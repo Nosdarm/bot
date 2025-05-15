@@ -1,0 +1,26 @@
+# Virtual environment
+venv/
+.venv/
+Env/
+env/
+
+# Compiled Python files
+__pycache__/
+*.pyc
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+/data/*.db # Если БД в data/
+
+# Environment variables / Secrets
+.env
+settings.json # Если settings.json содержит секреты
+
+# Logs
+*.log
+
+# IDE files
+.vscode/ # Опционально
+.history/ # ОБЯЗАТЕЛЬНО игнорируем локальную историю

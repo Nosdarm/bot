@@ -1,0 +1,814 @@
+# bot/game/character_processors/character_action_processor.py
+
+# --- Импорты ---
+import json
+import uuid
+import traceback
+import asyncio
+# ИСПРАВЛЕНИЕ: Убедимся, что все необходимые типы импортированы
+from typing import Optional, Dict, Any, List, Set, Callable, Awaitable
+
+
+# Импорт модели Character (нужен для работы с объектами персонажей, полученными от CharacterManager)
+from bot.game.models.character import Character
+# TODO: Импорт модели действия, если таковая есть
+# from bot.game.models.character_action import CharacterAction
+
+
+# Импорт менеджера персонажей (CharacterActionProcessor нуждается в нем для получения объектов Character)
+# CharacterActionProcessor не принимает CharacterManager в __init__.
+from bot.game.managers.character_manager import CharacterManager
+
+# TODO: Импорт других менеджеров/сервисов, которые нужны в start_action, add_action_to_queue, process_tick, complete_action
+# Эти менеджеры будут использоваться для валидации действия, расчета длительности, применения эффектов завершения действия и т.п.
+# Используйте строковые аннотации ('ManagerName') для Optional зависимостей, чтобы избежать циклов импорта.
+# Раскомментируйте только те, которые нужны в методах НИЖЕ.
+from bot.game.managers.item_manager import ItemManager
+from bot.game.managers.location_manager import LocationManager
+from bot.game.rules.rule_engine import RuleEngine
+from bot.game.managers.time_manager import TimeManager
+from bot.game.managers.combat_manager import CombatManager
+from bot.game.managers.status_manager import StatusManager
+from bot.game.managers.party_manager import PartyManager # PartyManager нужен для is_busy
+from bot.game.managers.npc_manager import NpcManager # Нужен для действий, взаимодействующих с NPC
+
+# TODO: Импорт процессоров, если они нужны в complete_action (напр., EventStageProcessor для триггеров)
+from bot.game.event_processors.event_stage_processor import EventStageProcessor
+from bot.game.event_processors.event_action_processor import EventActionProcessor # Нужен для некоторых действий?
+
+
+# Define send callback type (нужен для уведомлений о действиях)
+# SendToChannelCallback определен в GameManager/WorldSimulationProcessor, его нужно импортировать или определить здесь
+# Определим здесь, чтобы избежать циклического импорта
+SendToChannelCallback = Callable[[str], Awaitable[Any]]
+SendCallbackFactory = Callable[[int], SendToChannelCallback]
+
+
+class CharacterActionProcessor:
+    """
+    Процессор, отвечающий за управление индивидуальными действиями персонажей
+    и их очередями.
+    Обрабатывает начало, добавление в очередь, обновление прогресса и завершение действий.
+    Взаимодействует с CharacterManager для доступа к объектам Character
+    и с другими менеджерами/сервисами для логики самих действий.
+    """
+    def __init__(self,
+                 # --- Обязательные зависимости ---
+                 # Процессор действий нуждается в менеджере персонажей для доступа к объектам Character
+                 character_manager: CharacterManager,
+                 # Фабрика callback'ов для отправки сообщений (нужна для уведомлений игрока о начале/завершении)
+                 send_callback_factory: SendCallbackFactory,
+
+                 # --- Опциональные зависимости (ВСЕ менеджеры/сервисы, которые могут понадобиться при выполнении ЛЮБОГО действия) ---
+                 # Получаем их из GameManager при инстанциировании Процессора.
+                 # Раскомментируйте и добавьте в список параметров только те, которые реально нужны в логике start_action, add_action_to_queue, process_tick, complete_action
+                 item_manager: Optional['ItemManager'] = None,
+                 location_manager: Optional['LocationManager'] = None,
+                 rule_engine: Optional['RuleEngine'] = None,
+                 time_manager: Optional['TimeManager'] = None,
+                 combat_manager: Optional['CombatManager'] = None,
+                 status_manager: Optional['StatusManager'] = None,
+                 party_manager: Optional['PartyManager'] = None, # PartyManager нужен для is_busy
+                 npc_manager: Optional['NpcManager'] = None, # Нужен для действий с NPC
+
+                 # TODO: Добавьте другие менеджеры/сервисы, которые могут понадобиться (EconomyManager?)
+                 # economy_manager: Optional['EconomyManager'] = None,
+
+                 # Процессоры, которые могут понадобиться для триггеров в complete_action
+                 event_stage_processor: Optional['EventStageProcessor'] = None,
+                 event_action_processor: Optional['EventActionProcessor'] = None, # Если действие триггерит действие события
+                ):
+        print("Initializing CharacterActionProcessor...")
+        # --- Сохранение всех переданных аргументов в self._... ---
+        # Обязательные
+        self._character_manager = character_manager
+        self._send_callback_factory = send_callback_factory
+
+        # Опциональные
+        self._item_manager = item_manager
+        self._location_manager = location_manager
+        self._rule_engine = rule_engine
+        self._time_manager = time_manager
+        self._combat_manager = combat_manager
+        self._status_manager = status_manager
+        self._party_manager = party_manager
+        self._npc_manager = npc_manager
+        # self._economy_manager = economy_manager
+
+        self._event_stage_processor = event_stage_processor
+        self._event_action_processor = event_action_processor
+
+
+        print("CharacterActionProcessor initialized.")
+
+    # Метод для проверки занятости (ПЕРЕНЕСЕН ИЗ CharacterManager)
+    # Этот метод проверяет только атрибут current_action персонажа и вызывает PartyManager.is_party_busy.
+    # Он получает PartyManager из своих атрибутов.
+    def is_busy(self, character_id: str) -> bool:
+         """
+         Проверяет, занят ли персонаж выполнением индивидуального действия.
+         ИЛИ группового действия партии, если персонаж в партии.
+         PartyManager должен быть доступен (проинжектирован) для проверки занятости партии.
+         """
+         # Этот метод получает Character из своего manager'а
+         char = self._character_manager.get_character(character_id)
+         if not char:
+              return False # Несуществующий персонаж не занят
+
+         # Занят, если у него есть активное ИНДИВИДУАЛЬНОЕ действие
+         if getattr(char, 'current_action', None) is not None:
+              return True
+
+         # Занят, если он в партии И у этой партии есть активное действие
+         # Используем self._party_manager, который должен быть проинжектирован
+         if getattr(char, 'party_id', None) and self._party_manager and hasattr(self._party_manager, 'is_party_busy'):
+             # NOTE: PartyManager.is_party_busy может потребовать ссылку на CharacterManager
+             # в своих kwargs, если PartyManager сам вызывает is_busy для участников.
+             # Это передается через **kwargs в process_tick WSP.
+             # Но здесь мы в is_busy CharacterActionProcessor. is_party_busy PartyManager
+             # может вызывать is_busy на CharacterManager, что приведет к рекурсии!
+             # Альтернатива: PartyManager.is_party_busy просто проверяет party.current_action.
+             # Давайте предположим, что PartyManager.is_party_busy просто проверяет party.current_action.
+             return self._party_manager.is_party_busy(char.party_id)
+
+         return False # Не занят
+
+
+    # Метод для начала действия (ПЕРЕНЕСЕН ИЗ CharacterManager)
+    # Вызывается из CommandRouter или других мест, инициирующих действие.
+    async def start_action(self, character_id: str, action_data: Dict[str, Any], **kwargs) -> bool:
+        """
+        Начинает новое ИНДИВИДУАЛЬНОЕ действие для персонажа.
+        action_data: Словарь с данными действия (type, target_id, callback_data и т.т.).
+        kwargs: Дополнительные менеджеры/сервисы, переданные при вызове (например, CommandRouter передает свои менеджеры из __init__).
+        Эти менеджеры могут быть использованы для валидации или расчета длительности.
+        Возвращает True, если действие успешно начато, False иначе (напр., персонаж занят или валидация не пройдена).
+        """
+        print(f"CharacterActionProcessor: Attempting to start action for character {character_id}: {action_data.get('type')}")
+        # Получаем персонажа из менеджера персонажей (это синхронный вызов)
+        char = self._character_manager.get_character(character_id)
+        if not char:
+             print(f"CharacterActionProcessor: Error starting action: Character {character_id} not found.")
+             return False
+
+        action_type = action_data.get('type')
+        if not action_type:
+             print(f"CharacterActionProcessor: Error starting action: action_data is missing 'type'.")
+             await self._notify_character(character_id, f"❌ Не удалось начать действие: не указан тип действия.") # Пример
+             return False
+
+        # Проверяем, занят ли персонаж. Если занят, пытаемся добавить в очередь (если это разрешено для этого типа действия).
+        if self.is_busy(character_id):
+             print(f"CharacterActionProcessor: Character {character_id} is busy. Cannot start new action directly.")
+             # TODO: Определить, разрешено ли добавлять этот тип действия в очередь.
+             # Если разрешено:
+             # return await self.add_action_to_queue(character_id, action_data, **kwargs) # Передаем все kwargs дальше
+             # Если не разрешено:
+             await self._notify_character(character_id, f"❌ Ваш персонаж занят и не может начать действие '{action_type}'.") # Пример уведомления
+             return False # Персонаж занят и не может начать действие сразу или добавить в очередь
+
+
+        # --- Валидация action_data и расчет длительности для действия, которое НАЧИНАЕТСЯ СРАЗУ ---
+        # Получаем необходимые менеджеры из kwargs или из атрибутов __init__ процессора.
+        # Используем kwargs.get(..., self._attribute) для гибкости.
+        time_manager = kwargs.get('time_manager', self._time_manager)
+        rule_engine = kwargs.get('rule_engine', self._rule_engine)
+        location_manager = kwargs.get('location_manager', self._location_manager) # Нужен для валидации move
+        # TODO: Получите другие менеджеры, нужные для валидации action_data (ItemManager, NpcManager, CombatManager и т.п.)
+
+
+        # TODO: Реализовать валидацию и расчет total_duration с помощью RuleEngine
+        calculated_duration = action_data.get('total_duration', 0.0) # По умолчанию берем из данных, если есть
+        if rule_engine and hasattr(rule_engine, 'calculate_action_duration'):
+             try:
+                  # RuleEngine может рассчитать длительность на основе типа действия, персонажа, контекста, менеджеров.
+                  # Передаем все kwargs дальше, чтобы RuleEngine мог использовать другие менеджеры.
+                  calculated_duration = await rule_engine.calculate_action_duration(action_type, character=char, action_context=action_data, **kwargs)
+             except Exception as e:
+                  print(f"CharacterActionProcessor: Error calculating duration for action type '{action_type}' for {character_id}: {e}")
+                  import traceback
+                  print(traceback.format_exc())
+                  calculated_duration = action_data.get('total_duration', 0.0)
+
+        # Убедимся, что длительность - это float или int
+        try:
+            action_data['total_duration'] = float(calculated_duration) if calculated_duration is not None else 0.0
+        except (ValueError, TypeError):
+             print(f"CharacterActionProcessor: Warning: Calculated duration is not a valid number for action type '{action_type}'. Setting to 0.0.")
+             action_data['total_duration'] = 0.0
+
+
+        # TODO: Добавить другие валидации (цель существует? у персонажа есть предмет для действия? и т.п.)
+        if action_type == 'move':
+             target_location_id = action_data.get('target_location_id')
+             if not target_location_id:
+                  print(f"CharacterActionProcessor: Error starting move action: Missing target_location_id in action_data.")
+                  await self._notify_character(character_id, f"❌ Ошибка перемещения: не указана целевая локация.") # Пример
+                  return False
+
+             # Валидация: существует ли целевая локация?
+             if location_manager and hasattr(location_manager, 'get_location_static') and location_manager.get_location_static(target_location_id) is None:
+                 print(f"CharacterActionProcessor: Error starting move action: Target location '{target_location_id}' does not exist.")
+                 await self._notify_character(character_id, f"❌ Ошибка перемещения: локация '{target_location_id}' не существует.") # Пример
+                 return False
+
+             # TODO: Дополнительная валидация: доступна ли локация из текущей (через выходы)?
+             # current_location_id = getattr(char, 'location_id', None)
+             # if current_location_id and location_manager and hasattr(location_manager, 'get_connected_locations'):
+             #      connected_locations = location_manager.get_connected_locations(current_location_id)
+             #      if target_location_id not in connected_locations.values():
+             #           print(f"CharacterActionProcessor: Error starting move action: Target location '{target_location_id}' is not accessible from '{current_location_id}'.")
+             #           await self._notify_character(character_id, f"❌ Ошибка перемещения: локация '{target_location_id}' недоступна из вашей текущей локации.")
+             #           return False
+
+
+             # Сохраняем target_location_id в callback_data для использования в complete_action
+             if 'callback_data' not in action_data or not isinstance(action_data['callback_data'], dict):
+                 action_data['callback_data'] = {}
+             action_data['callback_data']['target_location_id'] = target_location_id
+
+
+        # TODO: Добавьте валидацию и расчет длительности для других типов действий, которые могут начинаться
+        # elif action_type == 'craft':
+        #     recipe_id = action_data.get('recipe_id')
+        #     if not recipe_id: ... error ...
+        #     # TODO: Проверка наличия ингредиентов, навыков и т.п. (ItemManager, CharacterManager/RuleEngine)
+        #     # TODO: Расчет total_duration крафтинга (RuleEngine)
+        #     pass
+        # elif action_type == 'search': ...
+        # elif action_type == 'use_skill': ...
+
+
+        else:
+             # Для неизвестных или мгновенных действий, если не требуется специфическая валидация,
+             # просто убедимся, что total_duration установлен (может быть 0).
+             if 'total_duration' not in action_data or action_data['total_duration'] is None:
+                  print(f"CharacterActionProcessor: Warning: Action type '{action_type}' has no total_duration specified. Setting to 0.0.")
+                  action_data['total_duration'] = 0.0
+             try: action_data['total_duration'] = float(action_data['total_duration'])
+             except (ValueError, TypeError): action_data['total_duration'] = 0.0
+
+
+        # --- Устанавливаем время начала и прогресс ---
+        if time_manager and hasattr(time_manager, 'get_current_game_time'):
+             action_data['start_game_time'] = time_manager.get_current_game_time()
+        else:
+             print(f"CharacterActionProcessor: Warning: Cannot get current game time for action '{action_type}'. TimeManager not available or has no get_current_game_time method. Start time is None.")
+             action_data['start_game_time'] = None # Или можно считать это ошибкой и вернуть False? Пока оставляем None.
+
+        action_data['progress'] = 0.0 # Прогресс начинается с 0
+
+
+        # --- Устанавливаем текущее действие ---
+        char.current_action = action_data
+        # Помечаем персонажа как измененного через его менеджер
+        # CharacterManager._dirty_characters доступен напрямую для CharacterActionProcessor
+        self._character_manager._dirty_characters.add(character_id)
+        # Добавляем персонажа в кеш сущностей с активным действием через его менеджер
+        # CharacterManager._entities_with_active_action доступен напрямую
+        self._character_manager._entities_with_active_action.add(character_id)
+
+
+        print(f"CharacterActionProcessor: Character {character_id} action '{action_data['type']}' started. Duration: {action_data['total_duration']:.1f}. Marked as dirty.")
+
+        # Сохранение в БД произойдет при вызове save_all_characters через PersistenceManager (вызывается WorldSimulationProcessor)
+
+        # TODO: Уведомить игрока о начале действия? Требует send_callback_factory (инжектирован)
+        # await self._notify_character(character_id, f"Вы начали действие: '{action_type}'.") # Нужен метод _notify_character
+
+        return True # Успешно начато
+
+
+    async def add_action_to_queue(self, character_id: str, action_data: Dict[str, Any], **kwargs) -> bool:
+        """
+        Добавляет новое ИНДИВИДУАЛЬНОЕ действие в очередь персонажа.
+        kwargs: Дополнительные менеджеры/сервисы для валидации или расчета длительности.
+        Возвращает True, если действие успешно добавлено, False иначе.
+        """
+        print(f"CharacterActionProcessor: Attempting to add action to queue for character {character_id}: {action_data.get('type')}")
+        # Получаем персонажа из менеджера персонажей
+        char = self._character_manager.get_character(character_id)
+        if not char:
+             print(f"CharacterActionProcessor: Error adding action to queue: Character {character_id} not found.")
+             return False
+
+        action_type = action_data.get('type')
+        if not action_type:
+             print(f"CharacterActionProcessor: Error adding action to queue: action_data is missing 'type'.")
+             await self._notify_character(character_id, f"❌ Не удалось добавить действие в очередь: не указан тип действия.") # Пример
+             return False
+
+        # TODO: Валидация action_data для добавления в очередь (может быть менее строгой, чем для start_action)
+        # Получаем необходимые менеджеры из kwargs или из атрибутов __init__ процессора.
+        rule_engine = kwargs.get('rule_engine', self._rule_engine)
+        location_manager = kwargs.get('location_manager', self._location_manager) # Получаем LocationManager для валидации перемещения
+
+
+        if action_type == 'move':
+             target_location_id = action_data.get('target_location_id')
+             if not target_location_id:
+                  print(f"CharacterActionProcessor: Error adding move action to queue: Missing target_location_id in action_data.")
+                  await self._notify_character(character_id, f"❌ Не удалось добавить перемещение в очередь: не указана целевая локация.") # Пример
+                  return False
+             # Облегченная валидация: существует ли целевая локация? (опционально для очереди)
+             if location_manager and hasattr(location_manager, 'get_location_static') and location_manager.get_location_static(target_location_id) is None:
+                 print(f"CharacterActionProcessor: Error adding move action to queue: Target location '{target_location_id}' does not exist.")
+                 await self._notify_character(character_id, f"❌ Не удалось добавить перемещение в очередь: локация '{target_location_id}' не существует.") # Пример
+                 return False
+             # Сохраняем target_location_id в callback_data для complete_action
+             if 'callback_data' not in action_data or not isinstance(action_data['callback_data'], dict):
+                 action_data['callback_data'] = {}
+             action_data['callback_data']['target_location_id'] = action_data.get('target_location_id')
+
+
+        # TODO: Реализовать расчет total_duration с помощью RuleEngine (если он проинжектирован и имеет метод)
+        # Важно рассчитать длительность ПЕРЕД добавлением в очередь, чтобы она сохранилась.
+        calculated_duration = action_data.get('total_duration', 0.0) # По умолчанию берем из данных, если есть
+        if rule_engine and hasattr(rule_engine, 'calculate_action_duration'): # Используем общий метод расчета длительности
+             try:
+                  # Pass context including location_manager for move duration calculation if needed
+                  calculated_duration = await rule_engine.calculate_action_duration(action_type, character=char, action_context=action_data, **kwargs) # Передаем персонажа и все kwargs
+             except Exception as e:
+                  print(f"CharacterActionProcessor: Error calculating duration for action type '{action_type}' for {character_id} in queue: {e}")
+                  import traceback
+                  print(traceback.format_exc())
+                  calculated_duration = action_data.get('total_duration', 0.0)
+
+        try: action_data['total_duration'] = float(calculated_duration) if calculated_duration is not None else 0.0
+        except (ValueError, TypeError): action_data['total_duration'] = 0.0
+
+
+        action_data['start_game_time'] = None # Начальное время не известно, пока действие в очереди
+        action_data['progress'] = 0.0 # Прогресс всегда 0 в очереди
+
+
+        # Добавляем действие в конец очереди
+        # Убедимся, что action_queue существует и является списком в модели Character
+        if not hasattr(char, 'action_queue') or not isinstance(char.action_queue, list):
+             print(f"CharacterActionProcessor: Warning: Character {character_id} model has no 'action_queue' list or it's incorrect type. Creating empty list.")
+             char.action_queue = [] # Создаем пустую очередь, если нет или некорректная
+
+        char.action_queue.append(action_data)
+        # Помечаем персонажа как измененного через его менеджер
+        self._character_manager._dirty_characters.add(character_id)
+        # Персонаж считается "активным" для тика, пока у него есть очередь или действие.
+        self._character_manager._entities_with_active_action.add(character_id)
+
+
+        print(f"CharacterActionProcessor: Action '{action_data['type']}' added to queue for character {character_id}. Queue length: {len(char.action_queue)}. Marked as dirty.")
+
+        # Сохранение в БД произойдет при вызове save_all_characters через PersistenceManager
+
+        # TODO: Уведомить игрока об успешном добавлении в очередь? Требует send_callback_factory (инжектирован)
+        # await self._notify_character(character_id, f"Действие '{action_type}' добавлено в вашу очередь.") # Пример
+
+        return True # Успешно добавлено в очередь
+
+
+    # Метод обработки тика для ОДНОГО персонажа (ПЕРЕНЕСЕН ИЗ CharacterManager)
+    # WorldSimulationProcessor будет вызывать этот метод для каждого ID персонажа, находящегося в кеше CharacterManager._entities_with_active_action.
+    async def process_tick(self, char_id: str, game_time_delta: float, **kwargs) -> None:
+        """
+        Обрабатывает тик для текущего ИНДИВИДУАЛЬНОГО действия персонажа.
+        Этот метод вызывается WorldSimulationProcessor для каждого активного персонажа.
+        Обновляет прогресс, завершает действие при необходимости, начинает следующее из очереди.
+        kwargs: Дополнительные менеджеры/сервисы (time_manager, send_callback_factory и т.т.), переданные WSP.
+        """
+        # print(f"CharacterActionProcessor: Processing tick for character {char_id}...") # Бывает очень шумно
+
+        # Получаем персонажа из менеджера персонажей (это синхронный вызов)
+        char = self._character_manager.get_character(char_id)
+        # Проверяем, что персонаж все еще в кеше. Если нет или у него нет действия И пустая очередь, удаляем из активных (в менеджере персонажей) и выходим.
+        if not char or (getattr(char, 'current_action', None) is None and not getattr(char, 'action_queue', [])):
+             # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
+             # _entities_with_active_action доступен напрямую для процессора.
+             self._character_manager._entities_with_active_action.discard(char_id)
+             # print(f"CharacterActionProcessor: Skipping tick for character {char_id} (not found, no action, or empty queue).")
+             return
+
+        current_action = getattr(char, 'current_action', None)
+        action_completed = False # Флаг завершения
+
+
+        # --- Обновляем прогресс текущего действия (если оно есть) ---
+        if current_action is not None:
+             duration = current_action.get('total_duration', 0.0)
+             if duration is None: # Обрабатываем случай, если total_duration None (например, перманентное действие)
+                 # print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' has None duration. Assuming it's ongoing.") # Бывает шумно
+                 # Ничего не делаем с прогрессом, действие продолжается перманентно до принудительной отмены или другого триггера.
+                 pass # Прогресс не меняется, dirty не помечается из-за прогресса.
+             elif duration <= 0:
+                  print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' is instant (duration <= 0). Marking as completed.")
+                  action_completed = True
+             else:
+                  progress = current_action.get('progress', 0.0)
+                  if not isinstance(progress, (int, float)):
+                       print(f"CharacterActionProcessor: Warning: Progress for char {char_id} action '{current_action.get('type', 'Unknown')}' is not a number ({progress}). Resetting to 0.0.")
+                       progress = 0.0
+
+                  current_action['progress'] = progress + game_time_delta
+                  char.current_action = current_action # Убедимся, что изменение сохраняется в объекте Character
+                  # Помечаем персонажа как измененного через его менеджер
+                  self._character_manager._dirty_characters.add(char_id)
+
+                  # print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}'. Progress: {current_action['progress']:.2f}/{duration:.1f}") # Debug
+
+                  # --- Проверяем завершение действия ---
+                  if current_action['progress'] >= duration:
+                       print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' completed.")
+                       action_completed = True
+
+
+        # --- Обработка завершения действия ---
+        # Этот блок выполняется, ЕСЛИ действие завершилось в этом тике.
+        if action_completed and current_action is not None:
+             # complete_action сбросит current_action, пометит dirty, и начнет следующее из очереди (если есть)
+             # Передаем все kwargs из WorldTick дальше в complete_action
+             await self.complete_action(char_id, current_action, **kwargs)
+
+
+        # --- Проверяем, нужно ли удалить из активных после завершения или если не было действия и очередь пуста ---
+        # complete_action уже запустил следующее действие ИЛИ оставил current_action = None.
+        # process_tick должен удалить из _entities_with_active_action, если персонаж больше не активен.
+        # Проверяем состояние персонажа СНОВА после завершения действия и запуска следующего.
+        # Убедимся, что у объекта Character есть атрибуты current_action и action_queue перед проверкой
+        if getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue):
+             # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
+             # _entities_with_active_action доступен напрямую для процессора.
+             self._character_manager._entities_with_active_action.discard(char_id)
+             # print(f"CharacterActionProcessor: Character {char_id} has no more actions. Removed from active list.")
+
+
+        # Сохранение обновленного состояния персонажа (если он помечен как dirty) произойдет в save_all_characters.
+        # process_tick пометил персонажа как dirty, если прогресс изменился.
+        # complete_action пометил персонажа как dirty, если действие завершилось и/или очередь изменилась.
+
+
+    # Метод для завершения ИНДИВИДУАЛЬНОГО действия персонажа (ПЕРЕНЕСЕН ИЗ CharacterManager)
+    # Вызывается из process_tick, когда действие завершено.
+    async def complete_action(self, character_id: str, completed_action_data: Dict[str, Any], **kwargs) -> None:
+        """
+        Обрабатывает завершение ИНДИВИДУАЛЬНОГО действия для персонажа.
+        Вызывает логику завершения действия, сбрасывает current_action, начинает следующее из очереди.
+        kwargs: Дополнительные менеджеры/сервисы, переданные из WorldTick (send_callback_factory, item_manager, location_manager, etc.).
+        """
+        print(f"CharacterActionProcessor: Completing action for character {character_id}: {completed_action_data.get('type')}")
+        # Получаем персонажа из менеджера персонажей
+        char = self._character_manager.get_character(character_id)
+        if not char:
+             print(f"CharacterActionProcessor: Error completing action: Character {character_id} not found.")
+             return # Не можем завершить действие
+
+        # TODO: --- ВЫПОЛНИТЬ ЛОГИКУ ЗАВЕРШЕНИЯ ДЕЙСТВИЯ ---
+        action_type = completed_action_data.get('type')
+        callback_data = completed_action_data.get('callback_data', {})
+        # Получаем необходимые менеджеры из kwargs или из атрибутов __init__ процессора
+        send_callback_factory = kwargs.get('send_callback_factory', self._send_callback_factory) # Получаем фабрику callback'ов
+        item_manager = kwargs.get('item_manager', self._item_manager)
+        location_manager = kwargs.get('location_manager', self._location_manager)
+        rule_engine = kwargs.get('rule_engine', self._rule_engine)
+        status_manager = kwargs.get('status_manager', self._status_manager)
+        combat_manager = kwargs.get('combat_manager', self._combat_manager)
+        npc_manager = kwargs.get('npc_manager', self._npc_manager)
+        # TODO: Получите другие менеджеры/процессоры, нужные для логики завершения (EventStageProcessor, EventActionProcessor?)
+        event_stage_processor = kwargs.get('event_stage_processor', self._event_stage_processor)
+        event_action_processor = kwargs.get('event_action_processor', self._event_action_processor)
+
+
+        # TODO: Определите канал для уведомлений игрока (например, из модели Character)
+        # async def player_callback(message_content: str): # Вспомогательная функция для отправки игроку
+        #      char_discord_id = getattr(char, 'discord_user_id', None)
+        #      if char_discord_id is not None and send_callback_factory:
+        #           # TODO: Нужна логика определения канала игрока по Discord ID
+        #           # Пока используем заглушку
+        #           channel_id = 12345 # Заглушка ID канала игрока
+        #           if channel_id:
+        #                callback = send_callback_factory(channel_id)
+        #                await callback(message_content)
+        #           else:
+        #                print(f"CharacterActionProcessor: Warning: Cannot find Discord channel for character {character_id} ({char_discord_id}).")
+        #      else:
+        #           print(f"CharacterActionProcessor: Warning: Cannot notify character {character_id}. Not found or not linked to Discord.")
+
+
+        try:
+            if action_type == 'move':
+                 # Действие перемещения завершено. Персонаж прибыл в локацию.
+                 target_location_id = callback_data.get('target_location_id')
+                 old_location_id = getattr(char, 'location_id', None) # Текущая локация перед обновлением
+
+                 # Для перемещения, LocationManager должен быть доступен для вызова триггеров
+                 if target_location_id and location_manager and hasattr(location_manager, 'handle_entity_arrival') and hasattr(location_manager, 'handle_entity_departure'): # Убедимся, что методы триггеров доступны
+                      # 1. Обновить локацию персонажа в кеше CharacterManager
+                      # NOTE: Локация обновляется только ПРИ ЗАВЕРШЕНИИ длительного действия перемещения.
+                      # Если действие мгновенное (duration <= 0), это происходит в том же тике, где оно началось.
+                      print(f"CharacterActionProcessor: Updating character {character_id} location in cache from {old_location_id} to {target_location_id}.")
+                      char.location_id = target_location_id
+                      # Помечаем персонажа как измененного через его менеджер
+                      self._character_manager._dirty_characters.add(character_id)
+
+
+                      # 2. Обработать триггеры OnExit для старой локации (если она была)
+                      # Передаем все менеджеры/сервисы из kwargs, чтобы триггеры могли их использовать
+                      if old_location_id: # Не вызываем OnExit, если персонаж начинал без локации
+                           print(f"CharacterActionProcessor: Triggering OnExit for location {old_location_id}.")
+                           await location_manager.handle_entity_departure(old_location_id, character_id, 'Character', **kwargs)
+
+                      # 3. Обработать триггеры OnEnter для новой локации
+                      # Передаем все менеджеры/сервисы из kwargs, чтобы триггеры могли их использовать
+                      print(f"CharacterActionProcessor: Triggering OnEnter for location {target_location_id}.")
+                      await location_manager.handle_entity_arrival(target_location_id, character_id, 'Character', **kwargs)
+
+                      # TODO: Отправить сообщение о прибытии в локацию игроку.
+                      # location_name = location_manager.get_location_name(target_location_id) if location_manager and hasattr(location_manager, 'get_location_name') else target_location_id
+                      # await player_callback(f"Вы прибыли в '{location_name}'.")
+                      print(f"CharacterActionProcessor: Character {character_id} completed move action to {target_location_id}. Triggers processed.")
+
+
+                 else:
+                       print("CharacterActionProcessor: Error completing move action: Required managers/data not available or LocationManager trigger methods missing.")
+                       # TODO: Что делать, если перемещение завершилось, но логику прибытия/триггеров не удалось выполнить?
+                       # Уведомить игрока об ошибке? Откатить перемещение? (Сложно)
+                       await self._notify_character(character_id, f"❌ Ошибка завершения перемещения. Произошла внутренняя ошибка.") # Пример
+
+
+            elif action_type == 'craft':
+                 # Пример: действие крафтинга завершено. Создать предмет и добавить в инвентарь.
+                 item_template_id = callback_data.get('item_template_id') or completed_action_data.get('item_template_id') # Получаем ID шаблона предмета
+
+                 # ItemManager должен быть доступен для создания предмета
+                 # CharacterManager должен быть доступен для добавления предмета в инвентарь
+                 if item_manager and self._character_manager and hasattr(self._character_manager, 'add_item_to_inventory'): # Убедимся, что add_item_to_inventory в менеджере персонажей
+                       try:
+                            # Создать готовый предмет (сохранится в БД внутри ItemManager.create_item)
+                            # Передаем все kwargs дальше, т.к. ItemManager.create_item может нуждаться в других менеджерах.
+                            item_data_for_creation = {'template_id': item_template_id, 'state_variables': completed_action_data.get('result_state_variables', {})}
+                            item_id = await item_manager.create_item(item_data_for_creation, **kwargs)
+
+                            if item_id:
+                                 # Добавить предмет в инвентарь персонажа (вызывает ItemManager.move_item и помечает персонажа dirty)
+                                 # add_item_to_inventory в CharacterManager уже вызывает ItemManager.move_item.
+                                 # Передаем все kwargs дальше, т.к. CharacterManager.add_item_to_inventory может нуждаться в ItemManager и др.
+                                 success = await self._character_manager.add_item_to_inventory(character_id, item_id, **kwargs)
+                                 if success:
+                                      print(f"CharacterActionProcessor: Created item {item_id} from recipe '{completed_action_data.get('recipe_id')}' added to inventory of {character_id}.")
+                                      # Уведомить игрока
+                                      # item_name = item_manager.get_item_template_name(item_template_id) if hasattr(item_manager, 'get_item_template_name') else item_template_id
+                                      # await player_callback(f"✅ Крафтинг завершен! Получен '{item_name}'.")
+                                 else:
+                                      print(f"CharacterActionProcessor: Error adding created item {item_id} to inventory of {character_id}.")
+                                      # TODO: Что делать с предметом, который не удалось добавить в инвентарь? Выбросить на землю? Удалить? Уведомить игрока?
+                                      await self._notify_character(character_id, f"❌ Крафтинг завершен, но не удалось добавить предмет в инвентарь.") # Пример
+
+                            else:
+                                 print(f"CharacterActionProcessor: Error creating item from template '{item_template_id}'. ItemManager.create_item returned None.")
+                                 # TODO: Что делать с не созданными предметами? Уведомить игрока?
+                                 await self._notify_character(character_id, f"❌ Не удалось создать предмет после завершения крафтинга.") # Пример
+
+
+                       except Exception as e:
+                            print(f"CharacterActionProcessor: ❌ Error during craft action completion for {character_id}: {e}")
+                            import traceback
+                            print(traceback.format_exc())
+                            # TODO: Уведомить игрока об ошибке завершения крафтинга?
+                            await self._notify_character(character_id, f"❌ Произошла ошибка при завершении крафтинга.") # Пример
+
+
+                       else:
+                           print(f"CharacterActionProcessor: Warning: Cannot complete craft action. Required managers not available (ItemManager or CharacterManager.add_item_to_inventory).")
+                           # TODO: Уведомить игрока об ошибке?
+                           await self._notify_character(character_id, f"❌ Произошла внутренняя ошибка при завершении крафтинга.") # Пример
+
+
+            # TODO: Добавьте логику завершения для других типов индивидуальных действий (search, use_skill, rest, dialog, combat_action и т.п.)
+            # elif action_type == 'search':
+            #      # Логика поиска: определить результат (Item/Location/Info), добавить в инвентарь/дать инфу.
+            #      # Используйте ItemManager, LocationManager, RuleEngine
+            #      item_manager = kwargs.get('item_manager', self._item_manager)
+            #      location_manager = kwargs.get('location_manager', self._location_manager)
+            #      rule_engine = kwargs.get('rule_engine', self._rule_engine)
+            #      # ... логика поиска ...
+            #      # Пример: найдено несколько предметов, добавить в инвентарь:
+            #      # if rule_engine and hasattr(rule_engine, 'determine_search_loot') and item_manager and hasattr(self._character_manager, 'add_item_to_inventory'):
+            #      #      # rule_engine.determine_search_loot вернет список Item IDs или template_ids
+            #      #      found_item_ids = await rule_engine.determine_search_loot(char, location_id=getattr(char, 'location_id', None), skill_check_result=callback_data.get('skill_check_result'), **kwargs) # Передаем менеджеры
+            #      #      for found_item_id in found_item_ids: # Это ID уже существующих Item
+            #      #           await self._character_manager.add_item_to_inventory(character_id, found_item_id, **kwargs) # Вызываем метод менеджера персонажей
+
+
+            # elif action_type == 'use_skill':
+            #      # Логика использования навыка: выполнить проверку, применить эффект, изменить состояние.
+            #      # Используйте RuleEngine, StatusManager, CombatManager, NpcManager, CharacterManager
+            #      rule_engine = kwargs.get('rule_engine', self._rule_engine)
+            #      status_manager = kwargs.get('status_manager', self._status_manager)
+            #      combat_manager = kwargs.get('combat_manager', self._combat_manager) # Если навык используется в бою
+            #      # ... логика использования навыка ...
+            #      # Пример: применен статус-эффект:
+            #      # if status_manager and hasattr(status_manager, 'add_status_effect_to_entity') and rule_engine and hasattr(rule_engine, 'calculate_skill_effect'):
+            #      #      # RuleEngine рассчитывает эффект навыка (напр., статус)
+            #      #      effect_data = await rule_engine.calculate_skill_effect(skill_id=callback_data.get('skill_id'), user=char, target_id=callback_data.get('target_id'), target_type=callback_data.get('target_type'), **kwargs)
+            #      #      if effect_data and effect_data.get('type') == 'status_effect' and effect_data.get('status_type'):
+            #      #           await status_manager.add_status_effect_to_entity(
+            #      #               target_id=effect_data.get('target_id'), target_type=effect_data.get('target_type'),
+            #      #               status_type=effect_data.get('status_type'), duration=effect_data.get('duration'), source_id=character_id,
+            #      #               **kwargs # Передаем менеджеры дальше
+            #      #           )
+
+
+            # elif action_type == 'rest':
+            #      # Логика отдыха: восстановить здоровье/ману, снять статусы.
+            #      # Используйте StatusManager, RuleEngine
+            #      status_manager = kwargs.get('status_manager', self._status_manager)
+            #      rule_engine = kwargs.get('rule_engine', self._rule_engine)
+            #      # ... логика отдыха ...
+            #      # Пример:
+            #      # if rule_engine and hasattr(rule_engine, 'calculate_rest_recovery'):
+            #      #      recovery = await rule_engine.calculate_rest_recovery(char, duration=completed_action_data.get('total_duration'), **kwargs)
+            #      #      char.health = min(char.health + recovery.get('health', 0), char.max_health)
+            #      #      self._character_manager._dirty_characters.add(character_id) # Помечаем персонажа dirty
+            #      # if status_manager and hasattr(status_manager, 'remove_status_effects_by_type'):
+            #      #      # Снять статусы усталости, используя StatusManager
+            #      #      await status_manager.remove_status_effects_by_type('Fatigue', target_id=character_id, target_type='Character', **kwargs)
+
+            # elif action_type == 'dialog':
+            #      # Логика диалога с NPC: продвинуть диалог, триггернуть события.
+            #      # Используйте NpcManager, EventStageProcessor, EventActionProcessor
+            #      npc_manager = kwargs.get('npc_manager', self._npc_manager)
+            #      event_stage_processor = kwargs.get('event_stage_processor', self._event_stage_processor)
+            #      event_action_processor = kwargs.get('event_action_processor', self._event_action_processor)
+            #      # ... логика диалога ...
+            #      # Пример: триггер следующей стадии события
+            #      # event_id = callback_data.get('event_id')
+            #      # next_stage = callback_data.get('next_stage_id')
+            #      # if event_id and next_stage and event_stage_processor and kwargs.get('event_manager'):
+            #      #      event = kwargs.get('event_manager').get_event(event_id) # EventManager из kwargs
+            #      #      if event: await event_stage_processor.advance_stage(event, next_stage, **kwargs)
+
+
+            # elif action_type == 'combat_action': # Действие в бою
+            #      # Логика завершения действия участника боя
+            #      # Используйте CombatManager
+            #      combat_id = callback_data.get('combat_id')
+            #      if combat_id and combat_manager and hasattr(combat_manager, 'handle_participant_action_complete'): # Нужен метод в CombatManager
+            #          print(f"CharacterActionProcessor: Combat action completed for {character_id} in combat {combat_id}. Notifying CombatManager.")
+            #          # CombatManager обрабатывает завершение действия участника (переход хода, следующий раунд и т.т.)
+            #          # Передаем все kwargs, т.к. CombatManager нуждается в других менеджерах
+            #          await combat_manager.handle_participant_action_complete(combat_id, character_id, completed_action_data, **kwargs)
+            #      else:
+            #          print(f"CharacterActionProcessor: Warning: Combat action completed for {character_id} in combat {combat_id}, but CombatManager or method not available.")
+            #          # TODO: Логировать ошибку?
+
+            else:
+                 print(f"CharacterActionProcessor: Warning: Unhandled individual action type '{action_type}' completed for character {character_id}. No specific completion logic executed.")
+                 await self._notify_character(character_id, f"Действие '{action_type}' завершено.")
+
+
+        except Exception as e:
+            print(f"CharacterActionProcessor: ❌ CRITICAL ERROR during action completion logic for character {character_id} action '{action_type}': {e}")
+            import traceback
+            print(traceback.format_exc())
+            # TODO: Логика обработки критической ошибки завершения действия (сообщить GM?)
+            await self._notify_character(character_id, f"❌ Произошла критическая ошибка при завершении действия '{action_type}'.")
+
+
+        # --- Сбросить current_action и начать следующее действие из очереди ---
+        char.current_action = None # Сбрасываем текущее действие
+        # Помечаем персонажа как измененного через его менеджер (current_action стал None)
+        self._character_manager._dirty_characters.add(character_id)
+
+
+        # Проверяем очередь после завершения текущего действия
+        action_queue = getattr(char, 'action_queue', []) or []
+        if action_queue:
+             next_action_data = action_queue.pop(0) # Удаляем из начала очереди
+             # Помечаем персонажа как измененного через его менеджер (очередь изменилась)
+             self._character_manager._dirty_characters.add(character_id)
+
+             print(f"CharacterActionProcessor: Character {character_id} starting next action from queue: {next_action_data.get('type')}.")
+
+             # Начинаем следующее действие (вызываем start_action этого же процессора)
+             # Передаем все необходимые менеджеры из kwargs дальше
+             await self.start_action(character_id, next_action_data, **kwargs) # <-- Рекурсивный вызов start_action процессора
+
+
+        # Если очередь пуста после завершения действия и current_action стал None,
+        # персонаж будет удален из _entities_with_active_action в конце process_tick.
+        # (Логика удаления из _entities_with_active_action уже в process_tick этого процессора)
+
+
+    # Вспомогательный метод для отправки сообщений конкретному персонажу (нужен send_callback_factory)
+    # Этот метод остается здесь, т.к. Processor отвечает за уведомления, связанные с действиями.
+    async def _notify_character(self, character_id: str, message: str) -> None:
+         """
+         Находит персонажа, определяет его Discord канал и отправляет сообщение через фабрику callback'ов.
+         """
+         # send_callback_factory проинжектирован в __init__ процессора
+         if self._send_callback_factory is None:
+              print(f"CharacterActionProcessor: Warning: Cannot notify character {character_id}. SendCallbackFactory not available.")
+              return
+
+         # Получаем персонажа из менеджера персонажей (это синхронный вызов)
+         char = self._character_manager.get_character(character_id)
+         if not char:
+              print(f"CharacterActionProcessor: Warning: Cannot notify character {character_id}. Character not found.")
+              return
+
+         # TODO: Нужна логика определения канала игрока по Discord ID
+         # Это может быть канал, где он последний раз вводил команду, или специальный канал для уведомлений.
+         # Пример: если у модели Character есть поле discord_channel_id или метод get_notification_channel_id
+         discord_channel_id = getattr(char, 'discord_channel_id', None) # Предполагаем поле в модели
+         # Или получить из менеджера локаций? send to location_id?
+         # if char.location_id and self._location_manager and hasattr(self._location_manager, 'get_location_channel'):
+         #      discord_channel_id = self._location_manager.get_location_channel(char.location_id)
+
+         if discord_channel_id is not None:
+              send_callback = self._send_callback_factory(discord_channel_id)
+              try: await send_callback(message)
+              except Exception as e: print(f"CharacterActionProcessor: Error sending notification to user {char.discord_user_id} in channel {discord_channel_id}: {e}")
+         else:
+              print(f"CharacterActionProcessor: Warning: Cannot send notification to character {character_id} ({getattr(char, 'discord_user_id', 'N/A')}). No Discord channel ID found.")
+
+
+    # NOTE: Метод get_entities_with_active_action остается в CharacterManager.
+
+    # NOTE: Метод process_tick (для ОДНОГО персонажа) перенесен сюда.
+    # WorldSimulationProcessor будет вызывать этот метод для каждого ID персонажа, находящегося в его кеше CharacterManager._entities_with_active_action.
+    async def process_tick(self, char_id: str, game_time_delta: float, **kwargs) -> None:
+        """
+        Обрабатывает тик для текущего ИНДИВИДУАЛЬНОГО действия персонажа.
+        Этот метод вызывается WorldSimulationProcessor для каждого активного персонажа.
+        Обновляет прогресс, завершает действие при необходимости, начинает следующее из очереди.
+        kwargs: Дополнительные менеджеры/сервисы (time_manager, send_callback_factory и т.т.), переданные WSP.
+        """
+        # print(f"CharacterActionProcessor: Processing tick for character {char_id}...") # Бывает очень шумно
+
+        # Получаем персонажа из менеджера персонажей (это синхронный вызов)
+        char = self._character_manager.get_character(char_id)
+        # Проверяем, что персонаж все еще в кеше. Если нет или у него нет действия И пустая очередь, удаляем из активных (в менеджере персонажей) и выходим.
+        # Убедимся, что у объекта Character есть атрибуты current_action и action_queue перед проверкой
+        if not char or (getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue)):
+             # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
+             # _entities_with_active_action доступен напрямую для процессора.
+             self._character_manager._entities_with_active_action.discard(char_id)
+             # print(f"CharacterActionProcessor: Skipping tick for character {char_id} (not found, no action, or empty queue).")
+             return
+
+        current_action = getattr(char, 'current_action', None)
+        action_completed = False # Флаг завершения
+
+
+        # --- Обновляем прогресс текущего действия (если оно есть) ---
+        if current_action is not None:
+             duration = current_action.get('total_duration', 0.0)
+             if duration is None: # Обрабатываем случай, если total_duration None (например, перманентное действие)
+                 # print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' has None duration. Assuming it's ongoing.") # Бывает шумно
+                 # Ничего не делаем с прогрессом, действие продолжается перманентно до принудительной отмены или другого триггера.
+                 pass # Прогресс не меняется, dirty не помечается из-за прогресса.
+             elif duration <= 0:
+                  print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' is instant (duration <= 0). Marking as completed.")
+                  action_completed = True
+             else:
+                  progress = current_action.get('progress', 0.0)
+                  if not isinstance(progress, (int, float)):
+                       print(f"CharacterActionProcessor: Warning: Progress for char {char_id} action '{current_action.get('type', 'Unknown')}' is not a number ({progress}). Resetting to 0.0.")
+                       progress = 0.0
+
+                  current_action['progress'] = progress + game_time_delta
+                  char.current_action = current_action # Убедимся, что изменение сохраняется в объекте Character
+                  # Помечаем персонажа как измененного через его менеджер
+                  self._character_manager._dirty_characters.add(char_id)
+
+                  # print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}'. Progress: {current_action['progress']:.2f}/{duration:.1f}") # Debug
+
+                  # --- Проверяем завершение действия ---
+                  if current_action['progress'] >= duration:
+                       print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' completed.")
+                       action_completed = True
+
+
+        # --- Обработка завершения действия ---
+        # Этот блок выполняется, ЕСЛИ действие завершилось в этом тике.
+        if action_completed and current_action is not None:
+             # complete_action сбросит current_action, пометит dirty, и начнет следующее из очереди (если есть)
+             # Передаем все kwargs из WorldTick дальше в complete_action
+             await self.complete_action(char_id, current_action, **kwargs)
+
+
+        # --- Проверяем, нужно ли удалить из активных после завершения или если не было действия и очередь пуста ---
+        # complete_action уже запустил следующее действие ИЛИ оставил current_action = None.
+        # process_tick должен удалить из _entities_with_active_action, если персонаж больше не активен.
+        # Проверяем состояние персонажа СНОВА после завершения действия и запуска следующего.
+        # Убедимся, что у объекта Character есть атрибуты current_action и action_queue перед проверкой
+        if getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue):
+             # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
+             # _entities_with_active_action доступен напрямую для процессора.
+             self._character_manager._entities_with_active_action.discard(char_id)
+             # print(f"CharacterActionProcessor: Character {char_id} has no more actions. Removed from active list.")
+
+
+        # Сохранение обновленного состояния персонажа (если он помечен как dirty) произойдет в save_all_characters.
+        # process_tick пометил персонажа как dirty, если прогресс изменился.
+        # complete_action пометил персонажа как dirty, если действие завершилось и/или очередь изменилась.
+
+
+# Конец класса CharacterActionProcessor

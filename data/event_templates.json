@@ -1,0 +1,23 @@
+// data/event_templates.json
+{
+    "goblin_ambush_basic": {
+      "name": "Засада Гоблинов",
+      "start_stage_id": "approach",
+      "stages": {
+        "approach": {
+          "id": "approach",
+          "name": "Гоблины приближаются",
+          "description_template": "Шум в кустах и мерзкое хихиканье... Кажется, кто-то приближается."
+          // outcomes, on_enter_actions would be here, loaded by EventManager
+        },
+        "combat_start": {
+          "id": "combat_start",
+          "name": "Бой начался",
+          "description_template": "С воплями из укрытий выскакивают гоблины с ржавым оружием."
+        },
+         "event_end": {"id": "event_end", "name": "Конец События", "description_template": "...", "outcomes":{}}
+      },
+       "involved_entities": {} # Will be populated
+    }
+    // Add more templates here
+  }
