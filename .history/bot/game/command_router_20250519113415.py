@@ -6,7 +6,7 @@ import asyncio
 import traceback
 import shlex # For better argument parsing (handles quotes)
 # Import typing components
-from typing import Optional, Dict, Any, Callable, Awaitable, List, Set, TYPE_CHECKING, ClassVar, Union # Добавляем Union для Type Hint
+from typing import Optional, Dict, Any, Callable, Awaitable, List, Set, TYPE_CHECKING, ClassVar
 
 # Import discord types for type hints
 from discord import Message # Used in route method signature, handle_* signatures
@@ -51,16 +51,20 @@ if TYPE_CHECKING:
 
 
 # Define Type Aliases for callbacks explicitly if used in type hints
+# These are defined outside TYPE_CHECKING because they are used in the __init__ signature
 SendToChannelCallback = Callable[..., Awaitable[Any]]
 SendCallbackFactory = Callable[[int], SendToChannelCallback]
 
 
 # --- Command Decorator ---
+# This decorator is used to register command handler methods
 _command_registry: Dict[str, Callable[..., Awaitable[Any]]] = {} # Global command registry
 
 def command(keyword: str) -> Callable:
     """Decorator to register a method as a command handler."""
     def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+        # Store the function in the registry using the keyword
+        # Commands are case-insensitive, store lowercase keyword
         _command_registry[keyword.lower()] = func
         print(f"DEBUG: Command '{keyword}' registered to {func.__name__}")
         return func
@@ -68,6 +72,7 @@ def command(keyword: str) -> Callable:
 
 # --- CommandRouter Class ---
 class CommandRouter:
+    # Access the global registry via a class variable
     _command_handlers: ClassVar[Dict[str, Callable[..., Awaitable[Any]]]] = _command_registry
 
 
@@ -101,17 +106,19 @@ class CommandRouter:
         # TODO: Add DialogueManager etc.
     ):
         print("Initializing CommandRouter...")
+        # Store all injected dependencies
         self._character_manager = character_manager
         self._event_manager = event_manager
         self._persistence_manager = persistence_manager
         self._settings = settings
         self._world_simulation_processor = world_simulation_processor
-        self._send_callback_factory = send_callback_factory
+        self._send_callback_factory = send_callback_factory # Store the factory
         self._character_action_processor = character_action_processor
         self._character_view_service = character_view_service
         self._location_manager = location_manager
         self._rule_engine = rule_engine
 
+        # Store optional dependencies
         self._openai_service = openai_service
         self._item_manager = item_manager
         self._npc_manager = npc_manager
@@ -126,6 +133,7 @@ class CommandRouter:
         self._event_stage_processor = event_stage_processor
         # TODO: Store dialogue_manager if added
 
+        # Get command prefix from settings, default to '/'
         self._command_prefix: str = self._settings.get('command_prefix', '/')
         if not isinstance(self._command_prefix, str) or not self._command_prefix:
             print(f"CommandRouter Warning: Invalid command prefix in settings: '{self._settings.get('command_prefix')}'. Defaulting to '/'.")
@@ -188,7 +196,7 @@ class CommandRouter:
             'persistence_manager': self._persistence_manager,
             'settings': self._settings,
             'world_simulation_processor': self._world_simulation_processor,
-            'send_callback_factory': self._send_callback_factory,
+            'send_callback_factory': self._send_callback_factory, # Pass the factory
             'character_action_processor': self._character_action_processor,
             'character_view_service': self._character_view_service,
             'location_manager': self._location_manager,
@@ -219,7 +227,7 @@ class CommandRouter:
             import traceback
             traceback.print_exc()
             try:
-                 send_callback = context['send_callback_factory'](message.channel.id) # Use context['send_callback_factory']
+                 send_callback = self._send_callback_factory(message.channel.id)
                  await send_callback(f"❌ Произошла ошибка при выполнении команды `{self._command_prefix}{command_keyword}`: {e}")
             except Exception as cb_e:
                  print(f"CommandRouter Error sending execution error message: {cb_e}")
@@ -257,7 +265,6 @@ class CommandRouter:
         `{prefix}character create <имя_персонажа>` - Создать нового персонажа.
         `{prefix}character stats [<ID персонажа>]` - Показать статистику.
         `{prefix}character inventory [<ID персонажа>]` - Показать инвентарь.
-        `{prefix}character delete [<ID персонажа>]` - Удалить персонажа.
         (И другие, если реализованы)
         """.format(prefix=self._command_prefix)
 
@@ -277,9 +284,8 @@ class CommandRouter:
         subcommand_args = args[1:]
 
         char_manager = context.get('character_manager') # Type: Optional["CharacterManager"]
-        # Need other managers for specific subcommands, get them within the subcommand blocks
-        # char_view_service = context.get('character_view_service')
-        # char_action_processor = context.get('character_action_processor')
+        char_view_service = context.get('character_view_service') # Type: Optional["CharacterViewService"]
+        char_action_processor = context.get('character_action_processor') # Type: Optional["CharacterActionProcessor"]
 
         if not char_manager:
              await send_callback("❌ Система персонажей временно недоступна.")
@@ -314,17 +320,17 @@ class CommandRouter:
                 new_character = await char_manager.create_character(
                     discord_id=author_id_int,
                     name=character_name,
-                    # guild_id=guild_id,  # <-- REMOVED THIS REDUNDANT ARGUMENT
-                    **context # Pass entire context dictionary (which includes guild_id)
-                )
+                    # guild_id=guild_id,  # <--- This line is the problem! Remove it.
+                    **context # This already includes 'guild_id' from when context was built in route()
+)
+
 
                 if new_character:
                     char_name = getattr(new_character, 'name', character_name)
                     char_id = getattr(new_character, 'id', 'N/A')
-                    await send_callback(f"✨ Ваш персонаж **{char_name}** успешно создан! (ID: `{char_id}`).") # Use Ваш for user's char
+                    await send_callback(f"✨ Ваш персонаж **{char_name}** успешно создан! (ID: `{char_id}`).")
                     print(f"CommandRouter: Character '{char_name}' (ID: {char_id}) created for user {author_id_int} in guild {guild_id}.")
                 else:
-                    # Creation failed (e.g., name taken, already has a char) - Manager should print detailed reason
                     await send_callback(f"❌ Не удалось создать персонажа **{character_name}**. Возможно, имя занято или у вас уже есть персонаж в этой гильдии.")
                     print(f"CommandRouter: Failed to create character '{character_name}' for user {author_id_int} in guild {guild_id}.")
 
@@ -337,116 +343,16 @@ class CommandRouter:
                 traceback.print_exc()
                 await send_callback(f"❌ Произошла ошибка при создании персонажа: {e}")
 
-        elif subcommand == "delete":
-            # Handle /character delete [<ID персонажа>]
-            # Если аргумент есть, пытаемся найти по ID. Если нет, удаляем своего персонажа.
-            # TODO: Возможно, добавить поиск по имени, если аргумент не похож на UUID?
-            # Это усложняет, пока оставим поиск по ID ИЛИ по Discord ID (если нет аргумента)
-
-            char_id_or_name_to_delete: Optional[str] = None
-            target_char: Optional["Character"] = None # Store the target character object
-
-            if subcommand_args:
-                 # Если аргумент предоставлен, пытаемся найти персонажа по этому ID
-                 char_id_or_name_to_delete = subcommand_args[0]
-                 # Пытаемся найти по ID (UUID)
-                 target_char = char_manager.get_character(guild_id, char_id_or_name_to_delete)
-
-                 # TODO: Опционально: Если по ID не нашли, и аргумент не похож на UUID, попробовать найти по имени?
-                 # requires regex check for UUID format and char_manager.get_character_by_name
-                 # if not target_char and not is_uuid_format(char_id_or_name_to_delete): # Вам нужна is_uuid_format функция
-                 #     target_char = char_manager.get_character_by_name(guild_id, char_id_or_name_to_delete)
-                 #     if target_char:
-                 #          print(f"CommandRouter: Found character '{char_id_or_name_to_delete}' by name for deletion (ID: {target_char.id}) in guild {guild_id}.")
-
-
-                 if not target_char:
-                      # Если не нашли по ID (и не реализовали поиск по имени), сообщаем об ошибке.
-                      await send_callback(f"❌ Персонаж с ID `{char_id_or_name_to_delete}` не найден в этой гильдии. Убедитесь, что используете правильный ID.")
-                      return # Exit if character by ID is not found
-            else:
-                 # Если аргумент не предоставлен, удаляем персонажа пользователя по его Discord ID
-                 author_id_int: Optional[int] = None
-                 try:
-                     if author_id is not None: author_id_int = int(author_id)
-                 except (ValueError, TypeError):
-                      await send_callback("❌ Не удалось определить ваш ID пользователя Discord.")
-                      print(f"CommandRouter Error: Invalid author_id format: {author_id}")
-                      return
-
-                 if author_id_int is None:
-                      await send_callback("❌ Не удалось получить ваш ID пользователя Discord.")
-                      print(f"CommandRouter Error: author_id is None.")
-                      return
-
-                 # Получаем персонажа пользователя по Discord ID и guild_id
-                 target_char = char_manager.get_character_by_discord_id(guild_id, author_id_int)
-
-                 if not target_char:
-                     await send_callback("❌ У вас еще нет персонажа, которого можно было бы удалить в этой гильдии.")
-                     return # Cannot delete if no character
-
-                 # Для логирования, используем ID найденного персонажа
-                 char_id_or_name_to_delete = getattr(target_char, 'id', 'N/A')
-
-
-            # At this point, target_char should be a Character object if found.
-            if target_char is None: # Redundant check, but safe.
-                 await send_callback("❌ Не удалось определить, какого персонажа удалить.")
-                 return
-
-            # Check if the user has permission to delete this character (assumes owner only for now)
-            author_id_int_check: Optional[int] = None
-            try:
-                if author_id is not None: author_id_int_check = int(author_id)
-            except (ValueError, TypeError): pass # Already handled above, but defensive
-
-            # Сравниваем Discord ID владельца персонажа с Discord ID автора команды
-            if author_id_int_check is None or getattr(target_char, 'discord_user_id', None) != author_id_int_check:
-                 await send_callback("❌ Вы можете удалить только своего персонажа.")
-                 # TODO: Добавить проверку на GM права, если нужно
-                 return
-
-            # Now call the manager's remove_character method using the found target_char's actual ID
-            try:
-                char_id_to_remove = getattr(target_char, 'id')
-                if char_id_to_remove is None:
-                     print(f"CommandRouter Error: Found character object but it has no ID attribute: {target_char}")
-                     await send_callback("❌ Произошла ошибка: Не удалось получить ID персонажа для удаления.")
-                     return # Cannot delete if character object has no ID
-
-                deleted_char_id = await char_manager.remove_character(
-                    character_id=char_id_to_remove, # Use the actual char ID from the object
-                    guild_id=guild_id, # Pass guild_id string
-                    **context # Pass full context
-                )
-
-                if deleted_char_id:
-                    char_name = getattr(target_char, 'name', 'персонаж')
-                    await send_callback(f"🗑️ Ваш персонаж **{char_name}** (ID: `{deleted_char_id}`) успешно удален.")
-                    print(f"CommandRouter: Character {deleted_char_id} ({char_name}) deleted by user {author_id} in guild {guild_id}.")
-                else:
-                    # Should ideally not happen if remove_character doesn't raise error
-                    print(f"CommandRouter: Warning: char_manager.remove_character returned None for {char_id_to_remove} in guild {guild_id}.")
-                    await send_callback(f"❌ Не удалось удалить персонажа (менеджер вернул None).")
-
-
-            except Exception as e:
-                print(f"CommandRouter Error deleting character {getattr(target_char, 'id', 'N/A')} for user {author_id} in guild {guild_id}: {e}")
-                import traceback
-                traceback.print_exc()
-                await send_callback(f"❌ Произошла ошибка при удалении персонажа: {e}")
-
-
-        # Add other subcommands for "character" here if needed (rename, etc.)
-        # elif subcommand == "rename": ...
-        # elif subcommand == "equip": ...
-        # elif subcommand == "use": ...
-
+        # Add other subcommands for "character" here if needed (delete, rename, etc.)
+        # Example:
+        # elif subcommand == "delete":
+        #     # Handle /character delete <char_id> (or player's own if no ID)
+        #     # ... logic using char_manager.remove_character ...
+        #     pass
 
         else:
             # Unknown subcommand for /character
-            await send_callback(f"Неизвестное действие для персонажа: `{subcommand}`. Доступные действия: `create`, `delete` (и другие, если реализованы).\nИспользование: `{self._command_prefix}character <действие> [аргументы]`")
+            await send_callback(f"Неизвестное действие для персонажа: `{subcommand}`. Доступные действия: `create` (и другие, если реализованы).\nИспользование: `{self._command_prefix}character <действие> [аргументы]`")
             print(f"CommandRouter: Unknown character subcommand: '{subcommand}' in guild {guild_id}.")
 
 
@@ -475,7 +381,6 @@ class CommandRouter:
 
         if args:
             char_id_to_view = args[0]
-            # Assuming get_character signature is get_character(guild_id: str, character_id: str)
             target_char = char_manager.get_character(guild_id, char_id_to_view)
 
             if not target_char:
@@ -495,7 +400,6 @@ class CommandRouter:
                  print(f"CommandRouter Error: author_id is None.")
                  return
 
-            # Assuming get_character_by_discord_id signature is get_character_by_discord_id(guild_id: str, discord_user_id: int)
             player_char = char_manager.get_character_by_discord_id(guild_id, author_id_int)
             if player_char:
                 target_char = player_char
@@ -508,9 +412,7 @@ class CommandRouter:
              return
 
         try:
-            # ИСПРАВЛЕНО ЗДЕСЬ: Изменено имя метода на get_character_sheet_embed
-            stats_embed = await char_view_service.get_character_sheet_embed(target_char, context=context) # <-- ИСПРАВЛЕНО
-
+            stats_embed = await char_view_service.get_character_stats_embed(target_char, context=context)
             if stats_embed:
                  await send_callback(embed=stats_embed)
                  print(f"CommandRouter: Sent status embed for character {getattr(target_char, 'id', 'N/A')} in guild {guild_id}.")

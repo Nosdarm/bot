@@ -338,34 +338,23 @@ class CommandRouter:
                 await send_callback(f"❌ Произошла ошибка при создании персонажа: {e}")
 
         elif subcommand == "delete":
-            # Handle /character delete [<ID персонажа>]
-            # Если аргумент есть, пытаемся найти по ID. Если нет, удаляем своего персонажа.
-            # TODO: Возможно, добавить поиск по имени, если аргумент не похож на UUID?
-            # Это усложняет, пока оставим поиск по ID ИЛИ по Discord ID (если нет аргумента)
+            # Handle /character delete [<char_id>]
+            # If no char_id is provided, attempt to delete the user's own character
 
-            char_id_or_name_to_delete: Optional[str] = None
+            char_id_to_delete: Optional[str] = None
             target_char: Optional["Character"] = None # Store the target character object
 
             if subcommand_args:
-                 # Если аргумент предоставлен, пытаемся найти персонажа по этому ID
-                 char_id_or_name_to_delete = subcommand_args[0]
-                 # Пытаемся найти по ID (UUID)
-                 target_char = char_manager.get_character(guild_id, char_id_or_name_to_delete)
-
-                 # TODO: Опционально: Если по ID не нашли, и аргумент не похож на UUID, попробовать найти по имени?
-                 # requires regex check for UUID format and char_manager.get_character_by_name
-                 # if not target_char and not is_uuid_format(char_id_or_name_to_delete): # Вам нужна is_uuid_format функция
-                 #     target_char = char_manager.get_character_by_name(guild_id, char_id_or_name_to_delete)
-                 #     if target_char:
-                 #          print(f"CommandRouter: Found character '{char_id_or_name_to_delete}' by name for deletion (ID: {target_char.id}) in guild {guild_id}.")
-
+                 # Assume first subcommand arg is a character ID
+                 char_id_to_delete = subcommand_args[0]
+                 # Get the character object by the provided ID (use get_character with guild_id)
+                 target_char = char_manager.get_character(guild_id, char_id_to_delete)
 
                  if not target_char:
-                      # Если не нашли по ID (и не реализовали поиск по имени), сообщаем об ошибке.
-                      await send_callback(f"❌ Персонаж с ID `{char_id_or_name_to_delete}` не найден в этой гильдии. Убедитесь, что используете правильный ID.")
+                      await send_callback(f"❌ Персонаж с ID `{char_id_to_delete}` не найден в этой гильдии.")
                       return # Exit if character by ID is not found
             else:
-                 # Если аргумент не предоставлен, удаляем персонажа пользователя по его Discord ID
+                 # No ID provided, get player's own character by Discord ID
                  author_id_int: Optional[int] = None
                  try:
                      if author_id is not None: author_id_int = int(author_id)
@@ -379,46 +368,49 @@ class CommandRouter:
                       print(f"CommandRouter Error: author_id is None.")
                       return
 
-                 # Получаем персонажа пользователя по Discord ID и guild_id
-                 target_char = char_manager.get_character_by_discord_id(guild_id, author_id_int)
-
-                 if not target_char:
-                     await send_callback("❌ У вас еще нет персонажа, которого можно было бы удалить в этой гильдии.")
+                 player_char = char_manager.get_character_by_discord_id(guild_id, author_id_int)
+                 if player_char:
+                     target_char = player_char # Found player's character
+                     char_id_to_delete = getattr(player_char, 'id', 'N/A') # Get character ID safely for logging
+                 else:
+                     await send_callback("❌ У вас еще нет персонажа, который можно было бы удалить.")
                      return # Cannot delete if no character
 
-                 # Для логирования, используем ID найденного персонажа
-                 char_id_or_name_to_delete = getattr(target_char, 'id', 'N/A')
-
-
-            # At this point, target_char should be a Character object if found.
-            if target_char is None: # Redundant check, but safe.
+            # At this point, target_char should be a Character object if found, otherwise we returned early.
+            if target_char is None: # This check is technically redundant due to returns above, but safe.
                  await send_callback("❌ Не удалось определить, какого персонажа удалить.")
                  return
 
-            # Check if the user has permission to delete this character (assumes owner only for now)
+            # Double-check that the character belongs to this guild (already done in get_character, but reinforce)
+            char_guild_id = getattr(target_char, 'guild_id', None)
+            if str(char_guild_id) != str(guild_id):
+                 # This should not happen if get_character is used correctly, but defensive
+                 print(f"CommandRouter Error: Mismatched guild_id for deletion: Char {getattr(target_char, 'id', 'N/A')} is in guild {char_guild_id}, but command is from guild {guild_id}.")
+                 await send_callback("❌ Произошла ошибка: Персонаж найден, но не принадлежит к этому серверу.") # More user-friendly message
+                 return
+
+
+            # Check if the user has permission to delete this character (e.g., is it their character? is it a GM command?)
+            # For simplicity, let's assume a user can only delete their OWN character for now.
+            # You would add GM permission checks if needed.
             author_id_int_check: Optional[int] = None
             try:
                 if author_id is not None: author_id_int_check = int(author_id)
             except (ValueError, TypeError): pass # Already handled above, but defensive
 
-            # Сравниваем Discord ID владельца персонажа с Discord ID автора команды
             if author_id_int_check is None or getattr(target_char, 'discord_user_id', None) != author_id_int_check:
+                 # Check if the user is the owner of the character
                  await send_callback("❌ Вы можете удалить только своего персонажа.")
-                 # TODO: Добавить проверку на GM права, если нужно
-                 return
+                 return # User is not the owner
 
-            # Now call the manager's remove_character method using the found target_char's actual ID
+            # Now we can safely call the manager's remove_character method
             try:
-                char_id_to_remove = getattr(target_char, 'id')
-                if char_id_to_remove is None:
-                     print(f"CommandRouter Error: Found character object but it has no ID attribute: {target_char}")
-                     await send_callback("❌ Произошла ошибка: Не удалось получить ID персонажа для удаления.")
-                     return # Cannot delete if character object has no ID
-
+                # CharacterManager.remove_character expects character_id, guild_id, **kwargs
+                # It handles cleanup and marking for DB deletion
                 deleted_char_id = await char_manager.remove_character(
-                    character_id=char_id_to_remove, # Use the actual char ID from the object
+                    character_id=getattr(target_char, 'id'), # Use the actual char ID from the object
                     guild_id=guild_id, # Pass guild_id string
-                    **context # Pass full context
+                    **context # Pass full context (including send_callback_factory if needed by cleanup)
                 )
 
                 if deleted_char_id:
@@ -426,13 +418,12 @@ class CommandRouter:
                     await send_callback(f"🗑️ Ваш персонаж **{char_name}** (ID: `{deleted_char_id}`) успешно удален.")
                     print(f"CommandRouter: Character {deleted_char_id} ({char_name}) deleted by user {author_id} in guild {guild_id}.")
                 else:
-                    # Should ideally not happen if remove_character doesn't raise error
-                    print(f"CommandRouter: Warning: char_manager.remove_character returned None for {char_id_to_remove} in guild {guild_id}.")
-                    await send_callback(f"❌ Не удалось удалить персонажа (менеджер вернул None).")
-
+                    # Should ideally not happen if target_char was found, but fallback
+                    await send_callback(f"❌ Не удалось удалить персонажа с ID `{char_id_to_delete}`.")
+                    print(f"CommandRouter: remove_character returned None for {char_id_to_delete} in guild {guild_id}.")
 
             except Exception as e:
-                print(f"CommandRouter Error deleting character {getattr(target_char, 'id', 'N/A')} for user {author_id} in guild {guild_id}: {e}")
+                print(f"CommandRouter Error deleting character {char_id_to_delete} for user {author_id} in guild {guild_id}: {e}")
                 import traceback
                 traceback.print_exc()
                 await send_callback(f"❌ Произошла ошибка при удалении персонажа: {e}")

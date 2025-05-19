@@ -21,8 +21,8 @@ from builtins import dict, set, list, int
 # --- Imports needed ONLY for Type Checking ---
 # These modules are imported ONLY for static analysis (Pylance/Mypy).
 # This breaks import cycles at runtime and helps Pylance correctly resolve types.
-# Используйте строковые литералы ("ClassName") для type hints в __init__ и методах
-# для классов, импортированных здесь.
+# Use string literals ("ClassName") for type hints in __init__ and methods
+# for classes imported here.
 if TYPE_CHECKING:
     # Add SqliteAdapter here
     from bot.database.sqlite_adapter import SqliteAdapter
@@ -130,52 +130,16 @@ class CharacterManager:
     # ИСПРАВЛЕНИЕ: Принимаем guild_id
     def get_character_by_discord_id(self, guild_id: str, discord_user_id: int) -> Optional["Character"]:
         """Получить персонажа по Discord User ID для определенной гильдии."""
-        guild_id_str = str(guild_id)
-        # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-        print(f"DEBUG: CharacterManager: Attempting to get character for Discord ID {discord_user_id} in guild {guild_id_str}...")
-
         # ИСПРАВЛЕНИЕ: Используем per-guild мапу
-        guild_discord_map = self._discord_to_char_map.get(guild_id_str) # Type: Optional[Dict[int, str]]
-
-        # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
+        guild_discord_map = self._discord_to_char_map.get(str(guild_id))
         if guild_discord_map:
-             print(f"DEBUG: CharacterManager: Found guild_discord_map for guild {guild_id_str}. Keys: {list(guild_discord_map.keys()) if isinstance(guild_discord_map, dict) else 'Not a dict'}. Looking for Discord ID {discord_user_id}.")
-        else:
-             print(f"DEBUG: CharacterManager: No guild_discord_map found for guild {guild_id_str}.")
-
-
-        if isinstance(guild_discord_map, dict): # Проверяем, что это словарь перед get
-             char_id = guild_discord_map.get(discord_user_id) # Type: Optional[str]
-
-             # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
+             char_id = guild_discord_map.get(discord_user_id)
+             # Возвращаем персонажа из основного кеша для этой гильдии
              if char_id:
-                 print(f"DEBUG: CharacterManager: Found char_id '{char_id}' in map for Discord ID {discord_user_id}. Attempting to get from _characters cache...")
-             else:
-                 print(f"DEBUG: CharacterManager: Char_id not found in map for Discord ID {discord_user_id}.")
+                 return self.get_character(guild_id, char_id) # Используем get_character с guild_id
 
+        return None # Гильдия, мапа, или персонаж не найдены
 
-             if char_id:
-                 # Возвращаем персонажа из основного кеша для этой гильдии
-                 # get_character также должен логировать
-                 char = self.get_character(guild_id, char_id) # Используем get_character с guild_id
-                 # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-                 if char:
-                      print(f"DEBUG: CharacterManager: Successfully retrieved character {char_id} from _characters cache.")
-                 else:
-                      print(f"DEBUG: CharacterManager: Char_id '{char_id}' found in map, but character NOT found in _characters cache for guild {guild_id_str}! Cache inconsistency?")
-                      # Это может указывать на несогласованность кешей. Возможно, персонаж в мапе, но не загрузился в основной кеш.
-                      # ОСТОРОЖНО: Если мапа глобальная, а кеш пер-гильдийный, эта логика может быть сложной.
-                      # В текущей реализации, мапа и кеш ПРЕДПОЛАГАЮТСЯ пер-гильдийными.
-                      # Если персонаж в мапе гильдии, но нет в кеше гильдии, это проблема.
-                      # Удаление из мапы может помочь, но это изменение состояния, требующее mark_dirty мапы?
-                      # Пока просто логируем предупреждение.
-
-                 return char # Возвращает найденный персонаж или None
-
-
-        # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ (уже была, убедитесь, что она там)
-        print(f"DEBUG: CharacterManager: Character not found for Discord ID {discord_user_id} in guild {guild_id_str}.")
-        return None
 
     # Используем строковый литерал в аннотации возвращаемого типа
     # ИСПРАВЛЕНИЕ: Принимаем guild_id
@@ -1201,9 +1165,9 @@ class CharacterManager:
          # Cleanup related states (statuses, combat, party, dialogue, etc.)
          # Use injected managers (self._...) and pass the context kwargs.
          cleanup_context: Dict[str, Any] = { # Assemble context for clean_up_* methods
-             'guild_id': guild_id_str, # Передаем guild_id_str
-             'character_id': character_id, # Передаем character_id
-             'character': char, # Pass the character object for convenience
+             'guild_id': guild_id_str, # Pass guild_id_str
+             'character_id': character_id, # Pass character_id
+             'character': char, # Pass the character object
              # Add potentially relevant managers to context *from self* if they exist and are not already in kwargs
              'item_manager': kwargs.get('item_manager', self._item_manager),
              'status_manager': kwargs.get('status_manager', self._status_manager),
@@ -1351,12 +1315,15 @@ class CharacterManager:
         guild_id_str = str(guild_id)
         # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
         char = self.get_character(guild_id_str, character_id)
+        # Убедимся, что у объекта Character есть атрибут action_queue и это не пустой список
         if not char or not hasattr(char, 'action_queue') or not isinstance(char.action_queue, list) or not char.action_queue:
             return None
 
+        # Извлекаем первое действие из очереди
         next_action = char.action_queue.pop(0) # Removes from start of list (modifies attribute)
-        self.mark_character_dirty(guild_id_str, character_id)
+        self.mark_character_dirty(guild_id_str, character_id) # Mark character as dirty for this guild
 
+        # ИСПРАВЛЕНИЕ: Если очередь опустела И нет текущего действия, снимаем пометку "занят" для этой гильдии
         if not char.action_queue and getattr(char, 'current_action', None) is None: # Safely check current_action attribute
              guild_active_action_cache = self._entities_with_active_action.get(guild_id_str)
              if guild_active_action_cache:

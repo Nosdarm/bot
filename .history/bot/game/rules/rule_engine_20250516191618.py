@@ -40,6 +40,20 @@ if TYPE_CHECKING:
 # Если модуль импортируется здесь, убедитесь, что он НЕ ИМПОРТИРУЕТ RuleEngine напрямую.
 from bot.game.models.character import Character # Прямой импорт модели, если она нужна для isinstance или других runtime целей
 
+# Прямые импорты менеджеров/сервисов, если RuleEngine их *создает* (что маловероятно)
+# или активно использует их класс для проверок типа INSTANCEOF в местах, где TYPE_CHECKING не помогает.
+# Судя по коду, вы получаете их через контекст, поэтому прямые импорты ниже были излишними для Runtime и вызывали циклы.
+# from bot.game.managers.location_manager import LocationManager # Удаляем прямой импорт
+# from bot.game.managers.character_manager import CharacterManager # Удаляем прямой импорт
+# from bot.game.managers.item_manager import ItemManager # Удаляем прямой импорт
+# from bot.game.managers.party_manager import PartyManager # Удаляем прямой импорт
+
+# Если NPC, Party, Combat модели используются для isinstance проверок, импортируйте их здесь.
+# from bot.game.models.npc import NPC # Прямой импорт если нужен для isinstance
+# from bot.game.models.party import Party # Прямой импорт если нужен для isinstance
+# from bot.game.models.combat import Combat # Прямой импорт если нужен для isinstance
+
+
 
 print("DEBUG: rule_engine.py module loaded.")
 

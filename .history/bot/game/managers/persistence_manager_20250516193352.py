@@ -1,19 +1,16 @@
 # bot/game/managers/persistence_manager.py
 
+import asyncio # Нужен для await
+import traceback # Для вывода трассировки ошибок
 # Импорт базовых типов
 from typing import Dict, Optional, Any, List, Set, Callable # Type hints
 # Импорт TYPE_CHECKING
 from typing import TYPE_CHECKING
 
-# Импорт async (используется в методах ниже)
-import asyncio
-import traceback # Для вывода трассировки ошибок
-
 
 # Импорт ВСЕХ менеджеров, которые этот менеджер будет координировать для сохранения/загрузки.
 # Используем ИМПОРТЫ В TYPE_CHECKING, чтобы избежать потенциальных циклических зависимостей,
 # если какие-то из этих менеджеров, в свою очередь, импортируют PersistenceManager.
-# Также это помогает Pylance с разрешением типов при использовании строковых литералов.
 if TYPE_CHECKING:
     # TODO: Импорт адаптера базы данных
     from bot.database.sqlite_adapter import SqliteAdapter
@@ -34,15 +31,18 @@ if TYPE_CHECKING:
     from bot.game.managers.party_manager import PartyManager # Если есть
     # TODO: Добавьте другие менеджеры, если они хранят персистентное состояние
 
-    # Определяем типы Callable для Type Checking, если они используются для аннотаций зависимостей-Callable
-    # Например, если PersistenceManager получает SendCallbackFactory как зависимость в __init__ (маловероятно, но возможно)
-    # SendCallbackFactory = Callable[[int], Callable[[str, Optional[Dict[str, Any]]], Awaitable[Any]]]
 
+# --- Импорты нужны при Runtime (крайне редко для PM, т.к. он работает с инстансами, а не классами) ---
+# Если вы используете классы менеджеров для isinstance проверок, их нужно импортировать здесь.
+# В вашем коде нет instanceof проверок на менеджерах в PM, поэтому runtime импорты классов не нужны.
 
-# --- Импорты нужны при Runtime ---
-# Для PersistenceManager крайне редко требуются runtime импорты менеджеров/адаптеров,
-# т.к. он работает с инстансами, переданными через __init__.
-# Здесь импортируются только вещи, нужные для логики самого PM, не для аннотаций типов зависимостей.
+# TODO: Импорт адаптера базы данных, если используется для реальной персистентности
+# Если SqliteAdapter проинжектирован как инстанс, его класс не нужен для runtime импорта в PM.
+# Но его класс может быть нужен для TYPE_CHECKING, если вы используете его в аннотациях.
+# Судя по __init__, он используется в аннотации Optional[SqliteAdapter], но без строкового литерала.
+# Если вы НЕ используете строковый литерал в __init__, SqliteAdapter должен быть импортирован здесь для Runtime.
+# Давайте оставим его здесь для обратной совместимости с предыдущими версиями, но рекомендуется использовать строковые литералы.
+# from bot.database.sqlite_adapter import SqliteAdapter # Если используется в __init__ без " "
 
 
 print("DEBUG: persistence_manager.py module loaded.")
@@ -56,10 +56,17 @@ class PersistenceManager:
     """
     def __init__(self,
                  # Принимаем зависимости, которые передает GameManager.
-                 # Используйте СТРОКОВЫЕ ЛИТЕРАЛЫ для аннотаций всех инжектированных зависимостей.
-                 # Это соответствует импортам в TYPE_CHECKING и делает код более надежным.
+                 # Используйте строковые литералы для инжектированных зависимостей, если импорт в TYPE_CHECKING.
+                 # Если импорт прямой (например, SqliteAdapter выше), строковый литерал не нужен.
+                 # Рекомендуется использовать строковые литералы и импорт в TYPE_CHECKING для всех зависимостей.
 
                  # ОБЯЗАТЕЛЬНЫЕ зависимости
+                 # event_manager: EventManager, # Прямой импорт, без " "
+                 # character_manager: CharacterManager, # Прямой импорт, без " "
+                 # location_manager: LocationManager, # Прямой импорт, без " "
+                 # db_adapter: Optional[SqliteAdapter] = None, # Прямой импорт SqliteAdapter, без " "
+
+                 # Давайте перейдем к использованию строковых литералов для всех зависимостей для консистентности
                  event_manager: "EventManager", # Use string literal!
                  character_manager: "CharacterManager", # Use string literal!
                  location_manager: "LocationManager", # Use string literal!
@@ -78,11 +85,10 @@ class PersistenceManager:
                  # TODO: Добавьте другие менеджеры
                 ):
         print("Initializing PersistenceManager...")
-        # Сохраняем ССЫЛКИ на менеджеры и адаптер как АТРИБУТЫ экземпляра
-        # Используем те же аннотации со строковыми литералами
         self._db_adapter: Optional["SqliteAdapter"] = db_adapter # Сохраняем адаптер БД
 
-        # Обязательные
+        # Сохраняем ССЫЛКИ на менеджеры как АТРИБУТЫ экземпляра
+        # Используем те же аннотации, что и в сигнатуре __init__
         self._event_manager: "EventManager" = event_manager
         self._character_manager: "CharacterManager" = character_manager
         self._location_manager: "LocationManager" = location_manager # Сохраняем, даже если он только загружает статику
@@ -106,14 +112,7 @@ class PersistenceManager:
         """
         Координирует сохранение состояния всех менеджеров для указанных гильдий.
         Каждый менеджер отвечает за сохранение СВОИХ данных per-guild, используя db_adapter.
-        Вызывается из GameManager или CommandRouter (GM команды).
-        guild_ids: Список ID гильдий, для которых нужно сохранить состояние.
-        kwargs: Дополнительный контекст (напр., db_adapter), который нужно передать менеджерам.
         """
-        if not guild_ids:
-            print("PersistenceManager: No guild IDs provided for save. Skipping state save.")
-            return
-
         print(f"PersistenceManager: Initiating game state save for {len(guild_ids)} guilds...")
 
         if self._db_adapter is None: # Если адаптер БД не был предоставлен
@@ -126,9 +125,8 @@ class PersistenceManager:
         else: # Если адаптер БД есть, выполняем сохранение с транзакцией
             print("PersistenceManager: Database adapter found, attempting to save via managers.")
             try:
-                # Запускаем транзакцию, если адаптер ее поддерживает
-                # if hasattr(self._db_adapter, 'begin_transaction'):
-                #      await self._db_adapter.begin_transaction()
+                # Запускаем транзакцию
+                # await self._db_adapter.begin_transaction() # Если адаптер имеет begin_transaction
 
                 # Вызываем методы сохранения для каждого менеджера и каждой гильдии
                 # Менеджеры сами взаимодействуют с self._db_adapter для выполнения записи.
@@ -145,10 +143,7 @@ class PersistenceManager:
                 if self._db_adapter:
                      # Если адаптер имеет rollback, используем его
                      if hasattr(self._db_adapter, 'rollback'):
-                        try:
-                             await self._db_adapter.rollback()
-                        except Exception as rb_e:
-                             print(f"PersistenceManager: Error during rollback: {rb_e}")
+                        await self._db_adapter.rollback()
                      else:
                          print("PersistenceManager: Warning: Database adapter has no 'rollback' method.")
 
@@ -165,10 +160,9 @@ class PersistenceManager:
          call_kwargs = {'guild_id': guild_id, **kwargs}
 
          # Список кортежей (атрибут менеджера, имя ожидаемого метода)
-         # Убедитесь, что ИМЯ МЕТОДА совпадает с методом save_state в менеджерах!
          managers_to_save = [
-             (self._event_manager, 'save_state'),
-             (self._character_manager, 'save_state'), # <-- ИСПРАВЛЕННОЕ ИМЯ МЕТОДА
+             (self._event_manager, 'save_state'), # Переименован load_all_events/save_all_events -> load_state/save_state
+             (self._character_manager, 'save_state'), # Переименован save_all_characters -> save_state
              (self._location_manager, 'save_state'), # Если LocationManager сохраняет динамику
              (self._npc_manager, 'save_state'),
              (self._item_manager, 'save_state'),
@@ -185,10 +179,10 @@ class PersistenceManager:
               manager = manager_attr # type: Optional[Any] # Use Any because manager can be different types
               if manager and hasattr(manager, method_name):
                    try:
+                       # Проверяем наличие required_args, хотя в PersistenceManager мы должны передавать все, что есть.
                        # Менеджер сам внутри должен игнорировать ненужные kwargs или рейзить ошибку, если mandatory args не переданы.
                        # Мы уже знаем, что save_state ожидает guild_id и **kwargs.
-                       # Передаем dictionary unpacking, чтобы аргументы попали как именованные.
-                       await getattr(manager, method_name)(**call_kwargs)
+                       await getattr(manager, method_name)(**call_kwargs) # Вызываем save_state(guild_id, **kwargs)
                    except Exception as e:
                        print(f"PersistenceManager: ❌ Error saving state for guild {guild_id} in manager {type(manager).__name__}: {e}")
                        # Не пробрасываем здесь, чтобы не остановить сохранение других менеджеров/гильдий.
@@ -198,11 +192,9 @@ class PersistenceManager:
                        print(traceback.format_exc())
                        # Если менеджер поднял AttributeError, значит, у него нет save_state метода.
                        # Это указывает на ошибку конфигурации или опечатку в managers_to_save.
-                       # TODO: Возможно, стоит логировать это как Warning, а не Error, если отсутствие метода допустимо для некоторых менеджеров.
 
-
+              # Логируем, если менеджер был предоставлен, но у него нет ожидаемого save_state метода
               elif manager:
-                   # Логируем, если менеджер был предоставлен, но у него нет ожидаемого save_state метода
                    print(f"PersistenceManager: Warning: Manager {type(manager).__name__} was provided but does not have expected method '{method_name}'. Skipping save for guild {guild_id}.")
 
 
@@ -210,16 +202,8 @@ class PersistenceManager:
         """
         Координирует загрузку состояния всех менеджеров для указанных гильдий при запуске бота.
         Каждый менеджер отвечает за загрузку СВОИХ данных per-guild, используя db_adapter.
-        kwargs: Передаются в load_state менеджеров (напр., time_manager для StatusManager).
-        Этот метод вызывается из GameManager или CommandRouter (GM команды).
-        guild_ids: Список ID гильдий, для которых нужно загрузить состояние.
+        Передаются в load_state менеджеров (напр., time_manager для StatusManager).
         """
-        if not guild_ids:
-            print("PersistenceManager: No guild IDs provided for load. Skipping state load.")
-            # TODO: Решите, что делать, если нет гильдий. Возможно, бот должен загрузить глобальное состояние или упасть?
-            # Пока просто ничего не делаем и возвращаемся. GameManager решит, что делать дальше.
-            return
-
         print(f"PersistenceManager: Initiating game state load for {len(guild_ids)} guilds...")
 
         if self._db_adapter is None: # Если адаптер БД не был предоставлен
@@ -229,8 +213,6 @@ class PersistenceManager:
             for guild_id in guild_ids:
                  await self._call_manager_load(guild_id, **kwargs) # Используем вспомогательный метод
                  # В режиме заглушки rebuild_runtime_caches может быть вызван сразу после load_state для каждой гильдии
-                 # await self._call_manager_rebuild_caches(guild_id, **kwargs) # Перенесем rebuild в общий блок после цикла
-
 
         else: # Если адаптер БД есть
             print("PersistenceManager: Database adapter found, attempting to load via managers.")
@@ -251,14 +233,15 @@ class PersistenceManager:
 
                  # Optional: Log counts after successful load for all guilds
                  # Это сложнее в многогильдийном режиме без агрегирующих методов в менеджерах.
-                 # Например, CharacterManager в текущей версии кеширует всех персонажей в одном _characters словаре.
+                 # active_events_count = sum(len(self._event_manager.get_active_events(guild_id)) for guild_id in guild_ids) if self._event_manager and hasattr(self._event_manager, 'get_active_events') else 0
+                 # print(f"PersistenceManager: Loaded {active_events_count} active events total.")
                  loaded_chars_count = len(self._character_manager._characters) if self._character_manager and hasattr(self._character_manager, '_characters') else 0 # Пример доступа к приватному атрибуту
                  print(f"PersistenceManager: Loaded {loaded_chars_count} characters into cache (total, may include other guilds if cache not filtered).")
 
 
             except Exception as e:
                  print(f"PersistenceManager: ❌ Error during game state load via managers: {e}")
-                 # КРИТИЧЕСКАЯ ОШИБКА ЗАГРУЗКИ - возможно, нужно остановить бот.
+                 # КРИТИЧЕСКАЯ ОШИБКА ЗАГРУЗКИ
                  import traceback
                  print(traceback.format_exc())
                  # TODO: Добавить логику обработки критических ошибок загрузки (оповещение GM, режим обслуживания?)
@@ -272,10 +255,9 @@ class PersistenceManager:
          call_kwargs = {'guild_id': guild_id, **kwargs}
 
          # Список кортежей (атрибут менеджера, имя ожидаемого метода)
-         # Убедитесь, что ИМЯ МЕТОДА совпадает с методом load_state в менеджерах!
          managers_to_load = [
-             (self._event_manager, 'load_state'), # <-- ИСПРАВЛЕННОЕ ИМЯ МЕТОДА
-             (self._character_manager, 'load_state'), # <-- ИСПРАВЛЕННОЕ ИМЯ МЕТОДА
+             (self._event_manager, 'load_state'), # Переименован load_all_events -> load_state
+             (self._character_manager, 'load_state'), # Переименован load_all_characters -> load_state
              (self._location_manager, 'load_state'), # LocationManager загружает шаблоны/инстансы
              (self._npc_manager, 'load_state'),
              (self._item_manager, 'load_state'),
@@ -294,8 +276,7 @@ class PersistenceManager:
                    try:
                         # Менеджер сам внутри должен игнорировать ненужные kwargs или рейзить ошибку.
                         # Мы передаем guild_id и все kwargs.
-                        # Передаем dictionary unpacking, чтобы аргументы попали как именованные.
-                        await getattr(manager, method_name)(**call_kwargs)
+                        await getattr(manager, method_name)(**call_kwargs) # Вызываем load_state(guild_id, **kwargs)
                    except Exception as e:
                        print(f"PersistenceManager: ❌ Error loading state for guild {guild_id} in manager {type(manager).__name__}: {e}")
                        # Не пробрасываем здесь, чтобы не остановить загрузку других менеджеров/гильдий.
@@ -306,7 +287,6 @@ class PersistenceManager:
 
 
               elif manager:
-                   # Логируем, если менеджер был предоставлен, но у него нет ожидаемого load_state метода
                    print(f"PersistenceManager: Warning: Manager {type(manager).__name__} was provided but does not have expected method '{method_name}'. Skipping load for guild {guild_id}.")
 
 
@@ -317,7 +297,6 @@ class PersistenceManager:
          call_kwargs = {'guild_id': guild_id, **kwargs}
 
          # Список кортежей (атрибут менеджера, имя ожидаемого метода)
-         # Убедитесь, что ИМЯ МЕТОДА совпадает с методом rebuild_runtime_caches в менеджерах!
          managers_to_rebuild = [
              (self._event_manager, 'rebuild_runtime_caches'),
              (self._character_manager, 'rebuild_runtime_caches'),
@@ -338,8 +317,7 @@ class PersistenceManager:
               if manager and hasattr(manager, method_name):
                    try:
                        # Менеджер сам внутри должен использовать guild_id и kwargs для перестройки.
-                       # Передаем dictionary unpacking, чтобы аргументы попали как именованные.
-                       await getattr(manager, method_name)(**call_kwargs)
+                       await getattr(manager, method_name)(**call_kwargs) # Вызываем rebuild_runtime_caches(guild_id, **kwargs)
                    except Exception as e:
                        print(f"PersistenceManager: ❌ Error rebuilding caches for guild {guild_id} in manager {type(manager).__name__}: {e}")
                        # Не пробрасываем здесь, чтобы не остановить перестройку других менеджеров/гильдий.
@@ -349,7 +327,6 @@ class PersistenceManager:
 
 
               elif manager:
-                   # Логируем, если менеджер был предоставлен, но у него нет ожидаемого rebuild_runtime_caches метода
                    print(f"PersistenceManager: Warning: Manager {type(manager).__name__} was provided but does not have expected method '{method_name}'. Skipping rebuild for guild {guild_id}.")
 
 
@@ -358,5 +335,3 @@ class PersistenceManager:
 # Конец класса PersistenceManager
 
 # TODO: Здесь могут быть другие классы менеджеров или хелперы, если они не являются частью GameManager.
-
-print("DEBUG: persistence_manager.py module loaded.")

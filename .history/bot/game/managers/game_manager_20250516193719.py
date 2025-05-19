@@ -4,15 +4,12 @@ print("--- Начинается загрузка: game_manager.py")
 import asyncio
 import traceback
 # Импорт базовых типов
-from typing import Optional, Dict, Any, Callable, Awaitable, List, Set
+from typing import Optional, Dict, Any, Callable, Awaitable, List, Set # Добавлен Set
 # Импорт TYPE_CHECKING
 from typing import TYPE_CHECKING
 
 # Импорт для Discord Client и Message, если они используются для аннотаций
-# Use string literal if these are only used for type hints to avoid import cycles
-from discord import Client # Direct import if Client is instantiated or directly used outside type hints
-# from discord import Message # Use string literal if only used in type hints like message: Message
-
+from discord import Client, Message
 
 # Адаптер для работы с SQLite - Прямой импорт нужен, т.к. он инстанциируется здесь
 from bot.database.sqlite_adapter import SqliteAdapter
@@ -20,9 +17,6 @@ from bot.database.sqlite_adapter import SqliteAdapter
 
 if TYPE_CHECKING:
     # --- Импорты для Type Checking ---
-    # Discord types used in method signatures
-    from discord import Message # Used in handle_discord_message
-
     # Менеджеры
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.event_manager import EventManager
@@ -128,8 +122,6 @@ class GameManager:
             # 2) Импортируем классы менеджеров и процессоров для их ИНСТАНЦИАЦИИ
             # ЭТИ ИМПОРТЫ НУЖНЫ ЗДЕСЬ ДЛЯ RUNTIME, т.к. мы создаем экземпляры!
             # Убедитесь, что эти импорты не вызывают циклов, что достигается использованием TYPE_CHECKING в других файлах.
-            # The ImportError was caused by one of these imports, specifically CommandRouter.
-            # Ensure CommandRouter is correctly defined in its file.
             from bot.game.rules.rule_engine import RuleEngine
             from bot.game.managers.time_manager import TimeManager
             from bot.game.managers.location_manager import LocationManager
@@ -155,10 +147,7 @@ class GameManager:
             # PersistenceManager
             from bot.game.managers.persistence_manager import PersistenceManager
             # Роутер команд
-            # This import was line 150 in the previous version and caused the ImportError.
-            # It's here because you need the CommandRouter class to instantiate it.
             from bot.game.command_router import CommandRouter
-
 
             # Core managers (создание экземпляров)
             self.rule_engine = RuleEngine(settings=self._settings.get('rule_settings', {}))
@@ -498,19 +487,11 @@ class GameManager:
         except Exception as e:
             print(f"GameManager: ❌ CRITICAL ERROR during setup: {e}")
             traceback.print_exc()
-            # Реализован корректный shutdown при ошибке setup
-            # Теперь метод shutdown существует благодаря исправленной индентации
-            try:
-                 await self.shutdown() # Попытка корректно выключиться
-            except Exception as shutdown_e:
-                 print(f"GameManager: ❌ Error during shutdown initiated by setup failure: {shutdown_e}")
-                 traceback.print_exc()
-
+            # TODO: Реализовать корректный shutdown при ошибке setup
+            await self.shutdown() # Попытка корректно выключиться
             # Не рейзим здесь, GameManager сам обрабатывает свою ошибку и выключается
-            # Внешний код (main.py) ожидает, что setup() либо завершится успешно, либо обработает ошибку и, возможно, завершит работу (через shutdown).
 
-
-    async def handle_discord_message(self, message: "Message") -> None: # Added type hint for Message
+    async def handle_discord_message(self, message: Message) -> None:
         if message.author.bot:
             return
         if not self._command_router:
@@ -527,7 +508,6 @@ class GameManager:
             traceback.print_exc()
             # Отправляем сообщение об ошибке пользователю в канал команды
             try:
-                 # Check if message.channel exists (it might not in DMs if discord.py cache is off)
                  if message.channel:
                       send_callback = self._get_discord_send_callback(message.channel.id)
                       await send_callback(f"❌ Произошла ошибка при обработке вашей команды: {e}", None)
@@ -544,9 +524,6 @@ class GameManager:
         async def _send(content: str = "", **kwargs: Any) -> None:
             # print(f"--- DIAGNOSTIC: _send function executed for channel {channel_id_int}. Accepts kwargs. ---")
             # Получаем канал через Discord Client
-            # Using client.get_channel is synchronous and might return None if channel is not in cache.
-            # For critical messages, consider client.fetch_channel (async) if get_channel returns None,
-            # but this adds complexity and potential errors. Stick to get_channel for now.
             channel = self._discord_client.get_channel(channel_id_int)
             if channel:
                 try:
@@ -556,24 +533,21 @@ class GameManager:
                     print(f"GameManager: Error sending message to channel {channel_id_int}: {e}")
                     traceback.print_exc()
             else:
-                print(f"GameManager: Warning: Channel {channel_id_int} not found in Discord client cache. Cannot send message. Kwargs: {kwargs}")
+                print(f"GameManager: Warning: Channel {channel_id_int} not found. Kwargs: {kwargs}")
                 # Можно добавить логику fallback, например, логировать в консоль или GM канал
 
 
         # Возвращаем асинхронную функцию _send
         return _send
 
-    # ИСПРАВЛЕНИЕ: Метод должен быть индентирован внутрь класса GameManager
     async def _world_tick_loop(self) -> None:
         print(f"GameManager: Starting world tick loop with interval {self._tick_interval_seconds} seconds.")
         try:
             while True:
                 await asyncio.sleep(self._tick_interval_seconds)
-                # Check if self._world_simulation_processor is None (e.g., if setup failed partially)
                 if self._world_simulation_processor:
                     try:
-                        # ИСПРАВЛЕНИЕ: Вызываем метод с правильным именем process_world_tick
-                        # WorldSimulationProcessor.process_world_tick ожидает time_delta и **kwargs
+                        # WorldSimulationProcessor.process_tick ожидает time_delta и **kwargs
                         # Передаем ВСЕ менеджеры/сервисы/колбэки в kwargs для WorldSimulationProcessor
                         tick_context_kwargs: Dict[str, Any] = {
                             'rule_engine': self.rule_engine,
@@ -604,21 +578,11 @@ class GameManager:
                             'discord_client': self._discord_client,
                             # TODO: Другие менеджеры/процессоры/сервисы, нужные при тике
                         }
-                        # Передаем time_delta (self._tick_interval_seconds) и собранный контекст (tick_context_kwargs)
-                        # Ensure process_world_tick in WorldSimulationProcessor expects 'game_time_delta'
-                        await self._world_simulation_processor.process_world_tick(
-                            game_time_delta=self._tick_interval_seconds,
-                            **tick_context_kwargs
-                        )
-                        # print("WorldSimulationProcessor tick processed.") # debug logging inside process_world_tick
+                        await self._world_simulation_processor.process_tick(self._tick_interval_seconds, **tick_context_kwargs) # Передаем time_delta и kwargs
                     except Exception as e:
                         print(f"GameManager: ❌ Error during world simulation tick: {e}")
                         traceback.print_exc()
                         # TODO: Обработка ошибки тика (логирование, оповещение GM, остановка симуляции?)
-                # else:
-                #     print("GameManager: Warning: WorldSimulationProcessor is None. Skipping tick.") # Log if tick skipped
-
-
         except asyncio.CancelledError:
             print("GameManager: World tick loop cancelled.")
         except Exception as e:
@@ -629,40 +593,33 @@ class GameManager:
             # Лучше просто логировать и позволить внешней системе остановить бот.
 
 
-    # ИСПРАВЛЕНИЕ: Метод должен быть индентирован внутрь класса GameManager
     async def shutdown(self) -> None:
         print("GameManager: Running shutdown...")
         # Останавливаем цикл тика мира
         if self._world_tick_task:
-            print("GameManager: Cancelling world tick loop...")
             self._world_tick_task.cancel()
             try:
-                # Wait for the task to finish cancelling. A timeout might be wise here.
-                await asyncio.wait_for(self._world_tick_task, timeout=5.0) # Example timeout
-                print("GameManager: World tick loop task finished.")
+                await self._world_tick_task
             except asyncio.CancelledError:
-                 print("GameManager: World tick loop task confirmed cancelled.")
-            except asyncio.TimeoutError:
-                 print("GameManager: Warning: Timeout waiting for world tick task to cancel.")
+                pass
             except Exception as e:
-                 print(f"GameManager: Error waiting for world tick task to complete after cancel: {e}")
-                 traceback.print_exc()
+                 print(f"GameManager: Error waiting for world tick task to cancel: {e}")
 
 
         # Сохраняем состояние
-        # Check if persistence manager exists before trying to save
         if self._persistence_manager:
             try:
                 print("GameManager: Saving game state on shutdown...")
                 # Определяем список ID гильдий для сохранения. Используем тот же список, что и для загрузки.
                 active_guild_ids: List[str] = self._active_guild_ids # Получаем список ID гильдий
 
+
                 # Собираем все менеджеры, сервисы, процессоры и колбэки в словарь для передачи как **kwargs
                 # Менеджерам при сохранении обычно нужно меньше зависимостей, чем при загрузке/rebuild.
                 # Но safe-способ - передать все инстанции менеджеров и DB адаптер.
                 save_context_kwargs: Dict[str, Any] = {
-                    # Передаем все инстанции менеджеров (Check if they are not None before including?)
-                    'rule_engine': self.rule_engine, # Can be None if setup failed early
+                    # Передаем все инстанции менеджеров
+                    'rule_engine': self.rule_engine,
                     'time_manager': self.time_manager,
                     'location_manager': self.location_manager,
                     'event_manager': self.event_manager,
@@ -675,29 +632,19 @@ class GameManager:
                     'npc_manager': self.npc_manager,
                     'party_manager': self.party_manager,
                     # Передаем адаптер БД (хотя PersistenceManager его уже имеет, менеджеры могут его ожидать в kwargs)
-                    'db_adapter': self._db_adapter, # Can be None
+                    'db_adapter': self._db_adapter,
                     # Передаем фабрику колбэков (для логирования ошибок в менеджерах при сохранении)
                     'send_callback_factory': self._get_discord_send_callback,
                     # TODO: Другие менеджеры/сервисы/процессоры, нужные при сохранении
                     'settings': self._settings, # Настройки могут понадобиться менеджерам при сохранении
-                    'discord_client': self._discord_client, # May be needed
                 }
-                # Filter out None values from context if managers are truly optional in save_state
-                # save_context_kwargs = {k: v for k, v in save_context_kwargs.items() if v is not None}
 
-
-                # Check if db_adapter is available before trying to save via persistence manager
-                # PersistenceManager itself should also handle db_adapter being None, but defensive check here is okay.
-                if self._db_adapter:
-                    # Вызываем save_game_state на PersistenceManager с правильными аргументами
-                    await self._persistence_manager.save_game_state(
-                        guild_ids=active_guild_ids, # Передаем список ID гильдий
-                        **save_context_kwargs # Передаем все собранные менеджеры и зависимости
-                    )
-                    print("GameManager: Game state saved on shutdown.")
-                else:
-                     print("GameManager: Warning: Skipping state save on shutdown, DB adapter is None.")
-
+                # Вызываем save_game_state на PersistenceManager с правильными аргументами
+                await self._persistence_manager.save_game_state(
+                    guild_ids=active_guild_ids, # Передаем список ID гильдий
+                    **save_context_kwargs # Передаем все собранные менеджеры и зависимости
+                )
+                print("GameManager: Game state saved on shutdown.")
             except Exception as e:
                 print(f"GameManager: ❌ Error saving game state on shutdown: {e}")
                 traceback.print_exc()
@@ -717,5 +664,4 @@ class GameManager:
 
 # --- Конец класса GameManager ---
 
-# This print statement should be outside the class
 print("DEBUG: game_manager.py module loaded.")

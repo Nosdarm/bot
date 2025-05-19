@@ -2,7 +2,8 @@
 print(f"DEBUG: Loading sqlite_adapter.py from: {__file__}")
 import sqlite3
 import traceback
-from typing import Optional, List, Tuple, Any, Union
+# from typing import Optional, List, Tuple, Any # Already imported below from aiosqlite
+from typing import Optional, List, Tuple, Any, Union # Добавляем Union для Tuple | List в аннотации execute_many params
 
 import aiosqlite
 # Типы для аннотаций
@@ -16,7 +17,7 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    LATEST_SCHEMA_VERSION = 1
+    LATEST_SCHEMA_VERSION = 1 # Увеличиваем эту версию при каждом изменении схемы
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -49,7 +50,7 @@ class SqliteAdapter:
                 print(f"SqliteAdapter: ❌ Error closing database connection: {e}")
                 traceback.print_exc()
             finally:
-                self._conn = None
+                self._conn = None # Убеждаемся, что self._conn None
 
     async def execute(self, sql: str, params: Optional[Union[Tuple, List]] = None) -> Cursor:
         """
@@ -60,7 +61,7 @@ class SqliteAdapter:
             raise ConnectionError("Database connection is not established.")
         try:
             cursor = await self._conn.execute(sql, params or ())
-            await self._conn.commit()
+            await self._conn.commit() # Коммит после успешного выполнения
             return cursor
         except Exception as e:
             print(f"SqliteAdapter: ❌ Error executing SQL: {sql} | params: {params} | {e}")
@@ -70,7 +71,7 @@ class SqliteAdapter:
                  print("SqliteAdapter: Transaction rolled back.")
             except Exception as rb_e:
                  print(f"SqliteAdapter: Error during rollback: {rb_e}")
-            raise
+            raise # Перебрасываем исключение
 
     async def execute_insert(self, sql: str, params: Optional[Union[Tuple, List]] = None) -> int:
         """
@@ -83,7 +84,7 @@ class SqliteAdapter:
         try:
             cursor = await self._conn.execute(sql, params or ())
             last_id = cursor.lastrowid
-            await self._conn.commit()
+            await self._conn.commit() # Коммит после успешной вставки
             return last_id
         except Exception as e:
             print(f"SqliteAdapter: ❌ Error executing INSERT SQL (with lastrowid): {sql} | params: {params} | {e}")
@@ -93,7 +94,8 @@ class SqliteAdapter:
                  print("SqliteAdapter: Transaction rolled back.")
             except Exception as rb_e:
                  print(f"SqliteAdapter: Error during rollback: {rb_e}")
-            raise
+            raise # Перебрасываем исключение
+
 
     async def execute_many(self, sql: str, data: List[Union[Tuple, List]]) -> None:
          """
@@ -108,7 +110,7 @@ class SqliteAdapter:
 
          try:
              await self._conn.executemany(sql, data)
-             await self._conn.commit()
+             await self._conn.commit() # Коммит после пакетной операции
          except Exception as e:
              print(f"SqliteAdapter: ❌ Error executing many SQL: {sql} | data count: {len(data)} | {e}")
              traceback.print_exc()
@@ -117,7 +119,8 @@ class SqliteAdapter:
                  print("SqliteAdapter: Transaction rolled back.")
              except Exception as rb_e:
                  print(f"SqliteAdapter: Error during rollback: {rb_e}")
-             raise
+             raise # Перебрасываем исключение
+
 
     async def fetchall(self, sql: str, params: Optional[Union[Tuple, List]] = None) -> List[Row]:
         """Выполняет SELECT запрос и возвращает все строки."""
@@ -126,12 +129,12 @@ class SqliteAdapter:
         try:
             cursor = await self._conn.execute(sql, params or ())
             rows = await cursor.fetchall()
-            await cursor.close()
+            await cursor.close() # Закрываем курсор
             return rows
         except Exception as e:
             print(f"SqliteAdapter: ❌ Error fetching all SQL: {sql} | params: {params} | {e}")
             traceback.print_exc()
-            raise
+            raise # Перебрасываем исключение
 
     async def fetchone(self, sql: str, params: Optional[Union[Tuple, List]] = None) -> Optional[Row]:
         """Выполняет SELECT запрос и возвращает одну строку (или None)."""
@@ -140,12 +143,12 @@ class SqliteAdapter:
         try:
             cursor = await self._conn.execute(sql, params or ())
             row = await cursor.fetchone()
-            await cursor.close()
+            await cursor.close() # Закрываем курсор
             return row
         except Exception as e:
             print(f"SqliteAdapter: ❌ Error fetching one SQL: {sql} | params: {params} | {e}")
             traceback.print_exc()
-            raise
+            raise # Перебрасываем исключение
 
     async def commit(self) -> None:
         """Выполняет коммит текущей транзакции."""
@@ -182,51 +185,6 @@ class SqliteAdapter:
     async def set_schema_version(self, cursor: Cursor, version: int) -> None:
         """Устанавливает текущую версию схемы в БД, используя предоставленный курсор."""
         await cursor.execute("INSERT OR REPLACE INTO schema_versions (version) VALUES (?)", (version,))
-
-    # --- Метод инициализации базы данных (восстановлен) ---
-    async def initialize_database(self) -> None:
-        """
-        Применяет все необходимые миграции для обновления схемы БД до последней версии.
-        """
-        print("SqliteAdapter: Initializing database schema...")
-        if not self._conn:
-            raise ConnectionError("Database connection is not established.")
-
-        try:
-            async with self._conn.cursor() as cursor:
-                current_version = await self.get_current_schema_version(cursor)
-                print(f"SqliteAdapter: Current database schema version: {current_version}")
-
-                for version in range(current_version + 1, self.LATEST_SCHEMA_VERSION + 1):
-                    print(f"SqliteAdapter: Running migration to version {version}...")
-                    migrate_method_name = f'_migrate_v{version-1}_to_v{version}'
-                    migrate_method = getattr(self, migrate_method_name, None)
-                    if migrate_method:
-                        await migrate_method(cursor)
-                        await self.set_schema_version(cursor, version)
-                        print(f"SqliteAdapter: Successfully migrated to version {version}.")
-                    else:
-                        print(f"SqliteAdapter: ❌ No migration method found: {migrate_method_name}.")
-                        raise NotImplementedError(f"Migration method {migrate_method_name} not implemented.")
-
-                if current_version == self.LATEST_SCHEMA_VERSION:
-                    print("SqliteAdapter: Database schema is up to date.")
-                else:
-                     print(f"SqliteAdapter: Database schema initialization/migration finished. Final version: {self.LATEST_SCHEMA_VERSION}")
-
-            # Коммит ВСЕЙ транзакции миграции после успешного выполнения всех шагов
-            await self._conn.commit()
-
-        except Exception as e:
-            print(f"SqliteAdapter: ❌ CRITICAL ERROR during database schema initialization or migration: {e}")
-            traceback.print_exc()
-            try:
-                if self._conn:
-                    await self._conn.rollback()
-                    print("SqliteAdapter: Transaction rolled back due to migration error.")
-            except Exception as rb_e:
-                print(f"SqliteAdapter: Error during rollback after schema init/migration error: {rb_e}")
-            raise # Перебрасываем исключение
 
     # --- Методы миграции схемы ---
     async def _migrate_v0_to_v1(self, cursor: Cursor) -> None:
@@ -456,6 +414,9 @@ class SqliteAdapter:
         print(f"DEBUG: Executing CREATE TABLE parties SQL:\n---\n{sql_parties}\n---")
         await cursor.execute(sql_parties)
 
+
+        # ВСЕ CREATE TABLE IF NOT EXISTS ДОЛЖНЫ БЫТЬ ВЫШЕ И ВНУТРИ ЭТОГО МЕТОДА МИГРАЦИИ
+
         print("SqliteAdapter: v0 to v1 migration complete.")
 
     # Для будущих миграций:
@@ -464,6 +425,8 @@ class SqliteAdapter:
     #    print("SqliteAdapter: Running v1 to v2 migration...")
     #    # Пример: добавить новую колонку в таблицу characters
     #    try:
+    #        # ALTER TABLE characters ADD COLUMN guild_id TEXT NOT NULL DEFAULT 'default_guild_id'; -- Этот ALTER TABLE должен был быть здесь, но мы его добавляем в CREATE TABLE в v1.
+    #        # В v1->v2 добавляются НОВЫЕ колонки или другие изменения.
     #        await cursor.execute("ALTER TABLE characters ADD COLUMN new_skill_slot INTEGER DEFAULT 0")
     #        print("SqliteAdapter: Added 'new_skill_slot' to characters table.")
     #    except sqlite3.OperationalError:
@@ -471,5 +434,6 @@ class SqliteAdapter:
     #    # Пример: добавить новую таблицу
     #    # await cursor.execute("CREATE TABLE new_table (...)")
     #    print("SqliteAdapter: v1 to v2 migration complete.")
+
 
 # --- Конец класса SqliteAdapter ---

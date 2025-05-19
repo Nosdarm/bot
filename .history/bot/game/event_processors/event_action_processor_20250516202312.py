@@ -7,15 +7,14 @@
 # Called by the GameManager when a player command is routed to an event.
 
 import json
-import traceback
-from typing import Dict, Optional, Any, List, Callable, Awaitable, TYPE_CHECKING, Set, Tuple
+import traceback # Import traceback
+from typing import Dict, Optional, Any, List, Callable, Awaitable, TYPE_CHECKING, Set, Tuple # Ensure all typing components are imported correctly, added Awaitable, TYPE_CHECKING, Set, Tuple
 
 # --- Define Type Aliases ---
 # Corrected alias for send message callback function signature
 # This callback is assumed to be the one returned by send_callback_factory(channel_id)
 # It takes the message string and optional data, and is awaitable.
 SendChannelMessageCallback = Callable[[str, Optional[Dict[str, Any]]], Awaitable[Any]]
-
 # SendCallbackFactory defined below (uses SendChannelMessageCallback)
 
 
@@ -63,10 +62,9 @@ if TYPE_CHECKING:
 # Managers and Processors should generally NOT be imported here if they are received via injection,
 # to avoid circular dependency issues.
 
-# Import Models needed for isinstance checks at runtime or static method calls
+# Import Models needed for isinstance checks at runtime
 from bot.game.models.character import Character # Need for isinstance checks (e.g. in _check_skill_check)
-# Added runtime import for Event and EventStage if EventStage.from_dict is used or isinstance(event, Event)
-from bot.game.models.event import Event, EventStage # Need Event for isinstance check, EventStage for from_dict
+# Check other models for isinstance usage below: NPC, Party, Combat might be used for instanceof checks
 
 
 # Define SendCallbackFactory here as it uses SendChannelMessageCallback which is defined above
@@ -87,31 +85,31 @@ class EventActionProcessor:
     def __init__(self,
                  # --- Обязательные зависимости ---
                  # Используем строковые литералы для инжектированных зависимостей
-                 event_stage_processor: "EventStageProcessor",
-                 event_manager: "EventManager",
-                 character_manager: "CharacterManager",
-                 loc_manager: "LocationManager",
-                 rule_engine: "RuleEngine",
-                 openai_service: Optional["OpenAIService"], # Optional Service
+                 event_stage_processor: "EventStageProcessor", # Use string literal!
+                 event_manager: "EventManager", # Use string literal!
+                 character_manager: "CharacterManager", # Use string literal!
+                 loc_manager: "LocationManager", # Use string literal!
+                 rule_engine: "RuleEngine", # Use string literal!
+                 openai_service: Optional["OpenAIService"], # Optional Service (use string literal)
                  # send_callback_factory - теперь обязательный аргумент для инициализации
-                 send_callback_factory: SendCallbackFactory, # Factory for callbacks (Callable type)
+                 send_callback_factory: SendCallbackFactory, # <-- ADDED: Factory for callbacks (Callable type)
 
                  # --- Опциональные зависимости ---
                  # Используйте строковые литералы для Optional зависимостей
-                 npc_manager: Optional["NpcManager"] = None,
-                 combat_manager: Optional["CombatManager"] = None,
-                 item_manager: Optional["ItemManager"] = None,
-                 time_manager: Optional["TimeManager"] = None,
-                 status_manager: Optional["StatusManager"] = None,
-                 party_manager: Optional["PartyManager"] = None,
-                 economy_manager: Optional["EconomyManager"] = None,
-                 dialogue_manager: Optional["DialogueManager"] = None,
-                 crafting_manager: Optional["CraftingManager"] = None,
+                 npc_manager: Optional["NpcManager"] = None, # Use string literal!
+                 combat_manager: Optional["CombatManager"] = None, # Use string literal!
+                 item_manager: Optional["ItemManager"] = None, # Use string literal!
+                 time_manager: Optional["TimeManager"] = None, # Use string literal!
+                 status_manager: Optional["StatusManager"] = None, # Use string literal!
+                 party_manager: Optional["PartyManager"] = None, # Use string literal!
+                 economy_manager: Optional["EconomyManager"] = None, # Use string literal!
+                 dialogue_manager: Optional["DialogueManager"] = None, # Use string literal!
+                 crafting_manager: Optional["CraftingManager"] = None, # Use string literal!
 
                  # TODO: Добавьте другие зависимости
-                 on_enter_action_executor: Optional["OnEnterActionExecutor"] = None,
-                 stage_description_generator: Optional["StageDescriptionGenerator"] = None,
-                 character_action_processor: Optional["CharacterActionProcessor"] = None,
+                 on_enter_action_executor: Optional["OnEnterActionExecutor"] = None, # Optional Executor
+                 stage_description_generator: Optional["StageDescriptionGenerator"] = None, # Optional Generator
+                 character_action_processor: Optional["CharacterActionProcessor"] = None, # Optional Processor
 
 
                 ):
@@ -124,7 +122,7 @@ class EventActionProcessor:
         self._loc_manager = loc_manager
         self._rule_engine = rule_engine
         self._openai_service = openai_service
-        self._send_callback_factory = send_callback_factory # Save the factory
+        self._send_callback_factory = send_callback_factory # <-- ADDED: Save the factory
 
         # Сохраняем опциональные менеджеры
         self._npc_manager = npc_manager
@@ -162,25 +160,16 @@ class EventActionProcessor:
         """
         print(f"EventActionProcessor: processing player '{player_id}' action '{command_keyword}' for event {event_id} with args {command_args}...")
 
-        # --- Get dependencies from kwargs or self attributes ---
-        # Prioritize kwargs (allows passing specific instances for a call)
-        # Use _inst suffix for clarity within this method
         event_manager_inst = kwargs.get('event_manager', self._event_manager) # type: Optional["EventManager"]
         character_manager_inst = kwargs.get('character_manager', self._character_manager) # type: Optional["CharacterManager"]
         loc_manager_inst = kwargs.get('loc_manager', self._loc_manager) # type: Optional["LocationManager"]
         rule_engine_inst = kwargs.get('rule_engine', self._rule_engine) # type: Optional["RuleEngine"]
+        # Проверка send_callback_factory требует осторожности, т.к. он Callable, а не Manager.
+        # Если он отсутствует в kwargs И отсутствует инжектированный self._send_callback_factory
         send_callback_factory_inst = kwargs.get('send_callback_factory', self._send_callback_factory) # type: Optional[SendCallbackFactory]
 
-        # Get optional dependencies and context from kwargs or self
-        # Use _inst suffix if these variables are used directly later, otherwise can get from context dict
-        # openai_service_inst = kwargs.get('openai_service', self._openai_service) # Example
 
-        # Also get channel_id from kwargs early, as event might not be found initially
-        channel_id_from_kwargs = kwargs.get('channel_id')
-
-
-        # --- Check essential dependencies are present ---
-        # This check *must* happen on the _inst variables retrieved above
+        # Check essential dependencies are present after attempting fallback
         if event_manager_inst is None or character_manager_inst is None or loc_manager_inst is None or rule_engine_inst is None or send_callback_factory_inst is None:
              # Collect names of missing dependencies
              missing_deps = [name for name, dep in [
@@ -191,55 +180,95 @@ class EventActionProcessor:
                  ('send_callback_factory', send_callback_factory_inst)
                  ] if dep is None]
 
-             print(f"EventActionProcessor Error: Missing essential dependencies for process_player_action: {', '.join(missing_deps)}.")
+             print(f"EventActionProcessor Error: Missing essential dependencies for process_player_action: {missing_deps}.")
+             # Ideally, GameManager/CommandRouter ensures these are passed. Log a critical error.
 
-             # Use the available channel_id (from kwargs) and factory (_inst) to send error message if possible
-             error_message = f"❌ Системная ошибка: Не удалось обработать команду. Отсутствуют ключевые компоненты: {', '.join(missing_deps)}."
-             if channel_id_from_kwargs is not None and send_callback_factory_inst is not None:
-                  try:
-                       # Use the _inst variable here
-                       send_cb = send_callback_factory_inst(channel_id_from_kwargs)
-                       await send_cb(error_message, None)
-                  except Exception as cb_e:
-                       print(f"EventActionProcessor Error sending initial error message: {cb_e}")
-             elif send_callback_factory_inst is None:
-                   print(f"EventActionProcessor Warning: Cannot send initial error message because send_callback_factory is missing.")
-             elif channel_id_from_kwargs is None:
-                  print(f"EventActionProcessor Warning: Cannot send initial error message because channel_id missing from kwargs.")
+             # ИСПРАВЛЕНИЕ: Форматируем список недостающих зависимостей в отдельную строку
+             missing_deps_str = ', '.join(missing_deps)
+
+             # ИСПРАВЛЕНИЕ: Используем отформатированную строку в сообщении об ошибке
+             error_message = f"❌ Системная ошибка: Не удалось обработать команду. Отсутствуют ключевые компоненты: {missing_deps_str}."
+
+             # Пытаемся отправить сообщение об ошибке пользователю, если channel_id доступен в kwargs
+             channel_id = kwargs.get('channel_id') # Assuming channel_id might be in kwargs from CommandRouter
+
+             if channel_id is not None:
+                  # Если send_callback_factory_inst доступен, используем его
+                  if send_callback_factory_inst:
+                      try:
+                           # Get channel callback using the available factory
+                           send_cb = send_callback_factory_inst(channel_id) # type: SendChannelMessageCallback
+                           # Use the obtained callback to send the error message
+                           await send_cb(error_message, None)
+                      except Exception as cb_e:
+                           print(f"EventActionProcessor Error sending error message: {cb_e}")
+                           # Fallback to printing if sending fails
+                           print(f"EventActionProcessor Error: Failed to send error message to channel {channel_id}. Message: {error_message}")
+
+                  else:
+                      # Если send_callback_factory_inst сам является missing dependency
+                      print(f"EventActionProcessor Error: Cannot send error message to channel {channel_id} because send_callback_factory is missing.")
+                      # Rely on GM logs (print statements above)
+
 
              # Always return False after critical error
              return False # Cannot proceed
 
-        # --- Now that essential dependencies are confirmed, proceed using _inst variables ---
 
-        # Get event object using the event manager instance
-        event: Optional["Event"] = event_manager_inst.get_event(event_id) # FIX: Use _inst variable
+        # Now, use the instances with _inst suffix for clarity below if needed
+        # e.g., event_manager = event_manager_inst
+        # We will use the original variable names for simplicity, assuming they are not None past this check.
+        # Alternatively, you could assign them here:
+        # event_manager = event_manager_inst
+        # character_manager = character_manager_inst
+        # loc_manager = loc_manager_inst
+        # rule_engine = rule_engine_inst
+        # send_callback_factory = send_callback_factory_inst
+
+        # For clarity and safety after the check, let's re-fetch them or use _inst names consistently.
+        # Re-fetching from kwargs/self is safer if logic below might modify the *instances* themselves
+        # which is not the case here. Using _inst names consistently is cleaner.
+        # Let's use the _inst variables below.
+
+        # Get event channel callback using the factory instance
+        # Make sure event object is available before getting channel ID
+        # Use event_manager_inst
+        event: Optional["Event"] = event_manager_inst.get_event(event_id)
+        if not event:
+             print(f"EventActionProcessor Error: Event {event_id} not found for player action.")
+             # Use event_manager_inst to get channel ID
+             channel_id_for_error = event_manager_inst.get_event_channel_id(event_id) # Get channel ID from event manager
+             if channel_id_for_error is not None and send_callback_factory_inst is not None:
+                  try: send_cb = send_callback_factory_inst(channel_id_for_error); await send_cb("❌ Ошибка: Событие не найдено.", None);
+                  except Exception as cb_e: print(f"EventActionProcessor Error sending error message: {cb_e}");
+             return False # Failed to process due to missing event
+
+
+        # Get event channel callback using the factory
+        # Make sure event object is available before getting channel ID
+        event: Optional["Event"] = event_manager.get_event(event_id) # Use string literal for Event type hint
         if not event:
              print(f"EventActionProcessor Error: Event {event_id} not found for player action.")
              # Use channel_id from kwargs if event is not found to send error message back
-             channel_id_for_error = channel_id_from_kwargs # Use kwargs channel_id as fallback
-             if channel_id_for_error is not None: # Factory is confirmed not None above
+             channel_id_for_error = kwargs.get('channel_id')
+             if channel_id_for_error is not None:
                  try:
-                      # Use the _inst variable here
-                      send_cb = send_callback_factory_inst(channel_id_for_error)
+                      send_cb = send_callback_factory(channel_id_for_error) # Use the factory if available
                       await send_cb("❌ Ошибка: Событие не найдено.", None);
                  except Exception as cb_e: print(f"EventActionProcessor Error sending error message: {cb_e}");
              return False # Failed to process due to missing event
 
 
         # Get player character object (needed for context/checks)
-        # Assuming character_manager needs guild_id and player_id
+        # Assuming character_manager.get_character needs guild_id and player_id
         guild_id = event.guild_id # Get guild_id from the event object
-        player_character = character_manager_inst.get_character(guild_id, player_id) # type: Optional["Character"] # FIX: Use _inst variable
+        player_character = character_manager.get_character(guild_id, player_id) # type: Optional["Character"] # Use string literal for Character type hint
         if not player_character:
              print(f"EventActionProcessor Error: Player character {player_id} not found for event {event_id} in guild {guild_id}.")
              # Use the event's channel ID to send error message
              channel_id_for_error = event.channel_id # Get channel ID from event
-             if channel_id_for_error is not None: # Factory is confirmed not None above
-                  try:
-                      # Use the _inst variable here
-                      send_cb = send_callback_factory_inst(channel_id_for_error)
-                      await send_cb("❌ Ошибка: Ваш персонаж не найден.", None);
+             if channel_id_for_error is not None:
+                  try: send_cb = send_callback_factory(channel_id_for_error); await send_cb("❌ Ошибка: Ваш персонаж не найден.", None);
                   except Exception as cb_e: print(f"EventActionProcessor Error sending error message: {cb_e}");
              return False # Failed to process due to missing player
 
@@ -248,18 +277,14 @@ class EventActionProcessor:
         if event.channel_id is None:
              print(f"EventActionProcessor Error: Event {event.id} has no channel_id. Cannot send messages.")
              # Try sending error back to the original channel if possible (channel_id from kwargs)
-             channel_id_for_error = channel_id_from_kwargs # Fallback to kwargs channel_id
-             if channel_id_for_error is not None: # Factory is confirmed not None above
-                 try:
-                     # Use the _inst variable here
-                     send_cb = send_callback_factory_inst(channel_id_for_error)
-                     await send_cb("❌ Ошибка: Событие не привязано к каналу для отправки сообщений.", None);
+             channel_id_for_error = kwargs.get('channel_id')
+             if channel_id_for_error is not None:
+                 try: send_cb = send_callback_factory(channel_id_for_error); await send_cb("❌ Ошибка: Событие не привязано к каналу для отправки сообщений.", None);
                  except Exception as cb_e: print(f"EventActionProcessor Error sending error message: {cb_e}");
              return False
 
-        # Use the factory to get the specific channel callback
-        # Use send_callback_factory_inst
-        send_message_callback = send_callback_factory_inst(event.channel_id) # FIX: Use _inst variable
+
+        send_message_callback = send_callback_factory(event.channel_id) # Use the factory to get the specific channel callback (type: SendChannelMessageCallback)
 
 
         # Get current stage data from the event object
@@ -272,23 +297,38 @@ class EventActionProcessor:
              except Exception as cb_e: print(f"EventActionProcessor Error sending error message: {cb_e}");
              return False
 
-        # Convert stage data to EventStage object if possible
-        try:
-             # EventStage needs to be imported at runtime if EventStage.from_dict is called
-             current_stage: "EventStage" = EventStage.from_dict(current_stage_data)
-             using_event_stage_object = True
-        except (NameError, ImportError, TypeError) as e: # Catch NameError, ImportError (if import fails), or TypeError (if from_dict fails)
-             print(f"EventActionProcessor Warning: EventStage model not available or from_dict failed ({e}). Working with raw stage data dictionary.")
+        # Convert stage data to EventStage object for easier access
+        # Use EventStage.from_dict if available, otherwise work with dict
+        # Assuming EventStage.from_dict exists and EventStage is correctly imported (perhaps only in TYPE_CHECKING if not used for isinstance?)
+        # Based on previous checks, EventStage.from_dict is used, so EventStage needs runtime import or dynamic access.
+        # Let's assume EventStage is imported directly if its static methods or instanceof is used.
+        # If only used for type hints, string literal is sufficient.
+        # Since from_dict is used, it needs runtime access. It should be imported directly.
+        # Check if EventStage is imported directly at runtime.
+        try: # Try block to check if EventStage is defined at runtime
+             _ = EventStage.from_dict # Accessing to see if it raises NameError
+             # If it doesn't raise, EventStage is defined at runtime.
+             current_stage: "EventStage" = EventStage.from_dict(current_stage_data) # Use string literal for consistency if TYPE_CHECKING imports it
+        except NameError:
+             # EventStage not defined at runtime. Work with dict data.
+             print("EventActionProcessor Warning: EventStage model not available at runtime. Working with raw stage data dictionary.")
              current_stage = current_stage_data # Use the dictionary directly
-             using_event_stage_object = False
+             # Adapt logic below to work with dictionary 'current_stage' instead of object.
+             # e.g., getattr(current_stage, 'allowed_actions', []) -> current_stage.get('allowed_actions', [])
+             # current_stage.name -> current_stage.get('name')
+
+        # We will continue assuming EventStage is available as an object for now for clarity,
+        # but be aware that if EventStage import is only in TYPE_CHECKING, this will fail at runtime.
+        # If EventStage.from_dict is the ONLY place the Class name is used at runtime,
+        # importing EventStage directly at runtime might be necessary.
+
 
         # --- Find the matching action in allowed_actions ---
-        # Adapt access based on whether current_stage is dict or object
-        allowed_actions_list = getattr(current_stage, 'allowed_actions', []) if using_event_stage_object else current_stage.get('allowed_actions', [])
+        allowed_actions_list = current_stage.get('allowed_actions', []) if isinstance(current_stage, dict) else getattr(current_stage, 'allowed_actions', []) # Adapt for dict or object
         target_action_definition: Optional[Dict[str, Any]] = None
 
         # Get stage name safely
-        current_stage_name = getattr(current_stage, 'name', current_stage_id) if using_event_stage_object else current_stage.get('name', current_stage_id)
+        current_stage_name = current_stage.get('name', current_stage_id) if isinstance(current_stage, dict) else getattr(current_stage, 'name', current_stage_id)
 
 
         print(f"EventActionProcessor: Searching stage '{current_stage_name}' ({current_stage_id}) for command '{command_keyword}'...")
@@ -303,9 +343,7 @@ class EventActionProcessor:
 
         if not target_action_definition:
              print(f"EventActionProcessor: Player action command '{command_keyword}' not found or not allowed in stage '{current_stage_name}' for event {event_id}.")
-             # Use getattr for event name safely
-             event_name = getattr(event, 'name', event_id) if isinstance(event, Event) else event_id
-             try: await send_message_callback(f"Действие `{command_keyword}` недоступно на текущей стадии **{event_name}** ('{current_stage_name}') или введено неверно для этой стадии.", None);
+             try: await send_message_callback(f"Действие `{command_keyword}` недоступно на текущей стадии **{getattr(event, 'name', event_id)}** ('{current_stage_name}') или введено неверно для этой стадии.", None); # Use getattr for event name
              except Exception as cb_e: print(f"EventActionProcessor Error sending feedback message: {cb_e}");
              return False # Command not allowed or not found
 
@@ -327,14 +365,13 @@ class EventActionProcessor:
         # Prioritize managers passed in kwargs (more specific context)
         action_execution_context: Dict[str, Any] = {
              # Passed Dependencies (should be in kwargs from GameManager/CommandRouter)
-             # FIX: Use the _inst variables here
-             'event_manager': event_manager_inst,
-             'character_manager': character_manager_inst,
-             'loc_manager': loc_manager_inst, 'location_manager': loc_manager_inst, # Alias for loc_manager
-             'rule_engine': rule_engine_inst,
+             'event_manager': kwargs.get('event_manager', self._event_manager),
+             'character_manager': kwargs.get('character_manager', self._character_manager),
+             'loc_manager': kwargs.get('loc_manager', self._loc_manager), 'location_manager': kwargs.get('location_manager', self._loc_manager), # Alias
+             'rule_engine': kwargs.get('rule_engine', self._rule_engine),
              'openai_service': kwargs.get('openai_service', self._openai_service), # Use kwargs or self attribute
-             'send_message_callback': send_message_callback, # Specific channel callback, already got above from factory_inst
-             'send_callback_factory': send_callback_factory_inst, # Factory itself - FIX: Use _inst variable
+             'send_message_callback': send_message_callback, # Specific channel callback, already got above from factory
+             'send_callback_factory': send_callback_factory, # Factory itself, already got above
 
              # Other Managers (get from kwargs or self attributes)
              'npc_manager': kwargs.get('npc_manager', self._npc_manager),
@@ -367,11 +404,9 @@ class EventActionProcessor:
              'action_params': action_params, # Just the params part
 
              # Include any other kwargs passed to process_player_action
-             # channel_id_from_kwargs can be added here if needed in action logic
-             'channel_id': channel_id_from_kwargs,
         }
         # Use update() to add kwargs safely without Pylance warning
-        action_execution_context.update(kwargs) # This might overwrite existing keys, review if needed
+        action_execution_context.update(kwargs)
 
 
         # TODO: Implement the action execution logic based on action_type.
@@ -424,16 +459,16 @@ class EventActionProcessor:
 
         # --- Trigger Stage Transition if a next stage ID was determined ---
         # If a valid next stage ID string was found AND it's different from the current stage
-        # Get processor from context (should be event_stage_processor_inst)
-        event_stage_processor_inst = action_execution_context.get('event_stage_processor') # Use the instance name for clarity
-        # Check if event_stage_processor_inst is available and has advance_stage method
+        event_stage_processor = action_execution_context.get('event_stage_processor') # Get processor from context
+        # Check if event_stage_processor is available and has advance_stage method
         if isinstance(determined_next_stage_id, str) and determined_next_stage_id and determined_next_stage_id != current_stage_id and \
-           event_stage_processor_inst and hasattr(event_stage_processor_inst, 'advance_stage'):
+           event_stage_processor and hasattr(event_stage_processor, 'advance_stage'):
              print(f"EventActionProcessor: Player action '{command_keyword}' triggers transition to stage '{determined_next_stage_id}'.")
 
              # Call the injected EventStageProcessor's advance_stage method.
-             # Use the _inst variable
-             await event_stage_processor_inst.advance_stage(
+             # Pass the event, the determined target stage ID, and the consolidated managers/context dictionary.
+             # EventStageProcessor handles OnEnter actions, auto-transitions checks, and description generation for the NEW stage.
+             await event_stage_processor.advance_stage( # Use processor from context
                  event=event, # Pass event object by reference
                  target_stage_id=determined_next_stage_id, # Target stage determined by player action outcome
                  # Pass the consolidated managers/context dictionary
@@ -468,7 +503,7 @@ class EventActionProcessor:
              # This is just a generic fallback.
 
              # Send basic feedback to the player using the provided callback.
-             # send_message_callback is available in action_execution_context
+             # send_message_callback is available in action_execution_context or kwargs
              send_message_callback = action_execution_context.get('send_message_callback')
 
              if send_message_callback:
@@ -476,9 +511,9 @@ class EventActionProcessor:
                   # Add player name for context
                   try:
                     # Ensure player_character is available in context for the name
-                    player_character_in_context = action_execution_context.get('player_character')
-                    player_name = getattr(player_character_in_context, 'name', 'Unknown') # Safely get name
-                    await send_message_callback(f"**{player_name}:** {feedback_message}", None) # The warning was likely on a call *site* related to this callback chain
+                    player_character = action_execution_context.get('player_character')
+                    player_name = getattr(player_character, 'name', 'Unknown') # Safely get name
+                    await send_message_callback(f"**{player_name}:** {feedback_message}", None)
                   except Exception as cb_e:
                     print(f"EventActionProcessor: Error sending feedback message: {cb_e}")
 
@@ -502,9 +537,9 @@ class EventActionProcessor:
     #      """Helper to perform a skill check and return the result/outcome."""
     #      # Use context['rule_engine'], context['player_character'], context['action_params'] etc.
     #      # Example: skill_name = context['action_params'].get('skill'), difficulty = context['action_params'].get('difficulty')
-    #      # rule_engine_inst = context.get('rule_engine') # Get manager from context
-    #      # if rule_engine_inst and hasattr(rule_engine_inst, 'perform_skill_check'):
-    #      #     check_result_details = await rule_engine_inst.perform_skill_check(context['player_character'], skill_name, difficulty, context=context)
+    #      # rule_engine = context.get('rule_engine')
+    #      # if rule_engine and hasattr(rule_engine, 'perform_skill_check'):
+    #      #     check_result_details = await rule_engine.perform_skill_check(context['player_character'], skill_name, difficulty, context=context)
     #      #     return {'outcome': check_result_details.get('outcome', 'failure'), **check_result_details}
     #      # return {'outcome': 'failure'} # Default if cannot perform check
 
@@ -512,10 +547,10 @@ class EventActionProcessor:
     #      """Helper to execute item usage effects."""
     #      # Use context['item_manager'], context['player_character'], context['action_params'] etc.
     #      # Example: item_id = context['action_params'].get('item_id')
-    #      # item_manager_inst = context.get('item_manager') # Get manager from context
-    #      # if item_manager_inst and hasattr(item_manager_inst, 'use_item'):
+    #      # item_manager = context.get('item_manager')
+    #      # if item_manager and hasattr(item_manager, 'use_item'):
     #      #     # Assuming use_item needs user, item_id, context, and returns a result dict
-    #      #     usage_result = await item_manager_inst.use_item(context['player_character'], item_id, context=context)
+    #      #     usage_result = await item_manager.use_item(context['player_character'], item_id, context=context)
     #      #     return {'outcome': usage_result.get('outcome', 'failure'), **usage_result}
     #      # return {'outcome': 'failure'} # Default if cannot use item
 
