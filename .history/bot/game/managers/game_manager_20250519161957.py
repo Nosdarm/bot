@@ -436,6 +436,7 @@ class GameManager:
             # 5) Загрузка состояния
             print("GameManager: Loading game state...")
             active_guild_ids: List[str] = self._active_guild_ids
+
             # Определяем список ID гильдий для загрузки. В данном примере берем из settings.
             # В РЕАЛЬНОМ ПРИЛОЖЕНИИ этот список должен браться из более надежного источника
             # (например, из базы данных, где хранятся гильдии, или после подключения к Discord API).

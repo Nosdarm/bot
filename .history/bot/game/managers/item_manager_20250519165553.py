@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from bot.game.managers.location_manager import LocationManager
     from bot.game.rules.rule_engine import RuleEngine
     # Add managers/processors that might be in context kwargs
-    from bot.game.managers.character_manager import CharacterManager
-    from bot.game.managers.npc_manager import NpcManager
+    # from bot.game.managers.character_manager import CharacterManager
+    # from bot.game.managers.npc_manager import NpcManager
     # from bot.game.managers.combat_manager import CombatManager
     # from bot.game.managers.status_manager import StatusManager
     # from bot.game.managers.party_manager import PartyManager

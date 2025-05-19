@@ -356,7 +356,6 @@ class SqliteAdapter:
 
 
         # Location Instance Table (This table stores instances of locations in the world)
-        await cursor.execute('''DROP TABLE IF EXISTS locations;''')
         await cursor.execute('''
              CREATE TABLE IF NOT EXISTS locations (
                  id TEXT PRIMARY KEY, -- Instance ID (UUID)
@@ -366,7 +365,6 @@ class SqliteAdapter:
                  description TEXT NULL, -- Instance-specific description override
                  exits TEXT DEFAULT '{}', -- JSON: {"direction": "location_id"} (Instance-specific exits)
                  state_variables TEXT DEFAULT '{}', -- JSON instance-specific state
-                 is_active INTEGER DEFAULT 1, -- <--- ADDED THIS LINE
                  UNIQUE(name, guild_id) -- Constraint
              );
         ''')
@@ -508,7 +506,7 @@ class SqliteAdapter:
 
         # Add more tables as needed (e.g., recipes, skills, quests, dialogue_states)
 
-        print("SqliteAdapter: v0 to v1 migration complete. Database schema created/updated.")
+        print("SqliteAdapter: v0 to v1 migration complete.")
 
     # Для будущих миграций:
     # async def _migrate_v1_to_v2(self, cursor: Cursor) -> None:

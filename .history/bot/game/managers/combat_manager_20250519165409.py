@@ -217,7 +217,7 @@ class CombatManager:
                  'channel_id': kwargs.get('channel_id'), # Try to get channel_id from context kwargs
                  'event_id': kwargs.get('event_id'), # Link to event if applicable
                  'current_round': 1, # Start at round 1
-                 'time_in_current_phase': 0.0, # Start timer at 0
+                 'round_timer': 0.0, # Start timer at 0
                  'participants': combat_participants_data, # List of participant dicts
                  'combat_log': [], # Start with empty log
                  'state_variables': kwargs.get('initial_state_variables', {}), # Allow initial state from kwargs

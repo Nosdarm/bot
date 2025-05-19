@@ -252,7 +252,7 @@ class EconomyManager:
         return False # No changes made
 
     # TODO: Implement calculate_price method
-    # Needs guild_id, location_id, item_template_id, quantity, is_selling, context
+    # Needs guild_id, location_id, item_template_id, quantity, context
     # Uses rule_engine to calculate price based on market inventory, template data, etc.
     async def calculate_price(
         self,
@@ -486,10 +486,7 @@ class EconomyManager:
              # If quantity > 1, you likely create multiple item instances.
              # If your Item model supports quantity on instances, adjust this.
              # Assuming creating 'count' individual instances:
-             # Round count down to nearest integer if items cannot be fractional instances
-             num_instances_to_create = int(resolved_count) if isinstance(resolved_count, int) else int(resolved_count + 0.5) # Round or truncate? Let's truncate to int for item instances
-
-             for i in range(num_instances_to_create): # Create integer number of items
+             for i in range(int(resolved_count)): # Create integer number of items
                   # create_item needs guild_id, item_data, **kwargs
                   # item_data needs template_id, and maybe initial state/temporary flag
                   # We don't set owner/location here, move_item does that.
@@ -514,14 +511,14 @@ class EconomyManager:
                            **kwargs # Pass context
                        )
                   else:
-                       print(f"EconomyManager: Warning: Failed to create item instance {i+1}/{num_instances_to_create} for buyer {buyer_entity_id} in guild {guild_id_str}.")
+                       print(f"EconomyManager: Warning: Failed to create item instance {i+1}/{int(resolved_count)} for buyer {buyer_entity_id} in guild {guild_id_str}.")
                        # Decide what to do if some items fail to create/move. Refund partially? Alert GM?
                        # Continue loop for now.
 
 
              # If the number of successfully created/moved items is less than requested, handle it.
-             if len(created_item_ids) < num_instances_to_create:
-                  print(f"EconomyManager: Warning: Only created/moved {len(created_item_ids)} of {num_instances_to_create} items for buyer {buyer_entity_id} in guild {guild_id_str}. Partial purchase?")
+             if len(created_item_ids) < int(resolved_count):
+                  print(f"EconomyManager: Warning: Only created/moved {len(created_item_ids)} of {int(resolved_count)} items for buyer {buyer_entity_id} in guild {guild_id_str}. Partial purchase?")
                   # This is a complex scenario. For now, return the list of successful IDs.
 
         except Exception as e:
@@ -559,20 +556,16 @@ class EconomyManager:
 
         print(f"EconomyManager: Attempting to sell {resolved_count:.2f}× item instance '{item_id_str}' at market {location_id} by {seller_entity_type} {seller_entity_id} in guild {guild_id_str}.")
 
-        # Let's assume selling means selling one specific instance (count is always 1).
-        # If you need to sell multiple instances, the command/logic needs to handle providing multiple item_ids.
-        # If you need to sell X units from a stack, the command/logic needs to handle that quantity.
-        # For this sell_item method, assume selling one *instance*.
-        if resolved_count != 1.0:
-             print(f"EconomyManager: Warning: sell_item currently only supports selling count=1 of a specific item instance. Received count={resolved_count} for item instance {item_id_str}.")
-             return None # Only support selling 1 instance at a time for now
+        if resolved_count <= 0:
+             print(f"EconomyManager: Warning: Sell count must be positive ({resolved_count}) for item instance {item_id_str} in guild {guild_id_str}.")
+             return None # Cannot sell non-positive quantity
 
 
         # --- 1. Check if seller owns the item instance and if market exists ---
         # Requires ItemManager.get_item
         item_mgr = kwargs.get('item_manager', self._item_manager) # Get ItemManager from context or self
-        if not item_mgr or not hasattr(item_mgr, 'get_item') or not hasattr(item_mgr, 'move_item') or not hasattr(item_mgr, 'mark_item_deleted'):
-             print(f"EconomyManager: ItemManager or required methods are not available to process sale for guild {guild_id_str}.")
+        if not item_mgr or not hasattr(item_mgr, 'get_item') or not hasattr(item_mgr, 'move_item'):
+             print(f"EconomyManager: ItemManager is not available to process sale for guild {guild_id_str}.")
              # TODO: Send feedback?
              return None
 
@@ -608,85 +601,63 @@ class EconomyManager:
 
         # --- 2. Calculate price ---
         # calculate_price needs guild_id, location_id, item_template_id, quantity, is_selling=True, context
-        # Price is calculated based on the template ID and the *quantity of units* being sold.
-        # If selling 1 instance, the quantity of units is the instance's quantity.
-        quantity_of_units_sold = float(getattr(item_instance, 'quantity', 1.0)) # Quantity of the instance being sold
+        # Note: For selling, quantity usually refers to the template quantity.
+        # If selling 1 instance, use its base template quantity if available.
+        # Or, if Item instances have their own quantity attribute, use that.
+        item_instance_quantity = float(getattr(item_instance, 'quantity', 1.0)) # Quantity of the instance being sold
+        # If selling 1 instance, the quantity for price calculation is its own quantity
+        quantity_for_price_calc = item_instance_quantity * resolved_count # If selling multiple instances? No, selling count=1 of specific instance.
+        # Assuming selling 1 item instance means quantity_for_price_calc = item_instance_quantity
+        # Let's stick to the simplest interpretation: selling 1 item instance counts as selling 1 item unit of that template.
+        # Or, RuleEngine calculates price per instance. Let's assume price is calculated per unit, and item_instance_quantity is 1.
+        # Simpler: Assume selling 'count' means selling 'count' units, and the instance quantity is used for calculation.
+        # Let's assume selling 'count' means selling 'count' units, and 'item_id' is just an identifier for the type.
+        # No, 'item_id' is the instance ID. If quantity is 1, we sell 1 instance.
+        # If you want to sell 5 units from a stack of 10, you'd need a different sell command/logic.
+        # Let's assume 'count' is the number of *instances* to sell (usually 1).
+        # The price should be calculated based on the *template* ID and the *total quantity being sold* (resolved_count * item_instance_quantity?).
+        # Let's assume for simplicity you always sell count=1 of a specific item instance.
+        # Price calculation should use the template ID and quantity 1.
+        # If Item model has quantity, use that quantity?
+        # Let's assume calculate_price uses the template ID and the *number of units* being sold.
+        # Number of units being sold is resolved_count * getattr(item_instance, 'quantity', 1.0).
+        total_units_sold = resolved_count * float(getattr(item_instance, 'quantity', 1.0)) # Total units from the instance(s) being sold
 
         total_revenue = await self.calculate_price(
             guild_id=guild_id_str,
             location_id=location_id,
             item_template_id=item_template_id,
-            quantity=quantity_of_units_sold, # Calculate price based on total units
+            quantity=total_units_sold, # Calculate price based on total units
             is_selling=True, # Selling
             **kwargs # Pass context
         )
 
         if total_revenue is None:
-            print(f"EconomyManager: Failed to calculate price for selling instance '{item_id_str}' ({quantity_of_units_sold:.2f} units) in guild {guild_id_str}.")
+            print(f"EconomyManager: Failed to calculate price for selling {resolved_count:.2f}× instance '{item_id_str}' ({total_units_sold:.2f} units) in guild {guild_id_str}.")
             # TODO: Send feedback?
             return None
         # Ensure total_revenue is non-negative (RuleEngine should handle this)
         if total_revenue < 0: total_revenue = 0 # Should not happen with correct price calculation
 
 
-        # --- 3. Remove item instance from seller's inventory ---
-        # Simplest way is to mark the specific item instance for deletion.
-        # The entity manager's inventory logic should use ItemManager to manage the list of item IDs.
-        # When the Item is marked for deletion, the entity manager should ideally remove its ID from the inventory list on save.
-        # Or, CharacterManager/NpcManager should have a remove_item_from_inventory method that calls ItemManager.mark_item_deleted
-        # and updates its own inventory list.
-        # Let's assume the entity manager (seller_mgr) has a specific method for this.
-        remove_item_from_inventory_method_name = 'remove_item_from_inventory' # Assuming method like remove_item_from_inventory(entity_id, item_id, context) exists
-        seller_mgr: Optional[Any] = None # Get manager from context
-        if seller_entity_type == 'Character': seller_mgr = kwargs.get('character_manager', self._character_manager)
-        elif seller_entity_type == 'NPC': seller_mgr = kwargs.get('npc_manager', self._npc_manager)
-        # TODO: Add Party
+        # --- 3. Add currency to seller ---
+        # Requires the seller's manager (CharacterManager, NpcManager) and a method like add_currency.
+        # Get manager from context
+        seller_mgr: Optional[Any] = None
+        add_currency_method_name = 'add_currency' # Assuming a method like add_currency(entity_id, amount, context) exists
 
-        if not seller_mgr or not hasattr(seller_mgr, remove_item_from_inventory_method_name):
-             print(f"EconomyManager: No suitable manager ({seller_entity_type}) or '{remove_item_from_inventory_method_name}' method found for seller {seller_entity_id} in guild {guild_id_str}. Cannot remove item from inventory.")
-             # TODO: Send feedback?
-             # Critical failure - item not removed from seller.
-             return None
+        if seller_entity_type == 'Character':
+            seller_mgr = kwargs.get('character_manager', self._character_manager)
+        elif seller_entity_type == 'NPC':
+            seller_mgr = kwargs.get('npc_manager', self._npc_manager)
+        # TODO: Add Party if Parties can sell items
 
-        try:
-            # Call remove_item_from_inventory method on the seller's manager
-            # It should remove the item ID from the entity's inventory list and potentially mark the item for deletion via ItemManager.
-            # Assuming remove_item_from_inventory needs entity_id, item_id, guild_id, **context
-            item_removal_successful = await getattr(seller_mgr, remove_item_from_inventory_method_name)(
-                seller_entity_id,
-                item_id_str,
-                guild_id=guild_id_str, # Pass guild_id
-                **kwargs # Pass context
-            )
-            if not item_removal_successful:
-                 # Seller manager reported failure to remove item from inventory.
-                 print(f"EconomyManager: Failed to remove item instance '{item_id_str}' from seller {seller_entity_id} inventory for guild {guild_id_str}. Sale failed before currency/market update.")
-                 # TODO: Send feedback?
-                 return None
-
-            # Note: Assuming the entity manager's remove_item_from_inventory calls ItemManager.mark_item_deleted.
-            # If it doesn't, we need to call mark_item_deleted here.
-            # Let's assume for now the entity manager handles the mark_item_deleted call.
-
-
-        except Exception as e:
-             print(f"EconomyManager: ❌ Error removing item from seller {seller_entity_id} inventory for guild {guild_id_str}: {e}")
-             traceback.print_exc()
-             # TODO: Send feedback?
-             return None
-
-
-        # --- 4. Add currency to seller ---
-        # Requires the seller's manager and add_currency method.
-        add_currency_method_name = 'add_currency' # Assuming method like add_currency(entity_id, amount, guild_id, context) exists
-
-        # Seller manager lookup already done above. Check for add_currency method specifically.
         if not seller_mgr or not hasattr(seller_mgr, add_currency_method_name):
-            # This is a severe inconsistency if remove_item_from_inventory worked but add_currency is missing.
-             print(f"EconomyManager: ❌ CRITICAL ERROR: Item removed from seller inventory, but seller manager ({seller_entity_type}) or '{add_currency_method_name}' method is not available to add currency for {seller_entity_id} in guild {guild_id_str}. Item lost, no revenue!")
-             # TODO: Alert GM? Send feedback?
-             return None # Indicate failure
-
+            print(f"EconomyManager: No suitable manager ({seller_entity_type}) or '{add_currency_method_name}' method found for seller {seller_entity_id} in guild {guild_id_str}. Cannot add currency.")
+            # TODO: Send feedback?
+            # Decide what to do - item is gone, seller gets no money? This is a critical failure for the transaction.
+            # Revert item removal? Log severe error?
+            return None # Indicate failure
 
         try:
             # Call add_currency method, passing seller ID, revenue, and context
@@ -698,22 +669,45 @@ class EconomyManager:
                 **kwargs # Pass context
             )
             if not addition_successful:
-                 # Seller manager reported failure to add currency. Item is removed, seller gets no money.
+                 # This is less critical than deduction failure, seller just doesn't get money.
                  print(f"EconomyManager: Warning: Failed to add currency ({total_revenue:.2f}) to seller {seller_entity_id} for guild {guild_id_str}. Item sold but no revenue added.")
                  # TODO: Alert GM? Send feedback?
-                 # Continue process, the item is removed anyway.
+                 # Continue process, the item is being removed anyway.
 
         except Exception as e:
             print(f"EconomyManager: ❌ Error adding currency to seller {seller_entity_id} for guild {guild_id_str}: {e}")
             traceback.print_exc()
             # TODO: Alert GM? Send feedback?
-            # Continue process, the item is removed anyway.
+            # Continue process, the item is being removed anyway.
+
+
+        # --- 4. Remove item instance(s) from seller's inventory ---
+        # This requires ItemManager.move_item or mark_item_deleted.
+        # We need to remove 'resolved_count' instances of item_id from the seller.
+        # Assuming resolved_count is usually 1, and we remove the specific instance.
+        # If resolved_count > 1 for a single item_id, this implies stacking and needs more complex logic.
+        # Let's assume count is always 1 for a specific instance ID being sold.
+        # We just need to remove THIS item instance from the seller.
+        # The simplest way is to mark the specific item instance for deletion.
+        try:
+            # mark_item_deleted needs guild_id, item_id
+            self.mark_item_deleted(guild_id_str, item_id_str) # Mark item for deletion from DB
+            print(f"EconomyManager: Item instance '{item_id_str}' marked for deletion from DB (sold by {seller_entity_id}) for guild {guild_id_str}.")
+            # Item is removed from cache by mark_item_deleted.
+
+        except Exception as e:
+             # CRITICAL ERROR: Currency added, but item not removed from seller/DB!
+             print(f"EconomyManager: ❌ CRITICAL ERROR during item deletion for sold item instance '{item_id_str}' from seller {seller_entity_id} in guild {guild_id_str} after currency added ({total_revenue:.2f}): {e}")
+             traceback.print_exc()
+             # TODO: Handle this severe error - potentially remove currency? Alert GM?
+             # For now, log and indicate failure.
+             return None # Indicate failure
 
 
         # --- 5. Add units back to market inventory ---
         # add_items_to_market needs guild_id, location_id, items_data, context
         # items_data is {item_template_id: quantity}
-        items_to_add_dict = {item_template_id: quantity_of_units_sold} # Add total units sold back to market
+        items_to_add_dict = {item_template_id: total_units_sold} # Add total units sold back to market
         try:
             addition_successful = await self.add_items_to_market(
                 guild_id=guild_id_str,
@@ -723,7 +717,7 @@ class EconomyManager:
             )
             # This should always succeed unless market data is corrupted.
             if not addition_successful:
-                 print(f"EconomyManager: Warning: Failed to add {quantity_of_units_sold:.2f}×'{item_template_id}' back to market {location_id} for guild {guild_id_str} after sale. Market inventory inconsistency.")
+                 print(f"EconomyManager: Warning: Failed to add {total_units_sold:.2f}×'{item_template_id}' back to market {location_id} for guild {guild_id_str} after sale. Market inventory inconsistency.")
                  # TODO: Alert GM? Log?
                  # Continue process.
 
@@ -748,7 +742,6 @@ class EconomyManager:
          guild_id_str = str(guild_id)
          # print(f"EconomyManager: Processing tick for guild {guild_id_str}. Delta: {game_time_delta}. (Placeholder)") # Too noisy
 
-
          # Get RuleEngine from kwargs or self
          rule_engine = kwargs.get('rule_engine', self._rule_engine) # type: Optional["RuleEngine"]
 
@@ -756,8 +749,8 @@ class EconomyManager:
               try:
                    # process_economy_tick needs guild_id and context
                    # RuleEngine is expected to iterate through markets for this guild, apply restock/price changes etc.
-                   # RuleEngine should call add/remove_items_to_market and mark_market_dirty on this manager.
                    await rule_engine.process_economy_tick(guild_id=guild_id_str, context=kwargs)
+                   # RuleEngine is responsible for calling add/remove_items_to_market and marking markets dirty.
 
               except Exception as e:
                    print(f"EconomyManager: ❌ Error processing economy tick for guild {guild_id_str}: {e}")
@@ -775,15 +768,7 @@ class EconomyManager:
 
     # rebuild_runtime_caches - rebuilds per-guild caches after loading
     # required_args_for_rebuild = ["guild_id"]
-    # Already takes guild_id and **kwargs
-    async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-        """
-        Перестраивает вспомогательные кеши (если будут) для определенной гильдии.
-        """
-        guild_id_str = str(guild_id)
-        print(f"EconomyManager: Rebuilding runtime caches for guild {guild_id_str}...")
-        # сейчас ничего лишнего делать не нужно
-        print(f"EconomyManager: Runtime caches rebuilt for guild {guild_id_str}.")
+    # Already implemented above.
 
 
     # TODO: Implement clean_up_for_location(location_id, guild_id, **context)
