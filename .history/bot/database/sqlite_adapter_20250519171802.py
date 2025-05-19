@@ -251,13 +251,12 @@ class SqliteAdapter:
         await cursor.execute('''DROP TABLE IF EXISTS characters;''')
         await cursor.execute('''DROP TABLE IF EXISTS events;''')
         await cursor.execute('''DROP TABLE IF EXISTS npcs;''')
-        await cursor.execute('''DROP TABLE IF EXISTS location_templates;''') # DROP for templates
-        await cursor.execute('''DROP TABLE IF EXISTS locations;''') # DROP for instances
-        await cursor.execute('''DROP TABLE IF EXISTS item_templates;''') # DROP for templates
-        await cursor.execute('''DROP TABLE IF EXISTS items;''') # DROP for instances
+        await cursor.execute('''DROP TABLE IF EXISTS locations;''')
+        await cursor.execute('''DROP TABLE IF EXISTS item_templates;''')
+        await cursor.execute('''DROP TABLE IF EXISTS items;''')
         await cursor.execute('''DROP TABLE IF EXISTS combats;''')
         await cursor.execute('''DROP TABLE IF EXISTS statuses;''')
-        await cursor.execute('''DROP TABLE IF EXISTS global_state;''')
+        await cursor.execute('''DROP TABLE IF EXISTS global_state;''') # Global state might not need dropping if it's truly global? But safe for v0.
         await cursor.execute('''DROP TABLE IF EXISTS timers;''')
         await cursor.execute('''DROP TABLE IF EXISTS crafting_queues;''')
         await cursor.execute('''DROP TABLE IF EXISTS market_inventories;''')
@@ -302,7 +301,7 @@ class SqliteAdapter:
                 channel_id INTEGER NULL,
                 guild_id TEXT NOT NULL,
                 current_stage_id TEXT NOT NULL,
-                players TEXT DEFAULT '[]', -- JSON список entity_id, участвующих в событии
+                players TEXT DEFAULT '[]', -- JSON список entity_id, участвующих в событии (was missing)
                 state_variables TEXT DEFAULT '{}', -- JSON
                 stages_data TEXT DEFAULT '{}', -- JSON
                 end_message_template TEXT NULL,
@@ -338,35 +337,15 @@ class SqliteAdapter:
             );
         ''')
 
-        # Location Templates Table (This table stores static definitions of locations)
-        await cursor.execute('''DROP TABLE IF EXISTS location_templates;''')
-        await cursor.execute('''
-            CREATE TABLE IF NOT EXISTS location_templates (
-                id TEXT PRIMARY KEY, -- Template ID
-                name TEXT NOT NULL, -- Name of the template
-                guild_id TEXT NOT NULL, -- <--- ADDED: Templates are PER GUILD
-                description TEXT NULL,
-                default_exits TEXT DEFAULT '{}', -- JSON: {"direction": "template_id"} (Defaults for instances)
-                default_state_variables TEXT DEFAULT '{}', -- JSON default state for instances
-                template_data TEXT DEFAULT '{}', -- JSON blob for full template definition
-                -- ADDED UNIQUE CONSTRAINT: Name must be unique per guild
-                UNIQUE(name, guild_id)
-            );
-        ''')
-
-
-        # Location Instance Table (This table stores instances of locations in the world)
-        await cursor.execute('''DROP TABLE IF EXISTS locations;''')
+        # Location Table (for instances)
         await cursor.execute('''
              CREATE TABLE IF NOT EXISTS locations (
-                 id TEXT PRIMARY KEY, -- Instance ID (UUID)
-                 template_id TEXT NULL, -- Link to location_templates.id (Optional, if some locations are unique instances)
+                 id TEXT PRIMARY KEY,
                  name TEXT NOT NULL,
                  guild_id TEXT NOT NULL,
-                 description TEXT NULL, -- Instance-specific description override
-                 exits TEXT DEFAULT '{}', -- JSON: {"direction": "location_id"} (Instance-specific exits)
-                 state_variables TEXT DEFAULT '{}', -- JSON instance-specific state
-                 is_active INTEGER DEFAULT 1, -- <--- ADDED THIS LINE
+                 description TEXT NULL,
+                 exits TEXT DEFAULT '{}', -- JSON: {"direction": "location_id"}
+                 state_variables TEXT DEFAULT '{}', -- JSON
                  UNIQUE(name, guild_id) -- Constraint
              );
         ''')
@@ -379,8 +358,6 @@ class SqliteAdapter:
                  description TEXT NULL,
                  type TEXT NULL, -- e.g., 'consumable', 'equipment', 'material'
                  properties TEXT DEFAULT '{}' -- JSON {stat_bonus: {...}, usable: true, craftable: {...}}
-                 -- Add other template fields like base_price, weight, max_stack_size etc.
-                 -- base_price REAL DEFAULT 0.0,
              );
         ''')
 
@@ -393,7 +370,7 @@ class SqliteAdapter:
                  guild_id TEXT NOT NULL, -- Items belong to a guild's context
                  owner_id TEXT NULL, -- ID владельца (персонажа, NPC, локации, партии)
                  owner_type TEXT NULL, -- Тип владельца ('character', 'npc', 'location', 'party')
-                 location_id TEXT NULL, -- Optional location ID if on the ground (redundant if owner_type='location'?)
+                 location_id TEXT NULL, -- Optional location ID if on the ground
                  quantity REAL DEFAULT 1.0, -- Stored as REAL
                  state_variables TEXT DEFAULT '{}', -- JSON instance-specific variables
                  is_temporary INTEGER DEFAULT 0 -- 0 or 1
@@ -410,15 +387,15 @@ class SqliteAdapter:
             CREATE TABLE IF NOT EXISTS combats (
                 id TEXT PRIMARY KEY, -- Unique Combat ID (UUID)
                 guild_id TEXT NOT NULL,
-                location_id TEXT NULL, -- Location instance ID where combat is happening
+                location_id TEXT NULL, -- Column added earlier
                 is_active INTEGER DEFAULT 1, -- 0 or 1
-                channel_id INTEGER NULL, -- Channel where combat messages occur
-                event_id TEXT NULL, -- Link to event if combat originated from one
+                channel_id INTEGER NULL, -- Channel where combat happens (was missing)
+                event_id TEXT NULL, -- Link to event (was missing)
                 current_round INTEGER DEFAULT 0,
-                round_timer REAL DEFAULT 0.0, -- Timer within the current round phase
-                participants TEXT DEFAULT '{}', -- JSON {entity_id: {role: 'player'/'npc', team: 'A'/'B', initial_health: ..., current_health: ...}, ...}
-                combat_log TEXT DEFAULT '[]', -- JSON list of strings/dicts representing combat actions
-                state_variables TEXT DEFAULT '{}' -- JSON combat instance state
+                round_timer REAL DEFAULT 0.0, -- Timer within the round (was missing)
+                participants TEXT DEFAULT '{}', -- JSON
+                combat_log TEXT DEFAULT '[]', -- JSON log of combat actions (was missing)
+                state_variables TEXT DEFAULT '{}' -- JSON
             );
         ''')
 
@@ -431,10 +408,10 @@ class SqliteAdapter:
                 target_id TEXT NOT NULL, -- ID сущности
                 target_type TEXT NOT NULL, -- Тип сущности ('character', 'npc', 'party', 'location')
                 guild_id TEXT NOT NULL, -- Status effects belong to a guild's context
-                duration REAL NULL, -- Длительность в игровых секундах (NULL для постоянных)
+                duration REAL NULL, -- Длительность в игровых секундах
                 applied_at REAL NOT NULL, -- Игровое время, когда наложен эффект
                 source_id TEXT NULL, -- ID источника эффекта
-                state_variables TEXT DEFAULT '{}' -- JSON instance-specific variables
+                state_variables TEXT DEFAULT '{}' -- JSON
                 -- Index for quick lookup by target
                 -- CREATE INDEX IF NOT EXISTS idx_statuses_target ON statuses (target_type, target_id);
                 -- CREATE INDEX IF NOT EXISTS idx_statuses_guild ON statuses (guild_id);
@@ -508,7 +485,7 @@ class SqliteAdapter:
 
         # Add more tables as needed (e.g., recipes, skills, quests, dialogue_states)
 
-        print("SqliteAdapter: v0 to v1 migration complete. Database schema created/updated.")
+        print("SqliteAdapter: v0 to v1 migration complete.")
 
     # Для будущих миграций:
     # async def _migrate_v1_to_v2(self, cursor: Cursor) -> None:

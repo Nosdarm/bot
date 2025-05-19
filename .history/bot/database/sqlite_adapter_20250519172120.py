@@ -339,24 +339,22 @@ class SqliteAdapter:
         ''')
 
         # Location Templates Table (This table stores static definitions of locations)
-        await cursor.execute('''DROP TABLE IF EXISTS location_templates;''')
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS location_templates (
-                id TEXT PRIMARY KEY, -- Template ID
-                name TEXT NOT NULL, -- Name of the template
-                guild_id TEXT NOT NULL, -- <--- ADDED: Templates are PER GUILD
+                id TEXT PRIMARY KEY, -- Global Template ID
+                name TEXT NOT NULL UNIQUE, -- Global unique name for template
                 description TEXT NULL,
-                default_exits TEXT DEFAULT '{}', -- JSON: {"direction": "template_id"} (Defaults for instances)
+                default_exits TEXT DEFAULT '{}', -- JSON: {"direction": "template_id"}
                 default_state_variables TEXT DEFAULT '{}', -- JSON default state for instances
-                template_data TEXT DEFAULT '{}', -- JSON blob for full template definition
-                -- ADDED UNIQUE CONSTRAINT: Name must be unique per guild
-                UNIQUE(name, guild_id)
+                template_data TEXT DEFAULT '{}' -- JSON blob for full template definition (ADDED THIS BACK)
+                -- Note: This table might be global or per-guild depending on design.
+                -- If per-guild templates: add guild_id TEXT NOT NULL, UNIQUE(name, guild_id)
+                -- Assuming global for now based on previous iterations
             );
         ''')
 
 
         # Location Instance Table (This table stores instances of locations in the world)
-        await cursor.execute('''DROP TABLE IF EXISTS locations;''')
         await cursor.execute('''
              CREATE TABLE IF NOT EXISTS locations (
                  id TEXT PRIMARY KEY, -- Instance ID (UUID)
@@ -366,7 +364,6 @@ class SqliteAdapter:
                  description TEXT NULL, -- Instance-specific description override
                  exits TEXT DEFAULT '{}', -- JSON: {"direction": "location_id"} (Instance-specific exits)
                  state_variables TEXT DEFAULT '{}', -- JSON instance-specific state
-                 is_active INTEGER DEFAULT 1, -- <--- ADDED THIS LINE
                  UNIQUE(name, guild_id) -- Constraint
              );
         ''')
@@ -508,7 +505,7 @@ class SqliteAdapter:
 
         # Add more tables as needed (e.g., recipes, skills, quests, dialogue_states)
 
-        print("SqliteAdapter: v0 to v1 migration complete. Database schema created/updated.")
+        print("SqliteAdapter: v0 to v1 migration complete.")
 
     # Для будущих миграций:
     # async def _migrate_v1_to_v2(self, cursor: Cursor) -> None:
