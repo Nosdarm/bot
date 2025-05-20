@@ -339,17 +339,14 @@ class SqliteAdapter:
             );
         ''')
 
-        # Location Template Table (PER-GUILD - Modified to add guild_id)
+        # Location Template Table (global)
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS location_templates (
-                id TEXT NOT NULL, -- Template ID
-                guild_id TEXT NOT NULL, -- <-- ДОБАВЛЕНА КОЛОНКА GUILD_ID
-                name TEXT NOT NULL, -- Template name
-                description TEXT NULL,
-                properties TEXT DEFAULT '{}', -- JSON данные шаблона (включают initial_state, on_enter_triggers, exits и т.д.)
-                -- Добавьте другие колонки шаблона здесь
-                PRIMARY KEY (id, guild_id), -- <-- Первичный ключ по ID и Guild ID
-                UNIQUE(name, guild_id) -- <-- Имя шаблона уникально в пределах гильдии
+                id TEXT PRIMARY KEY, -- Global ID
+                name TEXT NOT NULL UNIQUE, -- Global unique name for template
+                description TEXT NULL, -- <-- Проверьте здесь
+                properties TEXT DEFAULT '{}' -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
+                -- Templates might be per-guild...
             );
         ''')
 
@@ -362,9 +359,8 @@ class SqliteAdapter:
                  guild_id TEXT NOT NULL,
                  description TEXT NULL,
                  exits TEXT DEFAULT '{}', -- JSON: {"direction": "location_id"}
-                 state_variables TEXT DEFAULT '{}', -- <-- Проверьте запятую после этой строки
-                 is_active INTEGER DEFAULT 1 -- <-- ДОБАВЛЕНА КОЛОНКА is_active. БЕЗ ЗАПЯТОЙ, если это последняя колонка.
-                 -- UNIQUE(name, guild_id) -- Constraint - for instance names <-- Если это есть, то is_active ДОЛЖНА БЫТЬ С ЗАПЯТОЙ перед этим.
+                 state_variables TEXT DEFAULT '{}' -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
+                 -- UNIQUE(name, guild_id) -- Constraint - for instance names
              );
         ''')
 

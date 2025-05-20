@@ -18,8 +18,7 @@ import discord # Direct import
 
 # Import specific command handlers
 # Убедитесь, что путь к PartyCommandHandler правильный
-# Импорт на уровне TYPE_CHECKING
-# from bot.game.command_handlers.party_handler import PartyCommandHandler # Перемещаем в TYPE_CHECKING
+from bot.game.command_handlers.party_handler import PartyCommandHandler # <--- ИМПОРТИРУЕМ ОБРАБОТЧИК ПАРТИИ
 
 if TYPE_CHECKING:
     # --- Imports for Type Checking ---
@@ -57,8 +56,8 @@ if TYPE_CHECKING:
     from bot.game.world_processors.world_simulation_processor import WorldSimulationProcessor
     from bot.game.character_processors.character_action_processor import CharacterActionProcessor
     from bot.game.character_processors.character_view_service import CharacterViewService
-    from bot.game.party_processors.party_action_processor import PartyActionProcessor
-    # from bot.game.party_processors.party_view_service import PartyViewService
+    from bot.game.party_processors.party_action_processor import PartyActionProcessor # Party action processor is still needed in context for PartyCommandHandler
+    # from bot.game.party_processors.party_view_service import PartyViewService # Party view service is still needed in context for PartyCommandHandler
 
     # Import the PartyCommandHandler for type hinting
     from bot.game.command_handlers.party_handler import PartyCommandHandler # <--- ТИПИЗАЦИЯ ОБРАБОТЧИКА ПАРТИИ
@@ -802,7 +801,8 @@ class CommandRouter:
             await send_callback(f"❌ Произошла ошибка при попытке перемещения: {e}")
 
 
-    # --- Removed handle_party method and its decorators ---
+    # --- Removed handle_party method ---
+    # The logic for the 'party' command is now in PartyCommandHandler
 
 
     # Helper function example (can be defined in this file or a utility module)

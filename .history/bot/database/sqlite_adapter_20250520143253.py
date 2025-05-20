@@ -2,8 +2,7 @@
 print(f"DEBUG: Loading sqlite_adapter.py from: {__file__}")
 import sqlite3 # Keep for sqlite3.OperationalError
 import traceback
-import json # Needed for json.loads/dumps
-from typing import Optional, List, Tuple, Any, Union, Dict # Add Dict
+from typing import Optional, List, Tuple, Any, Union
 
 import aiosqlite
 # Типы для аннотаций
@@ -249,7 +248,6 @@ class SqliteAdapter:
         print("SqliteAdapter: Running v0 to v1 migration (creating initial tables)...")
 
         # Добавляем DROP TABLE IF EXISTS для всех таблиц перед CREATE, чтобы обеспечить чистую миграцию
-        # (ОСТОРОЖНО: Удаляет все данные при каждой миграции с 0 на 1. Удалите это в production!)
         await cursor.execute('''DROP TABLE IF EXISTS characters;''')
         await cursor.execute('''DROP TABLE IF EXISTS events;''')
         await cursor.execute('''DROP TABLE IF EXISTS npcs;''')
@@ -286,14 +284,15 @@ class SqliteAdapter:
                 status_effects TEXT DEFAULT '[]', -- JSON [{status_type: ..., duration: ..., applied_at: ..., state_variables: {...}}, ...]
                 -- Дополнительные колонки по необходимости
                 created_at REAL NOT NULL DEFAULT (strftime('%s','now')), -- Unix timestamp as REAL
-                last_played_at REAL NULL, -- <-- Конец колонок. Далее ограничения.
+                last_played_at REAL NULL,
                 -- UNIQUE ограничения в пределах гильдии
                 UNIQUE(discord_user_id, guild_id),
-                UNIQUE(name, guild_id) -- <--- Последнее ограничение. БЕЗ ЗАПЯТОЙ перед ');'
+                UNIQUE(name, guild_id)
             );
         ''')
 
         # Event Table
+        # ИСПРАВЛЕНИЕ: Убедимся, что колонка players присутствует и имеет правильный тип
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS events (
                 id TEXT PRIMARY KEY,
@@ -307,8 +306,8 @@ class SqliteAdapter:
                 state_variables TEXT DEFAULT '{}', -- JSON
                 stages_data TEXT DEFAULT '{}', -- JSON
                 end_message_template TEXT NULL,
-                started_at REAL NOT NULL DEFAULT (strftime('%s','now')), -- <-- Конец колонок
-                UNIQUE(channel_id, guild_id) -- <--- Последнее ограничение. БЕЗ ЗАПЯТОЙ перед ');'
+                started_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+                UNIQUE(channel_id, guild_id) -- Enforce one active event per channel PER GUILD
             );
         ''')
 
@@ -334,37 +333,34 @@ class SqliteAdapter:
                 max_health REAL DEFAULT 100.0,
                 is_alive INTEGER DEFAULT 1, -- 0 or 1
                 status_effects TEXT DEFAULT '[]', -- JSON
-                is_temporary INTEGER DEFAULT 0 -- <--- Конец колонок (если UNIQUE закомментировано). БЕЗ ЗАПЯТОЙ
-                -- UNIQUE(name, guild_id) -- Optional, depends on game rules -- <-- Если раскомментировано, должна быть запятая после is_temporary
+                is_temporary INTEGER DEFAULT 0 -- 0 or 1 (для временно созданных NPC)
+                -- UNIQUE(name, guild_id) -- Optional, depends on game rules
             );
         ''')
 
-        # Location Template Table (PER-GUILD - Modified to add guild_id)
+        # Location Table (for instances)
+        # ИСПРАВЛЕНИЕ: Убедимся, что таблица location_templates присутствует
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS location_templates (
-                id TEXT NOT NULL, -- Template ID
-                guild_id TEXT NOT NULL, -- <-- ДОБАВЛЕНА КОЛОНКА GUILD_ID
-                name TEXT NOT NULL, -- Template name
+                id TEXT PRIMARY KEY, -- Global ID
+                name TEXT NOT NULL UNIQUE, -- Global unique name for template
                 description TEXT NULL,
-                properties TEXT DEFAULT '{}', -- JSON данные шаблона (включают initial_state, on_enter_triggers, exits и т.д.)
-                -- Добавьте другие колонки шаблона здесь
-                PRIMARY KEY (id, guild_id), -- <-- Первичный ключ по ID и Guild ID
-                UNIQUE(name, guild_id) -- <-- Имя шаблона уникально в пределах гильдии
+                properties TEXT DEFAULT '{}' -- JSON
+                -- Templates might be per-guild, in that case UNIQUE(id, guild_id) and guild_id TEXT NOT NULL
+                -- Current schema suggests global templates
             );
         ''')
 
-        # Location Instance Table
         await cursor.execute('''
              CREATE TABLE IF NOT EXISTS locations (
                  id TEXT PRIMARY KEY, -- Instance ID (UUID)
                  template_id TEXT NOT NULL, -- Link to location_templates.id (or name?)
                  name TEXT NOT NULL, -- Instance name (can be different from template name)
                  guild_id TEXT NOT NULL,
-                 description TEXT NULL,
+                 description TEXT NULL, -- Instance specific description override
                  exits TEXT DEFAULT '{}', -- JSON: {"direction": "location_id"}
-                 state_variables TEXT DEFAULT '{}', -- <-- Проверьте запятую после этой строки
-                 is_active INTEGER DEFAULT 1 -- <-- ДОБАВЛЕНА КОЛОНКА is_active. БЕЗ ЗАПЯТОЙ, если это последняя колонка.
-                 -- UNIQUE(name, guild_id) -- Constraint - for instance names <-- Если это есть, то is_active ДОЛЖНА БЫТЬ С ЗАПЯТОЙ перед этим.
+                 state_variables TEXT DEFAULT '{}', -- JSON
+                 -- UNIQUE(name, guild_id) -- Constraint - for instance names
              );
         ''')
 
@@ -375,7 +371,7 @@ class SqliteAdapter:
                  name TEXT NOT NULL UNIQUE, -- Global unique name
                  description TEXT NULL,
                  type TEXT NULL, -- e.g., 'consumable', 'equipment', 'material'
-                 properties TEXT DEFAULT '{}' -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
+                 properties TEXT DEFAULT '{}' -- JSON {stat_bonus: {...}, usable: true, craftable: {...}}
              );
         ''')
 
@@ -391,7 +387,7 @@ class SqliteAdapter:
                  location_id TEXT NULL, -- Optional location ID if on the ground
                  quantity REAL DEFAULT 1.0, -- Stored as REAL
                  state_variables TEXT DEFAULT '{}', -- JSON instance-specific variables
-                 is_temporary INTEGER DEFAULT 0 -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
+                 is_temporary INTEGER DEFAULT 0 -- 0 or 1
                  -- Indices could improve performance
                  -- CREATE INDEX IF NOT EXISTS idx_items_owner ON items (owner_type, owner_id);
                  -- CREATE INDEX IF NOT EXISTS idx_items_location ON items (location_id); -- If location_id is used for ground items
@@ -401,6 +397,7 @@ class SqliteAdapter:
 
 
         # Combat Table
+        # ИСПРАВЛЕНИЕ: Убедимся, что колонки round_timer, combat_log, channel_id, event_id присутствуют
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS combats (
                 id TEXT PRIMARY KEY, -- Unique Combat ID (UUID)
@@ -413,7 +410,7 @@ class SqliteAdapter:
                 round_timer REAL DEFAULT 0.0, -- Timer within the round
                 participants TEXT DEFAULT '{}', -- JSON
                 combat_log TEXT DEFAULT '[]', -- JSON log
-                state_variables TEXT DEFAULT '{}' -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
+                state_variables TEXT DEFAULT '{}' -- JSON
             );
         ''')
 
@@ -428,8 +425,8 @@ class SqliteAdapter:
                 guild_id TEXT NOT NULL, -- Status effects belong to a guild's context
                 duration REAL NULL, -- Длительность в игровых секундах
                 applied_at REAL NOT NULL, -- Игровое время, когда наложен эффект
-                source_id TEXT NULL,
-                state_variables TEXT DEFAULT '{}' -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
+                source_id TEXT NULL, -- ID источника эффекта
+                state_variables TEXT DEFAULT '{}' -- JSON
                 -- Index for quick lookup by target
                 -- CREATE INDEX IF NOT EXISTS idx_statuses_target ON statuses (target_type, target_id);
                 -- CREATE INDEX IF NOT EXISTS idx_statuses_guild ON statuses (guild_id);
@@ -440,7 +437,7 @@ class SqliteAdapter:
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS global_state (
                 key TEXT PRIMARY KEY,
-                value TEXT -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
+                value TEXT -- Store value as JSON string or simple string
             );
         ''')
 
@@ -450,38 +447,38 @@ class SqliteAdapter:
                 id TEXT PRIMARY KEY, -- Unique timer ID (UUID)
                 guild_id TEXT NULL, -- NULL if global timer
                 type TEXT NOT NULL, -- Тип таймера
-                ends_at REAL NOT NULL,
-                callback_data TEXT NULL,
+                ends_at REAL NOT NULL, -- Игровое время, когда таймер истекает
+                callback_data TEXT NULL, -- JSON данные, передаваемые в колбэк
                 is_active INTEGER DEFAULT 1, -- 0 or 1
                 target_id TEXT NULL, -- ID сущности
-                target_type TEXT NULL -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
+                target_type TEXT NULL -- Тип сущности
                 -- Index for quick lookup of active timers
                 -- CREATE INDEX IF NOT EXISTS idx_timers_active ON timers (is_active, ends_at);
                 -- CREATE INDEX IF NOT EXISTS idx_timers_guild ON timers (guild_id);
             );
         ''')
 
-        # Crafting Queues Table (tied to an entity)
+        # Crafting Queues Table (tied to a character/entity)
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS crafting_queues (
-                entity_id TEXT NOT NULL, -- ID сущности (character/npc)
+                entity_id TEXT PRIMARY KEY, -- ID сущности (character/npc)
                 entity_type TEXT NOT NULL, -- 'character' or 'npc'
                 guild_id TEXT NOT NULL,
                 queue TEXT DEFAULT '[]', -- JSON список задач крафтинга
-                state_variables TEXT DEFAULT '{}', -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
-                PRIMARY KEY (entity_id, entity_type, guild_id) -- <--- Последнее ограничение. БЕЗ ЗАПЯТОЙ
+                state_variables TEXT DEFAULT '{}' -- JSON
             );
         ''')
 
-        # Market Inventories Table (tied to an entity)
+
+        # Market Inventories Table (tied to a location/entity)
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS market_inventories (
                 entity_id TEXT NOT NULL, -- ID сущности (location/npc/etc)
                 entity_type TEXT NOT NULL, -- 'location', 'npc'
                 guild_id TEXT NOT NULL,
                 inventory TEXT DEFAULT '{}', -- JSON {item_template_id: quantity}
-                state_variables TEXT DEFAULT '{}', -- <--- Проверьте здесь
-                PRIMARY KEY (entity_id, entity_type, guild_id) -- <--- Последнее ограничение. БЕЗ ЗАПЯТОЙ
+                state_variables TEXT DEFAULT '{}', -- JSON
+                PRIMARY KEY (entity_id, entity_type, guild_id) -- Composite Primary Key
             );
         ''')
 
@@ -495,8 +492,8 @@ class SqliteAdapter:
                 leader_id TEXT NULL,
                 member_ids TEXT DEFAULT '[]', -- JSON список ID участников
                 state_variables TEXT DEFAULT '{}', -- JSON
-                current_action TEXT NULL -- <--- Последняя колонка (если UNIQUE закомментировано). БЕЗ ЗАПЯТОЙ
-                -- UNIQUE(name, guild_id) -- Optional -- <-- Если раскомментировано, должна быть запятая после current_action
+                current_action TEXT NULL
+                -- UNIQUE(name, guild_id) -- Optional
                 -- Index example is commented out
             );
         ''')
