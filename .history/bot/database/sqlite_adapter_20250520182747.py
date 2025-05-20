@@ -362,9 +362,8 @@ class SqliteAdapter:
                  guild_id TEXT NOT NULL,
                  description TEXT NULL,
                  exits TEXT DEFAULT '{}', -- JSON: {"direction": "location_id"}
-                 state_variables TEXT DEFAULT '{}', -- <-- Проверьте запятую после этой строки
-                 is_active INTEGER DEFAULT 1 -- <-- ДОБАВЛЕНА КОЛОНКА is_active. БЕЗ ЗАПЯТОЙ, если это последняя колонка.
-                 -- UNIQUE(name, guild_id) -- Constraint - for instance names <-- Если это есть, то is_active ДОЛЖНА БЫТЬ С ЗАПЯТОЙ перед этим.
+                 state_variables TEXT DEFAULT '{}' -- <--- Последняя колонка. БЕЗ ЗАПЯТОЙ
+                 -- UNIQUE(name, guild_id) -- Constraint - for instance names
              );
         ''')
 

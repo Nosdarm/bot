@@ -818,7 +818,6 @@ class LocationManager:
         if isinstance(triggers, list) and engine and hasattr(engine, 'execute_triggers'):
             print(f"LocationManager: Executing {len(triggers)} OnExit triggers for {entity_type} {entity_id} from location {location_id} (guild {guild_id_str}).")
             try:
-                 # --- Начало блока try (отступ 4 пробела от if) ---
                  trigger_context = {
                      **kwargs,
                      'location_instance_id': location_id,
@@ -827,16 +826,17 @@ class LocationManager:
                      'location_instance_data': instance_data,
                      'location_template_data': tpl,
                  }
-                 await engine.execute_triggers(triggers, context=trigger_context)
-                 print(f"LocationManager: OnExit triggers executed for {entity_type} {entity_id}.")
-            # --- Конец блока try ---
-            except Exception as e: # <--- except должен быть на том же уровне отступа, что и try
-                 print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
-                 traceback.print_exc() # <--- print и traceback должны быть внутри except блока (отступ 4 пробела от except)
-        # --- Конец блока if ---
+                await engine.execute_triggers(triggers, context=trigger_context)
+                print(f"LocationManager: OnExit triggers executed for {entity_type} {entity_id}.")
+
+            except Exception as e:
+                print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
+                traceback.print_exc()
         elif triggers:
-             # ... остальная логика elif ...
-             pass
+            missing = []
+            if not engine: missing.append("RuleEngine (injected or in context)")
+            if missing:
+                print(f"LocationManager: Warning: OnExit triggers defined for location {location_id} (guild {guild_id_str}), but missing dependencies: {', '.join(missing)}.")
 
     async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None:
          """Обработка игрового тика для локаций для определенной гильдии."""
