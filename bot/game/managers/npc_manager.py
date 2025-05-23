@@ -187,58 +187,109 @@ class NpcManager:
     async def create_npc(
         self,
         guild_id: str, # Обязательный аргумент guild_id
-        npc_template_id: str,
+        npc_template_id: str, # This will be used as archetype_id if campaign_loader is present
         location_id: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[str]:
         """Создает нового NPC для определенной гильдии."""
         guild_id_str = str(guild_id)
-        print(f"NpcManager: Creating NPC from template '{npc_template_id}' at location {location_id} for guild {guild_id_str}...")
+        archetype_id_to_load = npc_template_id # Assume npc_template_id is the archetype_id for loading
+        
+        print(f"NpcManager: Creating NPC from template/archetype '{archetype_id_to_load}' at location {location_id} for guild {guild_id_str}...")
 
         if self._db_adapter is None:
             print(f"NpcManager: No DB adapter available for guild {guild_id_str}.")
-            # In multi-guild, this might require different handling if DB is crucial
             return None
 
-        # Генерация статов через RuleEngine (используем инжектированный, если есть, иначе из kwargs)
-        rule_engine = self._rule_engine or kwargs.get('rule_engine') # type: Optional["RuleEngine"]
-        stats: Dict[str, Any] = {"strength":5,"dexterity":5,"intelligence":5} # Default stats
+        # Initialize base data from kwargs or defaults
+        npc_id = str(uuid.uuid4())
+        base_name = kwargs.get('name', f"NPC_{npc_id[:8]}")
+        base_stats = kwargs.get('stats', {})
+        base_inventory = kwargs.get('inventory', [])
+        base_archetype_name = kwargs.get('archetype', "commoner")
+        base_traits = kwargs.get('traits', [])
+        base_desires = kwargs.get('desires', [])
+        base_motives = kwargs.get('motives', [])
+        base_backstory = kwargs.get('backstory', "")
+
+        # Attempt to load and apply archetype data from CampaignLoader
+        campaign_loader: Optional["CampaignLoader"] = kwargs.get('campaign_loader')
+        archetype_data_loaded: Optional[Dict[str, Any]] = None
+
+        if campaign_loader and hasattr(campaign_loader, 'get_npc_archetypes'):
+            try:
+                all_archetypes: List[Dict[str, Any]] = campaign_loader.get_npc_archetypes()
+                if isinstance(all_archetypes, list):
+                    for arch_data in all_archetypes:
+                        if isinstance(arch_data, dict) and arch_data.get('id') == archetype_id_to_load:
+                            archetype_data_loaded = arch_data
+                            print(f"NpcManager: Found archetype data for '{archetype_id_to_load}' in guild {guild_id_str}.")
+                            break
+                    if not archetype_data_loaded:
+                        print(f"NpcManager: Archetype '{archetype_id_to_load}' not found in campaign data for guild {guild_id_str}.")
+                else:
+                    print(f"NpcManager: Warning: campaign_loader.get_npc_archetypes() did not return a list for guild {guild_id_str}.")
+            except Exception as e:
+                print(f"NpcManager: Error loading NPC archetypes via CampaignLoader for guild {guild_id_str}: {e}")
+                traceback.print_exc()
+
+        # Layering: kwargs > archetype_data > generated/default
+        final_name = kwargs.get('name', archetype_data_loaded.get('name', base_name) if archetype_data_loaded else base_name)
+        
+        # Stats: Start with RuleEngine, then layer archetype, then layer specific kwargs
+        rule_engine = self._rule_engine or kwargs.get('rule_engine')
+        final_stats: Dict[str, Any] = {"strength":5,"dexterity":5,"intelligence":5} # Default initial
         if rule_engine and hasattr(rule_engine, 'generate_initial_npc_stats'):
             try:
-                # Assume generate_initial_npc_stats accepts template_id, guild_id, and context
-                # RuleEngine.generate_initial_npc_stats(npc_template_id: str, guild_id: str, **kwargs: Any) -> Dict[str, Any]
                 generated_stats = await rule_engine.generate_initial_npc_stats(
-                    npc_template_id=npc_template_id,
-                    guild_id=guild_id_str, # Pass guild_id
-                    **kwargs # Pass remaining context
+                    npc_template_id=archetype_id_to_load, # Pass archetype_id as template_id
+                    guild_id=guild_id_str,
+                    **kwargs
                 )
                 if isinstance(generated_stats, dict):
-                    stats = generated_stats
+                    final_stats.update(generated_stats)
             except Exception as e:
-                print(f"NpcManager: Error generating NPC stats for guild {guild_id_str}: {e}")
-                traceback.print_exc() # Log the error but proceed with default stats
+                print(f"NpcManager: Error generating NPC stats via RuleEngine for guild {guild_id_str}: {e}")
+                traceback.print_exc()
+
+        if archetype_data_loaded and isinstance(archetype_data_loaded.get('stats'), dict):
+            final_stats.update(archetype_data_loaded['stats']) # Archetype stats layer over RE
+        if base_stats: # Specific stats from kwargs layer over everything
+            final_stats.update(base_stats)
+
+        final_inventory = kwargs.get('inventory', archetype_data_loaded.get('inventory', base_inventory) if archetype_data_loaded else base_inventory)
+        final_archetype_name = kwargs.get('archetype', archetype_data_loaded.get('archetype', base_archetype_name) if archetype_data_loaded else base_archetype_name)
+        final_traits = kwargs.get('traits', archetype_data_loaded.get('traits', base_traits) if archetype_data_loaded else base_traits)
+        final_desires = kwargs.get('desires', archetype_data_loaded.get('desires', base_desires) if archetype_data_loaded else base_desires)
+        final_motives = kwargs.get('motives', archetype_data_loaded.get('motives', base_motives) if archetype_data_loaded else base_motives)
+        final_backstory = kwargs.get('backstory', archetype_data_loaded.get('backstory', base_backstory) if archetype_data_loaded else base_backstory)
+
 
         try:
-            npc_id = str(uuid.uuid4())
             data: Dict[str, Any] = {
                 'id': npc_id,
-                'template_id': npc_template_id,
-                'name': kwargs.get('name', f"NPC_{npc_id[:8]}"), # Optional name override from kwargs
-                'guild_id': guild_id_str, # <--- Add guild_id
-                'location_id': location_id, # Can be None
-                'stats': stats,
-                'inventory': [], # List of item IDs or objects? Needs consistency. Assuming List[str] (item IDs) based on remove_item_from_inventory.
+                'template_id': archetype_id_to_load, # Store the archetype/template ID used
+                'name': final_name,
+                'guild_id': guild_id_str,
+                'location_id': location_id,
+                'stats': final_stats,
+                'inventory': final_inventory,
                 'current_action': None,
                 'action_queue': [],
-                'party_id': None, # Can be None
-                'state_variables': kwargs.get('state_variables', {}), # Allow initial state from kwargs
-                'health': kwargs.get('health', 50.0), # Allow initial health from kwargs
-                'max_health': kwargs.get('max_health', 50.0), # Allow initial max_health from kwargs
-                'is_alive': kwargs.get('is_alive', True), # Allow initial is_alive from kwargs
-                'status_effects': [], # List of status effect IDs? Needs consistency. Assuming List[str].
+                'party_id': None,
+                'state_variables': kwargs.get('state_variables', {}),
+                'health': kwargs.get('health', float(final_stats.get('max_health', 50.0))), # Default health to max_health from stats if available
+                'max_health': kwargs.get('max_health', float(final_stats.get('max_health', 50.0))),
+                'is_alive': kwargs.get('is_alive', True),
+                'status_effects': [],
                 'is_temporary': bool(kwargs.get('is_temporary', False)),
+                'archetype': final_archetype_name,
+                'traits': final_traits,
+                'desires': final_desires,
+                'motives': final_motives,
+                'backstory': final_backstory,
             }
-            npc = NPC.from_dict(data) # Requires NPC.from_dict
+            npc = NPC.from_dict(data)
 
             # ИСПРАВЛЕНИЕ: Добавляем в per-guild кеш
             self._npcs.setdefault(guild_id_str, {})[npc_id] = npc
@@ -715,8 +766,8 @@ class NpcManager:
              print(f"NpcManager: Upserting {len(npcs_to_save)} NPCs for guild {guild_id_str}...")
              upsert_sql = '''
              INSERT OR REPLACE INTO npcs
-             (id, template_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, is_temporary)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             (id, template_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype, traits, desires, motives, backstory)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              '''
              data_to_upsert = []
              upserted_npc_ids: Set[str] = set() # Keep track of successfully prepared IDs
@@ -779,6 +830,11 @@ class NpcManager:
                            int(bool(is_alive)), # Save bool as integer (0 or 1)
                            status_json,
                            int(bool(is_temporary)), # Save bool as integer (0 or 1)
+                        getattr(npc, 'archetype', "commoner"),
+                        json.dumps(getattr(npc, 'traits', [])),
+                        json.dumps(getattr(npc, 'desires', [])),
+                        json.dumps(getattr(npc, 'motives', [])),
+                        getattr(npc, 'backstory', "")
                        ))
                        upserted_npc_ids.add(str(npc_id)) # Track IDs prepared for upsert
 
@@ -830,7 +886,7 @@ class NpcManager:
         try:
             # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
             sql = '''
-            SELECT id, template_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, is_temporary
+            SELECT id, template_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype, traits, desires, motives, backstory
             FROM npcs WHERE guild_id = ?
             '''
             rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
@@ -906,10 +962,28 @@ class NpcManager:
                      data['status_effects'] = []
 
                 # Convert boolean/numeric types, handle potential None/malformed data
-                data['health'] = float(data.get('health', 50.0)) if isinstance(data.get('health'), (int, float)) else 50.0
-                data['max_health'] = float(data.get('max_health', 50.0)) if isinstance(data.get('max_health'), (int, float)) else 50.0
-                data['is_alive'] = bool(data.get('is_alive', 0)) if data.get('is_alive') is not None else True # Default to True
-                data['is_temporary'] = bool(data.get('is_temporary', 0)) if data.get('is_temporary') is not None else False # Default to False
+                data['health'] = float(data.get('health', 50.0)) if data.get('health') is not None else 50.0
+                data['max_health'] = float(data.get('max_health', 50.0)) if data.get('max_health') is not None else 50.0
+                data['is_alive'] = bool(int(data.get('is_alive', 1))) if data.get('is_alive') is not None else True
+                data['is_temporary'] = bool(int(data.get('is_temporary', 0))) if data.get('is_temporary') is not None else False
+                
+                data['archetype'] = data.get('archetype', "commoner")
+                try:
+                    data['traits'] = json.loads(data.get('traits') or '[]') if isinstance(data.get('traits'), (str, bytes)) else []
+                except (json.JSONDecodeError, TypeError):
+                    print(f"NpcManager: Warning: Failed to parse traits for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('traits')}")
+                    data['traits'] = []
+                try:
+                    data['desires'] = json.loads(data.get('desires') or '[]') if isinstance(data.get('desires'), (str, bytes)) else []
+                except (json.JSONDecodeError, TypeError):
+                    print(f"NpcManager: Warning: Failed to parse desires for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('desires')}")
+                    data['desires'] = []
+                try:
+                    data['motives'] = json.loads(data.get('motives') or '[]') if isinstance(data.get('motives'), (str, bytes)) else []
+                except (json.JSONDecodeError, TypeError):
+                    print(f"NpcManager: Warning: Failed to parse motives for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('motives')}")
+                    data['motives'] = []
+                data['backstory'] = data.get('backstory', "")
 
 
                 # Ensure required object IDs are strings or None

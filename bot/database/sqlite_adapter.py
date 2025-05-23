@@ -248,23 +248,6 @@ class SqliteAdapter:
         """Миграция с Версии 0 (пустая БД) на Версию 1 (начальная схема)."""
         print("SqliteAdapter: Running v0 to v1 migration (creating initial tables)...")
 
-        # Добавляем DROP TABLE IF EXISTS для всех таблиц перед CREATE, чтобы обеспечить чистую миграцию
-        # (ОСТОРОЖНО: Удаляет все данные при каждой миграции с 0 на 1. Удалите это в production!)
-        await cursor.execute('''DROP TABLE IF EXISTS characters;''')
-        await cursor.execute('''DROP TABLE IF EXISTS events;''')
-        await cursor.execute('''DROP TABLE IF EXISTS npcs;''')
-        await cursor.execute('''DROP TABLE IF EXISTS locations;''')
-        await cursor.execute('''DROP TABLE IF EXISTS item_templates;''')
-        await cursor.execute('''DROP TABLE IF EXISTS items;''')
-        await cursor.execute('''DROP TABLE IF EXISTS combats;''')
-        await cursor.execute('''DROP TABLE IF EXISTS statuses;''')
-        await cursor.execute('''DROP TABLE IF EXISTS global_state;''')
-        await cursor.execute('''DROP TABLE IF EXISTS timers;''')
-        await cursor.execute('''DROP TABLE IF EXISTS crafting_queues;''')
-        await cursor.execute('''DROP TABLE IF EXISTS market_inventories;''')
-        await cursor.execute('''DROP TABLE IF EXISTS parties;''')
-
-
         # Убедитесь, что здесь перечислены ВСЕ таблицы со ВСЕМИ необходимыми колонками
         # Character Table
         await cursor.execute('''
@@ -284,7 +267,9 @@ class SqliteAdapter:
                 max_health REAL DEFAULT 100.0,
                 is_alive INTEGER DEFAULT 1, -- 0 or 1
                 status_effects TEXT DEFAULT '[]', -- JSON [{status_type: ..., duration: ..., applied_at: ..., state_variables: {...}}, ...]
-                -- Дополнительные колонки по необходимости
+                level INTEGER DEFAULT 1,
+                experience INTEGER DEFAULT 0,
+                active_quests TEXT DEFAULT '[]', -- JSON list of quest IDs
                 created_at REAL NOT NULL DEFAULT (strftime('%s','now')), -- Unix timestamp as REAL
                 last_played_at REAL NULL, -- <-- Конец колонок. Далее ограничения.
                 -- UNIQUE ограничения в пределах гильдии
@@ -292,6 +277,20 @@ class SqliteAdapter:
                 UNIQUE(name, guild_id) -- <--- Последнее ограничение. БЕЗ ЗАПЯТОЙ перед ');'
             );
         ''')
+        # Add new columns to characters if they don't exist (for existing databases)
+        # These will only succeed if the columns don't already exist.
+        try:
+            await cursor.execute("ALTER TABLE characters ADD COLUMN level INTEGER DEFAULT 1;")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e): raise
+        try:
+            await cursor.execute("ALTER TABLE characters ADD COLUMN experience INTEGER DEFAULT 0;")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e): raise
+        try:
+            await cursor.execute("ALTER TABLE characters ADD COLUMN active_quests TEXT DEFAULT '[]';")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e): raise
 
         # Event Table
         await cursor.execute('''
@@ -334,10 +333,36 @@ class SqliteAdapter:
                 max_health REAL DEFAULT 100.0,
                 is_alive INTEGER DEFAULT 1, -- 0 or 1
                 status_effects TEXT DEFAULT '[]', -- JSON
-                is_temporary INTEGER DEFAULT 0 -- <--- Конец колонок (если UNIQUE закомментировано). БЕЗ ЗАПЯТОЙ
-                -- UNIQUE(name, guild_id) -- Optional, depends on game rules -- <-- Если раскомментировано, должна быть запятая после is_temporary
+                is_temporary INTEGER DEFAULT 0,
+                archetype TEXT DEFAULT 'commoner',
+                traits TEXT DEFAULT '[]', -- JSON list of strings
+                desires TEXT DEFAULT '[]', -- JSON list of strings
+                motives TEXT DEFAULT '[]', -- JSON list of strings
+                backstory TEXT DEFAULT '' -- <--- Конец колонок (если UNIQUE закомментировано). БЕЗ ЗАПЯТОЙ
+                -- UNIQUE(name, guild_id) -- Optional, depends on game rules -- <-- Если раскомментировано, должна быть запятая после backstory
             );
         ''')
+        # Add new columns to npcs if they don't exist (for existing databases)
+        try:
+            await cursor.execute("ALTER TABLE npcs ADD COLUMN archetype TEXT DEFAULT 'commoner';")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e): raise
+        try:
+            await cursor.execute("ALTER TABLE npcs ADD COLUMN traits TEXT DEFAULT '[]';")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e): raise
+        try:
+            await cursor.execute("ALTER TABLE npcs ADD COLUMN desires TEXT DEFAULT '[]';")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e): raise
+        try:
+            await cursor.execute("ALTER TABLE npcs ADD COLUMN motives TEXT DEFAULT '[]';")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e): raise
+        try:
+            await cursor.execute("ALTER TABLE npcs ADD COLUMN backstory TEXT DEFAULT '';")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e): raise
 
         # Location Template Table (PER-GUILD - Modified to add guild_id)
         await cursor.execute('''
@@ -501,7 +526,59 @@ class SqliteAdapter:
             );
         ''')
 
-        # Add more tables as needed (e.g., recipes, skills, quests, dialogue_states)
+        # Quests Table
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS quests (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'available',
+                influence_level TEXT DEFAULT 'local',
+                prerequisites TEXT DEFAULT '[]', -- JSON list
+                connections TEXT DEFAULT '{}', -- JSON dict
+                stages TEXT DEFAULT '{}', -- JSON dict for stages data
+                rewards TEXT DEFAULT '{}', -- JSON dict
+                npc_involvement TEXT DEFAULT '{}', -- JSON dict
+                guild_id TEXT NOT NULL,
+                created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+                updated_at REAL NOT NULL DEFAULT (strftime('%s','now'))
+            );
+        ''')
+
+        # Relationships Table
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS relationships (
+                id TEXT PRIMARY KEY,
+                entity1_id TEXT NOT NULL,
+                entity1_type TEXT NOT NULL,
+                entity2_id TEXT NOT NULL,
+                entity2_type TEXT NOT NULL,
+                relationship_type TEXT DEFAULT 'neutral',
+                strength REAL DEFAULT 0.0,
+                details TEXT DEFAULT '',
+                guild_id TEXT NOT NULL,
+                updated_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+                UNIQUE(entity1_id, entity1_type, entity2_id, entity2_type, guild_id)
+            );
+        ''')
+
+        # Game Log Entries Table
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS game_log_entries (
+                id TEXT PRIMARY KEY,
+                timestamp REAL NOT NULL,
+                guild_id TEXT NOT NULL,
+                entry_type TEXT NOT NULL,
+                actor_id TEXT,
+                actor_type TEXT,
+                target_id TEXT,
+                target_type TEXT,
+                description TEXT NOT NULL,
+                details TEXT DEFAULT '{}' -- JSON dict
+            );
+        ''')
+
+        # Add more tables as needed (e.g., recipes, skills, dialogue_states)
 
         print("SqliteAdapter: v0 to v1 migration complete.")
 
