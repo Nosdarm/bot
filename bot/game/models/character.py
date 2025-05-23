@@ -29,6 +29,9 @@ class Character:
                  max_health: float = 100.0,
                  is_alive: bool = True,
                  status_effects: List[Dict[str, Any]] = None, # Убедитесь, что default=[]
+                 level: int = 1,
+                 experience: int = 0,
+                 active_quests: List[str] = None,
                  # Примите любые другие атрибуты, которые могут быть в DB схеме или создаются
                  **kwargs: Any # Для гибкости, если появятся новые поля
                 ):
@@ -48,6 +51,9 @@ class Character:
         self.max_health = max_health
         self.is_alive = is_alive
         self.status_effects = status_effects if status_effects is not None else []
+        self.level = level
+        self.experience = experience
+        self.active_quests = active_quests if active_quests is not None else []
 
         # Обработка любых дополнительных kwargs
         for key, value in kwargs.items():
@@ -89,6 +95,9 @@ class Character:
                  max_health=data.get('max_health'),
                  is_alive=data.get('is_alive'),
                  status_effects=data.get('status_effects'),
+                 level=data.get('level', 1),
+                 experience=data.get('experience', 0),
+                 active_quests=data.get('active_quests', []),
                  # Передайте любые другие атрибуты, которые __init__ может ожидать
                  # Если в __init__ есть **kwargs, можно передать остальные ключи словаря так:
                  # **{k: v for k, v in data.items() if k not in ['id', 'discord_user_id', 'name', 'guild_id', ...]}
