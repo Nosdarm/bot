@@ -1294,6 +1294,650 @@ class CommandRouter:
             traceback.print_exc()
             await send_callback(f"An error occurred while trying to craft the item: {e}")
 
+
+    @command("steal")
+    async def handle_steal(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Allows the player to attempt to steal from a target NPC.
+        Usage: {prefix}steal <target_npc_id_or_name>
+        """
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found for handle_steal.")
+            return
+
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id')
+
+        if not guild_id:
+            await send_callback("The /steal command can only be used on a server.")
+            return
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+
+        if not args:
+            await send_callback(f"Usage: {self._command_prefix}steal <target_npc_id_or_name>")
+            return
+
+        target_identifier = args[0]
+
+        char_manager = context.get('character_manager')
+        npc_manager = context.get('npc_manager')
+        char_action_processor = context.get('character_action_processor')
+
+        if not char_manager or not npc_manager or not char_action_processor:
+            await send_callback("Error: Required game systems (character, NPC, or action processing) are unavailable.")
+            print("CommandRouter: Missing one or more managers/processors for handle_steal.")
+            return
+
+        try:
+            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            if not player_char:
+                await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
+                return
+            
+            character_id = player_char.id
+
+            # Find the target NPC
+            target_npc = npc_manager.get_npc(guild_id, target_identifier)
+            if not target_npc:
+                if hasattr(npc_manager, 'get_npc_by_name'):
+                    target_npc = npc_manager.get_npc_by_name(guild_id, target_identifier)
+                if not target_npc:
+                    await send_callback(f"NPC '{target_identifier}' not found in this realm.")
+                    return
+            
+            target_npc_id = target_npc.id
+            target_npc_name = getattr(target_npc, 'name', target_identifier)
+
+            # Call CharacterActionProcessor to initiate the steal attempt
+            success = await char_action_processor.process_steal_action(
+                character_id=character_id,
+                target_id=target_npc_id,
+                target_type="NPC", # Currently only supporting NPC targets
+                context=context
+            )
+
+            # process_steal_action itself will notify "You attempt to steal..."
+            # The actual success/failure message comes when the action completes.
+            if not success:
+                await send_callback(f"Could not initiate steal attempt on {target_npc_name}.")
+                
+        except ValueError: # For int(author_id_str)
+            await send_callback("Invalid user ID format.")
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_steal for target '{target_identifier}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while trying to steal: {e}")
+
+
+    @command("fight")
+    async def handle_fight(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Initiates combat with a target NPC.
+        Usage: {prefix}fight <target_npc_id_or_name>
+        """
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found for handle_fight.")
+            return
+
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id')
+        channel_id = message.channel.id # Combat will occur in the command's channel
+
+        if not guild_id:
+            await send_callback("The /fight command can only be used on a server.")
+            return
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+
+        if not args:
+            await send_callback(f"Usage: {self._command_prefix}fight <target_npc_id_or_name>")
+            return
+
+        target_identifier = args[0]
+
+        char_manager = context.get('character_manager')
+        npc_manager = context.get('npc_manager')
+        loc_manager = context.get('location_manager')
+        combat_manager = context.get('combat_manager')
+        rule_engine = context.get('rule_engine') # For eligibility checks
+
+        if not char_manager or not npc_manager or not loc_manager or not combat_manager or not rule_engine:
+            await send_callback("Error: Required game systems for combat are unavailable.")
+            print("CommandRouter: Missing one or more managers for handle_fight.")
+            return
+
+        try:
+            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            if not player_char:
+                await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
+                return
+            
+            character_id = player_char.id
+            current_location_id = getattr(player_char, 'location_id', None)
+            if not current_location_id:
+                await send_callback("Your character isn't in a location where combat can occur.")
+                return
+
+            # Find the target NPC
+            target_npc = npc_manager.get_npc(guild_id, target_identifier)
+            if not target_npc:
+                if hasattr(npc_manager, 'get_npc_by_name'):
+                    target_npc = npc_manager.get_npc_by_name(guild_id, target_identifier)
+                if not target_npc:
+                    await send_callback(f"NPC '{target_identifier}' not found.")
+                    return
+            
+            target_npc_id = target_npc.id
+            target_npc_name = getattr(target_npc, 'name', target_identifier)
+
+            # 1. Location Check
+            npc_location_id = getattr(target_npc, 'location_id', None)
+            if npc_location_id != current_location_id:
+                player_loc_name = loc_manager.get_location_name(guild_id, current_location_id) if loc_manager else current_location_id
+                npc_loc_name = loc_manager.get_location_name(guild_id, npc_location_id) if loc_manager else npc_location_id
+                await send_callback(f"{target_npc_name} is not here. You are in {player_loc_name}, and they are in {npc_loc_name}.")
+                return
+
+            # 2. Eligibility Check (Already in combat?)
+            if combat_manager.get_combat_by_participant_id(guild_id, character_id):
+                await send_callback("You are already in combat!")
+                return
+            if combat_manager.get_combat_by_participant_id(guild_id, target_npc_id):
+                await send_callback(f"{target_npc_name} is already in combat with someone else.")
+                return
+            
+            # 3. (Optional) RuleEngine check for combat permissibility
+            # if hasattr(rule_engine, 'can_initiate_combat') and \
+            #    not await rule_engine.can_initiate_combat(player_char, target_npc, context=context):
+            #     await send_callback(f"You cannot initiate combat with {target_npc_name} at this time or place.")
+            #     return
+
+            # Initiate combat
+            participant_ids = [(character_id, "Character"), (target_npc_id, "NPC")]
+            
+            new_combat_instance = await combat_manager.start_combat(
+                guild_id=guild_id,
+                location_id=current_location_id,
+                participant_ids=participant_ids,
+                channel_id=channel_id, 
+                **context 
+            )
+
+            if new_combat_instance:
+                # CombatManager.start_combat should ideally send the initial combat message.
+                print(f"CommandRouter: Combat initiated by {character_id} against {target_npc_id} in guild {guild_id}, channel {channel_id}.")
+                # Example: await send_callback(f"⚔️ You attack {target_npc_name}! Combat has begun in channel <#{new_combat_instance.channel_id if new_combat_instance.channel_id else channel_id}>!")
+            else:
+                await send_callback(f"Could not start combat with {target_npc_name}. They might be too powerful, or something went wrong.")
+                
+        except ValueError: 
+            await send_callback("Invalid user ID format.")
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_fight against '{target_identifier}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while trying to initiate combat: {e}")
+
+
+    @command("hide")
+    async def handle_hide(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Allows the player to attempt to hide in their current location."""
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found for handle_hide.")
+            return
+
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id')
+
+        if not guild_id:
+            await send_callback("The /hide command can only be used on a server.")
+            return
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+
+        char_manager = context.get('character_manager')
+        char_action_processor = context.get('character_action_processor')
+
+        if not char_manager or not char_action_processor:
+            await send_callback("Error: Required game systems (character or action processing) are unavailable.")
+            print("CommandRouter: Missing character_manager or char_action_processor for handle_hide.")
+            return
+
+        try:
+            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            if not player_char:
+                await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
+                return
+            
+            character_id = player_char.id
+
+            # Call CharacterActionProcessor to initiate the hide attempt
+            success = await char_action_processor.process_hide_action(
+                character_id=character_id,
+                context=context
+            )
+
+            # process_hide_action itself will notify "You attempt to find a hiding spot..."
+            # The actual success/failure message comes when the action completes.
+            if not success:
+                # This might occur if the character is busy or another pre-check in process_hide_action fails.
+                await send_callback("Could not attempt to hide at this time. You might be busy or in an unsuitable location.")
+                
+        except ValueError: # For int(author_id_str)
+            await send_callback("Invalid user ID format.")
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_hide: {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while trying to hide: {e}")
+
+
+    @command("steal")
+    async def handle_steal(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Allows the player to attempt to steal from a target NPC.
+        Usage: {prefix}steal <target_npc_id_or_name>
+        """
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found for handle_steal.")
+            return
+
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id')
+
+        if not guild_id:
+            await send_callback("The /steal command can only be used on a server.")
+            return
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+
+        if not args:
+            await send_callback(f"Usage: {self._command_prefix}steal <target_npc_id_or_name>")
+            return
+
+        target_identifier = args[0]
+
+        char_manager = context.get('character_manager')
+        npc_manager = context.get('npc_manager')
+        char_action_processor = context.get('character_action_processor')
+        loc_manager = context.get('location_manager') # For location check
+
+        if not char_manager or not npc_manager or not char_action_processor or not loc_manager:
+            await send_callback("Error: Required game systems (character, NPC, action processing, or location) are unavailable.")
+            print("CommandRouter: Missing one or more managers/processors for handle_steal.")
+            return
+
+        try:
+            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            if not player_char:
+                await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
+                return
+            
+            character_id = player_char.id
+
+            # Find the target NPC
+            target_npc = npc_manager.get_npc(guild_id, target_identifier)
+            if not target_npc:
+                if hasattr(npc_manager, 'get_npc_by_name'): # Check if method exists
+                    target_npc = npc_manager.get_npc_by_name(guild_id, target_identifier)
+                if not target_npc:
+                    await send_callback(f"NPC '{target_identifier}' not found in this realm.")
+                    return
+            
+            target_npc_id = target_npc.id
+            target_npc_name = getattr(target_npc, 'name', target_identifier)
+
+            # Location Check: Ensure stealer and target are in the same location.
+            player_loc_id = getattr(player_char, 'location_id', None)
+            target_loc_id = getattr(target_npc, 'location_id', None)
+
+            if not player_loc_id:
+                await send_callback("You don't seem to be in any location.")
+                return
+            if player_loc_id != target_loc_id:
+                await send_callback(f"{target_npc_name} is not in your current location.")
+                return
+
+            # Call CharacterActionProcessor to initiate the steal attempt
+            success = await char_action_processor.process_steal_action(
+                character_id=character_id,
+                target_id=target_npc_id,
+                target_type="NPC", # Currently only supporting NPC targets
+                context=context
+            )
+
+            # process_steal_action itself will notify "You attempt to steal..."
+            # The actual success/failure message comes when the action completes.
+            if not success:
+                # This might occur if the character is busy or another pre-check in process_steal_action fails.
+                await send_callback(f"Could not attempt to steal from {target_npc_name} at this time. You might be busy.")
+                
+        except ValueError: # For int(author_id_str)
+            await send_callback("Invalid user ID format.")
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_steal for target '{target_identifier}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while trying to steal: {e}")
+
+
+    @command("use")
+    async def handle_use(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Allows the player to use an item from their inventory, optionally on a target.
+        Usage: {prefix}use <item_instance_id> [target_id]
+        Note: If target_id is an NPC, it will be assumed. If it's another player, that needs specific handling or target_type.
+        """
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found for handle_use.")
+            return
+
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id')
+
+        if not guild_id:
+            await send_callback("The /use command can only be used on a server.")
+            return
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+
+        if not args:
+            await send_callback(f"Usage: {self._command_prefix}use <item_instance_id> [target_id]")
+            return
+
+        item_instance_id = args[0]
+        target_id: Optional[str] = None
+        target_type: Optional[str] = None # Could be 'NPC', 'Character', 'Self', or even 'Item' (e.g. sharpening stone on a sword)
+
+        if len(args) > 1:
+            target_id = args[1]
+            # Basic type inference: if target_id is the user's own character_id or "self", it's "Character"
+            # If it's an NPC ID, it's "NPC". This might need more robust target parsing in future.
+            # For now, let's assume if target_id is provided, it's an NPC unless it's "self".
+            # More complex targeting might require a target_type argument or more sophisticated parsing.
+            # We will primarily rely on CharacterActionProcessor and RuleEngine to validate the target.
+
+
+        char_manager = context.get('character_manager')
+        char_action_processor = context.get('character_action_processor')
+        npc_manager = context.get('npc_manager') # Needed to infer target_type if target_id is an NPC
+
+        if not char_manager or not char_action_processor or not npc_manager:
+            await send_callback("Error: Required game systems (character, action processing, or NPC) are unavailable.")
+            print("CommandRouter: Missing one or more managers/processors for handle_use.")
+            return
+
+        try:
+            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            if not player_char:
+                await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
+                return
+            character_id = player_char.id
+
+            # Infer target_type if target_id is provided
+            if target_id:
+                if target_id.lower() == "self" or target_id == character_id:
+                    target_id = character_id
+                    target_type = "Character"
+                elif npc_manager.get_npc(guild_id, target_id): # Check if it's a known NPC ID
+                    target_type = "NPC"
+                # else, could be another player character ID - CharacterActionProcessor would need to handle that
+                # For now, if not self and not a known NPC, we can leave target_type as None or default to Character
+                # and let RuleEngine validate if the item can be used on that type of target.
+                # If target_type remains None, RuleEngine must be able to handle it (e.g. for items that don't need specific typed target).
+                # For simplicity, if a target_id is given and it's not 'self' or a known NPC, we'll assume it's a Character ID.
+                # This is a simplification; more robust target validation is needed for a full system.
+                elif char_manager.get_character(guild_id, target_id): # Check if it's another character
+                     target_type = "Character"
+                else:
+                    # If target_id is provided but not identified as self, NPC, or other Character, it's ambiguous
+                    # For items that *require* a specific type of target, RuleEngine will fail it.
+                    # For items that don't care or can target "environment", this might be fine.
+                    print(f"CommandRouter: Target '{target_id}' for /use command is not self, a known NPC, or another known Character. Target type remains undetermined by CommandRouter.")
+                    # We'll pass target_id, and target_type as None or its current value. RuleEngine must validate.
+
+
+            success = await char_action_processor.process_use_item_action(
+                character_id=character_id,
+                item_instance_id=item_instance_id,
+                target_id=target_id,
+                target_type=target_type,
+                context=context
+            )
+
+            if not success:
+                # process_use_item_action should have sent a specific reason if it could.
+                await send_callback(f"Could not use item '{item_instance_id}'. You might be busy, not own the item, or the target is invalid.")
+                
+        except ValueError: # For int(author_id_str)
+            await send_callback("Invalid user ID format.")
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_use for item '{item_instance_id}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while trying to use the item: {e}")
+
+
+    @command("gm")
+    async def handle_gm(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """GM-level commands for managing the game.
+        Usage:
+        {prefix}gm save_state - Manually triggers a save of the current guild's game state.
+        {prefix}gm create_npc <template_id> [location_id] [name] [is_temporary (true/false)] - Creates an NPC.
+        {prefix}gm delete_npc <npc_id> - Deletes an NPC.
+        {prefix}gm relationships inspect <entity_id> - Inspects relationships for an entity.
+        {prefix}gm load_campaign [campaign_id] - Loads campaign data for the current guild.
+        """
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback: # Should ideally not happen if context is built correctly
+            print("CommandRouter: Error: send_to_command_channel not found in context for handle_gm.")
+            return
+
+        author_id_str = str(message.author.id) # Ensure it's a string for comparison
+        
+        # GM Access Control
+        # Ensure GM IDs from settings are strings for comparison
+        gm_ids = [str(gm_id) for gm_id in self._settings.get('bot_admins', [])] 
+        if author_id_str not in gm_ids:
+            await send_callback("Access Denied: This command is for GMs only.")
+            return
+
+        if not args:
+            doc_string = self.handle_gm.__doc__.format(prefix=self._command_prefix)
+            await send_callback(f"Usage: {self._command_prefix}gm <subcommand> [arguments]\nAvailable subcommands:\n{doc_string}")
+            return
+
+        subcommand = args[0].lower()
+        gm_args = args[1:] # Arguments for the GM subcommand
+
+        guild_id = context.get('guild_id') # Most GM commands will be guild-specific
+
+        if subcommand == "save_state":
+            # guild_id is already fetched
+            persistence_manager = context.get('persistence_manager') # Type: Optional["PersistenceManager"]
+            
+            if not guild_id: # This command must be used in a server context
+                await send_callback("Error: This GM command must be used in a server channel.")
+                return
+
+            if not persistence_manager:
+                await send_callback("Error: PersistenceManager is not available. Cannot save state.")
+                print("CommandRouter: GM save_state failed - PersistenceManager missing from context.")
+                return
+            
+            try:
+                # Pass the full context as kwargs for save_game_state, as it might need other managers.
+                # save_game_state expects a list of guild_ids.
+                await persistence_manager.save_game_state(guild_ids=[guild_id], **context)
+                await send_callback(f"✅ Game state saving process initiated for this guild ({guild_id}).")
+                print(f"CommandRouter: GM {author_id_str} initiated save_state for guild {guild_id}.")
+            except Exception as e:
+                print(f"CommandRouter: Error during GM save_state for guild {guild_id}: {e}")
+                traceback.print_exc()
+                await send_callback(f"❌ An error occurred during game state save: {e}")
+        
+        
+        elif subcommand == "create_npc":
+            if not guild_id:
+                await send_callback("Error: This GM command must be used in a server channel.")
+                return
+            if not gm_args:
+                await send_callback(f"Usage: {self._command_prefix}gm create_npc <template_id> [location_id] [name] [is_temporary (true/false)]")
+                return
+            
+            template_id = gm_args[0]
+            loc_id = gm_args[1] if len(gm_args) > 1 else None
+            npc_name_arg = gm_args[2] if len(gm_args) > 2 else None
+            is_temp_str = gm_args[3].lower() if len(gm_args) > 3 else "false"
+            is_temporary_bool = is_temp_str == "true"
+
+            npc_manager = context.get('npc_manager')
+            if not npc_manager:
+                await send_callback("Error: NpcManager is not available.")
+                return
+            
+            # Optional: Spawn at GM's character current location if loc_id is None
+            # char_manager = context.get('character_manager')
+            # if loc_id is None and char_manager and author_id_str:
+            #    gm_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            #    if gm_char: loc_id = getattr(gm_char, 'location_id', None)
+
+            created_npc_id = await npc_manager.create_npc(
+                guild_id=guild_id,
+                npc_template_id=template_id,
+                location_id=loc_id,
+                name=npc_name_arg, 
+                is_temporary=is_temporary_bool,
+                # state_variables={}, # Example: if NpcManager.create_npc supports more kwargs
+                **context # Pass full context
+            )
+            if created_npc_id:
+                new_npc = npc_manager.get_npc(guild_id, created_npc_id)
+                display_name = getattr(new_npc, 'name', template_id) if new_npc else template_id
+                await send_callback(f"NPC '{display_name}' (ID: `{created_npc_id}`) created successfully at location `{getattr(new_npc, 'location_id', 'N/A')}`.")
+            else:
+                await send_callback(f"Failed to create NPC from template '{template_id}'.")
+
+        elif subcommand == "delete_npc":
+            if not guild_id:
+                await send_callback("Error: This GM command must be used in a server channel.")
+                return
+            if not gm_args:
+                await send_callback(f"Usage: {self._command_prefix}gm delete_npc <npc_id>")
+                return
+            
+            npc_id_to_delete = gm_args[0]
+            npc_manager = context.get('npc_manager')
+            if not npc_manager:
+                await send_callback("Error: NpcManager is not available.")
+                return
+
+            removed_id = await npc_manager.remove_npc(guild_id, npc_id_to_delete, **context)
+            if removed_id:
+                await send_callback(f"NPC `{removed_id}` has been removed.")
+            else:
+                await send_callback(f"Failed to remove NPC `{npc_id_to_delete}`. It might not exist or an error occurred.")
+
+        elif subcommand == "relationships" or subcommand == "rel":
+            if not gm_args:
+                await send_callback(f"Usage: {self._command_prefix}gm {subcommand} inspect <entity_id>")
+                return
+            
+            operation = gm_args[0].lower()
+            if operation == "inspect":
+                if len(gm_args) < 2:
+                    await send_callback(f"Usage: {self._command_prefix}gm {subcommand} inspect <entity_id>")
+                    return
+                entity_id_to_inspect = gm_args[1]
+                
+                relationship_manager = context.get('relationship_manager')
+                if not relationship_manager:
+                    await send_callback("Error: RelationshipManager is not available.")
+                    return
+                
+                if not guild_id: 
+                    await send_callback("Error: This command must be used in a server context.")
+                    return
+
+                try:
+                    # Attempt to get entity name for better message
+                    entity_name = entity_id_to_inspect
+                    char_mgr = context.get('character_manager')
+                    npc_mgr = context.get('npc_manager')
+                    # Check if it's a character
+                    char_obj = char_mgr.get_character(guild_id, entity_id_to_inspect) if char_mgr else None
+                    if char_obj:
+                        entity_name = getattr(char_obj, 'name', entity_id_to_inspect)
+                    else: # If not a character, check if it's an NPC
+                        npc_obj = npc_mgr.get_npc(guild_id, entity_id_to_inspect) if npc_mgr else None
+                        if npc_obj:
+                            entity_name = getattr(npc_obj, 'name', entity_id_to_inspect)
+                    
+                    relations = await relationship_manager.get_relationships_for_entity(guild_id, entity_id_to_inspect, context=context)
+                    
+                    if relations:
+                        response = f"**Relationships for {entity_name} (`{entity_id_to_inspect}`):**\n"
+                        for rel in relations:
+                            target_id_val = rel.get('target_id', 'Unknown Target') 
+                            # Attempt to get target name for better display
+                            target_name_str = target_id_val 
+                            if char_mgr and char_mgr.get_character(guild_id, target_id_val):
+                                target_name_str = getattr(char_mgr.get_character(guild_id, target_id_val), 'name', target_id_val)
+                            elif npc_mgr and npc_mgr.get_npc(guild_id, target_id_val):
+                                target_name_str = getattr(npc_mgr.get_npc(guild_id, target_id_val), 'name', target_id_val)
+                            
+                            rel_type = rel.get('type', 'unknown')
+                            strength = rel.get('strength', 0.0)
+                            response += f"- With **{target_name_str}** (`{target_id_val}`): Type: `{rel_type}`, Strength: `{strength:.1f}`\n"
+                        
+                        # Discord message length limit is 2000 characters
+                        if len(response) > 1950: 
+                            response = response[:1950] + "\n... (message truncated due to length)"
+                        await send_callback(response)
+                    else:
+                        await send_callback(f"No specific relationships found for {entity_name} (`{entity_id_to_inspect}`).")
+                except Exception as e:
+                    print(f"CommandRouter: Error during GM relationships inspect for {entity_id_to_inspect}: {e}")
+                    traceback.print_exc()
+                    await send_callback(f"An error occurred: {e}")
+            else:
+                await send_callback(f"Unknown operation for relationships: '{operation}'. Try 'inspect'.")
+        
+        elif subcommand == "load_campaign":
+            if not guild_id: # Requires a guild context for campaign loading
+                await send_callback("Error: Campaign loading is guild-specific and must be run in a server channel.")
+                return
+
+            campaign_identifier = gm_args[0] if gm_args else None # Optional: specific campaign file/ID
+            
+            persistence_manager = context.get('persistence_manager')
+            if not persistence_manager:
+                await send_callback("Error: PersistenceManager is not available. Cannot load campaign.")
+                return
+
+            try:
+                # This method name is a placeholder for what will be implemented in PersistenceManager (Task V.2)
+                if hasattr(persistence_manager, 'trigger_campaign_load_and_distribution'):
+                    await send_callback(f"Initiating campaign load for '{campaign_identifier or 'default'}' in guild {guild_id}...")
+                    # The actual heavy lifting is in Task V.2. This is just the command hook.
+                    # The context here includes all managers for distribution by PersistenceManager.
+                    await persistence_manager.trigger_campaign_load_and_distribution(guild_id, campaign_identifier, **context)
+                    await send_callback(f"✅ Campaign data for '{campaign_identifier or 'default'}' processed for guild {guild_id}.")
+                else:
+                    await send_callback("Error: Campaign loading functionality is not fully implemented in PersistenceManager yet.")
+                    print(f"CommandRouter: GM load_campaign: PersistenceManager missing 'trigger_campaign_load_and_distribution'.")
+
+            except Exception as e:
+                print(f"CommandRouter: Error during GM load_campaign for guild {guild_id}: {e}")
+                traceback.print_exc()
+                await send_callback(f"❌ An error occurred during campaign load: {e}")
+        
+        else:
+            await send_callback(f"Unknown GM subcommand: '{subcommand}'. Use `{self._command_prefix}gm` for help.")
+
 def is_uuid_format(s: str) -> bool:
      """Проверяет, выглядит ли строка как UUID (простая проверка формата)."""
      if not isinstance(s, str):

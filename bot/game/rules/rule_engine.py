@@ -697,3 +697,164 @@ class RuleEngine:
             # Optional: Add logic for being caught here based on another roll or margin of failure
             # For now, simple failure.
             return {"success": False, "message": "Your attempt to steal was unsuccessful."}
+
+    async def resolve_hide_attempt(self, character: Character, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Resolves a character's attempt to hide in their current location.
+        Calculates success based on stealth vs. NPC perception and location modifiers.
+        """
+        print(f"RuleEngine: Resolving hide attempt for character {character.id}")
+
+        guild_id = getattr(character, 'guild_id', context.get('guild_id'))
+        if not guild_id:
+            return {"success": False, "message": "Cannot determine guild for hide attempt."}
+
+        location_manager: Optional["LocationManager"] = context.get('location_manager')
+        npc_manager: Optional["NpcManager"] = context.get('npc_manager')
+
+        if not location_manager:
+            return {"success": False, "message": "Location system unavailable, cannot attempt to hide."}
+        if not npc_manager:
+            return {"success": False, "message": "NPC system unavailable, cannot check for observers."} # Or allow hiding if no NPCs? Game design choice.
+
+        character_location_id = getattr(character, 'location_id', None)
+        if not character_location_id:
+            return {"success": False, "message": "You are not in a valid location to hide."}
+
+        # Get location details for hiding bonus
+        # Assuming LocationManager.get_location_instance or similar exists
+        # For simplicity, let's assume location properties are directly accessible or fetched if needed.
+        # This part might need adjustment based on how LocationManager provides location properties.
+        current_location_instance = location_manager.get_location_instance(guild_id, character_location_id)
+        hiding_bonus = 0
+        if current_location_instance and hasattr(current_location_instance, 'properties'):
+            hiding_bonus = current_location_instance.properties.get('hiding_bonus', 0)
+        
+        character_stealth = character.stats.get('stealth', 5)
+
+        # Check against NPCs in the same location
+        npcs_in_location = npc_manager.get_npcs_in_location(guild_id, character_location_id)
+        
+        detected_by_npc_name = None
+
+        for npc_observer in npcs_in_location:
+            if not getattr(npc_observer, 'is_alive', True): # Skip dead NPCs
+                continue
+
+            npc_perception = npc_observer.stats.get('perception', 5)
+            
+            # Calculate detection chance for this NPC
+            base_detection_chance = self._rules_data.get('hide_base_detection_chance_percent', 20.0)
+            perception_factor = self._rules_data.get('hide_perception_factor_percent', 5.0)
+            min_detection_chance = self._rules_data.get('hide_min_detection_chance_percent', 5.0)
+            max_detection_chance = self._rules_data.get('hide_max_detection_chance_percent', 95.0)
+
+            # Higher stealth, lower hiding_bonus = harder to detect
+            # Higher perception = easier to detect
+            detection_chance = base_detection_chance + (npc_perception - character_stealth - hiding_bonus) * perception_factor
+            detection_chance = max(min_detection_chance, min(detection_chance, max_detection_chance)) # Clamp
+
+            roll = random.uniform(0, 100)
+            
+            print(f"RuleEngine: Hide check against NPC {npc_observer.id} ({getattr(npc_observer, 'name', 'NPC')}): CharStealth={character_stealth}, NPCPerc={npc_perception}, LocBonus={hiding_bonus}, DetectChance={detection_chance:.2f}%, Roll={roll:.2f}")
+
+            if roll <= detection_chance:
+                detected_by_npc_name = getattr(npc_observer, 'name', npc_observer.id)
+                print(f"RuleEngine: Hide attempt FAILED. Detected by {detected_by_npc_name}.")
+                return {"success": False, "message": f"You couldn't find a good hiding spot; {detected_by_npc_name} noticed you!"}
+        
+        if detected_by_npc_name is None: # Not detected by any NPC
+            print(f"RuleEngine: Hide attempt SUCCEEDED for character {character.id}.")
+            # Actual application of "Hidden" status effect should be done by StatusManager via CharacterActionProcessor.complete_action
+            return {"success": True, "message": "You are now hidden."}
+        else:
+            # This case should technically be caught above, but as a fallback.
+            return {"success": False, "message": "You failed to hide effectively."}
+
+    async def resolve_item_use(self, character: Character, item_instance_data: Dict[str, Any], target_entity: Optional[Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Resolves the use of an item, determining its effects.
+        Does NOT apply effects directly, but returns them for CharacterActionProcessor.
+        """
+        guild_id = getattr(character, 'guild_id', context.get('guild_id'))
+        item_id = item_instance_data.get('id', 'Unknown Item ID') # Instance ID
+        item_template_id = item_instance_data.get('template_id')
+
+        print(f"RuleEngine: Resolving use of item instance {item_id} (Template: {item_template_id}) by char {character.id} in guild {guild_id}.")
+
+        item_manager: Optional["ItemManager"] = context.get('item_manager')
+        # status_manager: Optional["StatusManager"] = context.get('status_manager') # Not used directly here, effects are returned
+
+        if not item_manager:
+            return {"success": False, "message": "Item system unavailable.", "consumed": False}
+        if not guild_id:
+            return {"success": False, "message": "Cannot determine guild for item use.", "consumed": False}
+        if not item_template_id:
+            return {"success": False, "message": "Item data is corrupted (missing template ID).", "consumed": False}
+
+        item_template = item_manager.get_item_template(guild_id, item_template_id)
+        if not item_template:
+            return {"success": False, "message": "Unknown item template.", "consumed": False}
+
+        item_name = getattr(item_template, 'name', item_template_id)
+        item_properties = getattr(item_template, 'properties', {})
+        if not isinstance(item_properties, dict): item_properties = {} # Ensure it's a dict
+
+        effect_type = item_properties.get('effect_type')
+        target_required = item_properties.get('target_required', False) # Does the item need a target?
+
+        if target_required and not target_entity:
+            return {"success": False, "message": f"The {item_name} must be used on a target.", "consumed": False}
+
+        # Example 1: Health Potion (targets self, or target_entity if specified and item allows)
+        if effect_type == 'heal':
+            heal_amount = item_properties.get('heal_amount', 25)
+            # Default target is the character using the item
+            actual_target_id = character.id
+            if target_entity and item_properties.get('can_target_others', False): # Check if item can target others
+                actual_target_id = getattr(target_entity, 'id', character.id)
+            
+            message = f"You use the {item_name}."
+            if actual_target_id == character.id:
+                message += " You feel refreshed."
+            else:
+                target_name_str = getattr(target_entity, 'name', 'the target')
+                message += f" You use it on {target_name_str}."
+
+
+            return {
+                "success": True, 
+                "consumed": True, 
+                "message": message,
+                "effects": [{"type": "heal", "amount": heal_amount, "target_id": actual_target_id}]
+            }
+
+        # Example 2: Targeted status effect item
+        elif effect_type == 'apply_status':
+            if not target_entity: # Should have been caught by target_required, but double check
+                 return {"success": False, "message": f"The {item_name} must be used on a target.", "consumed": False}
+
+            status_to_apply = item_properties.get('status_type')
+            duration = item_properties.get('duration') # Can be None for permanent or default duration
+            
+            if not status_to_apply:
+                return {"success": False, "message": f"The {item_name} has an unknown status effect.", "consumed": False}
+
+            target_name_str = getattr(target_entity, 'name', 'the target')
+            return {
+                "success": True,
+                "consumed": True,
+                "message": f"You use the {item_name} on {target_name_str}.",
+                "effects": [{
+                    "type": "status", 
+                    "status_type": status_to_apply, 
+                    "duration": duration, 
+                    "target_id": getattr(target_entity, 'id', None),
+                    "source_id": character.id # User is the source
+                }]
+            }
+        
+        # TODO: Add more item effect types (e.g., 'damage', 'learn_recipe', 'summon_npc', 'modify_env')
+
+        # Default/Unusable
+        return {"success": False, "message": f"You can't figure out how to use the {item_name} right now.", "consumed": False}

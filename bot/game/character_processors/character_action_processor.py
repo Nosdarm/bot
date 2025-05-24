@@ -730,6 +730,128 @@ class CharacterActionProcessor:
 
                     elif target_type.lower() == 'npc' and not target_entity : # Only notify if target was NPC and not found
                         await self._notify_character(character_id, f"❌ Target {target_name} seems to have vanished before you could complete the theft.")
+
+            elif action_type == 'hide':
+                if not rule_engine or not hasattr(rule_engine, 'resolve_hide_attempt'):
+                    await self._notify_character(character_id, "❌ Cannot determine outcome of hiding: Rule system unavailable.")
+                    print(f"CharacterActionProcessor: RuleEngine or resolve_hide_attempt missing for 'hide' action completion for char {character_id}.")
+                else:
+                    # Pass the full context (kwargs) to resolve_hide_attempt
+                    hide_outcome = await rule_engine.resolve_hide_attempt(char, context=kwargs)
+                    
+                    outcome_message = hide_outcome.get('message', "You attempt to hide...") # Default message if none from outcome
+                    await self._notify_character(character_id, outcome_message)
+
+                    if hide_outcome.get('success'):
+                        if status_manager and hasattr(status_manager, 'add_status_effect_to_entity'):
+                            guild_id_for_status = getattr(char, 'guild_id', None)
+                            if guild_id_for_status:
+                                await status_manager.add_status_effect_to_entity(
+                                    target_id=char.id,
+                                    target_type="Character",
+                                    status_type="Hidden", # Standardized status type
+                                    duration=None,  # Persists until broken or a specific duration
+                                    source_id=char.id, # Self-inflicted status
+                                    guild_id=guild_id_for_status,
+                                    **kwargs # Pass full context for other potential needs
+                                )
+                                print(f"CharacterActionProcessor: 'Hidden' status applied to {character_id}.")
+                            else:
+                                print(f"CharacterActionProcessor: Warning: Could not determine guild_id for char {character_id} to apply 'Hidden' status.")
+                                await self._notify_character(character_id, "⚠️ Could not properly apply hidden status (guild error).")
+                        else:
+                            print(f"CharacterActionProcessor: Warning: StatusManager unavailable. Cannot apply 'Hidden' status to {character_id}.")
+                            await self._notify_character(character_id, "⚠️ You are hidden, but the effect couldn't be formally applied (system issue).")
+
+            elif action_type == 'use_item':
+                item_id = callback_data.get('item_id')
+                original_item_data = callback_data.get('original_item_data') # This is the item_instance_data
+                target_id_from_callback = callback_data.get('target_id')
+                target_type_from_callback = callback_data.get('target_type')
+                
+                user_char = char # char is the user of the item
+
+                if not item_id or not original_item_data:
+                    await self._notify_character(character_id, "❌ Error completing item use: Item information missing.")
+                elif not rule_engine or not hasattr(rule_engine, 'resolve_item_use'):
+                    await self._notify_character(character_id, "❌ Cannot determine item effect: Rule system unavailable.")
+                else:
+                    target_entity = None
+                    guild_id = getattr(user_char, 'guild_id', None)
+
+                    if not guild_id:
+                         await self._notify_character(character_id, "❌ Error using item: Cannot determine current guild.")
+                    else:
+                        if target_id_from_callback and target_type_from_callback:
+                            if target_type_from_callback.lower() == 'character':
+                                if self._character_manager and hasattr(self._character_manager, 'get_character'):
+                                    target_entity = self._character_manager.get_character(guild_id, target_id_from_callback)
+                            elif target_type_from_callback.lower() == 'npc':
+                                if npc_manager and hasattr(npc_manager, 'get_npc'):
+                                    target_entity = npc_manager.get_npc(guild_id, target_id_from_callback)
+                            # Add other entity types if items can target them
+
+                        # Call RuleEngine to resolve the item use
+                        # kwargs here is the context passed to complete_action
+                        use_outcome = await rule_engine.resolve_item_use(user_char, original_item_data, target_entity, context=kwargs)
+                        
+                        outcome_message = use_outcome.get('message', "You used the item.")
+                        await self._notify_character(character_id, outcome_message)
+
+                        if use_outcome.get('success'):
+                            # Apply effects
+                            for effect in use_outcome.get('effects', []):
+                                effect_type = effect.get('type')
+                                effect_target_id = effect.get('target_id', user_char.id) # Default to self if not specified in effect
+
+                                if effect_type == 'heal':
+                                    if self._character_manager and hasattr(self._character_manager, 'apply_health_change'):
+                                        # Assuming apply_health_change can handle both Character and NPC if target_id matches
+                                        await self._character_manager.apply_health_change(
+                                            guild_id, effect_target_id, effect.get('amount', 0), healer_id=character_id
+                                        )
+                                    else: print(f"CharacterActionProcessor: Warning: CharacterManager.apply_health_change not available for heal effect.")
+                                
+                                elif effect_type == 'status':
+                                    if status_manager and hasattr(status_manager, 'add_status_effect_to_entity'):
+                                        # Determine target_type for status effect if not explicitly provided by effect data
+                                        status_target_type = effect.get('target_type')
+                                        if not status_target_type: # Infer from target_entity or default to Character for self-target
+                                            if target_entity: status_target_type = target_entity.__class__.__name__ # 'Character' or 'NPC'
+                                            elif effect_target_id == user_char.id: status_target_type = "Character"
+                                            else: print(f"CharacterActionProcessor: Warning: Could not determine target_type for status effect on {effect_target_id}."); continue
+                                        
+                                        await status_manager.add_status_effect_to_entity(
+                                            target_id=effect_target_id,
+                                            target_type=status_target_type,
+                                            status_type=effect.get('status_type'),
+                                            duration=effect.get('duration'),
+                                            source_id=character_id,
+                                            guild_id=guild_id,
+                                            **kwargs # Pass context
+                                        )
+                                    else: print(f"CharacterActionProcessor: Warning: StatusManager.add_status_effect_to_entity not available for status effect.")
+                                # Add other effect processors here (e.g., damage, stat_modify)
+
+                            # Consume item if specified
+                            if use_outcome.get('consumed'):
+                                if item_manager and hasattr(item_manager, 'delete_item_instance'):
+                                    # This assumes item_manager.delete_item_instance also removes it from character's inventory list attribute
+                                    # If not, manual removal is needed here.
+                                    delete_success = await item_manager.delete_item_instance(guild_id, item_id, context=kwargs)
+                                    if delete_success:
+                                        # Explicitly remove from character's inventory list if ItemManager doesn't do it
+                                        if hasattr(user_char, 'inventory') and isinstance(user_char.inventory, list) and item_id in user_char.inventory:
+                                            user_char.inventory.remove(item_id)
+                                            self._character_manager.mark_character_dirty(guild_id, user_char.id)
+                                            print(f"CharacterActionProcessor: Item {item_id} explicitly removed from char {user_char.id} inventory list.")
+                                        print(f"CharacterActionProcessor: Item {item_id} consumed by {character_id}.")
+                                    else:
+                                        print(f"CharacterActionProcessor: Warning: Failed to delete consumed item {item_id} via ItemManager for {character_id}.")
+                                        await self._notify_character(character_id, "⚠️ The item should have been consumed, but an error occurred.")
+                                else:
+                                    print(f"CharacterActionProcessor: Warning: ItemManager.delete_item_instance not available. Cannot consume item {item_id} for {character_id}.")
+                                    await self._notify_character(character_id, "⚠️ Item consumption failed (system issue).")
             
             else:
                  print(f"CharacterActionProcessor: Warning: Unhandled individual action type '{action_type}' completed for character {character_id}. No specific completion logic executed.")
@@ -1012,6 +1134,127 @@ class CharacterActionProcessor:
         else:
             # start_action should handle notifications for busy state or other validation failures.
             print(f"CharacterActionProcessor: Failed to start/queue steal action for {character_id} on {target_type} {target_id}.")
+            return False
+
+    async def process_hide_action(self, character_id: str, context: Dict[str, Any]) -> bool:
+        """
+        Initiates a hide action for a character.
+        """
+        print(f"CharacterActionProcessor: Processing hide action for char {character_id}.")
+        
+        char = self._character_manager.get_character(character_id)
+        if not char:
+            print(f"CharacterActionProcessor: Error processing hide: Character {character_id} not found.")
+            # Cannot notify if char object is not found. Command handler should handle.
+            return False
+
+        # Construct action data
+        action_data = {
+            'type': 'hide',
+            'total_duration': 2.0,  # Example: 2 seconds to attempt to hide
+            'callback_data': {} 
+        }
+
+        # Attempt to start the action. start_action handles busy checks, duration calculation, etc.
+        # It also handles notifications for busy state.
+        # We pass the full context down, which includes all managers and the send_callback_factory.
+        action_started_or_queued = await self.start_action(character_id, action_data, **context)
+
+        if action_started_or_queued:
+            await self._notify_character(character_id, "🤫 You attempt to find a hiding spot...")
+            print(f"CharacterActionProcessor: Hide action for {character_id} successfully initiated/queued.")
+            return True
+        else:
+            # start_action would have sent a notification if the character was busy or if validation failed.
+            print(f"CharacterActionProcessor: Failed to start/queue hide action for {character_id}.")
+            return False
+
+    async def process_use_item_action(self, character_id: str, item_instance_id: str, target_entity_id: Optional[str], target_entity_type: Optional[str], context: Dict[str, Any]) -> bool:
+        """
+        Initiates a 'use_item' action for a character.
+        """
+        print(f"CharacterActionProcessor: Processing use_item action for char {character_id}, item {item_instance_id}, target: {target_entity_type} {target_entity_id}.")
+        
+        char = self._character_manager.get_character(character_id)
+        if not char:
+            print(f"CharacterActionProcessor: Error processing use_item: Character {character_id} not found.")
+            # Cannot notify if char object is not found. Command handler should handle.
+            return False
+
+        item_manager = context.get('item_manager', self._item_manager)
+        if not item_manager:
+            await self._notify_character(character_id, "❌ Item system is unavailable.")
+            print(f"CharacterActionProcessor: ItemManager not found in context or self for use_item action by char {character_id}.")
+            return False
+
+        # Verify Item Ownership
+        char_inventory = getattr(char, 'inventory', [])
+        if item_instance_id not in char_inventory:
+            await self._notify_character(character_id, "❌ You do not possess that item.")
+            print(f"CharacterActionProcessor: Item {item_instance_id} not in inventory of char {character_id}.")
+            return False
+
+        # Fetch item instance data
+        guild_id = getattr(char, 'guild_id', context.get('guild_id'))
+        if not guild_id:
+            await self._notify_character(character_id, "❌ Cannot determine current guild for item use.")
+            return False
+            
+        item_instance = item_manager.get_item(guild_id, item_instance_id) # This should return a dict or Item model instance
+        if not item_instance:
+            await self._notify_character(character_id, "❌ The item could not be found or is invalid.")
+            print(f"CharacterActionProcessor: Item instance {item_instance_id} not found via ItemManager for char {character_id}.")
+            return False
+        
+        item_template_id = getattr(item_instance, 'template_id', None)
+        if isinstance(item_instance, dict): # If get_item returns a dict
+            item_template_id = item_instance.get('template_id')
+
+
+        # Determine action duration
+        action_duration = 0.5 # Default quick use time
+        if self._rule_engine and item_template_id:
+            try:
+                action_duration = await self._rule_engine.calculate_action_duration(
+                    action_type='use_item',
+                    action_context={'item_template_id': item_template_id, 'item_id': item_instance_id},
+                    character=char,
+                    context=context # Pass the full context
+                )
+            except Exception as e:
+                print(f"CharacterActionProcessor: Error calculating 'use_item' duration: {e}")
+        
+        # Construct action data
+        action_data = {
+            'type': 'use_item',
+            'item_id': item_instance_id,
+            'item_template_id': item_template_id,
+            'target_id': target_entity_id,
+            'target_type': target_entity_type,
+            'total_duration': action_duration, 
+            'callback_data': {
+                'item_id': item_instance_id,
+                'original_item_data': dict(item_instance) if isinstance(item_instance, dict) else item_instance.to_dict() if hasattr(item_instance, 'to_dict') else {}, # Pass a copy of item data
+                'target_id': target_entity_id,
+                'target_type': target_entity_type
+            }
+        }
+
+        action_started_or_queued = await self.start_action(character_id, action_data, **context)
+
+        if action_started_or_queued:
+            item_name = "the item" # Default
+            if item_template_id:
+                item_template = item_manager.get_item_template(guild_id, item_template_id)
+                if item_template:
+                    item_name = getattr(item_template, 'name', item_template_id)
+            
+            await self._notify_character(character_id, f"You begin to use {item_name}...")
+            print(f"CharacterActionProcessor: use_item action for {character_id} (item: {item_instance_id}) successfully initiated/queued.")
+            return True
+        else:
+            print(f"CharacterActionProcessor: Failed to start/queue use_item action for {character_id} (item: {item_instance_id}).")
+            # start_action should handle specific notifications (e.g., busy)
             return False
 
 # Конец класса CharacterActionProcessor
