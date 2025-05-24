@@ -5,13 +5,13 @@ import traceback # Keep for potential future use, though not explicitly used in 
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.db.sqlite_adapter import SqliteAdapter
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.item_manager import ItemManager
-    from bot.game.rules.rule_engine import RuleEngine  # Changed path
+    from bot.game.engine.rule_engine import RuleEngine
     from bot.game.managers.relationship_manager import RelationshipManager
-    from bot.game.services.consequence_processor import ConsequenceProcessor  # Changed path
+    from bot.game.engine.consequence_processor import ConsequenceProcessor
     # The import for 'Quest' model is removed as per instruction 10, assuming dicts are used.
 
 class QuestManager:
@@ -253,151 +253,77 @@ class QuestManager:
 
         # print(f"Loaded {len(data)} active quests for character '{character_id_str}' in guild '{guild_id_str}'.")
 
-    async def save_state(self, guild_id: str, character_id: str) -> List[Dict[str, Any]]:
+    def save_state(self, guild_id: str, character_id: str) -> List[Dict[str, Any]]:
         """Saves active quests for a character. Returns a list of quest data objects."""
         guild_id_str = str(guild_id)
-        character_id_str = str(character_id)
+        if not self._db_adapter:
+            print(f"QuestManager: DB adapter missing for guild {guild_id_str}. Cannot save quest state.")
+            return
 
-        character_quests_map = self._active_quests.get(guild_id_str, {}).get(character_id_str, {})
+        dirty_char_ids = self._dirty_quests.get(guild_id_str, set()).copy()
+        if not dirty_char_ids:
+            self._dirty_quests.pop(guild_id_str, None) # Clean up empty set for guild
+            return # Nothing to save for this guild
+
+        print(f"QuestManager: Saving quest states for {len(dirty_char_ids)} characters in guild {guild_id_str}...")
         
-        # If serialization to JSON strings for specific fields is needed for DB storage:
-        # serialized_quests = []
-        # for quest_data in character_quests_map.values():
-        #     data_copy = quest_data.copy()
-        #     if "progress" in data_copy and isinstance(data_copy["progress"], dict):
-        #         data_copy["progress"] = json.dumps(data_copy["progress"]) # Serialize 'progress' to JSON string
-        #     serialized_quests.append(data_copy)
-        # return serialized_quests
-        
-        # The user's version of this file might have an `await self._db_adapter.execute_many(...)` call here.
-        # This version of the code does not, so we are only making the function async
-        # to satisfy the Pylance error reported by the user.
-        return list(character_quests_map.values())
+        all_quests_to_save = []
+        # We need to save all quests for dirty characters, not just active ones, 
+        # as some might have been completed or failed.
+        # However, the current structure only explicitly stores active quests in _active_quests.
+        # Completed quests are tracked by template_id in _completed_quests.
+        # Failed quests are not explicitly stored after being removed from active.
 
-    # Helper methods
-    def _build_consequence_context(self, guild_id: str, character_id: str, quest_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Builds the context dictionary for consequence processing."""
-        context = {
-            "guild_id": guild_id,
-            "character_id": character_id,
-            "quest": quest_data,
-            # Pass managers if they are available and needed by consequences
-        }
-        if self._npc_manager: context["npc_manager"] = self._npc_manager
-        if self._item_manager: context["item_manager"] = self._item_manager
-        if self._character_manager: context["character_manager"] = self._character_manager
-        if self._relationship_manager: context["relationship_manager"] = self._relationship_manager
-        # rule_engine is not typically part of context, but used by ConsequenceProcessor itself
-        return context
+        # This logic will only save currently "active" quests from the _active_quests cache
+        # for characters marked as dirty. If a quest was completed or failed, it's removed
+        # from _active_quests. We need a more robust way to save all states (active, completed, failed)
+        # if they are all meant to be persisted in the `character_quests` table with their final status.
 
-    def _are_all_objectives_complete(self, quest_data: Dict[str, Any]) -> bool:
-        """
-        Checks if all objectives for the quest are complete.
-        This is a placeholder and needs to be implemented based on objective structure.
-        Example:
-        for objective in quest_data.get("objectives", []):
-            obj_id = objective.get("id")
-            obj_type = objective.get("type")
-            required_count = objective.get("count")
+        # For now, this will save the current state of any quest still in _active_quests for a dirty character.
+        for char_id in list(dirty_char_ids): # Iterate a copy if we modify the set
+            active_guild_quests = self._active_quests.get(guild_id_str, {})
+            char_active_quests = active_guild_quests.get(char_id, {})
+            for quest_id, quest_data in char_active_quests.items():
+                 # Ensure we only save quests that belong to the current char_id being processed
+                if str(quest_data.get('character_id')) == char_id:
+                    all_quests_to_save.append((
+                        quest_id, # Active quest instance ID
+                        char_id,
+                        guild_id_str,
+                        quest_data.get('template_id'),
+                        quest_data.get('status', 'active'), # Should be 'active' if from this cache
+                        json.dumps(quest_data.get('objectives_status', [])),
+                        quest_data.get('start_time'),
+                        quest_data.get('completion_time') 
+                    ))
             
-            current_progress = quest_data.get("progress", {}).get(obj_id)
+            # How to handle completed/failed quests for saving?
+            # If a character completes/fails a quest, they are marked dirty.
+            # The quest is removed from _active_quests.
+            # If `character_quests` is meant to be the single source of truth for all states,
+            # we need to explicitly insert/update 'completed' or 'failed' records here.
+            # This simplified save_state currently doesn't do that robustly.
+            # It primarily saves the _active_quests cache.
 
-            if obj_type == "kill" or obj_type == "collect":
-                if not isinstance(current_progress, int) or current_progress < required_count:
-                    return False
-            # Add checks for other objective types (e.g., "reach_location", "talk_to_npc")
-            else: # Unknown objective type
-                print(f"Warning: Unknown objective type '{obj_type}' for objective '{obj_id}' in quest '{quest_data.get('id')}'.")
-                return False 
-        return True
-        """
-        # Simplified placeholder: assume true for now.
-        # In a real implementation, iterate through quest_data["objectives"]
-        # and check against quest_data["progress"].
-        print(f"Placeholder: _are_all_objectives_complete for quest {quest_data.get('id')} returning True.")
-        return True
+        if all_quests_to_save:
+            upsert_sql = """
+                INSERT OR REPLACE INTO character_quests 
+                (quest_id, character_id, guild_id, template_id, status, objectives_status, start_time, completion_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+            """
+            try:
+                await self._db_adapter.execute_many(upsert_sql, all_quests_to_save)
+                print(f"QuestManager: Successfully saved/updated {len(all_quests_to_save)} quest instances for guild {guild_id_str}.")
+            except Exception as e:
+                print(f"QuestManager: DB error saving quest states for guild {guild_id_str}: {e}")
+                traceback.print_exc()
+                return # Don't clear dirty flags if save failed
 
-    def update_quest_progress(self, guild_id: str, character_id: str, quest_id: str, objective_id: str, progress_update: Any) -> bool:
-        """
-        Updates the progress of a specific objective within an active quest.
-        `progress_update` could be an increment value, a boolean flag, or other data.
-        This method should also check for quest completion after progress update.
-        """
-        guild_id_str = str(guild_id)
-        character_id_str = str(character_id)
-        quest_id_str = str(quest_id)
-        objective_id_str = str(objective_id)
+        self._dirty_quests.pop(guild_id_str, None) # Clear dirty set for the guild after attempting save
 
-        quest_data = self._active_quests.get(guild_id_str, {}).get(character_id_str, {}).get(quest_id_str)
-        if not quest_data or quest_data.get("status") != "active":
-            print(f"Error: Active quest '{quest_id_str}' not found or not active for progress update.")
-            return False
-
-        # Find the objective to update
-        objective_to_update = None
-        for obj in quest_data.get("objectives", []):
-            if obj.get("id") == objective_id_str:
-                objective_to_update = obj
-                break
-        
-        if not objective_to_update:
-            print(f"Error: Objective '{objective_id_str}' not found in quest '{quest_id_str}'.")
-            return False
-
-        # Update progress (example for count-based objectives)
-        current_progress = quest_data.get("progress", {}).get(objective_id_str, 0)
-        obj_type = objective_to_update.get("type")
-
-        if obj_type in ["kill", "collect"]: # Assuming progress_update is an increment for these
-            if not isinstance(current_progress, (int, float)): current_progress = 0
-            if isinstance(progress_update, (int, float)):
-                 new_progress = current_progress + progress_update
-            else: # If progress_update is not a number, assume it's the new value
-                new_progress = progress_update
-        else: # For other types, progress_update might be a boolean or specific value
-            new_progress = progress_update 
-            
-        quest_data.setdefault("progress", {})[objective_id_str] = new_progress
-        # print(f"Progress for objective '{objective_id_str}' in quest '{quest_id_str}' updated to {new_progress}.")
-        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
-
-        # Check for quest completion
-        if self._are_all_objectives_complete(quest_data):
-            self.complete_quest(guild_id_str, character_id_str, quest_id_str)
-            # complete_quest handles consequences and state changes
-
-        return True
+    async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
+        """Rebuilds any runtime caches if necessary (e.g., mapping quest givers to quests)."""
+        print(f"QuestManager: Rebuilding runtime caches for guild {str(guild_id)} (Placeholder).")
+        pass
 
 
-    def get_dirty_character_ids(self, guild_id: str) -> Set[str]:
-        """Gets set of character IDs with changed quest states for a guild."""
-        return self._dirty_quests.get(str(guild_id), set()).copy() # Return a copy
-
-    def clear_dirty_character_ids(self, guild_id: str) -> None:
-        """Clears the set of dirty character IDs for a guild."""
-        if str(guild_id) in self._dirty_quests:
-            self._dirty_quests[str(guild_id)].clear()
-    
-    # Example of how guild-specific templates might be loaded if they were in a DB (conceptual)
-    # def _load_guild_specific_templates_from_db(self, guild_id: str) -> Dict[str, Any]:
-    #     if not self._db_adapter:
-    #         return {}
-    #     # This is a conceptual example. Actual table and column names would vary.
-    #     # Assumes a table 'guild_quest_templates' with 'guild_id', 'template_id', 'template_data_json'
-    #     try:
-    #         rows = self._db_adapter.fetchall_sync(
-    #             "SELECT template_id, template_data_json FROM guild_quest_templates WHERE guild_id = ?",
-    #             (guild_id,)
-    #         )
-    #         templates = {}
-    #         for row in rows:
-    #             try:
-    #                 template_data = json.loads(row[1]) # template_data_json column
-    #                 templates[str(row[0])] = template_data # template_id column
-    #             except json.JSONDecodeError:
-    #                 print(f"Error decoding quest template JSON for template_id '{row[0]}' in guild '{guild_id}'.")
-    #         return templates
-    #     except Exception as e: # Catch database errors or other issues
-    #         print(f"Error loading guild-specific quest templates from DB for guild '{guild_id}': {e}")
-    #         # Consider logging the full traceback using traceback.format_exc()
-    #         

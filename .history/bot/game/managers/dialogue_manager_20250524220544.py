@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.event_processors.event_stage_processor import EventStageProcessor
     from bot.game.managers.time_manager import TimeManager
-    from bot.services.openai_service import OpenAIService # Added import
     # Add other managers/services that might be in context kwargs (e.g., from CommandRouter/WSP)
     # from bot.game.managers.location_manager import LocationManager
     # from bot.game.managers.event_manager import EventManager
@@ -89,7 +88,6 @@ class DialogueManager:
         rule_engine: Optional["RuleEngine"] = None, # Use string literal!
         event_stage_processor: Optional["EventStageProcessor"] = None, # Use string literal!
         time_manager: Optional["TimeManager"] = None, # Use string literal!
-        openai_service: Optional["OpenAIService"] = None, # Added openai_service
         # Add other injected dependencies here with Optional and string literals
     ):
         print("Initializing DialogueManager...")
@@ -102,7 +100,6 @@ class DialogueManager:
         self._rule_engine = rule_engine
         self._event_stage_processor = event_stage_processor
         self._time_manager = time_manager
-        self._openai_service = openai_service # Assigned to instance variable
 
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
