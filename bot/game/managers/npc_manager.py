@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     # from bot.game.managers.event_manager import EventManager
     from bot.game.managers.location_manager import LocationManager # Нужен для create_npc default location?
     from bot.game.rules.rule_engine import RuleEngine
+    from bot.services.campaign_loader import CampaignLoader # Added for type hint
 
     # Добавляем процессоры, если они используются в аннотациях методов
     # from bot.game.character_processors.character_action_processor import CharacterActionProcessor
@@ -92,7 +93,7 @@ class NpcManager:
         combat_manager: Optional["CombatManager"] = None,
         dialogue_manager: Optional["DialogueManager"] = None,
         # event_manager: Optional["EventManager"] = None, # if needed
-        # location_manager: Optional["LocationManager"] = None, # if needed for default loc logic
+        location_manager: Optional["LocationManager"] = None, # if needed for default loc logic
     ):
         print("Initializing NpcManager...")
         self._db_adapter = db_adapter
@@ -107,7 +108,7 @@ class NpcManager:
         self._combat_manager = combat_manager
         self._dialogue_manager = dialogue_manager
         # self._event_manager = event_manager
-        # self._location_manager = location_manager # Store LocationManager if needed
+        self._location_manager = location_manager # Store LocationManager if needed
 
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
