@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 import json
-import uuid # Maybe needed for crafting task IDs? Or items? Not for queue ID.
+import uuid
 import traceback
 import asyncio
+import time # Added for timestamp in crafting task
 # Импорт базовых типов
 # ИСПРАВЛЕНИЕ: Импортируем необходимые типы из typing
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awaitable, Union # Added Union
@@ -187,7 +188,140 @@ class CraftingManager:
     # Needs guild_id, entity_id, entity_type, recipe_id, quantity, context
     # Should validate recipe, requirements (via RuleEngine), consume ingredients (via ItemManager),
     # add task to queue, mark queue dirty.
-    # async def add_to_queue(self, guild_id: str, entity_id: str, entity_type: str, recipe_id: str, quantity: int = 1, **kwargs: Any) -> bool: ...
+    async def add_recipe_to_craft_queue(self, guild_id: str, entity_id: str, entity_type: str, recipe_id: str, quantity: int, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Adds a recipe to the crafting queue for a specific entity.
+        Performs requirement checks, consumes ingredients, and then queues the task.
+        """
+        guild_id_str = str(guild_id)
+        entity_id_str = str(entity_id)
+        recipe_id_str = str(recipe_id)
+        print(f"CraftingManager: Attempting to add {quantity}x recipe '{recipe_id_str}' to queue for {entity_type} {entity_id_str} in guild {guild_id_str}.")
+
+        # Retrieve necessary managers from self or context
+        rule_engine: Optional["RuleEngine"] = context.get('rule_engine', self._rule_engine)
+        item_manager: Optional["ItemManager"] = context.get('item_manager', self._item_manager)
+        # CharacterManager and NpcManager are already attributes of self
+        time_manager: Optional["TimeManager"] = context.get('time_manager', self._time_manager)
+
+        if not rule_engine: return {"success": False, "message": "Crafting system (RuleEngine) is unavailable."}
+        if not item_manager: return {"success": False, "message": "Item system (ItemManager) is unavailable."}
+        if not self._character_manager and entity_type == "Character": return {"success": False, "message": "Character system is unavailable."}
+        if not self._npc_manager and entity_type == "NPC": return {"success": False, "message": "NPC system is unavailable."}
+        if not time_manager: return {"success": False, "message": "Time system (TimeManager) is unavailable."}
+
+        # Fetch the recipe
+        recipe = self.get_recipe(guild_id_str, recipe_id_str)
+        if not recipe:
+            return {"success": False, "message": f"Recipe '{recipe_id_str}' not found."}
+
+        recipe_name = recipe.get('name', recipe_id_str)
+
+        # --- 4. Requirement Checks ---
+        # Placeholder: Assume RuleEngine.check_crafting_requirements exists
+        # This method would check skills, tools, location, etc.
+        # For now, we'll assume it passes or implement a basic check.
+        if hasattr(rule_engine, 'check_crafting_requirements'):
+            try:
+                requirements_met, requirement_message = await rule_engine.check_crafting_requirements(
+                    entity_id_str, entity_type, recipe, context
+                )
+                if not requirements_met:
+                    return {"success": False, "message": requirement_message or f"Requirements not met for crafting {recipe_name}."}
+            except Exception as e:
+                print(f"CraftingManager: Error during rule_engine.check_crafting_requirements for {entity_id_str}, recipe {recipe_id_str}: {e}")
+                traceback.print_exc()
+                return {"success": False, "message": f"Error checking requirements for {recipe_name}."}
+        else:
+            print(f"CraftingManager: Warning: RuleEngine.check_crafting_requirements not implemented. Skipping requirement checks.")
+
+
+        # --- 5. Ingredient Checks & Consumption ---
+        ingredients_to_consume = []
+        for ingredient in recipe.get('ingredients', []):
+            item_template_id = ingredient.get('item_template_id')
+            required_quantity = ingredient.get('quantity', 0) * quantity # Total needed for all items
+            
+            if not item_template_id or required_quantity <= 0:
+                continue # Skip invalid ingredient entry
+
+            # Check if entity has enough items
+            # Placeholder: Assume ItemManager.entity_has_item_template_id exists
+            has_enough = False
+            if hasattr(item_manager, 'entity_has_item_template_id'):
+                try:
+                    has_enough = await item_manager.entity_has_item_template_id(
+                        entity_id_str, entity_type, item_template_id, required_quantity, context
+                    )
+                except Exception as e:
+                    print(f"CraftingManager: Error checking ingredients for {entity_id_str}, item {item_template_id}: {e}")
+                    traceback.print_exc()
+                    return {"success": False, "message": f"Error checking ingredients for {recipe_name}."}
+            else:
+                print(f"CraftingManager: Warning: ItemManager.entity_has_item_template_id not implemented. Cannot check ingredients.")
+                return {"success": False, "message": "Cannot verify ingredients due to system configuration."}
+
+
+            if not has_enough:
+                # Get item name for a nicer message
+                ingredient_template = item_manager.get_item_template(guild_id_str, item_template_id)
+                ingredient_name = getattr(ingredient_template, 'name', item_template_id) if ingredient_template else item_template_id
+                return {"success": False, "message": f"Insufficient ingredients: Missing {required_quantity}x {ingredient_name} for {recipe_name}."}
+            
+            ingredients_to_consume.append({'item_template_id': item_template_id, 'quantity': required_quantity})
+
+        # All ingredient checks passed, now consume them
+        for item_to_consume in ingredients_to_consume:
+            # Placeholder: Assume ItemManager.remove_item_from_entity_inventory_by_template_id exists
+            if hasattr(item_manager, 'remove_item_from_entity_inventory_by_template_id'):
+                try:
+                    removed_count = await item_manager.remove_item_from_entity_inventory_by_template_id(
+                        entity_id_str, entity_type, item_to_consume['item_template_id'], item_to_consume['quantity'], context
+                    )
+                    if removed_count < item_to_consume['quantity']:
+                        # This should ideally not happen if has_enough check was correct and atomic.
+                        # Could indicate a race condition or logic error.
+                        print(f"CraftingManager: CRITICAL: Failed to consume enough {item_to_consume['item_template_id']} for {entity_id_str}. Expected {item_to_consume['quantity']}, got {removed_count}.")
+                        # Attempt to roll back consumed items (complex, not implemented here) or fail.
+                        return {"success": False, "message": f"Critical error consuming ingredients for {recipe_name}. Please contact an admin."}
+                except Exception as e:
+                    print(f"CraftingManager: Error consuming ingredients for {entity_id_str}, item {item_to_consume['item_template_id']}: {e}")
+                    traceback.print_exc()
+                    return {"success": False, "message": f"Error consuming ingredients for {recipe_name}."}
+            else:
+                print(f"CraftingManager: Warning: ItemManager.remove_item_from_entity_inventory_by_template_id not implemented. Cannot consume ingredients.")
+                return {"success": False, "message": "Cannot consume ingredients due to system configuration."}
+        
+        print(f"CraftingManager: Ingredients consumed successfully for {entity_id_str}, recipe {recipe_id_str}.")
+
+        # --- 6. Task Creation ---
+        total_duration = float(recipe.get('time', 10.0)) * quantity # Total time for all items
+        current_game_time = time_manager.get_current_game_time(guild_id_str) # Assuming this is synchronous for now
+
+        task = {
+            'task_id': str(uuid.uuid4()),
+            'recipe_id': recipe_id_str,
+            'quantity': quantity,
+            'progress': 0.0,
+            'total_duration': total_duration,
+            'added_at': current_game_time 
+        }
+
+        # --- 7. Add to Queue ---
+        guild_queues_cache = self._crafting_queues.setdefault(guild_id_str, {})
+        # Ensure entity_id_str is used as key
+        entity_queue_data = guild_queues_cache.setdefault(entity_id_str, {'entity_id': entity_id_str, 'entity_type': entity_type, 'guild_id': guild_id_str, 'queue': [], 'state_variables': {}})
+        
+        # Ensure 'queue' key exists and is a list
+        if not isinstance(entity_queue_data.get('queue'), list):
+            entity_queue_data['queue'] = []
+            
+        entity_queue_data['queue'].append(task)
+        self.mark_queue_dirty(guild_id_str, entity_id_str) # Use string entity_id
+
+        print(f"CraftingManager: Task {task['task_id']} for recipe {recipe_id_str} (x{quantity}) added to queue for {entity_type} {entity_id_str}. Queue length: {len(entity_queue_data['queue'])}.")
+        
+        return {"success": True, "message": f"✅ Started crafting {quantity}x {recipe_name}. It has been added to your queue."}
 
 
     # TODO: Implement process_tick method

@@ -658,6 +658,79 @@ class CharacterActionProcessor:
             #          print(f"CharacterActionProcessor: Warning: Combat action completed for {character_id} in combat {combat_id}, but CombatManager or method not available.")
             #          # TODO: Логировать ошибку?
 
+            elif action_type == 'steal':
+                target_id = callback_data.get('target_id')
+                target_type = callback_data.get('target_type')
+                target_name = callback_data.get('target_name', target_id) # Use stored name
+
+                if not target_id or not target_type:
+                    await self._notify_character(character_id, "❌ Error completing steal: Target information missing.")
+                elif not rule_engine or not hasattr(rule_engine, 'resolve_steal_attempt'):
+                    await self._notify_character(character_id, f"❌ Cannot determine outcome of stealing from {target_name}: Rule system unavailable.")
+                else:
+                    target_entity = None
+                    guild_id = getattr(char, 'guild_id', None) # Get guild_id from character
+
+                    if not guild_id:
+                        await self._notify_character(character_id, "❌ Error completing steal: Cannot determine current guild.")
+                    elif target_type.lower() == 'npc':
+                        if npc_manager and hasattr(npc_manager, 'get_npc'):
+                            target_entity = npc_manager.get_npc(guild_id, target_id)
+                        else:
+                            await self._notify_character(character_id, f"❌ Cannot verify target {target_name}: NPC system unavailable.")
+                    # TODO: Add support for stealing from other entity types (e.g., containers)
+                    else:
+                        await self._notify_character(character_id, f"❌ Stealing from target type '{target_type}' is not supported.")
+
+                    if target_entity:
+                        # Pass the full context (kwargs) which includes all managers
+                        steal_outcome = await rule_engine.resolve_steal_attempt(char, target_entity, context=kwargs)
+                        
+                        outcome_message = steal_outcome.get('message', f"You attempted to steal from {target_name}.")
+                        await self._notify_character(character_id, outcome_message)
+
+                        if steal_outcome.get('success') and steal_outcome.get('stolen_item_id'):
+                            stolen_item_id = steal_outcome['stolen_item_id']
+                            stolen_item_name = steal_outcome.get('stolen_item_name', 'an item')
+                            
+                            if item_manager and hasattr(item_manager, 'move_item'):
+                                # Move item to stealer's inventory
+                                move_success = await item_manager.move_item(
+                                    item_id=stolen_item_id,
+                                    new_owner_id=character_id,
+                                    new_owner_type='Character',
+                                    new_location_id=None, # No longer on ground/in container if owned
+                                    guild_id=guild_id,
+                                    **kwargs # Pass context
+                                )
+                                if move_success:
+                                    # ItemManager.move_item should handle adding to character's inventory list
+                                    # and marking character dirty.
+                                    # Now, explicitly remove from target's inventory list and mark target dirty.
+                                    if hasattr(target_entity, 'inventory') and isinstance(target_entity.inventory, list):
+                                        try:
+                                            target_entity.inventory.remove(stolen_item_id)
+                                            if target_type.lower() == 'npc' and npc_manager and hasattr(npc_manager, 'mark_npc_dirty'):
+                                                npc_manager.mark_npc_dirty(guild_id, target_id)
+                                            # TODO: Handle Character target inventory and dirty marking
+                                            print(f"CharacterActionProcessor: Item {stolen_item_id} removed from target {target_id}'s inventory list.")
+                                        except ValueError:
+                                            print(f"CharacterActionProcessor: Warning: Stolen item {stolen_item_id} not found in target {target_id}'s inventory list for removal.")
+                                    
+                                    await self._notify_character(character_id, f"🎒 You obtained {stolen_item_name}!")
+                                else:
+                                    await self._notify_character(character_id, f"⚠️ You managed to snatch {stolen_item_name}, but there was an issue placing it in your inventory.")
+                            else:
+                                await self._notify_character(character_id, f"⚠️ Item system unavailable to finalize theft of {stolen_item_name}.")
+                        
+                        # Optional: Process other consequences from steal_outcome
+                        # if steal_outcome.get('consequences') and 'consequence_processor' in kwargs:
+                        #     con_proc = kwargs['consequence_processor']
+                        #     await con_proc.process_consequences(guild_id, steal_outcome['consequences'], source_entity_id=character_id, target_entity_id=target_id, event_context=kwargs)
+
+                    elif target_type.lower() == 'npc' and not target_entity : # Only notify if target was NPC and not found
+                        await self._notify_character(character_id, f"❌ Target {target_name} seems to have vanished before you could complete the theft.")
+            
             else:
                  print(f"CharacterActionProcessor: Warning: Unhandled individual action type '{action_type}' completed for character {character_id}. No specific completion logic executed.")
                  await self._notify_character(character_id, f"Действие '{action_type}' завершено.")
@@ -810,5 +883,135 @@ class CharacterActionProcessor:
         # process_tick пометил персонажа как dirty, если прогресс изменился.
         # complete_action пометил персонажа как dirty, если действие завершилось и/или очередь изменилась.
 
+    async def process_move_action(self, character_id: str, target_location_id: str, context: Dict[str, Any]) -> bool:
+        """
+        Initiates a move action for a character.
+        This method is typically called by a command handler (e.g., CommandRouter.handle_move).
+        """
+        print(f"CharacterActionProcessor: Processing move action for char {character_id} to loc {target_location_id}.")
+        char = self._character_manager.get_character(character_id)
+        if not char:
+            print(f"CharacterActionProcessor: Error processing move: Character {character_id} not found.")
+            # No character, so cannot notify. Command handler should inform user.
+            return False
+
+        # Construct action data
+        action_data = {
+            'type': 'move',
+            'target_location_id': target_location_id,
+            # 'total_duration' will be calculated by self.start_action using RuleEngine
+            'callback_data': {'target_location_id': target_location_id} # For complete_action
+        }
+
+        # Attempt to start the action. start_action handles busy checks, duration calculation, etc.
+        # It also handles notifications for busy state.
+        # We pass the full context down, which includes all managers and the send_callback_factory.
+        action_started_or_queued = await self.start_action(character_id, action_data, **context)
+
+        if action_started_or_queued:
+            location_manager = context.get('location_manager', self._location_manager)
+            location_name = target_location_id # Default to ID if name not found
+            if location_manager and hasattr(location_manager, 'get_location_name'):
+                # Assuming get_location_name might need guild_id from character or context
+                guild_id = getattr(char, 'guild_id', context.get('guild_id'))
+                if guild_id:
+                    name_from_manager = location_manager.get_location_name(guild_id, target_location_id)
+                    if name_from_manager: location_name = name_from_manager
+                else:
+                    print(f"CharacterActionProcessor: Warning: Could not determine guild_id for location name lookup during move notification for char {character_id}.")
+
+
+            # Check if the action was immediately started or queued.
+            # self.start_action returns True if started or queued.
+            # We can check char.current_action to see if it's immediate.
+            current_char_action = getattr(char, 'current_action', None)
+            if current_char_action and current_char_action.get('type') == 'move' and current_char_action.get('target_location_id') == target_location_id:
+                await self._notify_character(character_id, f"🚶 Вы начинаете движение к локации '{location_name}'.")
+            else: # Action was likely queued or another error occurred that start_action handled by returning False
+                 # If start_action returned True but it was queued, this message is still okay.
+                 # If start_action returned False, this notification won't be sent.
+                await self._notify_character(character_id, f"🚶 Запрос на перемещение к локации '{location_name}' принят.")
+            
+            print(f"CharacterActionProcessor: Move action for {character_id} to {target_location_id} successfully initiated/queued.")
+            return True
+        else:
+            # start_action would have sent a notification if the character was busy.
+            # If it failed for other reasons (e.g., validation within start_action),
+            # start_action should ideally notify or this method should.
+            # For now, assuming start_action handles its own failure notifications.
+            print(f"CharacterActionProcessor: Failed to start/queue move action for {character_id} to {target_location_id}.")
+            # await self._notify_character(character_id, f"❌ Не удалось начать движение к локации '{target_location_id}'.") # This might be redundant if start_action notifies.
+            return False
+
+    async def process_steal_action(self, character_id: str, target_id: str, target_type: str, context: Dict[str, Any]) -> bool:
+        """
+        Initiates a steal action for a character against a target entity.
+        """
+        print(f"CharacterActionProcessor: Processing steal action by char {character_id} on target {target_type} {target_id}.")
+        
+        char = self._character_manager.get_character(character_id)
+        if not char:
+            print(f"CharacterActionProcessor: Error processing steal: Character {character_id} not found.")
+            # Cannot notify if char object is not found. Command handler should handle.
+            return False
+
+        # Retrieve target entity
+        target_entity = None
+        target_name = target_id # Default to ID
+        
+        if target_type.lower() == 'npc':
+            npc_manager = context.get('npc_manager', self._npc_manager)
+            if not npc_manager:
+                await self._notify_character(character_id, "❌ NPC system is unavailable for stealing.")
+                return False
+            target_entity = npc_manager.get_npc(getattr(char, 'guild_id', None), target_id)
+            if target_entity: target_name = getattr(target_entity, 'name', target_id)
+        # TODO: Extend here for other target types like 'container' or 'player_character'
+        else:
+            await self._notify_character(character_id, f"❌ Cannot steal from target type '{target_type}'.")
+            return False
+
+        if not target_entity:
+            await self._notify_character(character_id, f"❌ Target '{target_id}' ({target_type}) not found.")
+            return False
+
+        # Location Check
+        location_manager = context.get('location_manager', self._location_manager)
+        if not location_manager:
+            await self._notify_character(character_id, "❌ Location system is unavailable for stealing.")
+            return False
+            
+        char_loc_id = getattr(char, 'location_id', None)
+        target_loc_id = getattr(target_entity, 'location_id', None)
+
+        if char_loc_id != target_loc_id:
+            char_loc_name = location_manager.get_location_name(getattr(char, 'guild_id', None), char_loc_id) or "Unknown Location"
+            target_loc_name = location_manager.get_location_name(getattr(target_entity, 'guild_id', None), target_loc_id) or "an unknown place"
+            await self._notify_character(character_id, f"❌ You must be in the same location as {target_name} to steal. You are in {char_loc_name}, they are in {target_loc_name}.")
+            return False
+
+        # Construct action data
+        action_data = {
+            'type': 'steal',
+            'target_id': target_id,
+            'target_type': target_type,
+            'total_duration': 0.1,  # Stealing is a quick attempt.
+            'callback_data': {  # To pass to complete_action
+                'target_id': target_id,
+                'target_type': target_type,
+                'target_name': target_name # Store for notification in complete_action
+            }
+        }
+
+        action_started_or_queued = await self.start_action(character_id, action_data, **context)
+
+        if action_started_or_queued:
+            await self._notify_character(character_id, f"🤫 You attempt to steal from {target_name}...")
+            print(f"CharacterActionProcessor: Steal action for {character_id} on {target_type} {target_id} successfully initiated/queued.")
+            return True
+        else:
+            # start_action should handle notifications for busy state or other validation failures.
+            print(f"CharacterActionProcessor: Failed to start/queue steal action for {character_id} on {target_type} {target_id}.")
+            return False
 
 # Конец класса CharacterActionProcessor
