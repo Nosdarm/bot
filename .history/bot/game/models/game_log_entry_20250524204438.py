@@ -147,3 +147,4 @@ if __name__ == '__main__':
     print("Log 5 Actor ID (was None):", log5.actor_id)
     print("Log 5 Details (was None, now {}):", log5.details)
     print("Log 5 Dict:", log5.to_dict())
+```
