@@ -142,3 +142,4 @@ if __name__ == '__main__':
     quest_from_dict_no_id = Quest.from_dict({"name": "From Dict No ID", "guild_id": "test_guild"})
     print(f"Quest from_dict (no id in data) ID: {quest_from_dict_no_id.id}, Name: {quest_from_dict_no_id.name}")
 
+```
