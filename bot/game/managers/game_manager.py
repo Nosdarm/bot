@@ -51,6 +51,15 @@ if TYPE_CHECKING:
     from bot.game.command_handlers.party_handler import PartyCommandHandler # <--- ТИПИЗАЦИЯ PartyCommandHandler
     # Роутер команд
     from bot.game.command_router import CommandRouter
+    
+    # Новые менеджеры и сервисы для TYPE_CHECKING
+    from bot.game.managers.quest_manager import QuestManager
+    from bot.game.managers.relationship_manager import RelationshipManager
+    from bot.game.managers.dialogue_manager import DialogueManager
+    from bot.game.managers.game_log_manager import GameLogManager
+    from bot.game.services.campaign_loader import CampaignLoader
+    from bot.game.services.consequence_processor import ConsequenceProcessor
+
 
     # Типы Callable для Type Checking, если они используются в аннотациях (SendCallbackFactory используется напрямую в __init__)
     # SendToChannelCallback = Callable[..., Awaitable[Any]]
@@ -95,6 +104,14 @@ class GameManager:
         self.npc_manager: Optional["NpcManager"] = None
         self.party_manager: Optional["PartyManager"] = None
         self.openai_service: Optional["OpenAIService"] = None
+        
+        # Новые менеджеры и сервисы
+        self.quest_manager: Optional[QuestManager] = None
+        self.relationship_manager: Optional[RelationshipManager] = None
+        self.dialogue_manager: Optional[DialogueManager] = None
+        self.game_log_manager: Optional[GameLogManager] = None
+        self.campaign_loader: Optional[CampaignLoader] = None
+        self.consequence_processor: Optional[ConsequenceProcessor] = None
 
         # Процессоры и вспомогательные сервисы (используем строковые литералы)
         self._on_enter_action_executor: Optional["OnEnterActionExecutor"] = None
@@ -155,6 +172,14 @@ class GameManager:
             from bot.game.command_router import CommandRouter
             # Обработчики команд
             from bot.game.command_handlers.party_handler import PartyCommandHandler # <--- ИМПОРТИРУЕМ PartyCommandHandler для инстанциации
+            
+            # Новые импорты для инстанциации
+            from bot.game.managers.quest_manager import QuestManager
+            from bot.game.managers.relationship_manager import RelationshipManager
+            from bot.game.managers.dialogue_manager import DialogueManager
+            from bot.game.managers.game_log_manager import GameLogManager
+            from bot.game.services.campaign_loader import CampaignLoader
+            from bot.game.services.consequence_processor import ConsequenceProcessor
 
 
             # Core managers (создание экземпляров)
@@ -231,12 +256,63 @@ class GameManager:
                  self.character_manager._status_manager = self.status_manager
                  self.character_manager._party_manager = self.party_manager
                  self.character_manager._combat_manager = self.combat_manager
-                 # Внедрить dialogue_manager, если он есть и CharacterManager его использует
-                 # if hasattr(self, 'dialogue_manager'):
-                 #      self.character_manager._dialogue_manager = self.dialogue_manager
+                 self.character_manager._dialogue_manager = self.dialogue_manager # New
+                 self.character_manager._relationship_manager = self.relationship_manager # New
+                 self.character_manager._game_log_manager = self.game_log_manager # New
 
 
             print("GameManager: Dependent managers instantiated.")
+
+            # Новые менеджеры и сервисы (продолжение)
+            self.game_log_manager = GameLogManager(db_adapter=self._db_adapter, settings=self._settings.get('game_log_settings'))
+            self.relationship_manager = RelationshipManager(db_adapter=self._db_adapter, settings=self._settings.get('relationship_settings'))
+            self.campaign_loader = CampaignLoader(settings=self._settings)
+
+            self.dialogue_manager = DialogueManager(
+                db_adapter=self._db_adapter,
+                settings=self._settings.get('dialogue_settings', {}),
+                character_manager=self.character_manager,
+                npc_manager=self.npc_manager,
+                rule_engine=self.rule_engine,
+                time_manager=self.time_manager,
+                openai_service=self.openai_service,
+                relationship_manager=self.relationship_manager
+            )
+            
+            # NpcManager update (add dialogue_manager, location_manager, game_log_manager)
+            if self.npc_manager: # Check if npc_manager was instantiated
+                self.npc_manager._dialogue_manager = self.dialogue_manager
+                self.npc_manager._location_manager = self.location_manager # Ensure this was intended
+                self.npc_manager._game_log_manager = self.game_log_manager
+
+
+            self.consequence_processor = ConsequenceProcessor(
+                quest_manager=None, # To be set after QuestManager is created
+                character_manager=self.character_manager,
+                npc_manager=self.npc_manager,
+                item_manager=self.item_manager,
+                location_manager=self.location_manager, # Added LocationManager
+                event_manager=self.event_manager,
+                status_manager=self.status_manager,
+                rule_engine=self.rule_engine,
+                economy_manager=self.economy_manager, # Added EconomyManager
+                relationship_manager=self.relationship_manager, # Added RelationshipManager
+                game_log_manager=self.game_log_manager # Added GameLogManager
+                # game_state will be self (GameManager), but pass None for now if not used in __init__
+            )
+
+            self.quest_manager = QuestManager(
+                db_adapter=self._db_adapter,
+                settings=self._settings.get('quest_settings', {}),
+                consequence_processor=self.consequence_processor,
+                character_manager=self.character_manager,
+                game_log_manager=self.game_log_manager
+            )
+
+            if self.consequence_processor is not None and self.quest_manager is not None:
+                self.consequence_processor._quest_manager = self.quest_manager
+            
+            print("GameManager: New services and managers instantiated.")
 
             # Процессоры и роутер команд (создание экземпляров)
             # Внедрение зависимостей в процессоры
@@ -367,8 +443,12 @@ class GameManager:
                 npc_manager=self.npc_manager, combat_manager=self.combat_manager,
                 item_manager=self.item_manager, time_manager=self.time_manager,
                 status_manager=self.status_manager, crafting_manager=self.crafting_manager,
-                economy_manager=self.economy_manager
-                # TODO: WorldSimulationProcessor может нуждаться в других менеджерах (dialogue?)
+                economy_manager=self.economy_manager,
+                # New injections for WorldSimulationProcessor
+                dialogue_manager=self.dialogue_manager,
+                quest_manager=self.quest_manager,
+                relationship_manager=self.relationship_manager,
+                game_log_manager=self.game_log_manager
             )
             print("GameManager: WorldSimulationProcessor instantiated.")
 
@@ -390,10 +470,14 @@ class GameManager:
                     item_manager=self.item_manager, npc_manager=self.npc_manager,
                     combat_manager=self.combat_manager, time_manager=self.time_manager,
                     status_manager=self.status_manager, party_manager=self.party_manager, # Может быть None
-                    crafting_manager=self.crafting_manager, economy_manager=self.economy_manager,
+                    crafting_manager=self.crafting_manager, economy_manager=self.economy_manager, # Already present
                     # --- Передаем созданный PartyCommandHandler ---
-                    party_command_handler=self._party_command_handler # <--- ДОБАВЛЕНО!
-                    # TODO: CommandRouter может нуждаться в других менеджерах (dialogue?)
+                    party_command_handler=self._party_command_handler, # <--- ДОБАВЛЕНО!
+                    # New injections for CommandRouter
+                    quest_manager=self.quest_manager,
+                    dialogue_manager=self.dialogue_manager,
+                    relationship_manager=self.relationship_manager,
+                    game_log_manager=self.game_log_manager
                     # TODO: Добавить view services, которые могут понадобиться в context (например, party_view_service)
                     # party_view_service=...
                     # location_view_service=...
@@ -419,6 +503,13 @@ class GameManager:
                     'crafting_manager': self.crafting_manager, 'economy_manager': self.economy_manager,
                     'npc_manager': self.npc_manager, 'party_manager': self.party_manager,
                     'openai_service': self.openai_service,
+                    # New managers/services for load_context_kwargs
+                    'quest_manager': self.quest_manager,
+                    'relationship_manager': self.relationship_manager,
+                    'dialogue_manager': self.dialogue_manager,
+                    'game_log_manager': self.game_log_manager,
+                    'campaign_loader': self.campaign_loader,
+                    'consequence_processor': self.consequence_processor,
                     'on_enter_action_executor': self._on_enter_action_executor,
                     'stage_description_generator': self._stage_description_generator,
                     'event_stage_processor': self._event_stage_processor,
@@ -551,6 +642,13 @@ class GameManager:
                             'crafting_manager': self.crafting_manager, 'economy_manager': self.economy_manager,
                             'npc_manager': self.npc_manager, 'party_manager': self.party_manager,
                             'openai_service': self.openai_service,
+                             # New managers/services for tick_context_kwargs
+                            'quest_manager': self.quest_manager,
+                            'relationship_manager': self.relationship_manager,
+                            'dialogue_manager': self.dialogue_manager,
+                            'game_log_manager': self.game_log_manager,
+                            'consequence_processor': self.consequence_processor,
+                            'campaign_loader': self.campaign_loader, # Though likely not used in tick directly
                             'on_enter_action_executor': self._on_enter_action_executor,
                             'stage_description_generator': self._stage_description_generator,
                             'event_stage_processor': self._event_stage_processor,
@@ -618,6 +716,11 @@ class GameManager:
                     'status_manager': self.status_manager, 'combat_manager': self.combat_manager,
                     'crafting_manager': self.crafting_manager, 'economy_manager': self.economy_manager,
                     'npc_manager': self.npc_manager, 'party_manager': self.party_manager,
+                    # New managers for save_context_kwargs (match PersistenceManager __init__)
+                    'dialogue_manager': self.dialogue_manager,
+                    'quest_manager': self.quest_manager,
+                    'relationship_manager': self.relationship_manager,
+                    'game_log_manager': self.game_log_manager,
                     'db_adapter': self._db_adapter,
                     'send_callback_factory': self._get_discord_send_callback,
                     'settings': self._settings,
