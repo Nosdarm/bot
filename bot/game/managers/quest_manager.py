@@ -9,9 +9,9 @@ if TYPE_CHECKING:
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.item_manager import ItemManager
-    from bot.game.engine.rule_engine import RuleEngine
+    from bot.game.rules.rule_engine import RuleEngine  # Changed path
     from bot.game.managers.relationship_manager import RelationshipManager
-    from bot.game.engine.consequence_processor import ConsequenceProcessor
+    from bot.game.services.consequence_processor import ConsequenceProcessor  # Changed path
     # The import for 'Quest' model is removed as per instruction 10, assuming dicts are used.
 
 class QuestManager:
@@ -253,7 +253,7 @@ class QuestManager:
 
         # print(f"Loaded {len(data)} active quests for character '{character_id_str}' in guild '{guild_id_str}'.")
 
-    def save_state(self, guild_id: str, character_id: str) -> List[Dict[str, Any]]:
+    async def save_state(self, guild_id: str, character_id: str) -> List[Dict[str, Any]]:
         """Saves active quests for a character. Returns a list of quest data objects."""
         guild_id_str = str(guild_id)
         character_id_str = str(character_id)
@@ -269,6 +269,9 @@ class QuestManager:
         #     serialized_quests.append(data_copy)
         # return serialized_quests
         
+        # The user's version of this file might have an `await self._db_adapter.execute_many(...)` call here.
+        # This version of the code does not, so we are only making the function async
+        # to satisfy the Pylance error reported by the user.
         return list(character_quests_map.values())
 
     # Helper methods
