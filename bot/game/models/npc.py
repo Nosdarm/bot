@@ -56,6 +56,13 @@ class NPC:
     # Список ID активных статус-эффектов на этом NPC
     status_effects: List[str] = field(default_factory=list)
 
+    # Новые поля для личности NPC
+    archetype: str = "commoner"  # Например: "merchant", "guard", "hermit"
+    traits: List[str] = field(default_factory=list)  # Личностные черты
+    desires: List[str] = field(default_factory=list)  # Желания NPC
+    motives: List[str] = field(default_factory=list)  # Мотивы NPC
+    backstory: str = ""  # Краткая предыстория
+
     # TODO: Добавьте другие поля, если необходимо для вашей логики NPC
     # Например:
     # description: Optional[str] # Описание экземпляра NPC
@@ -85,6 +92,11 @@ class NPC:
             'max_health': self.max_health,
             'is_alive': self.is_alive,
             'status_effects': self.status_effects,
+            'archetype': self.archetype,
+            'traits': self.traits,
+            'desires': self.desires,
+            'motives': self.motives,
+            'backstory': self.backstory,
             # TODO: Включите другие поля, если добавили
             # 'description': self.description,
             # 'ai_state': self.ai_state,
@@ -98,9 +110,15 @@ class NPC:
         # Используем .get() с значениями по умолчанию для устойчивости к неполным данным.
 
         # Обязательные поля
-        npc_id = data['id'] # Пробрасываем ошибку, если ID нет - критично
-        template_id = data['template_id'] # Пробрасываем ошибку, если template_id нет
-        name = data['name'] # Пробрасываем ошибку, если имени нет
+        npc_id = data.get('id')
+        if npc_id is None:
+            raise ValueError("Missing 'id' key in data for NPC.from_dict")
+        template_id = data.get('template_id')
+        if template_id is None:
+            raise ValueError("Missing 'template_id' key in data for NPC.from_dict")
+        name = data.get('name')
+        if name is None:
+            raise ValueError("Missing 'name' key in data for NPC.from_dict")
 
 
         # Опциональные поля с значениями по умолчанию
@@ -137,6 +155,22 @@ class NPC:
         # description = data.get('description')
         # ai_state = data.get('ai_state', {}) or {}
 
+        # Новые поля личности
+        archetype = data.get('archetype', "commoner")
+        traits = data.get('traits', []) or []
+        desires = data.get('desires', []) or []
+        motives = data.get('motives', []) or []
+        backstory = data.get('backstory', "")
+
+        if not isinstance(traits, list):
+            print(f"NPC Model: Warning: Loaded traits for NPC {npc_id} is not a list ({type(traits).__name__}). Initializing as empty list.")
+            traits = []
+        if not isinstance(desires, list):
+            print(f"NPC Model: Warning: Loaded desires for NPC {npc_id} is not a list ({type(desires).__name__}). Initializing as empty list.")
+            desires = []
+        if not isinstance(motives, list):
+            print(f"NPC Model: Warning: Loaded motives for NPC {npc_id} is not a list ({type(motives).__name__}). Initializing as empty list.")
+            motives = []
 
         return NPC(
             id=npc_id,
@@ -155,6 +189,11 @@ class NPC:
             max_health=max_health,
             is_alive=is_alive,
             status_effects=status_effects,
+            archetype=archetype,
+            traits=traits,
+            desires=desires,
+            motives=motives,
+            backstory=backstory,
             # TODO: Передайте другие поля в конструктор
             # description=description,
             # ai_state=ai_state,
