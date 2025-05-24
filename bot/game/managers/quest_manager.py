@@ -412,8 +412,8 @@ class QuestManager:
         print(f"QuestManager: Rebuild runtime caches complete for guild {guild_id_str}.")
 
     def mark_quest_dirty(self, guild_id: str, quest_id: str) -> None:
-         guild_id_str, quest_id_str = str(guild_id), str(quest_id)
-         if guild_id_str in self._active_quests and quest_id_str in self._active_quests[guild_id_str]:
-              self._dirty_quests.setdefault(guild_id_str, set()).add(quest_id_str)
+        guild_id_str, quest_id_str = str(guild_id), str(quest_id)
+        if guild_id_str in self._active_quests and quest_id_str in self._active_quests[guild_id_str]:
+            self._dirty_quests.setdefault(guild_id_str, set()).add(quest_id_str)
 
 print("DEBUG: QuestManager module defined.")
