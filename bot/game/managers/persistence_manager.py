@@ -41,6 +41,10 @@ if TYPE_CHECKING:
     from bot.game.managers.economy_manager import EconomyManager
     from bot.game.managers.party_manager import PartyManager
     # TODO: Добавьте другие менеджеры, если они хранят персистентное состояние
+    from bot.game.managers.quest_manager import QuestManager # Placeholder
+    from bot.game.managers.relationship_manager import RelationshipManager # Placeholder
+    from bot.game.managers.game_log_manager import GameLogManager # Placeholder
+
 
     # Определяем типы Callable для Type Checking, если они используются для аннотаций зависимостей-Callable
     # Например, если PersistenceManager получает SendCallbackFactory как зависимость в __init__ (маловероятно, но возможно)
@@ -80,6 +84,9 @@ class PersistenceManager:
                  crafting_manager: Optional["CraftingManager"] = None, # Use string literal!
                  economy_manager: Optional["EconomyManager"] = None, # Use string literal!
                  party_manager: Optional["PartyManager"] = None, # Use string literal!
+                 quest_manager: Optional["QuestManager"] = None, # Use string literal!
+                 relationship_manager: Optional["RelationshipManager"] = None, # Use string literal!
+                 game_log_manager: Optional["GameLogManager"] = None, # Use string literal!
 
                  # TODO: Добавьте другие менеджеры
                 ):
@@ -103,6 +110,9 @@ class PersistenceManager:
         self._crafting_manager: Optional["CraftingManager"] = crafting_manager
         self._economy_manager: Optional["EconomyManager"] = economy_manager
         self._party_manager: Optional["PartyManager"] = party_manager
+        self._quest_manager: Optional["QuestManager"] = quest_manager
+        self._relationship_manager: Optional["RelationshipManager"] = relationship_manager
+        self._game_log_manager: Optional["GameLogManager"] = game_log_manager
         # TODO: Сохраните другие менеджеры
 
 
@@ -182,6 +192,9 @@ class PersistenceManager:
              (self._crafting_manager, 'save_state'),
              (self._economy_manager, 'save_state'),
              (self._party_manager, 'save_state'),
+             (self._quest_manager, 'save_state'),
+             (self._relationship_manager, 'save_state'),
+             (self._game_log_manager, 'save_state'),
              # TODO: Добавьте другие менеджеры здесь
          ]
 
@@ -299,6 +312,9 @@ class PersistenceManager:
              (self._crafting_manager, 'load_state'),
              (self._economy_manager, 'load_state'),
              (self._party_manager, 'load_state'),
+             (self._quest_manager, 'load_state'),
+             (self._relationship_manager, 'load_state'),
+             (self._game_log_manager, 'load_state'),
              # TODO: Добавьте другие менеджеры здесь
          ]
 
@@ -342,6 +358,9 @@ class PersistenceManager:
              (self._crafting_manager, 'rebuild_runtime_caches'),
              (self._economy_manager, 'rebuild_runtime_caches'),
              (self._party_manager, 'rebuild_runtime_caches'),
+             (self._quest_manager, 'rebuild_runtime_caches'),
+             (self._relationship_manager, 'rebuild_runtime_caches'),
+             (self._game_log_manager, 'rebuild_runtime_caches'),
              # TODO: Добавьте другие менеджеры здесь
          ]
 
