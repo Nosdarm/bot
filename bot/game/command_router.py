@@ -47,8 +47,9 @@ if TYPE_CHECKING:
     from bot.game.managers.party_manager import PartyManager
     from bot.services.openai_service import OpenAIService
     from bot.game.managers.persistence_manager import PersistenceManager
+    from bot.game.managers.quest_manager import QuestManager # Added for QuestManager
+    from bot.game.managers.dialogue_manager import DialogueManager # Added for DialogueManager
     # Добавляем другие менеджеры, которые могут быть в context kwargs
-    # from bot.game.managers.dialogue_manager import DialogueManager
 
 
     # Processors (use string literals)
@@ -123,8 +124,9 @@ class CommandRouter:
         party_action_processor: Optional["PartyActionProcessor"] = None, # Still needed for context
         event_action_processor: Optional["EventActionProcessor"] = None,
         event_stage_processor: Optional["EventStageProcessor"] = None,
+        quest_manager: Optional["QuestManager"] = None, # Added QuestManager
+        dialogue_manager: Optional["DialogueManager"] = None, # Added DialogueManager
         # Add other optional managers/processors needed for context
-        # dialogue_manager: Optional["DialogueManager"] = None,
         # Add View Services needed for context (even if handled by specific handlers)
         # party_view_service: Optional["PartyViewService"] = None, # Needed for PartyCommandHandler if it gets it from context
         # location_view_service: Optional["LocationViewService"] = None, # Needed for handle_look potentially
@@ -158,6 +160,8 @@ class CommandRouter:
         self._party_action_processor = party_action_processor
         self._event_action_processor = event_action_processor
         self._event_stage_processor = event_stage_processor
+        self._quest_manager = quest_manager # Added QuestManager
+        self._dialogue_manager = dialogue_manager # Added DialogueManager
 
         # Store View Services (even if delegated, they might be needed in context)
         # self._party_view_service = party_view_service
@@ -237,8 +241,9 @@ class CommandRouter:
             'party_action_processor': self._party_action_processor, # Include party_action_processor in context
             'event_action_processor': self._event_action_processor,
             'event_stage_processor': self._event_stage_processor,
-            # TODO: Add other optional managers like self._dialogue_manager
-            # 'dialogue_manager': self._dialogue_manager,
+            'quest_manager': self._quest_manager, # Added QuestManager to context
+            'dialogue_manager': self._dialogue_manager, # Added DialogueManager to context
+            # TODO: Add other optional managers
             # Add view services if stored as attributes and needed in context by handlers
             # 'party_view_service': self._party_view_service, # Include party_view_service in context
             # 'location_view_service': self._location_view_service,
@@ -805,7 +810,490 @@ class CommandRouter:
     # --- Removed handle_party method and its decorators ---
 
 
+    @command("roll")
+    async def handle_roll(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Rolls dice based on standard dice notation (e.g., /roll 2d6+3, /roll d20)."""
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found in context for handle_roll.")
+            return
+
+        if not args:
+            await send_callback(f"Usage: {self._command_prefix}roll <dice_notation (e.g., 2d6+3, d20, 4dF)>")
+            return
+
+        roll_string = "".join(args) # Allow for notations like /roll 2d6 + 3 (with spaces)
+        rule_engine = context.get('rule_engine')
+
+        if not rule_engine:
+            await send_callback("Error: RuleEngine not available for the roll command.")
+            print("CommandRouter: Error: rule_engine not found in context for handle_roll.")
+            return
+
+        try:
+            # Consider if character context is needed for rolls in the future
+            # For now, direct context pass-through
+            roll_result = await rule_engine.resolve_dice_roll(roll_string, context=context)
+            
+            rolls_str = ", ".join(map(str, roll_result.get('rolls', [])))
+            result_message = f"🎲 {message.author.mention} rolled **{roll_result.get('roll_string', roll_string)}**:\n" # Fixed newline here
+            
+            if roll_result.get('dice_sides') == 'F': # Fudge dice specific output
+                result_message += f"Rolls: [{rolls_str}] (Symbols: {' '.join(['+' if r > 0 else '-' if r < 0 else '0' for r in roll_result.get('rolls', [])])})"
+            else:
+                result_message += f"Rolls: [{rolls_str}]"
+
+            modifier_val = roll_result.get('modifier', 0)
+            if modifier_val != 0: # Only show modifier if it's not zero
+                result_message += f" Modifier: {modifier_val:+}" # Ensure sign is shown
+            
+            result_message += f"\n**Total: {roll_result.get('total')}**" # Fixed newline here
+            
+            await send_callback(result_message)
+
+        except ValueError as ve:
+            await send_callback(f"Error: Invalid dice notation for '{roll_string}'. {ve}")
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_roll for '{roll_string}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while trying to roll '{roll_string}'.")
+
+
     # Helper function example (can be defined in this file or a utility module)
+
+    @command("quest")
+    async def handle_quest(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """
+        Manages character quests.
+        Usage:
+        {prefix}quest list
+        {prefix}quest start <quest_template_id>
+        {prefix}quest complete <active_quest_id>
+        {prefix}quest fail <active_quest_id>
+        {prefix}quest objectives <active_quest_id> # Optional: To view current objectives
+        """
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found in context for handle_quest.")
+            return
+
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id') # This is already a string from context setup
+
+        if not guild_id:
+            await send_callback("Quest commands can only be used on a server.")
+            return
+        
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+
+        char_manager = context.get('character_manager')
+        quest_manager = context.get('quest_manager') # Get QuestManager from context
+
+        if not char_manager:
+            await send_callback("Character system is currently unavailable.")
+            print("CommandRouter: Error: character_manager not found in context for handle_quest.")
+            return
+        
+        if not quest_manager:
+            await send_callback("Quest system is currently unavailable.")
+            print("CommandRouter: Error: quest_manager not found in context for handle_quest.")
+            return
+
+        try:
+            author_discord_id = int(author_id_str)
+            player_char = char_manager.get_character_by_discord_id(guild_id, author_discord_id)
+            if not player_char:
+                await send_callback(f"You do not have an active character in this guild. Use `{self._command_prefix}character create <name>` to create one.")
+                return
+            character_id = player_char.id
+        except ValueError:
+            await send_callback("Invalid user ID format.")
+            return
+        except Exception as e:
+            await send_callback(f"Error fetching your character: {e}")
+            return
+
+        if not args:
+            doc = self.handle_quest.__doc__.format(prefix=self._command_prefix)
+            await send_callback(f"Please specify a quest action. Usage:\n{doc}")
+            return
+
+        subcommand = args[0].lower()
+        quest_action_args = args[1:]
+
+        try:
+            if subcommand == "list":
+                # List active and available quests (QuestManager needs to implement more detailed logic here)
+                quest_list = await quest_manager.list_quests_for_character(character_id, guild_id, context)
+                if not quest_list:
+                    await send_callback("No quests currently available or active for you.")
+                    return
+                
+                response = f"**Your Quests, {player_char.name}:**\n"
+                for q_data in quest_list: # Assuming q_data is a dict with 'name', 'description', 'status'
+                    response += f"- **{q_data.get('name', q_data.get('id'))}** ({q_data.get('status', 'unknown')})\n"
+                    response += f"  _{q_data.get('description', 'No description.')}_\n"
+                await send_callback(response)
+
+            elif subcommand == "start":
+                if not quest_action_args:
+                    await send_callback(f"Usage: {self._command_prefix}quest start <quest_template_id>")
+                    return
+                quest_template_id = quest_action_args[0]
+                success = await quest_manager.start_quest(character_id, quest_template_id, guild_id, context)
+                if success:
+                    # QuestManager should ideally return quest name or details for a better message
+                    await send_callback(f"Quest '{quest_template_id}' started!")
+                else:
+                    await send_callback(f"Failed to start quest '{quest_template_id}'. You may not meet prerequisites, or the quest is already active/completed, or it doesn't exist.")
+            
+            elif subcommand == "complete":
+                if not quest_action_args:
+                    await send_callback(f"Usage: {self._command_prefix}quest complete <active_quest_id>")
+                    return
+                active_quest_id = quest_action_args[0]
+                success = await quest_manager.complete_quest(character_id, active_quest_id, guild_id, context)
+                if success:
+                    await send_callback(f"Quest '{active_quest_id}' completed! Consequences and rewards (if any) have been applied.")
+                else:
+                    await send_callback(f"Failed to complete quest '{active_quest_id}'. Make sure all objectives are met or the quest ID is correct.")
+
+            elif subcommand == "fail":
+                if not quest_action_args:
+                    await send_callback(f"Usage: {self._command_prefix}quest fail <active_quest_id>")
+                    return
+                active_quest_id = quest_action_args[0]
+                success = await quest_manager.fail_quest(character_id, active_quest_id, guild_id, context)
+                if success:
+                    await send_callback(f"Quest '{active_quest_id}' marked as failed.")
+                else:
+                    await send_callback(f"Failed to mark quest '{active_quest_id}' as failed. It might not be an active quest for you.")
+            
+            # Optional: /quest objectives <active_quest_id>
+            elif subcommand == "objectives" or subcommand == "details":
+                if not quest_action_args:
+                    await send_callback(f"Usage: {self._command_prefix}quest {subcommand} <active_quest_id>")
+                    return
+                active_quest_id = quest_action_args[0]
+                # QuestManager needs a method like get_active_quest_details(char_id, q_id, guild_id)
+                # active_quest_details = await quest_manager.get_active_quest_details(character_id, active_quest_id, guild_id, context)
+                # For now, basic feedback:
+                await send_callback(f"Displaying objectives for quest '{active_quest_id}' is not fully implemented yet, but your QuestManager would handle this.")
+
+
+            else:
+                doc = self.handle_quest.__doc__.format(prefix=self._command_prefix)
+                await send_callback(f"Unknown quest action: '{subcommand}'. Usage:\n{doc}")
+
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_quest for subcommand '{subcommand}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while processing your quest command: {e}")
+
+
+    @command("npc")
+    async def handle_npc(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """
+        Interact with Non-Player Characters.
+        Usage:
+        {prefix}npc talk <npc_id_or_name> [initial_message]
+        """
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found in context for handle_npc.")
+            return
+
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id')
+        channel_id = message.channel.id
+
+        if not guild_id:
+            await send_callback("NPC commands can only be used on a server.")
+            return
+        
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+
+        if not args:
+            doc = self.handle_npc.__doc__.format(prefix=self._command_prefix)
+            await send_callback(f"Please specify an NPC action. Usage:\n{doc}")
+            return
+
+        subcommand = args[0].lower()
+        action_args = args[1:]
+
+        char_manager = context.get('character_manager')
+        npc_manager = context.get('npc_manager')
+        dialogue_manager = context.get('dialogue_manager')
+
+        if not char_manager:
+            await send_callback("Error: Character system is unavailable.")
+            print("CommandRouter: Error: character_manager not found for handle_npc.")
+            return
+        if not npc_manager:
+            await send_callback("Error: NPC system is unavailable.")
+            print("CommandRouter: Error: npc_manager not found for handle_npc.")
+            return
+        if not dialogue_manager:
+            await send_callback("Error: Dialogue system is unavailable at the moment.")
+            print("CommandRouter: Error: dialogue_manager not found for handle_npc.")
+            return
+
+        try:
+            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            if not player_char:
+                await send_callback(f"You need an active character to interact with NPCs. Use `{self._command_prefix}character create <name>`.")
+                return
+        except ValueError:
+            await send_callback("Invalid user ID format.")
+            return
+        except Exception as e:
+            await send_callback(f"Error fetching your character: {e}")
+            print(f"CommandRouter: Error fetching character for {author_id_str} in guild {guild_id}: {e}")
+            traceback.print_exc()
+            return
+
+        if subcommand == "talk":
+            if not action_args:
+                await send_callback(f"Usage: {self._command_prefix}npc talk <npc_id_or_name> [initial_message]")
+                return
+
+            npc_identifier = action_args[0]
+            initiator_message = " ".join(action_args[1:]) if len(action_args) > 1 else None
+            
+            target_npc = npc_manager.get_npc(guild_id, npc_identifier)
+            if not target_npc:
+                if hasattr(npc_manager, 'get_npc_by_name'): # Check if method exists
+                    target_npc = npc_manager.get_npc_by_name(guild_id, npc_identifier) # Assumes this method exists
+                if not target_npc:
+                    await send_callback(f"NPC '{npc_identifier}' not found in this realm.")
+                    return
+
+            # Location Check (optional, but good for immersion)
+            location_manager = context.get('location_manager')
+            if location_manager and hasattr(player_char, 'location_id') and hasattr(target_npc, 'location_id'):
+                if player_char.location_id != target_npc.location_id:
+                    npc_name = getattr(target_npc, 'name', npc_identifier)
+                    player_loc_name = location_manager.get_location_name(guild_id, player_char.location_id) or "Unknown Location"
+                    npc_loc_name = location_manager.get_location_name(guild_id, target_npc.location_id) or "an unknown place"
+                    await send_callback(f"{npc_name} is not here. You are in {player_loc_name}, and they are in {npc_loc_name}.")
+                    return
+            
+            # Determine dialogue template ID (this is game-specific logic)
+            # Example: use a default template or one specified on the NPC model
+            dialogue_template_id = getattr(target_npc, 'dialogue_template_id', 'generic_convo')
+
+            if not dialogue_manager.get_dialogue_template(guild_id, dialogue_template_id):
+                # Fallback if specific template not found
+                if dialogue_manager.get_dialogue_template(guild_id, 'generic_convo'):
+                    dialogue_template_id = 'generic_convo'
+                    print(f"CommandRouter: NPC {target_npc.id} missing specific dialogue template '{getattr(target_npc, 'dialogue_template_id', 'N/A')}'. Using 'generic_convo'.")
+                else: 
+                    npc_name = getattr(target_npc, 'name', npc_identifier)
+                    await send_callback(f"Sorry, no way to start a conversation with {npc_name} right now (missing dialogue templates '{dialogue_template_id}' and 'generic_convo').")
+                    print(f"CommandRouter: Missing dialogue template '{dialogue_template_id}' and 'generic_convo' for NPC {target_npc.id}")
+                    return
+            
+            try:
+                dialogue_id = await dialogue_manager.start_dialogue(
+                    guild_id=guild_id,
+                    template_id=dialogue_template_id,
+                    participant1_id=player_char.id,
+                    participant2_id=target_npc.id,
+                    channel_id=channel_id,
+                    initiator_message=initiator_message,
+                    **context # Pass full context
+                )
+
+                if dialogue_id:
+                    # DialogueManager's start_dialogue is expected to send the first message.
+                    print(f"CommandRouter: Dialogue {dialogue_id} initiated by {player_char.id} with NPC {target_npc.id} in channel {channel_id}.")
+                else:
+                    npc_name = getattr(target_npc, 'name', npc_identifier)
+                    await send_callback(f"Could not start a conversation with {npc_name}. They might be busy or unwilling to talk.")
+            except Exception as e:
+                npc_name = getattr(target_npc, 'name', npc_identifier)
+                print(f"CommandRouter: Error during dialogue_manager.start_dialogue with {npc_name}: {e}")
+                traceback.print_exc()
+                await send_callback(f"An unexpected error occurred while trying to talk to {npc_name}.")
+
+        else:
+            doc = self.handle_npc.__doc__.format(prefix=self._command_prefix)
+            await send_callback(f"Unknown action for NPC: '{subcommand}'. Usage:\n{doc}")
+
+
+    @command("buy")
+    async def handle_buy(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Allows the player to buy an item from the current location's market.
+        Usage: {prefix}buy <item_template_id> [quantity]
+        """
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found for handle_buy.")
+            return
+
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id')
+
+        if not guild_id:
+            await send_callback("The /buy command can only be used on a server.")
+            return
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+
+        if not args:
+            await send_callback(f"Usage: {self._command_prefix}buy <item_template_id> [quantity (default 1)]")
+            return
+
+        item_template_id_to_buy = args[0]
+        quantity_to_buy = 1
+        if len(args) > 1:
+            try:
+                quantity_to_buy = int(args[1])
+                if quantity_to_buy <= 0:
+                    await send_callback("Quantity must be a positive number.")
+                    return
+            except ValueError:
+                await send_callback("Invalid quantity specified. It must be a number.")
+                return
+
+        char_manager = context.get('character_manager')
+        loc_manager = context.get('location_manager')
+        eco_manager = context.get('economy_manager')
+        item_manager = context.get('item_manager') # Needed for item name lookup
+
+        if not char_manager or not loc_manager or not eco_manager or not item_manager:
+            await send_callback("Error: Required game systems (character, location, economy, or item) are unavailable.")
+            print("CommandRouter: Missing one or more managers for handle_buy.")
+            return
+
+        try:
+            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            if not player_char:
+                await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
+                return
+            
+            character_id = player_char.id
+            current_location_id = getattr(player_char, 'location_id', None)
+            if not current_location_id:
+                await send_callback("Your character doesn't seem to be in any specific location to buy items.")
+                return
+
+            # Attempt to purchase the item
+            # The EconomyManager.buy_item method handles most of the logic
+            # (checking market stock, price, player currency, item creation, inventory update)
+            created_item_ids = await eco_manager.buy_item(
+                guild_id=guild_id,
+                buyer_entity_id=character_id,
+                buyer_entity_type="Character",
+                location_id=current_location_id, # Assuming market is tied to character's current location
+                item_template_id=item_template_id_to_buy,
+                count=quantity_to_buy,
+                **context # Pass full context for other managers needed by buy_item
+            )
+
+            if created_item_ids:
+                # Get item name for a nicer message
+                item_template = item_manager.get_item_template(guild_id, item_template_id_to_buy)
+                item_name = getattr(item_template, 'name', item_template_id_to_buy) if item_template else item_template_id_to_buy
+                
+                if len(created_item_ids) == quantity_to_buy:
+                    await send_callback(f"🛍️ You successfully bought {quantity_to_buy}x {item_name}!")
+                elif created_item_ids: # Partial success
+                    await send_callback(f"🛍️ You managed to buy {len(created_item_ids)}x {item_name} (requested {quantity_to_buy}).")
+                else: # Should ideally be caught by buy_item returning None, but as a fallback
+                    await send_callback(f"Purchase of {item_name} seems to have failed despite initial checks.")
+
+            else:
+                # EconomyManager.buy_item should ideally provide a reason for failure.
+                # For now, a generic message.
+                item_template = item_manager.get_item_template(guild_id, item_template_id_to_buy)
+                item_name = getattr(item_template, 'name', item_template_id_to_buy) if item_template else item_template_id_to_buy
+                await send_callback(f"Could not buy {item_name}. It might be out of stock, or you may not have enough currency.")
+                
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_buy for item '{item_template_id_to_buy}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while trying to buy the item: {e}")
+
+
+    @command("craft")
+    async def handle_craft(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Allows the player to craft an item from a recipe.
+        Usage: {prefix}craft <recipe_id> [quantity]
+        """
+        send_callback = context.get('send_to_command_channel')
+        if not send_callback:
+            print("CommandRouter: Error: send_to_command_channel not found for handle_craft.")
+            return
+
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id')
+
+        if not guild_id:
+            await send_callback("The /craft command can only be used on a server.")
+            return
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+
+        if not args:
+            await send_callback(f"Usage: {self._command_prefix}craft <recipe_id> [quantity (default 1)]")
+            return
+
+        recipe_id_to_craft = args[0]
+        quantity_to_craft = 1
+        if len(args) > 1:
+            try:
+                quantity_to_craft = int(args[1])
+                if quantity_to_craft <= 0:
+                    await send_callback("Quantity must be a positive number.")
+                    return
+            except ValueError:
+                await send_callback("Invalid quantity specified. It must be a number.")
+                return
+
+        char_manager = context.get('character_manager')
+        craft_manager = context.get('crafting_manager') # Ensure this is self._crafting_manager via context
+
+        if not char_manager or not craft_manager:
+            await send_callback("Error: Required game systems (character or crafting) are unavailable.")
+            print("CommandRouter: Missing character_manager or crafting_manager for handle_craft.")
+            return
+
+        try:
+            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            if not player_char:
+                await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
+                return
+            
+            character_id = player_char.id
+            
+            # Call CraftingManager to add the recipe to the character's queue
+            result = await craft_manager.add_recipe_to_craft_queue(
+                guild_id=guild_id,
+                entity_id=character_id,
+                entity_type="Character",
+                recipe_id=recipe_id_to_craft,
+                quantity=quantity_to_craft,
+                context=context # Pass full context
+            )
+
+            if result and result.get("success"):
+                await send_callback(f"🛠️ {result.get('message', 'Crafting started!')}")
+            else:
+                error_message = result.get('message', "Could not start crafting. Check requirements and ingredients.")
+                await send_callback(f"⚠️ {error_message}")
+                
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_craft for recipe '{recipe_id_to_craft}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while trying to craft the item: {e}")
+
 def is_uuid_format(s: str) -> bool:
      """Проверяет, выглядит ли строка как UUID (простая проверка формата)."""
      if not isinstance(s, str):

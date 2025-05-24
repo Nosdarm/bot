@@ -17,7 +17,7 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    LATEST_SCHEMA_VERSION = 1 # Увеличьте это число, если добавляете новые миграции (_migrate_v1_to_v2 и т.д.)
+    LATEST_SCHEMA_VERSION = 3 # Увеличьте это число, если добавляете новые миграции (_migrate_v1_to_v2 и т.д.)
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -503,11 +503,63 @@ class SqliteAdapter:
 
         # Add more tables as needed (e.g., recipes, skills, quests, dialogue_states)
 
+        await cursor.execute('''DROP TABLE IF EXISTS dialogues;''') # Add this drop statement too
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS dialogues (
+                id TEXT PRIMARY KEY,
+                template_id TEXT,
+                guild_id TEXT NOT NULL,
+                participants TEXT DEFAULT '[]', -- JSON list of participant IDs
+                channel_id INTEGER,
+                current_stage_id TEXT,
+                state_variables TEXT DEFAULT '{}', -- JSON
+                conversation_history TEXT DEFAULT '[]', -- Added in v2, but good to have in base for new setups
+                last_activity_game_time REAL,
+                event_id TEXT,
+                is_active INTEGER DEFAULT 1 -- 0 or 1
+            );
+        ''')
+
         print("SqliteAdapter: v0 to v1 migration complete.")
 
+    async def _migrate_v1_to_v2(self, cursor: Cursor) -> None:
+        """Миграция с Версии 1 на Версию 2."""
+        print("SqliteAdapter: Running v1 to v2 migration (adding conversation_history to dialogues)...")
+        try:
+            await cursor.execute("ALTER TABLE dialogues ADD COLUMN conversation_history TEXT DEFAULT '[]'")
+            print("SqliteAdapter: Added 'conversation_history' to dialogues table.")
+        except sqlite3.OperationalError as e:
+            # Check if the error is "duplicate column name"
+            if 'duplicate column name' in str(e).lower():
+                print("SqliteAdapter: Column 'conversation_history' already exists in dialogues table, skipping ALTER TABLE.")
+            else:
+                raise # Re-raise other operational errors
+        print("SqliteAdapter: v1 to v2 migration complete.")
+
+    async def _migrate_v2_to_v3(self, cursor: Cursor) -> None:
+        """Миграция с Версии 2 на Версию 3 (добавление таблицы game_logs)."""
+        print("SqliteAdapter: Running v2 to v3 migration (creating game_logs table)...")
+        # Optional: DROP TABLE IF EXISTS game_logs; # For clean dev, remove for prod if data should be kept across schema changes
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS game_logs (
+                log_id TEXT PRIMARY KEY,
+                timestamp REAL NOT NULL,
+                guild_id TEXT NOT NULL,
+                channel_id INTEGER,
+                event_type TEXT NOT NULL,
+                message TEXT NOT NULL,
+                related_entities TEXT, -- JSON
+                context_data TEXT -- JSON for extra kwargs
+            );
+        ''')
+        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_game_logs_guild_ts ON game_logs (guild_id, timestamp DESC);''')
+        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_game_logs_event_type ON game_logs (guild_id, event_type);''')
+        print("SqliteAdapter: game_logs table created and indexes applied.")
+        print("SqliteAdapter: v2 to v3 migration complete.")
+
     # Для будущих миграций:
-    # async def _migrate_v1_to_v2(self, cursor: Cursor) -> None:
-    #    """Миграция с Версии 1 на Версию 2."""
+    # async def _migrate_v3_to_v4(self, cursor: Cursor) -> None: # Example for next migration
+    #    """Миграция с Версии 3 на Версию 4."""
     #    print("SqliteAdapter: Running v1 to v2 migration...")
     #    # Пример: добавить новую колонку в таблицу characters
     #    try:

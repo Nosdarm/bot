@@ -107,7 +107,7 @@ class NpcManager:
         self._combat_manager = combat_manager
         self._dialogue_manager = dialogue_manager
         # self._event_manager = event_manager
-        # self._location_manager = location_manager # Store LocationManager if needed
+        self._location_manager = location_manager # Store LocationManager if needed
 
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари

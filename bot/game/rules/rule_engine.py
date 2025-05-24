@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 import json  # Может понадобиться для работы с данными правил из JSON
+import random
+import re
 import traceback  # Для вывода трассировки ошибок
 import asyncio  # Если методы RuleEngine будут асинхронными
 
@@ -551,3 +553,147 @@ class RuleEngine:
         # Если ни диалог, ни перемещение невозможны, NPC бездействует
         print(f"RuleEngine: NPC {npc.id} not choosing peaceful action (no dialogue targets or valid exits). Choosing idle.")
         return {'type': 'idle', 'total_duration': None} # Пример структуры действия "бездействие"
+
+    async def resolve_dice_roll(self, roll_string: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Parses a dice roll string (e.g., "2d6+3", "d20-1", "4dF"), simulates the roll,
+        and returns a structured result.
+
+        Args:
+            roll_string: The dice notation string.
+            context: The game context (unused in this method but included for consistency).
+
+        Returns:
+            A dictionary with roll details:
+            {
+                'roll_string': str,
+                'num_dice': int,
+                'dice_sides': Union[int, str], # int for regular dice, 'F' for Fudge/Fate
+                'rolls': List[int],
+                'modifier': int,
+                'total': int
+            }
+
+        Raises:
+            ValueError: If the roll_string is invalid.
+        """
+        roll_string = roll_string.lower().strip()
+        # Regex to parse dice notation:
+        # (?P<num_dice>\d+)? - Optional number of dice
+        # d                       - The 'd' separator
+        # (?P<dice_sides>\d+|f)  - Number of sides (digits) or 'f' for Fudge/Fate dice
+        # (?P<modifier_op>[+\-])? - Optional modifier operator (+ or -)
+        # (?P<modifier_val>\d+)?  - Optional modifier value
+        match = re.fullmatch(r"(?P<num_dice>\d+)?d(?P<dice_sides>\d+|f)((?P<modifier_op>[+\-])(?P<modifier_val>\d+))?", roll_string)
+
+        if not match:
+            raise ValueError(f"Invalid dice roll string format: '{roll_string}'")
+
+        parts = match.groupdict()
+
+        num_dice = int(parts['num_dice']) if parts['num_dice'] else 1
+        dice_sides_str = parts['dice_sides']
+        
+        modifier_op = parts['modifier_op']
+        modifier_val = int(parts['modifier_val']) if parts['modifier_val'] else 0
+        modifier = modifier_val if modifier_op == '+' else -modifier_val if modifier_op == '-' else 0
+
+        rolls = []
+        calculated_dice_sides: Any = 0
+
+        if dice_sides_str == 'f': # Fudge/Fate dice
+            calculated_dice_sides = "F"
+            for _ in range(num_dice):
+                roll = random.randint(1, 3) - 2 # Results in -1, 0, or +1
+                rolls.append(roll)
+        else:
+            calculated_dice_sides = int(dice_sides_str)
+            if calculated_dice_sides <= 0:
+                raise ValueError("Dice sides must be a positive integer or 'F'.")
+            for _ in range(num_dice):
+                rolls.append(random.randint(1, calculated_dice_sides))
+        
+        total = sum(rolls) + modifier
+
+        return {
+            'roll_string': roll_string,
+            'num_dice': num_dice,
+            'dice_sides': calculated_dice_sides,
+            'rolls': rolls,
+            'modifier': modifier,
+            'total': total,
+        }
+
+    async def resolve_steal_attempt(self, stealer_char: Character, target_entity: Any, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Resolves a steal attempt from a target entity.
+        Calculates success chance based on stats and determines if an item is stolen.
+        Does NOT move the item, only determines outcome.
+        """
+        print(f"RuleEngine: Resolving steal attempt by {stealer_char.id} on target {getattr(target_entity, 'id', 'Unknown Target')}")
+
+        item_manager: Optional["ItemManager"] = context.get('item_manager')
+        # npc_manager: Optional["NpcManager"] = context.get('npc_manager') # Not directly used in this version
+        # character_manager: Optional["CharacterManager"] = context.get('character_manager') # Not directly used
+
+        stealer_dex = stealer_char.stats.get('dexterity', 10)
+        
+        # Get target perception, robustly handling different entity types
+        target_stats = getattr(target_entity, 'stats', {})
+        if not isinstance(target_stats, dict): # Ensure target_stats is a dict
+            target_stats = {}
+        target_perc = target_stats.get('perception', 10)
+        
+        target_name = getattr(target_entity, 'name', 'The target')
+
+        # Calculate success chance
+        base_chance = self._rules_data.get('steal_base_chance_percent', 30.0)
+        dex_factor = self._rules_data.get('steal_dex_factor_percent', 2.0)
+        min_chance = self._rules_data.get('steal_min_chance_percent', 5.0)
+        max_chance = self._rules_data.get('steal_max_chance_percent', 95.0)
+
+        success_chance = base_chance + (stealer_dex - target_perc) * dex_factor
+        success_chance = max(min_chance, min(success_chance, max_chance)) # Clamp chance
+
+        print(f"RuleEngine: Steal attempt: Stealer Dex={stealer_dex}, Target Perc={target_perc}, Success Chance={success_chance:.2f}%")
+
+        roll = random.uniform(0, 100) # Roll d100
+
+        if roll <= success_chance:
+            print(f"RuleEngine: Steal attempt SUCCEEDED (Roll: {roll:.2f} <= Chance: {success_chance:.2f})")
+            
+            target_inventory = getattr(target_entity, 'inventory', None)
+            if isinstance(target_inventory, list) and target_inventory:
+                stolen_item_id = random.choice(target_inventory)
+                
+                item_name = stolen_item_id # Default to ID
+                if item_manager and hasattr(item_manager, 'get_item_template_by_instance_id'): # More robust check
+                    # To get the name, we might need the item template from the item instance ID
+                    # This assumes item_manager can get template details from an instance ID
+                    # Or if inventory stores template_ids, this is simpler.
+                    # For now, let's assume inventory stores item_instance_ids and ItemManager can get details.
+                    # This part is a bit hand-wavy as ItemManager details are not fully specified here.
+                    # A more robust approach might be to have ItemManager.get_item_details(item_id)
+                    guild_id = getattr(stealer_char, 'guild_id', context.get('guild_id')) # Get guild_id if possible
+                    
+                    item_instance = None
+                    if guild_id and hasattr(item_manager, 'get_item'):
+                        item_instance = item_manager.get_item(guild_id, stolen_item_id) # Assumes get_item exists
+                    
+                    if item_instance and hasattr(item_instance, 'template_id'):
+                        item_template = item_manager.get_item_template(guild_id, item_instance.template_id)
+                        if item_template and hasattr(item_template, 'name'):
+                            item_name = item_template.name
+                    elif item_instance and hasattr(item_instance, 'name'): # Fallback if item has name directly
+                        item_name = item_instance.name
+
+                print(f"RuleEngine: Stolen item ID: {stolen_item_id} (Name: {item_name})")
+                return {"success": True, "stolen_item_id": stolen_item_id, "stolen_item_name": item_name, "message": f"You skillfully pilfered {item_name}!"}
+            else:
+                print(f"RuleEngine: Steal success, but target {target_name} has no items or invalid inventory.")
+                return {"success": False, "message": f"{target_name} has nothing to steal."} # Success but no items
+        else:
+            print(f"RuleEngine: Steal attempt FAILED (Roll: {roll:.2f} > Chance: {success_chance:.2f})")
+            # Optional: Add logic for being caught here based on another roll or margin of failure
+            # For now, simple failure.
+            return {"success": False, "message": "Your attempt to steal was unsuccessful."}
