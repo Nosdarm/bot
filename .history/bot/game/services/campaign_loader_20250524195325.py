@@ -20,7 +20,7 @@ class CampaignLoader:
     async def load_campaign_data_from_source(self, campaign_identifier: Optional[str] = None) -> Dict[str, Any]:
         """
         Loads campaign data from a source (e.g., JSON file).
-
+        
         Args:
             campaign_identifier: An optional identifier for a specific campaign. 
                                  If None, a default might be loaded.
@@ -31,11 +31,11 @@ class CampaignLoader:
         effective_campaign_identifier = campaign_identifier
         if effective_campaign_identifier is None:
             effective_campaign_identifier = self._settings.get('default_campaign_identifier', 'default_campaign')
-
+        
         file_path = os.path.join(self._campaign_base_path, f"{effective_campaign_identifier}.json")
-
+        
         print(f"CampaignLoader: Attempting to load campaign data from '{file_path}'...")
-
+        
         if not os.path.exists(file_path):
             print(f"CampaignLoader: Error - Campaign file not found at '{file_path}'.")
             # If the requested campaign was not found, and it wasn't already the default we're trying,
@@ -81,4 +81,3 @@ class CampaignLoader:
             print(f"CampaignLoader: Error listing available campaigns from '{self._campaign_base_path}': {e}")
             traceback.print_exc()
             return ["default_campaign"] # Return placeholder on error
-

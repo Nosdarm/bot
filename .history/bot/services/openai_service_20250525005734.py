@@ -29,15 +29,6 @@ class OpenAIService:
 
         print("OpenAIService PLACEHOLDER initialized.")
 
-    def is_available(self) -> bool:
-        """Checks if the OpenAI service is configured and likely available."""
-        # For the placeholder, this might just check if an API key is present.
-        # In a real implementation, it might also check model availability or other health checks.
-        if self._api_key and isinstance(self._api_key, str) and len(self._api_key.strip()) > 0:
-            return True
-        print("OpenAIService PLACEHOLDER: API key is not set. Service considered unavailable.")
-        return False
-
     # --- Core Method for Master Responses ---
     # This signature must match what StageDescriptionGenerator and OnEnterActionExecutor expect.
     async def generate_master_response(self, system_prompt: str, user_prompt: str, max_tokens: Optional[int] = None, temperature: float = 0.7) -> str:
