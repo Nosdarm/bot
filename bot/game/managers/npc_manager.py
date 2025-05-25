@@ -28,6 +28,12 @@ if TYPE_CHECKING:
     from bot.game.models.npc import NPC # Аннотируем как "NPC"
     # from bot.game.models.character import Character # Если Character объекты передаются в методы NPCManager
     # from bot.game.models.party import Party # Если Party объекты передаются в методы NPCManager
+    # Добавляем адаптер БД
+    from bot.database.sqlite_adapter import SqliteAdapter
+    # Добавляем модели, используемые в аннотациях или context
+    from bot.game.models.npc import NPC # Аннотируем как "NPC"
+    # from bot.game.models.character import Character # Если Character объекты передаются в методы NPCManager
+    # from bot.game.models.party import Party # Если Party объекты передаются в методы NPCManager
     # Добавляем менеджеры
     from bot.game.managers.item_manager import ItemManager
     from bot.game.managers.status_manager import StatusManager
@@ -35,10 +41,11 @@ if TYPE_CHECKING:
     from bot.game.managers.character_manager import CharacterManager # Нужен для clean_up_from_party в PartyManager
     from bot.game.managers.combat_manager import CombatManager
     from bot.game.managers.dialogue_manager import DialogueManager
+    from bot.game.managers.location_manager import LocationManager
+    from bot.game.managers.game_log_manager import GameLogManager
 
     # Добавляем другие менеджеры, если они передаются в __init__ или используются в аннотациях методов
     # from bot.game.managers.event_manager import EventManager
-    from bot.game.managers.location_manager import LocationManager # Нужен для create_npc default location?
     from bot.game.rules.rule_engine import RuleEngine
     from bot.services.campaign_loader import CampaignLoader # Added for type hint
 
@@ -94,6 +101,7 @@ class NpcManager:
         dialogue_manager: Optional["DialogueManager"] = None,
         # event_manager: Optional["EventManager"] = None, # if needed
         location_manager: Optional["LocationManager"] = None, # if needed for default loc logic
+        game_log_manager: Optional["GameLogManager"] = None,
     ):
         print("Initializing NpcManager...")
         self._db_adapter = db_adapter
@@ -109,6 +117,7 @@ class NpcManager:
         self._dialogue_manager = dialogue_manager
         # self._event_manager = event_manager
         self._location_manager = location_manager # Store LocationManager if needed
+        self._game_log_manager = game_log_manager
 
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари

@@ -14,10 +14,18 @@ if TYPE_CHECKING:
     from bot.game.managers.status_manager import StatusManager
     # from bot.game.managers.dialogue_manager import DialogueManager # If needed for dialogue consequences
     # from bot.game.managers.combat_manager import CombatManager # If needed for combat consequences
-    from bot.game.game_state import GameState
+    # from bot.game.game_state import GameState # Not needed if using Any for game_state type hint
+    from bot.game.rules.rule_engine import RuleEngine
+    from bot.game.managers.economy_manager import EconomyManager
+    from bot.game.managers.relationship_manager import RelationshipManager
+    from bot.game.managers.game_log_manager import GameLogManager
+    # Ensure DialogueManager is here if used in __init__ or methods
+    from bot.game.managers.dialogue_manager import DialogueManager
+
 
     # Define a type for custom function callbacks if they are complex
-    CustomFunctionCallback = Callable[[GameState, Dict[str, Any]], Awaitable[None]]
+    # CustomFunctionCallback = Callable[[GameState, Dict[str, Any]], Awaitable[None]] # GameState might be Any
+    CustomFunctionCallback = Callable[[Any, Dict[str, Any]], Awaitable[None]]
 
 
 class ConsequenceProcessor:
@@ -35,9 +43,13 @@ class ConsequenceProcessor:
         event_manager: EventManager,
         quest_manager: QuestManager,
         status_manager: StatusManager,
-        # dialogue_manager: Optional[DialogueManager] = None, # Add if dialogue consequences are handled
+        dialogue_manager: Optional["DialogueManager"] = None, # Add if dialogue consequences are handled
         # combat_manager: Optional[CombatManager] = None, # Add if combat consequences are handled
-        game_state: Optional[GameState] = None # For global state or complex interactions
+        game_state: Optional[Any] = None, # For global state or complex interactions
+        rule_engine: Optional["RuleEngine"] = None,
+        economy_manager: Optional["EconomyManager"] = None,
+        relationship_manager: Optional["RelationshipManager"] = None,
+        game_log_manager: Optional["GameLogManager"] = None
     ):
         self._character_manager = character_manager
         self._npc_manager = npc_manager
@@ -46,9 +58,13 @@ class ConsequenceProcessor:
         self._event_manager = event_manager
         self._quest_manager = quest_manager
         self._status_manager = status_manager
-        # self._dialogue_manager = dialogue_manager
+        self._dialogue_manager = dialogue_manager # dialogue_manager is now explicitly part of __init__
         # self._combat_manager = combat_manager
         self._game_state = game_state # Provides access to guild_id and other managers if needed
+        self._rule_engine = rule_engine
+        self._economy_manager = economy_manager
+        self._relationship_manager = relationship_manager
+        self._game_log_manager = game_log_manager
 
         # A registry for custom functions if you want to make it extensible
         self._custom_functions: Dict[str, CustomFunctionCallback] = {}

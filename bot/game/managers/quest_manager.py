@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from bot.game.rules.rule_engine import RuleEngine  # Changed path
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.services.consequence_processor import ConsequenceProcessor  # Changed path
+    from bot.game.managers.game_log_manager import GameLogManager
     # The import for 'Quest' model is removed as per instruction 10, assuming dicts are used.
 
 class QuestManager:
@@ -31,6 +32,7 @@ class QuestManager:
         rule_engine: Optional["RuleEngine"] = None,
         relationship_manager: Optional["RelationshipManager"] = None,
         consequence_processor: Optional["ConsequenceProcessor"] = None,
+        game_log_manager: Optional["GameLogManager"] = None,
     ):
         self._db_adapter = db_adapter
         self._settings = settings if settings else {} # Ensure settings is a dict
@@ -40,6 +42,7 @@ class QuestManager:
         self._rule_engine = rule_engine
         self._relationship_manager = relationship_manager
         self._consequence_processor = consequence_processor
+        self._game_log_manager = game_log_manager
 
         # guild_id -> character_id -> quest_id -> quest_data
         self._active_quests: Dict[str, Dict[str, Dict[str, Any]]] = {}
