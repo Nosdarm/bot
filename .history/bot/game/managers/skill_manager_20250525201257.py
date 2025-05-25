@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.db.sqlite_adapter import SqliteAdapter
     # Add other necessary imports for type hinting if SkillManager interacts with them
     # e.g., from bot.game.managers.character_manager import CharacterManager
 
@@ -89,4 +89,4 @@ class SkillManager:
 #
 #     # import asyncio
 #     # asyncio.run(main_test())
-
+```

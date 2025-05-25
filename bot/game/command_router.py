@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
     from bot.game.managers.quest_manager import QuestManager # Added for QuestManager
     from bot.game.managers.dialogue_manager import DialogueManager # Added for DialogueManager
+    from bot.game.managers.game_log_manager import GameLogManager
 
     from bot.services.campaign_loader import CampaignLoader 
     from bot.game.managers.relationship_manager import RelationshipManager 
@@ -148,7 +149,8 @@ class CommandRouter:
         # party_view_service: Optional["PartyViewService"] = None, # Needed for PartyCommandHandler if it gets it from context
         # location_view_service: Optional["LocationViewService"] = None, # Needed for handle_look potentially
         campaign_loader: Optional["CampaignLoader"] = None,
-        relationship_manager: Optional["RelationshipManager"] = None,       
+        relationship_manager: Optional["RelationshipManager"] = None,
+        game_log_manager: Optional["GameLogManager"] = None,
 
     ):
         print("Initializing CommandRouter...")
@@ -182,6 +184,7 @@ class CommandRouter:
         self._event_stage_processor = event_stage_processor
         self._quest_manager = quest_manager # Added QuestManager
         self._dialogue_manager = dialogue_manager # Added DialogueManager
+        self._game_log_manager = game_log_manager # Added GameLogManager
 
         self._command_prefix: str = self._settings.get('command_prefix', '/')
         if not isinstance(self._command_prefix, str) or not self._command_prefix:
@@ -242,6 +245,7 @@ class CommandRouter:
 
             'quest_manager': self._quest_manager, # Added QuestManager to context
             'dialogue_manager': self._dialogue_manager, # Added DialogueManager to context
+            'game_log_manager': self._game_log_manager, # Added GameLogManager to context
             # TODO: Add other optional managers
             # Add view services if stored as attributes and needed in context by handlers
             # 'party_view_service': self._party_view_service, # Include party_view_service in context

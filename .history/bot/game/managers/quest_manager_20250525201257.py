@@ -5,7 +5,7 @@ import traceback # Keep for potential future use, though not explicitly used in 
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.db.sqlite_adapter import SqliteAdapter
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.item_manager import ItemManager
@@ -402,10 +402,9 @@ class QuestManager:
     #         return templates
     #     except Exception as e: # Catch database errors or other issues
     #         print(f"Error loading guild-specific quest templates from DB for guild '{guild_id}': {e}")
-
-    #         # Consider logging the full traceback using traceback.format_exc()
     #         # Consider logging the full traceback using traceback.format_exc()
     #         return {}
 
 # No __main__ block in the final library file unless specifically for testing within this file.
 # For this refactoring task, it's better to remove it if it was part of the original conflicted file.
+```
