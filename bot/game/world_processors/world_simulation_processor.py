@@ -28,6 +28,10 @@ from bot.game.managers.status_manager import StatusManager
 from bot.game.managers.crafting_manager import CraftingManager
 from bot.game.managers.economy_manager import EconomyManager
 from bot.game.managers.party_manager import PartyManager
+from bot.game.managers.dialogue_manager import DialogueManager
+from bot.game.managers.quest_manager import QuestManager
+from bot.game.managers.relationship_manager import RelationshipManager
+from bot.game.managers.game_log_manager import GameLogManager
 
 # --- Импорт Сервисов ---
 from bot.services.openai_service import OpenAIService
@@ -104,6 +108,10 @@ class WorldSimulationProcessor:
                                                                 # WorldSimulationProcessor может передавать его в kwargs при вызове process_tick др. менеджеров
                                                                 # или party_manager нужен WSP напрямую? (см. get_parties_with_active_action)
                                                                 # Да, PartyManager нужен WSP для get_parties_with_active_action. Сделаем его ОПЦИОНАЛЬНЫМ.
+                 dialogue_manager: Optional[DialogueManager] = None,
+                 quest_manager: Optional[QuestManager] = None,
+                 relationship_manager: Optional[RelationshipManager] = None,
+                 game_log_manager: Optional[GameLogManager] = None,
                 ):
         print("Initializing WorldSimulationProcessor...")
         # --- Сохранение всех переданных аргументов в self._... ---
@@ -135,6 +143,10 @@ class WorldSimulationProcessor:
         self._crafting_manager = crafting_manager
         self._economy_manager = economy_manager
         self._party_manager = party_manager # PartyManager нужен WSP
+        self._dialogue_manager = dialogue_manager
+        self._quest_manager = quest_manager
+        self._relationship_manager = relationship_manager
+        self._game_log_manager = game_log_manager
 
         # TODO: Сохраните другие опциональные менеджеры/сервисы
 
