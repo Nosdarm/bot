@@ -402,8 +402,6 @@ class QuestManager:
     #         return templates
     #     except Exception as e: # Catch database errors or other issues
     #         print(f"Error loading guild-specific quest templates from DB for guild '{guild_id}': {e}")
-
-    #         # Consider logging the full traceback using traceback.format_exc()
     #         # Consider logging the full traceback using traceback.format_exc()
     #         return {}
 

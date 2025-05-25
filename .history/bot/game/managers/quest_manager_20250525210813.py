@@ -409,3 +409,4 @@ class QuestManager:
 
 # No __main__ block in the final library file unless specifically for testing within this file.
 # For this refactoring task, it's better to remove it if it was part of the original conflicted file.
+
