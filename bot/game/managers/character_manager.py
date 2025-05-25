@@ -41,6 +41,10 @@ if TYPE_CHECKING:
     # !!! Add Character here too, despite direct import above !!!
     # This is necessary for Pylance to resolve string literals in annotations (e.g., Dict[str, "Character"]).
     from bot.game.models.character import Character
+    # Ensure ItemManager is imported for type hinting
+    from bot.game.managers.item_manager import ItemManager
+    from bot.game.managers.relationship_manager import RelationshipManager
+    from bot.game.managers.game_log_manager import GameLogManager
 
 
 # --- Imports needed at Runtime ---
@@ -92,6 +96,8 @@ class CharacterManager:
         party_manager: Optional["PartyManager"] = None,
         combat_manager: Optional["CombatManager"] = None,
         dialogue_manager: Optional["DialogueManager"] = None,
+        relationship_manager: Optional["RelationshipManager"] = None,
+        game_log_manager: Optional["GameLogManager"] = None,
     ):
         print("Initializing CharacterManager...")
         self._db_adapter = db_adapter
@@ -103,6 +109,8 @@ class CharacterManager:
         self._party_manager = party_manager
         self._combat_manager = combat_manager
         self._dialogue_manager = dialogue_manager
+        self._relationship_manager = relationship_manager
+        self._game_log_manager = game_log_manager
 
         # Internal caches
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
