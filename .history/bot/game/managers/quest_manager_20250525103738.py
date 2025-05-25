@@ -12,7 +12,10 @@ if TYPE_CHECKING:
     from bot.game.rules.rule_engine import RuleEngine  # Changed path
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.services.consequence_processor import ConsequenceProcessor  # Changed path
+
+
     from bot.game.managers.game_log_manager import GameLogManager
+
     # The import for 'Quest' model is removed as per instruction 10, assuming dicts are used.
 
 class QuestManager:

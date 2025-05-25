@@ -41,9 +41,12 @@ if TYPE_CHECKING:
     from bot.game.managers.economy_manager import EconomyManager
     from bot.game.managers.party_manager import PartyManager
     # TODO: Добавьте другие менеджеры, если они хранят персистентное состояние
-    from bot.game.managers.quest_manager import QuestManager # Placeholder
-    from bot.game.managers.relationship_manager import RelationshipManager # Placeholder
-    from bot.game.managers.game_log_manager import GameLogManager # Placeholder
+    from bot.game.managers.quest_manager import QuestManager
+    from bot.game.managers.relationship_manager import RelationshipManager
+    from bot.game.managers.game_log_manager import GameLogManager
+    from bot.game.managers.dialogue_manager import DialogueManager
+    from bot.game.managers.skill_manager import SkillManager # Added SkillManager
+    from bot.game.managers.spell_manager import SpellManager # Added SpellManager
 
 
     # Определяем типы Callable для Type Checking, если они используются для аннотаций зависимостей-Callable
@@ -87,7 +90,9 @@ class PersistenceManager:
                  quest_manager: Optional["QuestManager"] = None, # Use string literal!
                  relationship_manager: Optional["RelationshipManager"] = None, # Use string literal!
                  game_log_manager: Optional["GameLogManager"] = None, # Use string literal!
-
+                 dialogue_manager: Optional["DialogueManager"] = None, # Use string literal!
+                 skill_manager: Optional["SkillManager"] = None, # Added skill_manager
+                 spell_manager: Optional["SpellManager"] = None, # Added spell_manager
                  # TODO: Добавьте другие менеджеры
                 ):
         print("Initializing PersistenceManager...")
@@ -113,6 +118,9 @@ class PersistenceManager:
         self._quest_manager: Optional["QuestManager"] = quest_manager
         self._relationship_manager: Optional["RelationshipManager"] = relationship_manager
         self._game_log_manager: Optional["GameLogManager"] = game_log_manager
+        self._dialogue_manager: Optional["DialogueManager"] = dialogue_manager
+        self._skill_manager: Optional["SkillManager"] = skill_manager # Assigned to instance
+        self._spell_manager: Optional["SpellManager"] = spell_manager # Assigned to instance
         # TODO: Сохраните другие менеджеры
 
 
@@ -195,6 +203,9 @@ class PersistenceManager:
              (self._quest_manager, 'save_state'),
              (self._relationship_manager, 'save_state'),
              (self._game_log_manager, 'save_state'),
+             (self._dialogue_manager, 'save_state'),
+             (self._skill_manager, 'save_state'), # Added to save list
+             (self._spell_manager, 'save_state'), # Added to save list
              # TODO: Добавьте другие менеджеры здесь
          ]
 
@@ -315,6 +326,9 @@ class PersistenceManager:
              (self._quest_manager, 'load_state'),
              (self._relationship_manager, 'load_state'),
              (self._game_log_manager, 'load_state'),
+             (self._dialogue_manager, 'load_state'),
+             (self._skill_manager, 'load_state'), # Added to load list
+             (self._spell_manager, 'load_state'), # Added to load list
              # TODO: Добавьте другие менеджеры здесь
          ]
 
@@ -361,6 +375,9 @@ class PersistenceManager:
              (self._quest_manager, 'rebuild_runtime_caches'),
              (self._relationship_manager, 'rebuild_runtime_caches'),
              (self._game_log_manager, 'rebuild_runtime_caches'),
+             (self._dialogue_manager, 'rebuild_runtime_caches'),
+             (self._skill_manager, 'rebuild_runtime_caches'), # Added to rebuild list
+             (self._spell_manager, 'rebuild_runtime_caches'), # Added to rebuild list
              # TODO: Добавьте другие менеджеры здесь
          ]
 
