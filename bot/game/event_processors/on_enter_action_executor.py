@@ -4,8 +4,14 @@ import traceback
 from typing import Any, List, Dict
 
 # Тип для отправки сообщений
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, TYPE_CHECKING # Added TYPE_CHECKING
 SendToChannelCallback = Callable[[str], Awaitable[Any]]
+
+if TYPE_CHECKING:
+    from bot.game.managers.npc_manager import NpcManager
+    from bot.game.managers.item_manager import ItemManager
+    from bot.game.managers.combat_manager import CombatManager
+    from bot.game.managers.status_manager import StatusManager
 
 class OnEnterActionExecutor:
     """
@@ -14,10 +20,10 @@ class OnEnterActionExecutor:
     """
     def __init__(
         self,
-        npc_manager,
-        item_manager,
-        combat_manager,
-        status_manager
+        npc_manager: "NpcManager",
+        item_manager: "ItemManager",
+        combat_manager: "CombatManager",
+        status_manager: "StatusManager"
     ):
         self._npc_manager = npc_manager
         self._item_manager = item_manager

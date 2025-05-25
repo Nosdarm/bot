@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from bot.game.managers.status_manager import StatusManager
     # from bot.game.managers.dialogue_manager import DialogueManager # If needed for dialogue consequences
     # from bot.game.managers.combat_manager import CombatManager # If needed for combat consequences
+    from bot.game.models.game_state import GameState
+
     # from bot.game.game_state import GameState # Not needed if using Any for game_state type hint
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.economy_manager import EconomyManager

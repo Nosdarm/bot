@@ -6,17 +6,18 @@ class CampaignLoader:
     Handles loading campaign data from a JSON file.
     """
 
-    def __init__(self, file_path: Optional[str] = None):
+    def __init__(self, settings: Optional[Dict[str, Any]] = None):
         """
         Initializes the CampaignLoader.
 
         Args:
-            file_path (Optional[str]): An optional path to a campaign file.
-                                       Loading is not done automatically on init.
+            settings (Optional[Dict[str, Any]]): Bot/game settings dictionary.
         """
+        self._settings = settings if settings is not None else {}
+        self._campaign_base_path = self._settings.get('campaign_data_path', 'data/campaigns')
         self._campaign_data: Optional[Dict[str, Any]] = None
-        self._file_path: Optional[str] = file_path # Store if provided, for potential future use
-        print(f"CampaignLoader initialized. Optional file path: {file_path}")
+        # self._file_path: Optional[str] = None # Removed as it's now derived from settings + identifier
+        print(f"CampaignLoader initialized. Base campaign path: '{self._campaign_base_path}'")
 
     def load_campaign_from_file(self, file_path: str) -> Dict[str, Any]:
         """
@@ -30,7 +31,7 @@ class CampaignLoader:
                             Returns an empty dictionary if loading fails.
         """
         print(f"Attempting to load campaign data from: {file_path}")
-        self._file_path = file_path # Update file path
+        # self._file_path = file_path # No longer directly set _file_path this way
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 self._campaign_data = json.load(f)

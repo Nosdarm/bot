@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.db.sqlite_adapter import SqliteAdapter
     # Add other necessary imports for type hinting
     # e.g., from bot.game.managers.character_manager import CharacterManager
 
@@ -68,3 +68,4 @@ class SpellManager:
         """Rebuilds any runtime caches if necessary."""
         print(f"SpellManager: Rebuilding runtime caches for guild {str(guild_id)} (Placeholder).")
 
+```
