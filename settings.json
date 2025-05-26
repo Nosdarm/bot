@@ -1,3 +1,54 @@
 {
-  "active_guild_ids": ["1364930265591320586"]
+  "active_guild_ids": ["1364930265591320586"],
+  "item_templates": {
+    "potion_health_minor": {
+        "name": "Minor Healing Potion",
+        "description": "A common potion that restores a small amount of health.",
+        "type": "potion",
+        "icon": "🧪",
+        "weight": 0.1,
+        "value": 10,
+        "usable": true,
+        "consumable": true,
+        "properties": { "effect_type": "heal", "amount": 20, "target": "self", "sfx": "glug" }
+    },
+    "sword_iron_short": {
+        "name": "Iron Shortsword",
+        "description": "A basic but reliable iron shortsword.",
+        "type": "weapon",
+        "icon": "⚔️",
+        "weight": 1.5,
+        "value": 25,
+        "equipable": true,
+        "properties": { "damage": "1d6", "damage_type": "slashing", "skill_used": "short_blades", "equip_slot": "main_hand", "parry_bonus": 1 }
+    },
+    "leather_jerkin": {
+        "name": "Leather Jerkin",
+        "description": "A simple leather jerkin offering basic protection.",
+        "type": "armor",
+        "icon": "👕",
+        "weight": 2.0,
+        "value": 15,
+        "equipable": true,
+        "properties": { "defense": 3, "armor_type": "light", "equip_slot": "chest", "stealth_penalty": 0 }
+    },
+    "iron_ore_chunk": {
+        "name": "Iron Ore Chunk",
+        "description": "A chunk of raw iron ore.",
+        "type": "resource",
+        "icon": "🪨",
+        "weight": 0.5,
+        "value": 5,
+        "properties": { "stackable": true, "max_stack": 20, "crafting_material_type": "metal_ore" }
+    },
+    "gold_coin": {
+        "name": "Gold Coin",
+        "description": "A standard gold coin.",
+        "type": "currency",
+        "icon": "🪙",
+        "weight": 0.01,
+        "value": 1,
+        "properties": { "stackable": true }
+    }
+  }
 }
