@@ -331,13 +331,208 @@ class CommandRouter:
     @command("character")
     async def handle_character(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
         """
-        Управляет персонажами. Usage: {prefix}character <create|delete> [args]
-        `{prefix}character create <name>`
-        `{prefix}character delete [character_id_or_name (defaults to yours)]`
+        Manages player characters.
+        Usage:
+        `{prefix}character create <name>` - Creates a new character with the given name.
+        `{prefix}character delete` - Deletes your character in this guild.
+        (Note: Delete functionality is conceptual and needs full implementation with confirmation.)
         """.format(prefix=self._command_prefix)
-        # Simplified existing character command logic for brevity
         send_callback = context['send_to_command_channel']
-        await send_callback("Character command logic is complex and retained from previous version.")
+        guild_id = context.get('guild_id')
+        author_id_str = context.get('author_id') # This is discord_user_id as string
+
+        if not guild_id:
+            await send_callback("Character commands can only be used in a server (guild).")
+            return
+        
+        if not author_id_str:
+            await send_callback("Could not identify your user ID.")
+            return
+        
+        try:
+            discord_user_id = int(author_id_str)
+        except ValueError:
+            await send_callback("Invalid user ID format.")
+            return
+
+        char_manager: Optional["CharacterManager"] = context.get('character_manager')
+        if not char_manager:
+            await send_callback("Character system is currently unavailable.")
+            print("CommandRouter Error: CharacterManager not found in context for handle_character.")
+            return
+
+        if not args:
+            help_text = (self.handle_character.__doc__ or "Character management commands.").format(prefix=self._command_prefix)
+            await send_callback(f"Please specify an action. Usage:\n{help_text}")
+            return
+
+        subcommand = args[0].lower()
+        action_args = args[1:]
+
+        if subcommand == "create":
+            if not action_args:
+                await send_callback(f"Usage: `{self._command_prefix}character create <name>`")
+                return
+            
+            character_name = " ".join(action_args) # Allow names with spaces
+
+            if not character_name or len(character_name) < 3 or len(character_name) > 32: # Basic name validation
+                await send_callback("Character name must be between 3 and 32 characters.")
+                return
+            
+            try:
+                # CharacterManager.create_character expects discord_id as int
+                new_char = await char_manager.create_character(
+                    discord_id=discord_user_id, 
+                    name=character_name,
+                    guild_id=guild_id,
+                    # initial_location_id can be omitted to use default from CharacterManager
+                    **context # Pass context for RuleEngine, etc.
+                )
+                if new_char:
+                    await send_callback(f"✅ Character '{new_char.name}' created successfully with ID `{new_char.id}`!")
+                else:
+                    # create_character might return None if char exists or name taken,
+                    # or could raise an exception for other reasons.
+                    # Assuming it returns None for "already exists" type errors for now.
+                    await send_callback(f"⚠️ Could not create character. You might already have a character in this guild, or the name '{character_name}' might be taken.")
+            except ValueError as ve: # Catch specific errors if CharacterManager raises them
+                await send_callback(f"⚠️ Error creating character: {ve}")
+            except ConnectionError as ce: # DB connection issues
+                await send_callback(f"⚠️ Database error: Could not save character. Please try again later. {ce}")
+            except Exception as e:
+                print(f"CommandRouter: Error in handle_character create: {e}")
+                traceback.print_exc()
+                await send_callback(f"An unexpected error occurred while creating character: {e}")
+
+        elif subcommand in ["view", "sheet"]:
+            target_char_to_view: Optional[Character] = None
+            char_identifier_for_msg = "your character" # Default message for self-view
+
+            if not action_args: # User wants to view their own character
+                target_char_to_view = char_manager.get_character_by_discord_id(guild_id, discord_user_id)
+                if not target_char_to_view:
+                    await send_callback("You don't have a character in this guild to view.")
+                    return
+                # char_identifier_for_msg is already "your character"
+            
+            else: # Admin potentially viewing another character OR user specifying their own char name/id
+                target_identifier = " ".join(action_args)
+                
+                # First, check if the user is trying to view their own character by providing an identifier
+                # This is a common use case, e.g. /char view MyCharName
+                potential_self_char = char_manager.get_character_by_discord_id(guild_id, discord_user_id)
+                if potential_self_char:
+                    if is_uuid_format(target_identifier) and potential_self_char.id == target_identifier:
+                        target_char_to_view = potential_self_char
+                    elif potential_self_char.name.lower() == target_identifier.lower(): # Case-insensitive name check
+                        target_char_to_view = potential_self_char
+
+                # If not viewing self by identifier, then it's an attempt to view others, requiring admin rights
+                if not target_char_to_view:
+                    admin_users_list = self._settings.get('bot_admins', [])
+                    if not isinstance(admin_users_list, list): admin_users_list = []
+                    admin_ids = {str(admin_id) for admin_id in admin_users_list}
+
+                    if author_id_str not in admin_ids:
+                        await send_callback("❌ You are not authorized to view other characters' sheets. You can only view your own character, either with or without specifying your character's name/ID.")
+                        return
+
+                    char_identifier_for_msg = f"character '{target_identifier}'" # Update for admin viewing message
+                    
+                    if is_uuid_format(target_identifier): 
+                        target_char_to_view = char_manager.get_character(guild_id, target_identifier)
+                    
+                    if not target_char_to_view: 
+                        target_char_to_view = char_manager.get_character_by_name(guild_id, target_identifier)
+
+                    if not target_char_to_view:
+                        await send_callback(f"Character '{target_identifier}' not found in this guild.")
+                        return
+            
+            # At this point, target_char_to_view is the Character object to be viewed.
+            if not self._character_view_service:
+                await send_callback("Character sheet viewing service is currently unavailable.")
+                print("CommandRouter Error: CharacterViewService not available in context for handle_character view.")
+                return
+
+            try:
+                # get_character_sheet_view should return a string (plain text or pre-formatted for Discord)
+                # It needs the character object and the context (for other managers if needed by the view service)
+                sheet_view_text = await self._character_view_service.get_character_sheet_view(target_char_to_view, context)
+                await send_callback(sheet_view_text)
+            except Exception as e:
+                print(f"CommandRouter: Error in handle_character view/sheet for {char_identifier_for_msg}: {e}")
+                traceback.print_exc()
+                await send_callback(f"An unexpected error occurred while generating the sheet for {char_identifier_for_msg}: {e}")
+        
+        elif subcommand == "delete":
+            target_char_to_delete: Optional[Character] = None
+            char_identifier_for_msg = "your character"
+
+            if not action_args: # User wants to delete their own character
+                target_char_to_delete = char_manager.get_character_by_discord_id(guild_id, discord_user_id)
+                if not target_char_to_delete:
+                    await send_callback("You don't have a character in this guild to delete.")
+                    return
+                char_identifier_for_msg = f"your character '{target_char_to_delete.name}'"
+            
+            else: # Admin potentially deleting another character
+                admin_users_list = self._settings.get('bot_admins', [])
+                if not isinstance(admin_users_list, list): admin_users_list = [] # Ensure it's a list
+                admin_ids = {str(admin_id) for admin_id in admin_users_list} # Convert to set of strings
+
+                if author_id_str not in admin_ids:
+                    await send_callback("❌ You are not authorized to delete other characters. You can only delete your own character by using `/character delete` with no arguments.")
+                    return
+
+                target_identifier = " ".join(action_args)
+                char_identifier_for_msg = f"character '{target_identifier}'"
+                
+                # Try resolving by ID first, then by name
+                if is_uuid_format(target_identifier): # is_uuid_format is defined at the end of CommandRouter
+                    target_char_to_delete = char_manager.get_character(guild_id, target_identifier)
+                
+                if not target_char_to_delete: # If not found by ID or not a UUID, try by name
+                    target_char_to_delete = char_manager.get_character_by_name(guild_id, target_identifier)
+
+                if not target_char_to_delete:
+                    await send_callback(f"Character '{target_identifier}' not found in this guild.")
+                    return
+            
+            # At this point, target_char_to_delete is the Character object to be deleted.
+            # For non-admin self-delete, confirmation is recommended but skipped for this sub-task.
+            # Example confirmation:
+            # if not action_args and (len(args) < 2 or args[1].lower() != 'confirm'):
+            #     await send_callback(f"Are you sure you want to delete {char_identifier_for_msg}? This action cannot be undone. Type `{self._command_prefix}character delete confirm` to proceed.")
+            #     return
+            # elif not action_args and len(args) >1 and args[1].lower() == 'confirm':
+            #    pass # Proceed with self-deletion confirmed
+
+            try:
+                char_name_before_delete = target_char_to_delete.name
+                char_id_before_delete = target_char_to_delete.id
+                
+                deleted_char_id_result = await char_manager.remove_character(
+                    character_id=char_id_before_delete, 
+                    guild_id=guild_id, 
+                    **context
+                )
+                
+                if deleted_char_id_result:
+                    await send_callback(f"🗑️ Character '{char_name_before_delete}' (ID: `{deleted_char_id_result}`) has been deleted.")
+                else:
+                    # This case might happen if remove_character had an internal issue but didn't raise an exception
+                    await send_callback(f"Could not delete {char_identifier_for_msg}. It might have already been removed or an error occurred.")
+            
+            except Exception as e:
+                print(f"CommandRouter: Error in handle_character delete for {char_identifier_for_msg}: {e}")
+                traceback.print_exc()
+                await send_callback(f"An unexpected error occurred while deleting {char_identifier_for_msg}: {e}")
+
+        else:
+            help_text = (self.handle_character.__doc__ or "Character management commands.").format(prefix=self._command_prefix)
+            await send_callback(f"Unknown character action: '{subcommand}'. Usage:\n{help_text}")
 
 
     @command("status")

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.dialogue_manager import DialogueManager
     from bot.services.openai_service import OpenAIService # Если используется
+    from bot.game.models.spell import Spell # For spell logic
 
     # Процессоры, которые могут создавать циклические импорты
     from bot.game.event_processors.event_stage_processor import EventStageProcessor # <-- Added, needed for handle_stage fix
@@ -41,7 +42,7 @@ if TYPE_CHECKING:
 # Эти модули необходимы для выполнения кода (например, для создания экземпляров, вызовов статических методов, проверок isinstance)
 # Если модуль импортируется здесь, убедитесь, что он НЕ ИМПОРТИРУЕТ RuleEngine напрямую.
 from bot.game.models.character import Character # Прямой импорт модели, если она нужна для isinstance или других runtime целей
-
+# from bot.game.models.spell import Spell # Not needed for runtime if only used in type hints within methods
 
 print("DEBUG: rule_engine.py module loaded.")
 
@@ -55,10 +56,31 @@ class RuleEngine:
     # required_args_for_load = [] # Если load_rules_data требует аргументов, добавьте сюда
     # required_args_for_save = [] # Если save_state требует аргументов, добавьте сюда
 
-    def __init__(self, settings: Optional[Dict[str, Any]] = None):
+    def __init__(self, 
+                 settings: Optional[Dict[str, Any]] = None,
+                 character_manager: Optional["CharacterManager"] = None,
+                 npc_manager: Optional["NpcManager"] = None,
+                 status_manager: Optional["StatusManager"] = None,
+                 item_manager: Optional["ItemManager"] = None, # Added for consistency
+                 location_manager: Optional["LocationManager"] = None, # Added for consistency
+                 party_manager: Optional["PartyManager"] = None, # Added for consistency
+                 combat_manager: Optional["CombatManager"] = None, # Added for consistency
+                 dialogue_manager: Optional["DialogueManager"] = None # Added for consistency
+                 ):
         print("Initializing RuleEngine...")
         self._settings = settings or {}
         self._rules_data: Dict[str, Any] = {} # Аннотация Dict, внутри Any - нормально
+        
+        # Store manager instances
+        self._character_manager = character_manager
+        self._npc_manager = npc_manager
+        self._status_manager = status_manager
+        self._item_manager = item_manager
+        self._location_manager = location_manager
+        self._party_manager = party_manager
+        self._combat_manager = combat_manager
+        self._dialogue_manager = dialogue_manager
+        
         print("RuleEngine initialized.")
 
     async def load_rules_data(self) -> None:
@@ -709,8 +731,9 @@ class RuleEngine:
         if not guild_id:
             return {"success": False, "message": "Cannot determine guild for hide attempt."}
 
-        location_manager: Optional["LocationManager"] = context.get('location_manager')
-        npc_manager: Optional["NpcManager"] = context.get('npc_manager')
+        # Use stored managers
+        location_manager = self._location_manager
+        npc_manager = self._npc_manager
 
         if not location_manager:
             return {"success": False, "message": "Location system unavailable, cannot attempt to hide."}
@@ -782,8 +805,9 @@ class RuleEngine:
 
         print(f"RuleEngine: Resolving use of item instance {item_id} (Template: {item_template_id}) by char {character.id} in guild {guild_id}.")
 
-        item_manager: Optional["ItemManager"] = context.get('item_manager')
-        # status_manager: Optional["StatusManager"] = context.get('status_manager') # Not used directly here, effects are returned
+        # Use stored manager
+        item_manager = self._item_manager
+        # status_manager = self._status_manager # Not used directly here, effects are returned
 
         if not item_manager:
             return {"success": False, "message": "Item system unavailable.", "consumed": False}
@@ -858,3 +882,268 @@ class RuleEngine:
 
         # Default/Unusable
         return {"success": False, "message": f"You can't figure out how to use the {item_name} right now.", "consumed": False}
+
+    # --- Spell Related Methods ---
+
+    async def check_spell_learning_requirements(self, character: "Character", spell: "Spell", **kwargs: Any) -> tuple[bool, Optional[str]]:
+        """
+        Checks if a character meets the requirements to learn a specific spell.
+        Called by SpellManager.learn_spell.
+        Returns a tuple: (can_learn: bool, reason: Optional[str])
+        """
+        if not spell.requirements:
+            return True, None # No requirements, can always learn
+
+        # Ensure character has stats and skills attributes
+        character_stats = getattr(character, 'stats', {})
+        if not isinstance(character_stats, dict): character_stats = {}
+        
+        character_skills = getattr(character, 'skills', {})
+        if not isinstance(character_skills, dict): character_skills = {}
+
+        for req_key, req_value in spell.requirements.items():
+            if req_key.startswith("min_"): # e.g., "min_intelligence"
+                stat_name = req_key.split("min_")[1]
+                if character_stats.get(stat_name, 0) < req_value:
+                    return False, f"Requires {stat_name} {req_value}, has {character_stats.get(stat_name, 0)}."
+            
+            elif req_key == "required_skill":
+                skill_name = req_value
+                required_level = spell.requirements.get("skill_level", 1) # Default required skill level is 1
+                if character_skills.get(skill_name, 0) < required_level:
+                    return False, f"Requires skill '{skill_name}' level {required_level}, has {character_skills.get(skill_name, 0)}."
+            
+            elif req_key == "skill_level": # Already handled by "required_skill"
+                continue
+
+            # TODO: Add other requirement types like "required_class", "required_faction", etc.
+            # elif req_key == "required_class":
+            #     if getattr(character, 'class_id', None) != req_value: # Assuming character has 'class_id'
+            #         return False, f"Requires class '{req_value}'."
+            
+            else:
+                # Unknown requirement, for now, assume it's not met or log a warning
+                print(f"RuleEngine: Warning: Unknown spell requirement key '{req_key}' for spell '{spell.id}'.")
+                # return False, f"Unknown requirement: {req_key}." # Stricter: fail on unknown reqs
+
+        return True, None
+
+    async def _resolve_dice_roll(self, roll_string: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Internal wrapper for resolve_dice_roll, ensuring consistent signature.
+        (Original resolve_dice_roll already matches this, but for clarity)
+        """
+        # The existing resolve_dice_roll is fine, just ensure it's called correctly.
+        # It was previously defined as: async def resolve_dice_roll(self, roll_string: str, context: Dict[str, Any])
+        # We can call it directly. The context argument is not strictly needed by resolve_dice_roll itself
+        # but providing it if available is harmless.
+        return await self.resolve_dice_roll(roll_string, context if context else {})
+
+
+    async def process_spell_effects(self, caster: "Character", spell: "Spell", target_entity: Optional[Any], guild_id: str, **kwargs: Any) -> Dict[str, Any]:
+        """
+        Processes the effects of a cast spell.
+        Called by SpellManager.cast_spell.
+        """
+        if not self._character_manager or not self._npc_manager or not self._status_manager:
+            return {"success": False, "message": "Core managers not available in RuleEngine for spell processing.", "outcomes": []}
+
+        outcomes: List[Dict[str, Any]] = []
+        caster_id = getattr(caster, 'id', 'UnknownCaster')
+        
+        # Determine default target if none provided based on spell
+        actual_target = target_entity
+        if not actual_target:
+            if spell.target_type == "self":
+                actual_target = caster
+            # Other target_types like "area" or "closest_enemy" would need more complex logic here
+            # or be resolved before calling this method (e.g., in SpellManager or CombatManager)
+
+        if not actual_target and spell.target_type not in ["self", "area_around_caster"]: # Area spells might not have a specific target_entity initially
+             # Some spells might require a target that wasn't provided or resolved
+            if spell.target_type not in ["self", "area_around_caster", "no_target"]: # Allow spells with no specific target
+                return {"success": False, "message": f"Spell '{spell.name}' requires a target, but none was provided or resolved.", "outcomes": []}
+
+
+        for effect_data in spell.effects:
+            effect_type = effect_data.get('type')
+            target_id_for_effect = getattr(actual_target, 'id', None) # Get ID of the current target for this effect
+            target_type_for_effect = None
+            if actual_target:
+                target_type_for_effect = type(actual_target).__name__ # "Character" or "NPC"
+
+            outcome_details: Dict[str, Any] = {"effect_type": effect_type, "target_id": target_id_for_effect}
+
+            try:
+                if effect_type == "damage":
+                    damage_str = effect_data.get('amount', "0")
+                    damage_type = effect_data.get('damage_type', "physical")
+                    
+                    roll_result = await self._resolve_dice_roll(damage_str)
+                    actual_damage = roll_result.get('total', 0)
+                    
+                    outcome_details.update({"amount": actual_damage, "damage_type": damage_type, "roll_details": roll_result})
+
+                    if actual_target and hasattr(actual_target, 'stats') and 'health' in actual_target.stats:
+                        # TODO: Add resistance/vulnerability checks based on damage_type
+                        actual_target.stats['health'] -= actual_damage
+                        print(f"RuleEngine: Applied {actual_damage} {damage_type} damage to {target_id_for_effect}. New health: {actual_target.stats['health']}")
+                        
+                        if target_type_for_effect == "Character":
+                            await self._character_manager.mark_character_dirty(guild_id, target_id_for_effect)
+                        elif target_type_for_effect == "NPC":
+                            await self._npc_manager.mark_npc_dirty(guild_id, target_id_for_effect)
+                        
+                        # Check for death
+                        if actual_target.stats['health'] <= 0:
+                            outcome_details["killed"] = True
+                            print(f"RuleEngine: Target {target_id_for_effect} killed by {damage_type} damage from spell '{spell.name}'.")
+                            # Further death processing (e.g., CombatManager.handle_death) might be needed
+                    else:
+                        outcome_details["message"] = "Target has no health attribute or target is invalid."
+                        print(f"RuleEngine: Spell '{spell.name}' damage effect: Target {target_id_for_effect} has no health or is invalid.")
+
+                elif effect_type == "heal":
+                    heal_str = effect_data.get('amount', "0")
+                    roll_result = await self._resolve_dice_roll(heal_str)
+                    actual_heal = roll_result.get('total', 0)
+
+                    outcome_details.update({"amount": actual_heal, "roll_details": roll_result})
+
+                    if actual_target and hasattr(actual_target, 'stats') and 'health' in actual_target.stats:
+                        max_health = actual_target.stats.get('max_health', actual_target.stats['health']) # Assume max_health if present
+                        current_health = actual_target.stats['health']
+                        new_health = min(current_health + actual_heal, max_health)
+                        healed_amount = new_health - current_health
+                        actual_target.stats['health'] = new_health
+                        
+                        outcome_details["healed_amount"] = healed_amount # Store actual amount healed
+                        print(f"RuleEngine: Applied {healed_amount} healing to {target_id_for_effect}. New health: {new_health}")
+
+                        if target_type_for_effect == "Character":
+                            await self._character_manager.mark_character_dirty(guild_id, target_id_for_effect)
+                        elif target_type_for_effect == "NPC":
+                            await self._npc_manager.mark_npc_dirty(guild_id, target_id_for_effect)
+                    else:
+                        outcome_details["message"] = "Target has no health attribute or target is invalid."
+                        print(f"RuleEngine: Spell '{spell.name}' heal effect: Target {target_id_for_effect} has no health or is invalid.")
+
+                elif effect_type == "apply_status_effect":
+                    status_effect_id = effect_data.get('status_effect_id')
+                    duration = effect_data.get('duration') # Can be None for default or permanent
+
+                    if status_effect_id and target_id_for_effect and target_type_for_effect:
+                        # Ensure StatusManager is available
+                        if not self._status_manager:
+                             outcome_details["message"] = "StatusManager not available."
+                             print(f"RuleEngine: Spell '{spell.name}' apply_status_effect: StatusManager not configured.")
+                        else:
+                            # Call StatusManager to apply the effect
+                            # Assuming add_status_effect_to_entity is an async method
+                            # It will handle creation of StatusEffect instance and adding to entity
+                            # Need to pass: target_id, target_type, status_type (id), duration, guild_id, source_id
+                            # status_data might be needed if the status effect definition is not globally available to StatusManager
+                            # For now, assume status_effect_id is enough for StatusManager to find the template.
+                            
+                            # The target_type needs to be derived from target_entity
+                            # e.g. target_type = "Character" or "NPC"
+
+                            await self._status_manager.add_status_effect_to_entity(
+                                guild_id=guild_id,
+                                entity_id=target_id_for_effect,
+                                entity_type=target_type_for_effect,
+                                status_effect_template_id=status_effect_id, # Assuming template ID
+                                duration_seconds=duration,
+                                source_id=caster_id,
+                                context_managers=kwargs.get('context_managers', {}) # Pass context if StatusManager needs it
+                            )
+                            outcome_details.update({"status_effect_id": status_effect_id, "duration": duration})
+                            print(f"RuleEngine: Applied status effect '{status_effect_id}' to {target_id_for_effect} for {duration}s.")
+                    else:
+                        outcome_details["message"] = "Missing status_effect_id, target_id, or target_type."
+                        print(f"RuleEngine: Spell '{spell.name}' apply_status_effect: Missing data: status_id={status_effect_id}, target_id={target_id_for_effect}, target_type={target_type_for_effect}")
+                
+                elif effect_type == "summon":
+                    npc_archetype_id = effect_data.get('summon_npc_archetype_id')
+                    count = effect_data.get('count', 1)
+                    summon_location_id = getattr(caster, 'location_id', None) # Summon at caster's location by default
+
+                    if npc_archetype_id and summon_location_id and self._npc_manager:
+                        summoned_npcs_ids = []
+                        for _ in range(count):
+                            # Assuming NpcManager.create_npc_instance_from_template or similar
+                            # This method would handle NPC creation, assigning an ID, and saving.
+                            # It might need guild_id, archetype_id, location_id.
+                            # For simplicity, let's assume it returns the new NPC's ID or the NPC object
+                            new_npc = await self._npc_manager.create_npc_instance_from_template(
+                                guild_id=guild_id,
+                                npc_template_id=npc_archetype_id,
+                                location_id=summon_location_id,
+                                name_override=f"{spell.name}'s Summon" # Optional: give summoned creature a special name
+                            )
+                            if new_npc and hasattr(new_npc, 'id'):
+                                summoned_npcs_ids.append(new_npc.id)
+                                print(f"RuleEngine: Summoned NPC '{new_npc.id}' (Archetype: {npc_archetype_id}) at location {summon_location_id}.")
+                            else:
+                                print(f"RuleEngine: Failed to summon NPC of archetype {npc_archetype_id}.")
+                        outcome_details.update({"npc_archetype_id": npc_archetype_id, "count": count, "summoned_ids": summoned_npcs_ids, "location_id": summon_location_id})
+                    else:
+                        outcome_details["message"] = "Missing npc_archetype_id, summon_location_id, or NpcManager."
+                        print(f"RuleEngine: Spell '{spell.name}' summon effect: Missing data or NpcManager.")
+
+                elif effect_type in ["buff_stat", "debuff_stat"]:
+                    stat_to_modify = effect_data.get('stat')
+                    amount = effect_data.get('amount') # Can be positive (buff) or negative (debuff via amount)
+                    duration = effect_data.get('duration', 60) # Default duration for stat mods
+
+                    if stat_to_modify and amount is not None and target_id_for_effect and target_type_for_effect and self._status_manager:
+                        # This translates to applying a generic "stat_modifier" status effect.
+                        # StatusManager would need to know how to interpret its properties.
+                        status_effect_properties = {
+                            "modifies_stat": stat_to_modify,
+                            "modifier_amount": amount if effect_type == "buff_stat" else -amount, # Ensure debuffs are negative
+                            "is_multiplier": effect_data.get("is_multiplier", False) # Optional: for percentage buffs
+                        }
+                        
+                        # We need a unique status effect ID for this, or a generic one that StatusManager parses
+                        # For example, "generic_stat_buff" or "generic_stat_debuff"
+                        # Or, the status_effect_id could be part of the spell's effect_data
+                        status_template_id_for_mod = effect_data.get("status_effect_template_id_override", f"mod_{stat_to_modify}_{'buff' if effect_type == 'buff_stat' else 'debuff'}")
+
+                        await self._status_manager.add_status_effect_to_entity(
+                            guild_id=guild_id,
+                            entity_id=target_id_for_effect,
+                            entity_type=target_type_for_effect,
+                            status_effect_template_id=status_template_id_for_mod, 
+                            duration_seconds=duration,
+                            source_id=caster_id,
+                            # Pass the specific modifications as part of the status effect instance data
+                            # This assumes StatusManager can take 'instance_properties' or similar
+                            # and merge them with the template for this specific application.
+                            instance_properties=status_effect_properties, 
+                            context_managers=kwargs.get('context_managers', {})
+                        )
+                        outcome_details.update({
+                            "stat_modified": stat_to_modify, 
+                            "modification_amount": status_effect_properties["modifier_amount"], 
+                            "duration": duration
+                        })
+                        print(f"RuleEngine: Applied {effect_type} to {stat_to_modify} for {target_id_for_effect} by {status_effect_properties['modifier_amount']} for {duration}s.")
+                    else:
+                        outcome_details["message"] = "Missing data for stat modification or StatusManager unavailable."
+                        print(f"RuleEngine: Spell '{spell.name}' {effect_type} effect: Missing data or StatusManager.")
+                
+                # Add more effect types here (e.g., teleport, create_item, etc.)
+
+                else:
+                    outcome_details["message"] = f"Unknown or unhandled spell effect type: '{effect_type}'."
+                    print(f"RuleEngine: Warning: Unknown spell effect type '{effect_type}' in spell '{spell.name}'.")
+            
+            except Exception as e:
+                print(f"RuleEngine: Error processing effect type '{effect_type}' for spell '{spell.name}': {e}")
+                traceback.print_exc()
+                outcome_details["error"] = str(e)
+            
+            outcomes.append(outcome_details)
+
+        return {"success": True, "message": "Spell effects processed.", "outcomes": outcomes}

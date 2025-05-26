@@ -1,113 +1,154 @@
 # В bot/game/models/character.py
-
-from __future__ import annotations # Убедитесь, что это есть
+from __future__ import annotations
 import json
-from typing import Dict, Any, List, Optional # Импортируем все необходимые типы
+from typing import Dict, Any, List, Optional
+from dataclasses import dataclass, field # Import dataclass and field
 
 # TODO: Импортировать другие модели, если Character имеет на них ссылки (напр., Item)
-# from bot.game.models.item import Item # Если Item используется в аннотациях инвентаря
+# from bot.game.models.item import Item
 
+@dataclass
 class Character:
-    # Определение атрибутов класса (опционально, но полезно для читаемости и Type Checking)
-    # Если используется __future__ annotations и аннотации в __init__, это менее критично,
-    # но для ClassVar или дефолтных значений здесь это важно.
-    # Example: inventory: List[Dict[str, Any]] # Убедитесь, что тип инвентаря соответствует схеме DB
+    id: str
+    discord_user_id: int
+    name: str
+    guild_id: str
+    
+    location_id: Optional[str] = None
+    stats: Dict[str, Any] = field(default_factory=dict) # e.g., {"health": 100, "mana": 50, "strength": 10, "intelligence": 12}
+    inventory: List[Dict[str, Any]] = field(default_factory=list) # List of item instance dicts or Item objects
+    current_action: Optional[Dict[str, Any]] = None
+    action_queue: List[Dict[str, Any]] = field(default_factory=list)
+    party_id: Optional[str] = None
+    state_variables: Dict[str, Any] = field(default_factory=dict) # For quests, flags, etc.
+    
+    # Attributes that might have been separate but often make sense within stats or derived
+    health: float = 100.0 # Current health, often also in stats for convenience
+    max_health: float = 100.0 # Max health, often also in stats
+    is_alive: bool = True
+    
+    status_effects: List[Dict[str, Any]] = field(default_factory=list) # List of status effect instances (or their dicts)
+    level: int = 1
+    experience: int = 0
+    active_quests: List[str] = field(default_factory=list) # List of quest IDs
 
-    def __init__(self,
-                 id: str,
-                 discord_user_id: int,
-                 name: str,
-                 guild_id: str, # <-- ДОБАВЬТЕ ЭТОТ АТРИБУТ
-                 location_id: Optional[str] = None,
-                 stats: Dict[str, Any] = None, # Убедитесь, что default={} или None и обрабатывается
-                 inventory: List[Dict[str, Any]] = None, # Убедитесь, что default=[] или None
-                 current_action: Optional[Dict[str, Any]] = None,
-                 action_queue: List[Dict[str, Any]] = None, # Убедитесь, что default=[]
-                 party_id: Optional[str] = None,
-                 state_variables: Dict[str, Any] = None, # Убедитесь, что default={}
-                 health: float = 100.0,
-                 max_health: float = 100.0,
-                 is_alive: bool = True,
-                 status_effects: List[Dict[str, Any]] = None, # Убедитесь, что default=[]
-                 level: int = 1,
-                 experience: int = 0,
-                 active_quests: List[str] = None,
-                 # Примите любые другие атрибуты, которые могут быть в DB схеме или создаются
-                 **kwargs: Any # Для гибкости, если появятся новые поля
-                ):
-        self.id = id
-        self.discord_user_id = discord_user_id
-        self.name = name
-        self.guild_id = guild_id # <-- ПРИСВОЙТЕ АТРИБУТ guild_id
-        self.location_id = location_id
-        # Инициализация изменяемых атрибутов, если они None (из-за дефолтов в схеме)
-        self.stats = stats if stats is not None else {}
-        self.inventory = inventory if inventory is not None else []
-        self.current_action = current_action
-        self.action_queue = action_queue if action_queue is not None else []
-        self.party_id = party_id
-        self.state_variables = state_variables if state_variables is not None else {}
-        self.health = health
-        self.max_health = max_health
-        self.is_alive = is_alive
-        self.status_effects = status_effects if status_effects is not None else []
-        self.level = level
-        self.experience = experience
-        self.active_quests = active_quests if active_quests is not None else []
+    # Spell Management Fields
+    known_spells: List[str] = field(default_factory=list) # List of spell_ids
+    spell_cooldowns: Dict[str, float] = field(default_factory=dict) # spell_id -> cooldown_end_timestamp
+    skills: Dict[str, int] = field(default_factory=dict) # skill_name -> level, e.g., {"evocation": 5, "first_aid": 2}
 
-        # Обработка любых дополнительных kwargs
-        for key, value in kwargs.items():
-            # Не перезаписывайте существующие атрибуты, если только это не намеренно
-            if not hasattr(self, key):
-                setattr(self, key, value)
+    # Catch-all for any other fields that might come from data
+    # This is less common with dataclasses as fields are explicit, but can be used if __post_init__ handles it.
+    # For now, we'll assume all relevant fields are explicitly defined.
+    # extra_fields: Dict[str, Any] = field(default_factory=dict)
 
+
+    def __post_init__(self):
+        # Ensure basic stats are present if not provided, especially health/max_health
+        # This also helps bridge the gap if health/max_health were not in stats from older data.
+        if 'health' not in self.stats:
+            self.stats['health'] = self.health
+        else:
+            self.health = float(self.stats['health'])
+
+        if 'max_health' not in self.stats:
+            self.stats['max_health'] = self.max_health
+        else:
+            self.max_health = float(self.stats['max_health'])
+        
+        # Ensure mana and intelligence are present for spellcasting if not already
+        if 'mana' not in self.stats:
+            self.stats['mana'] = self.stats.get('max_mana', 50) # Default mana if not set
+        if 'max_mana' not in self.stats: # Assuming max_mana is a stat
+            self.stats['max_mana'] = self.stats.get('mana', 50)
+        if 'intelligence' not in self.stats:
+            self.stats['intelligence'] = 10 # Default intelligence
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Character:
-        """Создает объект Character из словаря данных (например, из DB)."""
-        # В CharacterManager мы уже парсим JSON и преобразуем типы (например, is_alive в bool).
-        # Убедитесь, что словарь `data`, который передается сюда из CharacterManager,
-        # уже содержит все поля в правильных типах (str, int, float, bool, list, dict, None).
-        # Убедитесь, что он включает ключ 'guild_id'
+        """Creates a Character instance from a dictionary."""
         if 'guild_id' not in data:
-             # Это должно вызывать ошибку, если guild_id обязателен
-             raise ValueError("Missing 'guild_id' key in data for Character.from_dict")
+            raise ValueError("Missing 'guild_id' key in data for Character.from_dict")
+        if 'id' not in data or 'discord_user_id' not in data or 'name' not in data:
+            raise ValueError("Missing core fields (id, discord_user_id, name) for Character.from_dict")
 
-        # Вызов конструктора класса, передавая все ключи словаря как аргументы
-        # Это сработает корректно, ЕСЛИ __init__ принимает все эти ключи
-        # и ЕСЛИ ключи в data совпадают с именами параметров в __init__.
-        try:
-             # Явное извлечение и передача ключевых аргументов для ясности
-             # Убедитесь, что имена ключей соответствуют параметрам __init__
-             return cls(
-                 id=data.get('id'), # id может быть None если DB вернула что-то странное
-                 discord_user_id=data.get('discord_user_id'),
-                 name=data.get('name'),
-                 guild_id=data.get('guild_id'), # <-- Передайте guild_id
-                 location_id=data.get('location_id'),
-                 stats=data.get('stats'),
-                 inventory=data.get('inventory'),
-                 current_action=data.get('current_action'),
-                 action_queue=data.get('action_queue'),
-                 party_id=data.get('party_id'),
-                 state_variables=data.get('state_variables'),
-                 health=data.get('health'),
-                 max_health=data.get('max_health'),
-                 is_alive=data.get('is_alive'),
-                 status_effects=data.get('status_effects'),
-                 level=data.get('level', 1),
-                 experience=data.get('experience', 0),
-                 active_quests=data.get('active_quests', []),
-                 # Передайте любые другие атрибуты, которые __init__ может ожидать
-                 # Если в __init__ есть **kwargs, можно передать остальные ключи словаря так:
-                 # **{k: v for k, v in data.items() if k not in ['id', 'discord_user_id', 'name', 'guild_id', ...]}
-             )
-        except Exception as e:
-             print(f"Error creating Character object from dict: {data} | Error: {e}")
-             import traceback
-             traceback.print_exc()
-             raise # Перебрасываем ошибку
+        # Populate known fields, providing defaults for new/optional ones if missing in data
+        init_data = {
+            'id': data.get('id'),
+            'discord_user_id': data.get('discord_user_id'),
+            'name': data.get('name'),
+            'guild_id': data.get('guild_id'),
+            'location_id': data.get('location_id'),
+            'stats': data.get('stats', {}), # Ensure stats is at least an empty dict
+            'inventory': data.get('inventory', []),
+            'current_action': data.get('current_action'),
+            'action_queue': data.get('action_queue', []),
+            'party_id': data.get('party_id'),
+            'state_variables': data.get('state_variables', {}),
+            'health': float(data.get('health', 100.0)), # Ensure float
+            'max_health': float(data.get('max_health', 100.0)), # Ensure float
+            'is_alive': bool(data.get('is_alive', True)), # Ensure bool
+            'status_effects': data.get('status_effects', []),
+            'level': int(data.get('level', 1)), # Ensure int
+            'experience': int(data.get('experience', 0)), # Ensure int
+            'active_quests': data.get('active_quests', []),
+            
+            # New spell-related fields with defaults for backward compatibility
+            'known_spells': data.get('known_spells', []),
+            'spell_cooldowns': data.get('spell_cooldowns', {}),
+            'skills': data.get('skills', {}),
+        }
+        
+        # If stats from data doesn't have health/max_health, use the top-level ones
+        if 'health' not in init_data['stats'] and 'health' in data : # health might be in stats or top-level
+             init_data['stats']['health'] = init_data['health']
+        if 'max_health' not in init_data['stats'] and 'max_health' in data:
+             init_data['stats']['max_health'] = init_data['max_health']
 
 
-    # TODO: Другие методы модели Character (например, update_stats, add_status, remove_item и т.д.)
-    # Эти методы изменяют состояние объекта Character и должны затем пометить его dirty в CharacterManager.
+        return cls(**init_data)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts the Character instance to a dictionary for serialization."""
+        # dataclasses.asdict(self) could be used for simple cases,
+        # but a manual approach gives more control if needed (e.g., for complex objects in fields)
+        # For now, a direct mapping of fields should be fine.
+        
+        # Ensure stats reflects current health/max_health before saving
+        # This is important if self.health is modified directly elsewhere
+        # and should be the source of truth for stats dict.
+        if self.stats is None: self.stats = {} # Should be initialized by default_factory
+        self.stats['health'] = self.health
+        self.stats['max_health'] = self.max_health
+        
+        return {
+            "id": self.id,
+            "discord_user_id": self.discord_user_id,
+            "name": self.name,
+            "guild_id": self.guild_id,
+            "location_id": self.location_id,
+            "stats": self.stats,
+            "inventory": self.inventory, # Assuming items are dicts or simple serializable objects
+            "current_action": self.current_action,
+            "action_queue": self.action_queue,
+            "party_id": self.party_id,
+            "state_variables": self.state_variables,
+            "health": self.health, # Redundant if always in stats, but good for direct access
+            "max_health": self.max_health, # Redundant if always in stats
+            "is_alive": self.is_alive,
+            "status_effects": self.status_effects, # Assuming status effects are dicts or serializable
+            "level": self.level,
+            "experience": self.experience,
+            "active_quests": self.active_quests,
+            "known_spells": self.known_spells,
+            "spell_cooldowns": self.spell_cooldowns,
+            "skills": self.skills,
+        }
+
+    # TODO: Other methods for character logic, e.g.,
+    # def take_damage(self, amount: float): ...
+    # def heal(self, amount: float): ...
+    # def add_item_to_inventory(self, item_data: Dict[str, Any]): ...
+    # def learn_new_spell(self, spell_id: str): ...
+    # def set_cooldown(self, spell_id: str, cooldown_end_time: float): ...
+    # def get_skill_level(self, skill_name: str) -> int: ...
