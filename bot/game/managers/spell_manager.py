@@ -57,7 +57,19 @@ class SpellManager:
             except Exception as e:
                 print(f"SpellManager: Error loading spell template '{spell_data.get('id', 'UnknownID')}' for guild {guild_id_str}: {e}")
         
-        print(f"SpellManager: Loaded {loaded_count} spell templates for guild {guild_id_str}.")
+        print(f"SpellManager: Successfully loaded {loaded_count} spell templates for guild {guild_id_str}.")
+        if loaded_count > 0:
+            print(f"SpellManager: Example spell templates for guild {guild_id_str}:")
+            count = 0
+            for spell_id, spell_obj in self._spell_templates[guild_id_str].items():
+                if count < 3:
+                    print(f"  - ID: {spell_obj.id}, Name: {spell_obj.name}, Mana Cost: {spell_obj.mana_cost}")
+                    count += 1
+                else:
+                    break
+            if loaded_count > 3:
+                print(f"  ... and {loaded_count - 3} more.")
+
 
     async def get_spell(self, guild_id: str, spell_id: str) -> Optional[Spell]:
         """Retrieves a specific spell object from the cache."""

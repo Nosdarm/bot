@@ -56,7 +56,18 @@ class AbilityManager:
             except Exception as e:
                 print(f"AbilityManager: Error loading ability template '{ability_data.get('id', 'UnknownID')}' for guild {guild_id_str}: {e}")
         
-        print(f"AbilityManager: Loaded {loaded_count} ability templates for guild {guild_id_str}.")
+        print(f"AbilityManager: Successfully loaded {loaded_count} ability templates for guild {guild_id_str}.")
+        if loaded_count > 0:
+            print(f"AbilityManager: Example ability templates for guild {guild_id_str}:")
+            count = 0
+            for ability_id, ability_obj in self._ability_templates[guild_id_str].items():
+                if count < 3:
+                    print(f"  - ID: {ability_obj.id}, Name: {ability_obj.name}, Type: {ability_obj.type}")
+                    count += 1
+                else:
+                    break
+            if loaded_count > 3:
+                print(f"  ... and {loaded_count - 3} more.")
 
     async def get_ability(self, guild_id: str, ability_id: str) -> Optional[Ability]:
         """Retrieves a specific ability object from the cache for a guild."""

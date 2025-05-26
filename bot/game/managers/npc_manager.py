@@ -874,10 +874,29 @@ class NpcManager:
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         """Загружает NPC для определенной гильдии из базы данных в кеш."""
         guild_id_str = str(guild_id)
-        print(f"NpcManager: Loading NPCs for guild {guild_id_str} from DB...")
+        
+        # Log NPC Archetype data availability from campaign_data
+        campaign_data: Optional[Dict[str, Any]] = kwargs.get('campaign_data')
+        if campaign_data and isinstance(campaign_data.get("npc_archetypes"), list):
+            npc_archetypes_data = campaign_data["npc_archetypes"]
+            loaded_archetype_count = len(npc_archetypes_data)
+            print(f"NpcManager (load_state): Received {loaded_archetype_count} NPC archetypes from campaign_data for guild {guild_id_str}.")
+            if loaded_archetype_count > 0:
+                print("NpcManager (load_state): Example NPC archetypes received:")
+                for i, archetype_data in enumerate(npc_archetypes_data):
+                    if i < 3: # Print up to 3 examples
+                        print(f"  - ID: {archetype_data.get('id', 'N/A')}, Name: {archetype_data.get('name', 'N/A')}, Archetype: {archetype_data.get('archetype', 'N/A')}")
+                    else:
+                        break
+                if loaded_archetype_count > 3:
+                    print(f"  ... and {loaded_archetype_count - 3} more.")
+        else:
+            print(f"NpcManager (load_state): No NPC archetypes found in campaign_data for guild {guild_id_str} or format is incorrect.")
+
+        print(f"NpcManager: Loading NPC instances for guild {guild_id_str} from DB...")
 
         if self._db_adapter is None:
-            print(f"NpcManager: Warning: Cannot load NPCs for guild {guild_id_str}, DB adapter missing.")
+            print(f"NpcManager: Warning: Cannot load NPC instances for guild {guild_id_str}, DB adapter missing.")
             # TODO: In non-DB mode, load placeholder data or raise
             return
 

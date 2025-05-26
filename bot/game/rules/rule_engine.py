@@ -8,7 +8,7 @@ import traceback  # Для вывода трассировки ошибок
 import asyncio  # Если методы RuleEngine будут асинхронными
 
 # Импорт базовых типов и TYPE_CHECKING
-from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union # Added Union
 
 # --- Imports used in TYPE_CHECKING for type hints ---
 # Эти модули импортируются ТОЛЬКО для статического анализа (Pylance/Mypy).
@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from bot.game.models.npc import NPC # Возможно, нужен прямой импорт для isinstance
     from bot.game.models.party import Party # Возможно, нужен прямой импорт для isinstance
     from bot.game.models.combat import Combat # Возможно, нужен прямой импорт для isinstance
+    from bot.game.models.ability import Ability # For Ability logic
+    from bot.game.models.item import Item # For Item type hinting
+    # Spell model is already imported below
 
     # Менеджеры и процессоры, которые могут создавать циклические импорты
     from bot.game.managers.location_manager import LocationManager # <-- Moved here to break cycle
@@ -1147,3 +1150,514 @@ class RuleEngine:
             outcomes.append(outcome_details)
 
         return {"success": True, "message": "Spell effects processed.", "outcomes": outcomes}
+
+    # --- Ability Related Methods ---
+
+    async def check_ability_learning_requirements(self, character: "Character", ability: "Ability", **kwargs: Any) -> tuple[bool, Optional[str]]:
+        """
+        Checks if a character meets the requirements to learn a specific ability.
+        Called by AbilityManager.learn_ability.
+        Returns a tuple: (can_learn: bool, reason: Optional[str])
+        """
+        if not ability.requirements:
+            return True, None # No requirements, can always learn
+
+        character_stats = getattr(character, 'stats', {})
+        if not isinstance(character_stats, dict): character_stats = {}
+        
+        character_skills = getattr(character, 'skills', {}) # Assuming Character model has 'skills: Dict[str, int]'
+        if not isinstance(character_skills, dict): character_skills = {}
+        
+        character_level = getattr(character, 'level', 1)
+        if not isinstance(character_level, int): character_level = 1
+
+        # Conceptual: Assuming Character model might have 'char_class' or similar
+        character_class = getattr(character, 'char_class', None) 
+        if character_class and not isinstance(character_class, str): character_class = str(character_class)
+
+
+        for req_key, req_value in ability.requirements.items():
+            if req_key.startswith("min_"): # e.g., "min_strength"
+                stat_name = req_key.split("min_")[1]
+                if character_stats.get(stat_name, 0) < req_value:
+                    return False, f"Requires {stat_name} {req_value}, has {character_stats.get(stat_name, 0)}."
+            
+            elif req_key == "required_skill":
+                skill_name = req_value
+                # Default required skill level is 1 if not specified in ability.requirements
+                required_level = ability.requirements.get("skill_level", 1) 
+                if character_skills.get(skill_name, 0) < required_level:
+                    return False, f"Requires skill '{skill_name}' level {required_level}, has {character_skills.get(skill_name, 0)}."
+            
+            elif req_key == "skill_level": # Already handled by "required_skill" logic above
+                continue
+
+            elif req_key == "level": # Character level requirement
+                if character_level < req_value:
+                    return False, f"Requires character level {req_value}, current level is {character_level}."
+
+            elif req_key == "required_class":
+                if character_class is None or character_class.lower() != str(req_value).lower():
+                    return False, f"Requires class '{req_value}', character class is '{character_class or 'None'}'."
+            
+            # TODO: Add other requirement types like "required_race", "required_faction_rank", "required_ability_id" (prerequisite)
+            
+            else:
+                print(f"RuleEngine: Warning: Unknown ability requirement key '{req_key}' for ability '{ability.id}'.")
+                # Depending on game design, unknown requirements could either fail or be ignored.
+                # Failing is safer to prevent unintended learning.
+                # return False, f"Unknown requirement: {req_key}." 
+
+        return True, None
+
+    async def process_ability_effects(self, caster: "Character", ability: "Ability", target_entity: Optional[Any], guild_id: str, **kwargs: Any) -> Dict[str, Any]:
+        """
+        Processes the effects of an activated ability.
+        Called by AbilityManager.activate_ability.
+        """
+        if not self._character_manager or not self._npc_manager or not self._status_manager:
+            return {"success": False, "message": "Core managers not available in RuleEngine for ability processing.", "outcomes": []}
+
+        outcomes: List[Dict[str, Any]] = []
+        caster_id = getattr(caster, 'id', 'UnknownCaster')
+        
+        # Determine default target if none provided based on ability's target_type
+        actual_target = target_entity
+        if not actual_target and ability.target_type:
+            if ability.target_type == "self":
+                actual_target = caster
+            # Add more complex target resolution if needed (e.g., for "area" effects originating from caster)
+        
+        # Some abilities might not require a target (e.g. self-buffs that are already handled by actual_target = caster)
+        # Or abilities that affect the environment (not yet supported)
+        if not actual_target and ability.target_type not in ["self", "no_target", "area_around_caster"]:
+            return {"success": False, "message": f"Ability '{ability.name}' requires a target, but none was provided or resolved.", "outcomes": []}
+
+        for effect_data in ability.effects:
+            effect_type = effect_data.get('type')
+            target_id_for_effect = getattr(actual_target, 'id', None)
+            target_type_for_effect = type(actual_target).__name__ if actual_target else None
+
+            outcome_details: Dict[str, Any] = {"effect_type": effect_type, "target_id": target_id_for_effect}
+
+            try:
+                if effect_type == "apply_status_effect":
+                    status_effect_id = effect_data.get('status_effect_id')
+                    duration = effect_data.get('duration') 
+
+                    if status_effect_id and target_id_for_effect and target_type_for_effect and self._status_manager:
+                        await self._status_manager.add_status_effect_to_entity(
+                            guild_id=guild_id,
+                            entity_id=target_id_for_effect,
+                            entity_type=target_type_for_effect,
+                            status_effect_template_id=status_effect_id,
+                            duration_seconds=duration,
+                            source_id=caster_id,
+                            context_managers=kwargs.get('context_managers', {}) 
+                        )
+                        outcome_details.update({"status_effect_id": status_effect_id, "duration": duration})
+                        print(f"RuleEngine (Ability): Applied status effect '{status_effect_id}' to {target_id_for_effect} for {duration}s.")
+                    else:
+                        outcome_details["message"] = "Missing status_effect_id, target, type, or StatusManager for apply_status_effect."
+                        print(f"RuleEngine (Ability) apply_status_effect: Missing data or StatusManager. StatusID: {status_effect_id}, TargetID: {target_id_for_effect}, TargetType: {target_type_for_effect}")
+                
+                elif effect_type == "modify_stat": # For temporary activated buffs/debuffs via a status effect
+                    stat_to_modify = effect_data.get('stat')
+                    amount = effect_data.get('amount')
+                    duration = effect_data.get('duration', 60) # Default duration for temp stat mods if not specified
+                    
+                    # This assumes a "generic_stat_modifier" status effect template exists,
+                    # or StatusManager can handle dynamically generated ones based on properties.
+                    status_template_id_for_mod = effect_data.get("status_effect_template_id", f"temp_mod_{stat_to_modify}")
+
+                    if stat_to_modify and amount is not None and target_id_for_effect and target_type_for_effect and self._status_manager:
+                        status_effect_properties = {
+                            "modifies_stat": stat_to_modify,
+                            "modifier_amount": amount,
+                            "is_multiplier": effect_data.get("is_multiplier", False),
+                            "modifier_type": effect_data.get("modifier_type", "flat") # flat, percentage_base, percentage_total
+                        }
+                        await self._status_manager.add_status_effect_to_entity(
+                            guild_id=guild_id,
+                            entity_id=target_id_for_effect,
+                            entity_type=target_type_for_effect,
+                            status_effect_template_id=status_template_id_for_mod,
+                            duration_seconds=duration,
+                            source_id=caster_id,
+                            instance_properties=status_effect_properties,
+                            context_managers=kwargs.get('context_managers', {})
+                        )
+                        outcome_details.update({"stat_modified": stat_to_modify, "modification_amount": amount, "duration": duration})
+                        print(f"RuleEngine (Ability): Applied temporary stat modification '{stat_to_modify}' to {target_id_for_effect} by {amount} for {duration}s.")
+                    else:
+                        outcome_details["message"] = "Missing data for modify_stat or StatusManager."
+                        print(f"RuleEngine (Ability) modify_stat: Missing data or StatusManager. Stat: {stat_to_modify}, Amount: {amount}, TargetID: {target_id_for_effect}")
+
+                elif effect_type == "grant_flag":
+                    flag_to_grant = effect_data.get('flag')
+                    if flag_to_grant and actual_target: # Typically targets self (caster)
+                        if not hasattr(actual_target, 'flags') or actual_target.flags is None:
+                            print(f"RuleEngine (Ability): Target '{target_id_for_effect}' missing 'flags' attribute. Initializing.")
+                            actual_target.flags = [] # type: ignore
+                        
+                        if flag_to_grant not in actual_target.flags: # type: ignore
+                            actual_target.flags.append(flag_to_grant) # type: ignore
+                            if target_type_for_effect == "Character":
+                                await self._character_manager.mark_character_dirty(guild_id, target_id_for_effect)
+                            elif target_type_for_effect == "NPC":
+                                await self._npc_manager.mark_npc_dirty(guild_id, target_id_for_effect)
+                            outcome_details.update({"flag_granted": flag_to_grant})
+                            print(f"RuleEngine (Ability): Granted flag '{flag_to_grant}' to {target_id_for_effect}.")
+                        else:
+                            outcome_details["message"] = f"Target already has flag '{flag_to_grant}'."
+                    else:
+                        outcome_details["message"] = "Missing flag or target for grant_flag effect."
+                        print(f"RuleEngine (Ability) grant_flag: Missing flag or target. Flag: {flag_to_grant}, Target: {target_id_for_effect}")
+
+                elif effect_type == "play_sfx":
+                    sfx_id = effect_data.get('sfx_id', ability.sfx_on_activation)
+                    if sfx_id:
+                        outcome_details.update({"sfx_played": sfx_id})
+                        print(f"RuleEngine (Ability): Playing SFX '{sfx_id}' for ability '{ability.name}'.") # Log for now
+                    else:
+                        outcome_details["message"] = "Missing sfx_id for play_sfx effect."
+                
+                elif effect_type == "deal_weapon_damage_modifier":
+                    # This is complex. For now, apply a temporary status effect that modifies the next relevant attack.
+                    # CombatManager or a revised RuleEngine.calculate_damage would check for this status.
+                    # E.g., status_effect_id="empowered_attack_power_attack_martial"
+                    status_effect_id = effect_data.get("status_effect_id", f"empowered_attack_{ability.id}")
+                    duration = effect_data.get("duration_seconds", 6) # Short duration, e.g., for the next attack or turn
+                    
+                    if self._status_manager and caster_id: # This effect typically targets the caster
+                        status_properties = {
+                            "damage_multiplier": effect_data.get("damage_multiplier", 1.0),
+                            "accuracy_penalty": effect_data.get("accuracy_penalty", 0),
+                            # Add other relevant modifiers like "critical_chance_bonus", etc.
+                        }
+                        await self._status_manager.add_status_effect_to_entity(
+                            guild_id=guild_id,
+                            entity_id=caster_id, # Targets caster
+                            entity_type="Character", # Assuming caster is Character
+                            status_effect_template_id=status_effect_id,
+                            duration_seconds=duration,
+                            source_id=caster_id, # Ability itself is the source via caster
+                            instance_properties=status_properties
+                        )
+                        outcome_details.update({
+                            "status_applied_to_caster": status_effect_id, 
+                            "details": status_properties,
+                            "duration": duration
+                        })
+                        print(f"RuleEngine (Ability): Applied '{status_effect_id}' to caster {caster_id} for ability '{ability.name}'.")
+                    else:
+                        outcome_details["message"] = "StatusManager not available or caster_id missing for deal_weapon_damage_modifier."
+                        print(f"RuleEngine (Ability) deal_weapon_damage_modifier: StatusManager or caster_id missing.")
+                
+                # --- Notes on Passive Ability Integration ---
+                # 1. Direct Stat Modification Passives (e.g., +10 max_health from "Toughness"):
+                #    - These are typically applied once when the ability is learned.
+                #    - Logic would reside in AbilityManager.learn_ability or CharacterManager.update_character_after_ability_learn.
+                #    - RuleEngine would see the already modified stats. E.g., character.stats['max_health'] would be higher.
+
+                # 2. Flag-Based Passives (e.g., "Darkvision", "Immunity:Poison"):
+                #    - AbilityManager.learn_ability would add a flag like "darkvision" to character.flags (List[str]).
+                #    - RuleEngine methods would check for these flags:
+                #      - In perception checks: if "darkvision" in character.flags and current_light == "dim": bonus += ...
+                #      - In damage application: if "immunity_poison" in character.flags and damage_type == "poison": damage = 0
+                #      - These checks would be embedded within existing or new RuleEngine logic for specific game mechanics.
+
+                # 3. Conditional Trigger Passives (e.g., "Retaliate: When hit in melee, make a free attack"):
+                #    - These are event-driven. The game's main event loop or combat turn processor would:
+                #      a. Detect a trigger (e.g., "character_is_hit_melee_event").
+                #      b. Check if the affected character has abilities that trigger on this event.
+                #      c. If so, call a method like RuleEngine.process_triggered_ability_effects(character, ability, trigger_event_data).
+                #    - This is outside the scope of process_ability_effects for activated abilities.
+
+                else:
+                    outcome_details["message"] = f"Unknown or unhandled ability effect type: '{effect_type}'."
+                    print(f"RuleEngine (Ability): Warning: Unknown ability effect type '{effect_type}' in ability '{ability.name}'.")
+            
+            except Exception as e:
+                print(f"RuleEngine (Ability): Error processing effect type '{effect_type}' for ability '{ability.name}': {e}")
+                traceback.print_exc()
+                outcome_details["error"] = str(e)
+            
+            outcomes.append(outcome_details)
+
+        return {"success": True, "message": "Ability effects processed.", "outcomes": outcomes}
+
+    # --- Core Combat and Skill Resolution Methods ---
+
+    async def resolve_skill_check(
+        self, 
+        character: "Character", 
+        skill_name: str, 
+        difficulty_class: int, 
+        situational_modifier: int = 0, 
+        associated_stat: Optional[str] = None, # e.g., "strength" for Athletics
+        **kwargs: Any
+    ) -> tuple[bool, int, int]:
+        """
+        Resolves a generic skill check for a character.
+        Returns: (success: bool, total_skill_value: int, d20_roll: int)
+        """
+        # Ensure character has skills and stats attributes
+        character_skills = getattr(character, 'skills', {})
+        if not isinstance(character_skills, dict): character_skills = {}
+        
+        character_stats = getattr(character, 'stats', {})
+        if not isinstance(character_stats, dict): character_stats = {}
+
+        skill_value = character_skills.get(skill_name.lower(), 0) # Default to 0 if skill not present
+
+        stat_modifier = 0
+        # Determine associated stat if not provided
+        if not associated_stat:
+            # Simple default mapping (can be expanded or moved to rules_data)
+            skill_stat_map = {
+                "athletics": "strength", "acrobatics": "dexterity", "stealth": "dexterity",
+                "perception": "wisdom", "insight": "wisdom", "survival": "wisdom", "medicine": "wisdom",
+                "persuasion": "charisma", "deception": "charisma", "intimidation": "charisma", "performance": "charisma",
+                "investigation": "intelligence", "lore": "intelligence", "arcana": "intelligence", "religion": "intelligence",
+                # Add more skill-stat mappings as needed
+            }
+            associated_stat = skill_stat_map.get(skill_name.lower())
+
+        if associated_stat:
+            stat_value = character_stats.get(associated_stat, 10) # Default to 10 if stat not present
+            stat_modifier = (stat_value - 10) // 2 # Standard D&D modifier calculation
+
+        try:
+            roll_result_dict = await self._resolve_dice_roll("1d20", context=kwargs) # Pass context if _resolve_dice_roll uses it
+            d20_roll = roll_result_dict['total']
+        except ValueError: # Handle potential error from _resolve_dice_roll
+            print(f"RuleEngine: Error resolving 1d20 for skill check. Defaulting roll to 10.")
+            d20_roll = 10 # Fallback roll
+
+        total_skill_value = d20_roll + skill_value + stat_modifier + situational_modifier
+        success = total_skill_value >= difficulty_class
+
+        print(f"RuleEngine: Skill Check ({skill_name.capitalize()} DC {difficulty_class}): Roll={d20_roll}, SkillVal={skill_value}, StatMod({associated_stat or 'N/A'})={stat_modifier}, SitMod={situational_modifier} -> Total={total_skill_value}. Success: {success}")
+        return success, total_skill_value, d20_roll
+
+    async def resolve_attack_roll(
+        self, 
+        attacker: Union["Character", "NPC"], 
+        defender: Union["Character", "NPC"], 
+        weapon: Optional["Item"] = None, # Can be dict or Item model instance
+        ability_or_spell: Optional[Union["Ability", "Spell"]] = None, # Can be dict or model instance
+        attack_type: str = "melee_weapon", # "melee_weapon", "ranged_weapon", "unarmed", "spell_melee", "spell_ranged"
+        situational_modifiers: int = 0,
+        **kwargs: Any
+    ) -> tuple[bool, int, int, Optional[str]]:
+        """
+        Resolves an attack roll.
+        Returns: (hit: bool, attack_total: int, d20_roll: int, crit_status: Optional[str]) 
+                 crit_status can be "critical_hit", "critical_miss", or None.
+        """
+        attacker_stats = getattr(attacker, 'stats', {})
+        if not isinstance(attacker_stats, dict): attacker_stats = {}
+        
+        attacker_skills = getattr(attacker, 'skills', {}) # Assuming skills for weapon proficiency
+        if not isinstance(attacker_skills, dict): attacker_skills = {}
+
+        defender_stats = getattr(defender, 'stats', {})
+        if not isinstance(defender_stats, dict): defender_stats = {}
+
+        # --- Determine Attacker's Bonus ---
+        # This is a placeholder and needs significant expansion based on game rules.
+        # It should consider: weapon proficiency, specific weapon bonuses, spell attack bonuses, abilities.
+        attack_bonus = attacker_stats.get("attack_bonus", 0) # Generic attack bonus from stats
+        
+        # Placeholder for stat modifier (e.g., Strength for melee, Dexterity for ranged)
+        primary_stat_name = "strength" # Default for melee
+        if attack_type == "ranged_weapon": primary_stat_name = "dexterity"
+        elif attack_type.startswith("spell_"): primary_stat_name = "intelligence" # Or based on spell's casting stat
+        
+        primary_stat_value = attacker_stats.get(primary_stat_name, 10)
+        stat_modifier = (primary_stat_value - 10) // 2
+        attack_bonus += stat_modifier
+        
+        # Placeholder for proficiency bonus (e.g., from skills or character level)
+        # attack_bonus += getattr(attacker, 'proficiency_bonus', 2) # Example
+
+        # --- Determine Defender's Defense Value (AC) ---
+        # Placeholder: Assume a base Armor Class (AC) or use a stat.
+        defender_ac = defender_stats.get("armor_class", 10) # Default AC if not specified
+
+        # --- Resolve Attack Roll ---
+        try:
+            d20_roll_result = await self._resolve_dice_roll("1d20", context=kwargs)
+            d20_roll = d20_roll_result['total']
+        except ValueError:
+            d20_roll = 10 # Fallback
+
+        crit_status: Optional[str] = None
+        if d20_roll == 20:
+            crit_status = "critical_hit"
+        elif d20_roll == 1:
+            crit_status = "critical_miss"
+
+        attack_total = d20_roll + attack_bonus + situational_modifiers
+        
+        hit = False
+        if crit_status == "critical_hit":
+            hit = True
+        elif crit_status == "critical_miss":
+            hit = False
+        else:
+            hit = attack_total >= defender_ac
+            
+        print(f"RuleEngine: Attack Roll ({attack_type}): AttackerBonus={attack_bonus}, DefenderAC={defender_ac} | Roll={d20_roll} -> Total={attack_total}. Hit: {hit} (Crit: {crit_status})")
+        return hit, attack_total, d20_roll, crit_status
+
+    async def calculate_damage(
+        self, 
+        attacker: Union["Character", "NPC"], 
+        defender: Optional[Union["Character", "NPC"]], 
+        base_damage_roll: str, # e.g., "1d8", "2d6+3"
+        damage_type: str, 
+        is_critical_hit: bool = False,
+        weapon: Optional["Item"] = None, # For potential weapon properties like versatile
+        ability_or_spell: Optional[Union["Ability", "Spell"]] = None, # For spell/ability specific damage mods
+        **kwargs: Any
+    ) -> int:
+        """
+        Calculates damage dealt by an attack or effect.
+        """
+        attacker_stats = getattr(attacker, 'stats', {})
+        if not isinstance(attacker_stats, dict): attacker_stats = {}
+
+        # 1. Roll base damage
+        try:
+            rolled_damage_dict = await self._resolve_dice_roll(base_damage_roll, context=kwargs)
+            rolled_damage = rolled_damage_dict['total']
+        except ValueError:
+            print(f"RuleEngine: Error resolving base damage roll '{base_damage_roll}'. Defaulting to 1.")
+            rolled_damage = 1
+
+        # 2. Add attacker's relevant stat modifier (placeholder)
+        # This needs to be determined by weapon type (str for melee, dex for finesse/ranged) or spell casting stat.
+        # For simplicity, let's assume a generic "damage_modifier" stat or use strength.
+        stat_damage_modifier = (attacker_stats.get("strength", 10) - 10) // 2 # Example for melee
+        # if weapon and weapon.type == "ranged": stat_damage_modifier = (attacker_stats.get("dexterity", 10) - 10) // 2
+        # if spell: stat_damage_modifier = (attacker_stats.get(spell.casting_stat, 10) - 10) // 2
+        
+        total_damage = rolled_damage + stat_damage_modifier
+
+        # 3. Handle critical hit
+        if is_critical_hit:
+            # Simple crit: roll damage dice again and add.
+            # More complex: max base dice then roll again, or other rules.
+            try:
+                crit_roll_dict = await self._resolve_dice_roll(base_damage_roll.split('+')[0].split('-')[0], context=kwargs) # Reroll only dice part
+                crit_damage_bonus = crit_roll_dict['total'] 
+                # For "max damage + roll" crit:
+                # max_base_damage = (num_dice * dice_sides) from base_damage_roll (needs parsing)
+                # crit_damage_bonus = max_base_damage + crit_roll_dict['total'] - rolled_damage_dict['num_dice'] * 1 # if min roll was 1
+                total_damage += crit_damage_bonus
+                print(f"RuleEngine: Critical Hit! Added {crit_damage_bonus} damage.")
+            except ValueError:
+                print(f"RuleEngine: Error resolving critical hit damage for '{base_damage_roll}'.")
+
+
+        # 4. Apply resistances/vulnerabilities (Placeholder)
+        if defender:
+            defender_stats = getattr(defender, 'stats', {})
+            if not isinstance(defender_stats, dict): defender_stats = {}
+            # Example:
+            # resistances = defender_stats.get("resistances", {}) # e.g., {"fire": 0.5, "slashing": 0.75}
+            # vulnerabilities = defender_stats.get("vulnerabilities", {}) # e.g., {"bludgeoning": 1.5}
+            # if damage_type in resistances: total_damage *= resistances[damage_type]
+            # if damage_type in vulnerabilities: total_damage *= vulnerabilities[damage_type]
+            pass # Placeholder for resistance/vulnerability logic
+
+        final_damage = max(0, int(round(total_damage))) # Ensure damage is not negative and is an integer
+        
+        print(f"RuleEngine: Calculated Damage: BaseRoll='{base_damage_roll}', RolledDmg={rolled_damage}, StatMod={stat_damage_modifier}, Crit={is_critical_hit} -> FinalDmg={final_damage} ({damage_type})")
+        return final_damage
+
+    # --- Stubs for Other Key Missing Mechanics ---
+
+    async def award_experience(self, character: "Character", amount: int, **kwargs: Any) -> None:
+        """Awards experience points to a character."""
+        # TODO: Actual XP logic, check for level up
+        char_id = getattr(character, 'id', 'UnknownCharacter')
+        print(f"RuleEngine (Stub): Awarding {amount} XP to character {char_id}.")
+        # character.experience += amount
+        # self.check_for_level_up(character, **kwargs)
+        # if self._character_manager: await self._character_manager.mark_character_dirty(character.guild_id, character.id)
+        pass
+
+    async def check_for_level_up(self, character: "Character", **kwargs: Any) -> bool:
+        """Checks if a character has enough XP to level up and handles the process."""
+        # TODO: Implement XP thresholds, stat increases, new abilities/spells.
+        char_id = getattr(character, 'id', 'UnknownCharacter')
+        print(f"RuleEngine (Stub): Checking for level up for character {char_id}. Returning False.")
+        return False
+
+    async def calculate_initiative(self, combatants: List[Union["Character", "NPC"]], **kwargs: Any) -> List[tuple[str, int]]:
+        """Calculates initiative for combatants."""
+        # TODO: Implement initiative based on Dexterity, feats, etc.
+        print(f"RuleEngine (Stub): Calculating initiative for {len(combatants)} combatants. Shuffling for now.")
+        
+        initiative_list: List[tuple[str, int]] = []
+        # Shuffle for randomness, assign placeholder scores
+        random.shuffle(combatants) 
+        for i, combatant in enumerate(combatants):
+            combatant_id = getattr(combatant, 'id', f"unknown_combatant_{i}")
+            # Placeholder initiative score (e.g., d20 + dex_mod)
+            # For now, just use index or a random number
+            initiative_score = random.randint(1, 20) + i 
+            initiative_list.append((combatant_id, initiative_score))
+        
+        # Sort by initiative score, descending
+        initiative_list.sort(key=lambda x: x[1], reverse=True)
+        print(f"RuleEngine (Stub): Initiative order: {initiative_list}")
+        return initiative_list
+
+    async def apply_equipment_effects(self, character: "Character", item: "Item", equipping: bool, **kwargs: Any) -> None:
+        """Applies or removes effects of equipping/unequipping an item."""
+        # TODO: Modify character stats, grant/remove abilities/status effects based on item properties.
+        char_id = getattr(character, 'id', 'UnknownCharacter')
+        item_id = getattr(item, 'id', 'UnknownItem') if not isinstance(item, dict) else item.get('id', 'UnknownItem')
+        action = "equipping" if equipping else "unequipping"
+        print(f"RuleEngine (Stub): Applying equipment effects for character {char_id} {action} item {item_id}.")
+        # Example:
+        # if equipping:
+        #     if item.properties.get("bonus_strength"): character.stats["strength"] += item.properties["bonus_strength"]
+        # else:
+        #     if item.properties.get("bonus_strength"): character.stats["strength"] -= item.properties["bonus_strength"]
+        # if self._character_manager: await self._character_manager.mark_character_dirty(character.guild_id, character.id)
+        pass
+
+    async def resolve_saving_throw(
+        self, 
+        character: Union["Character", "NPC"], 
+        stat_to_save_with: str, 
+        difficulty_class: int, 
+        situational_modifier: int = 0,
+        **kwargs: Any
+    ) -> bool:
+        """Resolves a saving throw for a character against a DC."""
+        entity_stats = getattr(character, 'stats', {})
+        if not isinstance(entity_stats, dict): entity_stats = {}
+
+        stat_value = entity_stats.get(stat_to_save_with.lower(), 10) # Default to 10 if stat not present
+        stat_modifier = (stat_value - 10) // 2
+
+        try:
+            roll_result_dict = await self._resolve_dice_roll("1d20", context=kwargs)
+            d20_roll = roll_result_dict['total']
+        except ValueError:
+            d20_roll = 10 # Fallback
+
+        total_save_value = d20_roll + stat_modifier + situational_modifier
+        success = total_save_value >= difficulty_class
+        
+        char_id = getattr(character, 'id', 'UnknownEntity')
+        print(f"RuleEngine: Saving Throw ({stat_to_save_with.capitalize()} DC {difficulty_class}) for {char_id}: Roll={d20_roll}, StatMod={stat_modifier}, SitMod={situational_modifier} -> Total={total_save_value}. Success: {success}")
+        return success
+
+    # --- End of Core Combat and Skill Resolution Methods ---

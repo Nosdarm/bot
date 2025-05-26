@@ -37,6 +37,12 @@ class Character:
     spell_cooldowns: Dict[str, float] = field(default_factory=dict) # spell_id -> cooldown_end_timestamp
     skills: Dict[str, int] = field(default_factory=dict) # skill_name -> level, e.g., {"evocation": 5, "first_aid": 2}
 
+    # Ability Management Fields
+    known_abilities: List[str] = field(default_factory=list) # List of ability_ids
+    ability_cooldowns: Dict[str, float] = field(default_factory=dict) # ability_id -> cooldown_end_timestamp
+    flags: List[str] = field(default_factory=list) # List of flags, e.g., "darkvision", "immune_to_poison"
+    char_class: Optional[str] = None # Character class, e.g., "warrior", "mage"
+
     # Catch-all for any other fields that might come from data
     # This is less common with dataclasses as fields are explicit, but can be used if __post_init__ handles it.
     # For now, we'll assume all relevant fields are explicitly defined.
@@ -97,6 +103,12 @@ class Character:
             'known_spells': data.get('known_spells', []),
             'spell_cooldowns': data.get('spell_cooldowns', {}),
             'skills': data.get('skills', {}),
+
+            # New ability-related fields
+            'known_abilities': data.get('known_abilities', []),
+            'ability_cooldowns': data.get('ability_cooldowns', {}),
+            'flags': data.get('flags', []),
+            'char_class': data.get('char_class'), # Defaults to None if missing, which is fine for Optional[str]
         }
         
         # If stats from data doesn't have health/max_health, use the top-level ones
@@ -143,6 +155,12 @@ class Character:
             "known_spells": self.known_spells,
             "spell_cooldowns": self.spell_cooldowns,
             "skills": self.skills,
+            
+            # Ability-related fields
+            "known_abilities": self.known_abilities,
+            "ability_cooldowns": self.ability_cooldowns,
+            "flags": self.flags,
+            "char_class": self.char_class,
         }
 
     # TODO: Other methods for character logic, e.g.,

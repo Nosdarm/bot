@@ -148,7 +148,19 @@ class ItemManager:
         try:
             if self._settings and 'item_templates' in self._settings and isinstance(self._settings['item_templates'], dict):
                 self._item_templates = self._settings['item_templates']
-            print(f"ItemManager: Loaded {len(self._item_templates)} item templates from settings.")
+                loaded_count = len(self._item_templates)
+                print(f"ItemManager: Successfully loaded {loaded_count} item templates from settings.")
+                if loaded_count > 0:
+                    print("ItemManager: Example item templates loaded:")
+                    for i, (template_id, template_data) in enumerate(self._item_templates.items()):
+                        if i < 3: # Print up to 3 examples
+                            print(f"  - ID: {template_id}, Name: {template_data.get('name', 'N/A')}, Type: {template_data.get('type', 'N/A')}")
+                        else:
+                            break
+                    if loaded_count > 3:
+                        print(f"  ... and {loaded_count - 3} more.")
+            else:
+                print("ItemManager: No item templates found in settings or 'item_templates' is not a dict.")
         except Exception as e:
             print(f"ItemManager: Error loading item templates from settings: {e}")
             traceback.print_exc()

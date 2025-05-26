@@ -89,6 +89,21 @@ class QuestManager:
         #     guild_templates_cache[str(tpl_id)] = template_data # Ensure tpl_id is string
         
         # print(f"Loaded {len(guild_templates_cache)} quest templates for guild {guild_id_str}.")
+        
+        loaded_template_count = len(guild_templates_cache)
+        print(f"QuestManager: Loaded {loaded_template_count} quest templates from self.campaign_data for guild {guild_id_str}.")
+        if loaded_template_count > 0:
+            print(f"QuestManager: Example quest templates for guild {guild_id_str}:")
+            count = 0
+            for template_id, template_data in guild_templates_cache.items():
+                if count < 3:
+                    print(f"  - ID: {template_id}, Name: {template_data.get('name', 'N/A')}, Type: {template_data.get('type', 'N/A')}")
+                    count += 1
+                else:
+                    break
+            if loaded_template_count > 3:
+                print(f"  ... and {loaded_template_count - 3} more.")
+
 
     # Instruction 5: Ensure single functional version of helper methods
     def get_quest_template(self, guild_id: str, quest_template_id: str) -> Optional[Dict[str, Any]]:
