@@ -1,0 +1,7 @@
+{
+    "campaign_name": "Default Test Campaign",
+    "description": "A sample campaign for testing data loading.",
+    "quest_templates": [],
+    "npc_archetypes": [],
+    "dialogue_templates": []
+}

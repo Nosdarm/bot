@@ -8,7 +8,7 @@ from ..models.spell import Spell # Import the Spell model
 if TYPE_CHECKING:
     from bot.database.sqlite_adapter import SqliteAdapter
     from bot.game.managers.character_manager import CharacterManager
-    from bot.game.rules.rule_engine import RuleEngine
+    from bot.game.managers.rule_engine import RuleEngine
     from bot.game.managers.status_manager import StatusManager
     # from bot.game.managers.combat_manager import CombatManager # If needed for targeting/damage
     # from bot.game.managers.location_manager import LocationManager # If needed for targeting
