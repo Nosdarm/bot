@@ -1,33 +1,54 @@
 import discord
-from discord import slash_command # Or commands.Cog
-from typing import Optional
+# from discord import slash_command # Or commands.Cog - Replaced by app_commands
+from typing import Optional, TYPE_CHECKING # Added TYPE_CHECKING
 
 # --- Temporary global references ---
-from bot.bot_core import global_game_manager
+# from bot.bot_core import global_game_manager # REMOVE THIS LINE
 # --- End temporary global references ---
 
 TEST_GUILD_IDS = [] # Copy from bot_core.py
 
+# Add TYPE_CHECKING block for imports needed for type hints
+from discord import app_commands, Interaction # Make sure this is at the top level
+
+if TYPE_CHECKING:
+    from bot.bot_core import RPGBot
+    from bot.services.db_service import DBService
+    from bot.game.managers.game_manager import GameManager
+
 
 # Placeholder for /interact command
-@slash_command(name="interact", description="Взаимодействовать с чем-то или кем-то.", guild_ids=TEST_GUILD_IDS)
-async def cmd_interact(ctx: discord.ApplicationContext, target: str, action: str, *, details: Optional[str] = None):
-    await ctx.defer()
-    if global_game_manager:
-         response_data = await global_game_manager.process_player_action(
-             server_id=ctx.guild.id,
-             discord_user_id=ctx.author.id,
-             action_type="interact",
-             action_data={"target": target, "action": action, "details": details}
+@app_commands.command(name="interact", description="Взаимодействовать с чем-то или кем-то.")
+async def cmd_interact(interaction: Interaction, target: str, action_str: str, details: Optional[str] = None): # Renamed action to action_str to avoid conflict
+    await interaction.response.defer(ephemeral=True)
+
+    game_mngr = None
+    if hasattr(interaction.client, 'game_manager'):
+        game_mngr_candidate = getattr(interaction.client, 'game_manager')
+        if TYPE_CHECKING: # Ensure type checker knows about GameManager methods if available
+             assert isinstance(game_mngr_candidate, GameManager)
+        game_mngr = game_mngr_candidate
+
+    if game_mngr and hasattr(game_mngr, 'process_player_action'): # Check if method exists
+         # This command is still a placeholder and uses the old process_player_action structure
+         # It should be refactored to use DBService and specific game logic like other commands.
+         response_data = await game_mngr.process_player_action(
+             server_id=str(interaction.guild_id),
+             discord_user_id=interaction.user.id,
+             action_type="interact", # This action_type might need to be handled by process_player_action
+             action_data={"target": target, "action": action_str, "details": details}
          )
-         await ctx.followup.send(response_data.get("message", "**Ошибка:** Неизвестный ответ от мастера."))
+         await interaction.followup.send(response_data.get("message", "**Ошибка:** Неизвестный ответ от мастера."), ephemeral=True)
+    elif game_mngr:
+        await interaction.followup.send("The '/interact' command is not fully implemented for the new system yet.", ephemeral=True)
     else:
-         await ctx.followup.send("**Ошибка Мастера:** Игровая система недоступна.")
+         await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна.", ephemeral=True)
 
 import random # For basic combat roll
 
 @app_commands.command(name="fight", description="Engage in combat with an NPC.")
 @app_commands.describe(target_npc_name="The name of the NPC you want to fight (optional).")
+# guild_ids=TEST_GUILD_IDS # Removed, ensure RPGBot handles it
 async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = None):
     """Initiates a basic combat round with an NPC."""
     await interaction.response.defer(ephemeral=False) # Combat is generally public
@@ -180,11 +201,11 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
 # Add other action commands here (/use, /talk, etc.)
 
 import traceback # For error logging
-from discord import app_commands, Interaction # Use Interaction for type hinting
-from typing import Optional, TYPE_CHECKING
+# from discord import app_commands, Interaction # Already imported at the top
+from typing import Optional, TYPE_CHECKING # TYPE_CHECKING is fine here
 
 if TYPE_CHECKING:
-    from bot.bot_core import RPGBot
+    from bot.bot_core import RPGBot # Keep these for type hints within functions
     from bot.services.db_service import DBService
     from bot.services.openai_service import OpenAIService
 
@@ -305,7 +326,7 @@ async def cmd_talk(interaction: Interaction, npc_name: str, message: str):
             title=f"Talking with {npc_actual_name}",
             color=discord.Color.blue() # Or any other color
         )
-        embed.add_field(name=player_name (or interaction.user.display_name), value=message, inline=False)
+        embed.add_field(name=player_name or interaction.user.display_name, value=message, inline=False) # Corrected syntax
         embed.add_field(name=npc_actual_name, value=ai_response_text, inline=False)
 
         # Optionally, add a footer or timestamp

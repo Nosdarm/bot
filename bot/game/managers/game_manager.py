@@ -182,8 +182,9 @@ class GameManager:
             from bot.game.managers.game_log_manager import GameLogManager
             from bot.game.services.campaign_loader import CampaignLoader
             from bot.game.services.consequence_processor import ConsequenceProcessor
-            from bot.services.db_service import DBService # Added DBService import
+    # from bot.services.db_service import DBService # Will be imported outside TYPE_CHECKING
 
+from bot.services.db_service import DBService # Import DBService at module level
 
             # Core managers (создание экземпляров)
             self.rule_engine = RuleEngine(settings=self._settings.get('rule_settings', {}))
