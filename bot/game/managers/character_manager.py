@@ -356,7 +356,7 @@ class CharacterManager:
 
         # Преобразуем в JSON для сохранения в DB
         sql = """
-        INSERT INTO characters (
+        INSERT INTO players (
             id, discord_user_id, name, guild_id, location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
             health, max_health, is_alive, status_effects
@@ -447,7 +447,7 @@ class CharacterManager:
             ids_to_delete = list(deleted_char_ids_for_guild_set)
             placeholders = ','.join(['?'] * len(ids_to_delete))
             # Убеждаемся, что удаляем ТОЛЬКО для данного guild_id и по ID из списка
-            delete_sql = f"DELETE FROM characters WHERE guild_id = ? AND id IN ({placeholders})"
+            delete_sql = f"DELETE FROM players WHERE guild_id = ? AND id IN ({placeholders})"
             try:
                 await self._db_adapter.execute(delete_sql, (guild_id_str, *tuple(ids_to_delete)))
                 print(f"CharacterManager: Deleted {len(ids_to_delete)} characters from DB for guild {guild_id_str}.")
@@ -468,7 +468,7 @@ class CharacterManager:
              print(f"CharacterManager: Upserting {len(characters_to_save)} characters for guild {guild_id_str}...")
              # INSERT OR REPLACE SQL для обновления существующих или вставки новых
              upsert_sql = '''
-             INSERT OR REPLACE INTO characters
+             INSERT OR REPLACE INTO players
              (id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              '''
@@ -602,9 +602,9 @@ class CharacterManager:
         try:
             # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
             sql = '''
-            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects
-            FROM characters WHERE guild_id = ?
-            '''
+            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, race, mp, attack, defense
+            FROM players WHERE guild_id = ?
+            ''' # Added new columns from players table
             rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
             print(f"CharacterManager: Found {len(rows)} characters in DB for guild {guild_id_str}.")
 

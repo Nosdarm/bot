@@ -16,6 +16,7 @@ from discord import Client # Direct import if Client is instantiated or directly
 
 # Адаптер для работы с SQLite - Прямой импорт нужен, т.к. он инстанциируется здесь
 from bot.database.sqlite_adapter import SqliteAdapter
+from bot.services.db_service import DBService # Ensure DBService is imported for runtime
 
 
 if TYPE_CHECKING:
@@ -182,9 +183,9 @@ class GameManager:
             from bot.game.managers.game_log_manager import GameLogManager
             from bot.game.services.campaign_loader import CampaignLoader
             from bot.game.services.consequence_processor import ConsequenceProcessor
-    # from bot.services.db_service import DBService # Will be imported outside TYPE_CHECKING
+    # from bot.services.db_service import DBService # This can be removed from TYPE_CHECKING if imported above
 
-from bot.services.db_service import DBService # Import DBService at module level
+# Ensure no duplicate or misplaced DBService import within methods or other blocks
 
             # Core managers (создание экземпляров)
             self.rule_engine = RuleEngine(settings=self._settings.get('rule_settings', {}))

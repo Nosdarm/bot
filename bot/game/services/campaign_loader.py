@@ -167,6 +167,7 @@ class CampaignLoader:
                 if not existing_npc:
                     await self._db_service.create_npc(
                         npc_id=npc_id,
+                        template_id=npc_id, # Pass the archetype ID as template_id
                         name=name,
                         persona=persona,
                         guild_id=guild_id,
@@ -177,7 +178,7 @@ class CampaignLoader:
                         stats=stats,
                         archetype=archetype
                     )
-                    print(f"CampaignLoader: Created NPC '{name}' (ID: {npc_id}) for guild '{guild_id}'.")
+                    print(f"CampaignLoader: Created NPC '{name}' (ID: {npc_id}, Template: {npc_id}) for guild '{guild_id}'.")
                 else:
                     print(f"CampaignLoader: NPC '{name}' (ID: {npc_id}) already exists for guild '{guild_id}', skipping.")
             except Exception as e:

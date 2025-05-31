@@ -326,7 +326,8 @@ async def cmd_talk(interaction: Interaction, npc_name: str, message: str):
             title=f"Talking with {npc_actual_name}",
             color=discord.Color.blue() # Or any other color
         )
-        embed.add_field(name=player_name or interaction.user.display_name, value=message, inline=False) # Corrected syntax
+        name_to_display = player_name or interaction.user.display_name
+        embed.add_field(name=name_to_display, value=message, inline=False)
         embed.add_field(name=npc_actual_name, value=ai_response_text, inline=False)
 
         # Optionally, add a footer or timestamp

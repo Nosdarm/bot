@@ -3,6 +3,7 @@
 import discord
 from discord import app_commands, Interaction # Use Interaction for type hinting
 from typing import Optional, TYPE_CHECKING
+import traceback # Added traceback import
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot # For type hinting interaction.client
