@@ -1,19 +1,21 @@
 import discord
-from discord import slash_command
-from bot.bot_core import RPGBot # If using Bot methods
+from discord import app_commands, Interaction # Updated imports
+from typing import TYPE_CHECKING
 
-# --- ВРЕМЕННОЕ РЕШЕНИЕ для доступа бота ---
-# NOT PRODUCTION READY
-from bot.bot_core import get_bot_instance # Need a way to get bot instance for self.latency
-# --- КОНЕЦ ВРЕМЕННОГО РЕШЕНИЯ ---
+if TYPE_CHECKING:
+    from bot.bot_core import RPGBot # Keep for type hinting client
 
-TEST_GUILD_IDS = [] # Add your test server ID(s)
+TEST_GUILD_IDS = [] # Add your test server ID(s) - this can be populated from settings or RPGBot
 
-@slash_command(name="ping", description="Проверить жив ли бот.", guild_ids=TEST_GUILD_IDS)
-async def cmd_ping(ctx: discord.ApplicationContext):
-    bot_instance = get_bot_instance() # Temporarily access bot instance
-    if bot_instance:
+@app_commands.command(name="ping", description="Check if the bot is alive and its latency.")
+async def cmd_ping(interaction: Interaction): # Changed ctx to interaction
+    # Access bot instance via interaction.client
+    # The client attribute of Interaction is the Bot instance.
+    bot_instance: 'RPGBot' = interaction.client
+
+    if bot_instance and hasattr(bot_instance, 'latency'):
          latency_ms = round(bot_instance.latency * 1000, 2)
-         await ctx.respond(f"Понг! Задержка: {latency_ms} мс.")
+         await interaction.response.send_message(f"Pong! Latency: {latency_ms}ms.", ephemeral=True)
     else:
-        await ctx.respond("Понг! (Не удалось получить задержку бота.)")
+        # Fallback if latency is not available or bot_instance is not as expected
+        await interaction.response.send_message("Pong! (Could not retrieve bot latency.)", ephemeral=True)

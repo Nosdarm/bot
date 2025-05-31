@@ -8,7 +8,8 @@ import traceback
 from typing import Optional, Dict, Any, List
 
 # Правильные импорты для slash commands и контекста
-from discord import slash_command, Bot, ApplicationContext, Member, TextChannel # discord.Bot is RPGBot's parent
+from discord.ext import commands # Changed to commands.Bot
+from discord import Interaction, Member, TextChannel, Intents, app_commands # Specific imports
 from dotenv import load_dotenv
 
 # Импорты наших сервисов и менеджеров.
@@ -40,10 +41,11 @@ import bot.command_modules.utility_cmds # Import the new utility commands module
 from bot.command_modules.game_setup_cmds import is_master_or_admin, is_gm_channel # <-- Правильное место импорта
 
 # Global configuration settings (константы вне классов и функций)
-intents = discord.Intents.default()
-intents.members = True
-intents.guilds = True
-intents.message_content = True # Keep message content for flexibility
+# intents = discord.Intents.default() # Now Intents is imported directly
+# intents.members = True
+# intents.guilds = True
+# intents.message_content = True # Keep message content for flexibility
+# This will be defined before RPGBot instantiation in start_bot() or passed to it.
 
 
 # Global list of Guild IDs for rapid slash command testing
@@ -76,10 +78,11 @@ def load_settings_from_file(file_path: str) -> Dict[str, Any]:
         return {}
 
 # --- Definition of the RPGBot class ---
-class RPGBot(Bot):
-    def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: discord.Intents, debug_guilds: Optional[List[int]] = None):
-        super().__init__(command_prefix=command_prefix, intents=intents, debug_guilds=debug_guilds)
+class RPGBot(commands.Bot): # Changed base class to commands.Bot
+    def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
+        super().__init__(command_prefix=command_prefix, intents=intents)
         self.game_manager = game_manager
+        self.debug_guild_ids = debug_guild_ids # Store it for later use in on_ready tree sync
         self.openai_service = openai_service # Though game_manager might also hold a reference to it
 
         # TODO: Review if global_openai_service is still needed by any command module directly
@@ -98,19 +101,15 @@ class RPGBot(Bot):
         print(f'Logged in as {self.user.name} ({self.user.id})')
         if self.game_manager:
             print("GameManager is initialized in RPGBot.")
-            # GameManager.setup() should have been called before bot.start()
-            # If there's anything game_manager needs to do *after* login, it can be called here.
 
         print('Syncing command tree...')
-        if self.debug_guilds:
-            print(f"Debugging slash commands on guilds: {self.debug_guilds}")
-            # Sync to specific guilds if debug_guilds are provided
-            for guild_id in self.debug_guilds:
-                guild = discord.Object(id=guild_id)
+        if self.debug_guild_ids:
+            print(f"Debugging slash commands on guilds: {self.debug_guild_ids}")
+            for guild_id_val in self.debug_guild_ids: # Iterate over the stored list
+                guild = discord.Object(id=guild_id_val) # Use discord.Object
                 await self.tree.sync(guild=guild)
-            print(f"Command tree synced to {len(self.debug_guilds)} debug guild(s).")
+            print(f"Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
         else:
-            # Sync globally if no debug_guilds are specified (can take time)
             await self.tree.sync()
             print("Command tree synced globally.")
         print('Bot is ready!')
@@ -119,36 +118,37 @@ class RPGBot(Bot):
         # This approach assumes command functions are decorated with @slash_command
         # and are available in the imported modules.
         # discord.py V2 automatically discovers these in cogs or if added via self.add_application_command.
-        # For functions directly decorated, we need to add them.
+        # For functions directly decorated, we need to add them to the CommandTree.
 
         # General commands
-        self.add_application_command(bot.command_modules.general_cmds.cmd_ping)
+        self.tree.add_command(bot.command_modules.general_cmds.cmd_ping)
 
         # Game setup commands
-        # self.add_application_command(bot.command_modules.game_setup_cmds.cmd_start_game) # Placeholder
-        # self.add_application_command(bot.command_modules.game_setup_cmds.cmd_join_game) # Placeholder
-        self.add_application_command(bot.command_modules.game_setup_cmds.cmd_start_new_character) # New /start command
+        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_game) # Placeholder
+        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_join_game) # Placeholder
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_new_character) # New /start command
         # TODO: Add other game_setup_cmds (set_gm, set_gm_channel, etc.)
 
         # Exploration commands
-        self.add_application_command(bot.command_modules.exploration_cmds.cmd_look)
-        self.add_application_command(bot.command_modules.exploration_cmds.cmd_move)
-        self.add_application_command(bot.command_modules.exploration_cmds.cmd_check)
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_look)
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_move)
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_check)
 
         # Action commands
-        self.add_application_command(bot.command_modules.action_cmds.cmd_interact) # Placeholder, needs refactor
-        self.add_application_command(bot.command_modules.action_cmds.cmd_fight) # Refactored from cmd_attack
-        self.add_application_command(bot.command_modules.action_cmds.cmd_talk)
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_interact) # Placeholder, needs refactor
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_fight) # Refactored from cmd_attack
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_talk)
 
         # Inventory commands
-        self.add_application_command(bot.command_modules.inventory_cmds.cmd_inventory)
-        self.add_application_command(bot.command_modules.inventory_cmds.cmd_pickup)
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_inventory)
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_pickup)
 
         # Utility commands
-        self.add_application_command(bot.command_modules.utility_cmds.cmd_undo)
+        self.tree.add_command(bot.command_modules.utility_cmds.cmd_undo)
 
         # Simulation Trigger Command
-        self.add_application_command(cmd_gm_simulate) # Defined below
+        # cmd_gm_simulate is already an app_command.Command, so it should be added directly.
+        self.tree.add_command(cmd_gm_simulate) # Defined below
 
 # --- Global Helper for sending messages (e.g., from GameManager) ---
 # This needs access to the bot instance.
@@ -173,49 +173,37 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
 # --- Simulation Trigger Command (GM only) - DEFINITION as a separate function ---
 # Accesses GameManager via ctx.bot.game_manager if commands are structured as Cogs or similar.
 # For now, might still rely on global_game_manager or pass explicitly.
-# If this is registered to RPGBot, it can access self.game_manager through ctx.bot
-@slash_command(name="gm_simulate", description="ГМ: Запустить один шаг симуляции мира.")
+# If this is registered to RPGBot, it can access self.game_manager through interaction.client
+@app_commands.command(name="gm_simulate", description="ГМ: Запустить один шаг симуляции мира.")
 # guild_ids will be set dynamically when RPGBot is initialized if LOADED_TEST_GUILD_IDS has values.
 # For now, remove here and let RPGBot handle it or add it back if this is registered globally.
 # guild_ids=LOADED_TEST_GUILD_IDS
-async def cmd_gm_simulate(ctx: ApplicationContext):
+async def cmd_gm_simulate(interaction: Interaction): # Changed ctx to interaction
     # Access bot and game_manager from context
-    # This is the more modern way if commands are part of the bot instance (e.g. in a Cog or added directly)
-    bot_instance = ctx.bot
+    bot_instance = interaction.client # Correct way to access bot
     if not isinstance(bot_instance, RPGBot):
-        await ctx.respond("Error: Bot instance is not configured correctly.", ephemeral=True)
+        await interaction.response.send_message("Error: Bot instance is not configured correctly.", ephemeral=True)
         return
 
     game_mngr = bot_instance.game_manager
 
-    # TODO: Update is_master_or_admin and is_gm_channel to accept ctx and use game_mngr
+    # TODO: Update is_master_or_admin and is_gm_channel to accept interaction and use game_mngr
     # from bot.command_modules.game_setup_cmds import is_master_or_admin
     # For now, assume it's okay or True for testing this structural change
-    # if not is_master_or_admin(ctx, game_mngr): # Placeholder for updated check
-    #     await ctx.respond("**Мастер:** Только Истинный Мастер может управлять ходом времени!", ephemeral=True)
+    # if not is_master_or_admin(interaction, game_mngr): # Placeholder for updated check
+    #     await interaction.response.send_message("**Мастер:** Только Истинный Мастер может управлять ходом времени!", ephemeral=True)
     #     return
 
-    await ctx.defer()
+    await interaction.response.defer(ephemeral=True) # Defer response
 
     if game_mngr:
-        # GameManager's run_simulation_tick should use the bot's send_message capability
-        # or be passed a send_callback_factory that uses global_send_message or ctx.bot methods.
-        # For now, assuming run_simulation_tick can use a globally accessible send function or
-        # the one configured in GameManager during its setup.
-        # The callback _send_message_from_manager used global_game_manager, which is now set by RPGBot.
-        # The game_manager instance itself has a _get_discord_send_callback method.
-        # We need to ensure this is used or provide an equivalent.
-
-        # Simplification: GameManager's internal send callback factory should work if discord_client (RPGBot) is passed to it.
         await game_mngr.run_simulation_tick(
-            server_id=ctx.guild.id,
-            # send_message_callback is tricky here. GameManager.setup creates its own using the discord_client.
-            # So, this argument might not be needed if GameManager is correctly initialized with the bot.
-            # send_message_callback=global_send_message # Example, but ideally GameManager handles this.
+            server_id=interaction.guild_id, # Use interaction.guild_id
+            # send_message_callback is handled by GameManager's internal setup
         )
-        await ctx.followup.send("**Мастер:** Шаг симуляции мира завершен!")
+        await interaction.followup.send("**Мастер:** Шаг симуляции мира завершен!")
     else:
-        await ctx.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен или игра не начата. Используйте `/start_game`.")
+        await interaction.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен или игра не начата. Используйте `/start_game`.")
 
 
 # --- Main Bot Entry Point ---
@@ -270,15 +258,20 @@ async def start_bot():
         print("OpenAIService is not available (key missing or invalid).")
 
     # 4. Initialize RPGBot (which is the discord client)
-    # Intents are already defined globally
+        # Define intents here before passing to RPGBot
+    bot_intents = Intents.default()
+    bot_intents.members = True
+    bot_intents.guilds = True
+    bot_intents.message_content = True
+
     rpg_bot = RPGBot(
-        game_manager=None, # GameManager will be set after RPGBot is created, to resolve circular dependency
+        game_manager=None,
         openai_service=openai_service,
         command_prefix=COMMAND_PREFIX,
-        intents=intents, # global intents
-        debug_guilds=LOADED_TEST_GUILD_IDS if LOADED_TEST_GUILD_IDS else None
+        intents=bot_intents,
+        debug_guild_ids=LOADED_TEST_GUILD_IDS if LOADED_TEST_GUILD_IDS else None # Pass debug_guild_ids
     )
-    _rpg_bot_instance_for_global_send = rpg_bot # Set the global instance for global_send_message
+    _rpg_bot_instance_for_global_send = rpg_bot
 
     # 5. Initialize GameManager
     # GameManager needs the discord client (RPGBot instance)
