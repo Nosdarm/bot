@@ -157,6 +157,32 @@ async def cmd_pickup(interaction: Interaction, item_name: str):
         )
 
         if deleted_from_world:
+            # Log the successful pickup
+            try:
+                log_event_type = "PLAYER_PICKUP_ITEM"
+                log_message = f"{player_data.get('name', 'Player')} picked up {found_item_instance.get('name', item_name)} (x{int(quantity_to_pickup)})."
+                log_related_entities = {"item_template_id": item_template_id, "item_instance_id": item_instance_id}
+                log_context_data = {
+                    "player_id": player_id,
+                    "item_template_id": item_template_id,
+                    "quantity": int(quantity_to_pickup),
+                    "original_item_instance_id": item_instance_id,
+                    "original_location_id": player_location_id
+                }
+                await db_service.add_log_entry(
+                    guild_id=guild_id,
+                    event_type=log_event_type,
+                    message=log_message,
+                    player_id_column=player_id,
+                    related_entities=log_related_entities,
+                    context_data=log_context_data,
+                    channel_id=interaction.channel_id if interaction.channel else None
+                )
+                print(f"Log entry added for item pickup: Player {player_id}, Item {item_template_id}, Instance {item_instance_id}")
+            except Exception as log_e:
+                print(f"Error adding log entry for item pickup: {log_e}")
+                # Non-fatal, command already succeeded in game terms.
+
             # Success, make message public
             await interaction.followup.send(f"{interaction.user.mention} picked up {found_item_instance.get('name', item_name)} (x{int(quantity_to_pickup)}).", ephemeral=False)
         else:

@@ -281,15 +281,43 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
             return
 
         # Update Player Location
+        old_location_id = current_location_id
+        old_location_name = current_location_data.get('name', 'Unknown Starting Location')
+
         await db_service.update_player_location(player_id=player_data['id'], new_location_id=target_location_id)
 
         # Display New Location Description
         new_location_data = await db_service.get_location(location_id=target_location_id, guild_id=guild_id)
         if not new_location_data: # Should not happen if we just validated it
             await interaction.followup.send("Moved, but couldn't find details of your new location. Strange...", ephemeral=True)
+            # TODO: Consider if a rollback of player location is needed here, though complex.
             return
 
-        move_message = f"{player_data.get('name', 'You')} move to {new_location_data.get('name', 'an unknown place')}."
+        new_location_name = new_location_data.get('name', 'an unknown place')
+        player_id = player_data['id']
+        player_name = player_data.get('name', 'Player')
+
+        # Add log entry for the move
+        try:
+            log_message = f"{player_name} moved from {old_location_name} to {new_location_name}."
+            log_related_entities = {"old_location_id": old_location_id, "new_location_id": target_location_id}
+            log_context_data = {"old_location_id": old_location_id}
+
+            await db_service.add_log_entry(
+                guild_id=guild_id,
+                event_type="PLAYER_MOVE",
+                message=log_message,
+                player_id_column=player_id, # For the direct player_id col in game_logs
+                related_entities=log_related_entities,
+                context_data=log_context_data,
+                channel_id=interaction.channel_id if interaction.channel else None
+            )
+            print(f"Log entry added for player move: {player_id} from {old_location_id} to {target_location_id}")
+        except Exception as log_e:
+            print(f"Error adding log entry for player move: {log_e}")
+            # Non-fatal, continue with command execution
+
+        move_message = f"{player_name} move to {new_location_name}."
         await _send_location_embed(interaction, new_location_data, db_service, guild_id, followup=True, initial_message=move_message)
 
     except Exception as e:
