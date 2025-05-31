@@ -17,7 +17,7 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    LATEST_SCHEMA_VERSION = 3 # Увеличьте это число, если добавляете новые миграции (_migrate_v1_to_v2 и т.д.)
+    LATEST_SCHEMA_VERSION = 4 # Incremented for the new migration
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -648,6 +648,86 @@ class SqliteAdapter:
     #    # Пример: добавить новую таблицу
     #    # await cursor.execute("CREATE TABLE new_table (...)")
     #    print("SqliteAdapter: v1 to v2 migration complete.")
+
+    async def _migrate_v3_to_v4(self, cursor: Cursor) -> None:
+        """Миграция с Версии 3 на Версию 4."""
+        print("SqliteAdapter: Running v3 to v4 migration...")
+
+        # 1. Rename `characters` to `players`
+        try:
+            await cursor.execute("ALTER TABLE characters RENAME TO players;")
+            print("SqliteAdapter: Renamed table 'characters' to 'players'.")
+        except aiosqlite.OperationalError as e:
+            # This might happen if the migration is run multiple times and 'characters' no longer exists
+            # or if 'players' already exists (less likely if migrations run linearly).
+            if "no such table: characters" in str(e).lower():
+                print("SqliteAdapter: Table 'characters' not found, assuming already renamed to 'players'.")
+            elif "table players already exists" in str(e).lower():
+                 print("SqliteAdapter: Table 'players' already exists.")
+            else:
+                raise # Re-raise other operational errors
+
+        # 2. Add columns to the (new) `players` table
+        # Columns to add: race TEXT, mp INTEGER DEFAULT 0, attack INTEGER DEFAULT 0, defense INTEGER DEFAULT 0
+        # level and experience already exist from v1.
+        player_columns_to_add = [
+            ("race", "TEXT"),
+            ("mp", "INTEGER DEFAULT 0"),
+            ("attack", "INTEGER DEFAULT 0"),
+            ("defense", "INTEGER DEFAULT 0")
+        ]
+        for column_name, column_type in player_columns_to_add:
+            try:
+                await cursor.execute(f"ALTER TABLE players ADD COLUMN {column_name} {column_type};")
+                print(f"SqliteAdapter: Added column '{column_name}' to 'players' table.")
+            except aiosqlite.OperationalError as e:
+                if "duplicate column name" in str(e).lower():
+                    print(f"SqliteAdapter: Column '{column_name}' already exists in 'players' table, skipping.")
+                else:
+                    raise
+
+        # 3. Create `inventory` table
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS inventory (
+                inventory_id TEXT PRIMARY KEY,
+                player_id TEXT,
+                item_template_id TEXT,
+                quantity INTEGER,
+                FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE,
+                FOREIGN KEY(item_template_id) REFERENCES item_templates(id) ON DELETE CASCADE
+            );
+        ''')
+        print("SqliteAdapter: Created 'inventory' table IF NOT EXISTS.")
+        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_inventory_player_id ON inventory (player_id);''')
+        print("SqliteAdapter: Created index 'idx_inventory_player_id' on 'inventory' table IF NOT EXISTS.")
+
+        # 4. Verify/Update `item_templates` table - No direct schema change needed as per plan.
+        print("SqliteAdapter: 'item_templates' table structure confirmed suitable for item definitions (effects in properties).")
+
+        # 5. Add columns to `npcs` table
+        # Only 'persona' TEXT needs to be added. 'hp' and 'attack' are handled by existing fields.
+        try:
+            await cursor.execute("ALTER TABLE npcs ADD COLUMN persona TEXT;")
+            print("SqliteAdapter: Added column 'persona' to 'npcs' table.")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                print("SqliteAdapter: Column 'persona' already exists in 'npcs' table, skipping.")
+            else:
+                raise
+
+        # 6. Add `player_id` column to `game_logs` table
+        try:
+            await cursor.execute("ALTER TABLE game_logs ADD COLUMN player_id TEXT;")
+            print("SqliteAdapter: Added column 'player_id' to 'game_logs' table.")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                print("SqliteAdapter: Column 'player_id' already exists in 'game_logs' table, skipping.")
+            else:
+                raise
+        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_game_logs_player_id ON game_logs (player_id);''')
+        print("SqliteAdapter: Created index 'idx_game_logs_player_id' on 'game_logs' table IF NOT EXISTS.")
+
+        print("SqliteAdapter: v3 to v4 migration complete.")
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")
