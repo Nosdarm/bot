@@ -136,11 +136,13 @@ class GameManager:
     async def setup(self) -> None:
         print("GameManager: Running setup…")
         try:
-            # 1) Подключаемся к базе и инициализируем схему
-            self._db_adapter = SqliteAdapter(self._db_path)
-            await self._db_adapter.connect()
-            await self._db_adapter.initialize_database()
-            print("GameManager: Database setup complete.")
+            # 1) Инициализируем DBService (который внутри себя инициализирует SqliteAdapter)
+            # и подключаемся к базе, инициализируем схему.
+            self.db_service = DBService(db_path=self._db_path)
+            await self.db_service.connect()
+            await self.db_service.initialize_database() # This runs migrations via adapter
+            self._db_adapter = self.db_service.adapter # Get the adapter instance if needed directly by other managers
+            print("GameManager: DBService initialized, connected, and database schema updated.")
 
             # 2) Импортируем классы менеджеров и процессоров для их ИНСТАНЦИАЦИИ
             # ЭТИ ИМПОРТЫ НУЖНЫ ЗДЕСЬ ДЛЯ RUNTIME, т.к. мы создаем экземпляры!
@@ -180,6 +182,7 @@ class GameManager:
             from bot.game.managers.game_log_manager import GameLogManager
             from bot.game.services.campaign_loader import CampaignLoader
             from bot.game.services.consequence_processor import ConsequenceProcessor
+            from bot.services.db_service import DBService # Added DBService import
 
 
             # Core managers (создание экземпляров)
@@ -266,7 +269,22 @@ class GameManager:
             # Новые менеджеры и сервисы (продолжение)
             self.game_log_manager = GameLogManager(db_adapter=self._db_adapter, settings=self._settings.get('game_log_settings'))
             self.relationship_manager = RelationshipManager(db_adapter=self._db_adapter, settings=self._settings.get('relationship_settings'))
-            self.campaign_loader = CampaignLoader(settings=self._settings)
+
+            # Instantiate CampaignLoader with DBService
+            self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service)
+            print("GameManager: CampaignLoader instantiated with DBService.")
+
+            # Populate game data using CampaignLoader
+            # This needs to happen after DB init but before other managers might rely on this data.
+            if self._active_guild_ids:
+                for guild_id_str in self._active_guild_ids:
+                    print(f"GameManager: Populating game data for guild_id: {guild_id_str}...")
+                    # campaign_identifier can be passed if specific campaigns per guild are a feature.
+                    await self.campaign_loader.populate_all_game_data(guild_id=guild_id_str, campaign_identifier=None)
+            else:
+                print("GameManager: No active_guild_ids configured. Attempting to load global items only.")
+                # Call with a placeholder or handle in CampaignLoader if guild_id is None for global items
+                await self.campaign_loader.load_and_populate_items() # Ensures global items are loaded
 
             self.dialogue_manager = DialogueManager(
                 db_adapter=self._db_adapter,
@@ -519,13 +537,16 @@ class GameManager:
                     'party_action_processor': self._party_action_processor,
                     'persistence_manager': self._persistence_manager,
                     'world_simulation_processor': self._world_simulation_processor,
-                    'db_adapter': self._db_adapter,
+                    'db_adapter': self._db_adapter, # Still passing adapter directly if some old components need it
+                    'db_service': self.db_service,   # Pass DBService as well
                     'send_callback_factory': self._get_discord_send_callback,
                     'settings': self._settings,
                     'discord_client': self._discord_client,
                     # TODO: Добавьте любые другие данные из setup, которые могут потребоваться при загрузке/перестройке
                 }
 
+                # Load game state *after* initial data (items, locations, default NPCs) is populated.
+                # This ensures that loaded game states referencing these entities find them in the DB.
                 await self._persistence_manager.load_game_state(
                     guild_ids=active_guild_ids,
                     **load_context_kwargs
@@ -534,6 +555,7 @@ class GameManager:
             else:
                 print("GameManager: Warning: Skipping state load, PersistenceManager not available.")
 
+            # Initial data population is done before this point.
 
             # 6) Запуск цикла тика мира
             # Запускаем цикл тика ТОЛЬКО если WorldSimulationProcessor доступен

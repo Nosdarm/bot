@@ -1,0 +1,56 @@
+[
+  {
+    "id": "potion_health_minor",
+    "name": "Minor Healing Potion",
+    "description": "A common potion that restores a small amount of health.",
+    "type": "potion",
+    "icon": "🧪",
+    "weight": 0.1,
+    "value": 10,
+    "usable": true,
+    "consumable": true,
+    "effects": { "effect_type": "heal", "amount": 20, "target": "self", "sfx": "glug" }
+  },
+  {
+    "id": "sword_iron_short",
+    "name": "Iron Shortsword",
+    "description": "A basic but reliable iron shortsword.",
+    "type": "weapon",
+    "icon": "⚔️",
+    "weight": 1.5,
+    "value": 25,
+    "equipable": true,
+    "effects": { "damage": "1d6", "damage_type": "slashing", "skill_used": "short_blades", "equip_slot": "main_hand", "parry_bonus": 1 }
+  },
+  {
+    "id": "leather_jerkin",
+    "name": "Leather Jerkin",
+    "description": "A simple leather jerkin offering basic protection.",
+    "type": "armor",
+    "icon": "👕",
+    "weight": 2.0,
+    "value": 15,
+    "equipable": true,
+    "effects": { "defense": 3, "armor_type": "light", "equip_slot": "chest", "stealth_penalty": 0 }
+  },
+  {
+    "id": "iron_ore_chunk",
+    "name": "Iron Ore Chunk",
+    "description": "A chunk of raw iron ore.",
+    "type": "resource",
+    "icon": "🪨",
+    "weight": 0.5,
+    "value": 5,
+    "effects": { "stackable": true, "max_stack": 20, "crafting_material_type": "metal_ore" }
+  },
+  {
+    "id": "gold_coin",
+    "name": "Gold Coin",
+    "description": "A standard gold coin.",
+    "type": "currency",
+    "icon": "🪙",
+    "weight": 0.01,
+    "value": 1,
+    "effects": { "stackable": true }
+  }
+]

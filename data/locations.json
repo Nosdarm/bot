@@ -1,0 +1,68 @@
+[
+  {
+    "id": "town_square",
+    "name": "Town Square",
+    "description": "A bustling town square with a fountain in the center. Cobblestone paths lead in various directions.",
+    "connections": ["tavern", "market_street", "guild_hall", "city_gate"]
+  },
+  {
+    "id": "tavern",
+    "name": "The Drunken Dragon Tavern",
+    "description": "A cozy, dimly lit tavern filled with the murmur of adventurers and locals. The air smells of ale and stew.",
+    "connections": ["town_square"]
+  },
+  {
+    "id": "market_street",
+    "name": "Market Street",
+    "description": "A vibrant, busy street lined with colorful market stalls. Merchants hawk their wares, and shoppers haggle for goods.",
+    "connections": ["town_square", "alchemist_shop"]
+  },
+  {
+    "id": "guild_hall",
+    "name": "Adventurers' Guild Hall",
+    "description": "A grand hall with high ceilings and walls adorned with maps and trophies. A large board displays available quests.",
+    "connections": ["town_square"]
+  },
+  {
+    "id": "city_gate",
+    "name": "Main City Gate",
+    "description": "The main gate of the city, heavily fortified and guarded. A wide road leads out into the wilderness.",
+    "connections": ["town_square", "wilderness_ crossroads"]
+  },
+  {
+    "id": "alchemist_shop",
+    "name": "The Alchemist's Brew",
+    "description": "A shop filled with bubbling concoctions, strange ingredients, and the scent of exotic herbs.",
+    "connections": ["market_street"]
+  },
+  {
+    "id": "wilderness_crossroads",
+    "name": "Wilderness Crossroads",
+    "description": "A dusty crossroads outside the city. Paths lead into the forest, towards the mountains, and along the river.",
+    "connections": ["city_gate", "forest_path", "mountain_trail"]
+  },
+  {
+    "id": "forest_path",
+    "name": "Forest Path",
+    "description": "A winding path leading into a dark and ancient forest.",
+    "connections": ["wilderness_crossroads", "clearing_deepwood"]
+  },
+  {
+    "id": "mountain_trail",
+    "name": "Mountain Trail",
+    "description": "A steep and rocky trail ascending into the nearby mountains.",
+    "connections": ["wilderness_crossroads", "cave_entrance"]
+  },
+  {
+    "id": "clearing_deepwood",
+    "name": "Clearing in Deepwood",
+    "description": "A small, sun-dappled clearing deep within the forest. Ancient ruins are barely visible through the undergrowth.",
+    "connections": ["forest_path"]
+  },
+  {
+    "id": "cave_entrance",
+    "name": "Cave Entrance",
+    "description": "A dark and foreboding cave entrance at the foot of the mountains.",
+    "connections": ["mountain_trail"]
+  }
+]
