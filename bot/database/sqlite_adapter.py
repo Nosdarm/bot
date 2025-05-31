@@ -17,7 +17,7 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    LATEST_SCHEMA_VERSION = 4 # Incremented for the new migration
+    LATEST_SCHEMA_VERSION = 5 # Incremented for the new migration for undo log
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -728,6 +728,30 @@ class SqliteAdapter:
         print("SqliteAdapter: Created index 'idx_game_logs_player_id' on 'game_logs' table IF NOT EXISTS.")
 
         print("SqliteAdapter: v3 to v4 migration complete.")
+
+    async def _migrate_v4_to_v5(self, cursor: Cursor) -> None:
+        """Миграция с Версии 4 на Версию 5 (добавление is_undone в game_logs)."""
+        print("SqliteAdapter: Running v4 to v5 migration (adding is_undone to game_logs)...")
+
+        # Add is_undone column to game_logs
+        try:
+            await cursor.execute("ALTER TABLE game_logs ADD COLUMN is_undone INTEGER DEFAULT 0 NOT NULL;")
+            print("SqliteAdapter: Added column 'is_undone' to 'game_logs' table.")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                print("SqliteAdapter: Column 'is_undone' already exists in 'game_logs' table, skipping.")
+            else:
+                raise
+
+        # Add index for querying undoable actions
+        # Assumes the player_id column added in v4 was named 'player_id'
+        await cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_game_logs_player_undone_ts
+            ON game_logs (player_id, is_undone, timestamp DESC);
+        ''')
+        print("SqliteAdapter: Created index 'idx_game_logs_player_undone_ts' on 'game_logs' table IF NOT EXISTS.")
+
+        print("SqliteAdapter: v4 to v5 migration complete.")
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")

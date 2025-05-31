@@ -410,3 +410,254 @@ class DBService:
             print(f"DBService: Error deleting item instance {item_instance_id}: {e}")
             # Consider logging the error more formally
             return False
+
+    # --- HP Update Methods ---
+    async def update_npc_hp(self, npc_id: str, new_hp: int, guild_id: str) -> bool:
+        """Updates the current health of an NPC."""
+        # Ensure HP doesn't go below 0 or above max_health if that logic is here
+        # For now, just setting it. Max health check might be in game logic.
+        # Also, ensure NPC belongs to the guild for safety.
+        sql_check = "SELECT id FROM npcs WHERE id = ? AND guild_id = ?"
+        row = await self.adapter.fetchone(sql_check, (npc_id, guild_id))
+        if not row:
+            print(f"DBService: NPC {npc_id} not found in guild {guild_id} for HP update.")
+            return False
+
+        sql = "UPDATE npcs SET health = ? WHERE id = ? AND guild_id = ?"
+        try:
+            await self.adapter.execute(sql, (max(0, new_hp), npc_id, guild_id)) # Prevent negative HP in DB
+            print(f"DBService: Updated NPC {npc_id} HP to {new_hp} in guild {guild_id}.")
+            return True
+        except Exception as e:
+            print(f"DBService: Error updating NPC {npc_id} HP: {e}")
+            return False
+
+    async def update_player_hp(self, player_id: str, new_hp: int, guild_id: str) -> bool:
+        """Updates the current HP of a player."""
+        # Ensure HP doesn't go below 0 or above max_hp if that logic is here
+        # players table has 'hp' column from migration v4
+        sql_check = "SELECT id FROM players WHERE id = ? AND guild_id = ?"
+        row = await self.adapter.fetchone(sql_check, (player_id, guild_id))
+        if not row:
+            print(f"DBService: Player {player_id} not found in guild {guild_id} for HP update.")
+            return False
+
+        sql = "UPDATE players SET hp = ? WHERE id = ? AND guild_id = ?"
+        try:
+            await self.adapter.execute(sql, (max(0, new_hp), player_id, guild_id)) # Prevent negative HP
+            print(f"DBService: Updated Player {player_id} HP to {new_hp} in guild {guild_id}.")
+            return True
+        except Exception as e:
+            print(f"DBService: Error updating Player {player_id} HP: {e}")
+            return False
+
+    # --- Dialogue Session Management ---
+
+    async def get_or_create_dialogue_session(
+        self, player_id: str, npc_id: str, guild_id: str, channel_id: int
+    ) -> Dict[str, Any]:
+        """
+        Retrieves an active dialogue session or creates a new one if none exists.
+        A session is identified by the participants (player and NPC) and guild.
+        The 'participants' field in the DB should store a sorted list of IDs as a JSON string
+        to ensure (player_id, npc_id) and (npc_id, player_id) map to the same session.
+        """
+        # Sort participant IDs to ensure consistent lookup/storage
+        participant_list = sorted([player_id, npc_id])
+        participants_json = json.dumps(participant_list)
+
+        sql_find = """
+            SELECT id, conversation_history, state_variables, current_stage_id, template_id, is_active
+            FROM dialogues
+            WHERE participants = ? AND guild_id = ? AND is_active = 1
+            ORDER BY last_activity_game_time DESC LIMIT 1
+        """
+        # Or, if a session is strictly 1 player + 1 NPC and you want to ensure only one active:
+        # WHERE ( (participants LIKE '%' || ? || '%') AND (participants LIKE '%' || ? || '%') ) ...
+        # But storing sorted JSON list is cleaner for exact match.
+
+        row = await self.adapter.fetchone(sql_find, (participants_json, guild_id))
+
+        if row:
+            session = self._row_to_dict(row)
+            if session.get('conversation_history') and isinstance(session['conversation_history'], str):
+                session['conversation_history'] = json.loads(session['conversation_history'])
+            else:
+                session['conversation_history'] = [] # Ensure it's a list
+
+            if session.get('state_variables') and isinstance(session['state_variables'], str):
+                session['state_variables'] = json.loads(session['state_variables'])
+            else:
+                session['state_variables'] = {}
+
+            # Update last activity time (optional, could be separate method)
+            # For now, let's assume it's handled by update_dialogue_history or another mechanism
+            return session
+
+        # No active session found, create a new one
+        import uuid
+        import time
+        dialogue_id = str(uuid.uuid4())
+        current_time = time.time() # Using real time for last_activity for now
+
+        sql_create = """
+            INSERT INTO dialogues (
+                id, guild_id, participants, channel_id,
+                conversation_history, state_variables, is_active,
+                last_activity_game_time, current_stage_id, template_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        # template_id and current_stage_id might come from NPC's default dialogue or be None initially
+        initial_history = []
+        initial_state_vars = {}
+
+        params = (
+            dialogue_id, guild_id, participants_json, channel_id,
+            json.dumps(initial_history), json.dumps(initial_state_vars), 1, # is_active = True
+            current_time, None, None # current_stage_id, template_id (can be set later)
+        )
+        await self.adapter.execute(sql_create, params)
+
+        return {
+            "id": dialogue_id,
+            "guild_id": guild_id,
+            "participants": participant_list, # Return as list
+            "channel_id": channel_id,
+            "conversation_history": initial_history,
+            "state_variables": initial_state_vars,
+            "is_active": 1,
+            "last_activity_game_time": current_time,
+            "current_stage_id": None,
+            "template_id": None
+        }
+
+    async def update_dialogue_history(self, dialogue_id: str, new_history_entry: Dict[str, str]) -> bool:
+        """
+        Appends a new entry to the conversation_history of a dialogue session.
+        Also updates last_activity_game_time.
+        """
+        sql_get_history = "SELECT conversation_history FROM dialogues WHERE id = ?"
+        row = await self.adapter.fetchone(sql_get_history, (dialogue_id,))
+
+        if not row:
+            print(f"DBService: Dialogue session {dialogue_id} not found for history update.")
+            return False
+
+        current_history_json = row['conversation_history']
+        try:
+            current_history = json.loads(current_history_json) if current_history_json else []
+        except json.JSONDecodeError:
+            current_history = [] # Start fresh if JSON is corrupted
+
+        if not isinstance(current_history, list): # Ensure it's a list
+            current_history = []
+
+        current_history.append(new_history_entry)
+
+        import time # Using real time for simplicity
+        current_time = time.time()
+
+        sql_update = "UPDATE dialogues SET conversation_history = ?, last_activity_game_time = ? WHERE id = ?"
+        try:
+            await self.adapter.execute(sql_update, (json.dumps(current_history), current_time, dialogue_id))
+            print(f"DBService: Updated dialogue history for session {dialogue_id}.")
+            return True
+        except Exception as e:
+            print(f"DBService: Error updating dialogue history for session {dialogue_id}: {e}")
+            return False
+
+    async def set_dialogue_history(self, dialogue_id: str, full_history: List[Dict[str, str]]) -> bool:
+        """
+        Overwrites the entire conversation_history of a dialogue session with a new list.
+        Also updates last_activity_game_time.
+        Useful for operations like undo where the history is manipulated externally.
+        """
+        import time # Using real time for simplicity
+        current_time = time.time()
+
+        sql_update = "UPDATE dialogues SET conversation_history = ?, last_activity_game_time = ? WHERE id = ?"
+        try:
+            await self.adapter.execute(sql_update, (json.dumps(full_history), current_time, dialogue_id))
+            print(f"DBService: Set (overwrote) dialogue history for session {dialogue_id}.")
+            return True
+        except Exception as e:
+            print(f"DBService: Error setting (overwriting) dialogue history for session {dialogue_id}: {e}")
+            return False
+
+    # --- Undo Functionality Methods ---
+
+    async def get_last_undoable_player_action(self, player_id: str, guild_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches the most recent log entry for a player that has not been undone.
+        The player_id here refers to the 'player_id' column in 'game_logs' table.
+        """
+        sql = """
+            SELECT log_id, event_type, context_data, related_entities, message, timestamp
+            FROM game_logs
+            WHERE player_id = ? AND guild_id = ? AND is_undone = 0
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """
+        row = await self.adapter.fetchone(sql, (player_id, guild_id))
+        log_entry = self._row_to_dict(row)
+        if log_entry:
+            if log_entry.get('context_data') and isinstance(log_entry['context_data'], str):
+                log_entry['context_data'] = json.loads(log_entry['context_data'])
+            if log_entry.get('related_entities') and isinstance(log_entry['related_entities'], str):
+                log_entry['related_entities'] = json.loads(log_entry['related_entities'])
+        return log_entry
+
+    async def mark_log_as_undone(self, log_id: str, guild_id: str) -> bool:
+        """Marks a specific log entry as undone."""
+        sql_check = "SELECT log_id FROM game_logs WHERE log_id = ? AND guild_id = ?"
+        row = await self.adapter.fetchone(sql_check, (log_id, guild_id))
+        if not row:
+            print(f"DBService: Log entry {log_id} not found in guild {guild_id} to mark as undone.")
+            return False
+
+        sql = "UPDATE game_logs SET is_undone = 1 WHERE log_id = ? AND guild_id = ?"
+        try:
+            await self.adapter.execute(sql, (log_id, guild_id))
+            print(f"DBService: Marked log entry {log_id} as undone for guild {guild_id}.")
+            return True
+        except Exception as e:
+            print(f"DBService: Error marking log entry {log_id} as undone: {e}")
+            return False
+
+    async def create_item_instance(
+        self,
+        template_id: str,
+        guild_id: str,
+        quantity: int,
+        location_id: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        owner_type: Optional[str] = None,
+        state_variables: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
+        """
+        Creates a new item instance in the 'items' table.
+        Generates a new UUID for the item instance's id.
+        Returns the new item instance id or None on failure.
+        """
+        import uuid
+        item_instance_id = str(uuid.uuid4())
+
+        sql = """
+            INSERT INTO items (id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        # is_temporary defaults to 0 (False) as per schema if not specified
+        params = (
+            item_instance_id, template_id, guild_id, owner_id, owner_type,
+            location_id, quantity,
+            json.dumps(state_variables) if state_variables else '{}',
+            0 # Default is_temporary to False
+        )
+        try:
+            await self.adapter.execute(sql, params)
+            print(f"DBService: Created item instance {item_instance_id} (template: {template_id}) for guild {guild_id}.")
+            return item_instance_id
+        except Exception as e:
+            print(f"DBService: Error creating item instance for template {template_id}: {e}")
+            return None

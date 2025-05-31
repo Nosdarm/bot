@@ -29,6 +29,7 @@ import bot.command_modules.game_setup_cmds
 import bot.command_modules.exploration_cmds
 import bot.command_modules.action_cmds
 import bot.command_modules.inventory_cmds
+import bot.command_modules.utility_cmds # Import the new utility commands module
 # Импортируйте другие command_modules здесь
 
 
@@ -135,12 +136,16 @@ class RPGBot(Bot):
         self.add_application_command(bot.command_modules.exploration_cmds.cmd_check)
 
         # Action commands
-        self.add_application_command(bot.command_modules.action_cmds.cmd_interact)
-        self.add_application_command(bot.command_modules.action_cmds.cmd_attack)
+        self.add_application_command(bot.command_modules.action_cmds.cmd_interact) # Placeholder, needs refactor
+        self.add_application_command(bot.command_modules.action_cmds.cmd_fight) # Refactored from cmd_attack
+        self.add_application_command(bot.command_modules.action_cmds.cmd_talk)
 
         # Inventory commands
         self.add_application_command(bot.command_modules.inventory_cmds.cmd_inventory)
         self.add_application_command(bot.command_modules.inventory_cmds.cmd_pickup)
+
+        # Utility commands
+        self.add_application_command(bot.command_modules.utility_cmds.cmd_undo)
 
         # Simulation Trigger Command
         self.add_application_command(cmd_gm_simulate) # Defined below
