@@ -1,16 +1,22 @@
 # bot/services/openai_service.py
 
 import json
-from typing import Dict, Optional, Any, List # Added List
+from typing import Dict, Optional, Any, List, TYPE_CHECKING # Added TYPE_CHECKING
 import traceback # For better error logging
 
-# Attempt to import OpenAI, but handle if not installed for placeholder mode
+# Runtime import with aliasing
 try:
-    from openai import OpenAI, AsyncOpenAI # AsyncOpenAI for async calls
+    from openai import OpenAI as RuntimeOpenAI, AsyncOpenAI as RuntimeAsyncOpenAI
+    OPENAI_LIB_AVAILABLE = True
 except ImportError:
-    OpenAI = None
-    AsyncOpenAI = None
+    RuntimeOpenAI = None # Define placeholders for runtime
+    RuntimeAsyncOpenAI = None
+    OPENAI_LIB_AVAILABLE = False
     print("OpenAIService WARNING: OpenAI library not found. Service will run in placeholder mode.")
+
+# Import for static type checking (Pylance)
+if TYPE_CHECKING:
+    from openai import OpenAI, AsyncOpenAI # These are for type hints if needed directly
 
 
 class OpenAIService:
@@ -26,11 +32,11 @@ class OpenAIService:
         self._api_key = api_key
         self._model = model
         self._default_max_tokens = default_max_tokens
-        self._client: Optional['AsyncOpenAI'] = None # Use string literal for type hint
+        self._client: Optional['AsyncOpenAI'] = None # Type hint remains string literal
 
-        if self._api_key and AsyncOpenAI:
+        if self._api_key and RuntimeAsyncOpenAI: # Use runtime alias for check
             try:
-                self._client = AsyncOpenAI(api_key=self._api_key)
+                self._client = RuntimeAsyncOpenAI(api_key=self._api_key) # Use runtime alias for instantiation
                 print("OpenAIService: OpenAI AsyncClient initialized successfully.")
             except Exception as e:
                 print(f"OpenAIService ERROR: Failed to initialize OpenAI AsyncClient: {e}")
@@ -38,7 +44,7 @@ class OpenAIService:
         else:
             if not self._api_key:
                 print("OpenAIService WARNING: API key not provided. Service will operate in placeholder mode.")
-            if not AsyncOpenAI:
+            if not RuntimeAsyncOpenAI: # Check runtime alias
                  print("OpenAIService WARNING: AsyncOpenAI client not available (openai library issue?). Service will operate in placeholder mode.")
 
         print(f"OpenAIService initialized. API available: {self.is_available()}")
