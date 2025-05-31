@@ -128,9 +128,9 @@ class LocationManager:
             rows_templates = await db_adapter.fetchall(sql_templates, (guild_id_str,))
             print(f"LocationManager: Found {len(rows_templates)} location template rows for guild {guild_id_str}.")
             for row in rows_templates:
-                 tpl_id = row.get('id')
-                 tpl_data_json = row.get('properties')
-                 if tpl_id is None:
+                 tpl_id = row['id'] # Use direct access
+                 tpl_data_json = row['properties'] # Use direct access
+                 if tpl_id is None: # Should not happen if ID is PK and NOT NULL
                       print(f"LocationManager: Warning: Skipping template row with missing ID for guild {guild_id_str}. Row: {row}.");
                       continue
                  try:
@@ -139,10 +139,10 @@ class LocationManager:
                            print(f"LocationManager: Warning: Template data for template '{tpl_id}' is not a dictionary ({type(data)}) for guild {guild_id_str}. Skipping.");
                            continue
                       data['id'] = str(tpl_id) # Ensure string ID
-                      data.setdefault('name', row.get('name') if row.get('name') is not None else str(tpl_id))
-                      data.setdefault('description', row.get('description') if row.get('description') is not None else "")
+                      data.setdefault('name', row['name'] if row['name'] is not None else str(tpl_id)) # Use direct access
+                      data.setdefault('description', row['description'] if row['description'] is not None else "") # Use direct access
                       # Ensure exits/connected_locations are parsed correctly if they exist
-                      exits = data.get('exits') or data.get('connected_locations')
+                      exits = data.get('exits') or data.get('connected_locations') # .get() is fine for dict `data`
                       if isinstance(exits, str):
                            try: exits = json.loads(exits)
                            except (json.JSONDecodeError, TypeError): exits = {}
@@ -184,20 +184,20 @@ class LocationManager:
 
                  for row in rows_instances:
                       try:
-                           instance_id_raw = row.get('id')
-                           loaded_guild_id_raw = row.get('guild_id')
+                           instance_id_raw = row['id'] # Use direct access
+                           loaded_guild_id_raw = row['guild_id'] # Use direct access
 
                            if instance_id_raw is None or str(loaded_guild_id_raw) != guild_id_str:
                                 print(f"LocationManager: Warning: Skipping instance row with invalid ID ('{instance_id_raw}') or mismatched guild_id ('{loaded_guild_id_raw}') during load for guild {guild_id_str}. Row: {row}.")
                                 continue
 
                            instance_id = str(instance_id_raw)
-                           template_id = str(row.get('template_id')) if row.get('template_id') is not None else None
-                           instance_name = row.get('name')
-                           instance_description = row.get('description')
-                           instance_exits_json = row.get('exits')
-                           instance_state_json_raw = row.get('state_variables')
-                           is_active = row.get('is_active', 0)
+                           template_id = str(row['template_id']) if row['template_id'] is not None else None # Use direct access
+                           instance_name = row['name'] # Use direct access
+                           instance_description = row['description'] # Use direct access
+                           instance_exits_json = row['exits'] # Use direct access
+                           instance_state_json_raw = row['state_variables'] # Use direct access
+                           is_active = row['is_active'] if 'is_active' in row.keys() else 0 # Check key existence
 
                            instance_state_data = json.loads(instance_state_json_raw or '{}') if isinstance(instance_state_json_raw, (str, bytes)) else {}
                            if not isinstance(instance_state_data, dict):
@@ -233,9 +233,9 @@ class LocationManager:
                            loaded_instances_count += 1
 
                       except json.JSONDecodeError:
-                          print(f"LocationManager: Error decoding JSON for instance row (ID: {row.get('id', 'N/A')}, guild: {row.get('guild_id', 'N/A')}): {traceback.format_exc()}. Skipping instance row.");
+                          print(f"LocationManager: Error decoding JSON for instance row (ID: {row['id'] if 'id' in row.keys() else 'N/A'}, guild: {row['guild_id'] if 'guild_id' in row.keys() else 'N/A'}): {traceback.format_exc()}. Skipping instance row.");
                       except Exception as e:
-                          print(f"LocationManager: Error processing instance row (ID: {row.get('id', 'N/A')}, guild: {row.get('guild_id', 'N/A')}): {e}. Skipping instance row."); traceback.print_exc();
+                          print(f"LocationManager: Error processing instance row (ID: {row['id'] if 'id' in row.keys() else 'N/A'}, guild: {row['guild_id'] if 'guild_id' in row.keys() else 'N/A'}): {e}. Skipping instance row."); traceback.print_exc();
 
 
                  print(f"LocationManager: Loaded {loaded_instances_count} instances for guild {guild_id_str}.")

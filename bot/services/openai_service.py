@@ -26,7 +26,7 @@ class OpenAIService:
         self._api_key = api_key
         self._model = model
         self._default_max_tokens = default_max_tokens
-        self._client: Optional[AsyncOpenAI] = None
+        self._client: Optional['AsyncOpenAI'] = None # Use string literal for type hint
 
         if self._api_key and AsyncOpenAI:
             try:

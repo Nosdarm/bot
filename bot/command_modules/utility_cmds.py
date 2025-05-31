@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 @app_commands.command(name="undo", description="Reverts your last game action.")
 async def cmd_undo(interaction: Interaction):
     """Allows a player to undo their last recorded game action."""
-    await interaction.response.defer(ephemeral=True) # Start ephemeral, can make public if action is public
+    await interaction.response.defer(ephemeral=True) # Default to ephemeral, can make public if action is public
 
     try:
         if not hasattr(interaction.client, 'game_manager') or \
@@ -34,7 +34,7 @@ async def cmd_undo(interaction: Interaction):
             return
 
         player_id = player_data.get('id')
-        if not player_id:
+        if not player_id: # Should not happen if player_data is found
             await interaction.followup.send("Error retrieving your character ID.", ephemeral=True)
             return
 
@@ -50,41 +50,36 @@ async def cmd_undo(interaction: Interaction):
 
         success = False
         undo_message = f"Could not undo action: '{event_type}'."
+        public_message = False # Flag to make response public on success
 
         if event_type == "PLAYER_MOVE":
             old_loc_id = context_data.get('old_location_id')
             if old_loc_id:
                 await db_service.update_player_location(player_id=player_id, new_location_id=old_loc_id)
-                # Fetch old location name for a better message
                 old_loc_data = await db_service.get_location(location_id=old_loc_id, guild_id=guild_id)
                 old_loc_name = old_loc_data.get('name', 'your previous location') if old_loc_data else 'your previous location'
                 undo_message = f"You have moved back to {old_loc_name}."
                 success = True
+                public_message = True
             else:
                 undo_message = "Error: Move action context data is missing old location ID."
 
         elif event_type == "PLAYER_PICKUP_ITEM":
             item_template_id = context_data.get('item_template_id')
             quantity = context_data.get('quantity')
-            # original_item_instance_id = context_data.get('original_item_instance_id') # Not needed for recreate
             original_location_id = context_data.get('original_location_id')
 
             if item_template_id and quantity is not None and original_location_id:
-                # 1. Remove from inventory (this needs to be exact)
-                # Assuming remove_item_from_inventory can handle if item partially used/gone
-                # For simplicity, this assumes the exact quantity is still there.
-                # A more robust undo might need to check current quantity.
+                # 1. Remove from inventory
                 await db_service.remove_item_from_inventory(player_id, item_template_id, quantity)
 
                 # 2. Recreate item instance in the original location
-                # We don't have the original_item_instance_id's specific state_variables here,
-                # so we recreate a fresh instance from template.
                 new_instance_id = await db_service.create_item_instance(
                     template_id=item_template_id,
                     guild_id=guild_id,
                     quantity=quantity,
                     location_id=original_location_id,
-                    owner_id=original_location_id, # Assuming items on ground owned by location
+                    owner_id=original_location_id,
                     owner_type='location'
                 )
                 if new_instance_id:
@@ -94,9 +89,9 @@ async def cmd_undo(interaction: Interaction):
                     loc_name_disp = loc_def.get('name', 'its previous location') if loc_def else 'its previous location'
                     undo_message = f"{item_name_disp} (x{quantity}) removed from your inventory and returned to {loc_name_disp}."
                     success = True
+                    public_message = True
                 else:
-                    undo_message = "Error: Failed to return item to its location. Inventory may be incorrect."
-                    # Here, a compensating action might be to try and give item back to player if it was removed.
+                    undo_message = "Error: Failed to return item to its location. Inventory may be incorrect. Please contact an admin."
             else:
                 undo_message = "Error: Pickup action context data is incomplete."
 
@@ -113,40 +108,49 @@ async def cmd_undo(interaction: Interaction):
                 npc_name_disp = npc_data_for_name.get('name', 'the NPC') if npc_data_for_name else 'the NPC'
                 undo_message = f"Combat round with {npc_name_disp} undone. HP for both participants restored to pre-round values."
                 success = True
+                public_message = True
             else:
                 undo_message = "Error: Combat action context data is incomplete."
 
         elif event_type == "PLAYER_DIALOGUE_TURN":
             dialogue_id = context_data.get('dialogue_id')
             entries_to_remove_count = context_data.get('entries_added', 0)
+            related_entities = log_entry.get('related_entities', {})
+            npc_id_for_session = related_entities.get('npc_id')
 
-            if dialogue_id and entries_to_remove_count > 0:
-                # Fetch the session, which includes current history
-                # get_or_create will work, but ideally, a get_session_by_id would be better if it exists
-                # For now, this is fine as it will fetch the existing one.
-                session = await db_service.get_or_create_dialogue_session(player_id, context_data.get('npc_id', ''), guild_id, interaction.channel_id or 0)
 
-                if session and session['id'] == dialogue_id : # Ensure we got the correct session
+            if dialogue_id and entries_to_remove_count > 0 and npc_id_for_session:
+                session = await db_service.get_or_create_dialogue_session(player_id, npc_id_for_session, guild_id, interaction.channel_id or 0)
+
+                if session and session['id'] == dialogue_id :
                     current_history: List[Dict[str,str]] = session.get('conversation_history', [])
                     if len(current_history) >= entries_to_remove_count:
                         new_history = current_history[:-entries_to_remove_count]
                         await db_service.set_dialogue_history(dialogue_id, new_history)
-                        undo_message = "Last part of your conversation undone."
+
+                        npc_data_for_name = await db_service.get_npc(npc_id_for_session, guild_id)
+                        npc_name_disp = npc_data_for_name.get('name', 'the NPC') if npc_data_for_name else 'the NPC'
+                        undo_message = f"Last part of your conversation with {npc_name_disp} has been undone."
                         success = True
+                        public_message = True # Or keep ephemeral if preferred for dialogue
                     else:
                         undo_message = "Error: Not enough dialogue entries to remove for undo."
                 else:
-                    undo_message = "Error: Could not retrieve dialogue session for undo."
+                    undo_message = "Error: Could not retrieve correct dialogue session for undo."
             else:
-                undo_message = "Error: Dialogue action context data is incomplete."
+                undo_message = "Error: Dialogue action context data is incomplete or NPC ID missing."
         else:
             undo_message = f"Action type '{event_type}' cannot be undone at this time."
 
         if success and log_id_to_mark:
-            await db_service.mark_log_as_undone(log_id_to_mark, guild_id)
-            await interaction.followup.send(undo_message, ephemeral=False) # Make successful undos public
+            marked_undone = await db_service.mark_log_as_undone(log_id_to_mark, guild_id)
+            if not marked_undone:
+                # This is a bit problematic, the action was undone but marking failed.
+                undo_message += " (Warning: Failed to mark action as undone in logs. It might be undone again.)"
+                print(f"CRITICAL: Action log {log_id_to_mark} for player {player_id} was undone but marking failed.")
+            await interaction.followup.send(undo_message, ephemeral=not public_message)
         else:
-            await interaction.followup.send(undo_message, ephemeral=True) # Errors or non-undoable are ephemeral
+            await interaction.followup.send(undo_message, ephemeral=True)
 
     except Exception as e:
         print(f"Error in /undo command: {e}")

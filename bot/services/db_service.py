@@ -237,6 +237,7 @@ class DBService:
     async def create_npc(
         self, npc_id: str, name: str, persona: str,
         guild_id: str, location_id: str, hp: int, attack: int,
+        template_id: Optional[str] = None, # Added template_id
         description: Optional[str] = None, stats: Optional[Dict[str, Any]] = None,
         archetype: str = "commoner"
     ) -> Optional[Dict[str, Any]]:
@@ -248,12 +249,12 @@ class DBService:
         final_description = description if description else persona
 
         sql = """
-            INSERT INTO npcs (id, name, description, guild_id, location_id, health, max_health, stats, archetype, is_alive)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO npcs (id, template_id, name, description, guild_id, location_id, health, max_health, stats, archetype, is_alive)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Note: 'attack' column is not directly in npcs table in existing schema, it's part of stats.
         params = (
-            npc_id, name, final_description, guild_id, location_id,
+            npc_id, template_id, name, final_description, guild_id, location_id,
             hp, hp, # current health and max health
             json.dumps(npc_stats), archetype, 1 # is_alive = True
         )
