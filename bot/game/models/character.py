@@ -23,7 +23,7 @@ class Character:
     state_variables: Dict[str, Any] = field(default_factory=dict) # For quests, flags, etc.
     
     # Attributes that might have been separate but often make sense within stats or derived
-    health: float = 100.0 # Current health, often also in stats for convenience
+    hp: float = 100.0 # Current health, often also in stats for convenience
     max_health: float = 100.0 # Max health, often also in stats
     is_alive: bool = True
     
@@ -52,10 +52,10 @@ class Character:
     def __post_init__(self):
         # Ensure basic stats are present if not provided, especially health/max_health
         # This also helps bridge the gap if health/max_health were not in stats from older data.
-        if 'health' not in self.stats:
-            self.stats['health'] = self.health
+        if 'hp' not in self.stats:
+            self.stats['hp'] = self.hp
         else:
-            self.health = float(self.stats['health'])
+            self.hp = float(self.stats['hp'])
 
         if 'max_health' not in self.stats:
             self.stats['max_health'] = self.max_health
@@ -91,7 +91,7 @@ class Character:
             'action_queue': data.get('action_queue', []),
             'party_id': data.get('party_id'),
             'state_variables': data.get('state_variables', {}),
-            'health': float(data.get('health', 100.0)), # Ensure float
+            'hp': float(data.get('hp', 100.0)), # Ensure float
             'max_health': float(data.get('max_health', 100.0)), # Ensure float
             'is_alive': bool(data.get('is_alive', True)), # Ensure bool
             'status_effects': data.get('status_effects', []),
@@ -112,8 +112,8 @@ class Character:
         }
         
         # If stats from data doesn't have health/max_health, use the top-level ones
-        if 'health' not in init_data['stats'] and 'health' in data : # health might be in stats or top-level
-             init_data['stats']['health'] = init_data['health']
+        if 'hp' not in init_data['stats'] and 'hp' in data : # hp might be in stats or top-level
+             init_data['stats']['hp'] = init_data['hp']
         if 'max_health' not in init_data['stats'] and 'max_health' in data:
              init_data['stats']['max_health'] = init_data['max_health']
 
@@ -127,10 +127,10 @@ class Character:
         # For now, a direct mapping of fields should be fine.
         
         # Ensure stats reflects current health/max_health before saving
-        # This is important if self.health is modified directly elsewhere
+        # This is important if self.hp is modified directly elsewhere
         # and should be the source of truth for stats dict.
         if self.stats is None: self.stats = {} # Should be initialized by default_factory
-        self.stats['health'] = self.health
+        self.stats['hp'] = self.hp
         self.stats['max_health'] = self.max_health
         
         return {
@@ -145,7 +145,7 @@ class Character:
             "action_queue": self.action_queue,
             "party_id": self.party_id,
             "state_variables": self.state_variables,
-            "health": self.health, # Redundant if always in stats, but good for direct access
+            "hp": self.hp, # Redundant if always in stats, but good for direct access
             "max_health": self.max_health, # Redundant if always in stats
             "is_alive": self.is_alive,
             "status_effects": self.status_effects, # Assuming status effects are dicts or serializable

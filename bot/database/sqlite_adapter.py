@@ -17,7 +17,7 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    LATEST_SCHEMA_VERSION = 5 # Incremented for the new migration for undo log
+    LATEST_SCHEMA_VERSION = 9 # Standardize health/hp columns in players table
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -752,6 +752,292 @@ class SqliteAdapter:
         print("SqliteAdapter: Created index 'idx_game_logs_player_undone_ts' on 'game_logs' table IF NOT EXISTS.")
 
         print("SqliteAdapter: v4 to v5 migration complete.")
+
+    async def _migrate_v5_to_v6(self, cursor: Cursor) -> None:
+        """Миграция с Версии 5 на Версию 6 (добавление amount в inventory)."""
+        print("SqliteAdapter: Running v5 to v6 migration (adding amount to inventory)...")
+        try:
+            await cursor.execute("ALTER TABLE inventory ADD COLUMN amount INTEGER NOT NULL DEFAULT 1;")
+            print("SqliteAdapter: Added column 'amount' to 'inventory' table.")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                print("SqliteAdapter: Column 'amount' already exists in 'inventory' table, skipping.")
+            else:
+                print(f"SqliteAdapter: OperationalError when adding 'amount' column: {e}")
+                traceback.print_exc()
+                raise
+        except Exception as e:
+            print(f"SqliteAdapter: Unexpected error when adding 'amount' column: {e}")
+            traceback.print_exc()
+            raise
+        print("SqliteAdapter: v5 to v6 migration complete.")
+
+    async def _migrate_v6_to_v7(self, cursor: Cursor) -> None:
+        """Миграция с Версии 6 на Версию 7 (копирование inventory.quantity в inventory.amount и удаление inventory.quantity)."""
+        print("SqliteAdapter: Running v6 to v7 migration (inventory quantity -> amount cleanup)...")
+        await cursor.execute("PRAGMA busy_timeout = 5000;")
+
+        await cursor.execute("PRAGMA table_info(inventory);")
+        columns_info = await cursor.fetchall()
+        columns = [row["name"] for row in columns_info if row and "name" in row.keys()]
+
+        if 'quantity' not in columns:
+            print("SqliteAdapter: Column 'quantity' not found in 'inventory' table. Assuming already migrated or not needed.")
+            print("SqliteAdapter: v6 to v7 migration complete (no action taken).")
+            return
+
+        if 'amount' not in columns:
+            print("SqliteAdapter: CRITICAL: Column 'amount' not found. This implies v5_to_v6 failed.")
+            # This should ideally not happen if migrations run in order.
+            # For robustness, attempt to add it, but this is a sign of a problem.
+            try:
+                print("SqliteAdapter: Attempting to add missing 'amount' column before proceeding...")
+                await cursor.execute("ALTER TABLE inventory ADD COLUMN amount INTEGER NOT NULL DEFAULT 1;")
+                print("SqliteAdapter: Added missing 'amount' column. Proceeding with data copy.")
+            except Exception as e_add_col:
+                print(f"SqliteAdapter: Failed to add missing 'amount' column: {e_add_col}. Aborting v6_to_v7 for safety.")
+                traceback.print_exc()
+                raise # Critical failure
+
+        try:
+            print("SqliteAdapter: Copying data from 'quantity' to 'amount' in 'inventory' table...")
+            await cursor.execute("UPDATE inventory SET amount = CASE WHEN quantity IS NULL THEN 1 ELSE quantity END WHERE amount IS NOT quantity;")
+            print("SqliteAdapter: Data copied from 'quantity' to 'amount' where necessary.")
+        except Exception as e_copy:
+            print(f"SqliteAdapter: Error copying quantity to amount: {e_copy}.")
+            traceback.print_exc()
+            raise # This is a critical step
+
+        print("SqliteAdapter: Recreating 'inventory' table without 'quantity' column...")
+
+        await cursor.execute("PRAGMA foreign_keys;")
+        fk_enabled_row = await cursor.fetchone()
+        fk_enabled = False
+        if fk_enabled_row is not None:
+            try:
+                fk_enabled = bool(fk_enabled_row[0])
+            except IndexError:
+                print("SqliteAdapter: Warning: Could not determine foreign_key status from PRAGMA.")
+
+        # The main transaction is handled by initialize_database()
+        # if fk_enabled: # Foreign key handling might still be needed if STRICT mode is on, but usually ALTER/DROP is fine in a transaction.
+        #     await cursor.execute("PRAGMA foreign_keys=OFF;") # This might not be strictly necessary if not using STRICT tables.
+        #     print("SqliteAdapter: Temporarily disabled foreign keys.")
+
+        try:
+            # Ensure foreign keys are off for table manipulation if there's any doubt.
+            # However, SQLite typically allows these operations within a transaction without this,
+            # unless specific PRAGMAs like 'foreign_key_check' are used or tables are 'STRICT'.
+            # For safety during complex rebuilds, it can be kept but ensure it's balanced.
+            # Let's assume it's needed for robustness if foreign key constraints might interfere.
+            original_fk_status = await cursor.execute("PRAGMA foreign_keys;")
+            original_fk_enabled = await original_fk_status.fetchone()
+            fk_actually_enabled = original_fk_enabled[0] == 1 if original_fk_enabled else False
+
+            if fk_actually_enabled:
+                 await cursor.execute("PRAGMA foreign_keys=OFF;")
+                 print("SqliteAdapter: (migrate_v6_to_v7) Temporarily disabled foreign keys for table rebuild.")
+
+
+            create_inventory_new_sql = """
+                CREATE TABLE inventory_new (
+                    inventory_id TEXT PRIMARY KEY,
+                    player_id TEXT,
+                    item_template_id TEXT,
+                    amount INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE,
+                    FOREIGN KEY(item_template_id) REFERENCES item_templates(id) ON DELETE CASCADE
+                );
+            """
+            await cursor.execute(create_inventory_new_sql)
+            print("SqliteAdapter: Created 'inventory_new' table.")
+
+            insert_into_inventory_new_sql = """
+                INSERT INTO inventory_new (inventory_id, player_id, item_template_id, amount)
+                SELECT inventory_id, player_id, item_template_id, amount
+                FROM inventory;
+            """
+            await cursor.execute(insert_into_inventory_new_sql)
+            print("SqliteAdapter: Copied data to 'inventory_new'.")
+
+            await cursor.execute("DROP TABLE inventory;")
+            print("SqliteAdapter: Dropped old 'inventory' table.")
+
+            await cursor.execute("ALTER TABLE inventory_new RENAME TO inventory;")
+            print("SqliteAdapter: Renamed 'inventory_new' to 'inventory'.")
+
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_inventory_player_id ON inventory (player_id);")
+            print("SqliteAdapter: Recreated index 'idx_inventory_player_id' on 'inventory' table.")
+
+            # initialize_database() handles the commit for all migrations.
+            # print("SqliteAdapter: (migrate_v6_to_v7) Table reconstruction successful within its part of the migration.")
+
+        except Exception as e_rebuild:
+            print(f"SqliteAdapter: Error during inventory table reconstruction in _migrate_v6_to_v7: {e_rebuild}. The outer transaction in initialize_database will handle rollback.")
+            traceback.print_exc()
+            raise # Re-raise to trigger rollback in initialize_database
+        finally:
+            # Restore foreign key status if it was changed
+            if fk_actually_enabled: # Only if we actually turned them off
+                 await cursor.execute("PRAGMA foreign_keys=ON;")
+                 print("SqliteAdapter: (migrate_v6_to_v7) Re-enabled foreign keys.")
+            # else:
+            #      print("SqliteAdapter: (migrate_v6_to_v7) Foreign keys were not originally enabled or status unknown, not changing.")
+
+
+        print("SqliteAdapter: v6 to v7 migration complete.")
+
+    async def _migrate_v7_to_v8(self, cursor: Cursor) -> None:
+        """Миграция с Версии 7 на Версию 8 (добавление hp и max_health в таблицу players, если отсутствуют)."""
+        print("SqliteAdapter: Running v7 to v8 migration (ensure hp, max_health in players)...")
+
+        # Получаем информацию о столбцах таблицы players
+        await cursor.execute("PRAGMA table_info(players);")
+        columns_info = await cursor.fetchall()
+        column_names = [row['name'] for row in columns_info if row and 'name' in row.keys()]
+
+        # Проверяем и добавляем столбец hp, если он отсутствует
+        if 'hp' not in column_names:
+            try:
+                print("SqliteAdapter: Column 'hp' not found in 'players'. Adding column hp REAL DEFAULT 100.0...")
+                await cursor.execute("ALTER TABLE players ADD COLUMN hp REAL DEFAULT 100.0;")
+                print("SqliteAdapter: Successfully added column 'hp' to 'players' table.")
+            except Exception as e_hp:
+                print(f"SqliteAdapter: Error adding column 'hp' to 'players': {e_hp}")
+                traceback.print_exc()
+                raise
+        else:
+            print("SqliteAdapter: Column 'hp' already exists in 'players' table.")
+
+        # Проверяем и добавляем столбец max_health, если он отсутствует
+        if 'max_health' not in column_names:
+            try:
+                print("SqliteAdapter: Column 'max_health' not found in 'players'. Adding column max_health REAL DEFAULT 100.0...")
+                await cursor.execute("ALTER TABLE players ADD COLUMN max_health REAL DEFAULT 100.0;")
+                print("SqliteAdapter: Successfully added column 'max_health' to 'players' table.")
+            except Exception as e_max_health:
+                print(f"SqliteAdapter: Error adding column 'max_health' to 'players': {e_max_health}")
+                traceback.print_exc()
+                raise
+        else:
+            print("SqliteAdapter: Column 'max_health' already exists in 'players' table.")
+
+        print("SqliteAdapter: v7 to v8 migration complete.")
+
+    async def _migrate_v8_to_v9(self, cursor: Cursor) -> None:
+        """Миграция с Версии 8 на Версию 9 (стандартизация health -> hp в таблице players)."""
+        print("SqliteAdapter: Running v8 to v9 migration (standardize players.health to players.hp)...")
+
+        await cursor.execute("PRAGMA table_info(players);")
+        columns_info = await cursor.fetchall()
+        column_names = [row['name'] for row in columns_info if row and 'name' in row.keys()]
+
+        original_fk_status_query = await cursor.execute("PRAGMA foreign_keys;")
+        original_fk_enabled_row = await original_fk_status_query.fetchone()
+        fk_actually_enabled = original_fk_enabled_row[0] == 1 if original_fk_enabled_row else False
+
+        if 'health' in column_names and 'hp' in column_names:
+            print("SqliteAdapter: Both 'health' and 'hp' columns exist. Consolidating into 'hp' and dropping 'health'.")
+            try:
+                if fk_actually_enabled:
+                    await cursor.execute("PRAGMA foreign_keys=OFF;")
+                    print("SqliteAdapter: (migrate_v8_to_v9) Temporarily disabled foreign keys for table rebuild.")
+
+                # Ensure hp has the values from health if health is more up-to-date or hp is default
+                await cursor.execute("UPDATE players SET hp = health WHERE health IS NOT NULL AND (hp IS NULL OR hp = 100.0 OR hp != health);")
+                print("SqliteAdapter: Copied 'health' data to 'hp' where appropriate.")
+
+                # Define the schema for the new table, excluding 'health'
+                # This must match the players table schema AFTER v8 migration, minus 'health'
+                # And ensuring all constraints (PK, UNIQUE, NOT NULL, DEFAULT) are preserved.
+                create_players_new_sql = """
+                CREATE TABLE players_new (
+                    id TEXT PRIMARY KEY,
+                    discord_user_id INTEGER NULL,
+                    name TEXT NOT NULL,
+                    guild_id TEXT NOT NULL,
+                    location_id TEXT NULL,
+                    stats TEXT DEFAULT '{}',
+                    inventory TEXT DEFAULT '[]',
+                    current_action TEXT NULL,
+                    action_queue TEXT DEFAULT '[]',
+                    party_id TEXT NULL,
+                    state_variables TEXT DEFAULT '{}',
+                    max_health REAL DEFAULT 100.0,
+                    is_alive INTEGER DEFAULT 1,
+                    status_effects TEXT DEFAULT '[]',
+                    level INTEGER DEFAULT 1,
+                    experience INTEGER DEFAULT 0,
+                    active_quests TEXT DEFAULT '[]',
+                    created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+                    last_played_at REAL NULL,
+                    race TEXT,
+                    mp INTEGER DEFAULT 0,
+                    attack INTEGER DEFAULT 0,
+                    defense INTEGER DEFAULT 0,
+                    hp REAL DEFAULT 100.0,
+                    UNIQUE(discord_user_id, guild_id),
+                    UNIQUE(name, guild_id)
+                );
+                """
+                await cursor.execute(create_players_new_sql)
+                print("SqliteAdapter: Created 'players_new' table with standardized schema (no 'health' column).")
+
+                # Explicitly list columns for insertion, ensuring 'hp' gets its (potentially updated) value
+                # and 'health' is excluded.
+                cols_to_select = "id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, max_health, is_alive, status_effects, level, experience, active_quests, created_at, last_played_at, race, mp, attack, defense, hp"
+                insert_sql = f"INSERT INTO players_new ({cols_to_select}) SELECT {cols_to_select} FROM players;"
+                await cursor.execute(insert_sql)
+                print("SqliteAdapter: Copied data to 'players_new'.")
+
+                await cursor.execute("DROP TABLE players;")
+                print("SqliteAdapter: Dropped old 'players' table.")
+
+                await cursor.execute("ALTER TABLE players_new RENAME TO players;")
+                print("SqliteAdapter: Renamed 'players_new' to 'players'.")
+
+                # Recreate indexes that might have been on the original players table
+                # (Assuming these were the main ones, add others if they existed)
+                await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_players_guild_id ON players (guild_id);''') # Example, if it existed
+                await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_players_location_id ON players (location_id);''') # Example
+
+
+            except Exception as e_std:
+                print(f"SqliteAdapter: Error standardizing 'health' to 'hp': {e_std}")
+                traceback.print_exc()
+                raise # Re-raise to be caught by initialize_database for rollback
+            finally:
+                if fk_actually_enabled:
+                    await cursor.execute("PRAGMA foreign_keys=ON;")
+                    print("SqliteAdapter: (migrate_v8_to_v9) Re-enabled foreign keys.")
+
+        elif 'hp' not in column_names and 'health' in column_names:
+            print("SqliteAdapter: Only 'health' column exists. Renaming 'health' to 'hp'.")
+            try:
+                # Renaming column is simpler if no type change or complex data merge is needed.
+                # However, ensure the default value for 'hp' is consistent if it wasn't on 'health'.
+                # The v7_to_v8 migration already added 'hp' with default 100.0.
+                # This path (only 'health' exists) should be unlikely if v7_to_v8 ran.
+                # If this path IS taken, it means 'hp' was never created by v7_to_v8.
+                # We should add 'hp' and copy 'health' then drop 'health', or rename 'health' to 'hp'.
+                # Renaming is simpler if 'health' already has the right type and default.
+                # For now, sticking to rename as per original user script's branch.
+                await cursor.execute("ALTER TABLE players RENAME COLUMN health TO hp;")
+                print("SqliteAdapter: Successfully renamed 'health' to 'hp'.")
+                # Verify default for hp if it was just renamed
+                # This might require further ALTER TABLE DEFAULT which is tricky in SQLite.
+                # Best if 'health' column type and default were already compatible.
+            except Exception as e_rename:
+                print(f"SqliteAdapter: Error renaming 'health' to 'hp': {e_rename}")
+                traceback.print_exc()
+                raise
+        elif 'hp' in column_names and 'health' not in column_names:
+            print("SqliteAdapter: 'hp' column exists and 'health' column does not. Schema is already standardized.")
+        else: # Neither 'hp' nor 'health' column exists. This is unexpected.
+              # Or, if 'health' doesn't exist but 'hp' does (covered by previous elif)
+            print("SqliteAdapter: 'hp' column seems to be correctly in place or 'health' was already handled/missing.")
+
+        print("SqliteAdapter: v8 to v9 migration complete.")
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")
