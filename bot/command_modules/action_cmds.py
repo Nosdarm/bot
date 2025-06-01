@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.services.db_service import DBService
     from bot.game.managers.game_manager import GameManager
+    from bot.game.managers.combat_manager import CombatManager # Added for new cmd_fight
 
 
 # Placeholder for /interact command
@@ -55,16 +56,22 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
 
     try:
         if not hasattr(interaction.client, 'game_manager') or \
-           not hasattr(interaction.client.game_manager, 'db_service'):
-            await interaction.followup.send("Error: The game systems are not fully initialized.", ephemeral=True)
+           not hasattr(interaction.client.game_manager, 'db_service') or \
+           not hasattr(interaction.client.game_manager, 'combat_manager'): # Check for combat_manager
+            await interaction.followup.send("Error: Core game services (DB or Combat) are not fully initialized.", ephemeral=True)
             return
 
         client_bot: 'RPGBot' = interaction.client
         db_service: 'DBService' = client_bot.game_manager.db_service
+        combat_manager: 'CombatManager' = client_bot.game_manager.combat_manager # Get CombatManager
+        # game_manager for other calls if needed (though combat_manager should handle most combat logic)
+        game_mngr: 'GameManager' = client_bot.game_manager
+
+
         guild_id = str(interaction.guild_id)
         discord_user_id = interaction.user.id
+        channel_id = interaction.channel_id # For combat messages
 
-        # 1. Get Player Information
         player_data = await db_service.get_player_by_discord_id(discord_user_id=discord_user_id, guild_id=guild_id)
         if not player_data:
             await interaction.followup.send("You need to create a character first! Use `/start`.", ephemeral=True)
@@ -72,131 +79,128 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
 
         player_id = player_data.get('id')
         player_location_id = player_data.get('location_id')
-        player_hp = player_data.get('hp', 0)
-        player_attack = player_data.get('attack', 0) # Direct stat from players table
-        player_defense = player_data.get('defense', 0) # Direct stat from players table
+        player_name = player_data.get('name', 'You')
 
         if not player_id or not player_location_id:
             await interaction.followup.send("Error: Could not retrieve your character or location data.", ephemeral=True)
             return
 
-        # 2. Find Target NPC in Location
-        npcs_in_location = await db_service.get_npcs_in_location(location_id=player_location_id, guild_id=guild_id)
+        # Check if player is already in an active combat in this guild
+        active_combat_for_player = combat_manager.get_combat_by_participant_id(guild_id, player_id)
 
-        if not npcs_in_location:
-            await interaction.followup.send("There's nothing to fight here.", ephemeral=True)
+        if active_combat_for_player and active_combat_for_player.is_active:
+            current_actor_id = active_combat_for_player.get_current_actor_id()
+            if current_actor_id == player_id:
+                await interaction.followup.send(f"You are already in combat with {len(active_combat_for_player.participants) -1} opponent(s)! It's your turn. Use an action command (e.g., `/attack <target>`).", ephemeral=True)
+            else:
+                # Try to get current actor's name
+                actor_name = "Someone"
+                actor_participant_obj = active_combat_for_player.get_participant_data(current_actor_id) if current_actor_id else None
+                if actor_participant_obj and game_mngr: # Need GameManager to access other entity managers
+                    if actor_participant_obj.entity_type == "NPC" and game_mngr.npc_manager:
+                        npc_actor = game_mngr.npc_manager.get_npc(guild_id, actor_participant_obj.entity_id)
+                        if npc_actor: actor_name = npc_actor.name
+                    # Could add Character type here if players can fight players
+
+                await interaction.followup.send(f"You are already in combat! It's {actor_name}'s turn.", ephemeral=True)
             return
 
+        # If not in active combat, proceed to start a new one
+        if not target_npc_name:
+            await interaction.followup.send("Who do you want to fight? Please specify an NPC name.", ephemeral=True)
+            return
+
+        npcs_in_location = await db_service.get_npcs_in_location(location_id=player_location_id, guild_id=guild_id)
         target_npc_data = None
-        if target_npc_name:
-            for npc in npcs_in_location:
-                if npc.get('name', '').lower() == target_npc_name.lower():
-                    target_npc_data = npc
-                    break
-            if not target_npc_data:
-                await interaction.followup.send(f"NPC '{target_npc_name}' not found here.", ephemeral=True)
-                return
-        else: # No target specified
-            if len(npcs_in_location) == 1:
-                target_npc_data = npcs_in_location[0]
-                target_npc_name = target_npc_data.get('name', 'the creature') # Get name for messages
-                await interaction.followup.send(f"You engage the only available target: {target_npc_name}!", ephemeral=False)
-            else:
-                npc_names = ", ".join([npc['name'] for npc in npcs_in_location])
-                await interaction.followup.send(f"Please specify which NPC to fight. Available targets: {npc_names}", ephemeral=True)
-                return
+        for npc in npcs_in_location:
+            if npc.get('name', '').lower() == target_npc_name.lower():
+                target_npc_data = npc
+                break
+
+        if not target_npc_data:
+            await interaction.followup.send(f"NPC '{target_npc_name}' not found here.", ephemeral=True)
+            return
 
         npc_id = target_npc_data.get('id')
-        npc_hp = target_npc_data.get('health', 0) # 'health' column for npcs
-        npc_stats = target_npc_data.get('stats', {})
-        npc_attack = npc_stats.get('attack', 0) # Attack from NPC's stats
-        npc_defense = npc_stats.get('defense', 0) # Defense from NPC's stats (assuming it exists)
+        npc_name = target_npc_data.get('name', 'The NPC')
 
-        if npc_hp <= 0:
-            await interaction.followup.send(f"{target_npc_data.get('name', 'The target')} is already defeated or incapacitated.", ephemeral=False)
+        if getattr(target_npc_data, 'hp', target_npc_data.get('health', 0)) <= 0: # Check NPC health (NPC model uses .health or .hp if it's a dict from db)
+            await interaction.followup.send(f"{npc_name} is already defeated or incapacitated.", ephemeral=False)
             return
 
-        combat_messages = []
-        player_name_for_msg = player_data.get('name', 'You')
-        npc_name_for_msg = target_npc_data.get('name', 'The NPC')
+        # Initiate combat via CombatManager
+        participant_ids_types = [(player_id, "Character"), (npc_id, "NPC")]
 
-        # Store initial HP for logging context
-        player_hp_before_round = player_hp
-        npc_hp_before_round = npc_hp
+        # Context for start_combat, including managers it might need for fetching details
+        start_combat_context = {
+            "channel_id": channel_id,
+            "character_manager": game_mngr.character_manager,
+            "npc_manager": game_mngr.npc_manager,
+            "rule_engine": game_mngr.rule_engine, # For initiative roll if it's moved there
+            "send_callback_factory": game_mngr._get_discord_send_callback # If start_combat sends messages
+        }
 
-        player_damage_dealt = 0
-        npc_damage_dealt = 0
-        npc_defeated = False
-        player_defeated = False
+        new_combat = await combat_manager.start_combat(
+            guild_id=guild_id,
+            location_id=player_location_id,
+            participant_ids_types=participant_ids_types,
+            **start_combat_context
+        )
 
-        # 3. Basic Combat Round (One Exchange)
-        # Player's Turn
-        player_damage_dealt = max(1, player_attack - npc_defense + random.randint(-2,2))
-        npc_hp_after_player_attack = npc_hp_before_round - player_damage_dealt
-        await db_service.update_npc_hp(npc_id=npc_id, new_hp=npc_hp_after_player_attack, guild_id=guild_id)
-        combat_messages.append(f"{player_name_for_msg} attacks {npc_name_for_msg} for {player_damage_dealt} damage! {npc_name_for_msg} has {max(0, npc_hp_after_player_attack)} HP remaining.")
+        if new_combat:
+            # Announce combat start and who goes first
+            # Construct initiative message
+            init_messages = []
+            for p_obj in new_combat.participants:
+                p_name = "Unknown"
+                if p_obj.entity_type == "Character" and game_mngr.character_manager:
+                    p_char = game_mngr.character_manager.get_character(guild_id, p_obj.entity_id)
+                    if p_char: p_name = p_char.name
+                elif p_obj.entity_type == "NPC" and game_mngr.npc_manager:
+                    p_npc = game_mngr.npc_manager.get_npc(guild_id, p_obj.entity_id)
+                    if p_npc: p_name = p_npc.name
+                init_messages.append(f"{p_name} (Initiative: {p_obj.initiative})")
 
-        if npc_hp_after_player_attack <= 0:
-            combat_messages.append(f"**{npc_name_for_msg} has been defeated!**")
-            npc_defeated = True
-            # current_player_hp_for_log remains player_hp_before_round as NPC didn't attack
-            # current_npc_hp_for_log is max(0, npc_hp_after_player_attack)
+            initiative_summary = ", ".join(init_messages)
+
+            first_actor_id = new_combat.get_current_actor_id()
+            first_actor_name = "Someone"
+            if first_actor_id:
+                fa_obj = new_combat.get_participant_data(first_actor_id)
+                if fa_obj:
+                    if fa_obj.entity_type == "Character" and game_mngr.character_manager:
+                        fa_char = game_mngr.character_manager.get_character(guild_id, fa_obj.entity_id)
+                        if fa_char: first_actor_name = fa_char.name
+                    elif fa_obj.entity_type == "NPC" and game_mngr.npc_manager:
+                        fa_npc = game_mngr.npc_manager.get_npc(guild_id, fa_obj.entity_id)
+                        if fa_npc: first_actor_name = fa_npc.name
+
+            response_message = (
+                f"⚔️ Combat started with **{npc_name}**! ⚔️\n"
+                f"Initiative: {initiative_summary}\n"
+                f"It's **{first_actor_name}**'s turn. Use an action command (e.g., `/attack`)."
+            )
+            await interaction.followup.send(response_message)
+
+            # Log combat start
+            try:
+                log_msg = f"Combat started. Participants: {[(p.entity_id, p.entity_type) for p in new_combat.participants]}. Turn order: {new_combat.turn_order}."
+                await db_service.add_log_entry(
+                    guild_id=guild_id, event_type="COMBAT_START", message=log_msg,
+                    player_id_column=player_id, # If player initiated
+                    related_entities={"combat_id": new_combat.id, "participants": [p.entity_id for p in new_combat.participants]},
+                    context_data={"location_id": player_location_id, "channel_id": channel_id}
+                )
+            except Exception as log_e:
+                print(f"Error logging combat start: {log_e}")
+
         else:
-            # NPC's Turn (only if not defeated)
-            npc_damage_dealt = max(1, npc_attack - player_defense + random.randint(-1,1))
-            player_hp_after_npc_attack = player_hp_before_round - npc_damage_dealt
-            await db_service.update_player_hp(player_id=player_id, new_hp=player_hp_after_npc_attack, guild_id=guild_id)
-            combat_messages.append(f"{npc_name_for_msg} retaliates, attacking {player_name_for_msg} for {npc_damage_dealt} damage! You have {max(0, player_hp_after_npc_attack)} HP remaining.")
-
-            if player_hp_after_npc_attack <= 0:
-                combat_messages.append(f"**You have been defeated by {npc_name_for_msg}!**")
-                player_defeated = True
-
-        # Determine final HPs for log message
-        final_player_hp = max(0, player_hp_after_npc_attack if not npc_defeated else player_hp_before_round)
-        final_npc_hp = max(0, npc_hp_after_player_attack)
-
-        # Add log entry for the combat round
-        try:
-            log_message = (
-                f"{player_name_for_msg} (HP: {final_player_hp}) fought {npc_name_for_msg} (HP: {final_npc_hp}). "
-                f"Player dealt {player_damage_dealt} damage. "
-                f"NPC dealt {npc_damage_dealt if not npc_defeated else 0} damage."
-            )
-            log_related_entities = {"npc_id": npc_id, "player_id": player_id} # player_id also in direct column
-            log_context_data = {
-                "player_id": player_id,
-                "player_hp_before_round": player_hp_before_round,
-                "player_hp_after_round": final_player_hp,
-                "npc_id": npc_id,
-                "npc_hp_before_round": npc_hp_before_round,
-                "npc_hp_after_round": final_npc_hp,
-                "player_damage_dealt": player_damage_dealt,
-                "npc_damage_dealt": npc_damage_dealt if not npc_defeated else 0
-            }
-            await db_service.add_log_entry(
-                guild_id=guild_id,
-                event_type="PLAYER_COMBAT_ROUND",
-                message=log_message,
-                player_id_column=player_id,
-                related_entities=log_related_entities,
-                context_data=log_context_data,
-                channel_id=interaction.channel_id if interaction.channel else None
-            )
-            print(f"Log entry added for combat round: Player {player_id} vs NPC {npc_id}")
-        except Exception as log_e:
-            print(f"Error adding log entry for combat round: {log_e}")
-            # Non-fatal to the command execution itself
-
-        if not npc_defeated and not player_defeated:
-            combat_messages.append("The fight continues...")
-
-        await interaction.followup.send("\n".join(combat_messages))
+            await interaction.followup.send(f"Failed to start combat with {npc_name}. Please try again.", ephemeral=True)
 
     except Exception as e:
         print(f"Error in /fight command: {e}")
         traceback.print_exc()
-        await interaction.followup.send("An unexpected error occurred during combat.", ephemeral=True)
+        await interaction.followup.send("An unexpected error occurred while trying to start combat.", ephemeral=True)
 
 # Add other action commands here (/use, /talk, etc.)
 
