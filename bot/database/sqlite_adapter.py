@@ -17,7 +17,7 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    LATEST_SCHEMA_VERSION = 9 # Standardize health/hp columns in players table
+    LATEST_SCHEMA_VERSION = 10 # Add turn_order and current_turn_index to combats table
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -1038,6 +1038,45 @@ class SqliteAdapter:
             print("SqliteAdapter: 'hp' column seems to be correctly in place or 'health' was already handled/missing.")
 
         print("SqliteAdapter: v8 to v9 migration complete.")
+
+    async def _migrate_v9_to_v10(self, cursor: Cursor) -> None:
+        """Миграция с Версии 9 на Версию 10 (enhancing combats table for turn-based system)."""
+        print("SqliteAdapter: Running v9 to v10 migration (enhancing combats table for turn-based system)...")
+
+        await cursor.execute("PRAGMA table_info(combats);")
+        columns_info = await cursor.fetchall()
+        column_names = [row['name'] for row in columns_info if row and 'name' in row.keys()]
+
+        # guild_id and location_id should already exist from _migrate_v0_to_v1.
+        # Adding them here again would be redundant and might cause errors if run on an existing DB.
+        # We will only add the new columns for turn-based combat.
+
+        if 'turn_order' not in column_names:
+            try:
+                await cursor.execute("ALTER TABLE combats ADD COLUMN turn_order TEXT DEFAULT '[]';")
+                print("SqliteAdapter: Added column 'turn_order' to 'combats' table.")
+            except Exception as e:
+                print(f"SqliteAdapter: Error adding 'turn_order' to 'combats' (column might already exist or other issue): {e}")
+                # If it's "duplicate column name", that's fine. Otherwise, re-raise.
+                if "duplicate column name" not in str(e).lower():
+                    traceback.print_exc()
+                    raise
+        else:
+            print("SqliteAdapter: Column 'turn_order' already exists in 'combats' table.")
+
+        if 'current_turn_index' not in column_names:
+            try:
+                await cursor.execute("ALTER TABLE combats ADD COLUMN current_turn_index INTEGER DEFAULT 0;")
+                print("SqliteAdapter: Added column 'current_turn_index' to 'combats' table.")
+            except Exception as e:
+                print(f"SqliteAdapter: Error adding 'current_turn_index' to 'combats' (column might already exist or other issue): {e}")
+                if "duplicate column name" not in str(e).lower():
+                    traceback.print_exc()
+                    raise
+        else:
+            print("SqliteAdapter: Column 'current_turn_index' already exists in 'combats' table.")
+
+        print("SqliteAdapter: v9 to v10 migration complete (combats table schema additions).")
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")
