@@ -1,6 +1,7 @@
 # bot/bot_core.py
 
 import os
+print(f"CRITICAL_DEBUG: Bot is using database at absolute path: {os.path.abspath(DATABASE_PATH)}")
 import json
 import discord
 import asyncio
@@ -226,8 +227,6 @@ async def start_bot():
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY') or settings.get('openai_api_key')
     COMMAND_PREFIX = os.getenv('COMMAND_PREFIX') or settings.get('discord_command_prefix', '!') # Default '!'
     DATABASE_PATH = os.getenv('DATABASE_PATH') or settings.get('database_path', 'game_state.db') # Default 'game_state.db'
-    print(f"CRITICAL_DEBUG: Bot is using database at absolute path: {os.path.abspath(DATABASE_PATH)}")
-
 
     # Load TEST_GUILD_IDS from settings (env var could be a comma-separated string)
     test_guild_ids_str = os.getenv('TEST_GUILD_IDS')
