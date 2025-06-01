@@ -56,13 +56,6 @@ class CombatManager:
         self._rule_engine = rule_engine
         self._character_manager = character_manager
         self._npc_manager = npc_manager
-
-        # <<< DETAILED DEBUG PRINTS START >>>
-        print(f"CM_INIT_DEBUG: self._rule_engine is {'NOT None' if self._rule_engine else 'None'}")
-        print(f"CM_INIT_DEBUG: self._character_manager is {'NOT None' if self._character_manager else 'None'}")
-        print(f"CM_INIT_DEBUG: self._npc_manager is {'NOT None' if self._npc_manager else 'None'}")
-        # <<< DETAILED DEBUG PRINTS END >>>
-
         self._party_manager = party_manager
         self._status_manager = status_manager
         self._item_manager = item_manager
@@ -110,12 +103,6 @@ class CombatManager:
          return combats_in_event
 
     async def start_combat(self, guild_id: str, location_id: Optional[str], participant_ids_types: List[Tuple[str, str]], **kwargs: Any) -> Optional["Combat"]:
-        # <<< DETAILED DEBUG PRINTS START OF start_combat >>>
-        print(f"CM_START_COMBAT_DEBUG: self._rule_engine is {'NOT None' if self._rule_engine else 'None'}")
-        print(f"CM_START_COMBAT_DEBUG: self._character_manager is {'NOT None' if self._character_manager else 'None'}")
-        print(f"CM_START_COMBAT_DEBUG: self._npc_manager is {'NOT None' if self._npc_manager else 'None'}")
-        # <<< DETAILED DEBUG PRINTS END >>>
-
         guild_id_str = str(guild_id)
         location_id_str = str(location_id) if location_id is not None else None
         print(f"CombatManager: Starting new combat in location {location_id_str} for guild {guild_id_str} with participants: {participant_ids_types}...")
