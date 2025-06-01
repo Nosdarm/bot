@@ -133,8 +133,6 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
 
         # Context for start_combat, including managers it might need for fetching details
         start_combat_context = {
-            "guild_id": guild_id,
-            "location_id": player_location_id,
             "channel_id": channel_id,
             "character_manager": game_mngr.character_manager,
             "npc_manager": game_mngr.npc_manager,
