@@ -346,7 +346,7 @@ class CharacterManager:
             'action_queue': [], # list
             'party_id': None, # null
             'state_variables': {}, # dict
-            'health': 100.0,
+            'hp': 100.0,
             'max_health': 100.0,
             'is_alive': True, # bool (сохраняется как integer 0 or 1)
             'status_effects': [], # list
@@ -359,7 +359,7 @@ class CharacterManager:
         INSERT INTO players (
             id, discord_user_id, name, guild_id, location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
-            health, max_health, is_alive, status_effects
+            hp, max_health, is_alive, status_effects
             -- , ... другие колонки ...
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
@@ -376,7 +376,7 @@ class CharacterManager:
             json.dumps(data['action_queue']),
             data['party_id'],
             json.dumps(data['state_variables']),
-            data['health'],
+            data['hp'],
             data['max_health'],
             int(data['is_alive']), # boolean как integer (0 or 1)
             json.dumps(data['status_effects']),
@@ -469,7 +469,7 @@ class CharacterManager:
              # INSERT OR REPLACE SQL для обновления существующих или вставки новых
              upsert_sql = '''
              INSERT OR REPLACE INTO players
-             (id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects)
+             (id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              '''
              data_to_upsert = []
@@ -495,7 +495,7 @@ class CharacterManager:
                      action_queue = getattr(char, 'action_queue', [])
                      party_id = getattr(char, 'party_id', None)
                      state_variables = getattr(char, 'state_variables', {})
-                     health = getattr(char, 'health', 100.0)
+                     hp = getattr(char, 'hp', 100.0)
                      max_health = getattr(char, 'max_health', 100.0)
                      is_alive = getattr(char, 'is_alive', True)
                      status_effects = getattr(char, 'status_effects', [])
@@ -538,7 +538,7 @@ class CharacterManager:
                          queue_json,
                          party_id, # Может быть None
                          state_json,
-                         health,
+                         hp,
                          max_health,
                          int(is_alive), # boolean как integer
                          status_json,
@@ -602,7 +602,7 @@ class CharacterManager:
         try:
             # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
             sql = '''
-            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, race, mp, attack, defense
+            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, race, mp, attack, defense
             FROM players WHERE guild_id = ?
             ''' # Added new columns from players table
             rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
@@ -672,7 +672,7 @@ class CharacterManager:
                 data['is_alive'] = bool(is_alive_db) if is_alive_db is not None else True # Default to True if is_alive is None/missing
 
                 # Ensure health/max_health are numbers, default if missing or wrong type
-                data['health'] = float(data.get('health', 100.0)) if isinstance(data.get('health'), (int, float)) else 100.0
+                data['hp'] = float(data.get('hp', 100.0)) if isinstance(data.get('hp'), (int, float)) else 100.0
                 data['max_health'] = float(data.get('max_health', 100.0)) if isinstance(data.get('max_health'), (int, float)) else 100.0
 
 
@@ -1115,8 +1115,8 @@ class CharacterManager:
              return False
 
          # Убедимся, что у объекта Character есть атрибуты health, max_health, is_alive и что health/max_health числовые
-         if not hasattr(char, 'health') or not isinstance(char.health, (int, float)):
-              print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'health' attribute or it's not a number ({type(getattr(char, 'health', None))}). Cannot update health.")
+         if not hasattr(char, 'hp') or not isinstance(char.hp, (int, float)):
+              print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'hp' attribute or it's not a number ({type(getattr(char, 'hp', None))}). Cannot update health.")
               return False
          if not hasattr(char, 'max_health') or not isinstance(char.max_health, (int, float)):
               print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'max_health' attribute or it's not a number ({type(getattr(char, 'max_health', None))}). Cannot update health.")
@@ -1133,19 +1133,19 @@ class CharacterManager:
 
 
          # Общая логика обновления здоровья
-         new_health = char.health + amount
+         new_hp = char.hp + amount
          # Ограничиваем здоровье между 0 и max_health
-         char.health = max(0.0, min(char.max_health, new_health)) # Use 0.0 and char.max_health as float
+         char.hp = max(0.0, min(char.max_health, new_hp)) # Use 0.0 and char.max_health as float
 
          self.mark_character_dirty(guild_id_str, character_id) # Помечаем измененным для этой гильдии
 
          # Проверяем смерть после обновления
          # Check against the updated health attribute
-         if char.health <= 0 and char.is_alive: # If health became <= 0 AND character is still marked as alive
+         if char.hp <= 0 and char.is_alive: # If health became <= 0 AND character is still marked as alive
               # handle_character_death expects character_id, guild_id and **kwargs
               await self.handle_character_death(guild_id_str, character_id, **kwargs) # Pass guild_id and context to handler
 
-         print(f"CharacterManager: Updated health for character {character_id} in guild {guild_id_str} to {char.health}. Amount: {amount}.")
+         print(f"CharacterManager: Updated health for character {character_id} in guild {guild_id_str} to {char.hp}. Amount: {amount}.")
          return True
 
 
