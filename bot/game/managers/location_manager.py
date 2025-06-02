@@ -661,11 +661,10 @@ class LocationManager:
              mgr = kwargs.get('item_manager', self._item_manager)
              update_location_method_name = 'update_item_location'
              manager_attr_name = '_item_manager'
-        # TODO: Add other entity types like 'Party'
-        # elif entity_type == 'Party':
-        #      mgr = kwargs.get('party_manager', self._party_manager)
-        #      update_location_method_name = 'update_party_location'
-        #      manager_attr_name = '_party_manager'
+        elif entity_type == 'Party':
+             mgr = kwargs.get('party_manager', self._party_manager)
+             update_location_method_name = 'update_party_location'
+             manager_attr_name = '_party_manager'
         else:
             print(f"LocationManager: Error: Movement not supported for entity type {entity_type} for guild {guild_id_str}.")
             send_cb_factory = kwargs.get('send_callback_factory', self._send_callback_factory)
@@ -714,11 +713,19 @@ class LocationManager:
             await self.handle_entity_departure(from_location_id, entity_id, entity_type, **departure_context)
 
         try:
-            await getattr(mgr, update_location_method_name)(
-                 entity_id,
-                 to_location_id,
-                 context=movement_context
-            )
+            if entity_type == 'Party':
+                await getattr(mgr, update_location_method_name)(
+                    entity_id,       # party_id
+                    to_location_id,  # new_location_id
+                    guild_id_str,    # guild_id
+                    movement_context # context
+                )
+            else:
+                await getattr(mgr, update_location_method_name)(
+                    entity_id,
+                    to_location_id,
+                    context=movement_context
+                )
             print(f"LocationManager: Successfully updated location for {entity_type} {entity_id} to {to_location_id} for guild {guild_id_str} via {type(mgr).__name__}.")
         except Exception as e:
              print(f"LocationManager: ❌ Error updating location for {entity_type} {entity_id} to {to_location_id} for guild {guild_id_str} via {type(mgr).__name__}: {e}")
