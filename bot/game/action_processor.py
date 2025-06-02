@@ -284,7 +284,9 @@ class ActionProcessor:
             character_objects: Dict[str, Character] = {} # Store fetched character objects
 
             for character_id, collected_actions_json_string in party_actions_data:
-                character = await char_manager.get_character_by_player_id(character_id, game_state.guild_id)
+                # Assuming character_id from party_actions_data is the Character UUID.
+                # CharacterManager's get_character is synchronous.
+                character = char_manager.get_character(game_state.guild_id, character_id)
                 if not character:
                     print(f"ActionProcessor: Character {character_id} not found during conflict analysis prep. Skipping.")
                     # Potentially log this as an issue or add to a list of unprocessed players
@@ -330,6 +332,7 @@ class ActionProcessor:
             
             # Pass the character_objects map if your ConflictResolver needs full character data
             # For now, analyze_actions_for_conflicts expects Dict[str, List[Dict[str, Any]]]
+            # analyze_actions_for_conflicts is currently synchronous.
             identified_conflicts = current_conflict_resolver.analyze_actions_for_conflicts(player_actions_map=parsed_actions_map)
 
             if identified_conflicts:
@@ -357,7 +360,9 @@ class ActionProcessor:
         overall_state_changed_for_party = False
         
         for character_id, collected_actions_json_string in party_actions_data:
-            character = await char_manager.get_character_by_player_id(character_id, game_state.guild_id)
+            # Assuming character_id from party_actions_data is the Character UUID.
+            # CharacterManager's get_character is synchronous.
+            character = char_manager.get_character(game_state.guild_id, character_id)
             if not character:
                 print(f"ActionProcessor: Character {character_id} not found. Skipping.")
                 all_individual_results.append({"character_id": character_id, "success": False, "message": "Character not found.", "state_changed": False})
@@ -383,7 +388,8 @@ class ActionProcessor:
                         all_individual_results.append({"character_id": character_id, "action_original_text": original_text, "success": False, "message": "Action intent missing.", "state_changed": False})
                         continue
                     
-                    char_location = await loc_manager.get_location(character.current_location_id, game_state.guild_id)
+                    # loc_manager.get_location is likely synchronous if it uses a cache.
+                    char_location = loc_manager.get_location(character.current_location_id, game_state.guild_id)
                     ctx_channel_id_for_action = ctx_channel_id_fallback
                     if char_location and char_location.channel_id:
                         try: ctx_channel_id_for_action = int(char_location.channel_id)
