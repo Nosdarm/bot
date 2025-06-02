@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 # Эти модули необходимы для выполнения кода (например, для создания экземпляров, вызовов статических методов, проверок isinstance)
 # Если модуль импортируется здесь, убедитесь, что он НЕ ИМПОРТИРУЕТ RuleEngine напрямую.
 from bot.game.models.character import Character # Прямой импорт модели, если она нужна для isinstance или других runtime целей
+from bot.game.managers.time_manager import TimeManager # Added for runtime
 # from bot.game.rules.dice_roller import roll_dice as external_roll_dice # Example if using external roller directly
 # from bot.game.models.spell import Spell # Not needed for runtime if only used in type hints within methods
 
