@@ -18,7 +18,7 @@ class NPC:
     template_id: str
 
     # Отображаемое имя NPC (может отличаться от имени в шаблоне для уникальных NPC)
-    name: str
+    name_i18n: Dict[str, str] # e.g. {"en": "Guard", "ru": "Стражник"}
 
     # ID локации, где находится NPC, если он не в инвентаре/партии
     location_id: Optional[str]
@@ -61,7 +61,7 @@ class NPC:
     traits: List[str] = field(default_factory=list)  # Личностные черты
     desires: List[str] = field(default_factory=list)  # Желания NPC
     motives: List[str] = field(default_factory=list)  # Мотивы NPC
-    backstory: str = ""  # Краткая предыстория
+    backstory_i18n: Dict[str, str] = field(default_factory=lambda: {"en": ""})  # Краткая предыстория
 
     # TODO: Добавьте другие поля, если необходимо для вашей логики NPC
     # Например:
@@ -78,7 +78,7 @@ class NPC:
         data = {
             'id': self.id,
             'template_id': self.template_id,
-            'name': self.name,
+            'name_i18n': self.name_i18n,
             'location_id': self.location_id,
             'owner_id': self.owner_id,
             'is_temporary': self.is_temporary,
@@ -96,7 +96,7 @@ class NPC:
             'traits': self.traits,
             'desires': self.desires,
             'motives': self.motives,
-            'backstory': self.backstory,
+            'backstory_i18n': self.backstory_i18n,
             # TODO: Включите другие поля, если добавили
             # 'description': self.description,
             # 'ai_state': self.ai_state,
@@ -116,10 +116,14 @@ class NPC:
         template_id = data.get('template_id')
         if template_id is None:
             raise ValueError("Missing 'template_id' key in data for NPC.from_dict")
-        name = data.get('name')
-        if name is None:
-            raise ValueError("Missing 'name' key in data for NPC.from_dict")
-
+        
+        # Handle name_i18n and backward compatibility for 'name'
+        name_i18n = data.get('name_i18n')
+        if name_i18n is None:
+            name = data.get('name')
+            if name is None:
+                raise ValueError("Missing 'name' or 'name_i18n' key in data for NPC.from_dict")
+            name_i18n = {"en": name}
 
         # Опциональные поля с значениями по умолчанию
         location_id = data.get('location_id') # None по умолчанию
@@ -160,8 +164,13 @@ class NPC:
         traits = data.get('traits', []) or []
         desires = data.get('desires', []) or []
         motives = data.get('motives', []) or []
-        backstory = data.get('backstory', "")
-
+        
+        # Handle backstory_i18n and backward compatibility for 'backstory'
+        backstory_i18n = data.get('backstory_i18n')
+        if backstory_i18n is None:
+            backstory = data.get('backstory', "") # Default to empty string if old field is missing
+            backstory_i18n = {"en": backstory}
+        
         if not isinstance(traits, list):
             print(f"NPC Model: Warning: Loaded traits for NPC {npc_id} is not a list ({type(traits).__name__}). Initializing as empty list.")
             traits = []
@@ -175,7 +184,7 @@ class NPC:
         return NPC(
             id=npc_id,
             template_id=template_id,
-            name=name,
+            name_i18n=name_i18n,
             location_id=location_id,
             owner_id=owner_id,
             is_temporary=is_temporary,
@@ -193,7 +202,7 @@ class NPC:
             traits=traits,
             desires=desires,
             motives=motives,
-            backstory=backstory,
+            backstory_i18n=backstory_i18n,
             # TODO: Передайте другие поля в конструктор
             # description=description,
             # ai_state=ai_state,
