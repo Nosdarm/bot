@@ -1,21 +1,47 @@
 // data/event_templates.json
 {
     "goblin_ambush_basic": {
-      "name": "Засада Гоблинов",
+      "name_i18n": {
+        "ru": "Засада Гоблинов",
+        "en": "[EN] Goblin Ambush"
+      },
       "start_stage_id": "approach",
       "stages": {
         "approach": {
           "id": "approach",
-          "name": "Гоблины приближаются",
-          "description_template": "Шум в кустах и мерзкое хихиканье... Кажется, кто-то приближается."
+          "name_i18n": {
+            "ru": "Гоблины приближаются",
+            "en": "[EN] Goblins Approaching"
+          },
+          "description_template_i18n": {
+            "ru": "Шум в кустах и мерзкое хихиканье... Кажется, кто-то приближается.",
+            "en": "[EN] Rustling in the bushes and vile giggling... It seems someone is approaching."
+          }
           // outcomes, on_enter_actions would be here, loaded by EventManager
         },
         "combat_start": {
           "id": "combat_start",
-          "name": "Бой начался",
-          "description_template": "С воплями из укрытий выскакивают гоблины с ржавым оружием."
+          "name_i18n": {
+            "ru": "Бой начался",
+            "en": "[EN] Combat Started"
+          },
+          "description_template_i18n": {
+            "ru": "С воплями из укрытий выскакивают гоблины с ржавым оружием.",
+            "en": "[EN] With screams, goblins with rusty weapons jump out from their hiding spots."
+          }
         },
-         "event_end": {"id": "event_end", "name": "Конец События", "description_template": "...", "outcomes":{}}
+         "event_end": {
+          "id": "event_end",
+          "name_i18n": {
+            "ru": "Конец События",
+            "en": "[EN] Event End"
+          },
+          "description_template_i18n": {
+            "ru": "...",
+            "en": "[EN] ..."
+          },
+          "outcomes":{}
+        }
       },
        "involved_entities": {} # Will be populated
     }
