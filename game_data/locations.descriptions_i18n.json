@@ -1,0 +1,37 @@
+{
+  "locations": [
+    {
+      "id": "forest_entrance",
+      "name_i18n": {
+        "en": "Forest Entrance",
+        "ru": "Вход в лес"
+      },
+      "description_i18n": {
+        "en": "A dark and ominous entrance to a dense forest. The air is heavy with the scent of pine and damp earth.",
+        "ru": "Темный и зловещий вход в густой лес. Воздух пропитан запахом сосны и влажной земли."
+      }
+    },
+    {
+      "id": "abandoned_cabin",
+      "name_i18n": {
+        "en": "Abandoned Cabin",
+        "ru": "Заброшенная хижина"
+      },
+      "description_i18n": {
+        "en": "A dilapidated wooden cabin stands silently in a small clearing. The windows are broken, and the door hangs precariously on a single hinge.",
+        "ru": "Ветхая деревянная хижина молча стоит на небольшой поляне. Окна разбиты, а дверь ненадежно висит на одной петле."
+      }
+    },
+    {
+      "id": "crystal_cave",
+      "name_i18n": {
+        "en": "Crystal Cave",
+        "ru": "Хрустальная пещера"
+      },
+      "description_i18n": {
+        "en": "A glittering cave where large, luminous crystals grow from the walls and ceiling, casting an ethereal glow.",
+        "ru": "Сверкающая пещера, где со стен и потолка растут большие светящиеся кристаллы, излучающие неземное сияние."
+      }
+    }
+  ]
+}
