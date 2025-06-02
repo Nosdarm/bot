@@ -2,6 +2,7 @@
 
 import os
 import json
+import logging # For enhanced logging
 import discord
 import asyncio
 import traceback
@@ -15,6 +16,7 @@ from dotenv import load_dotenv
 # Импорты наших сервисов и менеджеров.
 from bot.services.openai_service import OpenAIService
 from bot.game.managers.game_manager import GameManager
+from bot.nlu.player_action_parser import parse_player_action # NLU Parser
 # Эти импорты могут быть нужны если команды напрямую их используют или для аннотаций.
 # Пока оставляем, но если RPGBot инкапсулирует GameManager, то прямые ссылки на
 # CharacterManager, LocationManager, EventManager из команд должны идти через GameManager.
@@ -113,6 +115,126 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
             await self.tree.sync()
             print("Command tree synced globally.")
         print('Bot is ready!')
+
+    async def on_message(self, message: discord.Message):
+        # Ignore messages from bots
+        if message.author.bot:
+            return
+
+        # Ignore messages starting with the command prefix (these are handled by process_commands)
+        if message.content.startswith(self.command_prefix):
+            await self.process_commands(message)
+            return
+
+        # Basic check for guild messages only (NLU might not apply to DMs in the same way)
+        if not message.guild:
+            return
+
+        # Retrieve GameManager
+        if not self.game_manager:
+            # Use proper logging if available, otherwise print
+            logging.warning("GameManager not available in on_message.")
+            return
+
+        # NLU processing should not happen for DMs if guild_id is essential for NLU context
+        # The check `if not guild_id_str:` later handles this, but good to be aware.
+
+        # No direct CharacterManager on RPGBot, it's within GameManager
+        # character_manager = self.game_manager.character_manager # Assuming this path exists
+
+        # Attempt to fetch the player's Character object
+        try:
+            # Assuming GameManager has a method to get a character by discord_user_id and guild_id
+            # This might involve going through a CharacterManager instance held by GameManager
+            # For example: character = await self.game_manager.character_manager.get_character_by_discord_id(message.author.id, message.guild.id)
+            # The exact method depends on GameManager's implementation.
+            # For now, let's assume a placeholder or a direct way if RPGBot is tightly coupled.
+            
+            # Placeholder: Direct access or a simplified method for fetching character
+            # In a real scenario, this would be:
+            # character = await self.game_manager.character_manager.get_character_by_discord_id(
+            # user_id=message.author.id, guild_id=message.guild.id
+            # )
+            # For the purpose of this subtask, we'll assume such a character object can be fetched.
+            # We need to simulate fetching or get a placeholder for `current_game_status`.
+            # Since we don't have the Character model definition here, we'll use a mock approach.
+
+            # SIMULATED: Fetch character (replace with actual call when CharacterManager is integrated)
+            # This part is tricky without knowing the exact Character model and CharacterManager API.
+            # Let's assume game_manager has a method like `get_character_status_for_nlu`
+            
+            # To interact with CharacterManager, we'd typically do:
+            char_model = await self.game_manager.character_manager.get_character_by_discord_id(
+                user_id=message.author.id,
+                guild_id=message.guild.id
+            )
+
+            if char_model:
+                logging.debug(f"NLU: Character {char_model.id} found for User {message.author.id}.")
+                busy_statuses = ['бой', 'диалог', 'торговля']
+                if char_model.current_game_status not in busy_statuses:
+                    logging.info(f"NLU: Processing message for User {message.author.id} (CharID: {char_model.id}, Guild: {message.guild.id}): \"{message.content}\"")
+                    
+                    language = char_model.selected_language if char_model.selected_language else "en"
+                    logging.info(f"NLU: Detected language for User {message.author.id}: {language}")
+
+                    nlu_service = self.game_manager.nlu_data_service
+                    guild_id_str = str(message.guild.id) # Already checked message.guild is not None
+
+                    if nlu_service:
+                        logging.debug(f"NLU: NLUDataService is available. Fetching game terms for Guild {guild_id_str}, Lang {language}.")
+                        # Potentially log count of entities if NLUDataService returns that, or do it in NLUDataService itself.
+                    else:
+                        logging.warning(f"NLU: NLUDataService is NOT available. Parsing will use fallbacks.")
+
+                    try:
+                        # CRITICAL: parse_player_action is now async, so it needs to be awaited.
+                        parsed_action = await parse_player_action(
+                            text=message.content,
+                            language=language,
+                            guild_id=guild_id_str,
+                            game_terms_db=nlu_service
+                        )
+
+                        if parsed_action:
+                            intent, entities = parsed_action
+                            logging.info(f"NLU: Recognized for User {message.author.id}: Intent='{intent}', Entities={entities}")
+                            
+                            action_data = {"intent": intent, "entities": entities, "original_text": message.content}
+                            action_json = json.dumps(action_data)
+                            logging.debug(f"NLU: Storing JSON for User {message.author.id}: {action_json}")
+                            
+                            char_model.собранные_действия_JSON = action_json
+                            
+                            try:
+                                await self.game_manager.character_manager.update_character(char_model)
+                                logging.info(f"NLU: Successfully updated character {char_model.id} with parsed action JSON.")
+                            except Exception as char_update_err:
+                                logging.error(f"NLU: Failed to save character {char_model.id} after NLU parsing: {char_update_err}", exc_info=True)
+                        else:
+                            logging.info(f"NLU: No action recognized for User {message.author.id} (Lang: {language}): \"{message.content}\"")
+
+                    except Exception as nlu_err:
+                        logging.error(f"NLU: Error during NLU processing or character update for User {message.author.id}: {nlu_err}", exc_info=True)
+                else:
+                    logging.debug(f"NLU: SKIPPED for User {message.author.id} due to status: {char_model.current_game_status}")
+            else:
+                logging.debug(f"NLU: No character found for User {message.author.id} in Guild {message.guild.id}. Message: \"{message.content}\"")
+
+        except Exception as e:
+            logging.error(f"NLU: Error in on_message NLU handling for User {message.author.id}: {e}", exc_info=True)
+
+        # Important: ensure commands are still processed if the message wasn't handled by NLU
+        # or if NLU is meant to augment rather than replace commands.
+        # If the message started with a prefix, it's already handled above.
+        # If NLU is intended for non-prefix messages, then process_commands might not be needed here
+        # unless you have a system where non-prefixed messages can also be commands.
+        # For now, if it didn't start with a prefix and wasn't handled by NLU to consume it,
+        # it might be ignored or passed to a default handler if one existed.
+        # commands.Bot processes commands based on prefix, so non-prefixed messages are generally ignored
+        # by the command processing system unless explicitly handled by on_message.
+        # The current structure already calls self.process_commands for prefixed messages.
+        # Non-prefixed messages are now flowing through the NLU logic.
 
     def add_application_commands_from_modules(self):
         # This approach assumes command functions are decorated with @slash_command
