@@ -1,26 +1,18 @@
 import asyncio
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
+import json # For Character.собранные_действия_JSON
 
 from bot.game.managers.party_manager import PartyManager
-from bot.game.models.party import Party # Assuming Party model can be imported
-
-# Required for standalone execution if models use Pydantic or similar
-# from bot.game.models.base_model import BaseModel
-# BaseModel.model_rebuild() # or similar initialization if needed
-
-
-class TestPartyManagerUpdatePartyLocation(unittest.IsolatedAsyncioTestCase):
-import unittest
-from unittest.mock import MagicMock, AsyncMock
-
-# Assuming PartyManager is in bot.game.managers.party_manager
-# Adjust the import path if it's different.
-from bot.game.managers.party_manager import PartyManager
+from bot.game.models.party import Party
+from bot.game.models.character import Character # For creating mock character objects
 from bot.game.managers.character_manager import CharacterManager
-from bot.game.managers.npc_manager import NpcManager
-from bot.game.managers.combat_manager import CombatManager
-from bot.database.sqlite_adapter import SqliteAdapter # For type hinting
+from bot.game.managers.npc_manager import NpcManager # Though not directly used in these new tests
+from bot.game.managers.combat_manager import CombatManager # Though not directly used in these new tests
+from bot.game.managers.location_manager import LocationManager 
+from bot.game.action_processor import ActionProcessor 
+from bot.database.sqlite_adapter import SqliteAdapter 
+
 
 class TestPartyManager(unittest.IsolatedAsyncioTestCase):
 
@@ -28,48 +20,62 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         self.mock_db_adapter = AsyncMock(spec=SqliteAdapter)
         self.mock_settings = {}
         
-        # Mock other managers that might be passed in __init__ if PartyManager uses them
-        # For update_party_location, these are not directly used but good practice if manager is complex
-        self.mock_npc_manager = AsyncMock()
-        self.mock_character_manager = AsyncMock()
-        self.mock_combat_manager = AsyncMock()
+        self.mock_character_manager = AsyncMock(spec=CharacterManager)
+        self.mock_npc_manager = AsyncMock(spec=NpcManager) 
+        self.mock_combat_manager = AsyncMock(spec=CombatManager)
+        
+        # Mocks for check_and_process_party_turn dependencies
+        self.mock_location_manager = AsyncMock(spec=LocationManager)
+        self.mock_action_processor = AsyncMock(spec=ActionProcessor)
+        self.mock_discord_client = AsyncMock() 
+
+        # Mock game_manager which provides access to other managers and discord_client
+        self.mock_game_manager = MagicMock()
+        self.mock_game_manager.location_manager = self.mock_location_manager
+        self.mock_game_manager.action_processor = self.mock_action_processor
+        self.mock_game_manager.discord_client = self.mock_discord_client
+        # For ActionProcessor call through game_manager if needed by AP
+        self.mock_game_manager.character_manager = self.mock_character_manager 
+        self.mock_game_manager.event_manager = AsyncMock() 
+        self.mock_game_manager.rule_engine = AsyncMock() 
+        self.mock_game_manager.openai_service = AsyncMock() 
+        self.mock_game_manager.game_state = MagicMock() 
+        self.mock_game_manager.game_state.guild_id = "test_guild_1" # Ensure guild_id is on game_state for AP
 
         self.party_manager = PartyManager(
             db_adapter=self.mock_db_adapter,
             settings=self.mock_settings,
-            npc_manager=self.mock_npc_manager,
-            character_manager=self.mock_character_manager,
-            combat_manager=self.mock_combat_manager
+            character_manager=self.mock_character_manager, # PartyManager needs this directly
+            npc_manager=self.mock_npc_manager, 
+            combat_manager=self.mock_combat_manager 
         )
         
-        # Initialize caches directly for testing
         self.party_manager._parties = {}
         self.party_manager._dirty_parties = {}
         self.party_manager._member_to_party_map = {}
+        self.party_manager._deleted_parties = {} 
 
         self.guild_id = "test_guild_1"
         self.party_id = "test_party_1"
         self.party_leader_id = "leader_1"
-        self.party_member_ids = [self.party_leader_id, "member_2"]
-
+        
         self.dummy_party_data = {
             "id": self.party_id,
             "guild_id": self.guild_id,
+            "name": "Test Party",
             "leader_id": self.party_leader_id,
-            "member_ids": self.party_member_ids,
-            "current_location_id": "old_location_123", # Initial location
+            "player_ids_list": [self.party_leader_id, "member_2"], 
+            "current_location_id": "loc1", 
             "state_variables": {},
             "current_action": None,
+            "turn_status": "сбор_действий" 
         }
         self.test_party = Party.from_dict(self.dummy_party_data)
-
-        # Pre-populate the cache for tests that need an existing party
         self.party_manager._parties.setdefault(self.guild_id, {})[self.party_id] = self.test_party
-        
-        # Mock mark_party_dirty to track its calls
         self.party_manager.mark_party_dirty = MagicMock()
 
     async def test_successfully_updates_party_location(self):
+        # This test was pre-existing, ensure it still works or adapt
         new_location_id = "new_location_456"
         context = {"reason": "test_move"}
 
@@ -184,6 +190,145 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
     # ... and so on for other test methods mentioned in the prompt,
     # ensuring they are part of this class if they were intended for PartyManager tests.
     # For now, only the setup and placeholder are implemented as per current file content.
+
+    # --- Tests for check_and_process_party_turn ---
+
+    async def create_mock_character(self, player_id: str, location_id: str, status: str, actions_json: Optional[str] = "[]") -> MagicMock:
+        char = MagicMock(spec=Character)
+        char.id = player_id
+        char.name = f"Char_{player_id}"
+        char.location_id = location_id
+        char.current_game_status = status
+        char.собранные_действия_JSON = actions_json
+        char.discord_user_id = f"discord_{player_id}" # Needed by ActionProcessor via char_model
+        return char
+
+    async def test_check_and_process_party_turn_not_all_ready(self):
+        loc_id = "loc1"
+        char1_ready = await self.create_mock_character("p1", loc_id, "ожидание_обработку")
+        char2_not_ready = await self.create_mock_character("p2", loc_id, "исследование")
+        
+        self.test_party.player_ids_list = [char1_ready.id, char2_not_ready.id]
+        self.party_manager._parties[self.guild_id][self.party_id] = self.test_party
+
+        self.mock_character_manager.get_character_by_player_id.side_effect = lambda player_id, guild_id: {
+            "p1": char1_ready, "p2": char2_not_ready
+        }.get(player_id)
+
+        await self.party_manager.check_and_process_party_turn(self.party_id, loc_id, self.guild_id, self.mock_game_manager)
+
+        self.mock_db_adapter.execute.assert_not_called() # No status change for party
+        self.mock_action_processor.process_party_actions.assert_not_called()
+        self.assertEqual(self.test_party.turn_status, "сбор_действий") # Should remain unchanged
+
+    async def test_check_and_process_party_turn_all_ready_success(self):
+        loc_id = "loc1"
+        char1_actions = json.dumps([{"intent": "spell", "entities": {"target": "enemy"}}])
+        char1 = await self.create_mock_character("p1", loc_id, "ожидание_обработку", char1_actions)
+        char2 = await self.create_mock_character("p2", loc_id, "ожидание_обработку", "[]") # No actions
+
+        self.test_party.player_ids_list = [char1.id, char2.id]
+        self.party_manager._parties[self.guild_id][self.party_id] = self.test_party
+        
+        self.mock_character_manager.get_character_by_player_id.side_effect = lambda player_id, guild_id: {
+            "p1": char1, "p2": char2
+        }.get(player_id)
+        
+        # Mock ActionProcessor response
+        self.mock_action_processor.process_party_actions.return_value = {
+            "success": True, 
+            "individual_action_results": [], 
+            "overall_state_changed": True
+        }
+        
+        # Mock LocationManager for channel retrieval
+        mock_location_model = MagicMock()
+        mock_location_model.channel_id = "1234567890"
+        self.mock_location_manager.get_location.return_value = mock_location_model
+        
+        mock_discord_channel = AsyncMock()
+        self.mock_discord_client.get_channel.return_value = mock_discord_channel
+
+        await self.party_manager.check_and_process_party_turn(self.party_id, loc_id, self.guild_id, self.mock_game_manager)
+
+        # 1. Party status updated to 'обработка' and then to 'сбор_действий'
+        self.mock_db_adapter.execute.assert_any_call(
+            "UPDATE parties SET turn_status = ? WHERE id = ? AND guild_id = ?", 
+            ('обработка', self.party_id, self.guild_id)
+        )
+        self.mock_db_adapter.execute.assert_any_call(
+            "UPDATE parties SET turn_status = ? WHERE id = ? AND guild_id = ?", 
+            ('сбор_действий', self.party_id, self.guild_id)
+        )
+        self.assertEqual(self.test_party.turn_status, "сбор_действий")
+
+        # 2. ActionProcessor called
+        expected_actions_data = [
+            (char1.id, char1_actions),
+            (char2.id, "[]") 
+        ]
+        self.mock_action_processor.process_party_actions.assert_called_once_with(
+            game_state=self.mock_game_manager.game_state,
+            char_manager=self.mock_character_manager,
+            loc_manager=self.mock_location_manager,
+            event_manager=self.mock_game_manager.event_manager,
+            rule_engine=self.mock_game_manager.rule_engine,
+            openai_service=self.mock_game_manager.openai_service,
+            party_actions_data=expected_actions_data,
+            ctx_channel_id_fallback=int(mock_location_model.channel_id)
+        )
+
+        # 3. Character statuses reset and actions cleared
+        self.assertEqual(char1.current_game_status, "исследование")
+        self.assertEqual(char1.собранные_действия_JSON, "[]")
+        self.mock_character_manager.update_character.assert_any_call(char1)
+        
+        self.assertEqual(char2.current_game_status, "исследование")
+        self.assertEqual(char2.собранные_действия_JSON, "[]")
+        self.mock_character_manager.update_character.assert_any_call(char2)
+        self.assertEqual(self.mock_character_manager.update_character.call_count, 2)
+
+
+        # 4. Notification sent
+        self.mock_location_manager.get_location.assert_called_with(loc_id, self.guild_id)
+        self.mock_discord_client.get_channel.assert_called_with(int(mock_location_model.channel_id))
+        mock_discord_channel.send.assert_called_once()
+        self.assertIn("Ход для группы 'Test Party' в локации 'loc1' был обработан.", mock_discord_channel.send.call_args[0][0])
+
+    async def test_check_and_process_party_turn_no_actions_data(self):
+        loc_id = "loc1"
+        char1 = await self.create_mock_character("p1", loc_id, "ожидание_обработку", "[]") # Empty actions
+        
+        self.test_party.player_ids_list = [char1.id]
+        self.party_manager._parties[self.guild_id][self.party_id] = self.test_party
+        
+        self.mock_character_manager.get_character_by_player_id.return_value = char1
+        
+        mock_location_model = MagicMock()
+        mock_location_model.channel_id = "1234567890"
+        self.mock_location_manager.get_location.return_value = mock_location_model
+        mock_discord_channel = AsyncMock()
+        self.mock_discord_client.get_channel.return_value = mock_discord_channel
+
+        await self.party_manager.check_and_process_party_turn(self.party_id, loc_id, self.guild_id, self.mock_game_manager)
+        
+        # Party status should still cycle
+        self.mock_db_adapter.execute.assert_any_call(
+            "UPDATE parties SET turn_status = ? WHERE id = ? AND guild_id = ?", ('обработка', self.party_id, self.guild_id))
+        self.mock_db_adapter.execute.assert_any_call(
+            "UPDATE parties SET turn_status = ? WHERE id = ? AND guild_id = ?", ('сбор_действий', self.party_id, self.guild_id))
+
+        # ActionProcessor should be called with empty list or not called if party_actions_data is empty before call
+        # Based on PartyManager code, it's called with empty list:
+        self.mock_action_processor.process_party_actions.assert_called_once() 
+        called_args, _ = self.mock_action_processor.process_party_actions.call_args
+        self.assertEqual(called_args[6], []) # party_actions_data should be empty list
+
+        self.assertEqual(char1.current_game_status, "исследование")
+        self.assertEqual(char1.собранные_действия_JSON, "[]")
+        self.mock_character_manager.update_character.assert_called_once_with(char1)
+        mock_discord_channel.send.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

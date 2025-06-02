@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.services.db_service import DBService
     from bot.game.managers.game_manager import GameManager
+    from bot.game.managers.character_manager import CharacterManager # Added for new commands
+    from bot.game.managers.party_manager import PartyManager # Added for new commands
     from bot.game.managers.combat_manager import CombatManager # Added for new cmd_fight
 
 
@@ -343,3 +345,157 @@ async def cmd_talk(interaction: Interaction, npc_name: str, message: str):
         print(f"Error in /talk command: {e}")
         traceback.print_exc()
         await interaction.followup.send("An unexpected error occurred while trying to talk to the NPC.", ephemeral=True)
+
+
+@app_commands.command(name="end_turn", description="Завершить свой ход и ждать обработки действий.")
+async def cmd_end_turn(interaction: Interaction):
+    """Allows a player to end their turn, setting their status to 'ожидание_обработку'."""
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        if not hasattr(interaction.client, 'game_manager') or \
+           not hasattr(interaction.client.game_manager, 'character_manager'):
+            await interaction.followup.send("Error: Core game services (Character Manager) are not fully initialized.", ephemeral=True)
+            return
+
+        client_bot: 'RPGBot' = interaction.client
+        character_manager: 'CharacterManager' = client_bot.game_manager.character_manager
+        # db_service could be fetched if direct db interaction was needed, but CharacterManager should handle it.
+        # db_service: 'DBService' = client_bot.game_manager.db_service
+
+
+        guild_id = str(interaction.guild_id)
+        discord_user_id = interaction.user.id
+
+        char_model = await character_manager.get_character_by_discord_id(user_id=discord_user_id, guild_id=guild_id)
+
+        if char_model:
+            if char_model.current_game_status == 'ожидание_обработку':
+                await interaction.followup.send("Вы уже завершили свой ход. Ожидайте обработки.", ephemeral=True)
+                return
+
+            char_model.current_game_status = 'ожидание_обработку'
+            char_model.собранные_действия_JSON = "[]" # Clear actions for the next turn (empty JSON list)
+
+            await character_manager.update_character(char_model)
+            # TODO: Add a log entry for ending turn via db_service if available and desired.
+            # Example: await db_service.add_log_entry(...)
+
+            await interaction.followup.send("Ваш ход завершен. Действия будут обработаны.", ephemeral=True)
+        else:
+            await interaction.followup.send("Не удалось найти вашего персонажа. Используйте `/start` для создания.", ephemeral=True)
+
+    except Exception as e:
+        print(f"Error in /end_turn command: {e}")
+        traceback.print_exc()
+        await interaction.followup.send("Произошла ошибка при завершении хода.", ephemeral=True)
+
+@app_commands.command(name="end_party_turn", description="Завершить ход для вашей группы в текущей локации.")
+async def cmd_end_party_turn(interaction: Interaction):
+    """Allows a player to end the turn for all party members in their current location."""
+    await interaction.response.defer(ephemeral=True) # Initial response while processing
+    processed_members_count = 0
+    updated_member_names = [] # Store names of members whose status was updated
+
+    try:
+        # --- Setup and Manager Access ---
+        if not hasattr(interaction.client, 'game_manager'):
+            await interaction.followup.send("Error: Game Manager is not available.", ephemeral=True)
+            return
+        
+        game_mngr: 'GameManager' = interaction.client.game_manager
+        
+        if not hasattr(game_mngr, 'character_manager') or \
+           not hasattr(game_mngr, 'party_manager') or \
+           not hasattr(game_mngr, 'db_service'): # db_service for logging or direct data if needed
+            await interaction.followup.send("Error: Core game services (Character, Party, or DB) are not fully initialized.", ephemeral=True)
+            return
+
+        character_manager: 'CharacterManager' = game_mngr.character_manager
+        party_manager: 'PartyManager' = game_mngr.party_manager
+        # db_service: 'DBService' = game_mngr.db_service # Available if needed
+
+        guild_id = str(interaction.guild_id)
+        discord_user_id = interaction.user.id
+        channel_id = interaction.channel_id # For the system message later
+
+        # --- Get Sender's Character and Party ---
+        sender_char = await character_manager.get_character_by_discord_id(user_id=discord_user_id, guild_id=guild_id)
+        if not sender_char:
+            await interaction.followup.send("Не удалось найти вашего персонажа. Используйте `/start`.", ephemeral=True)
+            return
+
+        if not sender_char.party_id:
+            await interaction.followup.send("Вы не состоите в группе.", ephemeral=True)
+            return
+
+        party = await party_manager.get_party(party_id=sender_char.party_id, guild_id=guild_id)
+        if not party:
+            # This case should ideally be handled by ensuring party_id on character is valid or cleared.
+            await interaction.followup.send(f"Не удалось найти вашу группу (ID: {sender_char.party_id}). Это может быть ошибка данных. Попробуйте пересоздать группу или обратитесь к администратору.", ephemeral=True)
+            return
+        
+        sender_char_location_id = sender_char.location_id # Cache for consistent comparison
+
+        # --- Update Status for Party Members in the Same Location ---
+        # Process sender first, as they initiated this.
+        if sender_char.current_game_status != 'ожидание_обработку':
+            sender_char.current_game_status = 'ожидание_обработку'
+            # Note: собранные_действия_JSON for the sender should ideally be cleared by their own /end_turn.
+            # If /end_party_turn is the *only* way they end their turn, then actions should be cleared here.
+            # Assuming /end_turn is preferred for individual action clearing.
+            await character_manager.update_character(sender_char)
+            processed_members_count += 1
+            updated_member_names.append(sender_char.name)
+
+        for member_player_id in party.player_ids_list:
+            # Skip the sender if they were already processed (which they were, just above)
+            if member_player_id == sender_char.id:
+                continue
+
+            member_char = await character_manager.get_character_by_player_id(player_id=member_player_id, guild_id=guild_id)
+            
+            if member_char and member_char.location_id == sender_char_location_id:
+                if member_char.current_game_status != 'ожидание_обработку':
+                    member_char.current_game_status = 'ожидание_обработку'
+                    # As with sender, assume individual /end_turn handles action clearing.
+                    await character_manager.update_character(member_char)
+                    processed_members_count += 1
+                    updated_member_names.append(member_char.name)
+            elif member_char:
+                # Member is in the party but not in the same location - do nothing to them.
+                pass
+            else:
+                # Member ID in party list but character not found (data integrity issue?)
+                print(f"Warning: Character not found for player_id {member_player_id} in party {party.id} (guild {guild_id}) during end_party_turn by {sender_char.name}.")
+
+
+        # --- Send Confirmation of Status Updates ---
+        if updated_member_names: # Check if any names were added (meaning status was changed)
+            await interaction.followup.send(f"Ход завершен для следующих членов вашей группы в локации '{sender_char_location_id}': {', '.join(updated_member_names)}. Ожидайте обработки.", ephemeral=False) # Send publicly
+        else:
+            await interaction.followup.send("Все члены вашей группы в текущей локации уже завершили свой ход. Ожидайте обработки.", ephemeral=True)
+
+
+        # --- Trigger Check and Processing by PartyManager ---
+        # The responsibility for checking readiness and processing is now in PartyManager.
+        # We pass the game_mngr itself to give PartyManager access to other managers if needed (like LocationManager or discord_client).
+        await party_manager.check_and_process_party_turn(
+            party_id=party.id,
+            location_id=sender_char_location_id,
+            guild_id=guild_id,
+            game_manager=game_mngr # Pass the whole game_manager
+        )
+
+    except Exception as e:
+        print(f"Error in /end_party_turn command: {e}")
+        traceback.print_exc()
+        # Ensure followup is used if initial response was deferred and no other followup sent.
+        if interaction.response.is_done():
+            await interaction.followup.send("Произошла непредвиденная ошибка при завершении хода группы.", ephemeral=True)
+        else:
+            # This case should be rare if defer() is always called first.
+            try:
+                await interaction.response.send_message("Произошла непредвиденная ошибка при завершении хода группы.",ephemeral=True)
+            except discord.errors.InteractionResponded: # If somehow it got responded to
+                 await interaction.followup.send("Произошла непредвиденная ошибка при завершении хода группы.", ephemeral=True)

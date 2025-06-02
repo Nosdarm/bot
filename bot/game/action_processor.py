@@ -253,3 +253,126 @@ class ActionProcessor:
         # Placeholder response for unhandled action types
         print(f"Action type '{action_type}' not handled by any specific processor.")
         return {"success": False, "message": f"**Мастер:** Действие '{action_type}' не поддерживается.", "target_channel_id": ctx_channel_id, "state_changed": False}
+
+    async def process_party_actions(self,
+                                game_state: GameState,
+                                char_manager: CharacterManager,
+                                loc_manager: LocationManager,
+                                event_manager: EventManager,
+                                rule_engine: RuleEngine,
+                                openai_service: OpenAIService,
+                                party_actions_data: List[Tuple[str, str]], # List[(character_id, collected_actions_json_string)]
+                                ctx_channel_id_fallback: int
+                                ) -> Dict[str, Any]:
+        """
+        Processes actions for a list of characters, typically a party.
+        Iterates through each character's collected actions and calls self.process for each.
+        """
+        all_individual_results = []
+        overall_state_changed_for_party = False
+        aggregated_messages = [] # Could be used to send one summary message, but self.process sends individually
+
+        print(f"ActionProcessor: Starting process_party_actions for {len(party_actions_data)} characters.")
+
+        for character_id, collected_actions_json_string in party_actions_data:
+            character = await char_manager.get_character_by_player_id(character_id, game_state.guild_id) # Assuming guild_id is in game_state
+            if not character:
+                print(f"ActionProcessor: Character {character_id} not found during party processing. Skipping.")
+                all_individual_results.append({
+                    "character_id": character_id, "success": False, 
+                    "message": "Character not found.", "state_changed": False
+                })
+                continue
+
+            if not collected_actions_json_string or collected_actions_json_string.strip() == "[]":
+                print(f"ActionProcessor: No actions collected for character {character.name} ({character_id}). Skipping.")
+                all_individual_results.append({
+                    "character_id": character_id, "success": True, 
+                    "message": "No actions submitted.", "state_changed": False
+                })
+                continue
+
+            try:
+                actions_list = json.loads(collected_actions_json_string)
+                if not isinstance(actions_list, list):
+                    print(f"ActionProcessor: Parsed actions for {character.name} is not a list. Found: {type(actions_list)}. Skipping.")
+                    all_individual_results.append({
+                        "character_id": character_id, "success": False, 
+                        "message": "Malformed actions data (not a list).", "state_changed": False
+                    })
+                    continue
+
+                print(f"ActionProcessor: Processing {len(actions_list)} actions for character {character.name} ({character_id}).")
+                for action_item_idx, action_item in enumerate(actions_list):
+                    if not isinstance(action_item, dict):
+                        print(f"ActionProcessor: Action item {action_item_idx} for {character.name} is not a dict. Skipping: {action_item}")
+                        continue
+
+                    action_type = action_item.get("intent")
+                    action_data = action_item.get("entities", {}) # Default to empty dict if missing
+                    original_text = action_item.get("original_text", "N/A")
+
+                    if not action_type:
+                        print(f"ActionProcessor: Action item {action_item_idx} for {character.name} missing 'intent'. Skipping: {action_item}")
+                        all_individual_results.append({
+                            "character_id": character_id, "action_original_text": original_text, "success": False,
+                            "message": "Action intent missing.", "state_changed": False
+                        })
+                        continue
+                    
+                    # Determine context channel for this specific action
+                    # Prefer location channel, fallback to the one passed from PartyManager
+                    char_location = await loc_manager.get_location(character.current_location_id, game_state.guild_id)
+                    ctx_channel_id_for_action = ctx_channel_id_fallback
+                    if char_location and char_location.channel_id:
+                        try:
+                            ctx_channel_id_for_action = int(char_location.channel_id)
+                        except ValueError:
+                            print(f"ActionProcessor: Invalid channel_id '{char_location.channel_id}' for location {char_location.id}. Using fallback.")
+                    
+                    print(f"ActionProcessor: Calling self.process for {character.name} - Action: {action_type}, Data: {action_data}, Orig: '{original_text}'")
+                    single_action_result = await self.process(
+                        game_state=game_state,
+                        char_manager=char_manager,
+                        loc_manager=loc_manager,
+                        event_manager=event_manager,
+                        rule_engine=rule_engine,
+                        openai_service=openai_service,
+                        ctx_channel_id=ctx_channel_id_for_action, # Use determined channel for this action
+                        discord_user_id=character.discord_user_id, # Get from character model
+                        action_type=action_type,
+                        action_data=action_data
+                    )
+                    
+                    # self.process already sends messages. We collect results for logging or further aggregation if needed.
+                    all_individual_results.append({
+                        "character_id": character_id,
+                        "action_original_text": original_text,
+                        **single_action_result # Merge the dict from self.process
+                    })
+                    
+                    if single_action_result.get("state_changed", False):
+                        overall_state_changed_for_party = True
+                        print(f"ActionProcessor: State changed by action '{action_type}' for character {character.name}.")
+
+            except json.JSONDecodeError:
+                print(f"ActionProcessor: Failed to parse JSON actions for character {character.name} ({character_id}). JSON: '{collected_actions_json_string}'. Skipping.")
+                all_individual_results.append({
+                    "character_id": character_id, "success": False,
+                    "message": "Invalid actions JSON.", "state_changed": False
+                })
+            except Exception as e:
+                print(f"ActionProcessor: Unexpected error processing actions for character {character.name} ({character_id}): {e}")
+                traceback.print_exc()
+                all_individual_results.append({
+                    "character_id": character_id, "success": False,
+                    "message": f"Unexpected error: {e}", "state_changed": False
+                })
+
+
+        print(f"ActionProcessor: Finished process_party_actions. Overall state changed: {overall_state_changed_for_party}.")
+        return {
+            "success": True, # Indicates batch job itself completed, check individual results for action success
+            "individual_action_results": all_individual_results,
+            "overall_state_changed": overall_state_changed_for_party
+        }
