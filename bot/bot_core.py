@@ -201,14 +201,28 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
                             logging.info(f"NLU: Recognized for User {message.author.id}: Intent='{intent}', Entities={entities}")
                             
                             action_data = {"intent": intent, "entities": entities, "original_text": message.content}
-                            action_json = json.dumps(action_data)
-                            logging.debug(f"NLU: Storing JSON for User {message.author.id}: {action_json}")
                             
-                            char_model.собранные_действия_JSON = action_json
+                            # Action accumulation logic
+                            actions_list = []
+                            if char_model.собранные_действия_JSON:
+                                try:
+                                    actions_list = json.loads(char_model.собранные_действия_JSON)
+                                    if not isinstance(actions_list, list): # Ensure it's a list
+                                        actions_list = [actions_list] # Convert to list if it was a single dict
+                                except json.JSONDecodeError:
+                                    logging.warning(f"NLU: Could not parse existing собранные_действия_JSON for char {char_model.id}. Initializing new list.")
+                                    actions_list = []
+                            
+                            actions_list.append(action_data)
+                            updated_actions_json = json.dumps(actions_list)
+                            
+                            logging.debug(f"NLU: Appending action for User {message.author.id}. New actions JSON: {updated_actions_json}")
+                            
+                            char_model.собранные_действия_JSON = updated_actions_json
                             
                             try:
                                 await self.game_manager.character_manager.update_character(char_model)
-                                logging.info(f"NLU: Successfully updated character {char_model.id} with parsed action JSON.")
+                                logging.info(f"NLU: Successfully updated character {char_model.id} with accumulated actions JSON.")
                             except Exception as char_update_err:
                                 logging.error(f"NLU: Failed to save character {char_model.id} after NLU parsing: {char_update_err}", exc_info=True)
                         else:
@@ -216,8 +230,45 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
 
                     except Exception as nlu_err:
                         logging.error(f"NLU: Error during NLU processing or character update for User {message.author.id}: {nlu_err}", exc_info=True)
-                else:
-                    logging.debug(f"NLU: SKIPPED for User {message.author.id} due to status: {char_model.current_game_status}")
+                else: # Player is in a 'busy' state (бой, диалог, торговля)
+                    current_status = char_model.current_game_status
+                    logging.info(f"Input: User {message.author.id} (CharID: {char_model.id}) is in '{current_status}' state. Raw message: \"{message.content}\"")
+
+                    if current_status == 'диалог':
+                        if hasattr(self.game_manager, 'dialogue_manager') and self.game_manager.dialogue_manager:
+                            logging.debug(f"Input: Routing message from {char_model.name} to DialogueManager.")
+                            try:
+                                await self.game_manager.dialogue_manager.process_player_dialogue_message(
+                                    character=char_model,
+                                    message_text=message.content,
+                                    channel_id=message.channel.id,
+                                    guild_id=str(message.guild.id) # Pass guild_id
+                                )
+                            except Exception as dialogue_err:
+                                logging.error(f"Input: Error calling process_player_dialogue_message for {char_model.name}: {dialogue_err}", exc_info=True)
+                        else:
+                            logging.warning(f"Input: DialogueManager not available for character {char_model.name} in 'диалог' state.")
+
+                    elif current_status == 'бой':
+                        # Combat is typically command-driven. Raw text might be for chat or out-of-band communication.
+                        # For now, just log. If specific raw text parsing is needed in combat,
+                        # a CombatManager.process_player_combat_message could be implemented.
+                        logging.info(f"Input: Message from {char_model.name} received while in 'бой' state. Content: \"{message.content}\". (Typically command-driven)")
+                        # Example if a handler was to be added:
+                        # if hasattr(self.game_manager, 'combat_manager') and self.game_manager.combat_manager:
+                        #     await self.game_manager.combat_manager.process_player_combat_message(char_model, message.content, message.channel.id)
+
+                    elif current_status == 'торговля':
+                        # Similar to dialogue, a TradeManager could handle raw text.
+                        # For now, just log.
+                        logging.info(f"Input: Message from {char_model.name} received while in 'торговля' state. Content: \"{message.content}\".")
+                        # Example if a handler was to be added:
+                        # if hasattr(self.game_manager, 'trade_manager') and self.game_manager.trade_manager:
+                        #     await self.game_manager.trade_manager.process_player_trade_message(char_model, message.content, message.channel.id)
+                    
+                    else:
+                        # Should not happen if busy_statuses list is accurate
+                        logging.warning(f"Input: User {message.author.id} (CharID: {char_model.id}) in unhandled busy status '{current_status}'. Message: \"{message.content}\"")
             else:
                 logging.debug(f"NLU: No character found for User {message.author.id} in Guild {message.guild.id}. Message: \"{message.content}\"")
 
@@ -260,6 +311,8 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
         self.tree.add_command(bot.command_modules.action_cmds.cmd_interact) # Placeholder, needs refactor
         self.tree.add_command(bot.command_modules.action_cmds.cmd_fight) # Refactored from cmd_attack
         self.tree.add_command(bot.command_modules.action_cmds.cmd_talk)
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_end_turn) # Added /end_turn
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_end_party_turn) # Added /end_party_turn
 
         # Inventory commands
         self.tree.add_command(bot.command_modules.inventory_cmds.cmd_inventory)

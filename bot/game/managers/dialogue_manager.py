@@ -1018,6 +1018,42 @@ def mark_dialogue_deleted(self, guild_id: str, dialogue_id: str) -> None:
 # TODO: Implement other dialogue actions like cancel_dialogue, send_message_in_dialogue (delegates to send_callback_factory from context)
 # async def cancel_dialogue(self, guild_id: str, dialogue_id: str, **kwargs: Any) -> None: ...
 
+    async def process_player_dialogue_message(self, character: Any, message_text: str, channel_id: int, guild_id: str):
+        """
+        Processes a raw message from a player who is currently in a dialogue state.
+        This is a placeholder. Actual implementation would involve:
+        - Retrieving the active dialogue session for the character.
+        - Parsing the message_text (e.g., for keywords, NLU intent within dialogue context).
+        - Calling self.advance_dialogue with appropriate action_data.
+        - Sending responses back to the channel.
+        """
+        # TODO: Implement actual dialogue continuation logic
+        # For now, just log and acknowledge.
+        active_dialogue = None
+        # Example of how to find the dialogue (assuming _participant_to_dialogue_map is implemented and up-to-date)
+        # if hasattr(self, '_participant_to_dialogue_map') and self._participant_to_dialogue_map.get(guild_id, {}).get(character.id):
+        #    dialogue_id = self._participant_to_dialogue_map[guild_id][character.id]
+        #    active_dialogue = self.get_dialogue(guild_id, dialogue_id)
+        
+        # Fallback: Iterate through active dialogues for this guild
+        if not active_dialogue:
+            guild_dialogues = self._active_dialogues.get(guild_id, {})
+            for d_id, d_data in guild_dialogues.items():
+                if character.id in d_data.get('participants', []):
+                    active_dialogue = d_data # Found it
+                    break
+
+        if active_dialogue:
+            dialogue_id = active_dialogue.get('id')
+            print(f"DialogueManager: Received message '{message_text}' from {character.name} (ID: {character.id}) in dialogue {dialogue_id} (Guild: {guild_id}) in channel {channel_id}.")
+            # Here, you would parse message_text and then potentially call:
+            # await self.advance_dialogue(guild_id, dialogue_id, character.id, action_data={"type": "text_response", "text": message_text}, channel_id=channel_id)
+            # For now, just a log. If a send_callback is available, could send an ack.
+        else:
+            print(f"DialogueManager: Received message '{message_text}' from {character.name} (ID: {character.id}) in dialogue state, but NO ACTIVE DIALOGUE found for them in guild {guild_id}.")
+            # This case might indicate an issue with state management or dialogue cleanup.
+
+
 # --- Конец класса DialogueManager ---
 
 print("DEBUG: dialogue_manager.py module loaded.")

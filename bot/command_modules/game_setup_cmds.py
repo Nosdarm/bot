@@ -97,7 +97,8 @@ async def cmd_start_new_character(interaction: Interaction, name: str, race: str
             stats=default_stats,
             level=1,
             experience=0,
-            unspent_xp=0
+            unspent_xp=0,
+            current_game_status='исследование' # Set default status
             # player_id can be omitted if DBService handles it
         )
 

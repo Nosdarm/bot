@@ -901,6 +901,207 @@ class PartyManager:
 
     # async def set_leader(self, party_id: str, entity_id: str, guild_id: str, **kwargs): ... # Change leader, mark dirty. Needs validation (new leader is member).
 
+    async def _get_ready_members_in_location(self, party: "Party", location_id: str, guild_id: str) -> List["Character"]:
+        """Helper to get characters in a party at a specific location who are ready for processing."""
+        ready_members: List["Character"] = []
+        if not self._character_manager:
+            print(f"PartyManager: CharacterManager not available in _get_ready_members_in_location for party {party.id} guild {guild_id}.")
+            return ready_members
+
+        # Ensure party.player_ids_list is a list of strings
+        member_ids = getattr(party, 'player_ids_list', [])
+        if not isinstance(member_ids, list):
+            print(f"PartyManager: Warning: party {party.id} player_ids_list is not a list in _get_ready_members_in_location.")
+            return ready_members
+
+        for member_player_id_str in member_ids:
+            if not isinstance(member_player_id_str, str): # Basic type check
+                print(f"PartyManager: Warning: Non-string member_id '{member_player_id_str}' in party {party.id} player_ids_list. Skipping.")
+                continue
+
+            member_char = await self._character_manager.get_character_by_player_id(player_id=member_player_id_str, guild_id=guild_id)
+            if member_char and member_char.location_id == location_id and member_char.current_game_status == 'ожидание_обработку':
+                ready_members.append(member_char)
+        return ready_members
+
+    async def check_and_process_party_turn(self, party_id: str, location_id: str, guild_id: str, game_manager: Any) -> None:
+        """
+        Checks if all party members in a given location are ready for turn processing.
+        If so, processes their actions, updates statuses, and notifies them.
+        `game_manager` is passed to access other managers like LocationManager and the discord_client.
+        """
+        print(f"PartyManager: Checking turn for party {party_id} in location {location_id}, guild {guild_id}.")
+        party = self.get_party(guild_id=guild_id, party_id=party_id)
+
+        if not party:
+            print(f"PartyManager: Party {party_id} not found in guild {guild_id}. Cannot process turn.")
+            return
+
+        if not self._character_manager:
+            print(f"PartyManager: CharacterManager not available for party {party_id} guild {guild_id}. Cannot process turn.")
+            return
+        
+        # Ensure db_service is available (assuming it's an attribute or accessible via game_manager)
+        # For this example, we'll assume self._db_adapter is used for direct DB writes if a service layer isn't specified for party updates.
+        if not self._db_adapter: # Changed from self.db_service to self._db_adapter based on existing code
+            print(f"PartyManager: DB Adapter not available for party {party_id} guild {guild_id}. Cannot process turn.")
+            return
+
+        # Get all members of the party who are in the specified location
+        # We need to count total members in location first, then check how many are ready.
+        total_members_in_location: List["Character"] = []
+        all_member_ids = getattr(party, 'player_ids_list', [])
+        if not isinstance(all_member_ids, list): all_member_ids = [] # Ensure it's a list
+
+        for pid_str in all_member_ids:
+            if not isinstance(pid_str, str): continue
+            char = await self._character_manager.get_character_by_player_id(player_id=pid_str, guild_id=guild_id)
+            if char and char.location_id == location_id:
+                total_members_in_location.append(char)
+        
+        if not total_members_in_location:
+            print(f"PartyManager: No members of party {party_id} found in location {location_id}. No turn to process here.")
+            return
+
+        ready_members_in_location = await self._get_ready_members_in_location(party, location_id, guild_id)
+
+        if len(ready_members_in_location) != len(total_members_in_location):
+            print(f"PartyManager: Not all {len(total_members_in_location)} members of party {party.id} in location {location_id} are ready. "
+                  f"({len(ready_members_in_location)} are 'ожидание_обработку'). Turn processing deferred.")
+            return
+
+        print(f"PartyManager: All {len(ready_members_in_location)} members of party {party.id} in location {location_id} are ready. Processing turn...")
+
+        try:
+            # 1. Update party status to 'обработка'
+            party.turn_status = 'обработка'
+            # Persist: Convert party to dict and update. Assuming DBService has an update_party method
+            # or we update the field directly using self._db_adapter.
+            # For now, direct update via SQL as other party fields are saved.
+            update_sql = "UPDATE parties SET turn_status = ? WHERE id = ? AND guild_id = ?"
+            await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+            self.mark_party_dirty(guild_id, party.id) # Mark dirty for full save later if needed, though status is directly updated.
+            print(f"PartyManager: Party {party.id} status set to 'обработка'.")
+
+            # 2. Prepare actions for ActionProcessor
+            party_actions_data = []
+            for member_char in ready_members_in_location:
+                actions_json = member_char.собранные_действия_JSON
+                party_actions_data.append({
+                    "character_id": member_char.id,
+                    "actions_json": actions_json if actions_json else "[]" # Ensure it's at least an empty list string
+                })
+            print(f"PartyManager: Collected actions for party {party.id} in location {location_id}: {party_actions_data_debug_log}")
+
+            # 3. Call ActionProcessor
+            action_processing_results = {"success": False, "overall_state_changed": False, "individual_action_results": []}
+            if hasattr(game_manager, 'action_processor') and party_actions_data:
+                action_processor = game_manager.action_processor
+                
+                # Determine fallback channel ID for ActionProcessor
+                # Using the location's main channel as the primary source.
+                location_model_for_ap_chan = await game_manager.location_manager.get_location(location_id, guild_id)
+                ctx_channel_id_for_ap = 0 # Default to 0 if no channel found
+                if location_model_for_ap_chan and location_model_for_ap_chan.channel_id:
+                    try:
+                        ctx_channel_id_for_ap = int(location_model_for_ap_chan.channel_id)
+                    except ValueError:
+                        print(f"PartyManager: Invalid channel_id '{location_model_for_ap_chan.channel_id}' for location {location_id}. Using 0 for AP.")
+
+                print(f"PartyManager: Calling ActionProcessor.process_party_actions for party {party.id}. Fallback Channel ID for AP: {ctx_channel_id_for_ap}")
+                
+                # Ensure all managers and game_state are correctly passed from game_manager
+                if not (hasattr(game_manager, 'game_state') and
+                        hasattr(game_manager, 'character_manager') and # Should be self._character_manager
+                        hasattr(game_manager, 'location_manager') and
+                        hasattr(game_manager, 'event_manager') and
+                        hasattr(game_manager, 'rule_engine') and
+                        hasattr(game_manager, 'openai_service')):
+                    print(f"PartyManager: CRITICAL - GameManager is missing one or more required components for ActionProcessor. Aborting action processing.")
+                    # Set party to an error state
+                    party.turn_status = 'ошибка_конфиг_АП'
+                    await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+                    return # Cannot proceed
+
+                action_processing_results = await action_processor.process_party_actions(
+                    game_state=game_manager.game_state,
+                    char_manager=self._character_manager, # Use the one injected into PartyManager
+                    loc_manager=game_manager.location_manager,
+                    event_manager=game_manager.event_manager,
+                    rule_engine=game_manager.rule_engine,
+                    openai_service=game_manager.openai_service,
+                    party_actions_data=party_actions_data, # This is List[Tuple[str,str]]
+                    ctx_channel_id_fallback=ctx_channel_id_for_ap
+                )
+                print(f"PartyManager: ActionProcessor results for party {party.id}: {action_processing_results}")
+
+            elif not party_actions_data:
+                print(f"PartyManager: No actions data prepared for party {party.id}. Skipping ActionProcessor call.")
+                action_processing_results["success"] = True # No actions means success in terms of processing
+            else:
+                print(f"PartyManager: ActionProcessor not found on game_manager. Cannot process party actions for {party.id}.")
+                # Consider setting party to an error state
+                party.turn_status = 'ошибка_нет_АП'
+                await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+                return # Cannot proceed
+
+            # Check overall success from ActionProcessor's batch job perspective.
+            # Individual action failures are logged by ActionProcessor.
+            if not action_processing_results.get("success"): # If the batch process itself failed
+                print(f"PartyManager: Action processing BATCH FAILED for party {party.id}. Details: {action_processing_results.get('details', 'N/A')}. Reverting party status.")
+                party.turn_status = 'ошибка_обработки_АП'
+                await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+                # Decide if to clear actions or let players retry. For now, we'll proceed to clear actions.
+
+            # 4. Post-Action Processing: Update character statuses and clear actions
+            # This happens regardless of individual action successes/failures, as the turn attempt is over.
+            for member_char in ready_members_in_location:
+                member_char.current_game_status = 'исследование'
+                member_char.собранные_действия_JSON = '[]'
+                await self._character_manager.update_character(member_char) # This should handle DB persistence for character
+            print(f"PartyManager: Characters of party {party.id} in location {location_id} reset to 'исследование' and actions cleared.")
+
+            # 5. Update party status back to 'сбор_действий' (or a default like 'активна')
+            party.turn_status = 'сбор_действий'
+            await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+            self.mark_party_dirty(guild_id, party.id) # Mark for full save if other things changed
+            print(f"PartyManager: Party {party.id} status set back to 'сбор_действий'.")
+
+            # 6. Notify Players
+            notification_message = (
+                f"**System:** Ход для группы '{party.name}' в локации '{location_id}' был обработан. "
+                f"Результаты действий (если были) должны быть видны. Новый ход начался. Вы можете снова вводить действия."
+            )
+            
+            # Access LocationManager and discord_client via game_manager
+            if game_manager and hasattr(game_manager, 'location_manager') and hasattr(game_manager, 'discord_client'):
+                location_model = await game_manager.location_manager.get_location(location_id, guild_id)
+                if location_model and location_model.channel_id:
+                    target_channel_id = int(location_model.channel_id)
+                    discord_channel = game_manager.discord_client.get_channel(target_channel_id)
+                    if discord_channel:
+                        await discord_channel.send(notification_message)
+                        print(f"PartyManager: Sent turn completion notification to channel {target_channel_id} for party {party.id}.")
+                    else:
+                        print(f"PartyManager: ERROR - Could not find channel {target_channel_id} to send notification for party {party.id}.")
+                else:
+                    print(f"PartyManager: ERROR - Location {location_id} or its channel_id not found for party {party.id} notification.")
+            else:
+                print(f"PartyManager: ERROR - GameManager, LocationManager, or DiscordClient not available. Cannot send notification for party {party.id}.")
+
+        except Exception as e:
+            print(f"PartyManager: CRITICAL ERROR during check_and_process_party_turn for party {party.id} in location {location_id}: {e}")
+            traceback.print_exc()
+            # Attempt to set party status to an error state if possible
+            try:
+                party.turn_status = 'ошибка_обработки_крит'
+                update_sql = "UPDATE parties SET turn_status = ? WHERE id = ? AND guild_id = ?"
+                await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+                print(f"PartyManager: Party {party.id} status set to 'ошибка_обработки_крит' due to exception.")
+            except Exception as e_crit:
+                print(f"PartyManager: Failed to set party status to error state after critical error: {e_crit}")
+
+
 # --- Конец класса PartyManager ---
 
 print("DEBUG: party_manager.py module loaded.")
