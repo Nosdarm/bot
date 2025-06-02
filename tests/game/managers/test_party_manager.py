@@ -14,7 +14,7 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         #     settings=self.mock_settings,
         #     character_manager=self.mock_char_manager
         # )
-        pass
+        pass # This is fine for an empty setUp body
 
     async def test_placeholder_party_manager(self):
         # Placeholder test
