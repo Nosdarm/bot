@@ -94,7 +94,10 @@ async def cmd_start_new_character(interaction: Interaction, name: str, race: str
             mp=default_mp,
             attack=default_attack, # This will go into stats if not a direct column
             defense=default_defense, # This will go into stats if not a direct column
-            stats=default_stats
+            stats=default_stats,
+            level=1,
+            experience=0,
+            unspent_xp=0
             # player_id can be omitted if DBService handles it
         )
 
