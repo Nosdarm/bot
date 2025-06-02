@@ -1,0 +1,51 @@
+{
+  "map": [
+    {
+      "location_id": "forest_entrance",
+      "connections": [
+        {
+          "to_location_id": "abandoned_cabin",
+          "direction": "north",
+          "description_i18n": {
+            "en": "A narrow path leads north towards a clearing.",
+            "ru": "Узкая тропа ведет на север к поляне."
+          }
+        }
+      ]
+    },
+    {
+      "location_id": "abandoned_cabin",
+      "connections": [
+        {
+          "to_location_id": "forest_entrance",
+          "direction": "south",
+          "description_i18n": {
+            "en": "The path south leads back to the forest entrance.",
+            "ru": "Тропа на юг ведет обратно ко входу в лес."
+          }
+        },
+        {
+          "to_location_id": "crystal_cave",
+          "direction": "west",
+          "description_i18n": {
+            "en": "A faint shimmering light to the west suggests a cave entrance.",
+            "ru": "Слабый мерцающий свет на западе указывает на вход в пещеру."
+          }
+        }
+      ]
+    },
+    {
+      "location_id": "crystal_cave",
+      "connections": [
+        {
+          "to_location_id": "abandoned_cabin",
+          "direction": "east",
+          "description_i18n": {
+            "en": "The passage east leads out of the cave and back towards the cabin.",
+            "ru": "Проход на восток выводит из пещеры обратно к хижине."
+          }
+        }
+      ]
+    }
+  ]
+}
