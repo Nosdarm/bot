@@ -17,7 +17,7 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    LATEST_SCHEMA_VERSION = 11 # Schema updates for players, locations, parties, new tables
+    LATEST_SCHEMA_VERSION = 12 # Added unspent_xp to players table
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -1200,6 +1200,26 @@ class SqliteAdapter:
             print(f"SqliteAdapter: '{table_name}' table created IF NOT EXISTS.")
         
         print("SqliteAdapter: v10 to v11 migration complete.")
+
+    async def _migrate_v11_to_v12(self, cursor: Cursor) -> None:
+        """Миграция с Версии 11 на Версию 12 (добавление unspent_xp в таблицу players)."""
+        print("SqliteAdapter: Running v11 to v12 migration (add unspent_xp to players)...")
+        try:
+            # Check if the column already exists
+            await cursor.execute("PRAGMA table_info(players);")
+            columns_info = await cursor.fetchall()
+            column_names = [row['name'] for row in columns_info if row and 'name' in row.keys()]
+
+            if 'unspent_xp' not in column_names:
+                await cursor.execute("ALTER TABLE players ADD COLUMN unspent_xp INTEGER DEFAULT 0;")
+                print("SqliteAdapter: Added column 'unspent_xp' to 'players' table with DEFAULT 0.")
+            else:
+                print("SqliteAdapter: Column 'unspent_xp' already exists in 'players' table.")
+        except Exception as e:
+            print(f"SqliteAdapter: Error adding 'unspent_xp' to 'players': {e}")
+            traceback.print_exc()
+            raise
+        print("SqliteAdapter: v11 to v12 migration complete.")
 
 
 # --- Конец класса SqliteAdapter ---

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import asyncio
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -11,10 +12,19 @@ from bot.game.models.party import Party # Assuming Party model can be imported
 
 
 class TestPartyManagerUpdatePartyLocation(unittest.IsolatedAsyncioTestCase):
+=======
+import unittest
+from unittest.mock import MagicMock, AsyncMock
+
+# from bot.game.managers.party_manager import PartyManager
+
+class TestPartyManager(unittest.IsolatedAsyncioTestCase):
+>>>>>>> player-party-system
 
     def setUp(self):
         self.mock_db_adapter = AsyncMock()
         self.mock_settings = {}
+<<<<<<< HEAD
         
         # Mock other managers that might be passed in __init__ if PartyManager uses them
         # For update_party_location, these are not directly used but good practice if manager is complex
@@ -141,6 +151,19 @@ class TestPartyManagerUpdatePartyLocation(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(hasattr(party_without_loc_attr, 'current_location_id')) # Attribute should now exist
         self.assertEqual(party_without_loc_attr.current_location_id, new_location_id)
         self.party_manager.mark_party_dirty.assert_called_once_with(self.guild_id, self.party_id)
+=======
+        self.mock_char_manager = AsyncMock()
+        # self.party_manager = PartyManager(
+        #     db_adapter=self.mock_db_adapter,
+        #     settings=self.mock_settings,
+        #     character_manager=self.mock_char_manager
+        # )
+        pass
+
+    async def test_placeholder_party_manager(self):
+        # Placeholder test
+        self.assertTrue(True)
+>>>>>>> player-party-system
 
 if __name__ == '__main__':
     unittest.main()

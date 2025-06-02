@@ -244,22 +244,35 @@ class PartyManager:
         #           # TODO: Send feedback?
         #           return None # Cannot create party if member is already in one
 
+        party_name = kwargs.get('name', f"Party of {leader_id_str}") # Default name if not provided
+        current_location_id = kwargs.get('current_location_id', None) # Get from kwargs
 
         try:
             new_id = str(uuid.uuid4())
 
             party_data: Dict[str, Any] = {
                 'id': new_id,
-                'guild_id': guild_id_str, # Сохраняем как строку
-                'leader_id': leader_id_str, # Store leader_id as string
-                'member_ids': member_ids_str, # Store member_ids as list of strings
-                # TODO: Добавить другие поля Party модели
-                'state_variables': kwargs.get('initial_state_variables', {}), # Allow initial state
-                'current_action': None, # Групповое действие партии
-                # TODO: location_id для партии, если применимо? (Например, Party Location = Leader Location)
-                # 'location_id': kwargs.get('initial_location_id'), # If passed
+                'name': party_name,
+                'guild_id': guild_id_str, 
+                'leader_id': leader_id_str, 
+                'player_ids_list': member_ids_str, # Use player_ids_list for Party.from_dict
+                'state_variables': kwargs.get('initial_state_variables', {}), 
+                'current_action': None,
+                'current_location_id': current_location_id,
+                'turn_status': "pending_actions" # Default turn status
             }
-            party = Party.from_dict(party_data) # Требует прямого импорта Party при runtime
+            # Party.from_dict expects 'player_ids' as JSON string if it's coming from DB,
+            # but for creation, we pass player_ids_list directly.
+            # The Party model's from_dict handles 'player_ids' (JSON str) or 'member_ids' (JSON str).
+            # For direct creation with a list, we should align with the dataclass field name `player_ids_list`.
+            # The `Party.from_dict` should be robust enough or we adjust `party_data` key here.
+            # The model's `from_dict` expects `player_ids` to be the JSON string.
+            # Let's ensure `Party.from_dict` can handle `player_ids_list` directly or modify `party_data`
+            # For now, assuming Party.from_dict is flexible or we adjust it later.
+            # The model's `player_ids_list` field is what `Party.from_dict` uses internally for the member list.
+            # The model's `player_ids` field is for the JSON string.
+
+            party = Party.from_dict(party_data)
 
             # ИСПРАВЛЕНИЕ: Добавляем в per-guild кеш
             self._parties.setdefault(guild_id_str, {})[new_id] = party
@@ -278,10 +291,10 @@ class PartyManager:
             self.mark_party_dirty(guild_id_str, new_id)
 
 
-            print(f"PartyManager: Party {new_id} created for guild {guild_id_str}. Leader: {leader_id_str}. Members: {member_ids_str}")
+            print(f"PartyManager: Party {new_id} ('{party.name}') created for guild {guild_id_str}. Leader: {leader_id_str}. Members: {member_ids_str}. Location: {current_location_id}")
             # TODO: Notify participants? (Through send_callback_factory from kwargs)
 
-            return new_id
+            return party # Return the Party object
 
         except Exception as e:
             print(f"PartyManager: Error creating party for leader {leader_id_str} in guild {guild_id_str}: {e}")
@@ -320,80 +333,35 @@ class PartyManager:
 
         print(f"PartyManager: Removing party {party_id_str} for guild {guild_id_str}. Leader: {getattr(party, 'leader_id', 'N/A')}")
 
-        # Get a copy of member_ids (which should be strings)
-        member_ids = list(getattr(party, 'member_ids', []))
-        if not isinstance(member_ids, list): member_ids = [] # Ensure it's a list
+        # Get a copy of player_ids_list (which should be strings)
+        member_ids_list = list(getattr(party, 'player_ids_list', []))
+        if not isinstance(member_ids_list, list): member_ids_list = [] # Ensure it's a list
 
-
-        # Передаем context в cleanup методы
-        cleanup_context: Dict[str, Any] = {
-            'party_id': party_id_str, # Pass string party_id
-            'party': party,
-            'guild_id': guild_id_str, # Передаем guild_id_str
-
-            # Pass injected managers/processors from self._ or kwargs
-            'character_manager': self._character_manager or kwargs.get('character_manager'),
-            'npc_manager': self._npc_manager or kwargs.get('npc_manager'),
-            'combat_manager': self._combat_manager or kwargs.get('combat_manager'),
-            # Add others that might need cleanup related to party disbanding (e.g., DialogueManager, StatusManager)
-            # 'dialogue_manager': self._dialogue_manager or kwargs.get('dialogue_manager'),
-            # 'status_manager': self._status_manager or kwargs.get('status_manager'),
-        }
-        cleanup_context.update(kwargs) # Add any extra kwargs passed to remove_party
-
-        if member_ids:
-            print(f"PartyManager: Cleaning up {len(member_ids)} members for party {party_id_str} in guild {guild_id_str}.")
-            # Iterate over a copy of member_ids list
-            for entity_id in list(member_ids): # Use a copy for iteration safety if members are removed from the list during cleanup
-                 try:
-                     entity_type = None
-                     manager = None # type: Optional[Any]
-                     # Get managers from cleanup context
-                     char_mgr = cleanup_context.get('character_manager') # type: Optional["CharacterManager"]
-                     npc_mgr = cleanup_context.get('npc_manager') # type: Optional["NpcManager"]
-
-                     # Determine entity type and get the appropriate manager
-                     if char_mgr and hasattr(char_mgr, 'get_character') and char_mgr.get_character(guild_id_str, entity_id):
-                          entity_type = "Character" ; manager = char_mgr
-                     elif npc_mgr and hasattr(npc_mgr, 'get_npc') and npc_mgr.get_npc(guild_id_str, entity_id):
-                          entity_type = "NPC" ; manager = npc_mgr
-                     # TODO: Add other entity types (e.g., if Parties can contain other Parties)
-
-
-                     # Check for cleanup methods on the entity manager
-                     # Prioritize generic clean_up_for_entity, then specific clean_up_from_party
-                     clean_up_method_name = None
-                     if manager:
-                          if hasattr(manager, 'clean_up_for_entity'):
-                                clean_up_method_name = 'clean_up_for_entity'
-                          elif hasattr(manager, 'clean_up_from_party'): # Fallback to specific method name
-                                clean_up_method_name = 'clean_up_from_party'
-
-
-                     if manager and clean_up_method_name and entity_type:
-                          # Call the cleanup method, passing entity_id, entity_type (for generic), and context
-                          if clean_up_method_name == 'clean_up_for_entity':
-                               # Generic method: clean_up_for_entity(entity_id, entity_type, context)
-                               await getattr(manager, clean_up_method_name)(entity_id, entity_type, context=cleanup_context)
-                          else: # Specific method: clean_up_from_party(entity_id, context)
-                               await getattr(manager, clean_up_method_name)(entity_id, context=cleanup_context)
-
-                          print(f"PartyManager: Cleaned up participant {entity_type} {entity_id} from party {party_id_str} in guild {guild_id_str} via {type(manager).__name__}.{clean_up_method_name}.")
-                     # else: // Warning logged below
-
-                 except Exception as e:
-                    print(f"PartyManager: ❌ Error during cleanup for member {entity_id} in party {party_id_str} (guild {guild_id_str}): {e}")
-                    import traceback
+        # Context for CharacterManager calls
+        # It's important that self._character_manager is available.
+        char_manager = self._character_manager # From __init__
+        
+        if char_manager and hasattr(char_manager, 'set_party_id'):
+            for member_id_str in member_ids_list:
+                try:
+                    # We assume all members in player_ids_list are characters that need party_id reset.
+                    # If NPCs could be in player_ids_list and have a similar field, logic would need adjustment.
+                    print(f"PartyManager: Setting party_id to None for character {member_id_str} from disbanded party {party_id_str}.")
+                    await char_manager.set_party_id(
+                        guild_id=guild_id_str,
+                        character_id=member_id_str,
+                        party_id=None, # Set to None
+                        **kwargs # Pass along other context if needed by set_party_id
+                    )
+                except Exception as e:
+                    print(f"PartyManager: Error setting party_id to None for member {member_id_str} of party {party_id_str}: {e}")
                     print(traceback.format_exc())
-                    # Do not re-raise error, continue cleanup for other members.
-            # After iterating, the member_ids list on the 'party' object *in cache* might have been modified
-            # if clean_up_for_entity/clean_up_from_party also update the entity object's party_id attribute.
-            # This is fine, as the party object will be removed from cache below anyway.
+        elif not char_manager:
+            print(f"PartyManager: Warning: CharacterManager not available in remove_party. Cannot set party_id to None for members of {party_id_str}.")
+        
+        print(f"PartyManager: Finished setting party_id to None for members of party {party_id_str} in guild {guild_id_str}.")
 
-        print(f"PartyManager: Finished member cleanup process for party {party_id_str} in guild {guild_id_str}.")
-
-
-        # --- Other party-specific cleanup ---
+        # --- Other party-specific cleanup (e.g., combat, statuses on party entity) ---
         # Remove status effects on the party entity itself (if Party can have statuses)
         # status_mgr = cleanup_context.get('status_manager') # type: Optional["StatusManager"]
         # if status_mgr and hasattr(status_mgr, 'remove_status_effects_by_target'):
@@ -424,22 +392,15 @@ class PartyManager:
         # --- Remove party from cache and mark for deletion from DB ---
 
         # ИСПРАВЛЕНИЕ: Удаляем записи из _member_to_party_map для этой гильдии for the *members who were in the party*
-        # Iterate through the list of members we got *before* cleanup (in case cleanup removed them from the list on the object)
+        # Iterate through the list of members we got *before* their party_id was set to None.
         guild_member_map = self._member_to_party_map.get(guild_id_str)
         if guild_member_map:
-             for member_id in member_ids: # Use the list of members before cleanup
-                  # Only remove the mapping if it still points to this specific party
+             for member_id in member_ids_list: # Use the initial list of members
                   if guild_member_map.get(member_id) == party_id_str:
                        del guild_member_map[member_id]
-                       # print(f"PartyManager: Removed member {member_id} from _member_to_party_map for guild {guild_id_str} (was in {party_id_str}).") # Debug
+                       # print(f"PartyManager: Removed member {member_id} from _member_to_party_map for guild {guild_id_str} (was in {party_id_str}).")
 
-             # Optional: Clean up leader mapping if distinct
-             # leader_id = getattr(party, 'leader_id', None)
-             # if leader_id is not None and str(leader_id) not in member_ids and guild_member_map.get(str(leader_id)) == party_id_str:
-             #      del guild_member_map[str(leader_id)]
-
-
-        # ИСПРАВЛЕНИЕ: Помечаем партию для удаления из БД (per-guild)
+        # Помечаем партию для удаления из БД (per-guild)
         # Use the correct per-guild deleted set
         self._deleted_parties.setdefault(guild_id_str, set()).add(party_id_str)
 
@@ -560,9 +521,10 @@ class PartyManager:
                  # INSERT OR REPLACE SQL для обновления существующих или вставки новых
                  upsert_sql = '''
                  INSERT OR REPLACE INTO parties
-                 (id, guild_id, leader_id, member_ids, state_variables, current_action)
-                 VALUES (?, ?, ?, ?, ?, ?)
+                 (id, guild_id, name, leader_id, player_ids, current_location_id, turn_status, state_variables, current_action)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                  '''
+                 # Note: 'member_ids' in DB was renamed to 'player_ids'
                  data_to_upsert = []
                  upserted_party_ids: Set[str] = set() # Keep track of successfully prepared IDs
 
@@ -577,35 +539,38 @@ class PartyManager:
                                 continue # Skip this party if invalid or wrong guild
 
                            leader_id = getattr(party, 'leader_id', None)
-                           member_ids = getattr(party, 'member_ids', [])
+                           # Use player_ids_list from the Party object for saving
+                           member_ids_list = getattr(party, 'player_ids_list', []) 
                            state_variables = getattr(party, 'state_variables', {})
                            current_action = getattr(party, 'current_action', None)
+                           party_name = getattr(party, 'name', f"Party {party_id}")
+                           current_location_id = getattr(party, 'current_location_id', None)
+                           turn_status = getattr(party, 'turn_status', "pending_actions")
+
 
                            if leader_id is None:
-                                print(f"PartyManager: Warning: Party {party_id} (guild {guild_id_str}) has no leader_id during save prep. Consider this an error if leader is mandatory.")
-                                # Decide if this should be skipped or handled differently
+                                print(f"PartyManager: Warning: Party {party_id} ('{party_name}') (guild {guild_id_str}) has no leader_id during save prep.")
 
+                           if not isinstance(member_ids_list, list):
+                               print(f"PartyManager: Warning: Party {party_id} ('{party_name}') (guild {guild_id_str}) player_ids_list is not a list during upsert prep ({type(member_ids_list)}). Saving as empty list.")
+                               member_ids_list = []
 
-                           # Убедимся, что данные для JSON корректны
-                           # Ensure member_ids is a list before dumping
-                           if not isinstance(member_ids, list):
-                               print(f"PartyManager: Warning: Party {party_id} (guild {guild_id_str}) member_ids is not a list during upsert prep ({type(member_ids)}). Saving as empty list.")
-                               member_ids = []
-
-                           member_ids_json = json.dumps(member_ids)
+                           player_ids_json = json.dumps(member_ids_list) # Save player_ids_list as JSON string
                            state_variables_json = json.dumps(state_variables)
                            current_action_json = json.dumps(current_action) if current_action is not None else None
 
-
                            data_to_upsert.append((
                                str(party_id),
-                               guild_id_str, # Убедимся, что guild_id строка
-                               str(leader_id) if leader_id is not None else None, # Save leader_id as str or None
-                               member_ids_json,
+                               guild_id_str,
+                               party_name,
+                               str(leader_id) if leader_id is not None else None,
+                               player_ids_json, # This is the 'player_ids' column in DB
+                               current_location_id,
+                               turn_status,
                                state_variables_json,
                                current_action_json,
                            ))
-                           upserted_party_ids.add(str(party_id)) # Track IDs that were prepared for upsert
+                           upserted_party_ids.add(str(party_id))
 
                       except Exception as e:
                            print(f"PartyManager: Error preparing data for party {getattr(party, 'id', 'N/A')} (guild {guild_id_str}) for upsert: {e}")
@@ -657,10 +622,11 @@ class PartyManager:
         rows = []
         try:
             sql = '''
-            SELECT id, guild_id, leader_id, member_ids, state_variables, current_action
+            SELECT id, guild_id, name, leader_id, player_ids, current_location_id, turn_status, state_variables, current_action
             FROM parties
             WHERE guild_id = ?
             '''
+            # Note: 'member_ids' in DB was renamed to 'player_ids'
             rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
             print(f"PartyManager: Found {len(rows)} parties in DB for guild {guild_id_str}.")
 
@@ -809,74 +775,130 @@ class PartyManager:
     # TODO: Implement clean_up_for_entity method (used by Character/NPC Managers)
     # This method is called by CharacterManager.remove_character, NpcManager.remove_npc etc.
     # It should remove the entity from the party they are in, and potentially disband the party if it becomes empty.
-    async def clean_up_for_entity(self, entity_id: str, entity_type: str, **kwargs: Any) -> None:
+    async def clean_up_for_entity(self, entity_id: str, entity_type: str, context: Dict[str, Any]) -> None: # Added context type hint
         """
         Удаляет сущность из партии, если она в ней состоит, когда сущность удаляется.
         Предназначен для вызова менеджерами сущностей (Character, NPC).
         """
-        # Get guild_id from context kwargs
-        guild_id = kwargs.get('guild_id')
+        # Get guild_id from context 
+        guild_id = context.get('guild_id')
         if guild_id is None:
-             print(f"PartyManager: Warning: clean_up_for_entity called for {entity_type} {entity_id} without guild_id in context. Cannot clean up from party.")
-             return # Cannot proceed without guild_id
+            print(f"PartyManager: Warning: clean_up_for_entity called for {entity_type} {entity_id} without guild_id in context. Cannot clean up from party.")
+            return # Cannot proceed without guild_id
 
         guild_id_str = str(guild_id)
         entity_id_str = str(entity_id)
-        print(f"PartyManager: Cleaning up {entity_type} {entity_id} from party in guild {guild_id_str}...")
+        print(f"PartyManager: Cleaning up {entity_type} {entity_id_str} from party in guild {guild_id_str}...")
 
         # Find the party the entity is in within this guild
-        # Use the updated get_party_by_member_id that takes guild_id
-        party = await self.get_party_by_member_id(guild_id_str, entity_id_str) # Use async method with guild_id and string entity_id
+        party = await self.get_party_by_member_id(guild_id_str, entity_id_str) 
 
         if not party:
-            # print(f"PartyManager: {entity_type} {entity_id_str} is not in a party in guild {guild_id_str}.") # Too noisy?
-            return # Entity is not in any party
+            return 
 
         party_id = getattr(party, 'id', None)
         if not party_id:
-             print(f"PartyManager: Warning: Found party object with no ID for participant {entity_id_str} in guild {guild_id_str} during cleanup.")
-             return # Cannot clean up from party without party ID
-        party_id_str = str(party_id) # Ensure party_id is string
+            print(f"PartyManager: Warning: Found party object with no ID for participant {entity_id_str} in guild {guild_id_str} during cleanup.")
+            return 
+        party_id_str = str(party_id)
 
 
-        # Remove the entity from the party object's member_ids list
-        member_ids_list = getattr(party, 'member_ids', [])
+        # Use player_ids_list for internal logic
+        member_ids_list = getattr(party, 'player_ids_list', [])
         if isinstance(member_ids_list, list):
             initial_count = len(member_ids_list)
-            # Create a new list excluding the entity ID
-            # Ensure we remove the correct string ID
             new_member_ids_list = [mid for mid in member_ids_list if mid != entity_id_str]
 
-            # If the list size changed, the entity was found and removed
             if len(new_member_ids_list) < initial_count:
-                 party.member_ids = new_member_ids_list # Update the party object
-                 print(f"PartyManager: Removed {entity_type} {entity_id_str} from member list of party {party_id_str} in guild {guild_id_str}.")
-                 self.mark_party_dirty(guild_id_str, party_id_str) # Mark party as dirty (per-guild)
+                party.player_ids_list = new_member_ids_list 
+                print(f"PartyManager: Removed {entity_type} {entity_id_str} from member list of party {party_id_str} in guild {guild_id_str}.")
+                self.mark_party_dirty(guild_id_str, party_id_str)
 
+                guild_member_map = self._member_to_party_map.get(guild_id_str)
+                if guild_member_map and guild_member_map.get(entity_id_str) == party_id_str:
+                    del guild_member_map[entity_id_str]
 
-                 # Remove the entity's entry from the _member_to_party_map for this guild
-                 guild_member_map = self._member_to_party_map.get(guild_id_str)
-                 if guild_member_map and guild_member_map.get(entity_id_str) == party_id_str:
-                      del guild_member_map[entity_id_str]
-                      # print(f"PartyManager: Removed member {entity_id_str} from _member_to_party_map for guild {guild_id_str} (was in {party_id_str}).") # Debug
-
-
-                 # Check if the party became empty after removing the member
-                 if not new_member_ids_list:
-                      print(f"PartyManager: Party {party_id_str} in guild {guild_id_str} is now empty after {entity_id_str} left. Removing party.")
-                      # Call remove_party to fully disband the party, passing context
-                      await self.remove_party(party_id_str, guild_id_str, **kwargs) # Pass party_id, guild_id, and context
-
-
+                if not new_member_ids_list:
+                    print(f"PartyManager: Party {party_id_str} in guild {guild_id_str} is now empty after {entity_id_str} left. Removing party.")
+                    await self.remove_party(party_id_str, guild_id_str, **context) # Pass context
             else:
-                 print(f"PartyManager: Warning: {entity_type} {entity_id_str} was not found in member list of party {party_id_str} in guild {guild_id_str} during cleanup.")
+                print(f"PartyManager: Warning: {entity_type} {entity_id_str} was not found in member list of party {party_id_str} in guild {guild_id_str} during cleanup.")
         else:
-             print(f"PartyManager: Warning: Party {party_id_str} member_ids data is not a list for guild {guild_id_str}. Cannot clean up participant {entity_id_str}.")
+            print(f"PartyManager: Warning: Party {party_id_str} player_ids_list data is not a list for guild {guild_id_str}. Cannot clean up participant {entity_id_str}.")
 
 
-    # TODO: Implement methods to manage party members (add/remove member)
-    # async def add_member(self, party_id: str, entity_id: str, entity_type: str, guild_id: str, **kwargs): ... # Add member to list, update map, mark dirty. Needs validation.
-    # async def remove_member(self, party_id: str, entity_id: str, guild_id: str, **kwargs): ... # Remove member from list, update map, mark dirty. Doesn't disband.
+    # --- Methods to manage party members ---
+
+    async def add_member_to_party(self, party_id: str, character_id: str, guild_id: str, context: Dict[str, Any]) -> bool:
+        """Adds a character to the specified party."""
+        guild_id_str = str(guild_id)
+        party_id_str = str(party_id)
+        char_id_str = str(character_id)
+
+        party = self.get_party(guild_id_str, party_id_str)
+        if not party:
+            print(f"PartyManager: Add member failed. Party {party_id_str} not found in guild {guild_id_str}.")
+            return False
+
+        # Ensure player_ids_list is being used
+        if not hasattr(party, 'player_ids_list') or not isinstance(party.player_ids_list, list):
+            print(f"PartyManager: Add member failed. Party {party_id_str} has invalid player_ids_list. Reinitializing.")
+            party.player_ids_list = [] # Initialize if missing or wrong type
+
+        if char_id_str in party.player_ids_list:
+            print(f"PartyManager: Character {char_id_str} is already in party {party_id_str} (guild {guild_id_str}).")
+            return True # Idempotent: already a member
+
+        party.player_ids_list.append(char_id_str)
+        
+        guild_member_map = self._member_to_party_map.setdefault(guild_id_str, {})
+        guild_member_map[char_id_str] = party_id_str
+        
+        self.mark_party_dirty(guild_id_str, party_id_str)
+        print(f"PartyManager: Character {char_id_str} added to party {party_id_str} in guild {guild_id_str}.")
+        return True
+
+    async def remove_member_from_party(self, party_id: str, character_id: str, guild_id: str, context: Dict[str, Any]) -> bool:
+        """Removes a character from the specified party. Handles leader migration or party disbandment."""
+        guild_id_str = str(guild_id)
+        party_id_str = str(party_id)
+        char_id_str = str(character_id)
+
+        party = self.get_party(guild_id_str, party_id_str)
+        if not party:
+            print(f"PartyManager: Remove member failed. Party {party_id_str} not found in guild {guild_id_str}.")
+            # If char has this party_id, it's an inconsistency. CharacterManager should handle clearing it.
+            return False
+
+        if not hasattr(party, 'player_ids_list') or not isinstance(party.player_ids_list, list):
+            print(f"PartyManager: Remove member failed. Party {party_id_str} has invalid player_ids_list.")
+            return False # Should not happen with proper initialization
+
+        if char_id_str not in party.player_ids_list:
+            print(f"PartyManager: Character {char_id_str} not found in party {party_id_str} (guild {guild_id_str}). Cannot remove.")
+            return False
+
+        party.player_ids_list.remove(char_id_str)
+        
+        guild_member_map = self._member_to_party_map.get(guild_id_str)
+        if guild_member_map and guild_member_map.get(char_id_str) == party_id_str:
+            del guild_member_map[char_id_str]
+
+        print(f"PartyManager: Character {char_id_str} removed from party {party_id_str} player_ids_list in guild {guild_id_str}.")
+
+        if not party.player_ids_list:
+            print(f"PartyManager: Party {party_id_str} is now empty. Disbanding party.")
+            await self.remove_party(party_id_str, guild_id_str, **context) # remove_party handles full cleanup
+            return True # Removal led to disband, so operation is successful in a way
+
+        if getattr(party, 'leader_id', None) == char_id_str:
+            # Leader left, assign new leader if members remain
+            party.leader_id = party.player_ids_list[0] # Assign first member as new leader
+            print(f"PartyManager: Leader {char_id_str} left party {party_id_str}. New leader is {party.leader_id}.")
+        
+        self.mark_party_dirty(guild_id_str, party_id_str)
+        return True
+
     # async def set_leader(self, party_id: str, entity_id: str, guild_id: str, **kwargs): ... # Change leader, mark dirty. Needs validation (new leader is member).
 
 # --- Конец класса PartyManager ---
