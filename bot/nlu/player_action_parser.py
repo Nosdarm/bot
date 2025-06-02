@@ -106,8 +106,9 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
     match_move_to_loc = patterns_map["move_to_location"].match(text)
     if match_move_to_loc:
         potential_loc_name = match_move_to_loc.group(1).strip()
-        if db_game_entities.get("location"):
-            db_loc = _find_matching_db_entity(potential_loc_name, db_game_entities["location"], "location")
+        location_list = db_game_entities.get("location")
+        if location_list:
+            db_loc = _find_matching_db_entity(potential_loc_name, location_list, "location")
             if db_loc:
                 return "move", [db_loc]
         # Fallback to raw name if not found in DB or DB not available
@@ -121,8 +122,9 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
     match = patterns_map["attack_target"].match(text)
     if match:
         potential_target_name = match.group(1).strip()
-        if db_game_entities.get("npc"): # Assuming targets are NPCs for now
-            db_npc = _find_matching_db_entity(potential_target_name, db_game_entities["npc"], "npc") # type becomes "npc"
+        npc_list = db_game_entities.get("npc")
+        if npc_list: # Assuming targets are NPCs for now
+            db_npc = _find_matching_db_entity(potential_target_name, npc_list, "npc") # type becomes "npc"
             if db_npc:
                 # Standardize to target_name for generic processing later, but add original type and id
                 return "attack", [{"type": "target_name", "id": db_npc["id"], "name": db_npc["name"], "original_type": "npc"}]
@@ -133,8 +135,9 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
     match = patterns_map["talk_to_npc"].match(text)
     if match:
         potential_npc_name = match.group(1).strip()
-        if db_game_entities.get("npc"):
-            db_npc = _find_matching_db_entity(potential_npc_name, db_game_entities["npc"], "npc")
+        npc_list = db_game_entities.get("npc")
+        if npc_list:
+            db_npc = _find_matching_db_entity(potential_npc_name, npc_list, "npc")
             if db_npc:
                 return "talk", [db_npc]
         return "talk", [{"type": "npc_name", "value": potential_npc_name}]
@@ -143,8 +146,9 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
     match = patterns_map["pickup_item"].match(text)
     if match:
         potential_item_name = match.group(1).strip()
-        if db_game_entities.get("item"):
-            db_item = _find_matching_db_entity(potential_item_name, db_game_entities["item"], "item")
+        item_list = db_game_entities.get("item")
+        if item_list:
+            db_item = _find_matching_db_entity(potential_item_name, item_list, "item")
             if db_item:
                 return "pickup", [db_item]
         return "pickup", [{"type": "item_name", "value": potential_item_name}]
@@ -158,8 +162,9 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
         
         # Match item
         item_entity = None
-        if db_game_entities.get("item"):
-            item_entity = _find_matching_db_entity(item_text_name, db_game_entities["item"], "item")
+        item_list = db_game_entities.get("item")
+        if item_list:
+            item_entity = _find_matching_db_entity(item_text_name, item_list, "item")
         
         if item_entity:
             entities.append(item_entity)
@@ -169,8 +174,9 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
         # Match target if exists
         if target_text_name:
             target_entity = None
-            if db_game_entities.get("npc"): # Assuming targets are NPCs
-                target_entity = _find_matching_db_entity(target_text_name, db_game_entities["npc"], "npc") # type: "npc"
+            npc_list_for_item_target = db_game_entities.get("npc")
+            if npc_list_for_item_target: # Assuming targets are NPCs
+                target_entity = _find_matching_db_entity(target_text_name, npc_list_for_item_target, "npc") # type: "npc"
             
             if target_entity:
                  # Standardize to target_name for generic processing, but add original type and id
@@ -190,8 +196,9 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
 
         # Match skill (if db_game_entities['skill'] was populated)
         skill_entity = None
-        if db_game_entities.get("skill"):
-            skill_entity = _find_matching_db_entity(skill_text_name, db_game_entities["skill"], "skill")
+        skill_list = db_game_entities.get("skill")
+        if skill_list:
+            skill_entity = _find_matching_db_entity(skill_text_name, skill_list, "skill")
         
         if skill_entity:
             entities.append(skill_entity)
@@ -200,8 +207,9 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
 
         if target_text_name:
             target_entity = None
-            if db_game_entities.get("npc"): # Assuming targets are NPCs
-                target_entity = _find_matching_db_entity(target_text_name, db_game_entities["npc"], "npc")
+            npc_list_for_skill_target = db_game_entities.get("npc")
+            if npc_list_for_skill_target: # Assuming targets are NPCs
+                target_entity = _find_matching_db_entity(target_text_name, npc_list_for_skill_target, "npc")
             
             if target_entity:
                 entities.append({"type": "target_name", "id": target_entity["id"], "name": target_entity["name"], "original_type": "npc"})
@@ -216,13 +224,15 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
     if match:
         potential_search_term = match.group(1).strip()
         # Try to match against locations first
-        if db_game_entities.get("location"):
-            db_loc = _find_matching_db_entity(potential_search_term, db_game_entities["location"], "location")
+        location_list_for_search = db_game_entities.get("location")
+        if location_list_for_search:
+            db_loc = _find_matching_db_entity(potential_search_term, location_list_for_search, "location")
             if db_loc: # If it's a known location name
                 return "search", [db_loc] # Entity type is "location"
         # Try to match against items
-        if db_game_entities.get("item"):
-            db_item = _find_matching_db_entity(potential_search_term, db_game_entities["item"], "item")
+        item_list_for_search = db_game_entities.get("item")
+        if item_list_for_search:
+            db_item = _find_matching_db_entity(potential_search_term, item_list_for_search, "item")
             if db_item: # If it's a known item name
                  return "search", [db_item] # Entity type is "item"
         # Fallback if not a known location or item
@@ -234,16 +244,19 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
     if match:
         potential_target_name = match.group(1).strip()
         # Order of checking matters: NPCs, then Items, then Locations as a broader category
-        if db_game_entities.get("npc"):
-            db_npc = _find_matching_db_entity(potential_target_name, db_game_entities["npc"], "npc")
+        npc_list_for_look = db_game_entities.get("npc")
+        if npc_list_for_look:
+            db_npc = _find_matching_db_entity(potential_target_name, npc_list_for_look, "npc")
             if db_npc:
                 return "look", [db_npc]
-        if db_game_entities.get("item"):
-            db_item = _find_matching_db_entity(potential_target_name, db_game_entities["item"], "item")
+        item_list_for_look = db_game_entities.get("item")
+        if item_list_for_look:
+            db_item = _find_matching_db_entity(potential_target_name, item_list_for_look, "item")
             if db_item:
                 return "look", [db_item]
-        if db_game_entities.get("location"): # Could be a specific feature in a location
-            db_loc = _find_matching_db_entity(potential_target_name, db_game_entities["location"], "location")
+        location_list_for_look = db_game_entities.get("location")
+        if location_list_for_look: # Could be a specific feature in a location
+            db_loc = _find_matching_db_entity(potential_target_name, location_list_for_look, "location")
             if db_loc:
                 return "look", [db_loc]
         # Fallback

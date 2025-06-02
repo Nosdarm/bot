@@ -1,6 +1,7 @@
 # bot/game/action_processor.py (updated process method implementation for 'move')
 import json
-from typing import Dict, Any, Optional, List
+import traceback
+from typing import Dict, Any, Optional, List, Tuple
 
 # Import models
 from bot.game.models.game_state import GameState
@@ -261,7 +262,7 @@ class ActionProcessor:
                                 event_manager: EventManager,
                                 rule_engine: RuleEngine,
                                 openai_service: OpenAIService,
-                                party_actions_data: List[Tuple[str, str]], # List[(character_id, collected_actions_json_string)]
+                                party_actions_data: List[Tuple[str, str]],  # List[(character_id, collected_actions_json_string)]
                                 ctx_channel_id_fallback: int
                                 ) -> Dict[str, Any]:
         """
@@ -279,7 +280,7 @@ class ActionProcessor:
             if not character:
                 print(f"ActionProcessor: Character {character_id} not found during party processing. Skipping.")
                 all_individual_results.append({
-                    "character_id": character_id, "success": False, 
+                    "character_id": character_id, "success": False,
                     "message": "Character not found.", "state_changed": False
                 })
                 continue
@@ -287,7 +288,7 @@ class ActionProcessor:
             if not collected_actions_json_string or collected_actions_json_string.strip() == "[]":
                 print(f"ActionProcessor: No actions collected for character {character.name} ({character_id}). Skipping.")
                 all_individual_results.append({
-                    "character_id": character_id, "success": True, 
+                    "character_id": character_id, "success": True,
                     "message": "No actions submitted.", "state_changed": False
                 })
                 continue
@@ -297,7 +298,7 @@ class ActionProcessor:
                 if not isinstance(actions_list, list):
                     print(f"ActionProcessor: Parsed actions for {character.name} is not a list. Found: {type(actions_list)}. Skipping.")
                     all_individual_results.append({
-                        "character_id": character_id, "success": False, 
+                        "character_id": character_id, "success": False,
                         "message": "Malformed actions data (not a list).", "state_changed": False
                     })
                     continue
@@ -319,7 +320,7 @@ class ActionProcessor:
                             "message": "Action intent missing.", "state_changed": False
                         })
                         continue
-                    
+
                     # Determine context channel for this specific action
                     # Prefer location channel, fallback to the one passed from PartyManager
                     char_location = await loc_manager.get_location(character.current_location_id, game_state.guild_id)
@@ -329,7 +330,7 @@ class ActionProcessor:
                             ctx_channel_id_for_action = int(char_location.channel_id)
                         except ValueError:
                             print(f"ActionProcessor: Invalid channel_id '{char_location.channel_id}' for location {char_location.id}. Using fallback.")
-                    
+
                     print(f"ActionProcessor: Calling self.process for {character.name} - Action: {action_type}, Data: {action_data}, Orig: '{original_text}'")
                     single_action_result = await self.process(
                         game_state=game_state,

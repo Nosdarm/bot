@@ -2,6 +2,7 @@ import asyncio
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 import json # For Character.собранные_действия_JSON
+from typing import Optional, List # Added Optional and List
 
 from bot.game.managers.party_manager import PartyManager
 from bot.game.models.party import Party
