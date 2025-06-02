@@ -355,19 +355,19 @@ class CharacterManager:
             'status_effects': [], # list
             'level': level,
             'experience': experience,
-            'unspent_xp': unspent_xp
+            'unspent_xp': unspent_xp,
+            'collected_actions_json': None # Default for new character
             # ... другие поля из модели Character ...
         }
-
 
         # Преобразуем в JSON для сохранения в DB
         sql = """
         INSERT INTO players (
             id, discord_user_id, name, guild_id, location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
-            hp, max_health, is_alive, status_effects, level, experience, unspent_xp
+            hp, max_health, is_alive, status_effects, level, experience, unspent_xp, collected_actions_json
             -- , ... другие колонки ...
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Убедитесь, что порядок параметров соответствует колонкам в SQL
         db_params = (
@@ -388,7 +388,8 @@ class CharacterManager:
             json.dumps(data['status_effects']),
             data['level'],
             data['experience'],
-            data['unspent_xp']
+            data['unspent_xp'],
+            data['collected_actions_json'] # Add this value
             # ... другие параметры ...
         )
 
@@ -478,8 +479,8 @@ class CharacterManager:
              # INSERT OR REPLACE SQL для обновления существующих или вставки новых
              upsert_sql = '''
              INSERT OR REPLACE INTO players
-             (id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, level, experience, unspent_xp)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             (id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, level, experience, unspent_xp, collected_actions_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              '''
              data_to_upsert = []
              upserted_char_ids: Set[str] = set() # Track IDs that were successfully prepared for upsert
@@ -511,6 +512,7 @@ class CharacterManager:
                      level = getattr(char, 'level', 1)
                      experience = getattr(char, 'experience', 0)
                      unspent_xp = getattr(char, 'unspent_xp', 0)
+                     collected_actions_json = getattr(char, 'collected_actions_json', None) # Should be string or None
 
                      # Ensure required fields for DB exist and have correct types before dumping
                      if not isinstance(inventory, list):
@@ -557,6 +559,7 @@ class CharacterManager:
                          level,
                          experience,
                          unspent_xp,
+                         collected_actions_json,
                      ))
                      upserted_char_ids.add(char_id) # Track IDs that were prepared for upsert
 
@@ -617,7 +620,7 @@ class CharacterManager:
         try:
             # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
             sql = '''
-            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, race, mp, attack, defense, level, experience, unspent_xp
+            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, race, mp, attack, defense, level, experience, unspent_xp, collected_actions_json
             FROM players WHERE guild_id = ?
             ''' # Added new columns from players table
             rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
@@ -681,6 +684,10 @@ class CharacterManager:
                 data['action_queue'] = json.loads(data.get('action_queue') or '[]') if isinstance(data.get('action_queue'), (str, bytes)) else []
                 data['state_variables'] = json.loads(data.get('state_variables') or '{}') if isinstance(data.get('state_variables'), (str, bytes)) else {}
                 data['status_effects'] = json.loads(data.get('status_effects') or '[]') if isinstance(data.get('status_effects'), (str, bytes)) else []
+                # collected_actions_json is expected to be TEXT, store as is (string or None)
+                # Character.from_dict will handle parsing if it's a JSON string.
+                data['collected_actions_json'] = data.get('collected_actions_json')
+
 
                 # Convert is_alive from DB integer (0 or 1) to boolean
                 is_alive_db = data.get('is_alive')

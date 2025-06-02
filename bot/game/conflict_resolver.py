@@ -38,7 +38,7 @@ class ConflictResolver:
               f"notification_service: {notification_service}, "
               f"pending_manual_resolutions store initialized.")
 
-    def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    async def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]], context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Analyzes a map of player actions to identify potential conflicts.
         If a conflict requires manual resolution, it calls prepare_for_manual_resolution.
@@ -111,7 +111,8 @@ class ConflictResolver:
                 else:
                     # For automatic, we might resolve immediately or queue it.
                     # For now, let's assume immediate resolution attempt.
-                    resolved_auto_conflict = self.resolve_conflict_automatically(current_conflict_details)
+                    # Pass context to resolve_conflict_automatically if it needs it (e.g. for guild_id)
+                    resolved_auto_conflict = await self.resolve_conflict_automatically(current_conflict_details, context=context)
                     processed_conflict_results.append(resolved_auto_conflict)
         
         # Example for "contested_resource_grab" (manual)
@@ -130,7 +131,7 @@ class ConflictResolver:
 
         return processed_conflict_results
 
-    def resolve_conflict_automatically(self, conflict: Dict[str, Any]) -> Dict[str, Any]:
+    async def resolve_conflict_automatically(self, conflict: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Attempts to resolve a given conflict automatically based on rules.
 
@@ -184,141 +185,105 @@ class ConflictResolver:
 
         # This is highly dependent on RuleEngine and the specific rule structure
         auto_res_config = rule.get("automatic_resolution", {})
-        config_check_type = auto_res_config.get("check_type") # This is the key for RuleEngine's _rules_data.checks
+        # The 'check_type' from rules_config will be passed to RuleEngine.resolve_check
+        rule_engine_check_type = auto_res_config.get("check_type")
 
-        if not config_check_type:
+        if not rule_engine_check_type:
             conflict["status"] = "resolution_failed_no_check_type"
             conflict["outcome"] = {"description": "Automatic resolution rule is missing 'check_type'."}
             return conflict
 
-        involved_players = conflict.get("involved_players", [])
-        if not involved_players:
+        involved_player_ids = conflict.get("involved_players", [])
+        if not involved_player_ids: # Should not happen if conflict is well-formed
             conflict["status"] = "resolution_failed_no_players"
-            conflict["outcome"] = {"description": "No players involved in the conflict."}
+            return conflict
+        
+        # For RuleEngine.resolve_check, we need actor_id, actor_type, and optionally target_id, target_type.
+        # These should ideally come from the actions that formed the conflict or be inferred.
+        # For simplicity, assume the first player is the "actor" and the second is the "target" if present.
+        # Entity types need to be known (e.g., "Character", "NPC").
+        # This information might need to be passed in `conflict['details']` or the `context`.
+        
+        actor_id = involved_player_ids[0]
+        # Assuming "Character" type for simplicity. This should be more robust.
+        actor_type = conflict.get("details", {}).get("actions", [{}])[0].get("entity_type", "Character") 
+        
+        target_id = None
+        target_type = None
+        if len(involved_player_ids) > 1:
+            target_id = involved_player_ids[1]
+            target_type = conflict.get("details", {}).get("actions", [{}, {}])[1].get("entity_type", "Character")
+
+        # The 'context' for resolve_check should contain guild_id and any other relevant info
+        # The 'context' passed to this method (resolve_conflict_automatically) should have guild_id.
+        rule_engine_context = context if context else {}
+        if 'guild_id' not in rule_engine_context and 'guild_id' in conflict.get('details', {}): # Try to get from conflict if not in direct context
+            rule_engine_context['guild_id'] = conflict['details']['guild_id']
+
+        if not self.rule_engine or not hasattr(self.rule_engine, 'resolve_check'):
+            conflict["status"] = "resolution_failed_rule_engine_unavailable"
+            conflict["outcome"] = {"description": "RuleEngine or resolve_check method is not available."}
+            print("Error: RuleEngine or resolve_check not available for automatic conflict resolution.")
             return conflict
 
-        # --- Prepare for RuleEngine.resolve_check ---
-        # For opposed checks, we need at least two players.
-        # For single-entity checks against a DC, we need one.
-        
-        actor_id = involved_players[0] # By convention, first player is the primary actor
-        # TODO: Determine actor_type (Character/NPC). For now, assume Character. This needs to come from player_actions_map or a character lookup.
-        actor_type = "Character" 
-        
-        target_id = involved_players[1] if len(involved_players) > 1 else None
-        target_type = "Character" if target_id else None # Assume Character if target exists
+        # Call RuleEngine's resolve_check
+        # RuleEngine.resolve_check is async as per previous subtask.
+        check_result = await self.rule_engine.resolve_check(
+            check_type=rule_engine_check_type,
+            entity_doing_check_id=actor_id,
+            entity_doing_check_type=actor_type,
+            target_entity_id=target_id,
+            target_entity_type=target_type,
+            # difficulty_dc might come from rule_definition or be inherent to the check_type in RuleEngine
+            difficulty_dc=auto_res_config.get('difficulty_dc'), 
+            context=rule_engine_context 
+        )
 
-        # Context for RuleEngine.resolve_check might include specific modifiers from conflict rule
-        # or situational modifiers from the game state (not implemented here yet).
-        # The `actor_check_details` and `target_check_details` from rules_config
-        # should guide what's passed or how RuleEngine's check_config is structured.
-        # For instance, `skill_or_stat_to_use` from rules_config could be passed in `context`
-        # if `config_check_type` in RuleEngine is generic.
-        
-        # For now, we assume `config_check_type` (e.g., "initiative_check") in RuleEngine's
-        # config already defines which stats/skills to use, or `resolve_check` can infer them.
-        # If `rules_config.automatic_resolution.actor_check_details.skill_or_stat_to_use` needs
-        # to be passed to `resolve_check`, it would go into the `context` argument.
-
-        # Placeholder: Directly call RuleEngine.resolve_check if it's async
-        # If RuleEngine is not async, this needs to be handled differently.
-        # For now, let's assume a synchronous call or that an async wrapper exists if needed.
-        
-        # This part is a conceptual placeholder for calling the RuleEngine.
-        # Actual implementation depends on whether RuleEngine.resolve_check is async
-        # and how it expects character data (IDs are fine, it fetches data).
-        
-        # --- Simulate calling RuleEngine for the actor ---
-        # This call is conceptual. In a real async setup:
-        # actor_check_result = await self.rule_engine.resolve_check(...)
-        actor_check_result_payload = { # Mocking RuleEngine's DetailedCheckResult
-            "total_roll_value": 15, "is_success": True, "outcome": "SUCCESS", 
-            "description": "Actor check placeholder", "rolls": [10], "modifier_applied": 5
-        }
-        print(f"Simulating RuleEngine check for actor {actor_id} using check type '{config_check_type}'. Result: {actor_check_result_payload['total_roll_value']}")
-
-        actor_roll = actor_check_result_payload["total_roll_value"]
+        # Process the DetailedCheckResult from RuleEngine
         final_outcome_key = "tie" # Default
         winner_id = None
 
-        if auto_res_config.get("check_type") == "opposed_check" or len(involved_players) > 1:
-            if not target_id:
-                conflict["status"] = "resolution_failed_no_target_for_opposed_check"
-                conflict["outcome"] = {"description": "Opposed check requires a target."}
-                return conflict
+        if check_result.is_success: # Actor succeeded against DC or won opposed check
+            # This logic might need to be more nuanced based on how RuleEngine's DetailedCheckResult.outcome is set
+            # For an opposed check, is_success might mean the actor won.
+            # We might need a specific field from check_result like check_result.winner_id
+            # For now, assume is_success for the primary actor means they "win" the conflict context.
+            final_outcome_key = "actor_wins" 
+            winner_id = actor_id
+            if check_result.outcome == "CRITICAL_SUCCESS": # Example: if RuleEngine sets this
+                 final_outcome_key = "actor_crit_wins" # Or similar specific outcome key
+        elif target_id: # If there was a target, and actor didn't succeed, assume target wins (simplification)
+            final_outcome_key = "target_wins"
+            winner_id = target_id
+            if check_result.outcome == "CRITICAL_FAILURE": # Actor critically failed
+                final_outcome_key = "target_crit_wins" # Or similar
+        # Else, it's a tie or failure against a DC with no specific target "winner"
 
-            # --- Simulate calling RuleEngine for the target (for opposed checks) ---
-            target_check_result_payload = { # Mocking RuleEngine's DetailedCheckResult
-                 "total_roll_value": 12, "is_success": True, "outcome": "SUCCESS", 
-                 "description": "Target check placeholder", "rolls": [7], "modifier_applied": 5
-            }
-            print(f"Simulating RuleEngine check for target {target_id} using check type '{config_check_type}'. Result: {target_check_result_payload['total_roll_value']}")
-            target_roll = target_check_result_payload["total_roll_value"]
+        # Map the RuleEngine outcome to conflict resolution effects
+        resolved_outcome_config = auto_res_config.get("outcome_rules", {}).get("outcomes", {}).get(final_outcome_key, {})
+        if not resolved_outcome_config and final_outcome_key == "tie": # Fallback for tie if not explicitly defined
+            resolved_outcome_config = auto_res_config.get("outcome_rules", {}).get("outcomes", {}).get(
+                auto_res_config.get("outcome_rules", {}).get("tie_breaker_rule", "tie"), {} # Use tie_breaker_rule if defined
+            )
 
-            outcome_rules = auto_res_config.get("outcome_rules", {})
-            if outcome_rules.get("higher_wins", True):
-                if actor_roll > target_roll:
-                    final_outcome_key = "actor_wins"
-                    winner_id = actor_id
-                elif target_roll > actor_roll:
-                    final_outcome_key = "target_wins"
-                    winner_id = target_id
-                else: # Tie
-                    # Apply tie-breaker rule
-                    tie_breaker = outcome_rules.get("tie_breaker_rule", "random")
-                    if tie_breaker == "actor_preference":
-                        final_outcome_key = "actor_wins" # Could map to a specific "tie_actor_wins" if defined
-                        winner_id = actor_id
-                    elif tie_breaker == "target_preference":
-                        final_outcome_key = "target_wins" # Could map to "tie_target_wins"
-                        winner_id = target_id
-                    elif tie_breaker == "random":
-                        if self.rule_engine and hasattr(self.rule_engine, "resolve_dice_roll"): # Check if rule_engine can roll
-                             # conceptual: tie_roll = await self.rule_engine.resolve_dice_roll("1d2") 
-                             # if tie_roll['total'] == 1: final_outcome_key = "actor_wins"; winner_id = actor_id
-                             # else: final_outcome_key = "target_wins"; winner_id = target_id
-                            print("Simulating random tie-break: actor wins")
-                            final_outcome_key = "actor_wins"; winner_id = actor_id
-                        else: # Fallback if no dice roller
-                            final_outcome_key = "actor_wins"; winner_id = actor_id # Default to actor on random tie without roller
-                    # TODO: Implement "stat_comparison:stat_name" tie-breaker
-                    else: # Default tie outcome if complex tie-breaker not handled
-                        final_outcome_key = "tie" 
-                        # Winner might remain None or be determined by a default if 'tie' outcome implies a winner
-            else: # Lower wins (less common)
-                if actor_roll < target_roll: final_outcome_key = "actor_wins"; winner_id = actor_id
-                elif target_roll < actor_roll: final_outcome_key = "target_wins"; winner_id = target_id
-                else: # Tie, handle as above
-                    final_outcome_key = "tie" 
-        
-        else: # Single entity check against a DC (or no DC, success always)
-            outcome_rules = auto_res_config.get("outcome_rules", {})
-            success_threshold = outcome_rules.get("success_threshold")
-            if success_threshold is not None:
-                if actor_roll >= success_threshold:
-                    final_outcome_key = "actor_wins" # Represents success for the actor
-                    winner_id = actor_id
-                else:
-                    final_outcome_key = "target_wins" # Represents failure for the actor (or "environment wins")
-            else: # No specific threshold, assume success or use a default outcome
-                final_outcome_key = "actor_wins" 
-                winner_id = actor_id
-                print(f"Warning: No success_threshold for non-opposed check '{config_check_type}'. Defaulting to actor_wins.")
 
-        # Get the descriptive outcome
-        resolved_outcome_details = auto_res_config.get("outcome_rules", {}).get("outcomes", {}).get(final_outcome_key, {})
-        
         conflict["status"] = "resolved_automatically"
         conflict["outcome"] = {
-            "winner_id": winner_id,
-            "actor_roll": actor_roll,
-            "target_roll": target_roll if target_id else None,
+            "winner_id": winner_id, # This might be determined by RuleEngine or derived here
+            "actor_roll_details": { # Store what RuleEngine returned
+                "total": check_result.total_roll_value,
+                "rolls": check_result.rolls,
+                "modifier": check_result.modifier_applied
+            },
+            # If opposed, RuleEngine's result might need to encapsulate both rolls or be called twice.
+            # For now, assume resolve_check handles opposed nature and DetailedCheckResult reflects primary actor's view.
+            "target_roll_details": None, # Placeholder
             "outcome_key": final_outcome_key,
-            "description": resolved_outcome_details.get("description", "Outcome automatically resolved."),
-            "effects": resolved_outcome_details.get("effects", [])
+            "description": resolved_outcome_config.get("description", check_result.description),
+            "effects": resolved_outcome_config.get("effects", []) # Effects from conflict config, not RuleEngine
         }
         
-        print(f"Conflict {conflict_id} ({conflict_type_id}) automatically resolved. Outcome: {final_outcome_key}, Winner: {winner_id}. Details: {conflict['outcome']}")
+        print(f"Conflict {conflict_id} ({conflict_type_id}) automatically resolved by RuleEngine. Outcome: {final_outcome_key}, Winner: {winner_id}. Details: {conflict['outcome']}")
         return conflict
 
     def prepare_for_manual_resolution(self, conflict: Dict[str, Any]) -> Dict[str, Any]:
