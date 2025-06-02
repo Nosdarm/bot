@@ -77,6 +77,7 @@ class CharacterActionProcessor:
                  # Процессоры, которые могут понадобиться для триггеров в complete_action
                  event_stage_processor: Optional['EventStageProcessor'] = None,
                  event_action_processor: Optional['EventActionProcessor'] = None, # Если действие триггерит действие события
+                 game_log_manager: Optional['GameLogManager'] = None, # Added GameLogManager
                 ):
         print("Initializing CharacterActionProcessor...")
         # --- Сохранение всех переданных аргументов в self._... ---
@@ -85,6 +86,7 @@ class CharacterActionProcessor:
         self._send_callback_factory = send_callback_factory
 
         # Опциональные
+        self._game_log_manager = game_log_manager # Store GameLogManager
         self._item_manager = item_manager
         self._location_manager = location_manager
         self._rule_engine = rule_engine
@@ -136,39 +138,36 @@ class CharacterActionProcessor:
 
     # Метод для начала действия (ПЕРЕНЕСЕН ИЗ CharacterManager)
     # Вызывается из CommandRouter или других мест, инициирующих действие.
-    async def start_action(self, character_id: str, action_data: Dict[str, Any], **kwargs) -> bool:
+    async def start_action(self, character_id: str, action_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """
         Начинает новое ИНДИВИДУАЛЬНОЕ действие для персонажа.
-        action_data: Словарь с данными действия (type, target_id, callback_data и т.т.).
-        kwargs: Дополнительные менеджеры/сервисы, переданные при вызове (например, CommandRouter передает свои менеджеры из __init__).
-        Эти менеджеры могут быть использованы для валидации или расчета длительности.
-        Возвращает True, если действие успешно начато, False иначе (напр., персонаж занят или валидация не пройдена).
+        action_data: Словарь с данными действия (type, target_id, callback_data и т.д.).
+        kwargs: Дополнительные менеджеры/сервисы.
+        Возвращает Dict: {"success": bool, "modified_entities": List[Any]}
         """
+        modified_entities: List[Any] = []
         print(f"CharacterActionProcessor: Attempting to start action for character {character_id}: {action_data.get('type')}")
-        # Получаем персонажа из менеджера персонажей (это синхронный вызов)
+        
         char = self._character_manager.get_character(character_id)
         if not char:
              print(f"CharacterActionProcessor: Error starting action: Character {character_id} not found.")
-             return False
+             return {"success": False, "modified_entities": modified_entities}
 
         action_type = action_data.get('type')
         if not action_type:
              print(f"CharacterActionProcessor: Error starting action: action_data is missing 'type'.")
-             await self._notify_character(character_id, f"❌ Не удалось начать действие: не указан тип действия.") # Пример
-             return False
+             await self._notify_character(character_id, f"❌ Не удалось начать действие: не указан тип действия.")
+             return {"success": False, "modified_entities": modified_entities}
 
-        # Проверяем, занят ли персонаж. Если занят, пытаемся добавить в очередь (если это разрешено для этого типа действия).
         if self.is_busy(character_id):
              print(f"CharacterActionProcessor: Character {character_id} is busy. Cannot start new action directly.")
-             # TODO: Определить, разрешено ли добавлять этот тип действия в очередь.
-             # Если разрешено:
-             # return await self.add_action_to_queue(character_id, action_data, **kwargs) # Передаем все kwargs дальше
-             # Если не разрешено:
-             await self._notify_character(character_id, f"❌ Ваш персонаж занят и не может начать действие '{action_type}'.") # Пример уведомления
-             return False # Персонаж занят и не может начать действие сразу или добавить в очередь
+             # Placeholder: In a real scenario, add_action_to_queue would also return a similar dict.
+             # success_queued = await self.add_action_to_queue(character_id, action_data, **kwargs)
+             # For now, if busy, assume it's a failure to start *this* action immediately.
+             await self._notify_character(character_id, f"❌ Ваш персонаж занят и не может начать действие '{action_type}'.")
+             return {"success": False, "modified_entities": modified_entities}
 
-
-        # --- Валидация action_data и расчет длительности для действия, которое НАЧИНАЕТСЯ СРАЗУ ---
+        # --- Валидация action_data и расчет длительности ---
         # Получаем необходимые менеджеры из kwargs или из атрибутов __init__ процессора.
         # Используем kwargs.get(..., self._attribute) для гибкости.
         time_manager = kwargs.get('time_manager', self._time_manager)
@@ -203,16 +202,14 @@ class CharacterActionProcessor:
              target_location_id = action_data.get('target_location_id')
              if not target_location_id:
                   print(f"CharacterActionProcessor: Error starting move action: Missing target_location_id in action_data.")
-                  await self._notify_character(character_id, f"❌ Ошибка перемещения: не указана целевая локация.") # Пример
-                  return False
+                  await self._notify_character(character_id, f"❌ Ошибка перемещения: не указана целевая локация.")
+                  return {"success": False, "modified_entities": modified_entities}
 
-             # Валидация: существует ли целевая локация?
-             if location_manager and hasattr(location_manager, 'get_location_static') and location_manager.get_location_static(target_location_id) is None:
+             if location_manager and hasattr(location_manager, 'get_location_static') and location_manager.get_location_static(target_location_id) is None: #FIXME: get_location_static needs guild_id
                  print(f"CharacterActionProcessor: Error starting move action: Target location '{target_location_id}' does not exist.")
-                 await self._notify_character(character_id, f"❌ Ошибка перемещения: локация '{target_location_id}' не существует.") # Пример
-                 return False
+                 await self._notify_character(character_id, f"❌ Ошибка перемещения: локация '{target_location_id}' не существует.")
+                 return {"success": False, "modified_entities": modified_entities}
 
-             # TODO: Дополнительная валидация: доступна ли локация из текущей (через выходы)?
              # current_location_id = getattr(char, 'location_id', None)
              # if current_location_id and location_manager and hasattr(location_manager, 'get_connected_locations'):
              #      connected_locations = location_manager.get_connected_locations(current_location_id)
@@ -261,61 +258,75 @@ class CharacterActionProcessor:
 
         # --- Устанавливаем текущее действие ---
         char.current_action = action_data
-        # Помечаем персонажа как измененного через его менеджер
-        # CharacterManager._dirty_characters доступен напрямую для CharacterActionProcessor
-        self._character_manager._dirty_characters.add(character_id)
-        # Добавляем персонажа в кеш сущностей с активным действием через его менеджер
-        # CharacterManager._entities_with_active_action доступен напрямую
-        self._character_manager._entities_with_active_action.add(character_id)
+        char.current_action = action_data
+        self._character_manager.mark_character_dirty(getattr(char, 'guild_id', None), character_id) # Use mark_character_dirty
+        self._character_manager._entities_with_active_action.setdefault(getattr(char, 'guild_id', None), set()).add(character_id) # Ensure guild key exists
+        
+        if char not in modified_entities:
+            modified_entities.append(char)
+
+        success_message = f"Character {getattr(char, 'name', character_id)} started action: {action_type}."
+        print(f"CharacterActionProcessor: {success_message} Duration: {action_data['total_duration']:.1f}. Marked as dirty.")
+        
+        # Log action start
+        if self._game_log_manager:
+            log_message = f"Character {getattr(char, 'name', character_id)} started action: {action_type}."
+            related_entities_log = [{"type": "character", "id": character_id}]
+            if action_data.get('target_id'):
+                related_entities_log.append({"type": action_data.get('target_type', 'unknown'), "id": action_data.get('target_id')})
+            
+            await self._game_log_manager.log_event(
+                guild_id=getattr(char, 'guild_id', 'unknown_guild'),
+                event_type="PLAYER_ACTION_START",
+                message=success_message, # Use the prepared message
+                related_entities=related_entities_log,
+                channel_id=kwargs.get('channel_id'), # Assuming channel_id might be in kwargs
+                context_data={
+                    "action_type": action_type,
+                    "action_details": action_data,
+                    "success": True 
+                }
+            )
+        return {"success": True, "modified_entities": modified_entities, "message": success_message}
 
 
-        print(f"CharacterActionProcessor: Character {character_id} action '{action_data['type']}' started. Duration: {action_data['total_duration']:.1f}. Marked as dirty.")
-
-        # Сохранение в БД произойдет при вызове save_all_characters через PersistenceManager (вызывается WorldSimulationProcessor)
-
-        # TODO: Уведомить игрока о начале действия? Требует send_callback_factory (инжектирован)
-        # await self._notify_character(character_id, f"Вы начали действие: '{action_type}'.") # Нужен метод _notify_character
-
-        return True # Успешно начато
-
-
-    async def add_action_to_queue(self, character_id: str, action_data: Dict[str, Any], **kwargs) -> bool:
+    async def add_action_to_queue(self, character_id: str, action_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """
+        Добавляет новое ИНДИВИДУАЛЬНОЕ действие в очередь персонажа.
+        kwargs: Дополнительные менеджеры/сервисы для валидации или расчета длительности.
+        Возвращает Dict: {"success": bool, "modified_entities": List[Any]}
+        """
+        modified_entities: List[Any] = []
         """
         Добавляет новое ИНДИВИДУАЛЬНОЕ действие в очередь персонажа.
         kwargs: Дополнительные менеджеры/сервисы для валидации или расчета длительности.
         Возвращает True, если действие успешно добавлено, False иначе.
         """
         print(f"CharacterActionProcessor: Attempting to add action to queue for character {character_id}: {action_data.get('type')}")
-        # Получаем персонажа из менеджера персонажей
-        char = self._character_manager.get_character(character_id)
+        char = self._character_manager.get_character(character_id) # TODO: Needs guild_id
         if not char:
              print(f"CharacterActionProcessor: Error adding action to queue: Character {character_id} not found.")
-             return False
+             return {"success": False, "modified_entities": modified_entities}
 
         action_type = action_data.get('type')
         if not action_type:
              print(f"CharacterActionProcessor: Error adding action to queue: action_data is missing 'type'.")
-             await self._notify_character(character_id, f"❌ Не удалось добавить действие в очередь: не указан тип действия.") # Пример
-             return False
+             await self._notify_character(character_id, f"❌ Не удалось добавить действие в очередь: не указан тип действия.")
+             return {"success": False, "modified_entities": modified_entities}
 
-        # TODO: Валидация action_data для добавления в очередь (может быть менее строгой, чем для start_action)
-        # Получаем необходимые менеджеры из kwargs или из атрибутов __init__ процессора.
         rule_engine = kwargs.get('rule_engine', self._rule_engine)
-        location_manager = kwargs.get('location_manager', self._location_manager) # Получаем LocationManager для валидации перемещения
-
+        location_manager = kwargs.get('location_manager', self._location_manager) 
 
         if action_type == 'move':
              target_location_id = action_data.get('target_location_id')
              if not target_location_id:
                   print(f"CharacterActionProcessor: Error adding move action to queue: Missing target_location_id in action_data.")
-                  await self._notify_character(character_id, f"❌ Не удалось добавить перемещение в очередь: не указана целевая локация.") # Пример
-                  return False
-             # Облегченная валидация: существует ли целевая локация? (опционально для очереди)
-             if location_manager and hasattr(location_manager, 'get_location_static') and location_manager.get_location_static(target_location_id) is None:
+                  await self._notify_character(character_id, f"❌ Не удалось добавить перемещение в очередь: не указана целевая локация.")
+                  return {"success": False, "modified_entities": modified_entities}
+             if location_manager and hasattr(location_manager, 'get_location_static') and location_manager.get_location_static(target_location_id) is None: # FIXME: get_location_static needs guild_id
                  print(f"CharacterActionProcessor: Error adding move action to queue: Target location '{target_location_id}' does not exist.")
-                 await self._notify_character(character_id, f"❌ Не удалось добавить перемещение в очередь: локация '{target_location_id}' не существует.") # Пример
-                 return False
-             # Сохраняем target_location_id в callback_data для complete_action
+                 await self._notify_character(character_id, f"❌ Не удалось добавить перемещение в очередь: локация '{target_location_id}' не существует.")
+                 return {"success": False, "modified_entities": modified_entities}
              if 'callback_data' not in action_data or not isinstance(action_data['callback_data'], dict):
                  action_data['callback_data'] = {}
              action_data['callback_data']['target_location_id'] = action_data.get('target_location_id')
@@ -349,20 +360,33 @@ class CharacterActionProcessor:
              char.action_queue = [] # Создаем пустую очередь, если нет или некорректная
 
         char.action_queue.append(action_data)
-        # Помечаем персонажа как измененного через его менеджер
-        self._character_manager._dirty_characters.add(character_id)
-        # Персонаж считается "активным" для тика, пока у него есть очередь или действие.
-        self._character_manager._entities_with_active_action.add(character_id)
-
-
-        print(f"CharacterActionProcessor: Action '{action_data['type']}' added to queue for character {character_id}. Queue length: {len(char.action_queue)}. Marked as dirty.")
-
-        # Сохранение в БД произойдет при вызове save_all_characters через PersistenceManager
-
-        # TODO: Уведомить игрока об успешном добавлении в очередь? Требует send_callback_factory (инжектирован)
-        # await self._notify_character(character_id, f"Действие '{action_type}' добавлено в вашу очередь.") # Пример
-
-        return True # Успешно добавлено в очередь
+        char.action_queue.append(action_data)
+        self._character_manager.mark_character_dirty(getattr(char, 'guild_id', None), character_id)
+        self._character_manager._entities_with_active_action.setdefault(getattr(char, 'guild_id', None), set()).add(character_id)
+        
+        if char not in modified_entities:
+            modified_entities.append(char)
+        
+        queue_message = f"Action '{action_data['type']}' added to queue for character {getattr(char, 'name', character_id)}. Queue length: {len(char.action_queue)}."
+        print(f"CharacterActionProcessor: {queue_message} Marked as dirty.")
+        
+        # Log action queued
+        if self._game_log_manager:
+            log_message = f"Character {getattr(char, 'name', character_id)} queued action: {action_type}."
+            related_entities_log = [{"type": "character", "id": character_id}]
+            await self._game_log_manager.log_event(
+                guild_id=getattr(char, 'guild_id', 'unknown_guild'),
+                event_type="PLAYER_ACTION_QUEUED",
+                message=queue_message, # Use the prepared message
+                related_entities=related_entities_log,
+                channel_id=kwargs.get('channel_id'),
+                context_data={
+                    "action_type": action_type,
+                    "action_details": action_data
+                }
+            )
+        # await self._notify_character(character_id, f"Действие '{action_type}' добавлено в вашу очередь.")
+        return {"success": True, "modified_entities": modified_entities, "message": queue_message}
 
 
     # Метод обработки тика для ОДНОГО персонажа (ПЕРЕНЕСЕН ИЗ CharacterManager)
@@ -435,7 +459,13 @@ class CharacterActionProcessor:
         if getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue):
              # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
              # _entities_with_active_action доступен напрямую для процессора.
-             self._character_manager._entities_with_active_action.discard(char_id)
+             # TODO: This needs guild_id. Assuming char.guild_id is available.
+             char_guild_id = getattr(char, 'guild_id', None)
+             if char_guild_id:
+                 self._character_manager._entities_with_active_action.get(char_guild_id, set()).discard(char_id)
+             else:
+                 print(f"CharacterActionProcessor (process_tick): Warning: Could not determine guild_id for char {char_id} to update active_entities set.")
+
              # print(f"CharacterActionProcessor: Character {char_id} has no more actions. Removed from active list.")
 
 
@@ -446,20 +476,25 @@ class CharacterActionProcessor:
 
     # Метод для завершения ИНДИВИДУАЛЬНОГО действия персонажа (ПЕРЕНЕСЕН ИЗ CharacterManager)
     # Вызывается из process_tick, когда действие завершено.
-    async def complete_action(self, character_id: str, completed_action_data: Dict[str, Any], **kwargs) -> None:
+    async def complete_action(self, character_id: str, completed_action_data: Dict[str, Any], **kwargs) -> List[Any]:
         """
         Обрабатывает завершение ИНДИВИДУАЛЬНОГО действия для персонажа.
         Вызывает логику завершения действия, сбрасывает current_action, начинает следующее из очереди.
-        kwargs: Дополнительные менеджеры/сервисы, переданные из WorldTick (send_callback_factory, item_manager, location_manager, etc.).
+        kwargs: Дополнительные менеджеры/сервисы, переданные из WorldTick.
+        Returns: A list of modified entity objects.
         """
+        modified_entities: List[Any] = []
         print(f"CharacterActionProcessor: Completing action for character {character_id}: {completed_action_data.get('type')}")
-        # Получаем персонажа из менеджера персонажей
+        
         char = self._character_manager.get_character(character_id)
         if not char:
              print(f"CharacterActionProcessor: Error completing action: Character {character_id} not found.")
-             return # Не можем завершить действие
+             return modified_entities 
 
-        # TODO: --- ВЫПОЛНИТЬ ЛОГИКУ ЗАВЕРШЕНИЯ ДЕЙСТВИЯ ---
+        # Add character to modified_entities by default as action completion likely changes it (current_action, queue)
+        if char not in modified_entities:
+            modified_entities.append(char)
+
         action_type = completed_action_data.get('type')
         callback_data = completed_action_data.get('callback_data', {})
         # Получаем необходимые менеджеры из kwargs или из атрибутов __init__ процессора
@@ -493,23 +528,26 @@ class CharacterActionProcessor:
 
         try:
             if action_type == 'move':
-                 # Действие перемещения завершено. Персонаж прибыл в локацию.
                  target_location_id = callback_data.get('target_location_id')
-                 old_location_id = getattr(char, 'location_id', None) # Текущая локация перед обновлением
+                 old_location_id = getattr(char, 'location_id', None) 
 
-                 # Для перемещения, LocationManager должен быть доступен для вызова триггеров
-                 if target_location_id and location_manager and hasattr(location_manager, 'handle_entity_arrival') and hasattr(location_manager, 'handle_entity_departure'): # Убедимся, что методы триггеров доступны
-                      # 1. Обновить локацию персонажа в кеше CharacterManager
-                      # NOTE: Локация обновляется только ПРИ ЗАВЕРШЕНИИ длительного действия перемещения.
-                      # Если действие мгновенное (duration <= 0), это происходит в том же тике, где оно началось.
+                 if target_location_id and location_manager and hasattr(location_manager, 'handle_entity_arrival') and hasattr(location_manager, 'handle_entity_departure'):
                       print(f"CharacterActionProcessor: Updating character {character_id} location in cache from {old_location_id} to {target_location_id}.")
-                      char.location_id = target_location_id
-                      # Помечаем персонажа как измененного через его менеджер
-                      self._character_manager._dirty_characters.add(character_id)
+                      
+                      # CharacterManager.update_character_location now returns the modified character
+                      modified_char_from_location_update = await self._character_manager.update_character_location(
+                          character_id, target_location_id, getattr(char, 'guild_id', None), **kwargs
+                      )
+                      if modified_char_from_location_update and modified_char_from_location_update not in modified_entities:
+                          # Replace char in modified_entities if it's already there, or add.
+                          try: modified_entities.remove(char) # Remove old instance if present
+                          except ValueError: pass
+                          modified_entities.append(modified_char_from_location_update)
+                          char = modified_char_from_location_update # Use the updated char object moving forward
 
-
-                      # 2. Обработать триггеры OnExit для старой локации (если она была)
-                      # Передаем все менеджеры/сервисы из kwargs, чтобы триггеры могли их использовать
+                      # TODO: LocationManager.handle_entity_departure/arrival should return modified locations
+                      # and RuleEngine.execute_triggers should propagate them.
+                      # For now, these calls won't add to modified_entities here.
                       if old_location_id: # Не вызываем OnExit, если персонаж начинал без локации
                            print(f"CharacterActionProcessor: Triggering OnExit for location {old_location_id}.")
                            await location_manager.handle_entity_departure(old_location_id, character_id, 'Character', **kwargs)
@@ -746,7 +784,8 @@ class CharacterActionProcessor:
                         if status_manager and hasattr(status_manager, 'add_status_effect_to_entity'):
                             guild_id_for_status = getattr(char, 'guild_id', None)
                             if guild_id_for_status:
-                                await status_manager.add_status_effect_to_entity(
+                                # add_status_effect_to_entity returns the StatusEffect object or None
+                                new_status_effect = await status_manager.add_status_effect_to_entity(
                                     target_id=char.id,
                                     target_type="Character",
                                     status_type="Hidden", # Standardized status type
@@ -755,7 +794,11 @@ class CharacterActionProcessor:
                                     guild_id=guild_id_for_status,
                                     **kwargs # Pass full context for other potential needs
                                 )
-                                print(f"CharacterActionProcessor: 'Hidden' status applied to {character_id}.")
+                                if new_status_effect:
+                                    if new_status_effect not in modified_entities:
+                                        modified_entities.append(new_status_effect)
+                                    # Character (char) is already added to modified_entities at the start of complete_action
+                                print(f"CharacterActionProcessor: 'Hidden' status applied to {character_id}. Status ID: {getattr(new_status_effect, 'id', 'N/A')}")
                             else:
                                 print(f"CharacterActionProcessor: Warning: Could not determine guild_id for char {character_id} to apply 'Hidden' status.")
                                 await self._notify_character(character_id, "⚠️ Could not properly apply hidden status (guild error).")
@@ -889,6 +932,30 @@ class CharacterActionProcessor:
         # Если очередь пуста после завершения действия и current_action стал None,
         # персонаж будет удален из _entities_with_active_action в конце process_tick.
         # (Логика удаления из _entities_with_active_action уже в process_tick этого процессора)
+        
+        # Log action completion
+        if self._game_log_manager:
+            log_message = f"Character {getattr(char, 'name', character_id)} completed action: {action_type}."
+            # related_entities could include target if relevant and available in completed_action_data or callback_data
+            related_entities_log = [{"type": "character", "id": character_id}]
+            if callback_data.get('target_id'):
+                 related_entities_log.append({"type": callback_data.get('target_type', 'unknown'), "id": callback_data.get('target_id')})
+
+            await self._game_log_manager.log_event(
+                guild_id=getattr(char, 'guild_id', 'unknown_guild'),
+                event_type="PLAYER_ACTION_COMPLETED",
+                message=log_message,
+                related_entities=related_entities_log,
+                channel_id=kwargs.get('channel_id'), # Assuming channel_id might be in kwargs context
+                context_data={
+                    "action_type": action_type,
+                    "completed_action_details": completed_action_data,
+                    # Include any specific results if available, e.g. if steal was successful
+                    # "outcome_details": steal_outcome if action_type == 'steal' else None 
+                }
+            )
+        
+        return modified_entities
 
 
     # Вспомогательный метод для отправки сообщений конкретному персонажу (нужен send_callback_factory)
@@ -1005,65 +1072,64 @@ class CharacterActionProcessor:
         # process_tick пометил персонажа как dirty, если прогресс изменился.
         # complete_action пометил персонажа как dirty, если действие завершилось и/или очередь изменилась.
 
-    async def process_move_action(self, character_id: str, target_location_id: str, context: Dict[str, Any]) -> bool:
+    async def process_move_action(self, character_id: str, target_location_id: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Initiates a move action for a character.
-        This method is typically called by a command handler (e.g., CommandRouter.handle_move).
+        Returns: Dict {"success": bool, "message": Optional[str], "modified_entities": List[Any]}
         """
+        modified_entities: List[Any] = []
         print(f"CharacterActionProcessor: Processing move action for char {character_id} to loc {target_location_id}.")
-        char = self._character_manager.get_character(character_id)
-        if not char:
-            print(f"CharacterActionProcessor: Error processing move: Character {character_id} not found.")
-            # No character, so cannot notify. Command handler should inform user.
-            return False
+        
+        # TODO: CharacterManager.get_character needs guild_id. This context must provide it.
+        guild_id = context.get('guild_id')
+        if not guild_id:
+            print(f"CharacterActionProcessor: Error processing move: guild_id missing in context for Character {character_id}.")
+            return {"success": False, "message": "Internal error: Guild context missing.", "modified_entities": modified_entities}
 
-        # Construct action data
+        char = self._character_manager.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterActionProcessor: Error processing move: Character {character_id} in guild {guild_id} not found.")
+            return {"success": False, "message": "Character not found.", "modified_entities": modified_entities}
+        
+        if char not in modified_entities: # Add char if found, as it might be modified by starting action
+            modified_entities.append(char)
+
         action_data = {
             'type': 'move',
             'target_location_id': target_location_id,
-            # 'total_duration' will be calculated by self.start_action using RuleEngine
-            'callback_data': {'target_location_id': target_location_id} # For complete_action
+            'callback_data': {'target_location_id': target_location_id} 
         }
 
-        # Attempt to start the action. start_action handles busy checks, duration calculation, etc.
-        # It also handles notifications for busy state.
-        # We pass the full context down, which includes all managers and the send_callback_factory.
-        action_started_or_queued = await self.start_action(character_id, action_data, **context)
+        start_action_result = await self.start_action(character_id, action_data, **context)
+        success = start_action_result.get("success", False)
+        entities_from_start = start_action_result.get("modified_entities", [])
+        for entity in entities_from_start:
+            if entity not in modified_entities:
+                modified_entities.append(entity)
 
-        if action_started_or_queued:
+        if success:
             location_manager = context.get('location_manager', self._location_manager)
-            location_name = target_location_id # Default to ID if name not found
+            location_name = target_location_id 
             if location_manager and hasattr(location_manager, 'get_location_name'):
-                # Assuming get_location_name might need guild_id from character or context
-                guild_id = getattr(char, 'guild_id', context.get('guild_id'))
-                if guild_id:
-                    name_from_manager = location_manager.get_location_name(guild_id, target_location_id)
+                char_guild_id = getattr(char, 'guild_id', guild_id) # Use guild_id from context as fallback
+                if char_guild_id:
+                    name_from_manager = location_manager.get_location_name(char_guild_id, target_location_id)
                     if name_from_manager: location_name = name_from_manager
                 else:
                     print(f"CharacterActionProcessor: Warning: Could not determine guild_id for location name lookup during move notification for char {character_id}.")
 
-
-            # Check if the action was immediately started or queued.
-            # self.start_action returns True if started or queued.
-            # We can check char.current_action to see if it's immediate.
             current_char_action = getattr(char, 'current_action', None)
+            message_to_player = f"🚶 Запрос на перемещение к локации '{location_name}' принят."
             if current_char_action and current_char_action.get('type') == 'move' and current_char_action.get('target_location_id') == target_location_id:
-                await self._notify_character(character_id, f"🚶 Вы начинаете движение к локации '{location_name}'.")
-            else: # Action was likely queued or another error occurred that start_action handled by returning False
-                 # If start_action returned True but it was queued, this message is still okay.
-                 # If start_action returned False, this notification won't be sent.
-                await self._notify_character(character_id, f"🚶 Запрос на перемещение к локации '{location_name}' принят.")
+                message_to_player = f"🚶 Вы начинаете движение к локации '{location_name}'."
             
+            await self._notify_character(character_id, message_to_player)
             print(f"CharacterActionProcessor: Move action for {character_id} to {target_location_id} successfully initiated/queued.")
-            return True
+            return {"success": True, "message": message_to_player, "modified_entities": modified_entities}
         else:
-            # start_action would have sent a notification if the character was busy.
-            # If it failed for other reasons (e.g., validation within start_action),
-            # start_action should ideally notify or this method should.
-            # For now, assuming start_action handles its own failure notifications.
             print(f"CharacterActionProcessor: Failed to start/queue move action for {character_id} to {target_location_id}.")
-            # await self._notify_character(character_id, f"❌ Не удалось начать движение к локации '{target_location_id}'.") # This might be redundant if start_action notifies.
-            return False
+            # Assuming start_action handles its own failure notifications if appropriate.
+            return {"success": False, "message": "Failed to start move action.", "modified_entities": modified_entities}
 
     async def process_steal_action(self, character_id: str, target_id: str, target_type: str, context: Dict[str, Any]) -> bool:
         """
@@ -1256,5 +1322,88 @@ class CharacterActionProcessor:
             print(f"CharacterActionProcessor: Failed to start/queue use_item action for {character_id} (item: {item_instance_id}).")
             # start_action should handle specific notifications (e.g., busy)
             return False
+
+    async def process_party_actions(
+        self,
+        game_manager: Any, 
+        guild_id: str,
+        actions_to_process: List[Dict[str, Any]], # This now expects a flat list of actions, potentially ordered
+        context: Dict[str, Any]
+        # removed party_actions_data, replaced with actions_to_process
+        # Optional[List[str]] action_order parameter is implicitly handled if actions_to_process is already ordered
+    ) -> Dict[str, Any]:
+        """
+        Processes a list of actions for party members, potentially in a specified order.
+        Saves modified entities after each individual action processing.
+        Each item in actions_to_process should be a dict like:
+        {"character_id": "id1", "action_data": {...}, "original_input_text": "...", "unique_action_id": "uuid_action_1"}
+        """
+        all_modified_entities_in_turn: List[Any] = []
+        overall_state_changed_for_party = False
+        individual_action_results = []
+
+        # The actions_to_process list is now assumed to be in the correct execution order
+        # if reordering was done by PartyManager (after ConflictResolver).
+        for action_entry in actions_to_process:
+            character_id = action_entry.get("character_id")
+            action_data_for_char = action_entry.get("action_data") 
+            original_input_text = action_entry.get("original_input_text", action_data_for_char.get("type") if action_data_for_char else "Unknown Action")
+            
+            if not character_id or not isinstance(action_data_for_char, dict):
+                print(f"CharacterActionProcessor (process_party_actions): Skipping invalid action entry: {action_entry}")
+                individual_action_results.append({
+                    "character_id": character_id, 
+                    "action_original_text": original_input_text,
+                    "success": False, 
+                    "message": "Invalid action entry structure.", 
+                    "modified_entities": []
+                })
+                continue
+
+            action_context = {**context, 'guild_id': guild_id}
+            action_result = await self.start_action(character_id, action_data_for_char, **action_context)
+            
+            action_succeeded = action_result.get("success", False)
+            entities_modified_by_action = action_result.get("modified_entities", [])
+            
+            individual_action_results.append({
+                "character_id": character_id,
+                "action_type": action_data_for_char.get("type"),
+                "action_original_text": original_input_text,
+                "success": action_succeeded,
+                "message": action_result.get("message"), 
+                "modified_entities_count": len(entities_modified_by_action)
+            })
+
+            if action_succeeded: 
+                overall_state_changed_for_party = True 
+                for entity in entities_modified_by_action:
+                    if entity not in all_modified_entities_in_turn:
+                        all_modified_entities_in_turn.append(entity)
+                
+                # Save entities modified by this specific action immediately
+                if entities_modified_by_action:
+                    print(f"CharacterActionProcessor (process_party_actions): Saving {len(entities_modified_by_action)} entities for char {character_id} action.")
+                    # Ensure game_manager has save_specific_entities and is the correct type
+                    if hasattr(game_manager, 'save_specific_entities') and callable(game_manager.save_specific_entities):
+                        await game_manager.save_specific_entities(entities_modified_by_action)
+                    else:
+                        print(f"CharacterActionProcessor (process_party_actions): ERROR - game_manager does not have save_specific_entities method.")
+
+            # NOTE: For durational actions, start_action only initiates. 
+            # Modifications often happen in complete_action, called by process_tick.
+            # The immediate save here will only save changes from start_action.
+            # Changes from complete_action would need to be saved when process_tick -> complete_action runs.
+            # This implies that WorldSimulationProcessor.process_world_tick also needs to gather
+            # modified_entities from CharacterActionProcessor.process_tick (if it were to return them)
+            # and then call game_manager.save_specific_entities. This is a larger change.
+            # For now, this fulfills saving after each call to "self.process()" equivalent (start_action).
+
+        return {
+            "success": True, # Overall success of processing the batch
+            "overall_state_changed_for_party": overall_state_changed_for_party,
+            "individual_action_results": individual_action_results,
+            "final_modified_entities_this_turn": all_modified_entities_in_turn # Entities modified by start_action calls
+        }
 
 # Конец класса CharacterActionProcessor

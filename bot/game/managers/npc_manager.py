@@ -1215,6 +1215,89 @@ class NpcManager:
     #      # self.mark_npc_dirty(guild_id_str, npc_id)
     #      print(f"NpcManager: Cleaned up dialogue state for NPC {npc_id} in guild {guild_id_str}.")
 
+    async def save_npc(self, npc: "NPC", guild_id: str) -> bool:
+        """
+        Saves a single NPC to the database using an UPSERT operation.
+        """
+        if self._db_adapter is None:
+            print(f"NpcManager: Error: DB adapter missing for guild {guild_id}. Cannot save NPC {getattr(npc, 'id', 'N/A')}.")
+            return False
+
+        guild_id_str = str(guild_id)
+        npc_id = getattr(npc, 'id', None)
+
+        if not npc_id:
+            print(f"NpcManager: Error: NPC object is missing an 'id'. Cannot save.")
+            return False
+        
+        # Ensure the NPC's internal guild_id matches the provided guild_id
+        # The NPC object from NPC.from_dict in create_npc already gets guild_id.
+        npc_internal_guild_id = getattr(npc, 'guild_id', None)
+        if str(npc_internal_guild_id) != guild_id_str:
+            print(f"NpcManager: Error: NPC {npc_id} guild_id ({npc_internal_guild_id}) does not match provided guild_id ({guild_id_str}).")
+            return False
+
+        try:
+            npc_data = npc.to_dict()
+
+            # Prepare data for DB columns based on 'npcs' table schema
+            # Columns are listed in the save_state method's SQL query
+            
+            db_params = (
+                npc_data.get('id'),
+                npc_data.get('template_id'),
+                json.dumps(npc_data.get('name_i18n', {})), # Save i18n name as JSON
+                guild_id_str, # Explicitly use the provided guild_id
+                npc_data.get('location_id'),
+                json.dumps(npc_data.get('stats', {})),
+                json.dumps(npc_data.get('inventory', [])),
+                json.dumps(npc_data.get('current_action')), # Can be None
+                json.dumps(npc_data.get('action_queue', [])),
+                npc_data.get('party_id'),
+                json.dumps(npc_data.get('state_variables', {})),
+                float(npc_data.get('health', 0.0)),
+                float(npc_data.get('max_health', 0.0)),
+                int(bool(npc_data.get('is_alive', False))),
+                json.dumps(npc_data.get('status_effects', [])),
+                int(bool(npc_data.get('is_temporary', False))),
+                npc_data.get('archetype', "commoner"),
+                json.dumps(npc_data.get('traits', [])),
+                json.dumps(npc_data.get('desires', [])),
+                json.dumps(npc_data.get('motives', [])),
+                json.dumps(npc_data.get('backstory_i18n', {})) # Save i18n backstory as JSON
+            )
+
+            upsert_sql = '''
+            INSERT OR REPLACE INTO npcs (
+                id, template_id, name, guild_id, location_id, 
+                stats, inventory, current_action, action_queue, party_id, 
+                state_variables, health, max_health, is_alive, status_effects, 
+                is_temporary, archetype, traits, desires, motives, backstory
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            '''
+            # 21 columns, 21 placeholders.
+
+            await self._db_adapter.execute(upsert_sql, db_params)
+            print(f"NpcManager: Successfully saved NPC {npc_id} for guild {guild_id_str}.")
+            
+            # If this NPC was marked as dirty, clean it from the dirty set for this guild
+            if guild_id_str in self._dirty_npcs and npc_id in self._dirty_npcs[guild_id_str]:
+                self._dirty_npcs[guild_id_str].discard(npc_id)
+                if not self._dirty_npcs[guild_id_str]: # If set becomes empty
+                    del self._dirty_npcs[guild_id_str]
+            
+            # Ensure the cached object is the one that was saved, if it's a different instance.
+            # NpcManager's cache _npcs stores NPC objects directly.
+            self._npcs.setdefault(guild_id_str, {})[npc_id] = npc
+            
+            return True
+
+        except Exception as e:
+            print(f"NpcManager: Error saving NPC {npc_id} for guild {guild_id_str}: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return False
+
 # --- Конец класса NpcManager ---
 
 print("DEBUG: npc_manager.py module loaded.")
