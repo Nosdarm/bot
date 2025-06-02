@@ -17,7 +17,8 @@ class GameLogEntry(BaseModel):
                  actor_type: Optional[str] = None, # e.g., "player", "npc", "system"
                  target_id: Optional[str] = None,
                  target_type: Optional[str] = None, # e.g., "player", "npc", "item", "location"
-                 description: str = "",
+                 description_i18n: Optional[Dict[str, str]] = None,
+                 description: Optional[str] = None, # For backward compatibility
                  details: Optional[Dict[str, Any]] = None):
         super().__init__(id)
         self.timestamp = timestamp if timestamp is not None else time.time()
@@ -27,7 +28,14 @@ class GameLogEntry(BaseModel):
         self.actor_type = actor_type
         self.target_id = target_id
         self.target_type = target_type
-        self.description = description
+        
+        if description_i18n is not None:
+            self.description_i18n = description_i18n
+        elif description is not None:
+            self.description_i18n = {"en": description}
+        else:
+            self.description_i18n = {"en": ""}
+            
         self.details = details if details is not None else {}
 
         if not self.guild_id:
@@ -38,7 +46,7 @@ class GameLogEntry(BaseModel):
             pass # Or raise ValueError("guild_id is required for GameLogEntry")
 
         if not self.description:
-            # print(f"Warning: GameLogEntry created with empty description (ID: {self.id})")
+            # print(f"Warning: GameLogEntry created with empty description_i18n (ID: {self.id})")
             pass
 
 
@@ -53,7 +61,7 @@ class GameLogEntry(BaseModel):
             "actor_type": self.actor_type,
             "target_id": self.target_id,
             "target_type": self.target_type,
-            "description": self.description,
+            "description_i18n": self.description_i18n,
             "details": self.details,
         })
         return data
@@ -72,9 +80,12 @@ class GameLogEntry(BaseModel):
             actor_type=data.get("actor_type"), # Optional, defaults to None
             target_id=data.get("target_id"), # Optional, defaults to None
             target_type=data.get("target_type"), # Optional, defaults to None
-            description=data.get("description", ""),
+            description_i18n=data.get("description_i18n"), # Will be handled if None
+            description_i18n=data.get("description_i18n"), 
+            description=data.get("description"), # For backward compatibility, __init__ will handle logic
             details=data.get("details", {}) # Default to empty dict if missing or None
         )
+        return instance
 
 # Example usage (optional, for testing)
 if __name__ == '__main__':
@@ -86,10 +97,10 @@ if __name__ == '__main__':
         "actor_type": "player",
         "target_id": "loc_forest_path_456",
         "target_type": "location",
-        "description": "Player 'Alice' (player_alice_123) used command '/move forest_path (loc_forest_path_456)'",
+        "description_i18n": {"en": "Player 'Alice' (player_alice_123) used command '/move forest_path (loc_forest_path_456)'", "ru": "Игрок 'Алиса' использовала команду '/move forest_path'"},
         "details": {"command": "/move", "args": ["forest_path"]}
     }
-    log1 = GameLogEntry(**log1_data) # Using ** to pass dict, id and timestamp will be auto-generated
+    log1 = GameLogEntry(guild_id=log1_data["guild_id"], entry_type=log1_data["entry_type"], actor_id=log1_data["actor_id"], actor_type=log1_data["actor_type"], target_id=log1_data["target_id"],target_type=log1_data["target_type"], description_i18n=log1_data["description_i18n"],details=log1_data["details"])
     print("Log 1 ID:", log1.id)
     print("Log 1 Timestamp:", log1.timestamp)
     print("Log 1 Dict:", log1.to_dict())
@@ -103,40 +114,46 @@ if __name__ == '__main__':
         "entry_type": "npc_action",
         "actor_id": "npc_goblin_789",
         "actor_type": "npc",
-        "description": "NPC 'Goblin Raider' (npc_goblin_789) moved to 'Cave Entrance'.",
+        "description": "NPC 'Goblin Raider' (npc_goblin_789) moved to 'Cave Entrance'.", # Old format for testing
         "details": {"old_location": "deep_cave", "new_location": "cave_entrance"}
     }
     log2 = GameLogEntry.from_dict(log2_source_data)
+    # Test that description was converted
+    assert log2.description_i18n == {"en": "NPC 'Goblin Raider' (npc_goblin_789) moved to 'Cave Entrance'."}
     print("\nLog 2 ID:", log2.id)
     print("Log 2 Timestamp:", log2.timestamp)
+    print("Log 2 Description (i18n):", log2.description_i18n)
     print("Log 2 Dict:", log2.to_dict())
 
-    # Minimal entry (relying on defaults)
-    log3 = GameLogEntry(guild_id="guild_minimal_3", description="System initialized.")
+    # Minimal entry (relying on defaults, using new i18n field)
+    log3 = GameLogEntry(guild_id="guild_minimal_3", description_i18n={"en": "System initialized."})
     print("\nLog 3 ID:", log3.id)
     print("Log 3 Timestamp (auto):", log3.timestamp)
+    print("Log 3 Description (i18n):", log3.description_i18n)
     print("Log 3 Type (default):", log3.entry_type)
     print("Log 3 Details (default):", log3.details)
     print("Log 3 Dict:", log3.to_dict())
 
-    # Test from_dict with missing optional fields and timestamp
+    # Test from_dict with missing optional fields and old description field
     log4_source_data = {
         "guild_id": "guild_missing_fields_4",
-        "description": "Quest started."
+        "description": "Quest started." # Old format
         # id, timestamp, entry_type, actor_id etc. are missing
     }
     log4 = GameLogEntry.from_dict(log4_source_data)
     print("\nLog 4 ID (auto):", log4.id)
+    print("Log 4 Description (i18n from old):", log4.description_i18n)
+    assert log4.description_i18n == {"en": "Quest started."}
     print("Log 4 Timestamp (auto from_dict):", log4.timestamp)
     print("Log 4 Entry Type (default from_dict):", log4.entry_type)
     print("Log 4 Actor ID (default None):", log4.actor_id)
     print("Log 4 Details (default {} from_dict):", log4.details)
     print("Log 4 Dict:", log4.to_dict())
 
-    # Test creation with explicit None for optional fields
+    # Test creation with explicit None for description_i18n (should default to {"en":""})
     log5 = GameLogEntry(
         guild_id="guild_explicit_none_5",
-        description="Test with None values",
+        description_i18n=None, # Explicitly None
         actor_id=None,
         actor_type=None,
         target_id=None,
