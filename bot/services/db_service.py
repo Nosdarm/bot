@@ -662,3 +662,142 @@ class DBService:
         except Exception as e:
             print(f"DBService: Error creating item instance for template {template_id}: {e}")
             return None
+
+    # --- Generic CRUD Operations ---
+
+    async def create_entity(self, table_name: str, data: Dict[str, Any], id_field: str = 'id') -> Optional[str]:
+        """
+        Creates an entity in the specified table.
+        Generates a UUID for the id_field if it's 'id' and not in data.
+        Handles JSON serialization for dict/list values.
+        Returns the ID of the newly created entity.
+        """
+        import uuid
+        import json
+
+        if id_field == 'id' and 'id' not in data:
+            data['id'] = str(uuid.uuid4())
+
+        processed_data = {}
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                processed_data[key] = json.dumps(value)
+            else:
+                processed_data[key] = value
+        
+        columns = ', '.join(processed_data.keys())
+        placeholders = ', '.join(['?'] * len(processed_data))
+        sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+        
+        try:
+            await self.adapter.execute(sql, tuple(processed_data.values()))
+            return data.get(id_field)
+        except Exception as e:
+            # TODO: Log the error appropriately
+            print(f"Error creating entity in {table_name}: {e}")
+            return None
+
+    async def get_entity(self, table_name: str, entity_id: str, guild_id: Optional[str] = None, id_field: str = 'id') -> Optional[Dict[str, Any]]:
+        """
+        Retrieves an entity by its ID from the specified table.
+        Handles JSON deserialization for string values that are valid JSON.
+        """
+        import json
+        sql = f"SELECT * FROM {table_name} WHERE {id_field} = ?"
+        params = (entity_id,)
+
+        if guild_id:
+            sql += " AND guild_id = ?"
+            params += (guild_id,)
+
+        row = await self.adapter.fetchone(sql, params)
+        entity = self._row_to_dict(row)
+
+        if entity:
+            for key, value in entity.items():
+                if isinstance(value, str):
+                    try:
+                        # Attempt to parse if it looks like a JSON object or array
+                        if value.startswith('{') and value.endswith('}'):
+                            entity[key] = json.loads(value)
+                        elif value.startswith('[') and value.endswith(']'):
+                            entity[key] = json.loads(value)
+                    except json.JSONDecodeError:
+                        # Not a JSON string, leave as is
+                        pass
+        return entity
+
+    async def update_entity(self, table_name: str, entity_id: str, data: Dict[str, Any], guild_id: Optional[str] = None, id_field: str = 'id') -> bool:
+        """
+        Updates an entity in the specified table.
+        Handles JSON serialization for dict/list values.
+        Returns True on success, False otherwise.
+        """
+        import json
+        if not data:
+            return False # Nothing to update
+
+        processed_data = {}
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                processed_data[key] = json.dumps(value)
+            else:
+                processed_data[key] = value
+        
+        set_clause = ', '.join([f"{key} = ?" for key in processed_data.keys()])
+        sql = f"UPDATE {table_name} SET {set_clause} WHERE {id_field} = ?"
+        
+        params = list(processed_data.values())
+        params.append(entity_id)
+
+        if guild_id:
+            sql += " AND guild_id = ?"
+            params.append(guild_id)
+
+        try:
+            # Assuming execute returns a cursor or similar object that has rowcount
+            # or the adapter's execute method itself might indicate success/failure (e.g., by rowcount or exception)
+            # For aiosqlite, execute doesn't directly return rowcount for SELECT, but for UPDATE/DELETE it can be obtained from cursor.
+            # The current adapter.execute() doesn't expose the cursor directly.
+            # Let's assume the adapter's execute method handles commit/rollback and raises an error on failure.
+            # If it returns rowcount, we can use it. If not, success is implied if no exception.
+            # For now, let's rely on the fact that an error would be raised if the update fails.
+            # To be more robust, one might need to modify the adapter or perform a check.
+            # For this implementation, we'll assume success if no exception is raised.
+            # A more direct way to check if an update occurred would be to get the cursor.rowcount.
+            # self.adapter.execute() would need to return the cursor or its rowcount.
+            # Let's modify the thought process: if execute() doesn't raise an error, we assume it's "successful"
+            # in that the command ran. Whether it updated rows depends on the WHERE clause.
+            # A common pattern is for execute to return the number of rows affected.
+            # If self.adapter.execute does not return rowcount, this function can't directly tell if a row was updated.
+            # It can only tell if the SQL command executed without error.
+            # Let's assume for now that if execute() completes, it's a success.
+            # The prompt says: "Assume success if execute completes without error."
+            await self.adapter.execute(sql, tuple(params))
+            return True
+        except Exception as e:
+            # TODO: Log the error appropriately
+            print(f"Error updating entity {entity_id} in {table_name}: {e}")
+            return False
+
+    async def delete_entity(self, table_name: str, entity_id: str, guild_id: Optional[str] = None, id_field: str = 'id') -> bool:
+        """
+        Deletes an entity by its ID from the specified table.
+        Returns True on success, False otherwise.
+        """
+        sql = f"DELETE FROM {table_name} WHERE {id_field} = ?"
+        params = [entity_id]
+
+        if guild_id:
+            sql += " AND guild_id = ?"
+            params.append(guild_id)
+
+        try:
+            # Similar to update_entity, success is assumed if execute completes without error.
+            # A more robust check might involve checking affected row count if the adapter provided it.
+            await self.adapter.execute(sql, tuple(params))
+            return True
+        except Exception as e:
+            # TODO: Log the error appropriately
+            print(f"Error deleting entity {entity_id} from {table_name}: {e}")
+            return False
