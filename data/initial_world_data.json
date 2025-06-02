@@ -1,8 +1,14 @@
 {
   "starting_area": {
     "id": "town_gate_square",
-    "name": "Площадь у городских ворот",
-    "description_template": "Вы стоите на обшарпанной булыжной площади прямо внутри главных ворот города [Название Города]. Высокие, мрачные стены замка на холме нависают над вами. Запах гниющей соломы и нечистот смешивается с едва уловимым ароматом готовящейся где-то пищи. Из-за углов ближайших лачуг выглядывают подозрительные фигуры. В воротах стоит одинокий уставший стражник.",
+    "name_i18n": {
+      "ru": "Площадь у городских ворот",
+      "en": "[EN] Square by the city gates"
+    },
+    "description_template_i18n": {
+      "ru": "Вы стоите на обшарпанной булыжной площади прямо внутри главных ворот города [Название Города]. Высокие, мрачные стены замка на холме нависают над вами. Запах гниющей соломы и нечистот смешивается с едва уловимым ароматом готовящейся где-то пищи. Из-за углов ближайших лачуг выглядывают подозрительные фигуры. В воротах стоит одинокий уставший стражник.",
+      "en": "[EN] You are standing on a shabby cobblestone square just inside the main gates of the city of [City Name]. The high, grim walls of the castle on the hill loom over you. The smell of rotting straw and filth mixes with the faint aroma of food cooking somewhere. Suspicious figures peek from around the corners of the nearest shacks. A lone, weary guard stands in the gateway."
+    },
     "exits": [
       {"direction": "север", "target_location_id": "market_square"},
       {"direction": "восток", "target_location_id": "tavern_rusty_nail"}
@@ -11,16 +17,28 @@
   "locations": [
     {
       "id": "tavern_rusty_nail",
-      "name": "Таверна 'Ржавый Гвоздь'",
-      "description_template": "Деревянная дверь со скрипом распахивается, являя взору темный и прокуренный зал таверны. Тяжелый воздух пропитан запахом пролитого пива, дешевого вина и пота. Угрюмые посетители сидят за грубо сколоченными столами, их лица едва различимы в мерцающем свете немногочисленных сальных свечей. Из кухни доносится ругань и стук посуды. Атмосфера густая, как здешняя похлебка.",
+      "name_i18n": {
+        "ru": "Таверна 'Ржавый Гвоздь'",
+        "en": "[EN] Tavern 'Rusty Nail'"
+      },
+      "description_template_i18n": {
+        "ru": "Деревянная дверь со скрипом распахивается, являя взору темный и прокуренный зал таверны. Тяжелый воздух пропитан запахом пролитого пива, дешевого вина и пота. Угрюмые посетители сидят за грубо сколоченными столами, их лица едва различимы в мерцающем свете немногочисленных сальных свечей. Из кухни доносится ругань и стук посуды. Атмосфера густая, как здешняя похлебка.",
+        "en": "[EN] The wooden door creaks open, revealing a dark and smoky tavern hall. The heavy air is saturated with the smell of spilled beer, cheap wine, and sweat. Gloomy patrons sit at roughly hewn tables, their faces barely visible in the flickering light of a few greasy candles. Swearing and the clatter of dishes can be heard from the kitchen. The atmosphere is as thick as the local stew."
+      },
       "exits": [
         {"direction": "запад", "target_location_id": "town_gate_square"}
       ]
     },
      {
       "id": "market_square",
-      "name": "Торговая Площадь",
-      "description_template": "Это место шума, суеты и обмана. Между рядами шатких лавок снуют торговцы и зеваки, выкрикивая названия своих товаров. Запахи специй, кожи, гниющих овощей и экзотических снадобий перемешиваются в хаотичный смрад. Карманники работают в толпе, а тени в подворотнях скрывают сомнительные сделки.",
+      "name_i18n": {
+        "ru": "Торговая Площадь",
+        "en": "[EN] Market Square"
+      },
+      "description_template_i18n": {
+        "ru": "Это место шума, суеты и обмана. Между рядами шатких лавок снуют торговцы и зеваки, выкрикивая названия своих товаров. Запахи специй, кожи, гниющих овощей и экзотических снадобий перемешиваются в хаотичный смрад. Карманники работают в толпе, а тени в подворотнях скрывают сомнительные сделки.",
+        "en": "[EN] This is a place of noise, bustle, and deceit. Merchants and onlookers scurry between rows of rickety stalls, shouting the names of their goods. The smells of spices, leather, rotting vegetables, and exotic potions mingle into a chaotic stench. Pickpockets work the crowd, and shadows in the alleyways conceal dubious deals."
+      },
       "exits": [
         {"direction": "юг", "target_location_id": "town_gate_square"}
       ]

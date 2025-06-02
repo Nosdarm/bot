@@ -11,7 +11,7 @@ from dataclasses import dataclass, field # Import dataclass and field
 class Character:
     id: str
     discord_user_id: int
-    name: str
+    name_i18n: Dict[str, str] # e.g., {"en": "Name", "ru": "Имя"}
     guild_id: str
     
     location_id: Optional[str] = None
@@ -81,55 +81,61 @@ class Character:
         """Creates a Character instance from a dictionary."""
         if 'guild_id' not in data:
             raise ValueError("Missing 'guild_id' key in data for Character.from_dict")
-        if 'id' not in data or 'discord_user_id' not in data or 'name' not in data:
-            raise ValueError("Missing core fields (id, discord_user_id, name) for Character.from_dict")
+        if 'id' not in data or 'discord_user_id' not in data or ('name' not in data and 'name_i18n' not in data):
+            raise ValueError("Missing core fields (id, discord_user_id, and name/name_i18n) for Character.from_dict")
+
+        data_copy = data.copy()
+
+        # Handle backward compatibility for name
+        if "name" in data_copy and "name_i18n" not in data_copy:
+            data_copy["name_i18n"] = {"en": data_copy.pop("name")}
+        elif "name" in data_copy and "name_i18n" in data_copy: # if both exist, prefer _i18n
+            data_copy.pop("name")
 
         # Populate known fields, providing defaults for new/optional ones if missing in data
         init_data = {
-            'id': data.get('id'),
-            'discord_user_id': data.get('discord_user_id'),
-            'name': data.get('name'),
-            'guild_id': data.get('guild_id'),
-            'location_id': data.get('location_id'),
-            'stats': data.get('stats', {}), # Ensure stats is at least an empty dict
-            'inventory': data.get('inventory', []),
-            'current_action': data.get('current_action'),
-            'action_queue': data.get('action_queue', []),
-            'party_id': data.get('party_id'),
-            'state_variables': data.get('state_variables', {}),
-            'hp': float(data.get('hp', 100.0)), # Ensure float
-            'max_health': float(data.get('max_health', 100.0)), # Ensure float
-            'is_alive': bool(data.get('is_alive', True)), # Ensure bool
-            'status_effects': data.get('status_effects', []),
-            'level': int(data.get('level', 1)), # Ensure int
-            'experience': int(data.get('experience', 0)), # Ensure int
-            'active_quests': data.get('active_quests', []),
+            'id': data_copy.get('id'),
+            'discord_user_id': data_copy.get('discord_user_id'),
+            'name_i18n': data_copy.get('name_i18n'),
+            'guild_id': data_copy.get('guild_id'),
+            'location_id': data_copy.get('location_id'),
+            'stats': data_copy.get('stats', {}), # Ensure stats is at least an empty dict
+            'inventory': data_copy.get('inventory', []),
+            'current_action': data_copy.get('current_action'),
+            'action_queue': data_copy.get('action_queue', []),
+            'party_id': data_copy.get('party_id'),
+            'state_variables': data_copy.get('state_variables', {}),
+            'hp': float(data_copy.get('hp', 100.0)), # Ensure float
+            'max_health': float(data_copy.get('max_health', 100.0)), # Ensure float
+            'is_alive': bool(data_copy.get('is_alive', True)), # Ensure bool
+            'status_effects': data_copy.get('status_effects', []),
+            'level': int(data_copy.get('level', 1)), # Ensure int
+            'experience': int(data_copy.get('experience', 0)), # Ensure int
+            'active_quests': data_copy.get('active_quests', []),
             
             # New spell-related fields with defaults for backward compatibility
-            'known_spells': data.get('known_spells', []),
-            'spell_cooldowns': data.get('spell_cooldowns', {}),
-            'skills': data.get('skills', {}),
+            'known_spells': data_copy.get('known_spells', []),
+            'spell_cooldowns': data_copy.get('spell_cooldowns', {}),
+            'skills': data_copy.get('skills', {}),
 
             # New ability-related fields
-            'known_abilities': data.get('known_abilities', []),
-            'ability_cooldowns': data.get('ability_cooldowns', {}),
-            'flags': data.get('flags', []),
-            'char_class': data.get('char_class'), # Defaults to None if missing, which is fine for Optional[str]
+            'known_abilities': data_copy.get('known_abilities', []),
+            'ability_cooldowns': data_copy.get('ability_cooldowns', {}),
+            'flags': data_copy.get('flags', []),
+            'char_class': data_copy.get('char_class'), # Defaults to None if missing, which is fine for Optional[str]
 
             # New fields
-            'selected_language': data.get('selected_language'),
-            'current_game_status': data.get('current_game_status'),
-            'collected_actions_json': data.get('collected_actions_json'),
-            'current_party_id': data.get('current_party_id'),
+            'selected_language': data_copy.get('selected_language'),
+            'current_game_status': data_copy.get('current_game_status'),
+            'collected_actions_json': data_copy.get('collected_actions_json'),
+            'current_party_id': data_copy.get('current_party_id'),
         }
         
         # If stats from data doesn't have health/max_health, use the top-level ones
-        if 'hp' not in init_data['stats'] and 'hp' in data : # hp might be in stats or top-level
+        if 'hp' not in init_data['stats'] and 'hp' in data_copy : # hp might be in stats or top-level
              init_data['stats']['hp'] = init_data['hp']
-        if 'max_health' not in init_data['stats'] and 'max_health' in data:
+        if 'max_health' not in init_data['stats'] and 'max_health' in data_copy:
              init_data['stats']['max_health'] = init_data['max_health']
-
-
         return cls(**init_data)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -148,7 +154,7 @@ class Character:
         return {
             "id": self.id,
             "discord_user_id": self.discord_user_id,
-            "name": self.name,
+            "name_i18n": self.name_i18n,
             "guild_id": self.guild_id,
             "location_id": self.location_id,
             "stats": self.stats,

@@ -4,8 +4,8 @@ from typing import Dict, Optional, Any, List
 @dataclass
 class Spell:
     id: str
-    name: str
-    description: str
+    name_i18n: Dict[str, str]
+    description_i18n: Dict[str, str]
     level: int
     mana_cost: int
     casting_time: float # in seconds
@@ -28,9 +28,22 @@ class Spell:
         # Dataclasses automatically handle the conversion of fields,
         # including Optional types and List/Dict types, as long as the
         # input data structure matches the field definitions.
+        
+        # Handle backward compatibility for name and description
+        data_copy = data.copy()
+        if "name" in data_copy and "name_i18n" not in data_copy:
+            data_copy["name_i18n"] = {"en": data_copy.pop("name")}
+        elif "name" in data_copy and "name_i18n" in data_copy: # If both exist, prefer _i18n
+            data_copy.pop("name")
+
+        if "description" in data_copy and "description_i18n" not in data_copy:
+            data_copy["description_i18n"] = {"en": data_copy.pop("description")}
+        elif "description" in data_copy and "description_i18n" in data_copy: # If both exist, prefer _i18n
+            data_copy.pop("description")
+            
         # For example, if 'school' is missing in 'data', it will be None.
         # If 'effects' is provided, it will be List[Dict[str, Any]].
-        return cls(**data)
+        return cls(**data_copy)
 
     def to_dict(self) -> Dict[str, Any]:
         """Converts the Spell instance to a dictionary for serialization."""
@@ -40,8 +53,8 @@ class Spell:
         # For this model, a direct field-to-key mapping is sufficient.
         return {
             "id": self.id,
-            "name": self.name,
-            "description": self.description,
+            "name_i18n": self.name_i18n,
+            "description_i18n": self.description_i18n,
             "school": self.school,
             "level": self.level,
             "mana_cost": self.mana_cost,
@@ -61,8 +74,8 @@ if __name__ == "__main__":
     # Example Usage (primarily for testing the model definition)
     example_spell_data_firebolt = {
         "id": "firebolt_v1",
-        "name": "Firebolt",
-        "description": "Hurls a small bolt of fire at a target.",
+        "name_i18n": {"en": "Firebolt", "ru": "Огненная стрела"},
+        "description_i18n": {"en": "Hurls a small bolt of fire at a target.", "ru": "Бросает небольшой сгусток огня в цель."},
         "school": "evocation",
         "level": 1,
         "mana_cost": 5,
@@ -82,8 +95,8 @@ if __name__ == "__main__":
 
     example_spell_data_mage_armor = {
         "id": "mage_armor_v1",
-        "name": "Mage Armor",
-        "description": "Surrounds the caster with a protective magical field.",
+        "name": "Mage Armor", # Old format for testing backward compatibility
+        "description": "Surrounds the caster with a protective magical field.", # Old format
         "school": "abjuration",
         "level": 1,
         "mana_cost": 10,
@@ -102,13 +115,15 @@ if __name__ == "__main__":
     spell1 = Spell.from_dict(example_spell_data_firebolt)
     spell2 = Spell.from_dict(example_spell_data_mage_armor)
 
-    print(f"Created spell: {spell1.name} (ID: {spell1.id})")
+    print(f"Created spell: {spell1.name_i18n['en']} (ID: {spell1.id})")
     print(f"Mana cost: {spell1.mana_cost}, School: {spell1.school}")
     print(f"Effects: {spell1.effects}")
     print(f"Area of Effect: {spell1.area_of_effect}") # Should be None
     print(f"Requirements: {spell1.requirements}") # Should be {'min_intelligence': 10}
 
-    print(f"\nCreated spell: {spell2.name} (ID: {spell2.id})")
+    print(f"\nCreated spell: {spell2.name_i18n['en']} (ID: {spell2.id})")
+    assert spell2.name_i18n == {"en": "Mage Armor"}
+    assert spell2.description_i18n == {"en": "Surrounds the caster with a protective magical field."}
     print(f"Target: {spell2.target_type}, Range: {spell2.range}")
     print(f"Effects: {spell2.effects}")
     print(f"Area of Effect: {spell2.area_of_effect}") # Should be None
@@ -117,8 +132,8 @@ if __name__ == "__main__":
     # Test case with explicit None for an optional field and explicit AoE
     example_spell_data_custom = {
         "id": "custom_spell_v1",
-        "name": "Custom Spell",
-        "description": "A spell with some fields explicitly set to None.",
+        "name_i18n": {"en": "Custom Spell"},
+        "description_i18n": {"en": "A spell with some fields explicitly set to None."},
         "level": 3,
         "mana_cost": 15,
         "casting_time": 1.5,
@@ -132,7 +147,7 @@ if __name__ == "__main__":
         # requirements, sfx_cast, sfx_impact are missing, will be None
     }
     spell3 = Spell.from_dict(example_spell_data_custom)
-    print(f"\nCreated spell: {spell3.name} (ID: {spell3.id})")
+    print(f"\nCreated spell: {spell3.name_i18n['en']} (ID: {spell3.id})")
     print(f"School: {spell3.school}") # Should be None
     print(f"Icon: {spell3.icon}") # Should be None
     print(f"Area of Effect: {spell3.area_of_effect}") # Should be {'shape': 'cone', 'length': 10}

@@ -14,7 +14,7 @@ class Party:
     id: str
 
     # Имя партии (может быть задано лидером или сгенерировано)
-    name: str
+    name_i18n: Dict[str, str] # e.g. {"en": "The Seekers", "ru": "Искатели"}
 
     # ID лидера партии (Optional, может быть None, если партия без лидера)
     leader_id: Optional[str] = None # ID сущности-лидера (Character ID или NPC ID)
@@ -53,9 +53,9 @@ class Party:
 
         data = {
             'id': self.id,
-            'name': self.name,
+            'name_i18n': self.name_i18n,
             'leader_id': self.leader_id,
-            'members': self.members,
+            # 'members': self.player_ids_list, # Assuming 'members' was meant to be player_ids_list
             'current_action': self.current_action,
             'action_queue': self.action_queue,
             'state_variables': self.state_variables,
@@ -75,8 +75,13 @@ class Party:
 
         # Обязательные поля
         party_id = data['id'] # Пробрасываем ошибку, если ID нет - критично
-        name = data['name'] # Пробрасываем ошибку, если имени нет
-
+        
+        name_i18n = data.get('name_i18n')
+        if name_i18n is None:
+            name = data.get('name')
+            if name is None:
+                raise ValueError("Missing 'name' or 'name_i18n' key in data for Party.from_dict")
+            name_i18n = {"en": name}
 
         # Опциональные поля с значениями по умолчанию
         leader_id = data.get('leader_id') # None по умолчанию
@@ -112,7 +117,7 @@ class Party:
 
         return Party(
             id=party_id,
-            name=name,
+            name_i18n=name_i18n,
             leader_id=leader_id,
             player_ids_list=player_ids_list_internal, # Use the processed list
             current_action=current_action,

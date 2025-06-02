@@ -1,13 +1,28 @@
 {
-    "campaign_name": "Default Test Campaign",
-    "description": "A sample campaign for testing data loading.",
+    "campaign_name_i18n": {
+        "en": "Default Test Campaign",
+        "ru": "[RU] Default Test Campaign"
+    },
+    "description_i18n": {
+        "en": "A sample campaign for testing data loading.",
+        "ru": "[RU] A sample campaign for testing data loading."
+    },
     "quest_templates": [],
     "npc_archetypes": [
         {
             "id": "goblin_grunt",
-            "name": "Goblin Grunt",
-            "description": "A weak but numerous goblin, often found in dark places.",
-            "persona": "A typical cowardly but opportunistic goblin, always looking for an easy score or a quick escape.",
+            "name_i18n": {
+                "en": "Goblin Grunt",
+                "ru": "[RU] Goblin Grunt"
+            },
+            "description_i18n": {
+                "en": "A weak but numerous goblin, often found in dark places.",
+                "ru": "[RU] A weak but numerous goblin, often found in dark places."
+            },
+            "persona_i18n": {
+                "en": "A typical cowardly but opportunistic goblin, always looking for an easy score or a quick escape.",
+                "ru": "[RU] A typical cowardly but opportunistic goblin, always looking for an easy score or a quick escape."
+            },
             "location_id": "cave_entrance",
             "archetype": "monster",
             "stats": { "max_health": 25, "strength": 7, "dexterity": 12, "base_damage": "1d4", "perception": 10, "xp_value": 10 },
@@ -17,16 +32,28 @@
             "traits": ["cowardly", "greedy"],
             "desires": ["find_shiny_things", "avoid_pain"],
             "motives": ["survival", "petty_theft"],
-            "backstory": "Exiled from a larger tribe for being too weak, now scrounges for survival.",
+            "backstory_i18n": {
+                "en": "Exiled from a larger tribe for being too weak, now scrounges for survival.",
+                "ru": "[RU] Exiled from a larger tribe for being too weak, now scrounges for survival."
+            },
             "faction": "goblin_clan_broken_spear",
             "behavior_tags": ["hostile_if_cornered", "flees_if_outnumbered"],
             "loot_table_id": "goblin_grunt_loot"
         },
         {
             "id": "human_town_guard",
-            "name": "Town Guard",
-            "description": "A vigilant guard tasked with protecting the town. Wears the town's livery.",
-            "persona": "A vigilant and dutiful member of the Town Guard. Believes in order and protecting the innocent.",
+            "name_i18n": {
+                "en": "Town Guard",
+                "ru": "[RU] Town Guard"
+            },
+            "description_i18n": {
+                "en": "A vigilant guard tasked with protecting the town. Wears the town's livery.",
+                "ru": "[RU] A vigilant guard tasked with protecting the town. Wears the town's livery."
+            },
+            "persona_i18n": {
+                "en": "A vigilant and dutiful member of the Town Guard. Believes in order and protecting the innocent.",
+                "ru": "[RU] A vigilant and dutiful member of the Town Guard. Believes in order and protecting the innocent."
+            },
             "location_id": "town_square",
             "archetype": "townsfolk_guard",
             "stats": { "max_health": 60, "strength": 12, "dexterity": 10, "base_damage": "1d8", "perception": 14, "xp_value": 25 },
@@ -36,16 +63,28 @@
             "traits": ["dutiful", "suspicious_of_outsiders"],
             "desires": ["keep_peace", "get_paid"],
             "motives": ["civic_duty", "self_preservation"],
-            "backstory": "Joined the guard after their family farm was raided by bandits. Believes in order.",
+            "backstory_i18n": {
+                "en": "Joined the guard after their family farm was raided by bandits. Believes in order.",
+                "ru": "[RU] Joined the guard after their family farm was raided by bandits. Believes in order."
+            },
             "faction": "town_of_เริ่มต้น",
             "behavior_tags": ["patrols_area", "will_intervene_in_crimes", "can_be_talked_to"],
             "dialogue_template_id": "guard_generic_dialogue"
         },
         {
             "id": "alchemist_npc",
-            "name": "Elara Meadowlight",
-            "description": "The town alchemist, always experimenting with new concoctions.",
-            "persona": "Elara is a curious and knowledgeable alchemist, passionate about her craft but sometimes a bit absent-minded.",
+            "name_i18n": {
+                "en": "Elara Meadowlight",
+                "ru": "[RU] Elara Meadowlight"
+            },
+            "description_i18n": {
+                "en": "The town alchemist, always experimenting with new concoctions.",
+                "ru": "[RU] The town alchemist, always experimenting with new concoctions."
+            },
+            "persona_i18n": {
+                "en": "Elara is a curious and knowledgeable alchemist, passionate about her craft but sometimes a bit absent-minded.",
+                "ru": "[RU] Elara is a curious and knowledgeable alchemist, passionate about her craft but sometimes a bit absent-minded."
+            },
             "location_id": "alchemist_shop",
             "archetype": "townsfolk_merchant",
             "stats": { "max_health": 40, "strength": 8, "dexterity": 11, "intelligence": 15, "base_damage": "1d4", "perception": 12, "xp_value": 15 },
@@ -54,16 +93,28 @@
             "traits": ["inquisitive", "kindly"],
             "desires": ["discover_new_potion", "help_sick"],
             "motives": ["knowledge", "altruism"],
-            "backstory": "Came to town to study rare herbs found in the nearby forest. Set up shop to fund her research.",
+            "backstory_i18n": {
+                "en": "Came to town to study rare herbs found in the nearby forest. Set up shop to fund her research.",
+                "ru": "[RU] Came to town to study rare herbs found in the nearby forest. Set up shop to fund her research."
+            },
             "faction": "town_of_เริ่มต้น",
             "behavior_tags": ["sells_potions", "can_identify_items", "offers_alchemy_advice"],
             "dialogue_template_id": "alchemist_generic_dialogue"
         },
         {
             "id": "tavern_barkeep_npc",
-            "name": "Borin Stonebeard",
-            "description": "The stout and jovial dwarven owner of The Drunken Dragon tavern.",
-            "persona": "Borin is a friendly and talkative barkeep, always ready with a drink and a story. He knows many local rumors.",
+            "name_i18n": {
+                "en": "Borin Stonebeard",
+                "ru": "[RU] Borin Stonebeard"
+            },
+            "description_i18n": {
+                "en": "The stout and jovial dwarven owner of The Drunken Dragon tavern.",
+                "ru": "[RU] The stout and jovial dwarven owner of The Drunken Dragon tavern."
+            },
+            "persona_i18n": {
+                "en": "Borin is a friendly and talkative barkeep, always ready with a drink and a story. He knows many local rumors.",
+                "ru": "[RU] Borin is a friendly and talkative barkeep, always ready with a drink and a story. He knows many local rumors."
+            },
             "location_id": "tavern",
             "archetype": "townsfolk_merchant",
             "stats": { "max_health": 70, "strength": 14, "dexterity": 9, "constitution": 16, "base_damage": "1d6", "perception": 13, "xp_value": 20 },
@@ -72,7 +123,10 @@
             "traits": ["jovial", "gossipy"],
             "desires": ["full_tavern", "hear_good_stories"],
             "motives": ["profit", "social_connection"],
-            "backstory": "A retired adventurer who decided that running a tavern was safer and more profitable. Still has a soft spot for fellow adventurers.",
+            "backstory_i18n": {
+                "en": "A retired adventurer who decided that running a tavern was safer and more profitable. Still has a soft spot for fellow adventurers.",
+                "ru": "[RU] A retired adventurer who decided that running a tavern was safer and more profitable. Still has a soft spot for fellow adventurers."
+            },
             "faction": "town_of_เริ่มต้น",
             "behavior_tags": ["sells_food_drink", "shares_rumors", "hires_bards"],
             "dialogue_template_id": "barkeep_generic_dialogue"
@@ -82,27 +136,77 @@
         {
             "id": "generic_guard_talk",
             "npc_archetype_ids": ["human_town_guard"],
-            "initial_greeting": "Greetings. Anything to report?",
+            "initial_greeting_i18n": {
+                "en": "Greetings. Anything to report?",
+                "ru": "[RU] Greetings. Anything to report?"
+            },
             "nodes": {
                 "start": {
-                    "text": "The city is quiet today. Anything specific you need?",
+                    "text_i18n": {
+                        "en": "The city is quiet today. Anything specific you need?",
+                        "ru": "[RU] The city is quiet today. Anything specific you need?"
+                    },
                     "player_responses": [
-                        { "text": "Just passing through.", "next_node_id": "end_generic" },
-                        { "text": "Heard any rumors?", "next_node_id": "rumors_node" },
-                        { "text": "I need help with something.", "next_node_id": "ask_for_help", "conditions": [{"type": "faction_rank_lessthan", "faction_id": "town_guard", "rank": 1}] }
+                        { 
+                            "text_i18n": {
+                                "en": "Just passing through.",
+                                "ru": "[RU] Just passing through."
+                            }, 
+                            "next_node_id": "end_generic" 
+                        },
+                        { 
+                            "text_i18n": {
+                                "en": "Heard any rumors?",
+                                "ru": "[RU] Heard any rumors?"
+                            }, 
+                            "next_node_id": "rumors_node" 
+                        },
+                        { 
+                            "text_i18n": {
+                                "en": "I need help with something.",
+                                "ru": "[RU] I need help with something."
+                            }, 
+                            "next_node_id": "ask_for_help", 
+                            "conditions": [{"type": "faction_rank_lessthan", "faction_id": "town_guard", "rank": 1}] 
+                        }
                     ]
                 },
                 "rumors_node": {
-                    "text": "They say the old well outside town is haunted these days.",
-                    "player_responses": [ { "text": "Interesting. Thanks.", "next_node_id": "end_generic" } ]
+                    "text_i18n": {
+                        "en": "They say the old well outside town is haunted these days.",
+                        "ru": "[RU] They say the old well outside town is haunted these days."
+                    },
+                    "player_responses": [ 
+                        { 
+                            "text_i18n": {
+                                "en": "Interesting. Thanks.",
+                                "ru": "[RU] Interesting. Thanks."
+                            }, 
+                            "next_node_id": "end_generic" 
+                        } 
+                    ]
                 },
                 "ask_for_help": {
-                    "text": "Help? What sort of help do you need?",
-                    "player_responses": [ { "text": "Nevermind for now.", "next_node_id": "end_generic" } ],
+                    "text_i18n": {
+                        "en": "Help? What sort of help do you need?",
+                        "ru": "[RU] Help? What sort of help do you need?"
+                    },
+                    "player_responses": [ 
+                        { 
+                            "text_i18n": {
+                                "en": "Nevermind for now.",
+                                "ru": "[RU] Nevermind for now."
+                            }, 
+                            "next_node_id": "end_generic" 
+                        } 
+                    ],
                     "npc_actions": [{"type": "log_message", "message": "Player asked for help."}]
                 },
                 "end_generic": {
-                    "text": "Alright then. Move along.",
+                    "text_i18n": {
+                        "en": "Alright then. Move along.",
+                        "ru": "[RU] Alright then. Move along."
+                    },
                     "player_responses": []
                 }
             }
@@ -111,8 +215,14 @@
     "spell_templates": [
         {
             "id": "firebolt_v1",
-            "name": "Firebolt",
-            "description": "Hurls a small bolt of fire at a target.",
+            "name_i18n": {
+                "en": "Firebolt",
+                "ru": "[RU] Firebolt"
+            },
+            "description_i18n": {
+                "en": "Hurls a small bolt of fire at a target.",
+                "ru": "[RU] Hurls a small bolt of fire at a target."
+            },
             "school": "evocation",
             "level": 1,
             "mana_cost": 5,
@@ -130,8 +240,14 @@
         },
         {
             "id": "minor_heal_v1",
-            "name": "Minor Heal",
-            "description": "A simple prayer that mends minor wounds.",
+            "name_i18n": {
+                "en": "Minor Heal",
+                "ru": "[RU] Minor Heal"
+            },
+            "description_i18n": {
+                "en": "A simple prayer that mends minor wounds.",
+                "ru": "[RU] A simple prayer that mends minor wounds."
+            },
             "school": "restoration",
             "level": 1,
             "mana_cost": 8,
@@ -149,8 +265,14 @@
         },
         {
             "id": "mage_armor_v1",
-            "name": "Mage Armor",
-            "description": "Surrounds the caster with a protective magical field.",
+            "name_i18n": {
+                "en": "Mage Armor",
+                "ru": "[RU] Mage Armor"
+            },
+            "description_i18n": {
+                "en": "Surrounds the caster with a protective magical field.",
+                "ru": "[RU] Surrounds the caster with a protective magical field."
+            },
             "school": "abjuration",
             "level": 1,
             "mana_cost": 10,
@@ -168,8 +290,14 @@
     "event_templates": [
         {
             "id": "roadside_ambush_easy",
-            "name": "Roadside Ambush",
-            "description_initial": "As you walk down the road, figures leap out from the bushes!",
+            "name_i18n": {
+                "en": "Roadside Ambush",
+                "ru": "[RU] Roadside Ambush"
+            },
+            "description_initial_i18n": {
+                "en": "As you walk down the road, figures leap out from the bushes!",
+                "ru": "[RU] As you walk down the road, figures leap out from the bushes!"
+            },
             "type": "combat",
             "trigger_conditions": [
                 {"type": "enter_location_with_tag", "tag": "ambush_prone_road"},
@@ -186,8 +314,14 @@
     "ability_templates": [
         {
             "id": "passive_toughness_1",
-            "name": "Toughness I",
-            "description": "Increases maximum health by 10%.",
+            "name_i18n": {
+                "en": "Toughness I",
+                "ru": "[RU] Toughness I"
+            },
+            "description_i18n": {
+                "en": "Increases maximum health by 10%.",
+                "ru": "[RU] Increases maximum health by 10%."
+            },
             "type": "passive_stat_modifier",
             "effects": [
                 { "type": "modify_stat", "stat": "max_health", "modifier_type": "percentage_base", "amount": 0.10 }
@@ -197,8 +331,14 @@
         },
         {
             "id": "power_attack_martial",
-            "name": "Power Attack",
-            "description": "Make a melee attack with increased force, dealing more damage but potentially less accurate or costing more stamina.",
+            "name_i18n": {
+                "en": "Power Attack",
+                "ru": "[RU] Power Attack"
+            },
+            "description_i18n": {
+                "en": "Make a melee attack with increased force, dealing more damage but potentially less accurate or costing more stamina.",
+                "ru": "[RU] Make a melee attack with increased force, dealing more damage but potentially less accurate or costing more stamina."
+            },
             "type": "activated_combat",
             "activation_type": "action",
             "resource_cost": { "stamina": 15 },
@@ -213,8 +353,14 @@
         },
         {
             "id": "racial_elf_darkvision",
-            "name": "Darkvision (Elf)",
-            "description": "Can see in dim light as if it were bright light, and in darkness as if it were dim light.",
+            "name_i18n": {
+                "en": "Darkvision (Elf)",
+                "ru": "[RU] Darkvision (Elf)"
+            },
+            "description_i18n": {
+                "en": "Can see in dim light as if it were bright light, and in darkness as if it were dim light.",
+                "ru": "[RU] Can see in dim light as if it were bright light, and in darkness as if it were dim light."
+            },
             "type": "innate_racial",
             "effects": [
                 { "type": "grant_flag", "flag": "darkvision" }
