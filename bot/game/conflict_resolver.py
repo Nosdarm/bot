@@ -48,6 +48,8 @@ class ConflictResolver:
         print(f"ConflictResolver initialized with db_adapter.")
 
     async def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]], guild_id: str) -> List[Dict[str, Any]]:
+
+      async def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]], context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Analyzes a map of player actions to identify potential conflicts.
         If a conflict requires manual resolution, it calls prepare_for_manual_resolution.
@@ -129,15 +131,38 @@ class ConflictResolver:
                     prepared_manual_conflict_result = await self.prepare_for_manual_resolution(current_conflict_details)
                     processed_conflict_results.append(prepared_manual_conflict_result)
                 else:
+
                     # Resolve automatically and add the result
                     resolved_auto_conflict_result = await self.resolve_conflict_automatically(current_conflict_details)
                     processed_conflict_results.append(resolved_auto_conflict_result)
+
+                    # For automatic, we might resolve immediately or queue it.
+                    # For now, let's assume immediate resolution attempt.
+                    # Pass context to resolve_conflict_automatically if it needs it (e.g. for guild_id)
+                    resolved_auto_conflict = await self.resolve_conflict_automatically(current_conflict_details, context=context)
+                    processed_conflict_results.append(resolved_auto_conflict)
+        
+        # Example for "contested_resource_grab" (manual)
+        # This requires different parsing of player_actions_map, e.g., two players GRAB same item_id
+        # Placeholder for such logic:
+        # if a_contested_resource_grab_is_detected:
+        #    grab_conflict_type = "contested_resource_grab"
+        #    grab_rule = self.rules_config.get(grab_conflict_type)
+        #    if grab_rule and grab_rule.get("manual_resolution_required"):
+        #        # Construct grab_conflict_details similar to above
+        #        # grab_conflict_details = { "type": grab_conflict_type, ... }
+        #        # prepared_grab_conflict = self.prepare_for_manual_resolution(grab_conflict_details)
+        #        # processed_conflict_results.append(prepared_grab_conflict)
+        #        pass
+
 
         # TODO: Add logic for other conflict types (e.g., item_dispute) based on rules_config
 
         return processed_conflict_results
 
     async def resolve_conflict_automatically(self, conflict: Dict[str, Any]) -> Dict[str, Any]:
+
+     async def resolve_conflict_automatically(self, conflict: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Attempts to resolve a given conflict automatically based on rules, using RuleEngine.
 
@@ -172,6 +197,11 @@ class ConflictResolver:
         if not config_check_type:
             error_msg = f"Automatic resolution rule for '{conflict_type_id}' missing 'check_type'."
             print(f"Error for conflict {conflict_id}: {error_msg}")
+
+        # The 'check_type' from rules_config will be passed to RuleEngine.resolve_check
+        rule_engine_check_type = auto_res_config.get("check_type")
+
+        if not rule_engine_check_type:
             conflict["status"] = "resolution_failed_no_check_type"
             conflict["outcome"] = {"description": error_msg}
             return conflict

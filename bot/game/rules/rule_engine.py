@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 # Эти модули необходимы для выполнения кода (например, для создания экземпляров, вызовов статических методов, проверок isinstance)
 # Если модуль импортируется здесь, убедитесь, что он НЕ ИМПОРТИРУЕТ RuleEngine напрямую.
 from bot.game.models.character import Character # Прямой импорт модели, если она нужна для isinstance или других runtime целей
+# from bot.game.rules.dice_roller import roll_dice as external_roll_dice # Example if using external roller directly
 # from bot.game.models.spell import Spell # Not needed for runtime if only used in type hints within methods
 
 print("DEBUG: rule_engine.py module loaded.")
@@ -62,20 +63,21 @@ class RuleEngine:
     # required_args_for_load = [] # Если load_rules_data требует аргументов, добавьте сюда
     # required_args_for_save = [] # Если save_state требует аргументов, добавьте сюда
 
-    def __init__(self, 
+    def __init__(self,
                  settings: Optional[Dict[str, Any]] = None,
                  character_manager: Optional["CharacterManager"] = None,
                  npc_manager: Optional["NpcManager"] = None,
                  status_manager: Optional["StatusManager"] = None,
-                 item_manager: Optional["ItemManager"] = None, # Added for consistency
-                 location_manager: Optional["LocationManager"] = None, # Added for consistency
-                 party_manager: Optional["PartyManager"] = None, # Added for consistency
-                 combat_manager: Optional["CombatManager"] = None, # Added for consistency
-                 dialogue_manager: Optional["DialogueManager"] = None # Added for consistency
+                 item_manager: Optional["ItemManager"] = None,
+                 location_manager: Optional["LocationManager"] = None,
+                 party_manager: Optional["PartyManager"] = None,
+                 combat_manager: Optional["CombatManager"] = None,
+                 dialogue_manager: Optional["DialogueManager"] = None,
+                 time_manager: Optional["TimeManager"] = None, # Added TimeManager
+                 rules_data: Optional[Dict[str, Any]] = None # Added rules_data
                  ):
         print("Initializing RuleEngine...")
         self._settings = settings or {}
-        self._rules_data: Dict[str, Any] = {} # Аннотация Dict, внутри Any - нормально
         
         # Store manager instances
         self._character_manager = character_manager
@@ -86,6 +88,13 @@ class RuleEngine:
         self._party_manager = party_manager
         self._combat_manager = combat_manager
         self._dialogue_manager = dialogue_manager
+        self._time_manager = time_manager # Store TimeManager
+        
+        # Load rules_data if provided, otherwise load from settings or keep empty
+        if rules_data is not None:
+            self._rules_data = rules_data
+        else:
+            self._rules_data = self._settings.get('rules_data', {}) # Fallback to settings
         
         print("RuleEngine initialized.")
 
@@ -582,69 +591,97 @@ class RuleEngine:
         print(f"RuleEngine: NPC {npc.id} not choosing peaceful action (no dialogue targets or valid exits). Choosing idle.")
         return {'type': 'idle', 'total_duration': None} # Пример структуры действия "бездействие"
 
-    async def resolve_dice_roll(self, roll_string: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def resolve_dice_roll(self, roll_string: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Parses a dice roll string (e.g., "2d6+3", "d20-1", "4dF"), simulates the roll,
         and returns a structured result.
 
         Args:
             roll_string: The dice notation string.
-            context: The game context (unused in this method but included for consistency).
+            context: Optional game context (unused in this method but included for consistency).
 
         Returns:
             A dictionary with roll details:
             {
-                'roll_string': str,
-                'num_dice': int,
-                'dice_sides': Union[int, str], # int for regular dice, 'F' for Fudge/Fate
-                'rolls': List[int],
-                'modifier': int,
-                'total': int
+                'roll_string': str,      # The original roll string.
+                'num_dice': int,         # Number of dice rolled.
+                'dice_sides': Union[int, str], # Sides per die (e.g., 6, 20, or "F" for Fudge).
+                'rolls': List[int],      # List of individual die results.
+                'modifier': int,         # The modifier applied to the sum of rolls.
+                'total': int             # The final total (sum of rolls + modifier).
             }
 
         Raises:
             ValueError: If the roll_string is invalid.
         """
-        roll_string = roll_string.lower().strip()
+        # This method is now async, but random.randint is synchronous.
+        # For a truly async dice roller (e.g., using an external service or for complex simulation),
+        # this would involve `await` calls. For now, it's async for API consistency.
+        
+        # Using the parsing logic from the existing method, which is more complete
+        # than the external dice_roller.py's current simple NdX+M.
+        
+        original_roll_string = roll_string # Keep original for return
+        roll_string = roll_string.lower().strip().replace(" ", "") # Normalize
+
         # Regex to parse dice notation:
         # (?P<num_dice>\d+)? - Optional number of dice
         # d                       - The 'd' separator
         # (?P<dice_sides>\d+|f)  - Number of sides (digits) or 'f' for Fudge/Fate dice
-        # (?P<modifier_op>[+\-])? - Optional modifier operator (+ or -)
-        # (?P<modifier_val>\d+)?  - Optional modifier value
-        match = re.fullmatch(r"(?P<num_dice>\d+)?d(?P<dice_sides>\d+|f)((?P<modifier_op>[+\-])(?P<modifier_val>\d+))?", roll_string)
+        # ((?P<modifier_op>[+\-])(?P<modifier_val>\d+))? - Optional modifier group with operator and value
+        match = re.fullmatch(r"(?P<num_dice>\d*)d(?P<dice_sides>\d+|f)(?P<modifier_str>(?:[+\-]\d+)*)", roll_string)
+        # Modifier_str now captures multiple modifiers like +2-1
 
         if not match:
-            raise ValueError(f"Invalid dice roll string format: '{roll_string}'")
+            # Try a simpler pattern if the main one fails (e.g. for just "d20")
+             match = re.fullmatch(r"d(?P<dice_sides>\d+|f)(?P<modifier_str>(?:[+\-]\d+)*)", roll_string)
+             if match: # Prepend num_dice = 1 if it's this simpler format
+                 parts_temp = match.groupdict()
+                 parts = {'num_dice': '1', **parts_temp}
+             else: # If still no match
+                 raise ValueError(f"Invalid dice roll string format: '{original_roll_string}'")
+        else:
+            parts = match.groupdict()
 
-        parts = match.groupdict()
 
-        num_dice = int(parts['num_dice']) if parts['num_dice'] else 1
+        num_dice_str = parts.get('num_dice')
+        num_dice = int(num_dice_str) if num_dice_str else 1 # Default to 1 die if not specified (e.g. "d20")
+        
         dice_sides_str = parts['dice_sides']
         
-        modifier_op = parts['modifier_op']
-        modifier_val = int(parts['modifier_val']) if parts['modifier_val'] else 0
-        modifier = modifier_val if modifier_op == '+' else -modifier_val if modifier_op == '-' else 0
-
+        # Parse complex modifiers like +2-1+5
+        modifier = 0
+        modifier_str_captured = parts.get('modifier_str', "")
+        if modifier_str_captured:
+            # Find all occurrences of operator and number (e.g., "+5", "-2")
+            modifier_parts = re.findall(r"([+\-])(\d+)", modifier_str_captured)
+            for op, val_str in modifier_parts:
+                val = int(val_str)
+                if op == '+':
+                    modifier += val
+                elif op == '-':
+                    modifier -= val
+        
         rolls = []
-        calculated_dice_sides: Any = 0
+        calculated_dice_sides: Union[int, str] = 0
 
         if dice_sides_str == 'f': # Fudge/Fate dice
             calculated_dice_sides = "F"
             for _ in range(num_dice):
-                roll = random.randint(1, 3) - 2 # Results in -1, 0, or +1
+                # Standard Fudge dice roll: 3dF -> 3 dice, each -1, 0, or +1
+                roll = random.randint(1, 3) - 2 
                 rolls.append(roll)
         else:
             calculated_dice_sides = int(dice_sides_str)
             if calculated_dice_sides <= 0:
-                raise ValueError("Dice sides must be a positive integer or 'F'.")
+                raise ValueError("Dice sides must be a positive integer.")
             for _ in range(num_dice):
                 rolls.append(random.randint(1, calculated_dice_sides))
         
         total = sum(rolls) + modifier
 
         return {
-            'roll_string': roll_string,
+            'roll_string': original_roll_string, # Return the original, non-normalized string
             'num_dice': num_dice,
             'dice_sides': calculated_dice_sides,
             'rolls': rolls,
@@ -1583,6 +1620,31 @@ class RuleEngine:
 
     # --- Stubs for Other Key Missing Mechanics ---
 
+    async def get_game_time(self, context: Optional[Dict[str, Any]] = None) -> float:
+        """
+        Returns the current in-game time.
+        Relies on TimeManager if provided during initialization.
+        """
+        if self._time_manager and hasattr(self._time_manager, 'get_current_game_time'):
+            # Assuming get_current_game_time in TimeManager might be async
+            try:
+                # If get_current_game_time is async, it should be awaited.
+                # For now, let's assume it could be either, and if it's async,
+                # the TimeManager type hint should reflect Awaitable[float].
+                # If it's synchronous, direct call is fine.
+                # Given the task is about async/await, let's assume it *could* be async.
+                current_time = await self._time_manager.get_current_game_time(context=context)
+                return float(current_time)
+            except Exception as e:
+                print(f"RuleEngine: Error getting game time from TimeManager: {e}")
+                traceback.print_exc()
+                return 0.0 # Fallback time
+        else:
+            # Fallback if TimeManager is not available or doesn't have the method
+            # This might be a placeholder (e.g., always noon) or an error
+            print("RuleEngine: Warning: TimeManager not available or get_current_game_time missing. Returning 0.0 as game time.")
+            return 0.0
+
     async def award_experience(self, character: "Character", amount: int, **kwargs: Any) -> None:
         """Awards experience points to a character."""
         # TODO: Actual XP logic, check for level up
@@ -1786,197 +1848,133 @@ class RuleEngine:
             check_type=check_type,
             entity_doing_check_id=entity_doing_check_id,
             target_entity_id=target_entity_id,
-            difficulty_dc=difficulty_dc, # Initial DC provided
-            roll_formula="1d20", # Placeholder, will be updated
+            difficulty_dc=difficulty_dc,
+            roll_formula="1d20", # Default, will be updated by check_config
             rolls=[],
             modifier_applied=0,
             modifier_details={},
             total_roll_value=0,
-            target_value=None, # DC or opposed roll result
-            outcome=CheckOutcome.FAILURE, # Default outcome
+            target_value=difficulty_dc, # Initial target value is the provided DC
+            outcome=CheckOutcome.FAILURE,
             is_success=False,
             is_critical=False,
-            description="Check resolution pending."
+            description="Check resolution has not started."
         )
 
-        # 1. Get Roll Formula and Modifier Rules
+        guild_id = context.get('guild_id') if context else None
+        if not guild_id:
+            result.description = "Error: guild_id missing from context for resolve_check."
+            # print(result.description) # For server logs
+            return result # Cannot proceed without guild_id for data fetching
+
+        # 1. Get Check Configuration from self.rules_data
+        # Ensure self.rules_data is loaded, e.g., in __init__ or a load_state method
+        if not self._rules_data or 'checks' not in self._rules_data:
+            result.description = "Error: RuleEngine rules_data not loaded or 'checks' key missing."
+            return result
+        
         check_config = self._rules_data.get('checks', {}).get(check_type)
         if not check_config:
-            result.description = f"Unsupported check_type: {check_type}. No configuration found."
-            # Consider raising ValueError or returning immediately if preferred
-            # For now, returning the partially filled result with an error description.
-            return result 
-            # raise ValueError(f"Unsupported check_type: {check_type}")
+            result.description = f"Error: No configuration found for check_type '{check_type}'."
+            return result
 
-        roll_formula_template = check_config.get('roll_formula', '1d20')
-        result.roll_formula = roll_formula_template # Store the template
+        result.roll_formula = check_config.get('roll_formula', '1d20') # Update from config
 
-        # 2. Get Entity Data (Placeholder Call)
-        # This data would be used to resolve roll_formula templates (e.g., '1d20+{STR_MOD}')
-        # and to calculate modifiers from various sources (stats, skills, status effects, items).
-        print(f"RuleEngine.resolve_check: Fetching data for entity {entity_doing_check_id} ({entity_doing_check_type})")
-        entity_doing_check_data = await self._get_entity_data_for_check(
-            entity_doing_check_id, 
-            entity_doing_check_type, 
-            ["stats", "skills", "status_effects", "inventory", "name", "current_hp", "max_hp", "is_alive", "location_id"], # Added location_id
-            context
-        )
-        # entity_data is now entity_doing_check_data
-
-        # 3. Calculate Modifier (Placeholder)
-        # Modifiers would be derived from entity_doing_check_data based on check_config['modifier_sources']
-        # Example modifier_sources: ["primary_stat", "relevant_skill", "active_status_effects"]
-        print(f"RuleEngine.resolve_check: Calculating modifiers for {check_type} based on sources: {check_config.get('modifier_sources', [])} and data: {entity_doing_check_data.get('name', entity_doing_check_id)}")
-        calculated_modifier = 0 # Placeholder
-        modifier_details_dict = {"placeholder_bonus": 0, "sources": check_config.get('modifier_sources', []), "retrieved_entity_keys": list(entity_doing_check_data.keys())} # Placeholder
+        # 2. Fetch Actor Data
+        actor = None
+        if self._character_manager and entity_doing_check_type == "Character":
+            actor = self._character_manager.get_character(guild_id, entity_doing_check_id)
+        elif self._npc_manager and entity_doing_check_type == "NPC":
+            actor = self._npc_manager.get_npc(guild_id, entity_doing_check_id)
         
+        if not actor:
+            result.description = f"Error: Actor {entity_doing_check_type} ID {entity_doing_check_id} not found."
+            return result
+
+        # 3. Calculate Modifier based on actor's stats/skills and check_config
+        calculated_modifier = 0
+        modifier_details_dict: Dict[str, Any] = {"base": 0}
+        
+        primary_stat = check_config.get('primary_stat') # e.g., "dexterity"
+        if primary_stat and hasattr(actor, 'stats') and isinstance(actor.stats, dict):
+            stat_value = actor.stats.get(primary_stat, 10)
+            stat_mod = (stat_value - 10) // 2
+            calculated_modifier += stat_mod
+            modifier_details_dict[primary_stat] = stat_mod
+
+        relevant_skill = check_config.get('relevant_skill') # e.g., "stealth"
+        if relevant_skill and hasattr(actor, 'skills') and isinstance(actor.skills, dict):
+            skill_value = actor.skills.get(relevant_skill, 0)
+            calculated_modifier += skill_value
+            modifier_details_dict[relevant_skill] = skill_value
+        
+        # TODO: Add modifiers from status effects, items, context, etc.
         result.modifier_applied = calculated_modifier
         result.modifier_details = modifier_details_dict
 
         # 4. Perform Dice Roll
-        # For now, assume roll_formula_template is a simple dice string like "1d20".
-        # Later, this step will involve substituting placeholders in roll_formula_template (e.g., {STR_MOD})
-        # with values from entity_doing_check_data before calling resolve_dice_roll.
-        actual_roll_formula = roll_formula_template # This will be refined
-        
         try:
-            roll_result_obj = await self.resolve_dice_roll(actual_roll_formula, context if context else {})
-            result.rolls = roll_result_obj.get('rolls', [])
-            base_roll_total = roll_result_obj.get('total', 0) # Sum of dice, includes dice string modifiers (e.g. 1d6+2)
+            # Use the roll_formula from check_config
+            roll_result_data = await self.resolve_dice_roll(result.roll_formula, context)
+            result.rolls = roll_result_data.get('rolls', [])
+            base_roll_value = roll_result_data.get('total', 0) # This total already includes modifiers from dice string itself
         except ValueError as e:
-            result.description = f"Error during dice roll for '{actual_roll_formula}': {e}"
-            result.outcome = CheckOutcome.FAILURE # Ensure failure on dice error
+            result.description = f"Error during dice roll for '{result.roll_formula}': {e}"
             return result
-
-        # 5. Calculate Total Result
-        total_value = base_roll_total + calculated_modifier
-        result.total_roll_value = total_value
-
-        # 6. Determine Target Value & Outcome (Simplified Placeholder)
-        target_value_for_check: Optional[int] = None
-        final_dc_to_beat: int = 10 # Default DC if no other source
-        target_entity_data: Dict[str, Any] = {} # Initialize target_entity_data
-
-        if target_entity_id and target_entity_type:
-            print(f"RuleEngine.resolve_check: Opposed check or target-based DC. Fetching data for target {target_entity_id} ({target_entity_type})")
-            target_entity_data = await self._get_entity_data_for_check(
-                target_entity_id, 
-                target_entity_type, 
-                ["stats", "name", "current_hp", "max_hp", "is_alive", "skills"], # Added skills for potential future use
-                context
-            )
-
-            opposed_config = check_config.get('opposed_by', {})
-            if opposed_config:
-                if opposed_config.get('type') == 'stat':
-                    target_stat_name = opposed_config.get('stat', 'armor_class') # e.g., 'armor_class', 'perception_dc'
-                    target_value_for_check = target_entity_data.get("stats", {}).get(target_stat_name, 10) 
-                    final_dc_to_beat = target_value_for_check
-                    result.difficulty_dc = None # DC was from target, not explicit input
-                elif opposed_config.get('type') == 'check':
-                    # This would involve a recursive call to resolve_check for the target,
-                    # or a different logic path to get the target's roll.
-                    # For placeholder, use a default.
-                    opposed_check_type = opposed_config.get('check_type', 'default_opposed_check') # Fallback if not specified
-                    print(f"RuleEngine.resolve_check: Opposed check type '{opposed_check_type}' against target {target_entity_data.get('name', target_entity_id)}. Placeholder DC used.")
-                    # In a real scenario, this might be:
-                    # opposed_roll_result = await self.resolve_check(opposed_check_type, target_entity_id, target_entity_type, entity_doing_check_id, entity_doing_check_type, None, context)
-                    # final_dc_to_beat = opposed_roll_result.total_roll_value
-                    # target_value_for_check = opposed_roll_result.total_roll_value
-                    final_dc_to_beat = 15 # Placeholder for opposed check result
-                    target_value_for_check = final_dc_to_beat 
-                    result.difficulty_dc = None # DC was from target's roll
-                # Add other opposed types like 'skill_value' if needed
-            else:
-                # No 'opposed_by' config, but target was provided.
-                # Check if 'uses_dc' is true and if DC can be derived from target (e.g. a generic "target_dc" stat on the target object)
-                if check_config.get('uses_dc', False):
-                    final_dc_to_beat = target_entity_data.get("stats", {}).get('generic_target_dc', check_config.get('default_dc', 10))
-                    target_value_for_check = final_dc_to_beat
-                    result.difficulty_dc = None # DC came from target's generic_target_dc or default
-
-        elif difficulty_dc is not None: # Explicit DC was provided
-            final_dc_to_beat = difficulty_dc
-            target_value_for_check = difficulty_dc
-            # result.difficulty_dc is already set from input
-
-        elif not check_config.get('uses_dc', False) and not check_config.get('opposed_by'):
-            # This check type might not need a DC (e.g., pure roll for effect magnitude).
-            # For outcome determination, we might still need a conceptual DC or handle it differently.
-            # For now, let's assume it doesn't compare against a DC for success/failure in the traditional sense.
-            # Or, it might always be considered a "success" if the action completes.
-            print(f"RuleEngine.resolve_check: Check type '{check_type}' does not use a DC and is not opposed. Outcome may depend on roll value itself.")
-            # final_dc_to_beat will remain its default (e.g. 10), but outcome logic might ignore it.
-            # Or, set is_success to True by default if no DC is applicable for comparison.
-            # This part needs careful design based on how such checks are used.
-            # For now, we'll proceed with the default final_dc_to_beat for outcome calc,
-            # which might mean these checks often result in SUCCESS if total_value is high enough.
-            pass # Keep default final_dc_to_beat or use a specific logic for no-DC checks.
-
-        else: # No target, no explicit DC, but check expects one (e.g. uses_dc: true)
-            final_dc_to_beat = check_config.get('default_dc', 10)
-            target_value_for_check = final_dc_to_beat
-            result.difficulty_dc = final_dc_to_beat # Using default DC
-
-        result.target_value = target_value_for_check
-
-        # Determine outcome (Success, Failure, Criticals)
-        is_success = total_value >= final_dc_to_beat
         
-        # Assuming d20 based system for criticals from the main die roll
-        # This needs to be robust if roll_formula is not d20 based (e.g. 3d6).
-        # For now, assumes the first roll in result.rolls is the "main die" (e.g., the d20).
-        d20_main_roll = result.rolls[0] if result.rolls and roll_formula_template.strip().startswith("1d20") else 0 # Handle if no rolls or not a 1d20
-        
-        crit_success_roll = check_config.get('critical_success_roll', 20)
-        crit_failure_roll = check_config.get('critical_failure_roll', 1)
-        allow_criticals = check_config.get('allow_criticals', True) # Check if criticals are even possible
+        result.total_roll_value = base_roll_value + calculated_modifier # Add character/skill mods to dice string's total
 
-        is_critical = False
-        determined_outcome = CheckOutcome.FAILURE # Default
-
-        if allow_criticals and d20_main_roll == crit_success_roll:
-            is_critical = True
-            is_success = True # Crit success is always a success (common rule)
-            determined_outcome = CheckOutcome.CRITICAL_SUCCESS
-        elif allow_criticals and d20_main_roll == crit_failure_roll:
-            is_critical = True
-            is_success = False # Crit failure is always a failure (common rule)
-            determined_outcome = CheckOutcome.CRITICAL_FAILURE
-        else: # Not a natural crit/fumble on the die, or criticals not allowed by die roll
-            if is_success:
-                # Check for critical success by margin if applicable and natural crit didn't occur
-                crit_success_margin = check_config.get('critical_success_margin')
-                if allow_criticals and crit_success_margin is not None and (total_value - final_dc_to_beat) >= crit_success_margin:
-                    is_critical = True
-                    determined_outcome = CheckOutcome.CRITICAL_SUCCESS
-                else:
-                    determined_outcome = CheckOutcome.SUCCESS
-            else: # Failure
-                # Check for critical failure by margin if applicable and natural crit didn't occur
-                crit_failure_margin = check_config.get('critical_failure_margin') # Often a positive number representing how much you failed by
-                if allow_criticals and crit_failure_margin is not None and (final_dc_to_beat - total_value) >= abs(crit_failure_margin):
-                    is_critical = True
-                    determined_outcome = CheckOutcome.CRITICAL_FAILURE
-                else:
-                    determined_outcome = CheckOutcome.FAILURE
+        # 5. Determine Target Value (DC)
+        actual_dc = difficulty_dc # Use provided DC if any
         
-        result.outcome = determined_outcome
-        result.is_success = is_success
-        result.is_critical = is_critical
+        if actual_dc is None: # If no explicit DC, try to get from check_config or target
+            if target_entity_id and target_entity_type:
+                target_entity = None
+                if self._character_manager and target_entity_type == "Character":
+                    target_entity = self._character_manager.get_character(guild_id, target_entity_id)
+                elif self._npc_manager and target_entity_type == "NPC":
+                    target_entity = self._npc_manager.get_npc(guild_id, target_entity_id)
+
+                if target_entity:
+                    # Example: DC could be a specific stat of the target
+                    dc_stat_name = check_config.get('target_dc_stat') # e.g., "passive_perception" or "armor_class"
+                    if dc_stat_name and hasattr(target_entity, 'stats') and isinstance(target_entity.stats, dict):
+                        actual_dc = target_entity.stats.get(dc_stat_name, check_config.get('default_dc', 15))
+                    else:
+                        actual_dc = check_config.get('default_dc', 15) # Fallback DC from config
+                else: # Target not found, use default DC
+                    actual_dc = check_config.get('default_dc', 15)
+            else: # No target and no explicit DC, use default from config
+                actual_dc = check_config.get('default_dc', 15)
+        
+        result.target_value = actual_dc
+        if result.difficulty_dc is None: result.difficulty_dc = actual_dc # Store the DC used if not explicit
+
+        # 6. Determine Outcome
+        result.is_success = result.total_roll_value >= actual_dc
+        
+        # Critical success/failure logic (simple d20 based for now)
+        d20_roll = result.rolls[0] if result.rolls and result.roll_formula.startswith("1d20") else 0
+        
+        if d20_roll == 20 and check_config.get('allow_critical_success', True):
+            result.is_critical = True
+            result.is_success = True # Crit success is always a success
+            result.outcome = CheckOutcome.CRITICAL_SUCCESS
+        elif d20_roll == 1 and check_config.get('allow_critical_failure', True):
+            result.is_critical = True
+            result.is_success = False # Crit failure is always a failure
+            result.outcome = CheckOutcome.CRITICAL_FAILURE
+        else:
+            result.outcome = CheckOutcome.SUCCESS if result.is_success else CheckOutcome.FAILURE
 
         # 7. Populate Description
-        description = (
-            f"Check: {check_type} by {entity_doing_check_id} ({entity_doing_check_type}). "
-            f"Roll: {result.rolls} (Formula: {actual_roll_formula}) + Modifier: {calculated_modifier} (Details: {modifier_details_dict}) = Total: {total_value}. "
-            f"Target: {final_dc_to_beat}"
-            f"{f' (DC from input: {difficulty_dc})' if difficulty_dc is not None and target_value_for_check == difficulty_dc else ''}"
-            f"{f' (Target Value from Opposed/Entity: {target_value_for_check})' if target_value_for_check is not None and target_value_for_check != difficulty_dc else ''}. "
-            f"Outcome: {determined_outcome.name}{' (Critical)' if is_critical else ''}."
+        result.description = (
+            f"{check_type.replace('_', ' ').capitalize()} by {getattr(actor, 'name', entity_doing_check_id)}: "
+            f"Roll ({result.roll_formula}): {result.rolls} + Mod: {result.modifier_applied} = Total: {result.total_roll_value}. "
+            f"Target DC: {actual_dc}. Outcome: {result.outcome.name}{' (Critical)' if result.is_critical else ''}."
         )
-        result.description = description
         
-        print(f"RuleEngine.resolve_check: Final result: {result}")
+        print(f"RuleEngine.resolve_check: {result.description}")
         return result
 
     # --- Stubs for Other Key Missing Mechanics ---
