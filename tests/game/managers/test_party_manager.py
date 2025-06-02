@@ -9,11 +9,7 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         self.mock_db_adapter = AsyncMock()
         self.mock_settings = {}
         self.mock_char_manager = AsyncMock()
-        # self.party_manager = PartyManager(
-        #     db_adapter=self.mock_db_adapter,
-        #     settings=self.mock_settings,
-        #     character_manager=self.mock_char_manager
-        # )
+        # Commented out section removed for simplicity in debugging indentation
         pass # This is fine for an empty setUp body
 
     async def test_placeholder_party_manager(self):
