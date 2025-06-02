@@ -55,7 +55,7 @@ class Party:
             'id': self.id,
             'name': self.name,
             'leader_id': self.leader_id,
-            'members': self.members,
+            # 'members': self.members, # player_ids_list (serialized as player_ids) is the source of truth
             'current_action': self.current_action,
             'action_queue': self.action_queue,
             'state_variables': self.state_variables,
