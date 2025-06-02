@@ -7,16 +7,12 @@ game conflicts based on player actions and defined rules.
 # Импорты, необходимые для ConflictResolver
 import json
 import uuid
-import traceback # <- Добавьте импорт traceback, он используется в Error handling
-from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union, Tuple # <- Убедитесь, что Union и Tuple импортированы
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union, Tuple
 
 # Используем TYPE_CHECKING для импорта, который нужен только для аннотаций типов
 # и предотвращает циклический импорт, если адаптер БД зависит от моделей или других частей игры.
 if TYPE_CHECKING:
-    # Импорт для аннотаций типов
-    from ..database.sqlite_adapter import SqliteAdapter
-    # Импорт класса Character для аннотаций типов
-    from .models.character import Character
+    from ..database.sqlite_adapter import SqliteAdapter # Import for type hinting (forward reference)
 
 # Placeholder for actual RuleEngine and NotificationService classes
 # from ..core.rule_engine import RuleEngine # Assuming RuleEngine might be in a core module
@@ -29,7 +25,6 @@ class ConflictResolver:
     based on the game's rules configuration.
     """
 
-    # Аннотация для db_adapter теперь ссылается на импортированный (в TYPE_CHECKING) класс
     def __init__(self, rule_engine: Any, rules_config_data: Dict[str, Any], notification_service: Any, db_adapter: 'SqliteAdapter'):
         """
         Инициализирует ConflictResolver.
@@ -214,7 +209,7 @@ class ConflictResolver:
 
             target_roll = None
             target_check_outcome = None
-            target_check_result = None
+            target_check_result = None # Initialize to None
 
             if config_check_type == "opposed_check" and target_id:
                  print(f"Calling RuleEngine for target '{target_id}' check type '{config_check_type}'...")
@@ -278,6 +273,7 @@ class ConflictResolver:
         except Exception as e:
             error_msg = f"Error during RuleEngine check for conflict {conflict_id} ({conflict_type_id}): {e}"
             print(f"❌ {error_msg}")
+            import traceback
             traceback.print_exc()
             conflict["status"] = "resolution_failed_rule_engine_error"
             conflict["outcome"] = {"description": error_msg}
@@ -286,6 +282,7 @@ class ConflictResolver:
         resolved_outcome_details = outcome_rules.get("outcomes", {}).get(final_outcome_key, {})
 
         conflict["status"] = "resolved_automatically"
+        # Populate outcome using results from RuleEngine and rules_config
         conflict["outcome"] = {
             "winner_id": winner_id,
             "actor_check_result": actor_check_result,
@@ -293,7 +290,7 @@ class ConflictResolver:
             "outcome_key": final_outcome_key,
             "description": resolved_outcome_details.get("description", f"Automatic outcome: {final_outcome_key}"),
             "effects": resolved_outcome_details.get("effects", []),
-            "resolution_timestamp": await self.rule_engine.get_game_time() if hasattr(self.rule_engine, 'get_game_time') else None
+            "resolution_timestamp": await self.rule_engine.get_game_time() if hasattr(self.rule_engine, 'get_game_time') else None # Get game time if possible
         }
 
         print(f"Conflict {conflict_id} ({conflict_type_id}) automatically resolved.")
@@ -323,6 +320,7 @@ class ConflictResolver:
             return {"status": "preparation_failed_unknown_type", "message": error_msg, "original_conflict": conflict}
 
         rule = self.rules_config[conflict_type_id]
+        # Check rule.get("manual_resolution_required") is implicitly handled by where this method is called
 
         conflict_id = conflict.get("conflict_id") or uuid.uuid4().hex
         conflict["conflict_id"] = conflict_id
@@ -338,6 +336,7 @@ class ConflictResolver:
                  return {"status": "preparation_failed_no_guild_id", "message": error_msg, "original_conflict": conflict}
 
             conflict_data_json = json.dumps(conflict)
+            # Use the db_adapter instance passed in __init__
             await self.db_adapter.save_pending_conflict(
                  conflict_id=conflict_id,
                  guild_id=guild_id,
@@ -348,6 +347,7 @@ class ConflictResolver:
         except Exception as e:
             error_msg = f"Error saving conflict {conflict_id} to DB for manual resolution: {e}"
             print(f"❌ {error_msg}")
+            import traceback
             traceback.print_exc()
             conflict["status"] = "preparation_failed_db_error"
             return {"status": "preparation_failed_db_error", "message": error_msg, "original_conflict": conflict}
@@ -383,6 +383,7 @@ class ConflictResolver:
         if self.notification_service:
              print(f"Simulating async notification service call for conflict {conflict_id}...")
              try:
+                 # Use the notification_service instance passed in __init__
                  await self.notification_service.send_master_alert(
                     conflict_id=conflict_id,
                     guild_id=guild_id,
@@ -392,6 +393,7 @@ class ConflictResolver:
                  print(f"Notification sent for conflict {conflict_id}.")
              except Exception as e:
                  print(f"❌ Error sending notification for conflict {conflict_id}: {e}")
+                 import traceback
                  traceback.print_exc()
 
 
@@ -419,6 +421,7 @@ class ConflictResolver:
         print(f"Processing Master resolution for conflict_id: {conflict_id}, outcome_type: {outcome_type}, params: {params}")
 
         try:
+            # Use the db_adapter instance passed in __init__
             pending_conflict_row = await self.db_adapter.get_pending_conflict(conflict_id)
             if not pending_conflict_row:
                  print(f"❌ Error: Conflict ID '{conflict_id}' not found in pending manual resolutions database table.")
@@ -429,14 +432,16 @@ class ConflictResolver:
                  }
 
             original_conflict = json.loads(pending_conflict_row['conflict_data'])
-            original_conflict["status"] = "resolved_manually"
+            original_conflict["status"] = "resolved_manually" # Update status
 
+            # Immediately remove the conflict from the pending table after retrieval
             await self.db_adapter.delete_pending_conflict(conflict_id)
             print(f"Conflict {conflict_id} retrieved and removed from database.")
 
         except Exception as e:
             error_msg = f"Error retrieving/deleting conflict {conflict_id} from DB for manual resolution: {e}"
             print(f"❌ {error_msg}")
+            import traceback
             traceback.print_exc()
             return {
                 "success": False,
@@ -503,7 +508,7 @@ class ConflictResolver:
 
         original_conflict["outcome"] = outcome_data
         original_conflict["resolved_by"] = "master"
-        original_conflict["resolution_timestamp"] = await self.rule_engine.get_game_time() if hasattr(self.rule_engine, 'get_game_time') else None
+        original_conflict["resolution_timestamp"] = await self.rule_engine.get_game_time() if hasattr(self.rule_engine, 'get_game_time') else None # Get game time if possible
 
 
         print(f"Conflict {conflict_id} resolved manually by Master. Outcome: {outcome_type}. Details: {original_conflict['outcome']}")
@@ -514,5 +519,172 @@ class ConflictResolver:
             "resolution_details": original_conflict
         }
 
-# The test block (`if __name__ == '__main__':`) with mock classes should be removed from this file.
-# It belongs in a separate test file.
+# Keep the Character model definition here as it was provided and confirmed correct
+@dataclass
+class Character:
+    # ... (определение класса Character без изменений) ...
+    id: str
+    discord_user_id: int
+    name_i18n: Dict[str, str]
+    guild_id: str
+
+    location_id: Optional[str] = None
+    stats: Dict[str, Any] = field(default_factory=dict)
+    inventory: List[Dict[str, Any]] = field(default_factory=list)
+    current_action: Optional[Dict[str, Any]] = None
+    action_queue: List[Dict[str, Any]] = field(default_factory=list)
+    party_id: Optional[str] = None
+    state_variables: Dict[str, Any] = field(default_factory=dict)
+
+    hp: float = 100.0
+    max_health: float = 100.0
+    is_alive: bool = True
+
+    status_effects: List[Dict[str, Any]] = field(default_factory=list)
+    level: int = 1
+    experience: int = 0
+    unspent_xp: int = 0
+    active_quests: List[str] = field(default_factory=list)
+
+    known_spells: List[str] = field(default_factory=list)
+    spell_cooldowns: Dict[str, float] = field(default_factory=dict)
+    skills: Dict[str, int] = field(default_factory=dict)
+
+    known_abilities: List[str] = field(default_factory=list)
+    ability_cooldowns: Dict[str, float] = field(default_factory=dict)
+    flags: List[str] = field(default_factory=list)
+    char_class: Optional[str] = None
+
+    selected_language: Optional[str] = None
+    current_game_status: Optional[str] = None
+    collected_actions_json: Optional[str] = None
+    current_party_id: Optional[str] = None
+
+    def __post_init__(self):
+        if 'hp' not in self.stats:
+            self.stats['hp'] = self.hp
+        else:
+            self.hp = float(self.stats.get('hp', self.hp))
+
+        if 'max_health' not in self.stats:
+            self.stats['max_health'] = self.max_health
+        else:
+            self.max_health = float(self.stats.get('max_health', self.max_health))
+
+        if 'mana' not in self.stats:
+            self.stats['mana'] = self.stats.get('max_mana', 50)
+        if 'max_mana' not in self.stats:
+            self.stats['max_mana'] = self.stats.get('mana', 50)
+        if 'intelligence' not in self.stats:
+            self.stats['intelligence'] = 10
+
+        if self.collected_actions_json is not None and not isinstance(self.collected_actions_json, str):
+             try:
+                 self.collected_actions_json = json.dumps(self.collected_actions_json)
+             except TypeError as e:
+                 print(f"WARNING: Could not json.dumps collected_actions_json in __post_init__: {e}. Value was: {self.collected_actions_json}")
+                 self.collected_actions_json = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Character:
+        if 'guild_id' not in data:
+            raise ValueError("Missing 'guild_id' key in data for Character.from_dict")
+        if 'id' not in data or 'discord_user_id' not in data or ('name' not in data and 'name_i18n' not in data):
+            raise ValueError("Missing core fields (id, discord_user_id, and name/name_i18n) for Character.from_dict")
+
+        data_copy = data.copy()
+
+        if "name" in data_copy and "name_i18n" not in data_copy:
+            data_copy["name_i18n"] = {"en": data_copy.pop("name")}
+        elif "name" in data_copy and "name_i18n" in data_copy:
+             data_copy.pop("name")
+
+        collected_actions_data = data_copy.get('collected_actions_json')
+        if collected_actions_data is None:
+             collected_actions_data = data_copy.get('собранные_действия_JSON')
+
+        init_data = {
+            'id': data_copy.get('id'),
+            'discord_user_id': data_copy.get('discord_user_id'),
+            'name_i18n': data_copy.get('name_i18n'),
+            'guild_id': data_copy.get('guild_id'),
+            'location_id': data_copy.get('location_id'),
+            'stats': data_copy.get('stats', {}),
+            'inventory': data_copy.get('inventory', []),
+            'current_action': data_copy.get('current_action'),
+            'action_queue': data_copy.get('action_queue', []),
+            'party_id': data_copy.get('party_id'),
+            'state_variables': data_copy.get('state_variables', {}),
+
+            'hp': float(data_copy.get('hp', data_copy['stats'].get('hp', 100.0)) if 'stats' in data_copy else data_copy.get('hp', 100.0)),
+            'max_health': float(data_copy.get('max_health', data_copy['stats'].get('max_health', 100.0)) if 'stats' in data_copy else data_copy.get('max_health', 100.0)),
+
+            'is_alive': bool(data_copy.get('is_alive', True)),
+            'status_effects': data_copy.get('status_effects', []),
+            'level': int(data_copy.get('level', 1)),
+            'experience': int(data_copy.get('experience', 0)),
+            'unspent_xp': int(data_copy.get('unspent_xp', 0)),
+            'active_quests': data_copy.get('active_quests', []),
+
+            'known_spells': data_copy.get('known_spells', []),
+            'spell_cooldowns': data_copy.get('spell_cooldowns', {}),
+            'skills': data_copy.get('skills', {}),
+
+            'known_abilities': data_copy.get('known_abilities', []),
+            'ability_cooldowns': data_copy.get('ability_cooldowns', {}),
+            'flags': data_copy.get('flags', []),
+            'char_class': data_copy.get('char_class'),
+
+            'selected_language': data_copy.get('selected_language'),
+            'current_game_status': data_copy.get('current_game_status'),
+            'collected_actions_json': collected_actions_data,
+            'current_party_id': data_copy.get('current_party_id'),
+        }
+
+        if 'stats' in init_data:
+             init_data['stats']['hp'] = float(init_data['hp'])
+             init_data['stats']['max_health'] = float(init_data['max_health'])
+        else:
+             init_data['stats'] = {'hp': float(init_data['hp']), 'max_health': float(init_data['max_health'])}
+
+
+        return cls(**init_data)
+
+    def to_dict(self) -> Dict[str, Any]:
+        if self.stats is None:
+            self.stats = {}
+        self.stats['hp'] = self.hp
+        self.stats['max_health'] = self.max_health
+
+        return {
+            "id": self.id,
+            "discord_user_id": self.discord_user_id,
+            "name_i18n": self.name_i18n,
+            "guild_id": self.guild_id,
+            "location_id": self.location_id,
+            "stats": self.stats,
+            "inventory": self.inventory,
+            "current_action": self.current_action,
+            "action_queue": self.action_queue,
+            "party_id": self.party_id,
+            "state_variables": self.state_variables,
+            "hp": self.hp,
+            "max_health": self.max_health,
+            "is_alive": self.is_alive,
+            "status_effects": self.status_effects,
+            "level": self.level,
+            "experience": self.experience,
+            "unspent_xp": self.unspent_xp,
+            "active_quests": self.active_quests,
+            "known_spells": self.known_spells,
+            "spell_cooldowns": self.spell_cooldowns,
+            "skills": self.skills,
+            "known_abilities": self.known_abilities,
+            "ability_cooldowns": self.ability_cooldowns,
+            "flags": self.flags,
+            "char_class": self.char_class,
+            "selected_language": self.selected_language,
+            "current_game_status": self.current_game_status,
+            "collected_actions_json": self.collected_actions_json,
+            "current_party_id": self.current_party_id,
+        }

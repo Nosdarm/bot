@@ -1,7 +1,6 @@
 # bot/database/sqlite_adapter.py
-"""
-Модуль для адаптера базы данных SQLite, включая систему миграции схемы.
-"""
+# В этом файле миграция _migrate_v10_to_v11 уже содержит добавление колонки collected_actions_json.
+# Вам нужно убедиться, что методы load/save (не представлены здесь) правильно используют эту колонку.
 
 print(f"DEBUG: Loading sqlite_adapter.py from: {__file__}")
 import sqlite3 # Keep for sqlite3.OperationalError
@@ -21,8 +20,7 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    # ОБНОВЛЕНО: Добавлена таблица pending_conflicts
-    LATEST_SCHEMA_VERSION = 13
+    LATEST_SCHEMA_VERSION = 12 # Added unspent_xp to players table
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -35,13 +33,9 @@ class SqliteAdapter:
             print("SqliteAdapter: Connecting to database...")
             try:
                 # IMPORTANT: Use check_same_thread=False for aiosqlite in a multi-threaded/async environment
-                # This is crucial for concurrent access in an async application.
                 self._conn = await aiosqlite.connect(self._db_path, check_same_thread=False)
-                self._conn.row_factory = aiosqlite.Row # Allows accessing columns by name
-                # Recommended for concurrency and performance
-                await self._conn.execute('PRAGMA journal_mode=WAL')
-                await self._conn.execute('PRAGMA foreign_keys=ON') # Ensure foreign key constraints are enforced
-
+                self._conn.row_factory = aiosqlite.Row
+                await self._conn.execute('PRAGMA journal_mode=WAL') # Recommended for concurrency
                 print("SqliteAdapter: Database connected successfully.")
             except Exception as e:
                 print(f"SqliteAdapter: ❌ Error connecting to database: {e}")
@@ -135,7 +129,6 @@ class SqliteAdapter:
         if not self._conn:
             raise ConnectionError("Database connection is not established.")
         try:
-            # No commit/rollback needed for SELECT operations
             cursor = await self._conn.execute(sql, params or ())
             rows = await cursor.fetchall()
             await cursor.close()
@@ -143,14 +136,13 @@ class SqliteAdapter:
         except Exception as e:
             print(f"SqliteAdapter: ❌ Error fetching all SQL: {sql} | params: {params} | {e}")
             traceback.print_exc()
-            raise # Re-raise the exception so the caller knows about the error
+            raise # Перебрасываем исключение, чтобы вызывающий код знал об ошибке
 
     async def fetchone(self, sql: str, params: Optional[Union[Tuple, List]] = None) -> Optional[Row]:
         """Выполняет SELECT запрос и возвращает одну строку (или None)."""
         if not self._conn:
             raise ConnectionError("Database connection is not established.")
         try:
-            # No commit/rollback needed for SELECT operations
             cursor = await self._conn.execute(sql, params or ())
             row = await cursor.fetchone()
             await cursor.close()
@@ -158,7 +150,7 @@ class SqliteAdapter:
         except Exception as e:
             print(f"SqliteAdapter: ❌ Error fetching one SQL: {sql} | params: {params} | {e}")
             traceback.print_exc()
-            raise # Re-raise the exception so the caller knows about the error
+            raise # Перебрасываем исключение, чтобы вызывающий код знал об ошибке
 
 
     async def commit(self) -> None:
@@ -293,15 +285,15 @@ class SqliteAdapter:
         try:
             await cursor.execute("ALTER TABLE characters ADD COLUMN level INTEGER DEFAULT 1;")
         except aiosqlite.OperationalError as e:
-            if "duplicate column name" not in str(e): pass # Use pass for silent skipping if column exists
+            if "duplicate column name" not in str(e): raise
         try:
             await cursor.execute("ALTER TABLE characters ADD COLUMN experience INTEGER DEFAULT 0;")
         except aiosqlite.OperationalError as e:
-            if "duplicate column name" not in str(e): pass
+            if "duplicate column name" not in str(e): raise
         try:
             await cursor.execute("ALTER TABLE characters ADD COLUMN active_quests TEXT DEFAULT '[]';")
         except aiosqlite.OperationalError as e:
-            if "duplicate column name" not in str(e): pass
+            if "duplicate column name" not in str(e): raise
 
         # Event Table
         await cursor.execute('''
@@ -357,23 +349,23 @@ class SqliteAdapter:
         try:
             await cursor.execute("ALTER TABLE npcs ADD COLUMN archetype TEXT DEFAULT 'commoner';")
         except aiosqlite.OperationalError as e:
-            if "duplicate column name" not in str(e): pass
+            if "duplicate column name" not in str(e): raise
         try:
             await cursor.execute("ALTER TABLE npcs ADD COLUMN traits TEXT DEFAULT '[]';")
         except aiosqlite.OperationalError as e:
-            if "duplicate column name" not in str(e): pass
+            if "duplicate column name" not in str(e): raise
         try:
             await cursor.execute("ALTER TABLE npcs ADD COLUMN desires TEXT DEFAULT '[]';")
         except aiosqlite.OperationalError as e:
-            if "duplicate column name" not in str(e): pass
+            if "duplicate column name" not in str(e): raise
         try:
             await cursor.execute("ALTER TABLE npcs ADD COLUMN motives TEXT DEFAULT '[]';")
         except aiosqlite.OperationalError as e:
-            if "duplicate column name" not in str(e): pass
+            if "duplicate column name" not in str(e): raise
         try:
             await cursor.execute("ALTER TABLE npcs ADD COLUMN backstory TEXT DEFAULT '';")
         except aiosqlite.OperationalError as e:
-            if "duplicate column name" not in str(e): pass
+            if "duplicate column name" not in str(e): raise
 
         # Location Template Table (PER-GUILD - Modified to add guild_id)
         await cursor.execute('''
@@ -601,7 +593,7 @@ class SqliteAdapter:
                 channel_id INTEGER,
                 current_stage_id TEXT,
                 state_variables TEXT DEFAULT '{}', -- JSON
-                conversation_history TEXT DEFAULT '[]', # Added in v2 (ensure in base for new setups)
+                conversation_history TEXT DEFAULT '[]', -- Added in v2, but good to have in base for new setups
                 last_activity_game_time REAL,
                 event_id TEXT,
                 is_active INTEGER DEFAULT 1 -- 0 or 1
@@ -617,15 +609,17 @@ class SqliteAdapter:
             await cursor.execute("ALTER TABLE dialogues ADD COLUMN conversation_history TEXT DEFAULT '[]'")
             print("SqliteAdapter: Added 'conversation_history' to dialogues table.")
         except sqlite3.OperationalError as e:
+            # Check if the error is "duplicate column name"
             if 'duplicate column name' in str(e).lower():
                 print("SqliteAdapter: Column 'conversation_history' already exists in dialogues table, skipping ALTER TABLE.")
             else:
-                raise
+                raise # Re-raise other operational errors
         print("SqliteAdapter: v1 to v2 migration complete.")
 
     async def _migrate_v2_to_v3(self, cursor: Cursor) -> None:
         """Миграция с Версии 2 на Версию 3 (добавление таблицы game_logs)."""
         print("SqliteAdapter: Running v2 to v3 migration (creating game_logs table)...")
+        # Optional: DROP TABLE IF EXISTS game_logs; # For clean dev, remove for prod if data should be kept across schema changes
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS game_logs (
                 log_id TEXT PRIMARY KEY,
@@ -643,21 +637,42 @@ class SqliteAdapter:
         print("SqliteAdapter: game_logs table created and indexes applied.")
         print("SqliteAdapter: v2 to v3 migration complete.")
 
+    # Для будущих миграций:
+    # async def _migrate_v3_to_v4(self, cursor: Cursor) -> None: # Example for next migration
+    #    """Миграция с Версии 3 на Версию 4."""
+    #    print("SqliteAdapter: Running v1 to v2 migration...")
+    #    # Пример: добавить новую колонку в таблицу characters
+    #    try:
+    #        await cursor.execute("ALTER TABLE characters ADD COLUMN new_skill_slot INTEGER DEFAULT 0")
+    #        print("SqliteAdapter: Added 'new_skill_slot' to characters table.")
+    #    except sqlite3.OperationalError:
+    #        print("SqliteAdapter: Column 'new_skill_slot' already exists, skipping ALTER TABLE.")
+    #        pass
+    #    # Пример: добавить новую таблицу
+    #    # await cursor.execute("CREATE TABLE new_table (...)")
+    #    print("SqliteAdapter: v1 to v2 migration complete.")
+
     async def _migrate_v3_to_v4(self, cursor: Cursor) -> None:
         """Миграция с Версии 3 на Версию 4."""
         print("SqliteAdapter: Running v3 to v4 migration...")
 
+        # 1. Rename `characters` to `players`
         try:
             await cursor.execute("ALTER TABLE characters RENAME TO players;")
             print("SqliteAdapter: Renamed table 'characters' to 'players'.")
         except aiosqlite.OperationalError as e:
+            # This might happen if the migration is run multiple times and 'characters' no longer exists
+            # or if 'players' already exists (less likely if migrations run linearly).
             if "no such table: characters" in str(e).lower():
                 print("SqliteAdapter: Table 'characters' not found, assuming already renamed to 'players'.")
             elif "table players already exists" in str(e).lower():
                  print("SqliteAdapter: Table 'players' already exists.")
             else:
-                raise
+                raise # Re-raise other operational errors
 
+        # 2. Add columns to the (new) `players` table
+        # Columns to add: race TEXT, mp INTEGER DEFAULT 0, attack INTEGER DEFAULT 0, defense INTEGER DEFAULT 0
+        # level and experience already exist from v1.
         player_columns_to_add = [
             ("race", "TEXT"),
             ("mp", "INTEGER DEFAULT 0"),
@@ -674,6 +689,7 @@ class SqliteAdapter:
                 else:
                     raise
 
+        # 3. Create `inventory` table
         await cursor.execute('''
             CREATE TABLE IF NOT EXISTS inventory (
                 inventory_id TEXT PRIMARY KEY,
@@ -688,8 +704,11 @@ class SqliteAdapter:
         await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_inventory_player_id ON inventory (player_id);''')
         print("SqliteAdapter: Created index 'idx_inventory_player_id' on 'inventory' table IF NOT EXISTS.")
 
+        # 4. Verify/Update `item_templates` table - No direct schema change needed as per plan.
         print("SqliteAdapter: 'item_templates' table structure confirmed suitable for item definitions (effects in properties).")
 
+        # 5. Add columns to `npcs` table
+        # Only 'persona' TEXT needs to be added. 'hp' and 'attack' are handled by existing fields.
         try:
             await cursor.execute("ALTER TABLE npcs ADD COLUMN persona TEXT;")
             print("SqliteAdapter: Added column 'persona' to 'npcs' table.")
@@ -699,6 +718,7 @@ class SqliteAdapter:
             else:
                 raise
 
+        # 6. Add `player_id` column to `game_logs` table
         try:
             await cursor.execute("ALTER TABLE game_logs ADD COLUMN player_id TEXT;")
             print("SqliteAdapter: Added column 'player_id' to 'game_logs' table.")
@@ -716,6 +736,7 @@ class SqliteAdapter:
         """Миграция с Версии 4 на Версию 5 (добавление is_undone в game_logs)."""
         print("SqliteAdapter: Running v4 to v5 migration (adding is_undone to game_logs)...")
 
+        # Add is_undone column to game_logs
         try:
             await cursor.execute("ALTER TABLE game_logs ADD COLUMN is_undone INTEGER DEFAULT 0 NOT NULL;")
             print("SqliteAdapter: Added column 'is_undone' to 'game_logs' table.")
@@ -725,6 +746,8 @@ class SqliteAdapter:
             else:
                 raise
 
+        # Add index for querying undoable actions
+        # Assumes the player_id column added in v4 was named 'player_id'
         await cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_game_logs_player_undone_ts
             ON game_logs (player_id, is_undone, timestamp DESC);
@@ -768,6 +791,8 @@ class SqliteAdapter:
 
         if 'amount' not in columns:
             print("SqliteAdapter: CRITICAL: Column 'amount' not found. This implies v5_to_v6 failed.")
+            # This should ideally not happen if migrations run in order.
+            # For robustness, attempt to add it, but this is a sign of a problem.
             try:
                 print("SqliteAdapter: Attempting to add missing 'amount' column before proceeding...")
                 await cursor.execute("ALTER TABLE inventory ADD COLUMN amount INTEGER NOT NULL DEFAULT 1;")
@@ -788,11 +813,29 @@ class SqliteAdapter:
 
         print("SqliteAdapter: Recreating 'inventory' table without 'quantity' column...")
 
+        await cursor.execute("PRAGMA foreign_keys;")
+        fk_enabled_row = await cursor.fetchone()
+        fk_enabled = False
+        if fk_enabled_row is not None:
+            try:
+                fk_enabled = bool(fk_enabled_row[0])
+            except IndexError:
+                print("SqliteAdapter: Warning: Could not determine foreign_key status from PRAGMA.")
+
+        # The main transaction is handled by initialize_database()
+        # if fk_enabled: # Foreign key handling might still be needed if STRICT mode is on, but usually ALTER/DROP is fine in a transaction.
+        #     await cursor.execute("PRAGMA foreign_keys=OFF;") # This might not be strictly necessary if not using STRICT tables.
+        #     print("SqliteAdapter: Temporarily disabled foreign keys.")
+
         try:
-            # Temporarily disable foreign keys only if they are on.
+            # Ensure foreign keys are off for table manipulation if there's any doubt.
+            # However, SQLite typically allows these operations within a transaction without this,
+            # unless specific PRAGMAs like 'foreign_key_check' are used or tables are 'STRICT'.
+            # For safety during complex rebuilds, it can be kept but ensure it's balanced.
+            # Let's assume it's needed for robustness if foreign key constraints might interfere.
             original_fk_status = await cursor.execute("PRAGMA foreign_keys;")
-            original_fk_enabled_row = await original_fk_status.fetchone()
-            fk_actually_enabled = original_fk_enabled_row[0] == 1 if original_fk_enabled_row else False
+            original_fk_enabled = await original_fk_status.fetchone()
+            fk_actually_enabled = original_fk_enabled[0] == 1 if original_fk_enabled else False
 
             if fk_actually_enabled:
                  await cursor.execute("PRAGMA foreign_keys=OFF;")
@@ -829,14 +872,21 @@ class SqliteAdapter:
             await cursor.execute("CREATE INDEX IF NOT EXISTS idx_inventory_player_id ON inventory (player_id);")
             print("SqliteAdapter: Recreated index 'idx_inventory_player_id' on 'inventory' table.")
 
+            # initialize_database() handles the commit for all migrations.
+            # print("SqliteAdapter: (migrate_v6_to_v7) Table reconstruction successful within its part of the migration.")
+
         except Exception as e_rebuild:
             print(f"SqliteAdapter: Error during inventory table reconstruction in _migrate_v6_to_v7: {e_rebuild}. The outer transaction in initialize_database will handle rollback.")
             traceback.print_exc()
-            raise
+            raise # Re-raise to trigger rollback in initialize_database
         finally:
-            if fk_actually_enabled:
+            # Restore foreign key status if it was changed
+            if fk_actually_enabled: # Only if we actually turned them off
                  await cursor.execute("PRAGMA foreign_keys=ON;")
                  print("SqliteAdapter: (migrate_v6_to_v7) Re-enabled foreign keys.")
+            # else:
+            #      print("SqliteAdapter: (migrate_v6_to_v7) Foreign keys were not originally enabled or status unknown, not changing.")
+
 
         print("SqliteAdapter: v6 to v7 migration complete.")
 
@@ -844,10 +894,12 @@ class SqliteAdapter:
         """Миграция с Версии 7 на Версию 8 (добавление hp и max_health в таблицу players, если отсутствуют)."""
         print("SqliteAdapter: Running v7 to v8 migration (ensure hp, max_health in players)...")
 
+        # Получаем информацию о столбцах таблицы players
         await cursor.execute("PRAGMA table_info(players);")
         columns_info = await cursor.fetchall()
         column_names = [row['name'] for row in columns_info if row and 'name' in row.keys()]
 
+        # Проверяем и добавляем столбец hp, если он отсутствует
         if 'hp' not in column_names:
             try:
                 print("SqliteAdapter: Column 'hp' not found in 'players'. Adding column hp REAL DEFAULT 100.0...")
@@ -860,6 +912,7 @@ class SqliteAdapter:
         else:
             print("SqliteAdapter: Column 'hp' already exists in 'players' table.")
 
+        # Проверяем и добавляем столбец max_health, если он отсутствует
         if 'max_health' not in column_names:
             try:
                 print("SqliteAdapter: Column 'max_health' not found in 'players'. Adding column max_health REAL DEFAULT 100.0...")
@@ -893,9 +946,13 @@ class SqliteAdapter:
                     await cursor.execute("PRAGMA foreign_keys=OFF;")
                     print("SqliteAdapter: (migrate_v8_to_v9) Temporarily disabled foreign keys for table rebuild.")
 
-                await cursor.execute("UPDATE players SET hp = health WHERE health IS NOT NULL AND (hp IS NULL OR hp != health);")
+                # Ensure hp has the values from health if health is more up-to-date or hp is default
+                await cursor.execute("UPDATE players SET hp = health WHERE health IS NOT NULL AND (hp IS NULL OR hp = 100.0 OR hp != health);")
                 print("SqliteAdapter: Copied 'health' data to 'hp' where appropriate.")
 
+                # Define the schema for the new table, excluding 'health'
+                # This must match the players table schema AFTER v8 migration, minus 'health'
+                # And ensuring all constraints (PK, UNIQUE, NOT NULL, DEFAULT) are preserved.
                 create_players_new_sql = """
                 CREATE TABLE players_new (
                     id TEXT PRIMARY KEY,
@@ -914,7 +971,6 @@ class SqliteAdapter:
                     status_effects TEXT DEFAULT '[]',
                     level INTEGER DEFAULT 1,
                     experience INTEGER DEFAULT 0,
-                    unspent_xp INTEGER DEFAULT 0, -- Added in v12, ensure included here for completeness if needed in a later migration
                     active_quests TEXT DEFAULT '[]',
                     created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
                     last_played_at REAL NULL,
@@ -922,11 +978,7 @@ class SqliteAdapter:
                     mp INTEGER DEFAULT 0,
                     attack INTEGER DEFAULT 0,
                     defense INTEGER DEFAULT 0,
-                    hp REAL DEFAULT 100.0, -- Standardized name
-                    selected_language TEXT NULL, -- Added in v11, ensure included
-                    current_game_status TEXT NULL, -- Added in v11, ensure included
-                    collected_actions_json TEXT NULL, -- Added in v11, ensure included
-                    current_party_id TEXT NULL, -- Added in v11, ensure included
+                    hp REAL DEFAULT 100.0,
                     UNIQUE(discord_user_id, guild_id),
                     UNIQUE(name, guild_id)
                 );
@@ -934,15 +986,9 @@ class SqliteAdapter:
                 await cursor.execute(create_players_new_sql)
                 print("SqliteAdapter: Created 'players_new' table with standardized schema (no 'health' column).")
 
-                # Explicitly list columns for insertion
-                cols_to_select = """
-                    id, discord_user_id, name, guild_id, location_id, stats,
-                    inventory, current_action, action_queue, party_id, state_variables,
-                    max_health, is_alive, status_effects, level, experience, unspent_xp,
-                    active_quests, created_at, last_played_at, race, mp, attack,
-                    defense, hp, selected_language, current_game_status,
-                    collected_actions_json, current_party_id
-                """
+                # Explicitly list columns for insertion, ensuring 'hp' gets its (potentially updated) value
+                # and 'health' is excluded.
+                cols_to_select = "id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, max_health, is_alive, status_effects, level, experience, active_quests, created_at, last_played_at, race, mp, attack, defense, hp"
                 insert_sql = f"INSERT INTO players_new ({cols_to_select}) SELECT {cols_to_select} FROM players;"
                 await cursor.execute(insert_sql)
                 print("SqliteAdapter: Copied data to 'players_new'.")
@@ -953,14 +999,16 @@ class SqliteAdapter:
                 await cursor.execute("ALTER TABLE players_new RENAME TO players;")
                 print("SqliteAdapter: Renamed 'players_new' to 'players'.")
 
-                # Recreate indexes
-                await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_players_guild_id ON players (guild_id);''')
-                await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_players_location_id ON players (location_id);''')
+                # Recreate indexes that might have been on the original players table
+                # (Assuming these were the main ones, add others if they existed)
+                await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_players_guild_id ON players (guild_id);''') # Example, if it existed
+                await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_players_location_id ON players (location_id);''') # Example
+
 
             except Exception as e_std:
                 print(f"SqliteAdapter: Error standardizing 'health' to 'hp': {e_std}")
                 traceback.print_exc()
-                raise
+                raise # Re-raise to be caught by initialize_database for rollback
             finally:
                 if fk_actually_enabled:
                     await cursor.execute("PRAGMA foreign_keys=ON;")
@@ -969,16 +1017,28 @@ class SqliteAdapter:
         elif 'hp' not in column_names and 'health' in column_names:
             print("SqliteAdapter: Only 'health' column exists. Renaming 'health' to 'hp'.")
             try:
+                # Renaming column is simpler if no type change or complex data merge is needed.
+                # However, ensure the default value for 'hp' is consistent if it wasn't on 'health'.
+                # The v7_to_v8 migration already added 'hp' with default 100.0.
+                # This path (only 'health' exists) should be unlikely if v7_to_v8 ran.
+                # If this path IS taken, it means 'hp' was never created by v7_to_v8.
+                # We should add 'hp' and copy 'health' then drop 'health', or rename 'health' to 'hp'.
+                # Renaming is simpler if 'health' already has the right type and default.
+                # For now, sticking to rename as per original user script's branch.
                 await cursor.execute("ALTER TABLE players RENAME COLUMN health TO hp;")
                 print("SqliteAdapter: Successfully renamed 'health' to 'hp'.")
+                # Verify default for hp if it was just renamed
+                # This might require further ALTER TABLE DEFAULT which is tricky in SQLite.
+                # Best if 'health' column type and default were already compatible.
             except Exception as e_rename:
                 print(f"SqliteAdapter: Error renaming 'health' to 'hp': {e_rename}")
                 traceback.print_exc()
                 raise
         elif 'hp' in column_names and 'health' not in column_names:
             print("SqliteAdapter: 'hp' column exists and 'health' column does not. Schema is already standardized.")
-        else:
-            print("SqliteAdapter: Neither 'hp' nor 'health' column exists or was handled.")
+        else: # Neither 'hp' nor 'health' column exists. This is unexpected.
+              # Or, if 'health' doesn't exist but 'hp' does (covered by previous elif)
+            print("SqliteAdapter: 'hp' column seems to be correctly in place or 'health' was already handled/missing.")
 
         print("SqliteAdapter: v8 to v9 migration complete.")
 
@@ -990,15 +1050,20 @@ class SqliteAdapter:
         columns_info = await cursor.fetchall()
         column_names = [row['name'] for row in columns_info if row and 'name' in row.keys()]
 
+        # guild_id and location_id should already exist from _migrate_v0_to_v1.
+        # Adding them here again would be redundant and might cause errors if run on an existing DB.
+        # We will only add the new columns for turn-based combat.
+
         if 'turn_order' not in column_names:
             try:
                 await cursor.execute("ALTER TABLE combats ADD COLUMN turn_order TEXT DEFAULT '[]';")
                 print("SqliteAdapter: Added column 'turn_order' to 'combats' table.")
-            except aiosqlite.OperationalError as e:
+            except Exception as e:
+                print(f"SqliteAdapter: Error adding 'turn_order' to 'combats' (column might already exist or other issue): {e}")
+                # If it's "duplicate column name", that's fine. Otherwise, re-raise.
                 if "duplicate column name" not in str(e).lower():
                     traceback.print_exc()
                     raise
-                else: pass
         else:
             print("SqliteAdapter: Column 'turn_order' already exists in 'combats' table.")
 
@@ -1006,11 +1071,11 @@ class SqliteAdapter:
             try:
                 await cursor.execute("ALTER TABLE combats ADD COLUMN current_turn_index INTEGER DEFAULT 0;")
                 print("SqliteAdapter: Added column 'current_turn_index' to 'combats' table.")
-            except aiosqlite.OperationalError as e:
+            except Exception as e:
+                print(f"SqliteAdapter: Error adding 'current_turn_index' to 'combats' (column might already exist or other issue): {e}")
                 if "duplicate column name" not in str(e).lower():
                     traceback.print_exc()
                     raise
-                else: pass
         else:
             print("SqliteAdapter: Column 'current_turn_index' already exists in 'combats' table.")
 
@@ -1022,10 +1087,10 @@ class SqliteAdapter:
 
         # 1. Update 'players' table
         player_columns_to_add = [
-            ("selected_language", "TEXT NULL"), # Added NULL constraint explicitely
-            ("current_game_status", "TEXT NULL"),
-            ("collected_actions_json", "TEXT NULL"), # **This is where the column is added**
-            ("current_party_id", "TEXT NULL") # Consider FOREIGN KEY to parties(id) later
+            ("selected_language", "TEXT"),
+            ("current_game_status", "TEXT"),
+            ("collected_actions_json", "TEXT"), # **This is where the column is added**
+            ("current_party_id", "TEXT") # Consider FOREIGN KEY to parties(id) later
         ]
         print("SqliteAdapter: Updating 'players' table...")
         for column_name, column_type in player_columns_to_add:
@@ -1042,9 +1107,9 @@ class SqliteAdapter:
 
         # 2. Update 'locations' table
         location_columns_to_add = [
-            ("descriptions_i18n", "TEXT NULL"), # JSON string for multilingual descriptions
-            ("static_name", "TEXT NULL"),       # Static identifier for the location
-            ("static_connections", "TEXT NULL") # JSON string for static connections
+            ("descriptions_i18n", "TEXT"), # JSON string for multilingual descriptions
+            ("static_name", "TEXT"),       # Static identifier for the location
+            ("static_connections", "TEXT") # JSON string for static connections
         ]
         print("SqliteAdapter: Updating 'locations' table...")
         for column_name, column_type in location_columns_to_add:
@@ -1062,10 +1127,19 @@ class SqliteAdapter:
         # 3. Update 'parties' table
         print("SqliteAdapter: Updating 'parties' table...")
         # Rename member_ids to player_ids
+        # This is not perfectly idempotent. If it fails, the transaction should roll back.
+        # Assumes member_ids exists and player_ids does not.
         try:
             await cursor.execute("ALTER TABLE parties RENAME COLUMN member_ids TO player_ids;")
             print("SqliteAdapter: Renamed column 'member_ids' to 'player_ids' in 'parties' table.")
         except aiosqlite.OperationalError as e:
+            # Common errors: "no such column: member_ids" (if already renamed or dropped)
+            # or "duplicate column name: player_ids" (if player_ids was somehow created before rename)
+            # This specific error for "duplicate column name" during RENAME is not standard,
+            # usually it's about the new name conflicting with an existing table.
+            # SQLite specific error for "duplicate column name" on RENAME might be "table `parties` has no column named `member_ids`"
+            # or if player_ids somehow exists, it might conflict differently.
+            # For now, let specific errors pass if they indicate already migrated.
             if "no such column: member_ids" in str(e).lower():
                  print("SqliteAdapter: Column 'member_ids' not found in 'parties', assuming already renamed or handled.")
             elif "duplicate column" in str(e).lower() and "player_ids" in str(e).lower(): # Generic check
@@ -1076,8 +1150,8 @@ class SqliteAdapter:
                 raise
 
         party_columns_to_add = [
-            ("current_location_id", "TEXT NULL"), # FOREIGN KEY to locations(id)
-            ("turn_status", "TEXT NULL")          # e.g., "collecting", "waiting", "processing"
+            ("current_location_id", "TEXT"), # FOREIGN KEY to locations(id)
+            ("turn_status", "TEXT")          # e.g., "collecting", "waiting", "processing"
         ]
         for column_name, column_type in party_columns_to_add:
             try:
@@ -1134,6 +1208,7 @@ class SqliteAdapter:
         """Миграция с Версии 11 на Версию 12 (добавление unspent_xp в таблицу players)."""
         print("SqliteAdapter: Running v11 to v12 migration (add unspent_xp to players)...")
         try:
+            # Check if the column already exists
             await cursor.execute("PRAGMA table_info(players);")
             columns_info = await cursor.fetchall()
             column_names = [row['name'] for row in columns_info if row and 'name' in row.keys()]
@@ -1148,61 +1223,6 @@ class SqliteAdapter:
             traceback.print_exc()
             raise
         print("SqliteAdapter: v11 to v12 migration complete.")
-
-    async def _migrate_v12_to_v13(self, cursor: Cursor) -> None:
-        """Миграция с Версии 12 на Версию 13 (добавление таблицы pending_conflicts)."""
-        print("SqliteAdapter: Running v12 to v13 migration (creating pending_conflicts table)...")
-        await cursor.execute('''
-            CREATE TABLE IF NOT EXISTS pending_conflicts (
-                id TEXT PRIMARY KEY, -- Conflict ID (should match ConflictResolver.conflict_id)
-                guild_id TEXT NOT NULL, -- Which guild this conflict belongs to
-                conflict_data TEXT NOT NULL, -- JSON string of the conflict dictionary
-                created_at REAL NOT NULL DEFAULT (strftime('%s','now')) -- Timestamp when it was created
-                -- Optional: Add FOREIGN KEY(guild_id) REFERENCES guilds(id) if you have a guilds table
-            );
-        ''')
-        # Add index for faster lookups by guild ID
-        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_pending_conflicts_guild_id ON pending_conflicts (guild_id);''')
-        print("SqliteAdapter: 'pending_conflicts' table created and index applied IF NOT EXISTS.")
-        print("SqliteAdapter: v12 to v13 migration complete.")
-
-
-    # --- Методы для работы с таблицей pending_conflicts ---
-
-    async def save_pending_conflict(self, conflict_id: str, guild_id: str, conflict_data: str) -> None:
-        """Saves or updates a pending manual conflict in the database."""
-        if not isinstance(conflict_data, str):
-             raise TypeError("conflict_data must be a JSON string.")
-        sql = """
-            INSERT INTO pending_conflicts (id, guild_id, conflict_data)
-            VALUES (?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                guild_id = excluded.guild_id,
-                conflict_data = excluded.conflict_data,
-                created_at = strftime('%s','now');
-        """
-        await self.execute(sql, (conflict_id, guild_id, conflict_data))
-        # print(f"SqliteAdapter: Saved pending conflict '{conflict_id}' for guild '{guild_id}'.") # Keep prints minimal in core adapter methods
-
-    async def get_pending_conflict(self, conflict_id: str) -> Optional[Row]:
-        """Retrieves a pending manual conflict by its ID."""
-        sql = "SELECT id, guild_id, conflict_data FROM pending_conflicts WHERE id = ?;"
-        row = await self.fetchone(sql, (conflict_id,))
-        # print(f"SqliteAdapter: Fetched pending conflict '{conflict_id}': {row is not None}")
-        return row
-
-    async def delete_pending_conflict(self, conflict_id: str) -> None:
-        """Deletes a pending manual conflict by its ID."""
-        sql = "DELETE FROM pending_conflicts WHERE id = ?;"
-        await self.execute(sql, (conflict_id,))
-        # print(f"SqliteAdapter: Deleted pending conflict '{conflict_id}'.") # Keep prints minimal
-
-    async def get_pending_conflicts_by_guild(self, guild_id: str) -> List[Row]:
-        """Retrieves all pending manual conflicts for a specific guild."""
-        sql = "SELECT id, guild_id, conflict_data FROM pending_conflicts WHERE guild_id = ? ORDER BY created_at DESC;"
-        rows = await self.fetchall(sql, (guild_id,))
-        # print(f"SqliteAdapter: Fetched {len(rows)} pending conflicts for guild '{guild_id}'.")
-        return rows
 
 
 # --- Конец класса SqliteAdapter ---

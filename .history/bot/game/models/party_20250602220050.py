@@ -55,7 +55,11 @@ class Party:
             'id': self.id,
             'name_i18n': self.name_i18n,
             'leader_id': self.leader_id,
+<<<<<<< HEAD
             # 'members': self.members, # player_ids_list (serialized as player_ids) is the source of truth
+=======
+            # 'members': self.player_ids_list, # Assuming 'members' was meant to be player_ids_list
+>>>>>>> feature/i18n-schema-updates
             'current_action': self.current_action,
             'action_queue': self.action_queue,
             'state_variables': self.state_variables,
