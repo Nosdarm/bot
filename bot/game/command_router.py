@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from bot.services.campaign_loader import CampaignLoader 
     from bot.game.managers.relationship_manager import RelationshipManager 
     from bot.game.managers.quest_manager import QuestManager
+    from bot.game.conflict_resolver import ConflictResolver # For type hinting
 
 
     # Добавляем другие менеджеры, которые могут быть в context kwargs
@@ -168,7 +169,8 @@ class CommandRouter:
         self._party_command_handler = party_command_handler
         self._campaign_loader = campaign_loader
         self._relationship_manager = relationship_manager 
-        self._quest_manager = quest_manager 
+        self._quest_manager = quest_manager
+        self._conflict_resolver = kwargs.get('conflict_resolver') # Added ConflictResolver from kwargs
 
         self._openai_service = openai_service
         self._item_manager = item_manager
@@ -253,7 +255,8 @@ class CommandRouter:
 
             'campaign_loader': self._campaign_loader,
             'relationship_manager': self._relationship_manager, 
-            'quest_manager': self._quest_manager, 
+            'quest_manager': self._quest_manager,
+            'conflict_resolver': self._conflict_resolver, # Add to context
 
         }
 
@@ -1564,6 +1567,156 @@ class CommandRouter:
         
         else:
             await send_callback(f"Unknown GM subcommand: '{subcommand}'. Use `{self._command_prefix}gm` for help.")
+
+    @command("party_submit_actions_placeholder")
+    async def handle_party_submit_actions_placeholder(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """
+        Placeholder for submitting party actions.
+        Usage: {prefix}party_submit_actions_placeholder <party_id> <json_actions_for_player1> <json_actions_for_player2> ...
+        Example: {prefix}party_submit_actions_placeholder party_xyz char1_id '[{"intent":"move","entities":{"target_space":"A2"}}]' char2_id '[{"intent":"look","entities":{}}]'
+        """
+        send_callback = context['send_to_command_channel']
+        guild_id = context.get('guild_id')
+        
+        if not guild_id:
+            await send_callback("This command must be used in a server.")
+            return
+
+        if len(args) < 3 or len(args) % 2 == 0: # Needs party_id and at least one pair of (char_id, actions_json)
+            await send_callback(f"Usage: {self._command_prefix}party_submit_actions_placeholder <party_id> <char1_id> '<actions_json1>' [<char2_id> '<actions_json2>'...]")
+            return
+
+        party_id_arg = args[0]
+        party_actions_data: List[Tuple[str, str]] = []
+        
+        for i in range(1, len(args), 2):
+            char_id = args[i]
+            actions_json_string = args[i+1]
+            party_actions_data.append((char_id, actions_json_string))
+
+        # Retrieve necessary managers from context
+        char_manager = context.get('character_manager')
+        loc_manager = context.get('location_manager')
+        event_manager = context.get('event_manager')
+        rule_engine = context.get('rule_engine')
+        openai_service = context.get('openai_service')
+        # The conflict_resolver is already part of self from __init__
+
+        if not all([char_manager, loc_manager, event_manager, rule_engine, self._conflict_resolver]):
+            await send_callback("Error: One or more required managers (Character, Location, Event, RuleEngine, ConflictResolver) are not available.")
+            return
+
+        # Import ActionProcessor here or at top of file if preferred
+        from bot.game.action_processor import ActionProcessor
+        
+        # Instantiate ActionProcessor, passing the conflict_resolver from CommandRouter
+        # Note: ActionProcessor's __init__ was modified to accept conflict_resolver
+        action_processor_instance = ActionProcessor(conflict_resolver=self._conflict_resolver) # This now correctly passes it to AP __init__
+        
+        # Mock GameState for now
+        from bot.game.models.game_state import GameState # Assuming GameState model
+        mock_game_state = GameState(guild_id=guild_id) # Basic mock
+
+        try:
+            result = await action_processor_instance.process_party_actions(
+                game_state=mock_game_state,
+                char_manager=char_manager,
+                loc_manager=loc_manager,
+                event_manager=event_manager,
+                rule_engine=rule_engine,
+                openai_service=openai_service, # Can be None if ActionProcessor handles it
+                party_actions_data=party_actions_data,
+                ctx_channel_id_fallback=message.channel.id,
+                conflict_resolver=self._conflict_resolver # Pass it again here, it will take precedence
+            )
+            
+            response_message = f"Party actions submitted for party '{party_id_arg}'. Result:\n"
+            response_message += f"Success: {result.get('success')}\n"
+            response_message += f"Message: {result.get('message', 'N/A')}\n"
+            if 'identified_conflicts' in result:
+                response_message += f"Identified Conflicts: {len(result['identified_conflicts'])}\n"
+                for idx, conflict in enumerate(result['identified_conflicts']):
+                    response_message += f"  Conflict {idx+1}: Type: {conflict.get('type')}, Players: {conflict.get('involved_players')}\n"
+
+            if result.get('overall_state_changed'):
+                response_message += "Overall game state changed.\n"
+            
+            # For individual results (if not using conflict resolver path)
+            # if result.get('individual_action_results'):
+            #    response_message += f"Individual Action Results: {len(result['individual_action_results'])}\n"
+
+            await send_callback(response_message[:1990]) # Trim if too long
+
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_party_submit_actions_placeholder: {e}")
+            traceback.print_exc()
+            await send_callback(f"An error occurred while processing party actions: {e}")
+
+    @command("resolve_conflict")
+    async def handle_resolve_conflict(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """
+        Allows a Master to manually resolve a pending conflict.
+        Usage: {prefix}resolve_conflict <conflict_id> <outcome_type> [<params_json>]
+        Example: {prefix}resolve_conflict an_id_from_notification actor_wins '{"reason": "Actor was faster"}'
+        Example: {prefix}resolve_conflict another_id custom_outcome '{"winner_player_id": "player123", "loot_awarded": "item_abc"}'
+        """
+        send_callback = context['send_to_command_channel']
+        author_id_str = str(message.author.id)
+        
+        # GM Access Control (or specific conflict resolution permission)
+        gm_ids = [str(gm_id) for gm_id in self._settings.get('bot_admins', [])] 
+        if author_id_str not in gm_ids:
+            await send_callback("Access Denied: This command is for GMs/Masters only.")
+            return
+
+        if len(args) < 2:
+            await send_callback(f"Usage: {self._command_prefix}resolve_conflict <conflict_id> <outcome_type> [<params_json>]")
+            return
+
+        conflict_id_arg = args[0]
+        outcome_type_arg = args[1]
+        params_json_arg = args[2] if len(args) > 2 else None
+        parsed_params: Optional[Dict[str, Any]] = None
+
+        if params_json_arg:
+            try:
+                import json # Ensure json is imported
+                parsed_params = json.loads(params_json_arg)
+                if not isinstance(parsed_params, dict):
+                    await send_callback("Error: params_json must be a valid JSON object (dictionary).")
+                    return
+            except json.JSONDecodeError as e:
+                await send_callback(f"Error parsing params_json: {e}")
+                return
+        
+        # Retrieve ConflictResolver from context (passed from GameManager to CommandRouter.__init__)
+        conflict_resolver_instance = self._conflict_resolver # Relies on it being stored in __init__
+
+        if not conflict_resolver_instance:
+            await send_callback("Error: ConflictResolver service is not available.")
+            print("CommandRouter: Error in handle_resolve_conflict - ConflictResolver not found in self._conflict_resolver.")
+            return
+
+        try:
+            resolution_result = conflict_resolver_instance.process_master_resolution(
+                conflict_id=conflict_id_arg,
+                outcome_type=outcome_type_arg,
+                params=parsed_params
+            )
+            
+            response_msg = resolution_result.get("message", "Conflict resolution processed.")
+            if resolution_result.get("success"):
+                await send_callback(f"✅ {response_msg}")
+                # Potentially log resolution_details or trigger further game events based on them
+                print(f"Conflict {conflict_id_arg} resolved. Details: {resolution_result.get('resolution_details')}")
+            else:
+                await send_callback(f"❌ {response_msg}")
+
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_resolve_conflict for ID '{conflict_id_arg}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An unexpected error occurred while resolving conflict: {e}")
+
 
 def is_uuid_format(s: str) -> bool:
      """Проверяет, выглядит ли строка как UUID (простая проверка формата)."""

@@ -22,10 +22,14 @@ from bot.services.openai_service import OpenAIService
 from bot.game.rules.rule_engine import RuleEngine # If movement needs rule checks
 from bot.game.rules import skill_rules # If skill_check rule is needed
 
+# Import ConflictResolver
+from bot.game.conflict_resolver import ConflictResolver
+
 
 class ActionProcessor:
-    def __init__(self):
-        print("ActionProcessor initialized.")
+    def __init__(self, conflict_resolver: Optional[ConflictResolver] = None):
+        self._conflict_resolver = conflict_resolver
+        print(f"ActionProcessor initialized. ConflictResolver {'present' if self._conflict_resolver else 'not present'}.")
 
 
     async def process(self,
@@ -263,117 +267,145 @@ class ActionProcessor:
                                 rule_engine: RuleEngine,
                                 openai_service: OpenAIService,
                                 party_actions_data: List[Tuple[str, str]],  # List[(character_id, collected_actions_json_string)]
-                                ctx_channel_id_fallback: int
+                                ctx_channel_id_fallback: int,
+                                conflict_resolver: Optional[ConflictResolver] = None
                                 ) -> Dict[str, Any]:
         """
         Processes actions for a list of characters, typically a party.
-        Iterates through each character's collected actions and calls self.process for each.
+        If a ConflictResolver is provided, it first analyzes actions for conflicts.
+        Otherwise, it iterates through each character's collected actions and calls self.process for each.
         """
+        # Prioritize argument-passed conflict_resolver, then instance's, then None
+        current_conflict_resolver = conflict_resolver if conflict_resolver else self._conflict_resolver
+
+        if current_conflict_resolver:
+            print(f"ActionProcessor: Using ConflictResolver for party actions.")
+            parsed_actions_map: Dict[str, List[Dict[str, Any]]] = {}
+            character_objects: Dict[str, Character] = {} # Store fetched character objects
+
+            for character_id, collected_actions_json_string in party_actions_data:
+                character = await char_manager.get_character_by_player_id(character_id, game_state.guild_id)
+                if not character:
+                    print(f"ActionProcessor: Character {character_id} not found during conflict analysis prep. Skipping.")
+                    # Potentially log this as an issue or add to a list of unprocessed players
+                    continue
+                character_objects[character_id] = character # Store for potential later use by ConflictResolver
+
+                if not collected_actions_json_string or collected_actions_json_string.strip() == "[]":
+                    parsed_actions_map[character_id] = []
+                    continue
+                try:
+                    actions_list = json.loads(collected_actions_json_string)
+                    if not isinstance(actions_list, list):
+                        print(f"ActionProcessor: Parsed actions for {character.name} is not a list (for conflict analysis). Skipping.")
+                        parsed_actions_map[character_id] = [] # Or handle error appropriately
+                        continue
+                    
+                    # Store actions with character_id for context, ConflictResolver might need it
+                    # The 'intent' and 'entities' structure matches what ConflictResolver might expect
+                    processed_actions_for_char = []
+                    for action_item in actions_list:
+                        if isinstance(action_item, dict) and "intent" in action_item:
+                             # Add player_id to each action for easier lookup in ConflictResolver
+                            action_with_context = {
+                                "player_id": character_id, # Or character.id, ensure consistency
+                                "type": action_item.get("intent"),
+                                **action_item.get("entities", {}), # Spread entities like target_space
+                                "original_text": action_item.get("original_text", "N/A")
+                            }
+                            processed_actions_for_char.append(action_with_context)
+                        else:
+                            print(f"Skipping malformed action item for {character_id}: {action_item}")
+                    parsed_actions_map[character_id] = processed_actions_for_char
+
+                except json.JSONDecodeError:
+                    print(f"ActionProcessor: Failed to parse JSON for {character_id} during conflict analysis. Skipping.")
+                    parsed_actions_map[character_id] = [] # Or handle error
+
+            if not parsed_actions_map:
+                print("ActionProcessor: No valid actions parsed for conflict analysis.")
+                return {"success": True, "message": "No actions to analyze for conflicts.", "individual_action_results": [], "overall_state_changed": False}
+
+            print(f"ActionProcessor: Calling ConflictResolver.analyze_actions_for_conflicts with map for players: {list(parsed_actions_map.keys())}")
+            
+            # Pass the character_objects map if your ConflictResolver needs full character data
+            # For now, analyze_actions_for_conflicts expects Dict[str, List[Dict[str, Any]]]
+            identified_conflicts = current_conflict_resolver.analyze_actions_for_conflicts(player_actions_map=parsed_actions_map)
+
+            if identified_conflicts:
+                print(f"ActionProcessor: Identified {len(identified_conflicts)} conflicts:")
+                for conflict in identified_conflicts:
+                    print(f"  - Conflict: {conflict}")
+                # Further processing will involve iterating these conflicts and calling
+                # resolve_conflict_automatically or prepare_for_manual_resolution.
+                # For now, just log and return.
+                return {"success": True, "message": f"Conflict analysis initiated. {len(identified_conflicts)} potential conflicts found.", "identified_conflicts": identified_conflicts, "individual_action_results": [], "overall_state_changed": False} # Placeholder
+            else:
+                print("ActionProcessor: No conflicts identified by ConflictResolver. Proceeding with individual action processing (or could stop here if desired).")
+                # If no conflicts, you might choose to then process actions individually as before,
+                # or this might be the end of the party turn if all actions must be conflict-free.
+                # For now, returning a message indicating no conflicts.
+                # To process individually, you'd call the original loop here.
+                # This part of the logic (what to do if no conflicts) needs to be defined.
+                # For this iteration, we'll assume if conflict resolver is on, its job is to find them,
+                # and subsequent steps would handle resolution. If none, the turn might be "clean".
+                return {"success": True, "message": "No conflicts identified. Actions not processed further in this path yet.", "individual_action_results": [], "overall_state_changed": False}
+
+        # Original behavior if no conflict_resolver is available
+        print(f"ActionProcessor: Starting process_party_actions (individual processing) for {len(party_actions_data)} characters.")
         all_individual_results = []
         overall_state_changed_for_party = False
-        aggregated_messages = [] # Could be used to send one summary message, but self.process sends individually
-
-        print(f"ActionProcessor: Starting process_party_actions for {len(party_actions_data)} characters.")
-
+        
         for character_id, collected_actions_json_string in party_actions_data:
-            character = await char_manager.get_character_by_player_id(character_id, game_state.guild_id) # Assuming guild_id is in game_state
+            character = await char_manager.get_character_by_player_id(character_id, game_state.guild_id)
             if not character:
-                print(f"ActionProcessor: Character {character_id} not found during party processing. Skipping.")
-                all_individual_results.append({
-                    "character_id": character_id, "success": False,
-                    "message": "Character not found.", "state_changed": False
-                })
+                print(f"ActionProcessor: Character {character_id} not found. Skipping.")
+                all_individual_results.append({"character_id": character_id, "success": False, "message": "Character not found.", "state_changed": False})
                 continue
 
             if not collected_actions_json_string or collected_actions_json_string.strip() == "[]":
-                print(f"ActionProcessor: No actions collected for character {character.name} ({character_id}). Skipping.")
-                all_individual_results.append({
-                    "character_id": character_id, "success": True,
-                    "message": "No actions submitted.", "state_changed": False
-                })
+                print(f"ActionProcessor: No actions for {character.name}. Skipping.")
+                all_individual_results.append({"character_id": character_id, "success": True, "message": "No actions submitted.", "state_changed": False})
                 continue
 
             try:
                 actions_list = json.loads(collected_actions_json_string)
                 if not isinstance(actions_list, list):
-                    print(f"ActionProcessor: Parsed actions for {character.name} is not a list. Found: {type(actions_list)}. Skipping.")
-                    all_individual_results.append({
-                        "character_id": character_id, "success": False,
-                        "message": "Malformed actions data (not a list).", "state_changed": False
-                    })
+                    all_individual_results.append({"character_id": character_id, "success": False, "message": "Malformed actions data.", "state_changed": False})
                     continue
 
-                print(f"ActionProcessor: Processing {len(actions_list)} actions for character {character.name} ({character_id}).")
                 for action_item_idx, action_item in enumerate(actions_list):
-                    if not isinstance(action_item, dict):
-                        print(f"ActionProcessor: Action item {action_item_idx} for {character.name} is not a dict. Skipping: {action_item}")
-                        continue
-
+                    if not isinstance(action_item, dict): continue
                     action_type = action_item.get("intent")
-                    action_data = action_item.get("entities", {}) # Default to empty dict if missing
+                    action_data = action_item.get("entities", {})
                     original_text = action_item.get("original_text", "N/A")
-
                     if not action_type:
-                        print(f"ActionProcessor: Action item {action_item_idx} for {character.name} missing 'intent'. Skipping: {action_item}")
-                        all_individual_results.append({
-                            "character_id": character_id, "action_original_text": original_text, "success": False,
-                            "message": "Action intent missing.", "state_changed": False
-                        })
+                        all_individual_results.append({"character_id": character_id, "action_original_text": original_text, "success": False, "message": "Action intent missing.", "state_changed": False})
                         continue
-
-                    # Determine context channel for this specific action
-                    # Prefer location channel, fallback to the one passed from PartyManager
+                    
                     char_location = await loc_manager.get_location(character.current_location_id, game_state.guild_id)
                     ctx_channel_id_for_action = ctx_channel_id_fallback
                     if char_location and char_location.channel_id:
-                        try:
-                            ctx_channel_id_for_action = int(char_location.channel_id)
-                        except ValueError:
-                            print(f"ActionProcessor: Invalid channel_id '{char_location.channel_id}' for location {char_location.id}. Using fallback.")
+                        try: ctx_channel_id_for_action = int(char_location.channel_id)
+                        except ValueError: pass
 
-                    print(f"ActionProcessor: Calling self.process for {character.name} - Action: {action_type}, Data: {action_data}, Orig: '{original_text}'")
                     single_action_result = await self.process(
-                        game_state=game_state,
-                        char_manager=char_manager,
-                        loc_manager=loc_manager,
-                        event_manager=event_manager,
-                        rule_engine=rule_engine,
-                        openai_service=openai_service,
-                        ctx_channel_id=ctx_channel_id_for_action, # Use determined channel for this action
-                        discord_user_id=character.discord_user_id, # Get from character model
-                        action_type=action_type,
-                        action_data=action_data
+                        game_state=game_state, char_manager=char_manager, loc_manager=loc_manager,
+                        event_manager=event_manager, rule_engine=rule_engine, openai_service=openai_service,
+                        ctx_channel_id=ctx_channel_id_for_action, discord_user_id=character.discord_user_id,
+                        action_type=action_type, action_data=action_data
                     )
-                    
-                    # self.process already sends messages. We collect results for logging or further aggregation if needed.
-                    all_individual_results.append({
-                        "character_id": character_id,
-                        "action_original_text": original_text,
-                        **single_action_result # Merge the dict from self.process
-                    })
-                    
+                    all_individual_results.append({"character_id": character_id, "action_original_text": original_text, **single_action_result})
                     if single_action_result.get("state_changed", False):
                         overall_state_changed_for_party = True
-                        print(f"ActionProcessor: State changed by action '{action_type}' for character {character.name}.")
-
             except json.JSONDecodeError:
-                print(f"ActionProcessor: Failed to parse JSON actions for character {character.name} ({character_id}). JSON: '{collected_actions_json_string}'. Skipping.")
-                all_individual_results.append({
-                    "character_id": character_id, "success": False,
-                    "message": "Invalid actions JSON.", "state_changed": False
-                })
+                all_individual_results.append({"character_id": character_id, "success": False, "message": "Invalid actions JSON.", "state_changed": False})
             except Exception as e:
-                print(f"ActionProcessor: Unexpected error processing actions for character {character.name} ({character_id}): {e}")
                 traceback.print_exc()
-                all_individual_results.append({
-                    "character_id": character_id, "success": False,
-                    "message": f"Unexpected error: {e}", "state_changed": False
-                })
+                all_individual_results.append({"character_id": character_id, "success": False, "message": f"Unexpected error: {e}", "state_changed": False})
 
-
-        print(f"ActionProcessor: Finished process_party_actions. Overall state changed: {overall_state_changed_for_party}.")
         return {
-            "success": True, # Indicates batch job itself completed, check individual results for action success
+            "success": True,
             "individual_action_results": all_individual_results,
             "overall_state_changed": overall_state_changed_for_party
         }

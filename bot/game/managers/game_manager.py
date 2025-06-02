@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from bot.game.services.campaign_loader import CampaignLoader
     from bot.game.services.consequence_processor import ConsequenceProcessor
     from bot.services.nlu_data_service import NLUDataService # For NLU Data Service
+    from bot.game.conflict_resolver import ConflictResolver
 
 
     # Типы Callable для Type Checking, если они используются в аннотациях (SendCallbackFactory используется напрямую в __init__)
@@ -106,6 +107,7 @@ class GameManager:
         self.npc_manager: Optional["NpcManager"] = None
         self.party_manager: Optional["PartyManager"] = None
         self.openai_service: Optional["OpenAIService"] = None
+        self.conflict_resolver: Optional["ConflictResolver"] = None
         
         # Новые менеджеры и сервисы
         self.quest_manager: Optional[QuestManager] = None
@@ -186,6 +188,10 @@ class GameManager:
             from bot.game.services.campaign_loader import CampaignLoader
             from bot.game.services.consequence_processor import ConsequenceProcessor
             from bot.services.nlu_data_service import NLUDataService # Import for instantiation
+            
+            # Conflict Resolver and its data
+            from bot.game.conflict_resolver import ConflictResolver
+            from bot.game.models.rules_config_definition import EXAMPLE_RULES_CONFIG
     # from bot.services.db_service import DBService # This can be removed from TYPE_CHECKING if imported above
 
 # Ensure no duplicate or misplaced DBService import within methods or other blocks
@@ -419,6 +425,17 @@ class GameManager:
             if self.party_manager is None:
                 self._party_action_processor = None
                 print("GameManager: Warning: PartyManager not available, PartyActionProcessor is None.")
+            
+            # Instantiate ConflictResolver
+            # For NotificationService, using a placeholder string or a mock object for now.
+            # In a real scenario, a NotificationService instance would be passed.
+            mock_notification_service = "PlaceholderNotificationService" # Or an actual mock instance
+            self.conflict_resolver = ConflictResolver(
+                rule_engine=self.rule_engine,
+                rules_config_data=EXAMPLE_RULES_CONFIG, # Using example data for now
+                notification_service=mock_notification_service
+            )
+            print("GameManager: ConflictResolver instantiated.")
 
             # --- Создание экземпляра PartyCommandHandler ---
             # PartyCommandHandler ожидает character_manager, party_manager, party_action_processor, settings (обязательные), npc_manager (опциональный)
@@ -504,6 +521,7 @@ class GameManager:
                     crafting_manager=self.crafting_manager, economy_manager=self.economy_manager, # Already present
                     # --- Передаем созданный PartyCommandHandler ---
                     party_command_handler=self._party_command_handler, # <--- ДОБАВЛЕНО!
+                    conflict_resolver=self.conflict_resolver, # Pass ConflictResolver to CommandRouter
                     # New injections for CommandRouter
                     quest_manager=self.quest_manager,
                     dialogue_manager=self.dialogue_manager,
@@ -550,6 +568,7 @@ class GameManager:
                     'party_action_processor': self._party_action_processor,
                     'persistence_manager': self._persistence_manager,
                     'world_simulation_processor': self._world_simulation_processor,
+                    'conflict_resolver': self.conflict_resolver, # For loading context
                     'db_adapter': self._db_adapter, # Still passing adapter directly if some old components need it
                     'db_service': self.db_service,   # Pass DBService as well
                     'nlu_data_service': self.nlu_data_service, # Pass NLUDataService
@@ -693,6 +712,7 @@ class GameManager:
                             'character_view_service': self._character_view_service,
                             'party_action_processor': self._party_action_processor,
                             'persistence_manager': self._persistence_manager,
+                            'conflict_resolver': self.conflict_resolver, # For tick context
                             'db_adapter': self._db_adapter,
                             'nlu_data_service': self.nlu_data_service, # Pass NLUDataService
                             'send_callback_factory': self._get_discord_send_callback,
@@ -758,6 +778,7 @@ class GameManager:
                     'quest_manager': self.quest_manager,
                     'relationship_manager': self.relationship_manager,
                     'game_log_manager': self.game_log_manager,
+                    'conflict_resolver': self.conflict_resolver, # For save context
                     'db_adapter': self._db_adapter,
                     'send_callback_factory': self._get_discord_send_callback,
                     'settings': self._settings,
