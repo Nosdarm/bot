@@ -991,7 +991,7 @@ class PartyManager:
                     "character_id": member_char.id,
                     "actions_json": actions_json if actions_json else "[]" # Ensure it's at least an empty list string
                 })
-            print(f"PartyManager: Collected actions for party {party.id} in location {location_id}: {party_actions_data_debug_log}")
+            print(f"PartyManager: Collected actions for party {party.id} in location {location_id}: {party_actions_data}")
 
             # 3. Call ActionProcessor
             action_processing_results = {"success": False, "overall_state_changed": False, "individual_action_results": []}
