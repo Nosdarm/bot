@@ -1,12 +1,7 @@
-# bot/game/models/character.py
-"""
-Definition for the Character model.
-"""
-
-from __future__ import annotations # Для правильной работы аннотаций внутри класса
+from __future__ import annotations
 import json
-from dataclasses import dataclass, field # <- Импорт field и dataclass
 from typing import Dict, Any, List, Optional
+from dataclasses import dataclass, field
 
 @dataclass
 class Character:
@@ -48,20 +43,16 @@ class Character:
     current_party_id: Optional[str] = None
 
     def __post_init__(self):
-        # Ensure stats contains hp and max_health as numbers
         if 'hp' not in self.stats:
             self.stats['hp'] = self.hp
         else:
-            # If loaded from stats, ensure the attribute is set
-            self.hp = float(self.stats.get('hp', self.hp))
+            self.hp = float(self.stats['hp'])
 
         if 'max_health' not in self.stats:
             self.stats['max_health'] = self.max_health
         else:
-            # If loaded from stats, ensure the attribute is set
-            self.max_health = float(self.stats.get('max_health', self.max_health))
+            self.max_health = float(self.stats['max_health'])
 
-        # Basic default stats if missing
         if 'mana' not in self.stats:
             self.stats['mana'] = self.stats.get('max_mana', 50)
         if 'max_mana' not in self.stats:
@@ -70,12 +61,7 @@ class Character:
             self.stats['intelligence'] = 10
 
         if self.collected_actions_json is not None and not isinstance(self.collected_actions_json, str):
-             try:
-                 self.collected_actions_json = json.dumps(self.collected_actions_json)
-             except TypeError as e:
-                 print(f"WARNING: Could not json.dumps collected_actions_json in __post_init__: {e}. Value was: {self.collected_actions_json}")
-                 self.collected_actions_json = None
-
+            self.collected_actions_json = json.dumps(self.collected_actions_json)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Character:
@@ -89,12 +75,7 @@ class Character:
         if "name" in data_copy and "name_i18n" not in data_copy:
             data_copy["name_i18n"] = {"en": data_copy.pop("name")}
         elif "name" in data_copy and "name_i18n" in data_copy:
-             data_copy.pop("name")
-
-        collected_actions_data = data_copy.get('collected_actions_json')
-        if collected_actions_data is None:
-             collected_actions_data = data_copy.get('собранные_действия_JSON')
-
+            data_copy.pop("name")
 
         init_data = {
             'id': data_copy.get('id'),
@@ -108,10 +89,8 @@ class Character:
             'action_queue': data_copy.get('action_queue', []),
             'party_id': data_copy.get('party_id'),
             'state_variables': data_copy.get('state_variables', {}),
-
-            'hp': float(data_copy.get('hp', data_copy['stats'].get('hp', 100.0)) if 'stats' in data_copy else data_copy.get('hp', 100.0)),
-            'max_health': float(data_copy.get('max_health', data_copy['stats'].get('max_health', 100.0)) if 'stats' in data_copy else data_copy.get('max_health', 100.0)),
-
+            'hp': float(data_copy.get('hp', 100.0)),
+            'max_health': float(data_copy.get('max_health', 100.0)),
             'is_alive': bool(data_copy.get('is_alive', True)),
             'status_effects': data_copy.get('status_effects', []),
             'level': int(data_copy.get('level', 1)),
@@ -130,16 +109,14 @@ class Character:
 
             'selected_language': data_copy.get('selected_language'),
             'current_game_status': data_copy.get('current_game_status'),
-            'collected_actions_json': collected_actions_data,
+            'collected_actions_json': data_copy.get('collected_actions_json') or data_copy.get('собранные_действия_JSON'),
             'current_party_id': data_copy.get('current_party_id'),
         }
 
-        if 'stats' in init_data:
-             init_data['stats']['hp'] = float(init_data['hp'])
-             init_data['stats']['max_health'] = float(init_data['max_health'])
-        else:
-             init_data['stats'] = {'hp': float(init_data['hp']), 'max_health': float(init_data['max_health'])}
-
+        if 'hp' not in init_data['stats'] and 'hp' in data_copy:
+            init_data['stats']['hp'] = init_data['hp']
+        if 'max_health' not in init_data['stats'] and 'max_health' in data_copy:
+            init_data['stats']['max_health'] = init_data['max_health']
 
         return cls(**init_data)
 
