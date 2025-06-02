@@ -915,5 +915,92 @@ class LocationManager:
          if guild_id_str in self._location_instances and instance_id_str in self._location_instances[guild_id_str]:
               self._dirty_instances.setdefault(guild_id_str, set()).add(instance_id_str)
 
+    async def save_location(self, location: "Location", guild_id: str) -> bool:
+        """
+        Saves a single location entity (instance) to the database using an UPSERT operation.
+        The Location object should have attributes corresponding to instance data.
+        """
+        if self._db_adapter is None:
+            print(f"LocationManager: Error: DB adapter missing for guild {guild_id}. Cannot save location {getattr(location, 'id', 'N/A')}.")
+            return False
+
+        guild_id_str = str(guild_id)
+        loc_id = getattr(location, 'id', None)
+        if not loc_id:
+            print(f"LocationManager: Error: Location object is missing an 'id'. Cannot save.")
+            return False
+        
+        # Ensure the location's internal guild_id (if exists) matches the provided guild_id
+        # This depends on whether Location model itself holds guild_id. Assuming it might.
+        loc_guild_id = getattr(location, 'guild_id', guild_id_str)
+        if str(loc_guild_id) != guild_id_str:
+            print(f"LocationManager: Error: Location {loc_id} guild_id ({loc_guild_id}) does not match provided guild_id ({guild_id_str}).")
+            return False
+
+        try:
+            loc_data = location.to_dict()
+
+            # Prepare data for DB columns based on 'locations' table schema
+            # id, guild_id, template_id, name, description, exits, state_variables, is_active
+            
+            db_id = loc_data.get('id')
+            db_template_id = loc_data.get('template_id') # Location object should have this if it's an instance
+            
+            # Name and description will store i18n dicts as JSON strings
+            db_name_i18n = loc_data.get('name_i18n', {"en": "Unknown Location"})
+            db_description_i18n = loc_data.get('description_template_i18n', {"en": ""}) # Or descriptions_i18n
+            
+            db_exits = loc_data.get('exits', [])
+            db_is_active = loc_data.get('is_active', True) # Default to True if not specified
+
+            # Collect remaining fields into state_variables
+            # These are fields from to_dict() not directly mapped to main columns
+            standard_fields = {'id', '_id', 'name_i18n', 'description_template_i18n', 'exits', 
+                               'template_id', 'is_active', 'guild_id',
+                               'name', 'description_template'} # Include legacy names to exclude
+            
+            state_vars_dict = {k: v for k, v in loc_data.items() if k not in standard_fields}
+            # If location object has an explicit 'state' or 'state_variables' field, merge it.
+            explicit_state = loc_data.get('state', loc_data.get('state_variables'))
+            if isinstance(explicit_state, dict):
+                state_vars_dict.update(explicit_state)
+
+
+            db_params = (
+                db_id,
+                guild_id_str,
+                db_template_id,
+                json.dumps(db_name_i18n),
+                json.dumps(db_description_i18n), # Storing description_template_i18n here
+                json.dumps(db_exits),
+                json.dumps(state_vars_dict),
+                int(db_is_active)
+            )
+
+            upsert_sql = '''
+            INSERT OR REPLACE INTO locations (
+                id, guild_id, template_id, name, description, 
+                exits, state_variables, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            '''
+            # 8 columns, 8 placeholders.
+
+            await self._db_adapter.execute(upsert_sql, db_params)
+            print(f"LocationManager: Successfully saved location instance {db_id} for guild {guild_id_str}.")
+            
+            # If this location instance was marked as dirty, clean it from the dirty set
+            if guild_id_str in self._dirty_instances and db_id in self._dirty_instances[guild_id_str]:
+                self._dirty_instances[guild_id_str].discard(db_id)
+                if not self._dirty_instances[guild_id_str]: # If set becomes empty
+                    del self._dirty_instances[guild_id_str]
+            
+            return True
+
+        except Exception as e:
+            print(f"LocationManager: Error saving location instance {loc_id} for guild {guild_id_str}: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return False
+
 
 # --- Конец класса LocationManager ---

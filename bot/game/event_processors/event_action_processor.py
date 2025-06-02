@@ -156,11 +156,16 @@ class EventActionProcessor:
                                     command_args: List[str], # Аргументы команды игрока
                                     # ВСЕ зависимости и контекст ПЕРЕДАЮТСЯ ЧЕРЕЗ **kwargs!
                                     **kwargs: Any # Catch all other arguments (managers, callbacks, context)
-                                   ) -> bool: # Returns True if stage transition occurred, False otherwise.
+                                   ) -> Dict[str, Any]: 
         """
         Обрабатывает команду игрока внутри контекста активного события.
+        Returns a dictionary: {"stage_transitioned": bool, "message": Optional[str], "modified_entities": List[Any]}
         """
         print(f"EventActionProcessor: processing player '{player_id}' action '{command_keyword}' for event {event_id} with args {command_args}...")
+        
+        modified_entities: List[Any] = []
+        return_message: Optional[str] = None
+        stage_transitioned: bool = False
 
         # --- Get dependencies from kwargs or self attributes ---
         # Prioritize kwargs (allows passing specific instances for a call)
@@ -192,12 +197,9 @@ class EventActionProcessor:
                  ] if dep is None]
 
              print(f"EventActionProcessor Error: Missing essential dependencies for process_player_action: {', '.join(missing_deps)}.")
-
-             # Use the available channel_id (from kwargs) and factory (_inst) to send error message if possible
              error_message = f"❌ Системная ошибка: Не удалось обработать команду. Отсутствуют ключевые компоненты: {', '.join(missing_deps)}."
              if channel_id_from_kwargs is not None and send_callback_factory_inst is not None:
                   try:
-                       # Use the _inst variable here
                        send_cb = send_callback_factory_inst(channel_id_from_kwargs)
                        await send_cb(error_message, None)
                   except Exception as cb_e:
@@ -206,137 +208,108 @@ class EventActionProcessor:
                    print(f"EventActionProcessor Warning: Cannot send initial error message because send_callback_factory is missing.")
              elif channel_id_from_kwargs is None:
                   print(f"EventActionProcessor Warning: Cannot send initial error message because channel_id missing from kwargs.")
-
-             # Always return False after critical error
-             return False # Cannot proceed
+             return {"stage_transitioned": False, "message": error_message, "modified_entities": modified_entities}
 
         # --- Now that essential dependencies are confirmed, proceed using _inst variables ---
 
-        # Get event object using the event manager instance
-        event: Optional["Event"] = event_manager_inst.get_event(event_id) # FIX: Use _inst variable
+        event: Optional["Event"] = event_manager_inst.get_event(event_id) 
         if not event:
              print(f"EventActionProcessor Error: Event {event_id} not found for player action.")
-             # Use channel_id from kwargs if event is not found to send error message back
-             channel_id_for_error = channel_id_from_kwargs # Use kwargs channel_id as fallback
-             if channel_id_for_error is not None: # Factory is confirmed not None above
+             channel_id_for_error = channel_id_from_kwargs 
+             return_message = "❌ Ошибка: Событие не найдено."
+             if channel_id_for_error is not None: 
                  try:
-                      # Use the _inst variable here
                       send_cb = send_callback_factory_inst(channel_id_for_error)
-                      await send_cb("❌ Ошибка: Событие не найдено.", None);
+                      await send_cb(return_message, None);
                  except Exception as cb_e: print(f"EventActionProcessor Error sending error message: {cb_e}");
-             return False # Failed to process due to missing event
+             return {"stage_transitioned": False, "message": return_message, "modified_entities": modified_entities}
 
-
-        # Get player character object (needed for context/checks)
-        # Assuming character_manager needs guild_id and player_id
-        guild_id = event.guild_id # Get guild_id from the event object
-        player_character = character_manager_inst.get_character(guild_id, player_id) # type: Optional["Character"] # FIX: Use _inst variable
+        guild_id = event.guild_id 
+        player_character = character_manager_inst.get_character(guild_id, player_id) 
         if not player_character:
              print(f"EventActionProcessor Error: Player character {player_id} not found for event {event_id} in guild {guild_id}.")
-             # Use the event's channel ID to send error message
-             channel_id_for_error = event.channel_id # Get channel ID from event
-             if channel_id_for_error is not None: # Factory is confirmed not None above
+             channel_id_for_error = event.channel_id 
+             return_message = "❌ Ошибка: Ваш персонаж не найден."
+             if channel_id_for_error is not None: 
                   try:
-                      # Use the _inst variable here
                       send_cb = send_callback_factory_inst(channel_id_for_error)
-                      await send_cb("❌ Ошибка: Ваш персонаж не найден.", None);
+                      await send_cb(return_message, None);
                   except Exception as cb_e: print(f"EventActionProcessor Error sending error message: {cb_e}");
-             return False # Failed to process due to missing player
-
-        # Now that event and player character are confirmed, get the send callback for the event channel
-        # Make sure event has a channel_id
+             return {"stage_transitioned": False, "message": return_message, "modified_entities": modified_entities}
+        
         if event.channel_id is None:
              print(f"EventActionProcessor Error: Event {event.id} has no channel_id. Cannot send messages.")
-             # Try sending error back to the original channel if possible (channel_id from kwargs)
-             channel_id_for_error = channel_id_from_kwargs # Fallback to kwargs channel_id
-             if channel_id_for_error is not None: # Factory is confirmed not None above
+             channel_id_for_error = channel_id_from_kwargs 
+             return_message = "❌ Ошибка: Событие не привязано к каналу для отправки сообщений."
+             if channel_id_for_error is not None: 
                  try:
-                     # Use the _inst variable here
                      send_cb = send_callback_factory_inst(channel_id_for_error)
-                     await send_cb("❌ Ошибка: Событие не привязано к каналу для отправки сообщений.", None);
+                     await send_cb(return_message, None);
                  except Exception as cb_e: print(f"EventActionProcessor Error sending error message: {cb_e}");
-             return False
+             return {"stage_transitioned": False, "message": return_message, "modified_entities": modified_entities}
 
-        # Use the factory to get the specific channel callback
-        # Use send_callback_factory_inst
-        send_message_callback = send_callback_factory_inst(event.channel_id) # FIX: Use _inst variable
-
+        send_message_callback = send_callback_factory_inst(event.channel_id) 
 
         # Get current stage data from the event object
-        current_stage_id = event.current_stage_id # Keep track of current stage ID
+        current_stage_id = event.current_stage_id 
         current_stage_data = event.stages_data.get(current_stage_id)
 
         if not current_stage_data:
              print(f"EventActionProcessor Error: Stage '{current_stage_id}' not found in event {event_id} data.")
-             try: await send_message_callback(f"❌ Ошибка: Данные текущей стадии '{current_stage_id}' не найдены в событии.", None);
+             return_message = f"❌ Ошибка: Данные текущей стадии '{current_stage_id}' не найдены в событии."
+             try: await send_message_callback(return_message, None);
              except Exception as cb_e: print(f"EventActionProcessor Error sending error message: {cb_e}");
-             return False
+             return {"stage_transitioned": False, "message": return_message, "modified_entities": modified_entities}
 
-        # Convert stage data to EventStage object if possible
         try:
-             # EventStage needs to be imported at runtime if EventStage.from_dict is called
              current_stage: "EventStage" = EventStage.from_dict(current_stage_data)
              using_event_stage_object = True
-        except (NameError, ImportError, TypeError) as e: # Catch NameError, ImportError (if import fails), or TypeError (if from_dict fails)
+        except (NameError, ImportError, TypeError) as e: 
              print(f"EventActionProcessor Warning: EventStage model not available or from_dict failed ({e}). Working with raw stage data dictionary.")
-             current_stage = current_stage_data # Use the dictionary directly
+             current_stage = current_stage_data 
              using_event_stage_object = False
 
-        # --- Find the matching action in allowed_actions ---
-        # Adapt access based on whether current_stage is dict or object
         allowed_actions_list = getattr(current_stage, 'allowed_actions', []) if using_event_stage_object else current_stage.get('allowed_actions', [])
         target_action_definition: Optional[Dict[str, Any]] = None
-
-        # Get stage name safely
         current_stage_name = getattr(current_stage, 'name', current_stage_id) if using_event_stage_object else current_stage.get('name', current_stage_id)
-
 
         print(f"EventActionProcessor: Searching stage '{current_stage_name}' ({current_stage_id}) for command '{command_keyword}'...")
 
         for action_def in allowed_actions_list:
-            # Simple check: match command keyword (case-insensitive)
             if isinstance(action_def, dict) and action_def.get('command', '').lower() == command_keyword.lower():
-                # TODO: Add more sophisticated matching based on command_args and action_def parameters/requirements
                 target_action_definition = action_def
                 print(f"EventActionProcessor: Found potential action match for command '{command_keyword}'.")
-                break # Found a match
+                break 
 
         if not target_action_definition:
              print(f"EventActionProcessor: Player action command '{command_keyword}' not found or not allowed in stage '{current_stage_name}' for event {event_id}.")
-             # Use getattr for event name safely
              event_name = getattr(event, 'name', event_id) if isinstance(event, Event) else event_id
-             try: await send_message_callback(f"Действие `{command_keyword}` недоступно на текущей стадии **{event_name}** ('{current_stage_name}') или введено неверно для этой стадии.", None);
+             return_message = f"Действие `{command_keyword}` недоступно на текущей стадии **{event_name}** ('{current_stage_name}') или введено неверно для этой стадии."
+             try: await send_message_callback(return_message, None);
              except Exception as cb_e: print(f"EventActionProcessor Error sending feedback message: {cb_e}");
-             return False # Command not allowed or not found
-
+             return {"stage_transitioned": False, "message": return_message, "modified_entities": modified_entities}
 
         # --- Execute the found action ---
         action_type = target_action_definition.get('type')
-        action_params = target_action_definition.get('params', {}) # Parameters for the action logic
+        action_params = target_action_definition.get('params', {}) 
 
-        player_character_name = getattr(player_character, 'name', 'Unknown') # Get player name safely
+        player_character_name = getattr(player_character, 'name', 'Unknown') 
         print(f"EventActionProcessor: Executing player action type '{action_type}' for player '{player_character_name}'...")
 
-        # --- Determine the outcome of the action execution (if applicable) ---
-        # This needs actual action logic based on action_type.
-        # Initialize with a default outcome
-        action_execution_outcome: str = "success" # Default outcome
+        action_execution_outcome: str = "success" 
+        
+        # Placeholder for results from action execution helpers
+        action_helper_results: Dict[str, Any] = {}
 
-        # Create a context dictionary containing all managers and relevant info for action execution
-        # Get all managers/processors from kwargs or self attributes (if they were injected in __init__)
-        # Prioritize managers passed in kwargs (more specific context)
         action_execution_context: Dict[str, Any] = {
-             # Passed Dependencies (should be in kwargs from GameManager/CommandRouter)
-             # FIX: Use the _inst variables here
              'event_manager': event_manager_inst,
              'character_manager': character_manager_inst,
-             'loc_manager': loc_manager_inst, 'location_manager': loc_manager_inst, # Alias for loc_manager
+             'loc_manager': loc_manager_inst, 'location_manager': loc_manager_inst, 
              'rule_engine': rule_engine_inst,
-             'openai_service': kwargs.get('openai_service', self._openai_service), # Use kwargs or self attribute
-             'send_message_callback': send_message_callback, # Specific channel callback, already got above from factory_inst
-             'send_callback_factory': send_callback_factory_inst, # Factory itself - FIX: Use _inst variable
-
-             # Other Managers (get from kwargs or self attributes)
+             'openai_service': kwargs.get('openai_service', self._openai_service), 
+             'send_message_callback': send_message_callback, 
+             'send_callback_factory': send_callback_factory_inst, 
+             
              'npc_manager': kwargs.get('npc_manager', self._npc_manager),
              'combat_manager': kwargs.get('combat_manager', self._combat_manager),
              'item_manager': kwargs.get('item_manager', self._item_manager),
@@ -347,145 +320,118 @@ class EventActionProcessor:
              'dialogue_manager': kwargs.get('dialogue_manager', self._dialogue_manager),
              'crafting_manager': kwargs.get('crafting_manager', self._crafting_manager),
 
-             # Processors (get from kwargs or self attributes)
              'event_stage_processor': kwargs.get('event_stage_processor', self._event_stage_processor),
              'on_enter_action_executor': kwargs.get('on_enter_action_executor', self._on_enter_action_executor),
              'stage_description_generator': kwargs.get('stage_description_generator', self._stage_description_generator),
              'character_action_processor': kwargs.get('character_action_processor', self._character_action_processor),
-             # Add other processors if needed (e.g. PartyActionProcessor?)
 
-             # Action Specific Context
-             'event': event, # Event object
-             'player_character': player_character, # Player Character object
+             'event': event, 
+             'player_character': player_character, 
              'player_id': player_id,
-             'guild_id': guild_id, # Add guild_id
+             'guild_id': guild_id, 
              'current_stage_id': current_stage_id,
-             'current_stage_data': current_stage_data, # Pass raw data too
+             'current_stage_data': current_stage_data, 
              'command_keyword': command_keyword,
              'command_args': command_args,
-             'action_data': target_action_definition, # Full action definition
-             'action_params': action_params, # Just the params part
-
-             # Include any other kwargs passed to process_player_action
-             # channel_id_from_kwargs can be added here if needed in action logic
+             'action_data': target_action_definition, 
+             'action_params': action_params, 
              'channel_id': channel_id_from_kwargs,
         }
-        # Use update() to add kwargs safely without Pylance warning
-        action_execution_context.update(kwargs) # This might overwrite existing keys, review if needed
+        action_execution_context.update(kwargs) 
 
+        # --- Action Execution Logic (Placeholder) ---
+        # This is where you'd call specific helper methods based on action_type
+        # e.g., if action_type == "skill_check_event":
+        #   action_helper_results = await self._execute_skill_check_for_event(action_execution_context)
+        #   action_execution_outcome = action_helper_results.get("outcome_keyword", "failure")
+        #   modified_entities.extend(action_helper_results.get("modified_entities", []))
+        #   return_message = action_helper_results.get("message_to_player")
 
-        # TODO: Implement the action execution logic based on action_type.
-        # This logic should use the managers/services from action_execution_context
-        # and determine the 'action_execution_outcome' string.
-        # This might involve calling methods on managers like rule_engine, combat_manager etc.
-        # Example placeholder:
-        # if action_type == 'skill_check_player':
-        #     check_result = await self._execute_skill_check(action_execution_context) # Call a helper method
-        #     action_execution_outcome = check_result.get('outcome', 'failure')
-        #     # Potentially send intermediate feedback about the check result here using send_message_callback
-        # elif action_type == 'use_item':
-        #     use_result = await self._execute_use_item(action_execution_context) # Call a helper method
-        #     action_execution_outcome = use_result.get('outcome', 'failure')
-        #     # Potentially send intermediate feedback about item usage here
-        # ... other action types ...
-
-        # For 'simple_transition', the outcome is conceptually always success in terms of triggering the transition below.
-        # Actual side-effects (if any) for simple_transition actions should still be handled here or delegated.
         if action_type == 'simple_transition':
-            action_execution_outcome = 'success'
+            action_execution_outcome = 'success' # Triggers the transition defined in outcome_stage_id
+            return_message = action_params.get("success_message", f"Действие '{command_keyword}' выполнено.")
             print(f"EventActionProcessor: Action type '{action_type}' has outcome '{action_execution_outcome}'.")
-            # Note: Side effects for simple transitions (if any) could be implemented here or in a helper.
+            # If simple_transition itself modifies something (e.g. event state_variables), it should be handled here
+            # and the modified event object added to modified_entities.
+            # For now, assume simple_transition only transitions.
+            if event not in modified_entities: modified_entities.append(event) # Event state might be considered modified by action
         elif action_type is None:
-             print(f"EventActionProcessor Warning: Action '{command_keyword}' has no defined 'type'. Assuming simple success outcome.")
-             action_execution_outcome = 'success' # Default for actions without a type? Or should this be an error?
-        # Handle other action types here (skill checks, combat actions, item usage, etc.)
-        # based on the determined 'action_execution_outcome' from their execution logic.
+             print(f"EventActionProcessor Warning: Action '{command_keyword}' has no defined 'type'. Assuming simple success outcome for transition purposes.")
+             action_execution_outcome = 'success'
+             return_message = f"Действие '{command_keyword}' выполнено (нет типа)."
+             if event not in modified_entities: modified_entities.append(event)
+        else:
+            # For other action types, you'd have specific logic.
+            # For now, just a placeholder:
+            print(f"EventActionProcessor: Action type '{action_type}' executed (placeholder logic).")
+            action_execution_outcome = "success" # Default for unknown actions for now
+            return_message = f"Действие '{command_keyword}' (тип: {action_type}) выполнено."
+            # Assume the action might have modified the player_character or the event itself.
+            # These are added as they are part of the action context.
+            if player_character and player_character not in modified_entities: modified_entities.append(player_character)
+            if event and event not in modified_entities: modified_entities.append(event)
+            
+            # Example: If an action directly calls a rule_engine method that returns modified entities
+            # if action_type == "trigger_complex_effect_event":
+            #    complex_effect_result = await rule_engine_inst.some_complex_effect(
+            #        character=player_character, 
+            #        event=event, 
+            #        guild_id=guild_id, 
+            #        **action_execution_context
+            #    ) # Assuming this method exists and returns a dict with 'modified_entities'
+            #    action_execution_outcome = complex_effect_result.get("outcome_keyword", "failure")
+            #    return_message = complex_effect_result.get("message_to_player")
+            #    entities_from_effect = complex_effect_result.get("modified_entities", [])
+            #    for entity in entities_from_effect:
+            #        if entity not in modified_entities:
+            #            modified_entities.append(entity)
 
 
-        # --- Determine if the action triggers a stage transition ---
+        # --- Determine Stage Transition ---
         outcome_stage_id_def: Optional[Any] = target_action_definition.get('outcome_stage_id')
         determined_next_stage_id: Optional[str] = None
 
-        # Map the determined action outcome to the next stage ID if outcome_stage_id_def is a dictionary.
         if isinstance(outcome_stage_id_def, str) and outcome_stage_id_def:
-             # Simple case: 'outcome_stage_id' is just a stage ID string. Action always transitions here regardless of detailed outcome.
              determined_next_stage_id = outcome_stage_id_def
              print(f"Action defines a simple transition to '{determined_next_stage_id}'.")
         elif isinstance(outcome_stage_id_def, dict):
-             # Complex case: 'outcome_stage_id' is a dictionary mapping outcomes to stage IDs.
-             # Use the determined 'action_execution_outcome'
              determined_next_stage_id = outcome_stage_id_def.get(action_execution_outcome)
              print(f"Action defines outcome-based transition. Outcome '{action_execution_outcome}' maps to stage '{determined_next_stage_id}'.")
-
-             # Optional: Handle specific critical outcomes if they exist and map to different stages
-             # if action_execution_outcome == 'critical_success': determined_next_stage_id = outcome_stage_id_def.get('critical_success', determined_next_stage_id)
-             # elif action_execution_outcome == 'critical_failure': determined_next_stage_id = outcome_stage_id_def.get('critical_failure', determined_next_stage_id)
-
-
-        # --- Trigger Stage Transition if a next stage ID was determined ---
-        # If a valid next stage ID string was found AND it's different from the current stage
-        # Get processor from context (should be event_stage_processor_inst)
-        event_stage_processor_inst = action_execution_context.get('event_stage_processor') # Use the instance name for clarity
-        # Check if event_stage_processor_inst is available and has advance_stage method
+        
+        event_stage_processor_inst = action_execution_context.get('event_stage_processor')
         if isinstance(determined_next_stage_id, str) and determined_next_stage_id and determined_next_stage_id != current_stage_id and \
            event_stage_processor_inst and hasattr(event_stage_processor_inst, 'advance_stage'):
              print(f"EventActionProcessor: Player action '{command_keyword}' triggers transition to stage '{determined_next_stage_id}'.")
-
-             # Call the injected EventStageProcessor's advance_stage method.
-             # Use the _inst variable
-             await event_stage_processor_inst.advance_stage(
-                 event=event, # Pass event object by reference
-                 target_stage_id=determined_next_stage_id, # Target stage determined by player action outcome
-                 # Pass the consolidated managers/context dictionary
-                 # send_message_callback is included in action_execution_context
-                 **action_execution_context # Unpack the context dictionary as kwargs for advance_stage
+             
+             # advance_stage should also return a dict with "modified_entities"
+             advance_result = await event_stage_processor_inst.advance_stage(
+                 event=event, 
+                 target_stage_id=determined_next_stage_id, 
+                 **action_execution_context 
              )
-
-             # Event state (current_stage_id etc.) has been updated by the advance_stage call.
-             # GameManager (the caller of process_player_action) is responsible for saving this state.
-
+             stage_transitioned = True
+             # Assuming advance_stage returns a dict like {"message": str, "modified_entities": List[Any]}
+             # If it modifies entities (e.g. the event itself, or entities due to on-enter actions)
+             if isinstance(advance_result, dict):
+                 modified_from_advance = advance_result.get("modified_entities", [])
+                 modified_entities.extend(entity for entity in modified_from_advance if entity not in modified_entities)
+                 # Message from advance_stage might be more relevant or could be combined
+                 # return_message = advance_result.get("message_to_player", return_message) # Or append
+             
              print(f"EventActionProcessor: Player action triggered stage transition for event {event.id}.")
-             return True # Indicate a stage transition occurred
-
-
-        else: # The action did NOT define a valid/different outcome_stage_id for the determined outcome.
-             # Or it defined an outcome_stage_id that is the same as the current stage (no explicit transition).
-             # In this case, the action's primary effect should happen *without* changing the stage.
-
+        else: 
+             stage_transitioned = False
              print(f"EventActionProcessor: Player action '{command_keyword}' processed, but did NOT trigger a stage transition.")
-
-             # TODO: Execute side effects of actions that do NOT trigger a stage transition (if not done above in the first TODO block)
-             # For example, using an item, attacking an NPC, casting a non-transitioning spell.
-             # Example: If the action type required a skill check but failed, and failure didn't have an outcome_stage_id
-             # if action_type == 'skill_check_player' and action_execution_outcome == 'failure':
-             #     feedback_message = "Проверка действия не удалась."
-             # elif action_type == 'use_item' and action_execution_outcome == 'success':
-             #     feedback_message = f"Вы использовали предмет." # More specific feedback
-             # ... default feedback if no specific type feedback is given ...
-             feedback_message = "Действие выполнено." # Default fallback message for non-transitioning actions
-
-             # Note: More specific feedback should ideally come from the action execution logic itself (first TODO block).
-             # This is just a generic fallback.
-
-             # Send basic feedback to the player using the provided callback.
-             # send_message_callback is available in action_execution_context
-             send_message_callback = action_execution_context.get('send_message_callback')
-
-             if send_message_callback:
-                  # Send to the event channel (callback is already bound to the channel)
-                  # Add player name for context
-                  try:
-                    # Ensure player_character is available in context for the name
-                    player_character_in_context = action_execution_context.get('player_character')
-                    player_name = getattr(player_character_in_context, 'name', 'Unknown') # Safely get name
-                    await send_message_callback(f"**{player_name}:** {feedback_message}", None) # The warning was likely on a call *site* related to this callback chain
-                  except Exception as cb_e:
-                    print(f"EventActionProcessor: Error sending feedback message: {cb_e}")
-
-
-             print(f"EventActionProcessor: No stage transition triggered for event {event.id}.")
-             return False # Indicate no stage transition occurred
-
+             if return_message: # Send feedback if a message was set by action execution
+                  send_cb = action_execution_context.get('send_message_callback')
+                  if send_cb:
+                      try:
+                        player_name_for_msg = getattr(player_character, 'name', 'Unknown')
+                        await send_cb(f"**{player_name_for_msg}:** {return_message}", None)
+                      except Exception as cb_e:
+                        print(f"EventActionProcessor Error sending feedback message: {cb_e}")
+             
+        return {"stage_transitioned": stage_transitioned, "message": return_message, "modified_entities": modified_entities}
 
     # --- Optional: Helper methods for action processing ---
     # Implement helper methods here for different action types like skill checks, item usage, etc.

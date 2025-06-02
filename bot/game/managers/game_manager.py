@@ -813,5 +813,103 @@ class GameManager:
 
         print("GameManager: Shutdown complete.")
 
+    async def save_specific_entities(self, modified_entities: List[Any]) -> None:
+        """
+        Saves a list of specific modified entity objects using their respective managers.
+        """
+        if not modified_entities:
+            return
+
+        print(f"GameManager: Received {len(modified_entities)} entities for specific saving.")
+        
+        # Import models needed for isinstance checks INSIDE the method or at TYPE_CHECKING level
+        # to avoid circular dependencies at module load time if GameManager is imported by models.
+        # However, for runtime isinstance checks, they need to be available.
+        # Assuming models are structured not to import GameManager directly.
+        from bot.game.models.character import Character
+        from bot.game.models.location import Location # Assuming Location model exists
+        from bot.game.models.event import Event
+        from bot.game.models.item import Item
+        from bot.game.models.status_effect import StatusEffect
+        from bot.game.models.npc import NPC
+        from bot.game.models.party import Party
+
+        for entity in modified_entities:
+            entity_id = getattr(entity, 'id', 'UnknownID')
+            guild_id_from_entity = getattr(entity, 'guild_id', None)
+            
+            if not guild_id_from_entity:
+                # Attempt to get guild_id from context if available (e.g. from a Character or NPC's location)
+                # This is a fallback and might not always be reliable.
+                # Best if entities consistently have .guild_id
+                if hasattr(entity, 'location_id') and self.location_manager and entity.location_id:
+                    loc_instance = self.location_manager.get_location_instance(entity.location_id) # Needs guild for loc
+                    # This path is tricky, get_location_instance needs guild_id itself.
+                    # For now, we strongly rely on entity.guild_id
+                    pass # Placeholder for more complex guild_id derivation
+
+                if not guild_id_from_entity:
+                    print(f"GameManager (save_specific_entities): Warning - Could not determine guild_id for entity ID {entity_id} of type {type(entity).__name__}. Skipping save.")
+                    continue
+            
+            guild_id_str = str(guild_id_from_entity)
+
+            try:
+                if isinstance(entity, Character):
+                    if self.character_manager:
+                        await self.character_manager.save_character(entity, guild_id_str)
+                    else: print(f"GameManager: CharacterManager not available. Cannot save Character {entity_id}.")
+                
+                elif isinstance(entity, NPC):
+                    if self.npc_manager:
+                        await self.npc_manager.save_npc(entity, guild_id_str)
+                    else: print(f"GameManager: NpcManager not available. Cannot save NPC {entity_id}.")
+
+                elif isinstance(entity, Party):
+                    if self.party_manager:
+                        await self.party_manager.save_party(entity, guild_id_str)
+                    else: print(f"GameManager: PartyManager not available. Cannot save Party {entity_id}.")
+
+                elif isinstance(entity, Location): # Actual Location model objects
+                    if self.location_manager:
+                        await self.location_manager.save_location(entity, guild_id_str)
+                    else: print(f"GameManager: LocationManager not available. Cannot save Location {entity_id}.")
+                
+                elif isinstance(entity, dict) and 'template_id' in entity and entity.get('guild_id') == guild_id_str and 'state' in entity:
+                    # This is a fallback for location instances if they are still dicts in some paths
+                    if self.location_manager and hasattr(self.location_manager, 'save_location_instance_data'): # Requires specific method
+                        # await self.location_manager.save_location_instance_data(entity, guild_id_str)
+                        print(f"GameManager: Location instance (dict) {entity_id} would be saved by LocationManager if save_location_instance_data existed.")
+                    elif self.location_manager and hasattr(self.location_manager, 'save_location'):
+                         print(f"GameManager: Attempting to save location instance (dict) {entity_id} via save_location. This might fail if it expects a Location object.")
+                         # This will likely fail if save_location expects a Location model object.
+                         # For now, this path is mostly a placeholder unless Location objects are always passed.
+                    else: print(f"GameManager: LocationManager not available or no suitable save method for location dict {entity_id}.")
+
+
+                elif isinstance(entity, Event):
+                    if self.event_manager:
+                        await self.event_manager.save_event(entity, guild_id_str)
+                    else: print(f"GameManager: EventManager not available. Cannot save Event {entity_id}.")
+                
+                elif isinstance(entity, Item):
+                    if self.item_manager:
+                        await self.item_manager.save_item(entity, guild_id_str)
+                    else: print(f"GameManager: ItemManager not available. Cannot save Item {entity_id}.")
+                
+                elif isinstance(entity, StatusEffect):
+                    if self.status_manager:
+                        await self.status_manager.save_status_effect(entity, guild_id_str)
+                    else: print(f"GameManager: StatusManager not available. Cannot save StatusEffect {entity_id}.")
+                
+                else:
+                    print(f"GameManager (save_specific_entities): Unknown entity type for saving: {type(entity).__name__} (ID: {entity_id}). Skipping.")
+
+            except Exception as e:
+                print(f"GameManager (save_specific_entities): Error saving entity ID {entity_id} of type {type(entity).__name__} for guild {guild_id_str}: {e}")
+                traceback.print_exc()
+        
+        print(f"GameManager: Finished specific saving for {len(modified_entities)} entities.")
+
 
 print("DEBUG: game_manager.py module loaded.")

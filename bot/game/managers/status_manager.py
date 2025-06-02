@@ -219,8 +219,8 @@ class StatusManager:
                 'duration': resolved_duration, # None для постоянного
                 'applied_at': applied_at, # None если time_manager недоступен?
                 'source_id': source_id,
-                'guild_id': guild_id_str, # <-- СОХРАНЯЕМ guild_id в данных статуса
-                'state_variables': {}, # Инстанс-специфичные переменные статуса
+                guild_id=guild_id_str, 
+                'state_variables': kwargs.get('state_variables', {}), # Allow passing initial state_variables
             }
 
             # TODO: Возможно, вызвать RuleEngine для "on_apply" эффектов
@@ -233,51 +233,38 @@ class StatusManager:
             #               **kwargs # Передаем контекст
             #           )
 
-            # Создаем объект StatusEffect из данных
             eff = StatusEffect.from_dict(data)
 
             # --- Сохранение в БД ---
+            # No direct save here if we use granular save_status_effect later.
+            # However, the original code saved here, then marked dirty.
+            # For consistency with granular saving, we'd ideally just create the object,
+            # add to cache, mark dirty, and let the caller decide to save it via save_status_effect.
+            # Let's keep the save for now as it's existing behavior, but granular save can also be called.
             if self._db_adapter:
-                 # TODO: Убедитесь, что SQL запрос соответствует ВСЕМ полям StatusEffect модели, включая guild_id
                  sql = '''
                      INSERT INTO statuses (id, status_type, target_id, target_type, duration, applied_at, source_id, state_variables, guild_id)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                     -- TODO: Добавить другие колонки
                  '''
                  params = (
                      eff.id, eff.status_type, eff.target_id, eff.target_type,
                      eff.duration, eff.applied_at, eff.source_id,
                      json.dumps(eff.state_variables),
-                     eff.guild_id # <-- Параметр guild_id
-                     # TODO: Добавить другие параметры
+                     eff.guild_id
                  )
                  await self._db_adapter.execute(sql, params)
-                 # execute уже коммитит
-                 print(f"StatusManager: Status {eff.id} added and saved to DB for guild {guild_id_str}.")
+                 print(f"StatusManager: Status {eff.id} (type: {eff.status_type}) added and directly saved to DB for target {eff.target_id} in guild {guild_id_str}.")
             else:
                  print(f"StatusManager: No DB adapter. Simulating save for status {eff.id} for guild {guild_id_str}.")
 
-
-            # --- Добавление в кеш после успешного сохранения ---
-            # Добавляем в пер-гильдийный кеш статусов
             self._status_effects.setdefault(guild_id_str, {})[eff.id] = eff
-            # TODO: Добавить в пер-гильдийный кеш {target_id: Set[status_effect_id]} если он используется
-            # self._status_effects_by_target.setdefault(guild_id_str, {}).setdefault(target_id, set()).add(eff.id)
-
-
-            # TODO: Пометить целевую сущность dirty, если она имеет атрибут status_effects,
-            # который ссылается на список ID статусов.
-            # Эту логику лучше делать в clean_up_for_* методах менеджеров сущностей,
-            # которые вызываются здесь в process_tick или remove_status_effect.
-
-            self._dirty_status_effects.setdefault(guild_id_str, set()).add(eff.id) # Помечаем статус dirty для этой гильдии
+            self.mark_status_effect_dirty(guild_id_str, eff.id) # Use the new helper
 
             print(f"StatusManager: Status {eff.id} added to cache for guild {guild_id_str}.")
-
-            return eff.id
+            return eff # Return the StatusEffect object
 
         except Exception as e:
-            print(f"StatusManager: ❌ Error adding or saving status effect for guild {guild_id_str}: {e}")
+            print(f"StatusManager: ❌ Error adding status effect '{status_type}' for target {target_id} in guild {guild_id_str}: {e}")
             import traceback
             print(traceback.format_exc())
             # rollback уже в execute
@@ -533,56 +520,41 @@ class StatusManager:
 
 
             if statuses_to_save:
-                # TODO: Убедитесь, что SQL запрос соответствует ВСЕМ полям StatusEffect модели, включая guild_id
                 sql_upsert = '''
                     INSERT OR REPLACE INTO statuses
                     (id, status_type, target_id, target_type, duration, applied_at, source_id, state_variables, guild_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    -- TODO: Добавить другие колонки в SQL
                 '''
                 data_to_upsert = []
                 for eff in statuses_to_save:
-                    # Убедимся, что все нужные атрибуты существуют и имеют правильный тип
                     if not isinstance(eff, StatusEffect) or not eff.id or not eff.status_type or not eff.target_id or not eff.target_type or not eff.guild_id:
                         print(f"StatusManager: Warning: Skipping upsert for invalid StatusEffect object: {eff}. Missing mandatory attributes.")
                         continue
 
-                    sv_json = json.dumps(getattr(eff, 'state_variables', {})) # Safely get state_variables
+                    sv_json = json.dumps(getattr(eff, 'state_variables', {})) 
 
                     data_to_upsert.append((
                         eff.id, eff.status_type, eff.target_id, eff.target_type,
-                        eff.duration, eff.applied_at, eff.source_id, # duration и applied_at могут быть None или float
+                        eff.duration, eff.applied_at, eff.source_id, 
                         sv_json,
-                        eff.guild_id # <-- Параметр guild_id из объекта
-                        # TODO: Добавить другие параметры в кортеж
+                        eff.guild_id 
                     ))
-                    upserted_status_ids.add(eff.id) # Track ID
+                    upserted_status_ids.add(eff.id) 
 
-                if data_to_upsert: # Только если есть что сохранять
+                if data_to_upsert: 
                      await self._db_adapter.execute_many(sql_upsert, data_to_upsert)
-                     # execute_many коммитит сам
                      print(f"StatusManager: Successfully upserted {len(data_to_upsert)} statuses for guild {guild_id_str}.")
-                     # ИСПРАВЛЕНИЕ: Очищаем dirty set для этой гильдии только для успешно сохраненных ID
-                     self._dirty_status_effects.get(guild_id_str, set()).difference_update(upserted_status_ids)
-                     # Если после очистки set пуст, удаляем ключ гильдии
-                     if guild_id_str in self._dirty_status_effects and not self._dirty_status_effects[guild_id_str]:
-                          self._dirty_status_effects.pop(guild_id_str)
+                     if guild_id_str in self._dirty_status_effects: # Check if key exists before difference_update
+                        self._dirty_status_effects[guild_id_str].difference_update(upserted_status_ids)
+                        if not self._dirty_status_effects[guild_id_str]: # If set is empty after update
+                            self._dirty_status_effects.pop(guild_id_str)
 
-
-            # Note: При использовании execute и execute_many с авто-коммитом в каждом вызове,
-            # нет необходимости в явном self._conn.commit() в конце save_state.
 
             print(f"StatusManager: Successfully saved state for guild {guild_id_str}.")
 
         except Exception as e:
             print(f"StatusManager: ❌ Error during saving state for guild {guild_id_str}: {e}")
             traceback.print_exc()
-            # При ошибке в execute_many, он сам откатит свою транзакцию.
-            # Если ошибка в первом execute (delete), только он откатится.
-            # Явный rollback в конце save_state может откатить предыдущие операции,
-            # если они не были закоммичены (но execute/execute_many авто-коммитят).
-            # Если нужна атомарность всего save_state, нужно использовать одну транзакцию.
-            # Для простоты пока оставим как есть с авто-коммитом по операциям.
 
 
     # ИСПРАВЛЕНИЕ: load_state должен принимать guild_id и **kwargs
@@ -746,5 +718,90 @@ class StatusManager:
               await self.remove_status_effect(status_id, guild_id_str, **context) # Удаляем каждый статус
 
     # TODO: Добавьте remove_status_effects_by_event_id(event_id, guild_id, context)
+
+    async def save_status_effect(self, status_effect: "StatusEffect", guild_id: str) -> bool:
+        """
+        Saves a single status effect to the database using an UPSERT operation.
+        """
+        if self._db_adapter is None:
+            print(f"StatusManager: Error: DB adapter missing for guild {guild_id}. Cannot save status effect {getattr(status_effect, 'id', 'N/A')}.")
+            return False
+
+        guild_id_str = str(guild_id)
+        effect_id = getattr(status_effect, 'id', None)
+
+        if not effect_id:
+            print(f"StatusManager: Error: StatusEffect object is missing an 'id'. Cannot save.")
+            return False
+        
+        # Ensure the status_effect's internal guild_id (if exists on the object, though not typical for this model)
+        # matches the provided guild_id. For StatusEffect, guild_id is usually contextual.
+        # However, the DB table 'statuses' has a guild_id column, so we must save it.
+        # We'll use the provided guild_id for the DB operation.
+
+        try:
+            effect_data = status_effect.to_dict()
+
+            # Prepare data for DB columns based on 'statuses' table schema
+            # Columns: id, status_type, target_id, target_type, duration, applied_at, 
+            #          source_id, state_variables, guild_id
+
+            db_id = effect_data.get('id')
+            db_status_type = effect_data.get('status_type')
+            db_target_id = effect_data.get('target_id')
+            db_target_type = effect_data.get('target_type')
+            db_duration = effect_data.get('duration') # Can be None or float
+            db_applied_at = effect_data.get('applied_at') # Can be None or float
+            db_source_id = effect_data.get('source_id') # Can be None
+            
+            db_state_variables = effect_data.get('state_variables', {})
+            if not isinstance(db_state_variables, dict): 
+                db_state_variables = {}
+            
+            # guild_id comes from the method argument
+            db_guild_id = guild_id_str
+            
+            db_params = (
+                db_id,
+                db_status_type,
+                db_target_id,
+                db_target_type,
+                db_duration,
+                db_applied_at,
+                db_source_id,
+                json.dumps(db_state_variables),
+                db_guild_id
+            )
+
+            upsert_sql = '''
+            INSERT OR REPLACE INTO statuses (
+                id, status_type, target_id, target_type, duration, 
+                applied_at, source_id, state_variables, guild_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            '''
+            # 9 columns, 9 placeholders.
+
+            await self._db_adapter.execute(upsert_sql, db_params)
+            print(f"StatusManager: Successfully saved status effect {db_id} for guild {guild_id_str}.")
+            
+            # If this status effect was marked as dirty, clean it from the dirty set for this guild
+            if guild_id_str in self._dirty_status_effects and db_id in self._dirty_status_effects[guild_id_str]:
+                self._dirty_status_effects[guild_id_str].discard(db_id)
+                if not self._dirty_status_effects[guild_id_str]: # If set becomes empty
+                    del self._dirty_status_effects[guild_id_str]
+            
+            # Also, ensure the in-memory cache (_status_effects) is updated/contains this object instance
+            # The StatusManager cache _status_effects stores StatusEffect objects directly.
+            # So, if the passed status_effect object is the one from the cache, it's already up-to-date.
+            # If it's a new instance or a copy, we should ensure the cache has the saved version.
+            self._status_effects.setdefault(guild_id_str, {})[db_id] = status_effect
+            
+            return True
+
+        except Exception as e:
+            print(f"StatusManager: Error saving status effect {effect_id} for guild {guild_id_str}: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return False
 
 # Конец класса StatusManager

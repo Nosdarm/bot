@@ -984,20 +984,64 @@ class PartyManager:
             print(f"PartyManager: Party {party.id} status set to 'обработка'.")
 
             # 2. Prepare actions for ActionProcessor
-            party_actions_data = []
+            # Flatten all submitted actions from all ready members into a single list.
+            # Each action will be a dict including character_id, original_input_text, and the action_data itself.
+            all_submitted_actions: List[Dict[str, Any]] = []
             for member_char in ready_members_in_location:
-                actions_json = member_char.собранные_действия_JSON
-                party_actions_data.append({
-                    "character_id": member_char.id,
-                    "actions_json": actions_json if actions_json else "[]" # Ensure it's at least an empty list string
-                })
-            print(f"PartyManager: Collected actions for party {party.id} in location {location_id}: {party_actions_data}")
+                actions_json_str = member_char.собранные_действия_JSON
+                member_actions_this_turn: List[Dict[str, Any]] = []
+                if actions_json_str:
+                    try:
+                        member_actions_this_turn = json.loads(actions_json_str)
+                        if not isinstance(member_actions_this_turn, list):
+                            member_actions_this_turn = []
+                    except json.JSONDecodeError:
+                        print(f"PartyManager: Could not parse actions_json for char {member_char.id}: {actions_json_str}")
+                        member_actions_this_turn = []
+                
+                for i, action_data in enumerate(member_actions_this_turn):
+                    if isinstance(action_data, dict): # Ensure action_data is a dict
+                        all_submitted_actions.append({
+                            "character_id": member_char.id,
+                            "action_data": action_data, # This is the dict like {'type': 'move', 'target': 'loc_x'}
+                            "original_input_text": action_data.get("original_input", action_data.get("type", "N/A")), # Store original text if available
+                            "unique_action_id": f"{member_char.id}_action_{i}" # Simple unique ID for this turn
+                        })
+            
+            print(f"PartyManager: Flattened actions for party {party.id} in location {location_id}: {all_submitted_actions}")
+
+            # --- Placeholder for Conflict Resolution ---
+            # conflict_resolver = getattr(game_manager, 'conflict_resolver', None)
+            # ordered_actions_to_process = all_submitted_actions # Default to original order
+            # if conflict_resolver and hasattr(conflict_resolver, 'analyze_and_order_actions'):
+            #     try:
+            #         # This method would take the flat list, analyze, and return an ordered list
+            #         # It might also modify actions (e.g., mark some as failed due to conflict)
+            #         ordered_actions_to_process = await conflict_resolver.analyze_and_order_actions(
+            #             guild_id, all_submitted_actions, context
+            #         )
+            #         print(f"PartyManager: Actions ordered by ConflictResolver: {ordered_actions_to_process}")
+            #     except Exception as cr_exc:
+            #         print(f"PartyManager: Error during conflict resolution: {cr_exc}")
+            #         # Fallback to original order or handle error appropriately
+            # else:
+            #     print("PartyManager: ConflictResolver not available or method missing, processing in submitted order.")
+            actions_to_process_final = all_submitted_actions # Use this list for now
 
             # 3. Call ActionProcessor
-            action_processing_results = {"success": False, "overall_state_changed": False, "individual_action_results": []}
-            if hasattr(game_manager, 'action_processor') and party_actions_data:
+            action_processing_results = {"success": False, "overall_state_changed_for_party": False, "individual_action_results": []}
+            # Pass the flat (potentially ordered) list of actions
+            if hasattr(game_manager, 'action_processor') and actions_to_process_final:
                 action_processor = game_manager.action_processor
                 
+                # Pass game_manager instance to process_party_actions
+                # The context dict is also passed along.
+                current_context = {
+                    # Gather necessary context items for process_party_actions if not already in 'context'
+                    # For now, assuming 'context' passed to check_and_process_party_turn is sufficient
+                    **context 
+                }
+
                 # Determine fallback channel ID for ActionProcessor
                 # Using the location's main channel as the primary source.
                 location_model_for_ap_chan = await game_manager.location_manager.get_location(location_id, guild_id)
@@ -1030,64 +1074,102 @@ class PartyManager:
                     event_manager=game_manager.event_manager,
                     rule_engine=game_manager.rule_engine,
                     openai_service=game_manager.openai_service,
-                    party_actions_data=party_actions_data, # This is List[Tuple[str,str]]
-                    ctx_channel_id_fallback=ctx_channel_id_for_ap
+                    party_actions_data=party_actions_data, 
+                    context=context # Pass the existing context from check_and_process_party_turn
+                    # game_manager is now an argument to process_party_actions
                 )
                 print(f"PartyManager: ActionProcessor results for party {party.id}: {action_processing_results}")
+                
+                # Update overall_state_changed based on the new return structure
+                if action_processing_results.get("overall_state_changed_for_party"):
+                    overall_state_changed_for_party = True # This was implicitly handled before, now explicit
 
             elif not party_actions_data:
                 print(f"PartyManager: No actions data prepared for party {party.id}. Skipping ActionProcessor call.")
-                action_processing_results["success"] = True # No actions means success in terms of processing
+                action_processing_results["success"] = True 
             else:
                 print(f"PartyManager: ActionProcessor not found on game_manager. Cannot process party actions for {party.id}.")
-                # Consider setting party to an error state
                 party.turn_status = 'ошибка_нет_АП'
                 await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
-                return # Cannot proceed
+                    return 
 
             # Check overall success from ActionProcessor's batch job perspective.
-            # Individual action failures are logged by ActionProcessor.
-            if not action_processing_results.get("success"): # If the batch process itself failed
-                print(f"PartyManager: Action processing BATCH FAILED for party {party.id}. Details: {action_processing_results.get('details', 'N/A')}. Reverting party status.")
+            if not action_processing_results.get("success"): 
+                print(f"PartyManager: Action processing BATCH FAILED for party {party.id}. Details: {action_processing_results.get('individual_action_results', 'N/A')}. Reverting party status.")
                 party.turn_status = 'ошибка_обработки_АП'
                 await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
-                # Decide if to clear actions or let players retry. For now, we'll proceed to clear actions.
 
             # 4. Post-Action Processing: Update character statuses and clear actions
             # This happens regardless of individual action successes/failures, as the turn attempt is over.
-            for member_char in ready_members_in_location:
-                member_char.current_game_status = 'исследование'
-                member_char.собранные_действия_JSON = '[]'
-                await self._character_manager.update_character(member_char) # This should handle DB persistence for character
+            # The actual character objects might have been modified by ActionProcessor/RuleEngine and saved.
+            # We re-fetch them here to ensure we have the latest state if we need to make further changes
+            # or rely on their state for notifications.
+            
+            # The modified_entities from action_processing_results.get("final_modified_entities_this_turn", [])
+            # contains the Character objects as they were at the end of their respective start_action calls.
+            # We need to iterate through ready_members_in_location to reset their game status.
+            
+            for member_char_original_state in ready_members_in_location:
+                # Re-fetch to ensure we have the latest version if it was modified and replaced in memory
+                # (though granular saves should mean the instance is the same or updated)
+                member_char_updated = await self._character_manager.get_character(guild_id, member_char_original_state.id)
+                if member_char_updated:
+                    member_char_updated.current_game_status = 'исследование'
+                    member_char_updated.собранные_действия_JSON = '[]'
+                    # Save the character after updating status and clearing actions
+                    await self._character_manager.save_character(member_char_updated, guild_id) 
+                else:
+                    print(f"PartyManager: WARNING - Character {member_char_original_state.id} not found after action processing for party {party.id} when resetting status.")
+
             print(f"PartyManager: Characters of party {party.id} in location {location_id} reset to 'исследование' and actions cleared.")
 
             # 5. Update party status back to 'сбор_действий' (or a default like 'активна')
             party.turn_status = 'сбор_действий'
             await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
-            self.mark_party_dirty(guild_id, party.id) # Mark for full save if other things changed
+            self.mark_party_dirty(guild_id, party.id) 
             print(f"PartyManager: Party {party.id} status set back to 'сбор_действий'.")
 
-            # 6. Notify Players
-            notification_message = (
-                f"**System:** Ход для группы '{party.name}' в локации '{location_id}' был обработан. "
-                f"Результаты действий (если были) должны быть видны. Новый ход начался. Вы можете снова вводить действия."
+            # 6. Notify Players with a detailed report
+            location_name_for_report = location_id # Default
+            if hasattr(game_manager, 'location_manager') and game_manager.location_manager:
+                loc_name = game_manager.location_manager.get_location_name(guild_id, location_id)
+                if loc_name: location_name_for_report = loc_name
+            
+            report_message = self.format_turn_report(
+                individual_action_results=action_processing_results.get("individual_action_results", []),
+                party_name=getattr(party, 'name', party_id),
+                location_name=location_name_for_report,
+                character_manager=self._character_manager # Pass character_manager for name resolution
             )
             
-            # Access LocationManager and discord_client via game_manager
             if game_manager and hasattr(game_manager, 'location_manager') and hasattr(game_manager, 'discord_client'):
-                location_model = await game_manager.location_manager.get_location(location_id, guild_id)
-                if location_model and location_model.channel_id:
-                    target_channel_id = int(location_model.channel_id)
-                    discord_channel = game_manager.discord_client.get_channel(target_channel_id)
+                location_model = await game_manager.location_manager.get_location(location_id, guild_id) # This seems to be fetching a dict, not Location model
+                
+                # Assuming get_location_instance returns a dict-like structure that might have channel_id
+                # Or if game_manager.location_manager.get_location returns Location model instance.
+                # For now, let's assume get_location_channel can work with location_id.
+                target_channel_id_int = None
+                if hasattr(game_manager.location_manager, 'get_location_channel'):
+                    target_channel_id_int = game_manager.location_manager.get_location_channel(guild_id, location_id)
+
+                if target_channel_id_int:
+                    discord_channel = game_manager.discord_client.get_channel(target_channel_id_int)
                     if discord_channel:
-                        await discord_channel.send(notification_message)
-                        print(f"PartyManager: Sent turn completion notification to channel {target_channel_id} for party {party.id}.")
+                        # Split long messages if necessary
+                        max_len = 1980 # Discord max message length is 2000
+                        if len(report_message) > max_len:
+                            parts = [report_message[i:i+max_len] for i in range(0, len(report_message), max_len)]
+                            for part_num, part in enumerate(parts):
+                                await discord_channel.send(f"```\n{part}\n```" + (f" (Part {part_num+1}/{len(parts)})" if len(parts) > 1 else ""))
+                        else:
+                            await discord_channel.send(f"```\n{report_message}\n```")
+                        print(f"PartyManager: Sent turn report to channel {target_channel_id_int} for party {party.id}.")
                     else:
-                        print(f"PartyManager: ERROR - Could not find channel {target_channel_id} to send notification for party {party.id}.")
+                        print(f"PartyManager: ERROR - Could not find channel {target_channel_id_int} to send report for party {party.id}.")
                 else:
-                    print(f"PartyManager: ERROR - Location {location_id} or its channel_id not found for party {party.id} notification.")
+                    print(f"PartyManager: ERROR - Location {location_id} channel_id not found for party {party.id} report.")
             else:
-                print(f"PartyManager: ERROR - GameManager, LocationManager, or DiscordClient not available. Cannot send notification for party {party.id}.")
+                print(f"PartyManager: ERROR - GameManager, LocationManager, or DiscordClient not available. Cannot send report for party {party.id}.")
 
         except Exception as e:
             print(f"PartyManager: CRITICAL ERROR during check_and_process_party_turn for party {party.id} in location {location_id}: {e}")
@@ -1101,7 +1183,149 @@ class PartyManager:
             except Exception as e_crit:
                 print(f"PartyManager: Failed to set party status to error state after critical error: {e_crit}")
 
+    def format_turn_report(
+        self, 
+        individual_action_results: List[Dict[str, Any]], 
+        party_name: str, 
+        location_name: str,
+        character_manager: "CharacterManager" # Pass CharacterManager for name resolution
+    ) -> str:
+        report_parts = [
+            f"Turn Report for Party: {party_name} in {location_name}",
+            "----------------------------------------------------"
+        ]
+        if not individual_action_results:
+            report_parts.append("No actions were processed this turn.")
+        else:
+            for result in individual_action_results:
+                char_id = result.get("character_id")
+                char_name = char_id # Default to ID
+                if char_id and character_manager:
+                    # Assuming character_manager.get_character needs guild_id, 
+                    # but we don't have individual char guild_id here easily.
+                    # This is a simplification; proper name resolution might need more context.
+                    # For now, let's assume CharacterManager can get by ID if it's globally unique in cache for this context,
+                    # or we rely on PartyManager's guild_id context for all characters.
+                    # A better approach would be if individual_action_results already contained character_name.
+                    # For this exercise, we'll try a simple lookup, acknowledging its limits.
+                    # This part highlights a potential issue: format_turn_report needs guild_id for char_manager.get_character
+                    # Let's assume for now char_id is sufficient for a name hint or the calling context handles guild.
+                    # For now, we will just use char_id as name if manager is not passed or char not found.
+                    # A more robust solution would be to enrich action_results with names earlier.
+                    # For this specific implementation, we will just show ID to avoid complex lookups without guild_id.
+                    
+                    # Simplified: If character_manager was available and get_character could work with just ID (if IDs are globally unique)
+                    # char = character_manager.get_character(None, char_id) # Passing None for guild_id is problematic
+                    # if char and hasattr(char, 'name'):
+                    #    char_name = getattr(char, 'name')
+                    pass # Keeping char_name as char_id for now due to guild_id complexity here.
+
+                action_text = result.get("action_original_text", "Unknown action")
+                outcome_message = result.get("message", "No outcome message.")
+                success_str = "Success" if result.get("success") else "Failure"
+                
+                report_parts.append(f"Character {char_name}: Action '{action_text}' -> {success_str}. Outcome: {outcome_message}")
+
+        report_parts.append("----------------------------------------------------")
+        report_parts.append("End of Turn.")
+        return "\n".join(report_parts)
 
 # --- Конец класса PartyManager ---
+
+    async def save_party(self, party: "Party", guild_id: str) -> bool:
+        """
+        Saves a single party to the database using an UPSERT operation.
+        """
+        if self._db_adapter is None:
+            print(f"PartyManager: Error: DB adapter missing for guild {guild_id}. Cannot save party {getattr(party, 'id', 'N/A')}.")
+            return False
+
+        guild_id_str = str(guild_id)
+        party_id = getattr(party, 'id', None)
+
+        if not party_id:
+            print(f"PartyManager: Error: Party object is missing an 'id'. Cannot save.")
+            return False
+        
+        party_internal_guild_id = getattr(party, 'guild_id', None)
+        if party_internal_guild_id and str(party_internal_guild_id) != guild_id_str:
+            print(f"PartyManager: Error: Party {party_id} guild_id ({party_internal_guild_id}) does not match provided guild_id ({guild_id_str}).")
+            return False
+        # If party object doesn't have guild_id, we assume it's correct for the given guild_id context.
+
+        try:
+            party_data = party.to_dict() # This already JSONifies player_ids_list into 'player_ids'
+
+            # Prepare data for DB columns based on 'parties' table schema
+            # Columns: id, guild_id, name, leader_id, player_ids, current_location_id, 
+            #          turn_status, state_variables, current_action
+
+            # action_queue is in party_data from to_dict(), but not in DB schema from save_state.
+            # We'll merge it into state_variables if it's not None.
+            final_state_variables = party_data.get('state_variables', {})
+            if not isinstance(final_state_variables, dict): final_state_variables = {}
+            
+            action_queue_data = party_data.get('action_queue')
+            if action_queue_data is not None: # Only add if it exists and is not None
+                final_state_variables['action_queue'] = action_queue_data
+
+
+            db_params = (
+                party_data.get('id'),
+                guild_id_str, # Explicitly use the provided guild_id
+                json.dumps(party_data.get('name_i18n', {})), # Save i18n name as JSON
+                party_data.get('leader_id'),
+                party_data.get('player_ids'), # This is already a JSON string from party.to_dict()
+                party_data.get('current_location_id'),
+                party_data.get('turn_status'),
+                json.dumps(final_state_variables),
+                json.dumps(party_data.get('current_action')) # Can be None
+            )
+
+            upsert_sql = '''
+            INSERT OR REPLACE INTO parties (
+                id, guild_id, name, leader_id, player_ids, 
+                current_location_id, turn_status, state_variables, current_action
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            '''
+            # 9 columns, 9 placeholders.
+
+            await self._db_adapter.execute(upsert_sql, db_params)
+            print(f"PartyManager: Successfully saved party {party_id} for guild {guild_id_str}.")
+            
+            if guild_id_str in self._dirty_parties and party_id in self._dirty_parties[guild_id_str]:
+                self._dirty_parties[guild_id_str].discard(party_id)
+                if not self._dirty_parties[guild_id_str]:
+                    del self._dirty_parties[guild_id_str]
+            
+            # PartyManager cache _parties stores Party objects.
+            # Ensure the cached object is the one that was passed and now saved.
+            self._parties.setdefault(guild_id_str, {})[party_id] = party
+            
+            # Also, update the _member_to_party_map if members changed.
+            # This requires comparing old vs new state or just rebuilding for this party.
+            # For simplicity, let's remove old mappings for this party's previous members (if known) 
+            # and add new mappings. This is tricky without old state.
+            # A safer bet is that if save_party is called, the Party object `party` is the source of truth.
+            current_members = getattr(party, 'player_ids_list', [])
+            if isinstance(current_members, list):
+                guild_member_map = self._member_to_party_map.setdefault(guild_id_str, {})
+                # Remove old mappings that might point to this party_id but member is no longer in party
+                # This is not perfect as it doesn't capture members removed from other parties to join this one.
+                # A full rebuild of map or more complex diffing would be needed for 100% accuracy on complex member changes.
+                keys_to_remove = [m_id for m_id, p_id in guild_member_map.items() if p_id == party_id and m_id not in current_members]
+                for k in keys_to_remove:
+                    del guild_member_map[k]
+                # Add/update mappings for current members
+                for member_id_str in current_members:
+                    guild_member_map[member_id_str] = party_id
+
+            return True
+
+        except Exception as e:
+            print(f"PartyManager: Error saving party {party_id} for guild {guild_id_str}: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return False
 
 print("DEBUG: party_manager.py module loaded.")
