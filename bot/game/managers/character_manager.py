@@ -266,6 +266,9 @@ class CharacterManager:
         guild_id: str, # Обязательный аргумент guild_id
         # Опциональная начальная локация (ID инстанса локации)
         initial_location_id: Optional[str] = None,
+        level: int = 1,
+        experience: int = 0,
+        unspent_xp: int = 0,
         # Добавляем **kwargs для контекста, хотя guild_id теперь обязателен
         **kwargs: Any
     ) -> Optional["Character"]: # Возвращаем Optional["Character"], т.к. создание может не удасться
@@ -350,6 +353,9 @@ class CharacterManager:
             'max_health': 100.0,
             'is_alive': True, # bool (сохраняется как integer 0 or 1)
             'status_effects': [], # list
+            'level': level,
+            'experience': experience,
+            'unspent_xp': unspent_xp
             # ... другие поля из модели Character ...
         }
 
@@ -359,9 +365,9 @@ class CharacterManager:
         INSERT INTO players (
             id, discord_user_id, name, guild_id, location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
-            hp, max_health, is_alive, status_effects
+            hp, max_health, is_alive, status_effects, level, experience, unspent_xp
             -- , ... другие колонки ...
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Убедитесь, что порядок параметров соответствует колонкам в SQL
         db_params = (
@@ -380,6 +386,9 @@ class CharacterManager:
             data['max_health'],
             int(data['is_alive']), # boolean как integer (0 or 1)
             json.dumps(data['status_effects']),
+            data['level'],
+            data['experience'],
+            data['unspent_xp']
             # ... другие параметры ...
         )
 
@@ -469,8 +478,8 @@ class CharacterManager:
              # INSERT OR REPLACE SQL для обновления существующих или вставки новых
              upsert_sql = '''
              INSERT OR REPLACE INTO players
-             (id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             (id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, level, experience, unspent_xp)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              '''
              data_to_upsert = []
              upserted_char_ids: Set[str] = set() # Track IDs that were successfully prepared for upsert
@@ -499,6 +508,9 @@ class CharacterManager:
                      max_health = getattr(char, 'max_health', 100.0)
                      is_alive = getattr(char, 'is_alive', True)
                      status_effects = getattr(char, 'status_effects', [])
+                     level = getattr(char, 'level', 1)
+                     experience = getattr(char, 'experience', 0)
+                     unspent_xp = getattr(char, 'unspent_xp', 0)
 
                      # Ensure required fields for DB exist and have correct types before dumping
                      if not isinstance(inventory, list):
@@ -542,6 +554,9 @@ class CharacterManager:
                          max_health,
                          int(is_alive), # boolean как integer
                          status_json,
+                         level,
+                         experience,
+                         unspent_xp,
                      ))
                      upserted_char_ids.add(char_id) # Track IDs that were prepared for upsert
 
@@ -602,7 +617,7 @@ class CharacterManager:
         try:
             # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
             sql = '''
-            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, race, mp, attack, defense
+            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, race, mp, attack, defense, level, experience, unspent_xp
             FROM players WHERE guild_id = ?
             ''' # Added new columns from players table
             rows = await self._db_adapter.fetchall(sql, (guild_id_str,))

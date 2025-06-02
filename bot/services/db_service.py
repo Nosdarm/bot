@@ -53,7 +53,8 @@ class DBService:
         self, discord_user_id: int, name: str, race: str,
         guild_id: str, location_id: str, hp: int, mp: int,
         attack: int, defense: int, stats: Optional[Dict[str, Any]] = None,
-        player_id: Optional[str] = None # Allow providing an ID, e.g. UUID
+        player_id: Optional[str] = None, # Allow providing an ID, e.g. UUID
+        level: int = 1, experience: int = 0, unspent_xp: int = 0
     ) -> Optional[Dict[str, Any]]:
         """
         Creates a new player in the 'players' table.
@@ -64,13 +65,13 @@ class DBService:
             player_id = f"{guild_id}-{discord_user_id}" # Example composite ID, consider UUIDs for production
 
         sql = """
-            INSERT INTO players (id, discord_user_id, name, race, guild_id, location_id, hp, mp, attack, defense, stats, experience, level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO players (id, discord_user_id, name, race, guild_id, location_id, hp, mp, attack, defense, stats, experience, level, unspent_xp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             player_id, discord_user_id, name, race, guild_id, location_id,
             hp, mp, attack, defense, json.dumps(stats) if stats else '{}',
-            0, 1 # Default exp and level
+            experience, level, unspent_xp
         )
         # Assuming execute_insert returns the last inserted rowid, which might not be the text player_id.
         # For text PKs, execute is fine, then fetch.

@@ -82,6 +82,7 @@ class PartyCommandHandler:
 `{prefix}party create` - Создать новую партию (вы становитесь лидером).
 `{prefix}party join <ID партии>` - Присоединиться к существующей партии.
 `{prefix}party leave` - Покинуть текущую партию.
+`{prefix}party disband` - Распустить партию (только лидер).
 `{prefix}party info [<ID партии>]` - Показать информацию о вашей партии или партии по ID.
              """.format(prefix=self._command_prefix)
 
@@ -103,24 +104,23 @@ class PartyCommandHandler:
 
         if author_id_int is not None and self._char_manager:
              player_char = self._char_manager.get_character_by_discord_id(guild_id, author_id_int)
-             player_char_id = getattr(player_char, 'id', None) if player_char else None
+             # Ensure player_char is not None before trying to get 'id'
+             if player_char:
+                 player_char_id = getattr(player_char, 'id', None)
 
 
         if subcommand == "create":
              await self._handle_create_subcommand(send_callback, guild_id, author_id, player_char, player_char_id, subcommand_args, context)
-
         elif subcommand == "join":
              await self._handle_join_subcommand(send_callback, guild_id, author_id, player_char, player_char_id, subcommand_args, context)
-
         elif subcommand == "leave":
              await self._handle_leave_subcommand(send_callback, guild_id, author_id, player_char, player_char_id, subcommand_args, context)
-
+        elif subcommand == "disband":
+            await self._handle_disband_subcommand(send_callback, guild_id, author_id, player_char, player_char_id, subcommand_args, context)
         elif subcommand == "info":
              await self._handle_info_subcommand(send_callback, guild_id, author_id, player_char, player_char_id, subcommand_args, context)
-
-
         else:
-            await send_callback(f"Неизвестное действие для партии: `{subcommand}`. Доступные действия: `create`, `join`, `leave`, `info` (и другие, если реализованы).\nИспользование: `{self._command_prefix}party <действие> [аргументы]`".format(prefix=self._command_prefix))
+            await send_callback(f"Неизвестное действие для партии: `{subcommand}`. Доступные действия: `create`, `join`, `leave`, `disband`, `info`.\nИспользование: `{self._command_prefix}party <действие> [аргументы]`".format(prefix=self._command_prefix))
             print(f"PartyCommandHandler: Unknown party subcommand: '{subcommand}' in guild {guild_id}.")
 
 
@@ -128,52 +128,60 @@ class PartyCommandHandler:
         """Handles the '/party create' subcommand logic."""
         print(f"PartyCommandHandler: Handling create subcommand for user {author_id} in guild {guild_id}...")
 
-        if player_char is None:
-             await send_callback("❌ Для создания партии необходим персонаж.")
-             print(f"PartyCommandHandler: Create failed for user {author_id} in guild {guild_id}: No character.")
-             return
+        if player_char is None or player_char_id is None:
+            await send_callback("❌ Для создания партии необходим персонаж.")
+            print(f"PartyCommandHandler: Create failed for user {author_id} in guild {guild_id}: No character or character ID missing.")
+            return
 
-        if player_char_id is None:
-             await send_callback("❌ Произошла ошибка: Не удалось получить ID вашего персонажа.")
-             print(f"PartyCommandHandler Error: Player character object has no ID attribute for user {author_id} in guild {guild_id}.")
-             return
-
-
-        player_current_party = await self._party_manager.get_party_by_member_id(player_char_id, guild_id)
-        if player_current_party:
-             await send_callback(f"❌ Вы уже состоите в партии (ID `{getattr(player_current_party, 'id', 'N/A')}`). Сначала покиньте ее (`{self._command_prefix}party leave`).".format(prefix=self._command_prefix))
-             print(f"PartyCommandHandler: Create failed for char {player_char_id} in guild {guild_id}: Already in party {getattr(player_current_party, 'id', 'N/A')}.")
-             return
+        # Check if player is already in a party
+        if getattr(player_char, 'party_id', None):
+            await send_callback(f"❌ Вы уже состоите в партии (ID `{getattr(player_char, 'party_id')}`). Сначала покиньте ее (`{self._command_prefix}party leave`).")
+            print(f"PartyCommandHandler: Create failed for char {player_char_id} in guild {guild_id}: Already in party {getattr(player_char, 'party_id')}.")
+            return
 
         try:
-             new_party_id = await self._party_manager.create_party(
-                 leader_id=player_char_id,
-                 member_ids=[player_char_id],
-                 guild_id=guild_id,
-                 **context
-             )
+            player_location_id = getattr(player_char, 'location_id', None)
+            if not player_location_id:
+                await send_callback("❌ Не удалось определить вашу текущую локацию. Создание партии невозможно.")
+                print(f"PartyCommandHandler: Create failed for char {player_char_id} in guild {guild_id}: Character has no location_id.")
+                return
 
-             if new_party_id:
-                  if self._char_manager and hasattr(self._char_manager, 'set_party_id'):
-                      await self._char_manager.set_party_id(
-                          guild_id=guild_id,
-                          character_id=player_char_id,
-                          party_id=new_party_id,
-                          **context
-                      )
+            # Create party with leader as the only member and set party location to leader's location
+            new_party = await self._party_manager.create_party(
+                leader_id=player_char_id,
+                member_ids=[player_char_id], # Initial members list
+                guild_id=guild_id,
+                # Pass current_location_id for the party based on leader's location
+                current_location_id=player_location_id,
+                **context # Pass full context which might include other managers
+            )
 
-                  await send_callback(f"🎉 Вы успешно создали новую партию! ID партии: `{new_party_id}`")
-                  print(f"PartyCommandHandler: Party {new_party_id} created by user {author_id} (char {player_char_id}) in guild {guild_id}.")
-
-             else:
-                  await send_callback("❌ Не удалось создать партию. Возможно, произошла внутренняя ошибка.")
-                  print(f"PartyCommandHandler: party_manager.create_party returned None for user {author_id} (char {player_char_id}) in guild {guild_id}.")
+            if new_party and hasattr(new_party, 'id'):
+                new_party_id = getattr(new_party, 'id')
+                # Update player's current_party_id
+                update_success = await self._char_manager.set_party_id(
+                    guild_id=guild_id,
+                    character_id=player_char_id,
+                    party_id=new_party_id,
+                    **context
+                )
+                if update_success:
+                    await send_callback(f"🎉 Вы успешно создали новую партию! ID партии: `{new_party_id}`")
+                    print(f"PartyCommandHandler: Party {new_party_id} created by user {author_id} (char {player_char_id}) in guild {guild_id}. Player party_id updated.")
+                else:
+                    # This case is tricky: party created but player update failed.
+                    # Potentially try to roll back party creation or log inconsistency.
+                    await send_callback("❌ Партия создана, но не удалось обновить ваш статус. Обратитесь к администратору.")
+                    print(f"PartyCommandHandler: Party {new_party_id} created, but failed to update char {player_char_id}'s party_id in guild {guild_id}.")
+            else:
+                await send_callback("❌ Не удалось создать партию. Возможно, произошла внутренняя ошибка.")
+                print(f"PartyCommandHandler: party_manager.create_party returned None or invalid object for user {author_id} (char {player_char_id}) in guild {guild_id}.")
 
         except Exception as e:
-             print(f"PartyCommandHandler Error creating party for user {author_id} (char {player_char_id}) in guild {guild_id}: {e}")
-             import traceback
-             traceback.print_exc()
-             await send_callback(f"❌ Произошла ошибка при создании партии: {e}")
+            print(f"PartyCommandHandler Error creating party for user {author_id} (char {player_char_id}) in guild {guild_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            await send_callback(f"❌ Произошла ошибка при создании партии: {str(e)}")
 
 
     async def _handle_join_subcommand(self, send_callback: SendToChannelCallback, guild_id: str, author_id: str, player_char: Optional[Any], player_char_id: Optional[str], subcommand_args: List[str], context: Dict[str, Any]) -> None:
@@ -181,90 +189,185 @@ class PartyCommandHandler:
         print(f"PartyCommandHandler: Handling join subcommand for user {author_id} in guild {guild_id}...")
 
         if not subcommand_args:
-             await send_callback(f"Использование: `{self._command_prefix}party join <ID партии>`".format(prefix=self._command_prefix))
-             return
-        if player_char is None:
-            await send_callback("❌ Для присоединения к партии необходим персонаж.")
-            print(f"PartyCommandHandler: Join failed for user {author_id} in guild {guild_id}: No character.")
+            await send_callback(f"Использование: `{self._command_prefix}party join <ID партии>`")
             return
-        if player_char_id is None:
-             await send_callback("❌ Произошла ошибка: Не удалось получить ID вашего персонажа.")
-             print(f"PartyCommandHandler Error: Player character object has no ID attribute for user {author_id} in guild {guild_id}.")
-             return
+        
+        if player_char is None or player_char_id is None:
+            await send_callback("❌ Для присоединения к партии необходим персонаж.")
+            print(f"PartyCommandHandler: Join failed for user {author_id} in guild {guild_id}: No character or character ID.")
+            return
+
+        if getattr(player_char, 'party_id', None):
+            await send_callback(f"❌ Вы уже состоите в партии (ID `{getattr(player_char, 'party_id')}`). Сначала покиньте ее (`{self._command_prefix}party leave`).")
+            return
 
         target_party_id_arg = subcommand_args[0]
-
         target_party = self._party_manager.get_party(guild_id, target_party_id_arg)
-        if not target_party:
-             await send_callback(f"❌ Партия с ID `{target_party_id_arg}` не найдена в этой гильдии.")
-             print(f"PartyCommandHandler: Join failed for char {player_char_id} in guild {guild_id}: Target party {target_party_id_arg} not found.")
-             return
 
-        player_current_party = await self._party_manager.get_party_by_member_id(player_char_id, guild_id)
-        if player_current_party:
-             if getattr(player_current_party, 'id', None) == getattr(target_party, 'id', None):
-                  await send_callback(f"❌ Вы уже состоите в этой партии (ID `{target_party_id_arg}`).")
-                  print(f"PartyCommandHandler: Join failed for char {player_char_id} in guild {guild_id}: Already in target party {target_party_id_arg}.")
-             else:
-                  await send_callback(f"❌ Вы уже состоите в другой партии (ID `{getattr(player_current_party, 'id', 'N/A')}`). Сначала покиньте ее (`{self._command_prefix}party leave`).".format(prefix=self._command_prefix))
-                  print(f"PartyCommandHandler: Join failed for char {player_char_id} in guild {guild_id}: Already in different party {getattr(player_current_party, 'id', 'N/A')}.")
-             return
+        if not target_party:
+            await send_callback(f"❌ Партия с ID `{target_party_id_arg}` не найдена.")
+            return
+
+        player_location_id = getattr(player_char, 'location_id', None)
+        party_location_id = getattr(target_party, 'current_location_id', None)
+
+        if not player_location_id:
+            await send_callback("❌ Не удалось определить вашу текущую локацию.")
+            return
+        
+        if player_location_id != party_location_id:
+            # Optionally fetch location names for a friendlier message
+            player_loc_name = player_location_id
+            party_loc_name = party_location_id
+            # Placeholder for fetching location names if LocationManager is available
+            # loc_manager = context.get('location_manager')
+            # if loc_manager:
+            #    player_loc_obj = loc_manager.get_location(guild_id, player_location_id)
+            #    if player_loc_obj: player_loc_name = player_loc_obj.name
+            #    party_loc_obj = loc_manager.get_location(guild_id, party_location_id)
+            #    if party_loc_obj: party_loc_name = party_loc_obj.name
+            await send_callback(f"❌ Вы должны находиться в той же локации, что и партия, чтобы присоединиться. Вы в `{player_loc_name}`, партия в `{party_loc_name}`.")
+            return
 
         try:
-             join_successful = await self._party_action_processor.process_join_party(
-                 character_id=player_char_id,
-                 party_id=getattr(target_party, 'id'),
-                 context=context
-             )
-             if join_successful:
-                  print(f"PartyCommandHandler: Join party action processed successfully in processor for char {player_char_id} to party {getattr(target_party, 'id', 'N/A')} in guild {guild_id}.")
-             else:
-                  print(f"PartyCommandHandler: Join party action failed in processor for char {player_char_id} to party {getattr(target_party, 'id', 'N/A')} in guild {guild_id}.")
+            # Assuming add_member_to_party will be created in PartyManager
+            # add_member_to_party(self, party_id: str, character_id: str, guild_id: str, context: Dict[str, Any]) -> bool:
+            join_successful = await self._party_manager.add_member_to_party(
+                party_id=target_party.id, # type: ignore
+                character_id=player_char_id,
+                guild_id=guild_id,
+                context=context
+            )
+
+            if join_successful:
+                update_char_party_success = await self._char_manager.set_party_id(guild_id, player_char_id, target_party.id, **context) # type: ignore
+                if update_char_party_success:
+                    await send_callback(f"🎉 Вы успешно присоединились к партии `{getattr(target_party, 'name', target_party.id)}`!") # type: ignore
+                    print(f"PartyCommandHandler: Char {player_char_id} successfully joined party {target_party.id} in guild {guild_id}.") # type: ignore
+                else:
+                    await send_callback("❌ Удалось присоединиться к партии, но не удалось обновить ваш статус. Обратитесь к администратору.")
+                    # Potentially roll back add_member_to_party or log inconsistency
+                    print(f"PartyCommandHandler: Char {player_char_id} joined party {target_party.id}, but failed to update char's party_id in guild {guild_id}.") # type: ignore
+            else:
+                # add_member_to_party in PartyManager should ideally send specific error or return reason
+                await send_callback(f"❌ Не удалось присоединиться к партии `{getattr(target_party, 'name', target_party.id)}`. Возможно, она заполнена или закрыта.") # type: ignore
+                print(f"PartyCommandHandler: add_member_to_party failed for char {player_char_id} to party {target_party.id} in guild {guild_id}.") # type: ignore
 
         except Exception as e:
-             print(f"PartyCommandHandler Error joining party for char {player_char_id} to party {target_party_id_arg} in guild {guild_id}: {e}")
-             import traceback
-             traceback.print_exc()
-             await send_callback(f"❌ Произошла ошибка при присоединении к партии: {e}")
+            print(f"PartyCommandHandler Error joining party for char {player_char_id} to party {target_party_id_arg} in guild {guild_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            await send_callback(f"❌ Произошла ошибка при присоединении к партии: {str(e)}")
 
 
     async def _handle_leave_subcommand(self, send_callback: SendToChannelCallback, guild_id: str, author_id: str, player_char: Optional[Any], player_char_id: Optional[str], subcommand_args: List[str], context: Dict[str, Any]) -> None:
         """Handles the '/party leave' subcommand logic."""
         print(f"PartyCommandHandler: Handling leave subcommand for user {author_id} in guild {guild_id}...")
 
-        if player_char_id is None:
+        if player_char is None or player_char_id is None:
             await send_callback("❌ У вас нет персонажа, чтобы покинуть партию.")
-            print(f"PartyCommandHandler: Leave failed for user {author_id} in guild {guild_id}: No character.")
             return
 
-        player_current_party = await self._party_manager.get_party_by_member_id(player_char_id, guild_id)
-        if not player_current_party:
-             await send_callback("❌ Вы не состоите в партии.")
-             print(f"PartyCommandHandler: Leave failed for char {player_char_id} in guild {guild_id}: Not in a party.")
-             return
+        current_party_id = getattr(player_char, 'party_id', None)
+        if not current_party_id:
+            await send_callback("❌ Вы не состоите в партии.")
+            return
 
+        party_to_leave = self._party_manager.get_party(guild_id, current_party_id)
+        if not party_to_leave:
+            # This implies inconsistency, character has a party_id but party doesn't exist
+            await send_callback("❌ Вы состоите в партии, которая не найдена. Сбрасываю ваш статус партии...")
+            await self._char_manager.set_party_id(guild_id, player_char_id, None, **context)
+            print(f"PartyCommandHandler: Char {player_char_id} had party_id {current_party_id} but party not found in guild {guild_id}. Cleared char's party_id.")
+            return
+
+        player_location_id = getattr(player_char, 'location_id', None)
+        party_location_id = getattr(party_to_leave, 'current_location_id', None)
+
+        if not player_location_id:
+            await send_callback("❌ Не удалось определить вашу текущую локацию. Выход из партии невозможен сейчас.")
+            return
+
+        if player_location_id != party_location_id:
+            await send_callback(f"❌ Вы должны находиться в той же локации, что и партия, чтобы покинуть ее. Вы в `{player_location_id}`, партия в `{party_location_id}`.")
+            return
+            
         try:
-             party_id_to_leave = getattr(player_current_party, 'id')
-             if party_id_to_leave is None:
-                  print(f"PartyCommandHandler Error: Player's party object has no ID attribute for char {player_char_id} in guild {guild_id}. Party object: {player_current_party}")
-                  await send_callback("❌ Произошла ошибка: Не удалось получить ID вашей партии.")
-                  return
+            # remove_member_from_party(self, party_id: str, character_id: str, guild_id: str, context: Dict[str, Any]) -> bool:
+            # This method in PartyManager will handle leader migration or party disbandment.
+            leave_successful = await self._party_manager.remove_member_from_party(
+                party_id=current_party_id,
+                character_id=player_char_id,
+                guild_id=guild_id,
+                context=context
+            )
 
-             leave_successful = await self._party_action_processor.process_leave_party(
-                 character_id=player_char_id,
-                 party_id=party_id_to_leave,
-                 context=context
-             )
-             if leave_successful:
-                  print(f"PartyCommandHandler: Leave party action processed successfully in processor for char {player_char_id} from party {party_id_to_leave} in guild {guild_id}.")
-             else:
-                  print(f"PartyCommandHandler: Leave party action failed in processor for char {player_char_id} from party {party_id_to_leave} in guild {guild_id}.")
+            if leave_successful:
+                # PartyManager.remove_member_from_party might have already set char's party_id to None
+                # if it handled leader migration and the char was the leader of a now-empty party that got disbanded.
+                # However, to be safe, or if the char was not the leader, we set it here.
+                await self._char_manager.set_party_id(guild_id, player_char_id, None, **context)
+                await send_callback(f"✅ Вы покинули партию `{getattr(party_to_leave, 'name', current_party_id)}`.")
+                print(f"PartyCommandHandler: Char {player_char_id} successfully left party {current_party_id} in guild {guild_id}.")
+            else:
+                # This might occur if remove_member_from_party had an internal failure
+                # but didn't raise an exception.
+                await send_callback(f"❌ Не удалось покинуть партию `{getattr(party_to_leave, 'name', current_party_id)}` из-за внутренней ошибки.")
+                print(f"PartyCommandHandler: remove_member_from_party failed for char {player_char_id} from party {current_party_id} in guild {guild_id}.")
 
         except Exception as e:
-              print(f"PartyCommandHandler Error leaving party for char {player_char_id} from party {getattr(player_current_party, 'id', 'N/A')} in guild {guild_id}: {e}")
-              import traceback
-              traceback.print_exc()
-              await send_callback(f"❌ Произошла ошибка при попытке покинуть партию: {e}")
+            print(f"PartyCommandHandler Error leaving party for char {player_char_id} from party {current_party_id} in guild {guild_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            await send_callback(f"❌ Произошла ошибка при попытке покинуть партию: {e}")
+
+    async def _handle_disband_subcommand(self, send_callback: SendToChannelCallback, guild_id: str, author_id: str, player_char: Optional[Any], player_char_id: Optional[str], subcommand_args: List[str], context: Dict[str, Any]) -> None:
+        """Handles the '/party disband' subcommand logic."""
+        print(f"PartyCommandHandler: Handling disband subcommand for user {author_id} in guild {guild_id}...")
+
+        if player_char is None or player_char_id is None:
+            await send_callback("❌ У вас нет персонажа, чтобы распустить партию.")
+            return
+
+        current_party_id = getattr(player_char, 'party_id', None)
+        if not current_party_id:
+            await send_callback("❌ Вы не состоите в партии, чтобы ее распускать.")
+            return
+
+        party_to_disband = self._party_manager.get_party(guild_id, current_party_id)
+        if not party_to_disband:
+            await send_callback("❌ Ваша партия не найдена. Возможно, она уже распущена. Сбрасываю ваш статус партии...")
+            await self._char_manager.set_party_id(guild_id, player_char_id, None, **context)
+            print(f"PartyCommandHandler: Char {player_char_id} tried to disband party {current_party_id} but party not found in guild {guild_id}. Cleared char's party_id.")
+            return
+
+        if getattr(party_to_disband, 'leader_id', None) != player_char_id:
+            await send_callback("❌ Только лидер партии может ее распустить.")
+            return
+        
+        try:
+            # remove_party(self, party_id: str, guild_id: str, context: Dict[str, Any]) -> bool:
+            # This method in PartyManager must handle setting party_id = None for all members.
+            disband_successful = await self._party_manager.remove_party(
+                party_id=current_party_id,
+                guild_id=guild_id,
+                context=context
+            )
+
+            if disband_successful:
+                party_name = getattr(party_to_disband, 'name', current_party_id)
+                await send_callback(f"✅ Партия `{party_name}` успешно распущена.")
+                print(f"PartyCommandHandler: Party {current_party_id} in guild {guild_id} disbanded by leader {player_char_id}.")
+            else:
+                # This might occur if remove_party had an internal failure
+                await send_callback(f"❌ Не удалось распустить партию `{getattr(party_to_disband, 'name', current_party_id)}` из-за внутренней ошибки.")
+                print(f"PartyCommandHandler: remove_party failed for party {current_party_id} in guild {guild_id}, initiated by {player_char_id}.")
+
+        except Exception as e:
+            print(f"PartyCommandHandler Error disbanding party {current_party_id} in guild {guild_id} by {player_char_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            await send_callback(f"❌ Произошла ошибка при роспуске партии: {str(e)}")
 
 
     async def _handle_info_subcommand(self, send_callback: SendToChannelCallback, guild_id: str, author_id: str, player_char: Optional[Any], player_char_id: Optional[str], subcommand_args: List[str], context: Dict[str, Any]) -> None:

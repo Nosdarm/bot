@@ -29,7 +29,8 @@ class Character:
     
     status_effects: List[Dict[str, Any]] = field(default_factory=list) # List of status effect instances (or their dicts)
     level: int = 1
-    experience: int = 0
+    experience: int = 0  # This will be treated as 'xp'
+    unspent_xp: int = 0
     active_quests: List[str] = field(default_factory=list) # List of quest IDs
 
     # Spell Management Fields
@@ -103,6 +104,7 @@ class Character:
             'status_effects': data.get('status_effects', []),
             'level': int(data.get('level', 1)), # Ensure int
             'experience': int(data.get('experience', 0)), # Ensure int
+            'unspent_xp': int(data.get('unspent_xp', 0)), # Ensure int
             'active_quests': data.get('active_quests', []),
             
             # New spell-related fields with defaults for backward compatibility
@@ -163,6 +165,7 @@ class Character:
             "status_effects": self.status_effects, # Assuming status effects are dicts or serializable
             "level": self.level,
             "experience": self.experience,
+            "unspent_xp": self.unspent_xp,
             "active_quests": self.active_quests,
             "known_spells": self.known_spells,
             "spell_cooldowns": self.spell_cooldowns,
