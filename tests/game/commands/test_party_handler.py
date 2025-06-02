@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
+from typing import Optional, List, Dict, Any # Added imports
 
 from bot.game.command_handlers.party_handler import PartyCommandHandler
 # Assuming models and managers are importable
