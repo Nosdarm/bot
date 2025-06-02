@@ -15,4 +15,4 @@ class NLUEntity(TypedDict):
 # For now, the parser will likely produce dicts like:
 # {"type": "location", "id": "loc_001", "name": "Forest of Whispers"}
 # NLUEntity is more for the data coming *from* NLUDataService.
-
+```
