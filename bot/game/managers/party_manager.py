@@ -459,6 +459,44 @@ class PartyManager:
         return party_id_str # Return the ID of the removed party
 
 
+    async def update_party_location(self, party_id: str, new_location_id: Optional[str], guild_id: str, context: Dict[str, Any]) -> bool:
+        """
+        Обновляет местоположение партии.
+        """
+        guild_id_str = str(guild_id)
+        party = self.get_party(guild_id_str, party_id)
+
+        if not party:
+            print(f"PartyManager: Error: Party {party_id} not found in guild {guild_id_str} for location update.")
+            return False
+
+        # Ensure current_location_id attribute exists
+        # ИСПРАВЛЕНИЕ: Используем getattr для безопасного доступа к current_location_id
+        if not hasattr(party, 'current_location_id'):
+            print(f"PartyManager: Warning: Party {party_id} in guild {guild_id_str} does not have 'current_location_id' attribute. Initializing to None.")
+            # Инициализируем атрибут, если он отсутствует, чтобы соответствовать общей логике Party модели
+            setattr(party, 'current_location_id', None)
+            # Не возвращаем False здесь, а продолжаем обновление, так как атрибут теперь существует.
+
+        # Ensure new_location_id is a string or None
+        resolved_new_location_id: Optional[str] = None
+        if new_location_id is not None:
+            resolved_new_location_id = str(new_location_id)
+
+        # Check if already at the location
+        # ИСПРАВЛЕНИЕ: Используем getattr для безопасного доступа к current_location_id при сравнении
+        if getattr(party, 'current_location_id', None) == resolved_new_location_id:
+            # print(f"PartyManager: Party {party_id} in guild {guild_id_str} is already at location {resolved_new_location_id}.") # Optional: too noisy?
+            return True
+
+        # Update the party's current_location_id
+        party.current_location_id = resolved_new_location_id # type: ignore # Мы знаем, что атрибут существует
+        self.mark_party_dirty(guild_id_str, party_id)
+
+        print(f"PartyManager: Party {party_id} in guild {guild_id_str} location updated to {resolved_new_location_id}. Context: {context}")
+        return True
+
+
     # Methods for persistence (called by PersistenceManager):
     # These methods should work per-guild
     # required_args_for_load, required_args_for_save, required_args_for_rebuild уже определены как атрибуты класса
