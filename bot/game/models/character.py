@@ -47,7 +47,7 @@ class Character:
     # New fields for player status and preferences
     selected_language: Optional[str] = None # Player's preferred language
     current_game_status: Optional[str] = None # E.g., "active", "paused", "in_tutorial"
-    collected_actions_json: Optional[str] = None # JSON string of collected actions
+    собранные_действия_JSON: Optional[str] = None # JSON string of collected actions
     current_party_id: Optional[str] = None # ID of the party the player is currently in (fk to parties table)
 
     # Catch-all for any other fields that might come from data
@@ -150,7 +150,7 @@ class Character:
             # New fields
             'selected_language': data_copy.get('selected_language'),
             'current_game_status': data_copy.get('current_game_status'),
-            'collected_actions_json': data_copy.get('collected_actions_json'),
+            'собранные_действия_JSON': data_copy.get('collected_actions_json'), # Kept old key for backward compatibility
             'current_party_id': data_copy.get('current_party_id'),
         }
         
@@ -207,7 +207,7 @@ class Character:
             # New fields
             "selected_language": self.selected_language,
             "current_game_status": self.current_game_status,
-            "collected_actions_json": self.collected_actions_json,
+            "собранные_действия_JSON": self.собранные_действия_JSON,
             "current_party_id": self.current_party_id,
         }
 
