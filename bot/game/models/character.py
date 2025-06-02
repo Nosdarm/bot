@@ -43,6 +43,12 @@ class Character:
     flags: List[str] = field(default_factory=list) # List of flags, e.g., "darkvision", "immune_to_poison"
     char_class: Optional[str] = None # Character class, e.g., "warrior", "mage"
 
+    # New fields for player status and preferences
+    selected_language: Optional[str] = None # Player's preferred language
+    current_game_status: Optional[str] = None # E.g., "active", "paused", "in_tutorial"
+    collected_actions_json: Optional[str] = None # JSON string of collected actions
+    current_party_id: Optional[str] = None # ID of the party the player is currently in (fk to parties table)
+
     # Catch-all for any other fields that might come from data
     # This is less common with dataclasses as fields are explicit, but can be used if __post_init__ handles it.
     # For now, we'll assume all relevant fields are explicitly defined.
@@ -109,6 +115,12 @@ class Character:
             'ability_cooldowns': data.get('ability_cooldowns', {}),
             'flags': data.get('flags', []),
             'char_class': data.get('char_class'), # Defaults to None if missing, which is fine for Optional[str]
+
+            # New fields
+            'selected_language': data.get('selected_language'),
+            'current_game_status': data.get('current_game_status'),
+            'collected_actions_json': data.get('collected_actions_json'),
+            'current_party_id': data.get('current_party_id'),
         }
         
         # If stats from data doesn't have health/max_health, use the top-level ones
@@ -161,6 +173,12 @@ class Character:
             "ability_cooldowns": self.ability_cooldowns,
             "flags": self.flags,
             "char_class": self.char_class,
+
+            # New fields
+            "selected_language": self.selected_language,
+            "current_game_status": self.current_game_status,
+            "collected_actions_json": self.collected_actions_json,
+            "current_party_id": self.current_party_id,
         }
 
     # TODO: Other methods for character logic, e.g.,

@@ -17,7 +17,7 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    LATEST_SCHEMA_VERSION = 10 # Add turn_order and current_turn_index to combats table
+    LATEST_SCHEMA_VERSION = 11 # Schema updates for players, locations, parties, new tables
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -1077,6 +1077,130 @@ class SqliteAdapter:
             print("SqliteAdapter: Column 'current_turn_index' already exists in 'combats' table.")
 
         print("SqliteAdapter: v9 to v10 migration complete (combats table schema additions).")
+
+    async def _migrate_v10_to_v11(self, cursor: Cursor) -> None:
+        """Миграция с Версии 10 на Версию 11."""
+        print("SqliteAdapter: Running v10 to v11 migration...")
+
+        # 1. Update 'players' table
+        player_columns_to_add = [
+            ("selected_language", "TEXT"),
+            ("current_game_status", "TEXT"),
+            ("collected_actions_json", "TEXT"),
+            ("current_party_id", "TEXT") # Consider FOREIGN KEY to parties(id) later
+        ]
+        print("SqliteAdapter: Updating 'players' table...")
+        for column_name, column_type in player_columns_to_add:
+            try:
+                await cursor.execute(f"ALTER TABLE players ADD COLUMN {column_name} {column_type};")
+                print(f"SqliteAdapter: Added column '{column_name}' to 'players' table.")
+            except aiosqlite.OperationalError as e:
+                if "duplicate column name" in str(e).lower():
+                    print(f"SqliteAdapter: Column '{column_name}' already exists in 'players' table, skipping.")
+                else:
+                    print(f"SqliteAdapter: Error adding column '{column_name}' to 'players': {e}")
+                    traceback.print_exc()
+                    raise
+
+        # 2. Update 'locations' table
+        location_columns_to_add = [
+            ("descriptions_i18n", "TEXT"), # JSON string for multilingual descriptions
+            ("static_name", "TEXT"),       # Static identifier for the location
+            ("static_connections", "TEXT") # JSON string for static connections
+        ]
+        print("SqliteAdapter: Updating 'locations' table...")
+        for column_name, column_type in location_columns_to_add:
+            try:
+                await cursor.execute(f"ALTER TABLE locations ADD COLUMN {column_name} {column_type};")
+                print(f"SqliteAdapter: Added column '{column_name}' to 'locations' table.")
+            except aiosqlite.OperationalError as e:
+                if "duplicate column name" in str(e).lower():
+                    print(f"SqliteAdapter: Column '{column_name}' already exists in 'locations' table, skipping.")
+                else:
+                    print(f"SqliteAdapter: Error adding column '{column_name}' to 'locations': {e}")
+                    traceback.print_exc()
+                    raise
+        
+        # 3. Update 'parties' table
+        print("SqliteAdapter: Updating 'parties' table...")
+        # Rename member_ids to player_ids
+        # This is not perfectly idempotent. If it fails, the transaction should roll back.
+        # Assumes member_ids exists and player_ids does not.
+        try:
+            await cursor.execute("ALTER TABLE parties RENAME COLUMN member_ids TO player_ids;")
+            print("SqliteAdapter: Renamed column 'member_ids' to 'player_ids' in 'parties' table.")
+        except aiosqlite.OperationalError as e:
+            # Common errors: "no such column: member_ids" (if already renamed or dropped)
+            # or "duplicate column name: player_ids" (if player_ids was somehow created before rename)
+            # This specific error for "duplicate column name" during RENAME is not standard,
+            # usually it's about the new name conflicting with an existing table.
+            # SQLite specific error for "duplicate column name" on RENAME might be "table `parties` has no column named `member_ids`"
+            # or if player_ids somehow exists, it might conflict differently.
+            # For now, let specific errors pass if they indicate already migrated.
+            if "no such column: member_ids" in str(e).lower():
+                 print("SqliteAdapter: Column 'member_ids' not found in 'parties', assuming already renamed or handled.")
+            elif "duplicate column" in str(e).lower() and "player_ids" in str(e).lower(): # Generic check
+                 print(f"SqliteAdapter: Column 'player_ids' might already exist or 'member_ids' handled: {e}")
+            else:
+                print(f"SqliteAdapter: Error renaming 'member_ids' to 'player_ids': {e}")
+                traceback.print_exc()
+                raise
+
+        party_columns_to_add = [
+            ("current_location_id", "TEXT"), # FOREIGN KEY to locations(id)
+            ("turn_status", "TEXT")          # e.g., "collecting", "waiting", "processing"
+        ]
+        for column_name, column_type in party_columns_to_add:
+            try:
+                await cursor.execute(f"ALTER TABLE parties ADD COLUMN {column_name} {column_type};")
+                print(f"SqliteAdapter: Added column '{column_name}' to 'parties' table.")
+            except aiosqlite.OperationalError as e:
+                if "duplicate column name" in str(e).lower():
+                    print(f"SqliteAdapter: Column '{column_name}' already exists in 'parties' table, skipping.")
+                else:
+                    print(f"SqliteAdapter: Error adding column '{column_name}' to 'parties': {e}")
+                    traceback.print_exc()
+                    raise
+
+        # 4. Create 'world_state' table
+        print("SqliteAdapter: Creating 'world_state' table...")
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS world_state (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        ''')
+        print("SqliteAdapter: 'world_state' table created IF NOT EXISTS.")
+
+        # 5. Create 'rules_config' table
+        print("SqliteAdapter: Creating 'rules_config' table...")
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS rules_config (
+                id TEXT PRIMARY KEY,
+                config_data TEXT -- Stores all rules as a JSON string
+            );
+        ''')
+        print("SqliteAdapter: 'rules_config' table created IF NOT EXISTS.")
+
+        # 6. Create Stub Tables
+        stub_tables = [
+            "generated_locations", "generated_npcs", "generated_factions",
+            "generated_quests", "player_npc_memory", "skills",
+            "item_properties", "questlines", "quest_steps", "mobile_groups"
+        ]
+        print("SqliteAdapter: Creating stub tables...")
+        for table_name in stub_tables:
+            print(f"SqliteAdapter: Creating '{table_name}' table...")
+            await cursor.execute(f'''
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    id TEXT PRIMARY KEY,
+                    placeholder TEXT NULL
+                );
+            ''')
+            print(f"SqliteAdapter: '{table_name}' table created IF NOT EXISTS.")
+        
+        print("SqliteAdapter: v10 to v11 migration complete.")
+
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")
