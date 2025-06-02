@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.services.campaign_loader import CampaignLoader
     from bot.game.services.consequence_processor import ConsequenceProcessor
+    from bot.services.nlu_data_service import NLUDataService # For NLU Data Service
 
 
     # Типы Callable для Type Checking, если они используются в аннотациях (SendCallbackFactory используется напрямую в __init__)
@@ -113,6 +114,7 @@ class GameManager:
         self.game_log_manager: Optional[GameLogManager] = None
         self.campaign_loader: Optional[CampaignLoader] = None
         self.consequence_processor: Optional[ConsequenceProcessor] = None
+        self.nlu_data_service: Optional["NLUDataService"] = None # For NLU Data Service
 
         # Процессоры и вспомогательные сервисы (используем строковые литералы)
         self._on_enter_action_executor: Optional["OnEnterActionExecutor"] = None
@@ -183,6 +185,7 @@ class GameManager:
             from bot.game.managers.game_log_manager import GameLogManager
             from bot.game.services.campaign_loader import CampaignLoader
             from bot.game.services.consequence_processor import ConsequenceProcessor
+            from bot.services.nlu_data_service import NLUDataService # Import for instantiation
     # from bot.services.db_service import DBService # This can be removed from TYPE_CHECKING if imported above
 
 # Ensure no duplicate or misplaced DBService import within methods or other blocks
@@ -332,6 +335,14 @@ class GameManager:
             if self.consequence_processor is not None and self.quest_manager is not None:
                 self.consequence_processor._quest_manager = self.quest_manager
             
+            # NLUDataService
+            if self._db_adapter:
+                self.nlu_data_service = NLUDataService(db_adapter=self._db_adapter)
+                print("GameManager: NLUDataService instantiated.")
+            else:
+                self.nlu_data_service = None
+                print("GameManager: Warning: DB adapter is None, NLUDataService not instantiated.")
+
             print("GameManager: New services and managers instantiated.")
 
             # Процессоры и роутер команд (создание экземпляров)
@@ -541,6 +552,7 @@ class GameManager:
                     'world_simulation_processor': self._world_simulation_processor,
                     'db_adapter': self._db_adapter, # Still passing adapter directly if some old components need it
                     'db_service': self.db_service,   # Pass DBService as well
+                    'nlu_data_service': self.nlu_data_service, # Pass NLUDataService
                     'send_callback_factory': self._get_discord_send_callback,
                     'settings': self._settings,
                     'discord_client': self._discord_client,
@@ -682,6 +694,7 @@ class GameManager:
                             'party_action_processor': self._party_action_processor,
                             'persistence_manager': self._persistence_manager,
                             'db_adapter': self._db_adapter,
+                            'nlu_data_service': self.nlu_data_service, # Pass NLUDataService
                             'send_callback_factory': self._get_discord_send_callback,
                             'settings': self._settings,
                             'discord_client': self._discord_client,
