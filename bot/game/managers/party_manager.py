@@ -1034,14 +1034,6 @@ class PartyManager:
             if hasattr(game_manager, 'action_processor') and actions_to_process_final:
                 action_processor = game_manager.action_processor
                 
-                # Pass game_manager instance to process_party_actions
-                # The context dict is also passed along.
-                current_context = {
-                    # Gather necessary context items for process_party_actions if not already in 'context'
-                    # For now, assuming 'context' passed to check_and_process_party_turn is sufficient
-                    **context
-                }
-
                 # Determine fallback channel ID for ActionProcessor
                 # Using the location's main channel as the primary source.
                 location_model_for_ap_chan = await game_manager.location_manager.get_location(location_id, guild_id)
