@@ -1020,9 +1020,6 @@ def mark_dialogue_deleted(self, guild_id: str, dialogue_id: str) -> None:
 
 
      async def process_player_dialogue_message(
-
-async def process_player_dialogue_message(
- 
         self, character: Any, message_text: str, channel_id: int, guild_id: str
     ):
         """
