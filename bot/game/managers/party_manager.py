@@ -1067,20 +1067,20 @@ class PartyManager:
                     await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
                     return # Cannot proceed
 
-                # Define the context dictionary to be passed to process_party_actions
-                # This context can include any relevant information for action processing.
-                current_context_for_action_processor = {
-                    'guild_id': guild_id,
-                    'party_id': party_id,
-                    'location_id': location_id,
-                    # Add other relevant context data if CharacterActionProcessor.process_party_actions expects it
-                }
+                # The context dictionary current_context_for_action_processor is no longer needed for this call.
+                # Its information (guild_id, party_id, location_id) would be available via game_manager's attributes
+                # or game_state if needed by the processor, or passed differently if essential.
 
                 action_processing_results = await action_processor.process_party_actions(
-                    game_manager=game_manager, # Pass the whole game_manager
-                    guild_id=guild_id,
-                    actions_to_process=actions_to_process_final, # Use the correctly prepared list of actions
-                    context=current_context_for_action_processor # Pass the defined context
+                    game_state=game_manager.game_state,
+                    char_manager=game_manager.character_manager,
+                    loc_manager=game_manager.location_manager,
+                    event_manager=game_manager.event_manager,
+                    rule_engine=game_manager.rule_engine,
+                    openai_service=game_manager.openai_service,
+                    party_actions_data=actions_to_process_final,
+                    ctx_channel_id_fallback=ctx_channel_id_for_ap, # Defined earlier in the method
+                    conflict_resolver=getattr(game_manager, 'conflict_resolver', None)
                 )
                 print(f"PartyManager: ActionProcessor results for party {party.id}: {action_processing_results}")
 
