@@ -944,6 +944,7 @@ class NpcManager:
                         visual_description_i18n = getattr(npc, 'visual_description_i18n', {"en": "", "ru": ""})
 
                        # Ensure data types are suitable for JSON dumping
+                       if not isinstance(name_i18n, dict): name_i18n = {"en": str(name_i18n), "ru": str(name_i18n)} # Basic fallback if not dict
                        if not isinstance(stats, dict): stats = {}
                        if not isinstance(inventory, list): inventory = []
                        if not isinstance(action_queue, list): action_queue = []
@@ -962,7 +963,7 @@ class NpcManager:
                        data_to_upsert.append((
                            str(npc_id),
                            str(template_id) if template_id is not None else None, # Ensure template_id is str or None
-                           str(name),
+                           json.dumps(name_i18n), # Save i18n name as JSON
                            guild_id_str, # Ensure guild_id is string
                            str(location_id) if location_id is not None else None, # Ensure location_id is str or None
                            stats_json,
