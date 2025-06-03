@@ -20,6 +20,7 @@ from builtins import dict, set, list, str, int, bool, float # Added relevant bui
 if TYPE_CHECKING:
     # Add SqliteAdapter here
     from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.game.models.item import Item # Added for type hinting
     # Add models if they cause import cycles or are complex
     # from bot.game.models.item_instance import ItemInstance # If you have an ItemInstance model
     # from bot.game.models.item_template import ItemTemplate # If you have an ItemTemplate model

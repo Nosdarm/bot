@@ -374,9 +374,13 @@ class CommandRouter:
             name = char_args[0]
             # Prevent TypeError: create_character() got multiple values for keyword argument 'guild_id'
             context_copy = context.copy()
-            if 'guild_id' in context_copy:
+            if 'guild_id' in context_copy: # guild_id is passed explicitly
                 del context_copy['guild_id']
             
+            # Define a variable literally named 'kwargs' from context_copy
+            # to address the Pylance error "kwargs is not defined" at the unpacking site.
+            kwargs = context_copy
+
             try:
                 # Ensure author_id is passed as discord_id
                 # Ensure guild_id is passed directly and not duplicated in context_copy
@@ -384,7 +388,7 @@ class CommandRouter:
                     guild_id=guild_id, 
                     discord_id=int(author_id), 
                     name=name, 
-                    **context_copy
+                    **kwargs # Use the variable named kwargs
                 )
                 if char_id:
                     await send_callback(f"Character '{name}' (ID: {char_id}) created successfully for user {message.author.mention}!")

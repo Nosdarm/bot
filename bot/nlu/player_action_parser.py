@@ -169,16 +169,12 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
         # Match target if exists
         if target_text_name:
             target_entity = None
-            if db_game_entities.get("npc"): # Assuming targets are NPCs
-                target_entity = _find_matching_db_entity(target_text_name, db_game_entities["npc"], "npc") # type: "npc"
+            npc_data_list = db_game_entities.get("npc") # Get NPC list once
+            if npc_data_list:
+                target_entity = _find_matching_db_entity(target_text_name, npc_data_list, "npc")
 
-            npc_list_for_item_target = db_game_entities.get("npc")
-            if npc_list_for_item_target: # Assuming targets are NPCs # THIS IS THE CORRECT LINE
-                target_entity = _find_matching_db_entity(target_text_name, npc_list_for_item_target, "npc") # type: "npc"
-
-            
             if target_entity:
-                 # Standardize to target_name for generic processing, but add original type and id
+                # Standardize to target_name for generic processing, but add original type and id
                 entities.append({"type": "target_name", "id": target_entity["id"], "name": target_entity["name"], "original_type": "npc"})
             else:
                 entities.append({"type": "target_name", "value": target_text_name}) # Fallback for target
