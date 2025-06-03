@@ -59,16 +59,16 @@ class ActionProcessor:
         """
 
         # --- Initial Checks (Same) ---
-        character = await char_manager.get_character_by_discord_id(discord_user_id=discord_user_id, guild_id=game_state.guild_id)
+        character = char_manager.get_character_by_discord_id(discord_user_id=discord_user_id, guild_id=str(game_state.server_id)) # Assuming sync
         if not character:
             return {"success": False, "message": "**Мастер:** У вас еще нет персонажа в этой игре. Используйте `/join_game`.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
         current_location_id = getattr(character, 'current_location_id', None)
-        location = await loc_manager.get_location(current_location_id, guild_id=game_state.guild_id) if current_location_id else None
+        location = loc_manager.get_location(current_location_id, guild_id=str(game_state.server_id)) if current_location_id else None # Assuming sync
         if not location:
             return {"success": False, "message": "**Мастер:** Ваш персонаж в неизвестной локации. Обратитесь к администратору.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-        output_channel_id = await loc_manager.get_location_channel(game_state.guild_id, location.id) if game_state.guild_id else ctx_channel_id # Ensure guild_id is passed
+        output_channel_id = loc_manager.get_location_channel(str(game_state.server_id), location.id) if game_state.server_id else ctx_channel_id # Assuming sync
         output_channel_id = output_channel_id or ctx_channel_id
 
 
@@ -77,7 +77,7 @@ class ActionProcessor:
         # If relevant, it passes ALL handling to EventManager.process_player_action_within_event.
         # EventManager must return a compatible dict structure.
 
-        active_events = await event_manager.get_active_events_in_location(location.id, guild_id=game_state.guild_id)
+        active_events = await event_manager.get_active_events_in_location(location.id, guild_id=str(game_state.server_id))
         relevant_event_id = None
         # Basic relevancy check: if ANY event is active and action *could* be interactive with it.
         is_potentially_event_interactive = action_type in ["interact", "attack", "use_skill", "skill_check", "move", "use_item"]
@@ -126,7 +126,7 @@ class ActionProcessor:
             active_event_names = ', '.join([getattr(e, 'name', 'Unknown Event') for e in active_events]) if active_events else 'нет'
 
             # Assuming get_characters_in_location needs guild_id
-            other_chars_in_loc = await char_manager.get_characters_in_location(location.id, guild_id=game_state.guild_id) if char_manager else []
+            other_chars_in_loc = char_manager.get_characters_in_location(location.id, guild_id=str(game_state.server_id)) if char_manager else [] # Assuming sync
             visible_char_names = ', '.join([getattr(c, 'name', 'Someone') for c in other_chars_in_loc if c.id != character.id][:3]) if other_chars_in_loc else 'нет'
 
             user_prompt = (
@@ -140,11 +140,11 @@ class ActionProcessor:
             # Logging before return
             if game_log_manager and character:
                 await game_log_manager.log_event(
-                    guild_id=game_state.guild_id, # Assuming guild_id is string
+                    guild_id=str(game_state.server_id),
                     event_type="player_action",
                     message=f"{character_name} used {action_type} to look at {location_name}.",
                     related_entities=[{"id": str(character.id), "type": "character"}, {"id": str(location.id), "type": "location"}],
-                    channel_id=ctx_channel_id # Assuming ctx_channel_id is int
+                    channel_id=ctx_channel_id
                 )
             return {"success": True, "message": f"**Локация:** {location_name}\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": False}
 
@@ -157,7 +157,7 @@ class ActionProcessor:
             # --- FULL Movement Logic Implementation ---
 
             # Use LocationManager to find target location by exit direction or name/ID
-            target_location = await loc_manager.get_exit_target(location.id, destination_input, guild_id=game_state.guild_id) # Checks direction AND accessible by name/ID
+            target_location = await loc_manager.get_exit_target(location.id, destination_input, guild_id=str(game_state.server_id)) # Checks direction AND accessible by name/ID
 
             if not target_location:
                 # LocationManager.get_exit_target handles the checks if the input is a valid/accessible exit or connected location by name.
@@ -175,7 +175,7 @@ class ActionProcessor:
             # For now, basic move is always successful (no checks, no cost)
 
             # Update character's location using CharacterManager
-            await char_manager.update_character_location(character.id, target_location.id, guild_id=game_state.guild_id)
+            await char_manager.update_character_location(character.id, target_location.id, guild_id=str(game_state.server_id))
             # State has changed -> GameManager will be signaled by "state_changed": True
 
 
@@ -207,14 +207,14 @@ class ActionProcessor:
             description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=250)
 
             # Determine where to send the description (usually the destination location's mapped channel)
-            destination_channel_id = await loc_manager.get_location_channel(game_state.guild_id, target_location.id) if game_state.guild_id else None
+            destination_channel_id = loc_manager.get_location_channel(str(game_state.server_id), target_location.id) if game_state.server_id else None # Assuming sync
             # If destination channel is not mapped, use the channel where command was issued
             final_output_channel_id = destination_channel_id if destination_channel_id else output_channel_id
 
             # Logging before return
             if game_log_manager and character and target_location:
                 await game_log_manager.log_event(
-                    guild_id=game_state.guild_id, # Assuming guild_id is string
+                    guild_id=str(game_state.server_id),
                     event_type="player_action",
                     message=f"{character_name} moved from {current_location_name} to {target_location_name}.",
                     related_entities=[
@@ -293,11 +293,11 @@ class ActionProcessor:
              # Logging before return
              if game_log_manager and character:
                  await game_log_manager.log_event(
-                     guild_id=game_state.guild_id, # Assuming guild_id is string
+                     guild_id=str(game_state.server_id),
                      event_type="player_action",
                      message=f"{character_name} attempted skill check {skill_name} for {target_description}. Success: {check_result.get('is_success')}",
                      related_entities=[{"id": str(character.id), "type": "character"}],
-                     channel_id=ctx_channel_id, # Assuming ctx_channel_id is int
+                     channel_id=ctx_channel_id,
                      metadata={"skill_name": skill_name, "complexity": complexity, "result": check_result}
                  )
             return {"success": True, "message": f"_{mech_summary}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed}
@@ -341,7 +341,7 @@ class ActionProcessor:
 
             for character_id, collected_actions_json_string in party_actions_data:
                 # Assuming character_id from party_actions_data is the Character UUID.
-            character = await char_manager.get_character(game_state.guild_id, character_id) # Made async
+            character = char_manager.get_character(str(game_state.server_id), character_id) # Assuming sync
                 if not character:
                     print(f"ActionProcessor: Character {character_id} not found during conflict analysis prep. Skipping.")
                     # Potentially log this as an issue or add to a list of unprocessed players
@@ -399,7 +399,7 @@ class ActionProcessor:
                 # For now, just log and return.
                 if game_log_manager:
                     await game_log_manager.log_event(
-                        guild_id=str(game_state.guild_id),
+                        guild_id=str(game_state.server_id),
                         event_type="conflict_identification",
                         message=f"{len(identified_conflicts)} conflicts identified for party.",
                         related_entities=[{"id": p_id, "type": "character"} for p_id in parsed_actions_map.keys()],
@@ -424,7 +424,7 @@ class ActionProcessor:
         
         for character_id, collected_actions_json_string in party_actions_data:
             # Assuming character_id from party_actions_data is the Character UUID.
-            character = await char_manager.get_character(game_state.guild_id, character_id) # Made async
+            character = char_manager.get_character(str(game_state.server_id), character_id) # Assuming sync
             if not character:
                 print(f"ActionProcessor: Character {character_id} not found. Skipping.")
                 all_individual_results.append({"character_id": character_id, "success": False, "message": "Character not found.", "state_changed": False})
@@ -453,7 +453,7 @@ class ActionProcessor:
                         continue
                     
                     character_current_loc_id = getattr(character, 'current_location_id', None)
-                    char_location = await loc_manager.get_location(character_current_loc_id, game_state.guild_id) if character_current_loc_id else None # Made async
+                    char_location = loc_manager.get_location(character_current_loc_id, str(game_state.server_id)) if character_current_loc_id else None # Assuming sync
                     ctx_channel_id_for_action = ctx_channel_id_fallback
                     if char_location and getattr(char_location, 'channel_id', None):
                         try: ctx_channel_id_for_action = int(char_location.channel_id)
@@ -471,8 +471,6 @@ class ActionProcessor:
                         ctx_channel_id=ctx_channel_id_for_action, discord_user_id=character_discord_user_id,
                         action_type=action_type, action_data=action_data, game_log_manager=game_log_manager
                     )
-                    if game_state.game_manager and game_state.guild_id: # Ensure guild_id is available
-                        await game_state.game_manager.save_game_state_after_action(game_state.guild_id)
                     all_individual_results.append({"character_id": character_id, "action_original_text": original_text, **single_action_result})
                     if single_action_result.get("state_changed", False):
                         overall_state_changed_for_party = True

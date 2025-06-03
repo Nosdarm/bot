@@ -100,7 +100,10 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
         self.add_application_commands_from_modules()
 
     async def on_ready(self):
-        print(f'Logged in as {self.user.name} ({self.user.id})')
+        if self.user:
+            print(f'Logged in as {self.user.name} ({self.user.id})')
+        else:
+            print("Error: Bot user object not available on_ready.")
         if self.game_manager:
             print("GameManager is initialized in RPGBot.")
 
@@ -166,9 +169,9 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
             # Let's assume game_manager has a method like `get_character_status_for_nlu`
             
             # To interact with CharacterManager, we'd typically do:
-            char_model = await self.game_manager.character_manager.get_character_by_discord_id(
-                discord_user_id=message.author.id,
-                guild_id=message.guild.id
+            char_model = self.game_manager.character_manager.get_character_by_discord_id(
+                discord_user_id=message.author.id, # discord_user_id is int
+                guild_id=str(message.guild.id) # ensure guild_id is string
             )
 
             if char_model:
