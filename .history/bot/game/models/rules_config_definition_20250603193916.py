@@ -196,4 +196,3 @@ EXAMPLE_RULES_CONFIG = {
 # involved in the conflict, and their values (e.g., +2 agility, -10% speed) would be applied
 # to the relevant skill/stat check.
 
-

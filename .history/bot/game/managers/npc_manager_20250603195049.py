@@ -209,14 +209,8 @@ class NpcManager:
         npc_template_id: str, # This will be used as archetype_id if campaign_loader is present
         location_id: Optional[str] = None,
         **kwargs: Any,
-    ) -> Optional[Union[str, Dict[str, str]]]: # Updated return type
-        """
-        Создает нового NPC для определенной гильдии.
-        If AI generation is used and successful, it saves the content for moderation
-        and returns a dict with status 'pending_moderation' and 'request_id'.
-        Otherwise, it creates the NPC directly and returns the npc_id.
-        Returns None on failure.
-        """
+    ) -> Optional[str]:
+        """Создает нового NPC для определенной гильдии."""
         guild_id_str = str(guild_id)
         archetype_id_to_load = npc_template_id # Assume npc_template_id is the archetype_id for loading
         
@@ -240,14 +234,8 @@ class NpcManager:
         # Attempt to load and apply archetype data from CampaignLoader
         campaign_loader: Optional["CampaignLoader"] = kwargs.get('campaign_loader')
         archetype_data_loaded: Optional[Dict[str, Any]] = None
-        ai_generated_data: Optional[Dict[str, Any]] = None
 
-        # Determine if AI generation should be triggered
-        trigger_ai_generation = False
-        if npc_template_id.startswith("AI:"):
-            trigger_ai_generation = True
-            print(f"NpcManager: AI generation triggered by keyword for '{npc_template_id}'.")
-        elif campaign_loader and hasattr(campaign_loader, 'get_npc_archetypes'):
+        if campaign_loader and hasattr(campaign_loader, 'get_npc_archetypes'):
             try:
                 all_archetypes: List[Dict[str, Any]] = campaign_loader.get_npc_archetypes()
                 if isinstance(all_archetypes, list):
@@ -257,106 +245,37 @@ class NpcManager:
                             print(f"NpcManager: Found archetype data for '{archetype_id_to_load}' in guild {guild_id_str}.")
                             break
                     if not archetype_data_loaded:
-                        print(f"NpcManager: Archetype '{archetype_id_to_load}' not found. Triggering AI generation.")
-                        trigger_ai_generation = True # Archetype not found, trigger AI
+                        print(f"NpcManager: Archetype '{archetype_id_to_load}' not found in campaign data for guild {guild_id_str}.")
                 else:
-                    print(f"NpcManager: Warning: campaign_loader.get_npc_archetypes() did not return a list for guild {guild_id_str}. Considering AI generation.")
-                    trigger_ai_generation = True # Problem with campaign data, trigger AI
+                    print(f"NpcManager: Warning: campaign_loader.get_npc_archetypes() did not return a list for guild {guild_id_str}.")
             except Exception as e:
-                print(f"NpcManager: Error loading NPC archetypes via CampaignLoader for guild {guild_id_str}: {e}. Triggering AI generation.")
+                print(f"NpcManager: Error loading NPC archetypes via CampaignLoader for guild {guild_id_str}: {e}")
                 traceback.print_exc()
-                trigger_ai_generation = True # Error loading, trigger AI
-        else:
-            # No campaign loader or no method to get archetypes, consider AI generation
-            print(f"NpcManager: No CampaignLoader or get_npc_archetypes method. Triggering AI generation for '{npc_template_id}'.")
-            trigger_ai_generation = True
 
-<<<<<<< HEAD
         # Layering: kwargs > archetype_data > generated/default
         final_name_i18n = kwargs.get('name_i18n', archetype_data_loaded.get('name_i18n', {"en": base_name, "ru": base_name}) if archetype_data_loaded else {"en": base_name, "ru": base_name})
         
         # Stats: Start with RuleEngine, then layer archetype, then layer specific kwargs
-=======
-        if trigger_ai_generation:
-            npc_id_concept = npc_template_id # Or derive a concept, e.g., npc_template_id.split(":")[-1]
-            if npc_template_id.startswith("AI:"):
-                npc_id_concept = npc_template_id.replace("AI:", "", 1) # Example: "AI:generate_guard" -> "generate_guard"
-
-            ai_generated_data = await self.generate_npc_details_from_ai(
-                guild_id=guild_id_str,
-                npc_id_concept=npc_id_concept,
-                player_level_for_scaling=kwargs.get('player_level')
-            )
-            if ai_generated_data is None:
-                print(f"NpcManager: AI generation failed for concept '{npc_id_concept}'. NPC creation aborted.")
-                return None # AI generation failed, abort NPC creation
-
-            # --- Moderation Step for AI Generated Content ---
-            user_id = kwargs.get('user_id')
-            if not user_id:
-                print(f"NpcManager: CRITICAL - user_id not found in kwargs for AI NPC generation. Aborting moderation save.")
-                # Depending on policy, you might allow creation without moderation record, or abort.
-                # For now, let's abort as user_id is crucial for moderation tracking.
-                return None
-
-            request_id = str(uuid.uuid4())
-            content_type = 'npc'
-            try:
-                data_json = json.dumps(ai_generated_data)
-                await self._db_adapter.save_pending_moderation_request(
-                    request_id, guild_id_str, str(user_id), content_type, data_json
-                )
-                print(f"NpcManager: AI-generated NPC data for '{npc_id_concept}' saved for moderation. Request ID: {request_id}")
-                return {"status": "pending_moderation", "request_id": request_id}
-            except Exception as e_mod_save:
-                print(f"NpcManager: ERROR saving AI NPC content for moderation: {e_mod_save}")
-                traceback.print_exc()
-                return None # Failed to save for moderation, abort NPC creation
-
-        # --- This part below is now only for NON-AI generated NPCs (i.e., from archetype_data_loaded) ---
-        # Layering: kwargs > archetype_data > generated/default (AI data path now returns above)
-        # Start with base values
-        final_data: Dict[str, Any] = {
-            'name': base_name,
-            'stats': {"strength":5,"dexterity":5,"intelligence":5},
-            'inventory': base_inventory,
-            'archetype': base_archetype_name,
-            'traits': base_traits,
-            'desires': base_desires,
-            'motives': base_motives,
-            'backstory': base_backstory,
-        }
-
-        # 1. Apply RuleEngine generated stats (if no AI stats)
->>>>>>> ai-moderation-flow
         rule_engine = self._rule_engine or kwargs.get('rule_engine')
-        if rule_engine and hasattr(rule_engine, 'generate_initial_npc_stats') and not (ai_generated_data and 'stats' in ai_generated_data):
+        final_stats: Dict[str, Any] = {"strength":5,"dexterity":5,"intelligence":5} # Default initial
+        if rule_engine and hasattr(rule_engine, 'generate_initial_npc_stats'):
             try:
                 generated_stats = await rule_engine.generate_initial_npc_stats(
-                    npc_template_id=archetype_id_to_load,
+                    npc_template_id=archetype_id_to_load, # Pass archetype_id as template_id
                     guild_id=guild_id_str,
                     **kwargs
                 )
                 if isinstance(generated_stats, dict):
-                    final_data['stats'].update(generated_stats)
+                    final_stats.update(generated_stats)
             except Exception as e:
-                print(f"NpcManager: Error generating NPC stats via RuleEngine: {e}")
+                print(f"NpcManager: Error generating NPC stats via RuleEngine for guild {guild_id_str}: {e}")
                 traceback.print_exc()
 
-        # 2. Layer Archetype Data (if loaded and no AI data)
-        if archetype_data_loaded and not ai_generated_data:
-            final_data['name'] = archetype_data_loaded.get('name', final_data['name'])
-            if isinstance(archetype_data_loaded.get('stats'), dict):
-                final_data['stats'].update(archetype_data_loaded['stats'])
-            final_data['inventory'] = archetype_data_loaded.get('inventory', final_data['inventory'])
-            final_data['archetype'] = archetype_data_loaded.get('archetype', final_data['archetype'])
-            final_data['traits'] = archetype_data_loaded.get('traits', final_data['traits'])
-            final_data['desires'] = archetype_data_loaded.get('desires', final_data['desires'])
-            final_data['motives'] = archetype_data_loaded.get('motives', final_data['motives'])
-            final_data['backstory'] = archetype_data_loaded.get('backstory', final_data['backstory'])
-            # Potentially other fields from archetype_data
+        if archetype_data_loaded and isinstance(archetype_data_loaded.get('stats'), dict):
+            final_stats.update(archetype_data_loaded['stats']) # Archetype stats layer over RE
+        if base_stats: # Specific stats from kwargs layer over everything
+            final_stats.update(base_stats)
 
-<<<<<<< HEAD
         final_inventory = kwargs.get('inventory', archetype_data_loaded.get('inventory', base_inventory) if archetype_data_loaded else base_inventory)
         final_archetype_name = kwargs.get('archetype', archetype_data_loaded.get('archetype', base_archetype_name) if archetype_data_loaded else base_archetype_name)
         final_traits = kwargs.get('traits', archetype_data_loaded.get('traits', base_traits) if archetype_data_loaded else base_traits)
@@ -369,88 +288,26 @@ class NpcManager:
         final_motivation_i18n = kwargs.get('motivation_i18n', archetype_data_loaded.get('motivation_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
         final_dialogue_hints_i18n = kwargs.get('dialogue_hints_i18n', archetype_data_loaded.get('dialogue_hints_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
         final_visual_description_i18n = kwargs.get('visual_description_i18n', archetype_data_loaded.get('visual_description_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
-=======
-        # 3. Layer AI Generated Data (if available)
-        # AI data is expected to be comprehensive.
-        # It might have 'name_i18n', 'backstory_i18n', 'description_i18n' etc.
-        # The NPC model and `from_dict` should handle these.
-        if ai_generated_data:
-            # Map AI fields to final_data. This depends on the structure of ai_generated_data.
-            # Assuming ai_generated_data directly provides keys like 'name', 'stats', etc.
-            # Or if it provides i18n versions, those should be preferred.
-            final_data['name'] = ai_generated_data.get('name', final_data['name']) # Prefer non-i18n if 'name' is the key
-            if 'name_i18n' in ai_generated_data: # If AI provides i18n name
-                 final_data['name_i18n'] = ai_generated_data['name_i18n']
-                 # If 'name' is not also provided by AI, we might need to set a default 'name' from 'name_i18n'
-                 if 'name' not in ai_generated_data and isinstance(ai_generated_data['name_i18n'], dict):
-                     final_data['name'] = next(iter(ai_generated_data['name_i18n'].values()), final_data['name'])
->>>>>>> ai-moderation-flow
 
-
-            if isinstance(ai_generated_data.get('stats'), dict):
-                final_data['stats'].update(ai_generated_data['stats'])
-            final_data['inventory'] = ai_generated_data.get('inventory', final_data['inventory']) # AI might provide starting items
-            final_data['archetype'] = ai_generated_data.get('archetype', final_data['archetype'])
-            final_data['traits'] = ai_generated_data.get('traits', final_data['traits'])
-            final_data['desires'] = ai_generated_data.get('desires', final_data['desires'])
-            final_data['motives'] = ai_generated_data.get('motives', final_data['motives'])
-            final_data['backstory'] = ai_generated_data.get('backstory', final_data['backstory']) # Prefer non-i18n
-            if 'backstory_i18n' in ai_generated_data:
-                 final_data['backstory_i18n'] = ai_generated_data['backstory_i18n']
-                 if 'backstory' not in ai_generated_data and isinstance(ai_generated_data['backstory_i18n'], dict):
-                     final_data['backstory'] = next(iter(ai_generated_data['backstory_i18n'].values()), final_data['backstory'])
-
-            # Other fields AI might provide: description_i18n, visual_description_i18n, etc.
-            # These should be added to final_data if the NPC model supports them.
-            for key in ['description_i18n', 'visual_description_i18n', 'personality_description_i18n', 'roleplaying_notes_i18n', 'knowledge_i18n', 'npc_goals_i18n', 'relationships_i18n', 'speech_patterns_i18n']:
-                if key in ai_generated_data:
-                    final_data[key] = ai_generated_data[key]
-
-
-        # 4. Layer kwargs (specific overrides)
-        # These kwargs override anything set by defaults, archetypes, or AI.
-        final_data['name'] = kwargs.get('name', final_data['name'])
-        if base_stats: # base_stats are from kwargs.get('stats', {})
-            final_data['stats'].update(base_stats)
-        if 'inventory' in kwargs: # Check if 'inventory' was explicitly passed in kwargs
-            final_data['inventory'] = kwargs['inventory']
-        if 'archetype' in kwargs:
-            final_data['archetype'] = kwargs['archetype']
-        if 'traits' in kwargs:
-            final_data['traits'] = kwargs['traits']
-        if 'desires' in kwargs:
-            final_data['desires'] = kwargs['desires']
-        if 'motives' in kwargs:
-            final_data['motives'] = kwargs['motives']
-        if 'backstory' in kwargs:
-            final_data['backstory'] = kwargs['backstory']
-
-        # Ensure stats has max_health for health calculation
-        if 'max_health' not in final_data['stats']:
-             final_data['stats']['max_health'] = 50.0 # Default if not set by RE, archetype, AI, or kwargs
 
         try:
-            # Prepare the full data dictionary for NPC.from_dict
-            data_for_npc_object: Dict[str, Any] = {
+            data: Dict[str, Any] = {
                 'id': npc_id,
-<<<<<<< HEAD
                 'template_id': archetype_id_to_load, # Store the archetype/template ID used
                 'name_i18n': final_name_i18n,
-=======
-                'template_id': archetype_id_to_load, # Original template ID or concept
->>>>>>> ai-moderation-flow
                 'guild_id': guild_id_str,
                 'location_id': location_id,
+                'stats': final_stats,
+                'inventory': final_inventory,
                 'current_action': None,
                 'action_queue': [],
                 'party_id': None,
                 'state_variables': kwargs.get('state_variables', {}),
-                'health': kwargs.get('health', float(final_data['stats'].get('max_health', 50.0))),
-                'max_health': kwargs.get('max_health', float(final_data['stats'].get('max_health', 50.0))),
+                'health': kwargs.get('health', float(final_stats.get('max_health', 50.0))), # Default health to max_health from stats if available
+                'max_health': kwargs.get('max_health', float(final_stats.get('max_health', 50.0))),
                 'is_alive': kwargs.get('is_alive', True),
-                'status_effects': [], # Status effects usually added post-creation
+                'status_effects': [],
                 'is_temporary': bool(kwargs.get('is_temporary', False)),
-<<<<<<< HEAD
                 'archetype': final_archetype_name,
                 'traits': final_traits,
                 'desires': final_desires,
@@ -461,17 +318,8 @@ class NpcManager:
                 'motivation_i18n': final_motivation_i18n,
                 'dialogue_hints_i18n': final_dialogue_hints_i18n,
                 'visual_description_i18n': final_visual_description_i18n,
-=======
->>>>>>> ai-moderation-flow
             }
-            # Add all fields from final_data (name, stats, inventory, archetype, traits, etc.)
-            data_for_npc_object.update(final_data)
-
-            # If AI provided i18n fields and they are in final_data, they will be passed to NPC.from_dict
-            # Example: if 'name_i18n' is in final_data, it's passed.
-            # NPC.from_dict needs to be able to handle these i18n fields.
-
-            npc = NPC.from_dict(data_for_npc_object)
+            npc = NPC.from_dict(data)
 
             # ИСПРАВЛЕНИЕ: Добавляем в per-guild кеш
             self._npcs.setdefault(guild_id_str, {})[npc_id] = npc
@@ -479,11 +327,11 @@ class NpcManager:
             # ИСПРАВЛЕНИЕ: Помечаем NPC dirty (per-guild)
             self.mark_npc_dirty(guild_id_str, npc_id)
 
-            print(f"NpcManager: NPC {npc_id} ('{getattr(npc, 'name', 'N/A')}') created from campaign/default for guild {guild_id_str}.")
-            return npc_id # Return npc_id for non-AI path
+            print(f"NpcManager: NPC {npc_id} ('{getattr(npc, 'name', 'N/A')}') created for guild {guild_id_str}.")
+            return npc_id
 
         except Exception as e:
-            print(f"NpcManager: Error creating NPC from template (non-AI path) '{npc_template_id}' for guild {guild_id_str}: {e}")
+            print(f"NpcManager: Error creating NPC from template '{npc_template_id}' for guild {guild_id_str}: {e}")
             import traceback
             print(traceback.format_exc())
             return None
@@ -1071,7 +919,7 @@ class NpcManager:
                            continue # Skip this NPC if invalid or wrong guild
 
                        template_id = getattr(npc, 'template_id', None)
-                        name_i18n = getattr(npc, 'name_i18n', {"en": "Unnamed NPC", "ru": "Безымянный NPC"})
+                       name_i18n = getattr(npc, 'name_i18n', {"en": "Unnamed NPC", "ru": "Безымянный NPC"})
                        location_id = getattr(npc, 'location_id', None)
                        stats = getattr(npc, 'stats', {})
                        inventory = getattr(npc, 'inventory', [])
@@ -1084,16 +932,16 @@ class NpcManager:
                        is_alive = getattr(npc, 'is_alive', True)
                        status_effects = getattr(npc, 'status_effects', [])
                        is_temporary = getattr(npc, 'is_temporary', False)
-                        archetype = getattr(npc, 'archetype', "commoner")
-                        traits = getattr(npc, 'traits', [])
-                        desires = getattr(npc, 'desires', [])
-                        motives = getattr(npc, 'motives', [])
-                        backstory_i18n = getattr(npc, 'backstory_i18n', {"en": "", "ru": ""})
-                        role_i18n = getattr(npc, 'role_i18n', {"en": "", "ru": ""})
-                        personality_i18n = getattr(npc, 'personality_i18n', {"en": "", "ru": ""})
-                        motivation_i18n = getattr(npc, 'motivation_i18n', {"en": "", "ru": ""})
-                        dialogue_hints_i18n = getattr(npc, 'dialogue_hints_i18n', {"en": "", "ru": ""})
-                        visual_description_i18n = getattr(npc, 'visual_description_i18n', {"en": "", "ru": ""})
+                       archetype = getattr(npc, 'archetype', "commoner")
+                       traits = getattr(npc, 'traits', [])
+                       desires = getattr(npc, 'desires', [])
+                       motives = getattr(npc, 'motives', [])
+                       backstory_i18n = getattr(npc, 'backstory_i18n', {"en": "", "ru": ""})
+                       role_i18n = getattr(npc, 'role_i18n', {"en": "", "ru": ""})
+                       personality_i18n = getattr(npc, 'personality_i18n', {"en": "", "ru": ""})
+                       motivation_i18n = getattr(npc, 'motivation_i18n', {"en": "", "ru": ""})
+                       dialogue_hints_i18n = getattr(npc, 'dialogue_hints_i18n', {"en": "", "ru": ""})
+                       visual_description_i18n = getattr(npc, 'visual_description_i18n', {"en": "", "ru": ""})
 
                        # Ensure data types are suitable for JSON dumping
                        if not isinstance(name_i18n, dict): name_i18n = {"en": str(name_i18n), "ru": str(name_i18n)} # Basic fallback if not dict
@@ -1610,93 +1458,6 @@ class NpcManager:
             import traceback
             print(traceback.format_exc())
             return False
-
-    async def create_npc_from_moderated_data(self, guild_id: str, npc_data: Dict[str, Any], context: Dict[str, Any]) -> Optional[str]:
-        """
-        Creates a new NPC from already validated and approved moderated data.
-        This method bypasses AI generation and direct validation steps.
-        """
-        guild_id_str = str(guild_id)
-        print(f"NpcManager: Creating NPC from moderated data for guild {guild_id_str}...")
-
-        if self._db_adapter is None:
-            print(f"NpcManager: No DB adapter available for guild {guild_id_str}. Cannot create NPC from moderated data.")
-            return None
-
-        # Ensure npc_data has an ID, or assign a new one.
-        # The moderated data should ideally retain any ID it was assigned during AI generation,
-        # or the moderation request ID could even be used if it's unique and suitable.
-        # For now, let's assume npc_data might or might not have 'id'.
-        # If 'id' is missing or seems like a placeholder (e.g., from a template_id), generate a new one.
-        npc_id = npc_data.get('id')
-        if not npc_id or npc_id == npc_data.get('template_id'): # Basic check if ID might be a template ID
-            npc_id = str(uuid.uuid4())
-            print(f"NpcManager: Assigned new ID {npc_id} to NPC from moderated data.")
-
-        # Ensure core fields are present and correctly typed from npc_data
-        # The npc_data should be the dictionary that was originally validated.
-        data_for_npc_object: Dict[str, Any] = {
-            'id': npc_id,
-            'guild_id': guild_id_str,
-            'template_id': npc_data.get('template_id', npc_data.get('archetype')), # Fallback to archetype for template_id if needed
-            'name': npc_data.get('name', f"NPC_{npc_id[:8]}"), # Default name if missing
-            'location_id': npc_data.get('location_id'), # Can be None
-            'stats': npc_data.get('stats', {"strength":5,"dexterity":5,"intelligence":5, "max_health": 50.0}),
-            'inventory': npc_data.get('inventory', []),
-            'current_action': None, # Fresh NPC starts with no action
-            'action_queue': [],
-            'party_id': None, # Fresh NPC not in a party
-            'state_variables': npc_data.get('state_variables', {}),
-            'health': float(npc_data.get('stats', {}).get('max_health', 50.0)), # Full health
-            'max_health': float(npc_data.get('stats', {}).get('max_health', 50.0)),
-            'is_alive': True,
-            'status_effects': [], # Fresh NPC starts with no status effects
-            'is_temporary': npc_data.get('is_temporary', False),
-            'archetype': npc_data.get('archetype', "commoner"),
-            'traits': npc_data.get('traits', []),
-            'desires': npc_data.get('desires', []),
-            'motives': npc_data.get('motives', []),
-            'backstory': npc_data.get('backstory', ""),
-            # Include i18n fields if they exist in npc_data
-        }
-
-        # Add i18n fields if present in npc_data to data_for_npc_object
-        for i18n_key in ['name_i18n', 'description_i18n', 'visual_description_i18n',
-                         'personality_description_i18n', 'roleplaying_notes_i18n',
-                         'knowledge_i18n', 'npc_goals_i18n', 'relationships_i18n',
-                         'speech_patterns_i18n', 'backstory_i18n']:
-            if i18n_key in npc_data:
-                data_for_npc_object[i18n_key] = npc_data[i18n_key]
-
-        try:
-            npc = NPC.from_dict(data_for_npc_object)
-
-            # Add to cache
-            self._npcs.setdefault(guild_id_str, {})[npc.id] = npc
-
-            # Mark as dirty for persistence
-            # This will use the regular save_npc or save_state logic which handles i18n fields
-            self.mark_npc_dirty(guild_id_str, npc.id)
-
-            # Explicitly save now to ensure it's in DB (save_state might be deferred)
-            # The `save_npc` method handles i18n fields correctly if NPC model's to_dict provides them.
-            # However, the current save_state in NpcManager uses a simpler direct mapping for npcs table.
-            # For consistency, it's better if save_npc is robust for all fields including i18n,
-            # or save_state is enhanced.
-            # Given save_npc's structure, it should handle i18n if npc.to_dict() includes them.
-            # Let's assume save_npc handles it. If not, save_state is the fallback.
-            # For now, relying on mark_npc_dirty and the next save_state cycle.
-            # To ensure it's saved immediately, we could call self.save_npc(npc, guild_id_str)
-            # but that requires npc.to_dict() to be comprehensive.
-            # The current save_state in NpcManager actually handles the full schema including i18n name/backstory.
-
-            print(f"NpcManager: NPC {npc.id} ('{getattr(npc, 'name', 'N/A')}') created from moderated data for guild {guild_id_str} and marked dirty.")
-            return npc.id
-
-        except Exception as e:
-            print(f"NpcManager: Error creating NPC from moderated data for guild {guild_id_str}: {e}")
-            traceback.print_exc()
-            return None
 
 # --- Конец класса NpcManager ---
 

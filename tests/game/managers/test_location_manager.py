@@ -220,3 +220,217 @@ class TestLocationManagerMoveEntityParty(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestLocationManagerAICreation(unittest.IsolatedAsyncioTestCase):
+
+    async def asyncSetUp(self):
+        self.mock_db_adapter = AsyncMock()
+        self.mock_settings = {"campaign_data": {"location_templates": []}} # Basic settings
+        self.mock_rule_engine = AsyncMock()
+        self.mock_event_manager = AsyncMock()
+        self.mock_character_manager = AsyncMock()
+        self.mock_npc_manager = AsyncMock()
+        self.mock_item_manager = AsyncMock()
+        self.mock_combat_manager = AsyncMock()
+        self.mock_status_manager = AsyncMock()
+        self.mock_party_manager = AsyncMock()
+        self.mock_time_manager = AsyncMock()
+        self.mock_send_callback_factory = MagicMock()
+        self.mock_event_stage_processor = AsyncMock()
+        self.mock_event_action_processor = AsyncMock()
+        self.mock_on_enter_action_executor = AsyncMock()
+        self.mock_stage_description_generator = AsyncMock()
+
+        # AI Mocks
+        self.mock_prompt_generator = AsyncMock()
+        self.mock_openai_service = AsyncMock()
+        self.mock_ai_validator = AsyncMock()
+
+        self.location_manager = LocationManager(
+            db_adapter=self.mock_db_adapter,
+            settings=self.mock_settings,
+            rule_engine=self.mock_rule_engine,
+            event_manager=self.mock_event_manager,
+            character_manager=self.mock_character_manager,
+            npc_manager=self.mock_npc_manager,
+            item_manager=self.mock_item_manager,
+            combat_manager=self.mock_combat_manager,
+            status_manager=self.mock_status_manager,
+            party_manager=self.mock_party_manager,
+            time_manager=self.mock_time_manager,
+            send_callback_factory=self.mock_send_callback_factory,
+            event_stage_processor=self.mock_event_stage_processor,
+            event_action_processor=self.mock_event_action_processor,
+            on_enter_action_executor=self.mock_on_enter_action_executor,
+            stage_description_generator=self.mock_stage_description_generator,
+            multilingual_prompt_generator=self.mock_prompt_generator,
+            openai_service=self.mock_openai_service,
+            ai_validator=self.mock_ai_validator
+        )
+        # Ensure internal caches are initialized as dicts
+        self.location_manager._location_templates = {}
+        self.location_manager._location_instances = {}
+        self.location_manager._dirty_instances = {}
+        self.location_manager._deleted_instances = {}
+
+    async def test_create_location_instance_ai_pending_moderation(self):
+        guild_id = "test_guild_loc_ai_success"
+        template_id_arg = "AI:generate_haunted_mansion"
+        user_id = "test_user_loc_mod"
+        mock_validated_loc_data = {
+            "name_i18n": {"en": "AI Haunted Mansion"},
+            "description_i18n": {"en": "A spooky place."},
+            "exits": {}, "state_variables": {}
+        }
+
+        self.location_manager.generate_location_details_from_ai = AsyncMock(return_value=mock_validated_loc_data)
+
+        expected_request_id = str(uuid.uuid4())
+        with patch('uuid.uuid4', return_value=uuid.UUID(expected_request_id)):
+            result = await self.location_manager.create_location_instance(
+                guild_id, template_id_arg, user_id=user_id
+            )
+
+        self.assertEqual(result, {"status": "pending_moderation", "request_id": expected_request_id})
+        self.mock_db_adapter.save_pending_moderation_request.assert_called_once()
+        call_args = self.mock_db_adapter.save_pending_moderation_request.call_args[0]
+        self.assertEqual(call_args[0], expected_request_id)
+        self.assertEqual(call_args[1], guild_id)
+        self.assertEqual(call_args[2], user_id)
+        self.assertEqual(call_args[3], "location")
+        self.assertEqual(json.loads(call_args[4]), mock_validated_loc_data)
+
+    async def test_create_location_instance_ai_generation_fails(self):
+        guild_id = "test_guild_loc_ai_fail"
+        template_id_arg = "AI:generate_failed_dungeon"
+        user_id = "test_user_loc_fail"
+
+        self.location_manager.generate_location_details_from_ai = AsyncMock(return_value=None)
+
+        result = await self.location_manager.create_location_instance(
+            guild_id, template_id_arg, user_id=user_id
+        )
+        self.assertIsNone(result)
+        self.mock_db_adapter.save_pending_moderation_request.assert_not_called()
+
+    async def test_create_location_instance_ai_no_user_id(self):
+        guild_id = "test_guild_loc_ai_no_user"
+        template_id_arg = "AI:generate_secret_cave"
+        mock_validated_data = {"name_i18n": {"en": "Secret Cave AI"}}
+        self.location_manager.generate_location_details_from_ai = AsyncMock(return_value=mock_validated_data)
+
+        result = await self.location_manager.create_location_instance(
+            guild_id, template_id_arg # No user_id
+        )
+        self.assertIsNone(result)
+        self.mock_db_adapter.save_pending_moderation_request.assert_not_called()
+
+    async def test_create_location_instance_non_ai_from_template(self):
+        guild_id = "test_guild_loc_template"
+        template_id = "market_square"
+
+        # Setup LocationManager's internal template cache
+        self.location_manager._location_templates[guild_id] = {
+            template_id: {
+                "id": template_id, "name": "Market Square", "description": "A bustling square.",
+                "exits": {}, "initial_state": {}
+            }
+        }
+
+        result = await self.location_manager.create_location_instance(guild_id, template_id)
+
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, dict)
+        self.assertNotIn("status", result) # Should be the location instance data
+        self.assertEqual(result["template_id"], template_id)
+        self.assertTrue(result["id"] is not None and result["id"] != template_id)
+        self.mock_db_adapter.save_pending_moderation_request.assert_not_called()
+        self.assertIn(result["id"], self.location_manager._dirty_instances.get(guild_id, set()))
+
+    async def test_generate_location_details_from_ai_success(self):
+        guild_id = "test_guild_gen_loc_success"
+        location_idea = "a serene crystal cave"
+        expected_data = {"name_i18n": {"en": "Crystal Cave"}, "description_i18n": {"en": "Shimmers with light."}}
+
+        self.mock_prompt_generator.generate_location_description_prompt.return_value = {"system": "sys", "user": "usr"}
+        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": json.dumps(expected_data)})
+        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value={
+            "overall_status": "success",
+            "entities": [{"validated_data": expected_data}]
+        })
+
+        result = await self.location_manager.generate_location_details_from_ai(guild_id, location_idea)
+        self.assertEqual(result, expected_data)
+
+    async def test_generate_location_details_from_ai_openai_fails(self):
+        self.mock_prompt_generator.generate_location_description_prompt.return_value = {"system": "sys", "user": "usr"}
+        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"error": "OpenAI down"})
+
+        result = await self.location_manager.generate_location_details_from_ai("gid_loc_openai_fail", "concept")
+        self.assertIsNone(result)
+
+    async def test_generate_location_details_from_ai_validator_fails(self):
+        self.mock_prompt_generator.generate_location_description_prompt.return_value = {"system": "sys", "user": "usr"}
+        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"})
+        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value={"global_errors": ["validation failed"]})
+
+        result = await self.location_manager.generate_location_details_from_ai("gid_loc_val_fail", "concept")
+        self.assertIsNone(result)
+
+    async def test_generate_location_details_from_ai_validator_requires_moderation(self):
+        self.mock_prompt_generator.generate_location_description_prompt.return_value = {"system": "sys", "user": "usr"}
+        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"})
+        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value={
+            "overall_status": "requires_manual_review",
+            "entities": [{"validated_data": {"name":"Needs Review Loc"}, "requires_moderation": True}]
+        })
+        result = await self.location_manager.generate_location_details_from_ai("gid_loc_val_mod", "concept")
+        self.assertIsNone(result) # Current design returns None if validator says requires_moderation
+
+    async def test_create_location_instance_from_moderated_data(self):
+        """Test creating a location instance from moderated, pre-validated data."""
+        guild_id = "test_guild_mod_loc"
+        user_id = "test_user_loc_creator" # For add_generated_location
+
+        moderated_loc_data = {
+            "id": str(uuid.uuid4()), # ID might be pre-assigned
+            "name_i18n": {"en": "Approved Serene Cave"},
+            "description_i18n": {"en": "A beautiful cave, now approved."},
+            "exits": {"out": "world_map_01"},
+            "state_variables": {"crystals_mined_today": 0},
+            "template_id": "ai_cave_template_xyz"
+        }
+        context_data = {"some_other_context": "value"}
+
+        # The method being tested
+        activated_loc_data = await self.location_manager.create_location_instance_from_moderated_data(
+            guild_id, moderated_loc_data, user_id, context_data
+        )
+
+        self.assertIsNotNone(activated_loc_data)
+        self.assertIsInstance(activated_loc_data, dict)
+        self.assertEqual(activated_loc_data["id"], moderated_loc_data["id"])
+        self.assertEqual(activated_loc_data["name_i18n"]["en"], "Approved Serene Cave")
+        self.assertEqual(activated_loc_data["state"]["crystals_mined_today"], 0)
+
+        # Check if instance is in cache and marked dirty
+        self.assertIn(activated_loc_data["id"], self.location_manager._location_instances.get(guild_id, {}))
+        self.assertIn(activated_loc_data["id"], self.location_manager._dirty_instances.get(guild_id, set()))
+
+        # Verify add_generated_location was called
+        self.mock_db_adapter.add_generated_location.assert_called_once_with(
+            activated_loc_data["id"], guild_id, user_id
+        )
+
+        # Verify no AI services were called
+        self.mock_prompt_generator.generate_location_description_prompt.assert_not_called()
+        self.mock_openai_service.generate_structured_multilingual_content.assert_not_called()
+        self.mock_ai_validator.validate_ai_response.assert_not_called()
+        self.mock_db_adapter.save_pending_moderation_request.assert_not_called()
+
+
+# This ensures if the file is run directly, tests from both classes are executed.
+# However, typically you'd run tests with `python -m unittest discover` or similar.
+if __name__ == '__main__':
+    unittest.main()
