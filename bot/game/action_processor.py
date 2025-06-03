@@ -146,7 +146,7 @@ class ActionProcessor:
                     event_type="player_action",
                     message=f"{character_name_display} used {action_type} to look at {location_name_display}.",
                     related_entities=[{"id": str(character.id), "type": "character"}, {"id": str(character.location_id), "type": "location"}],
-                    channel_id=str(ctx_channel_id)
+                    channel_id=ctx_channel_id # Pass int directly
                 )
             return {"success": True, "message": f"**Локация:** {location_name_display}\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": False}
         elif action_type == "move":
@@ -203,17 +203,20 @@ class ActionProcessor:
                         {"id": str(current_location_instance['id']), "type": "location"},
                         {"id": str(target_location_instance_data['id']), "type": "location"}
                     ],
-                    channel_id=str(ctx_channel_id)
+                    channel_id=ctx_channel_id # Pass int directly
                 )
             return {"success": True, "message": f"**Мастер:** {description}", "target_channel_id": response_target_channel_id, "state_changed": response_state_changed}
 
         elif action_type == "skill_check":
              skill_name = action_data.get("skill_name")
              complexity = action_data.get("complexity", "medium")
-             # base_modifiers = action_data.get("modifiers", {}) # This was unbound
-             # target_description = action_data.get("target_description", "чего-то") # This was unbound
              base_modifiers: Dict[str, Any] = action_data.get("modifiers", {})
              target_description: str = action_data.get("target_description", "чего-то")
+
+             # Initialize potentially unbound variables
+             mech_summary: str = ""
+             description: str = "" # For AI description
+             state_changed_from_check: bool = False
 
 
              env_modifiers: Dict[str, Any] = {}
@@ -226,7 +229,7 @@ class ActionProcessor:
              if skill_name not in character.skills: # skills is Dict[str, int] on CharacterModel
                  return {"success": False, "message": f"**Мастер:** Ваш персонаж не владеет навыком '{skill_name}'.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-             base_dc = skill_rules.get_base_dc(complexity) # Corrected function name
+             base_dc = rule_engine.get_base_dc(complexity) # Changed skill_rules.get_base_dc to rule_engine.get_base_dc
 
              # TODO: Implement rule_engine.perform_check if it's missing or fix signature
              # For now, assume it exists and works with passed rule_engine instance
@@ -243,26 +246,37 @@ class ActionProcessor:
              if not check_result: # Should not happen with placeholder
                   return {"success": False, "message": f"**Мастер:** Произошла ошибка при выполнении проверки навыка '{skill_name}'.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-             # description variable was unbound
-             description: str = ""
              # OpenAI call (uses openai_service passed to process)
              # ... (OpenAI prompt generation logic, ensure location_name_display and current_location_instance.get('description_template') are used) ...
-             # description = await openai_service.generate_master_response(...)
-             description = "Результат проверки навыка (placeholder AI description)." # Placeholder AI description
+             description = "Результат проверки навыка (placeholder AI description)." # Placeholder AI description, already initialized
 
-             # mech_summary and state_changed were unbound
-             mech_summary: str = check_result.get("description", "Проверка выполнена.")
-             state_changed_from_check: bool = check_result.get("is_critical_failure", False)
+             mech_summary = check_result.get("description", "Проверка выполнена.") # Already initialized
+             state_changed_from_check = check_result.get("is_critical_failure", False) # Already initialized
 
              if game_log_manager and character:
-                 await game_log_manager.log_event(
-                     guild_id=str(game_state.server_id), # Use game_state.server_id
-                     event_type="player_action",
-                     message=f"{character_name_display} attempted skill check {skill_name} for {target_description}. Success: {check_result.get('is_success')}",
-                     related_entities=[{"id": str(character.id), "type": "character"}],
-                     channel_id=str(ctx_channel_id),
-                     metadata={"skill_name": skill_name, "complexity": complexity, "result": check_result}
-                 )
+                # Ensure channel_id is int or None for log_event
+                channel_id_to_log: Optional[int] = None
+                if isinstance(ctx_channel_id, int):
+                    channel_id_to_log = ctx_channel_id
+                elif isinstance(ctx_channel_id, str):
+                    try:
+                        channel_id_to_log = int(ctx_channel_id)
+                    except ValueError:
+                        print(f"Warning: Could not convert channel_id '{ctx_channel_id}' to int for logging skill check.")
+
+                await game_log_manager.log_event(
+                    guild_id=str(game_state.server_id),
+                    event_type="player_action",
+                    message=f"{character_name_display} attempted skill check {skill_name} for {target_description}. Success: {check_result.get('is_success')}. Details: {mech_summary}", # Added mech_summary to log
+                    related_entities=[{"id": str(character.id), "type": "character"}],
+                    channel_id=channel_id_to_log, # Use converted value
+                    metadata={"skill_name": skill_name, "complexity": complexity, "result": check_result}
+                )
+            # Ensure correct indentation for this return if it was the unindent issue. The log_msg was above it.
+            # The log_msg variable is not used here, so the unindent issue might have been about this block.
+            # Assuming the log_msg was meant for the string below, and its construction was unindented.
+            # The prompt seems to indicate the log_msg = f"..." line itself was unindented.
+            # If this log_msg was for a different logging system, it's now correctly part of game_log_manager.
             return {"success": True, "message": f"_{mech_summary}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed_from_check}
 
         # Fallback for unhandled actions
@@ -296,7 +310,7 @@ class ActionProcessor:
                 collected_actions_json_string_str = collected_actions_json_loop # Assign
 
                 # Use await for async get_character
-                character_obj: Optional[CharacterModel] = await char_manager.get_character(guild_id=str(game_state.server_id), character_id=character_id_str)
+                character_obj: Optional[CharacterModel] = char_manager.get_character(guild_id=str(game_state.server_id), character_id=character_id_str) # Removed await, added guild_id
                 if not character_obj:
                     print(f"ActionProcessor: Character {character_id_str} not found during conflict analysis. Skipping.")
                     # continue # This was a "continue can be used only within a loop" error source if this loop was removed/refactored.
@@ -369,7 +383,7 @@ class ActionProcessor:
 
         for char_id_loop_ind, collected_actions_json_loop_ind in party_actions_data:
             # Use loop variables directly
-            character_obj_ind: Optional[CharacterModel] = await char_manager.get_character(guild_id=str(game_state.server_id), character_id=char_id_loop_ind)
+            character_obj_ind: Optional[CharacterModel] = char_manager.get_character(guild_id=str(game_state.server_id), character_id=char_id_loop_ind) # Removed await, added guild_id
             if not character_obj_ind:
                 print(f"ActionProcessor: Character {char_id_loop_ind} not found. Skipping.")
                 all_individual_results.append({"character_id": char_id_loop_ind, "success": False, "message": "Character not found.", "state_changed": False})

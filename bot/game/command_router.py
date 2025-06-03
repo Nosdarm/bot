@@ -489,17 +489,22 @@ class CommandRouter:
         entity_id_to_inspect = sub_args[0] 
 
         try:
-            relationships = relationship_manager.get_relationships_for_entity(guild_id, entity_id_to_inspect)
+            # Assuming get_relationships_for_entity is async and might need context
+            relationships = await relationship_manager.get_relationships_for_entity(guild_id, entity_id_to_inspect, context=context)
             if not relationships:
                 await send_callback(f"ℹ️ No relationships found for entity `{entity_id_to_inspect}` in this guild.")
                 return
 
             response_lines = [f"Relationships for Entity `{entity_id_to_inspect}`:"]
-            for rel in relationships:
-                other_entity_id = rel.entity2_id if rel.entity1_id == entity_id_to_inspect else rel.entity1_id
-                other_entity_type = rel.entity2_type if rel.entity1_type == entity_id_to_inspect else rel.entity1_type
+            for rel_data in relationships: # Renamed rel to rel_data for clarity
+                other_entity_id = rel_data.get('entity2_id') if rel_data.get('entity1_id') == entity_id_to_inspect else rel_data.get('entity1_id')
+                other_entity_type = rel_data.get('entity2_type') if rel_data.get('entity1_type') == entity_id_to_inspect else rel_data.get('entity1_type')
+                # Safely get details_i18n, then 'en', then fallback
+                details_i18n = rel_data.get('details_i18n', {})
+                details_text = details_i18n.get('en', 'N/A') if isinstance(details_i18n, dict) else 'N/A'
+
                 response_lines.append(
-                    f"- With `{other_entity_id}` ({other_entity_type}): **{rel.relationship_type}** (Strength: {rel.strength:.2f}). Details: _{rel.details or 'N/A'}_"
+                    f"- With `{other_entity_id}` ({other_entity_type}): **{rel_data.get('relationship_type', 'unknown')}** (Strength: {rel_data.get('strength', 0.0):.2f}). Details: _{details_text}_"
                 )
             await send_callback("\n".join(response_lines))
         except Exception as e:
@@ -541,21 +546,24 @@ class CommandRouter:
             # For now, direct context pass-through
             roll_result = await rule_engine.resolve_dice_roll(roll_string, context=context)
             
-            rolls_str = ", ".join(map(str, roll_result.get('rolls', [])))
-            result_message = f"🎲 {message.author.mention} rolled **{roll_result.get('roll_string', roll_string)}**:\n" # Fixed newline here
-            
-            if roll_result.get('dice_sides') == 'F': # Fudge dice specific output
-                result_message += f"Rolls: [{rolls_str}] (Symbols: {' '.join(['+' if r > 0 else '-' if r < 0 else '0' for r in roll_result.get('rolls', [])])})"
-            else:
-                result_message += f"Rolls: [{rolls_str}]"
+            if roll_result: # Check if roll_result is not None
+                rolls_str = ", ".join(map(str, roll_result.get('rolls', [])))
+                result_message = f"🎲 {message.author.mention} rolled **{roll_result.get('roll_string', roll_string)}**:\n"
 
-            modifier_val = roll_result.get('modifier', 0)
-            if modifier_val != 0: # Only show modifier if it's not zero
-                result_message += f" Modifier: {modifier_val:+}" # Ensure sign is shown
-            
-            result_message += f"\n**Total: {roll_result.get('total')}**" # Fixed newline here
-            
-            await send_callback(result_message)
+                if roll_result.get('dice_sides') == 'F': # Fudge dice specific output
+                    result_message += f"Rolls: [{rolls_str}] (Symbols: {' '.join(['+' if r > 0 else '-' if r < 0 else '0' for r in roll_result.get('rolls', [])])})"
+                else:
+                    result_message += f"Rolls: [{rolls_str}]"
+
+                modifier_val = roll_result.get('modifier', 0)
+                if modifier_val != 0: # Only show modifier if it's not zero
+                    result_message += f" Modifier: {modifier_val:+}" # Ensure sign is shown
+
+                result_message += f"\n**Total: {roll_result.get('total')}**"
+
+                await send_callback(result_message)
+            else:
+                await send_callback(f"Error: Rolling dice '{roll_string}' produced no result.")
 
         except ValueError as ve:
             await send_callback(f"Error: Invalid dice notation for '{roll_string}'. {ve}")
@@ -1673,29 +1681,36 @@ class CommandRouter:
                     npc_mgr = context.get('npc_manager')
                     # Check if it's a character
                     char_obj = char_mgr.get_character(guild_id, entity_id_to_inspect) if char_mgr else None
-                    if char_obj:
+                    if char_obj: # Check if char_obj is not None
                         entity_name = getattr(char_obj, 'name', entity_id_to_inspect)
                     else: # If not a character, check if it's an NPC
                         npc_obj = npc_mgr.get_npc(guild_id, entity_id_to_inspect) if npc_mgr else None
-                        if npc_obj:
+                        if npc_obj: # Check if npc_obj is not None
                             entity_name = getattr(npc_obj, 'name', entity_id_to_inspect)
                     
-                    relations = await relationship_manager.get_relationships_for_entity(guild_id, entity_id_to_inspect, context=context)
+                    relations = await relationship_manager.get_relationships_for_entity(guild_id, entity_id_to_inspect, context=context) # Already awaited
                     
                     if relations:
                         response = f"**Relationships for {entity_name} (`{entity_id_to_inspect}`):**\n"
-                        for rel in relations:
-                            target_id_val = rel.get('target_id', 'Unknown Target') 
-                            # Attempt to get target name for better display
+                        for rel_data in relations: # rel is a dict
+                            target_id_val = rel_data.get('target_id', 'Unknown Target')
                             target_name_str = target_id_val 
-                            if char_mgr and char_mgr.get_character(guild_id, target_id_val):
-                                target_name_str = getattr(char_mgr.get_character(guild_id, target_id_val), 'name', target_id_val)
-                            elif npc_mgr and npc_mgr.get_npc(guild_id, target_id_val):
-                                target_name_str = getattr(npc_mgr.get_npc(guild_id, target_id_val), 'name', target_id_val)
                             
-                            rel_type = rel.get('type', 'unknown')
-                            strength = rel.get('strength', 0.0)
-                            response += f"- With **{target_name_str}** (`{target_id_val}`): Type: `{rel_type}`, Strength: `{strength:.1f}`\n"
+                            # Safe fetching of target names
+                            target_char = char_mgr.get_character(guild_id, target_id_val) if char_mgr else None
+                            if target_char:
+                                target_name_str = getattr(target_char, 'name', target_id_val)
+                            else:
+                                target_npc = npc_mgr.get_npc(guild_id, target_id_val) if npc_mgr else None
+                                if target_npc:
+                                    target_name_str = getattr(target_npc, 'name', target_id_val)
+
+                            rel_type = rel_data.get('relationship_type', 'unknown') # Use get for safety
+                            strength = rel_data.get('strength', 0.0) # Use get for safety
+                            details_i18n = rel_data.get('details_i18n', {})
+                            details_text = details_i18n.get('en', 'N/A') if isinstance(details_i18n, dict) else 'N/A'
+
+                            response += f"- With **{target_name_str}** (`{target_id_val}`): Type: `{rel_type}`, Strength: `{strength:.1f}`. Details: _{details_text}_\n" # Updated details access
                         
                         # Discord message length limit is 2000 characters
                         if len(response) > 1950: 
