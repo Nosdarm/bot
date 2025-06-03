@@ -122,7 +122,7 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
             return
 
         # Ignore messages starting with the command prefix (these are handled by process_commands)
-        if message.content.startswith(self.command_prefix):
+        if message.content.startswith(str(self.command_prefix)):
             await self.process_commands(message)
             return
 
@@ -166,10 +166,14 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
             # To interact with CharacterManager, we'd typically do:
             char_model = await self.game_manager.character_manager.get_character_by_discord_id(
                 user_id=message.author.id,
-                guild_id=message.guild.id
+                guild_id=str(message.guild.id)
             )
 
-            if char_model:
+            if not char_model:
+                logging.warning(f"NLU: No character found for User {message.author.id} in Guild {message.guild.id}. Message ignored for NLU.")
+                return
+
+            if char_model: # This check is now slightly redundant due to the one above, but harmless
                 logging.debug(f"NLU: Character {char_model.id} found for User {message.author.id}.")
                 busy_statuses = ['бой', 'диалог', 'торговля']
                 if char_model.current_game_status not in busy_statuses:
@@ -220,11 +224,14 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
                             
                             char_model.собранные_действия_JSON = updated_actions_json
                             
+                            # Mark character as dirty before saving
+                            self.game_manager.character_manager.mark_character_dirty(str(message.guild.id), char_model.id)
                             try:
-                                await self.game_manager.character_manager.update_character(char_model)
-                                logging.info(f"NLU: Successfully updated character {char_model.id} with accumulated actions JSON.")
-                            except Exception as char_update_err:
-                                logging.error(f"NLU: Failed to save character {char_model.id} after NLU parsing: {char_update_err}", exc_info=True)
+                                # Call save_character instead of update_character
+                                await self.game_manager.character_manager.save_character(char_model, guild_id=str(message.guild.id))
+                                logging.info(f"NLU: Successfully saved character {char_model.id} with accumulated actions JSON.")
+                            except Exception as char_save_err:
+                                logging.error(f"NLU: Failed to save character {char_model.id} after NLU parsing: {char_save_err}", exc_info=True)
                         else:
                             logging.info(f"NLU: No action recognized for User {message.author.id} (Lang: {language}): \"{message.content}\"")
 
