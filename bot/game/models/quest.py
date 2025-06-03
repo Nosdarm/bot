@@ -19,6 +19,8 @@ class Quest(BaseModel):
                  rewards: Optional[Dict[str, Any]] = None,
                  npc_involvement: Optional[Dict[str, str]] = None,
                  guild_id: str = "",
+                 quest_giver_details_i18n: Optional[Dict[str, str]] = None,
+                 consequences_summary_i18n: Optional[Dict[str, str]] = None,
                  # For backward compatibility
                  name: Optional[str] = None,
                  description: Optional[str] = None):

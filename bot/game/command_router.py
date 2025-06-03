@@ -152,6 +152,7 @@ class CommandRouter:
         campaign_loader: Optional["CampaignLoader"] = None,
         relationship_manager: Optional["RelationshipManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
+        conflict_resolver: Optional["ConflictResolver"] = None,
 
     ):
         print("Initializing CommandRouter...")
@@ -170,7 +171,7 @@ class CommandRouter:
         self._campaign_loader = campaign_loader
         self._relationship_manager = relationship_manager 
         self._quest_manager = quest_manager
-        self._conflict_resolver = kwargs.get('conflict_resolver') # Added ConflictResolver from kwargs
+        self._conflict_resolver = conflict_resolver # Added ConflictResolver from kwargs
 
         self._openai_service = openai_service
         self._item_manager = item_manager
