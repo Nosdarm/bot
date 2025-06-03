@@ -614,11 +614,13 @@ class CommandRouter:
                 await send_callback(f"You do not have an active character in this guild. Use `{self._command_prefix}character create <name>` to create one.")
                 return
             character_id = player_char.id
-        except ValueError:
+        except ValueError: # Catches int(author_id_str) conversion error
             await send_callback("Invalid user ID format.")
             return
-        except Exception as e:
+        except Exception as e: # Catches other errors during character fetch
             await send_callback(f"Error fetching your character: {e}")
+            print(f"CommandRouter: Error fetching character for {author_id_str} in guild {guild_id}: {e}") # Log for server admin
+            traceback.print_exc()
             return
 
         if not args:
@@ -629,7 +631,7 @@ class CommandRouter:
         subcommand = args[0].lower()
         quest_action_args = args[1:]
 
-        try:
+        try: # This try block is for the subcommands themselves
             if subcommand == "list":
                 # List active and available quests (QuestManager needs to implement more detailed logic here)
                 quest_list = await quest_manager.list_quests_for_character(character_id, guild_id, context)
@@ -720,8 +722,8 @@ class CommandRouter:
                 doc = self.handle_quest.__doc__.format(prefix=self._command_prefix)
                 await send_callback(f"Unknown quest action: '{subcommand}'. Usage:\n{doc}")
 
-        except Exception as e:
-            print(f"CommandRouter: Error in handle_quest for subcommand '{subcommand}': {e}")
+        except Exception as e: # This except handles errors within the subcommand logic
+            print(f"CommandRouter: Error in handle_quest for subcommand '{subcommand}' for user {author_id_str} in guild {guild_id}: {e}")
             traceback.print_exc()
             await send_callback(f"An error occurred while processing your quest command: {e}")
 
@@ -780,10 +782,10 @@ class CommandRouter:
             if not player_char:
                 await send_callback(f"You need an active character to interact with NPCs. Use `{self._command_prefix}character create <name>`.")
                 return
-        except ValueError:
+        except ValueError: # Catches int(author_id_str) conversion error
             await send_callback("Invalid user ID format.")
             return
-        except Exception as e:
+        except Exception as e: # Catches other errors during character fetch
             await send_callback(f"Error fetching your character: {e}")
             print(f"CommandRouter: Error fetching character for {author_id_str} in guild {guild_id}: {e}")
             traceback.print_exc()
@@ -856,7 +858,7 @@ class CommandRouter:
         else:
             doc = self.handle_npc.__doc__.format(prefix=self._command_prefix)
             await send_callback(f"Unknown action for NPC: '{subcommand}'. Usage:\n{doc}")
-
+        # Removed an extra 'except Exception as e:' block that was here, as the outer one in route() handles general command errors.
 
     @command("buy")
     async def handle_buy(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:

@@ -1049,11 +1049,9 @@ class LocationManager:
                  }
                  await engine.execute_triggers(triggers, context=trigger_context)
                  print(f"LocationManager: OnExit triggers executed for {entity_type} {entity_id}.")
-            # --- Конец блока try ---
-            except Exception as e: # <--- except должен быть на том же уровне отступа, что и try
-                 print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
-                 traceback.print_exc() # <--- print и traceback должны быть внутри except блока (отступ 4 пробела от except)
-        # --- Конец блока if ---
+            except Exception as e:
+                print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
+                traceback.print_exc()
         elif triggers:
              # ... остальная логика elif ...
              pass
@@ -1086,7 +1084,7 @@ class LocationManager:
                   is_active = instance_data.get('is_active', False)
 
                   if instance_id and is_active:
-                       try: # <-- Corrected Indentation Start
+                       try:
                             template_id = instance_data.get('template_id')
                             template = self.get_location_static(guild_id_str, template_id)
 
@@ -1099,11 +1097,9 @@ class LocationManager:
                                 template=template,
                                 context=managers_context
                             )
-
-                       except Exception as e: # <-- Corrected Indentation (aligned with try)
+                       except Exception as e:
                            print(f"LocationManager: ❌ Error processing tick for location instance {instance_id} in guild {guild_id_str}: {e}")
-                           traceback.print_exc() # <-- Corrected Indentation (aligned with print above)
-
+                           traceback.print_exc()
          elif rule_engine:
               print(f"LocationManager: Warning: RuleEngine injected/found, but 'process_location_tick' method not found for tick processing.")
 
