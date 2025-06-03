@@ -136,30 +136,31 @@ class CharacterManager:
 
     # Используем строковый литерал в аннотации возвращаемого типа
     # ИСПРАВЛЕНИЕ: Принимаем guild_id
-    async def get_character_by_discord_id(self, guild_id: str, discord_user_id: int) -> Optional["Character"]:
+    # Made synchronous as it does not await anything internally
+    def get_character_by_discord_id(self, guild_id: str, discord_user_id: int) -> Optional["Character"]:
         """Получить персонажа по Discord User ID для определенной гильдии."""
         guild_id_str = str(guild_id)
         # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-        print(f"DEBUG: CharacterManager: Attempting to get character for Discord ID {discord_user_id} in guild {guild_id_str}...")
+        # print(f"DEBUG: CharacterManager: Attempting to get character for Discord ID {discord_user_id} in guild {guild_id_str}...") # Too noisy
 
         # ИСПРАВЛЕНИЕ: Используем per-guild мапу
         guild_discord_map = self._discord_to_char_map.get(guild_id_str) # Type: Optional[Dict[int, str]]
 
         # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-        if guild_discord_map:
-             print(f"DEBUG: CharacterManager: Found guild_discord_map for guild {guild_id_str}. Keys: {list(guild_discord_map.keys()) if isinstance(guild_discord_map, dict) else 'Not a dict'}. Looking for Discord ID {discord_user_id}.")
-        else:
-             print(f"DEBUG: CharacterManager: No guild_discord_map found for guild {guild_id_str}.")
+        # if guild_discord_map:
+        #      print(f"DEBUG: CharacterManager: Found guild_discord_map for guild {guild_id_str}. Keys: {list(guild_discord_map.keys()) if isinstance(guild_discord_map, dict) else 'Not a dict'}. Looking for Discord ID {discord_user_id}.") # Too noisy
+        # else:
+        #      print(f"DEBUG: CharacterManager: No guild_discord_map found for guild {guild_id_str}.") # Too noisy
 
 
         if isinstance(guild_discord_map, dict): # Проверяем, что это словарь перед get
              char_id = guild_discord_map.get(discord_user_id) # Type: Optional[str]
 
              # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-             if char_id:
-                 print(f"DEBUG: CharacterManager: Found char_id '{char_id}' in map for Discord ID {discord_user_id}. Attempting to get from _characters cache...")
-             else:
-                 print(f"DEBUG: CharacterManager: Char_id not found in map for Discord ID {discord_user_id}.")
+             # if char_id:
+             #     print(f"DEBUG: CharacterManager: Found char_id '{char_id}' in map for Discord ID {discord_user_id}. Attempting to get from _characters cache...") # Too noisy
+             # else:
+             #     print(f"DEBUG: CharacterManager: Char_id not found in map for Discord ID {discord_user_id}.") # Too noisy
 
 
              if char_id:
@@ -167,22 +168,23 @@ class CharacterManager:
                  # get_character также должен логировать
                  char = self.get_character(guild_id, char_id) # Используем get_character с guild_id
                  # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-                 if char:
-                      print(f"DEBUG: CharacterManager: Successfully retrieved character {char_id} from _characters cache.")
-                 else:
-                      print(f"DEBUG: CharacterManager: Char_id '{char_id}' found in map, but character NOT found in _characters cache for guild {guild_id_str}! Cache inconsistency?")
-                      # Это может указывать на несогласованность кешей. Возможно, персонаж в мапе, но не загрузился в основной кеш.
-                      # ОСТОРОЖНО: Если мапа глобальная, а кеш пер-гильдийный, эта логика может быть сложной.
-                      # В текущей реализации, мапа и кеш ПРЕДПОЛАГАЮТСЯ пер-гильдийными.
-                      # Если персонаж в мапе гильдии, но нет в кеше гильдии, это проблема.
-                      # Удаление из мапы может помочь, но это изменение состояния, требующее mark_dirty мапы?
-                      # Пока просто логируем предупреждение.
-
+                 # if char:
+                 #      print(f"DEBUG: CharacterManager: Successfully retrieved character {char_id} from _characters cache.") # Too noisy
+                 # else:
+                 #      print(f"DEBUG: CharacterManager: Char_id '{char_id}' found in map, but character NOT found in _characters cache for guild {guild_id_str}! Cache inconsistency?") # Critical, keep
+                 #      # Это может указывать на несогласованность кешей. Возможно, персонаж в мапе, но не загрузился в основной кеш.
+                 #      # ОСТОРОЖНО: Если мапа глобальная, а кеш пер-гильдийный, эта логика может быть сложной.
+                 #      # В текущей реализации, мапа и кеш ПРЕДПОЛАГАЮТСЯ пер-гильдийными.
+                 #      # Если персонаж в мапе гильдии, но нет в кеше гильдии, это проблема.
+                 #      # Удаление из мапы может помочь, но это изменение состояния, требующее mark_dirty мапы?
+                 #      # Пока просто логируем предупреждение.
+                 if not char: # More concise logging for this critical case
+                     print(f"CRITICAL: CharacterManager: Char_id '{char_id}' for Discord ID {discord_user_id} found in map, but character NOT in _characters cache for guild {guild_id_str}! Cache inconsistency.")
                  return char # Возвращает найденный персонаж или None
 
 
         # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ (уже была, убедитесь, что она там)
-        print(f"DEBUG: CharacterManager: Character not found for Discord ID {discord_user_id} in guild {guild_id_str}.")
+        # print(f"DEBUG: CharacterManager: Character not found for Discord ID {discord_user_id} in guild {guild_id_str}.") # Too noisy
         return None
 
     # Используем строковый литерал в аннотации возвращаемого типа
@@ -884,14 +886,14 @@ class CharacterManager:
             if self._status_manager and hasattr(self._status_manager, 'clean_up_for_character'):
                  await self._status_manager.clean_up_for_character(character_id, context=cleanup_context)
             # PartyManager.clean_up_for_character должен уметь чистить по character_id и guild_id (через context)
-            if self._party_manager and hasattr(self._party_manager, 'clean_up_for_character'):
-                 await self._party_manager.clean_up_for_character(character_id, context=cleanup_context)
+            if self._party_manager and hasattr(self._party_manager, 'clean_up_for_entity'): # Updated method name
+                 await self._party_manager.clean_up_for_entity(character_id, entity_type="Character", context=cleanup_context)
             # CombatManager.clean_up_for_character должен уметь чистить по character_id и guild_id (через context)
-            if self._combat_manager and hasattr(self._combat_manager, 'clean_up_for_character'):
-                 await self._combat_manager.clean_up_for_character(character_id, context=cleanup_context)
+            if self._combat_manager and hasattr(self._combat_manager, 'clean_up_for_entity'): # Updated method name
+                 await self._combat_manager.clean_up_for_entity(character_id, entity_type="Character", context=cleanup_context)
             # DialogueManager.clean_up_for_character должен уметь чистить по character_id и guild_id (через context)
-            if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_character'):
-                 await self._dialogue_manager.clean_up_for_character(character_id, context=cleanup_context)
+            if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_entity'): # Updated method name
+                 await self._dialogue_manager.clean_up_for_entity(character_id, entity_type="Character", context=cleanup_context)
 
             print(f"CharacterManager: Cleanup initiated for character {character_id} in guild {guild_id_str}.")
 
@@ -1294,22 +1296,24 @@ class CharacterManager:
          try:
              if self._status_manager and hasattr(self._status_manager, 'clean_up_for_character'):
                   await self._status_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass the context dict
-             if self._combat_manager and hasattr(self._combat_manager, 'remove_participant_from_combat'):
+             if self._combat_manager and hasattr(self._combat_manager, 'clean_up_for_entity'): # Updated method name
                   # remove_participant_from_combat might need entity_type
-                  await self._combat_manager.remove_participant_from_combat(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
-             if self._party_manager and hasattr(self._party_manager, 'clean_up_for_character'):
-                  await self._party_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass the context dict
-             if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_character'):
-                  await self._dialogue_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass the context dict
+                  await self._combat_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
+             if self._party_manager and hasattr(self._party_manager, 'clean_up_for_entity'): # Updated method name
+                  await self._party_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
+             if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_entity'): # Updated method name
+                  await self._dialogue_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
 
              # Drop items (if location_id is available on character)
-             if self._item_manager and hasattr(self._item_manager, 'drop_all_inventory') and getattr(char, 'location_id', None) is not None:
-                  await self._item_manager.drop_all_inventory(character_id, entity_type="Character", location_id=char.location_id, context=base_cleanup_kwargs) # Pass location_id explicitly, and the context dict
+             # Changed to use clean_up_for_character as it handles dropping inventory
+             if self._item_manager and hasattr(self._item_manager, 'clean_up_for_character') and getattr(char, 'location_id', None) is not None:
+                  await self._item_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass context dict
 
              # Trigger death logic in RuleEngine
-             if self._rule_engine and hasattr(self._rule_engine, 'trigger_death'):
-                  # Assuming trigger_death accepts entity (Character object) and context
-                  await self._rule_engine.trigger_death(char, context=base_cleanup_kwargs) # Pass the character object and context dict
+             # FIXME: RuleEngine.trigger_death method does not exist. Implement or remove call.
+             # if self._rule_engine and hasattr(self._rule_engine, 'trigger_death'):
+             #      # Assuming trigger_death accepts entity (Character object) and context
+             #      await self._rule_engine.trigger_death(char, context=base_cleanup_kwargs) # Pass the character object and context dict
 
              print(f"CharacterManager: Death cleanup initiated for character {character_id} in guild {guild_id_str}.")
 
