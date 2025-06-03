@@ -175,7 +175,7 @@ async def parse_player_action(text: str, language: str, guild_id: str, game_term
         if target_text_name:
             target_entity = None
             npc_list_for_item_target = db_game_entities.get("npc")
-            if npc_list_for_item_target: # Assuming targets are NPCs
+            if npc_list_for_item_target: # Assuming targets are NPCs # THIS IS THE CORRECT LINE
                 target_entity = _find_matching_db_entity(target_text_name, npc_list_for_item_target, "npc") # type: "npc"
             
             if target_entity:

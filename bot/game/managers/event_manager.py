@@ -1123,7 +1123,7 @@ class EventManager:
         if not event_id:
             print(f"EventManager: Error: Event object is missing an 'id'. Cannot save.")
             return False
-        
+
         # Ensure the event's internal guild_id (if exists) matches the provided guild_id
         event_guild_id = getattr(event, 'guild_id', guild_id_str)
         if str(event_guild_id) != guild_id_str:
@@ -1134,38 +1134,38 @@ class EventManager:
             event_data = event.to_dict()
 
             # Prepare data for DB columns based on 'events' table schema used in save_state
-            # id, template_id, name, is_active, channel_id, current_stage_id, 
+            # id, template_id, name, is_active, channel_id, current_stage_id,
             # players, state_variables, stages_data, end_message_template, guild_id
 
             db_id = event_data.get('id')
             db_template_id = event_data.get('template_id')
-            
+
             # name column stores name_i18n as JSON
             db_name_i18n = event_data.get('name_i18n', {"en": "Unnamed Event"})
-            
+
             db_is_active = getattr(event, 'is_active', True) # Event model doesn't list it, EventManager uses it
             db_channel_id = event_data.get('channel_id')
             db_current_stage_id = event_data.get('current_stage_id', 'start')
-            
+
             # 'players' in DB is a list of player IDs. Event model has 'involved_entities'.
             involved_entities = event_data.get('involved_entities', {})
             db_players_list = involved_entities.get('players', [])
             if not isinstance(db_players_list, list):
                 db_players_list = []
-            
+
             db_stages_data = event_data.get('stages_data', {})
             db_end_message_template = getattr(event, 'end_message_template', 'Событие завершилось.')
 
             # Collect remaining fields from event_data into state_variables, merging with explicit state_variables
             managed_fields = {
-                'id', '_id', 'template_id', 'name_i18n', 'is_active', 'channel_id', 
-                'current_stage_id', 'players', 'stages_data', 'end_message_template', 
+                'id', '_id', 'template_id', 'name_i18n', 'is_active', 'channel_id',
+                'current_stage_id', 'players', 'stages_data', 'end_message_template',
                 'guild_id', 'involved_entities', 'name' # legacy name
             }
             # Start with explicit state_variables from the event object if any
             current_state_vars = event_data.get('state_variables', {})
             if not isinstance(current_state_vars, dict): current_state_vars = {}
-            
+
             additional_state_data = {
                 k: v for k, v in event_data.items() if k not in managed_fields and k != 'state_variables'
             }
@@ -1192,8 +1192,8 @@ class EventManager:
 
             upsert_sql = '''
             INSERT OR REPLACE INTO events (
-                id, template_id, name, is_active, channel_id, 
-                current_stage_id, players, state_variables, stages_data, 
+                id, template_id, name, is_active, channel_id,
+                current_stage_id, players, state_variables, stages_data,
                 end_message_template, guild_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             '''
@@ -1201,13 +1201,13 @@ class EventManager:
 
             await self._db_adapter.execute(upsert_sql, db_params)
             print(f"EventManager: Successfully saved event {db_id} for guild {guild_id_str}.")
-            
+
             # If this event was marked as dirty, clean it from the dirty set
             if guild_id_str in self._dirty_events and db_id in self._dirty_events[guild_id_str]:
                 self._dirty_events[guild_id_str].discard(db_id)
                 if not self._dirty_events[guild_id_str]: # If set becomes empty
                     del self._dirty_events[guild_id_str]
-            
+
             return True
 
         except Exception as e:
