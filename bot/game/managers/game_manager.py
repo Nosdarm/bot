@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, Callable, Awaitable, List, Set
 # Импорт TYPE_CHECKING
 from typing import TYPE_CHECKING
 
+import discord # For discord.abc.Messageable
 # Импорт для Discord Client и Message, если они используются для аннотаций
 # Use string literal if these are only used for type hints to avoid import cycles
 from discord import Client # Direct import if Client is instantiated or directly used outside type hints
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
     from bot.game.command_router import CommandRouter
     
     # Новые менеджеры и сервисы для TYPE_CHECKING
+    from bot.game.managers.ability_manager import AbilityManager # Added for type hint
+    from bot.game.managers.spell_manager import SpellManager # Added for type hint
     from bot.game.managers.quest_manager import QuestManager
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.dialogue_manager import DialogueManager
@@ -112,13 +115,15 @@ class GameManager:
         self.conflict_resolver: Optional["ConflictResolver"] = None
         
         # Новые менеджеры и сервисы
-        self.quest_manager: Optional[QuestManager] = None
-        self.relationship_manager: Optional[RelationshipManager] = None
-        self.dialogue_manager: Optional[DialogueManager] = None
-        self.game_log_manager: Optional[GameLogManager] = None
-        self.campaign_loader: Optional[CampaignLoader] = None
-        self.consequence_processor: Optional[ConsequenceProcessor] = None
+        self.quest_manager: Optional["QuestManager"] = None
+        self.relationship_manager: Optional["RelationshipManager"] = None
+        self.dialogue_manager: Optional["DialogueManager"] = None
+        self.game_log_manager: Optional["GameLogManager"] = None
+        self.campaign_loader: Optional["CampaignLoader"] = None
+        self.consequence_processor: Optional["ConsequenceProcessor"] = None
         self.nlu_data_service: Optional["NLUDataService"] = None # For NLU Data Service
+        self.ability_manager: Optional["AbilityManager"] = None # Added
+        self.spell_manager: Optional["SpellManager"] = None   # Added
         self.prompt_context_collector: Optional["PromptContextCollector"] = None
         self.multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None
 
@@ -752,11 +757,14 @@ class GameManager:
         async def _send(content: str = "", **kwargs: Any) -> None:
             channel = self._discord_client.get_channel(channel_id_int)
             if channel:
-                try:
-                    await channel.send(content, **kwargs)
-                except Exception as e:
-                    print(f"GameManager: Error sending message to channel {channel_id_int}: {e}")
-                    traceback.print_exc()
+                if isinstance(channel, discord.abc.Messageable): # Added check
+                    try:
+                        await channel.send(content, **kwargs)
+                    except Exception as e:
+                        print(f"GameManager: Error sending message to channel {channel_id_int}: {e}")
+                        traceback.print_exc()
+                else:
+                    print(f"GameManager: Warning: Channel {channel_id_int} is not Messageable (type: {type(channel)}).")
             else:
                 print(f"GameManager: Warning: Channel {channel_id_int} not found in Discord client cache. Cannot send message. Kwargs: {kwargs}")
 

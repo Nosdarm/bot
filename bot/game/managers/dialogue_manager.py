@@ -317,10 +317,12 @@ class DialogueManager:
 
             # Optional: Notify participants / channel about dialogue start?
             send_cb_factory = kwargs.get('send_callback_factory') # Get factory from context
-            dialogue_channel_id = dialogue_data.get('channel_id')
-            if send_cb_factory and dialogue_channel_id is not None:
+            dialogue_channel_id_val = dialogue_data.get('channel_id') # This can be Optional[int]
+            if send_cb_factory and dialogue_channel_id_val is not None:
                  try:
-                     send_cb = send_cb_factory(int(dialogue_channel_id))
+                     # Ensure channel_id is int before passing to factory
+                     processed_channel_id = int(dialogue_channel_id_val)
+                     send_cb = send_callback_factory(processed_channel_id)
                      # TODO: Get participant names etc.
                      start_message = f"Начинается диалог ({tpl_id_str})!" # Basic message for now
                      # Get start stage dialogue text from template using RuleEngine?
@@ -337,12 +339,14 @@ class DialogueManager:
                                      context=kwargs # Pass context
                                  )
                                  if stage_text: start_message += f"\n{stage_text}"
-                         except Exception as e: print(f"DialogueManager: Error getting start dialogue text for {new_id}: {e}"); traceback.print_exc();
+                         except Exception as e_text: print(f"DialogueManager: Error getting start dialogue text for {new_id}: {e_text}"); # traceback already imported
 
 
                      await send_cb(start_message)
-                 except Exception as e:
-                      print(f"DialogueManager: Error sending dialogue start message for {new_id} to channel {dialogue_channel_id}: {e}"); traceback.print_exc();
+                 except (ValueError, TypeError) as e_int: # Catch error from int(dialogue_channel_id_val)
+                      print(f"DialogueManager: Invalid channel_id format '{dialogue_channel_id_val}' for dialogue {new_id}: {e_int}")
+                 except Exception as e_send:
+                      print(f"DialogueManager: Error sending dialogue start message for {new_id} to channel {dialogue_channel_id_val}: {e_send}"); # traceback already imported
 
 
             return new_id # Return the created dialogue ID

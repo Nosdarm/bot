@@ -62,7 +62,8 @@ class AbilityManager:
             count = 0
             for ability_id, ability_obj in self._ability_templates[guild_id_str].items():
                 if count < 3:
-                    print(f"  - ID: {ability_obj.id}, Name: {ability_obj.name}, Type: {ability_obj.type}")
+                    ability_display_name = getattr(ability_obj, 'name', ability_obj.id)
+                    print(f"  - ID: {ability_obj.id}, Name: {ability_display_name}, Type: {ability_obj.type}")
                     count += 1
                 else:
                     break
@@ -83,12 +84,12 @@ class AbilityManager:
             print("AbilityManager: CharacterManager or RuleEngine not available for learn_ability.")
             return False
 
-        ability = await self.get_ability(guild_id_str, ability_id)
+        ability = await self.get_ability(guild_id_str, ability_id) # get_ability is async, await is fine
         if not ability:
             print(f"AbilityManager: Ability '{ability_id}' not found for guild {guild_id_str}.")
             return False
 
-        character = await self._character_manager.get_character(guild_id_str, character_id)
+        character = self._character_manager.get_character(guild_id_str, character_id) # Assuming sync
         if not character:
             print(f"AbilityManager: Character '{character_id}' not found for guild {guild_id_str}.")
             return False
@@ -115,7 +116,8 @@ class AbilityManager:
             if ability.type == "passive_stat_modifier":
                 # Example: self._rule_engine.apply_passive_ability_stat_mods(character, ability)
                 # For now, this is conceptual. The RuleEngine would iterate ability.effects.
-                print(f"AbilityManager: Passive ability '{ability.name}' learned. Stat mods would be applied by RuleEngine or Character model updates.")
+                ability_display_name = getattr(ability, 'name', ability.id)
+                print(f"AbilityManager: Passive ability '{ability_display_name}' learned. Stat mods would be applied by RuleEngine or Character model updates.")
 
             await self._character_manager.mark_character_dirty(guild_id_str, character_id)
             print(f"AbilityManager: Character '{character_id}' learned ability '{ability_id}' (Source: {source}).")
@@ -132,19 +134,21 @@ class AbilityManager:
             print("AbilityManager: CharacterManager or RuleEngine not available for activate_ability.")
             return {"success": False, "message": "Internal server error: Manager not available."}
 
-        ability = await self.get_ability(guild_id_str, ability_id)
+        ability = await self.get_ability(guild_id_str, ability_id) # get_ability is async, await is fine
         if not ability:
             return {"success": False, "message": f"Ability '{ability_id}' not found."}
+        
+        ability_display_name = getattr(ability, 'name', ability.id)
 
         if not ability.type.startswith("activated_"):
-            return {"success": False, "message": f"Ability '{ability.name}' is not an activatable ability."}
+            return {"success": False, "message": f"Ability '{ability_display_name}' is not an activatable ability."}
 
-        caster = await self._character_manager.get_character(guild_id_str, character_id)
+        caster = self._character_manager.get_character(guild_id_str, character_id) # Assuming sync
         if not caster:
             return {"success": False, "message": f"Caster '{character_id}' not found."}
             
         if not hasattr(caster, 'known_abilities') or ability_id not in caster.known_abilities: # type: ignore
-             return {"success": False, "message": f"Caster does not know the ability '{ability.name}'."}
+             return {"success": False, "message": f"Caster does not know the ability '{ability_display_name}'."}
 
         # Resource Costs (e.g., stamina, action_points)
         if ability.resource_cost:
@@ -154,12 +158,12 @@ class AbilityManager:
                         return {"success": False, "message": f"Caster has no '{resource}' attribute."}
                     current_resource_val = caster.stats[resource] # type: ignore
                     if current_resource_val < cost:
-                        return {"success": False, "message": f"Not enough {resource} to use {ability.name}. Needs {cost}, has {current_resource_val}."}
+                        return {"success": False, "message": f"Not enough {resource} to use {ability_display_name}. Needs {cost}, has {current_resource_val}."}
                     caster.stats[resource] -= cost # type: ignore
-                    print(f"AbilityManager: Deducted {cost} {resource} from {character_id} for {ability.name}.")
+                    print(f"AbilityManager: Deducted {cost} {resource} from {character_id} for {ability_display_name}.")
                 # TODO: Handle other resource types like "uses_per_day", "action_points"
                 else:
-                    print(f"AbilityManager: Warning: Unknown resource cost type '{resource}' for ability '{ability.name}'.")
+                    print(f"AbilityManager: Warning: Unknown resource cost type '{resource}' for ability '{ability_display_name}'.")
             await self._character_manager.mark_character_dirty(guild_id_str, character_id)
 
 
@@ -172,11 +176,11 @@ class AbilityManager:
             current_time = time.time()
             if ability_id in caster.ability_cooldowns and caster.ability_cooldowns[ability_id] > current_time: # type: ignore
                 remaining_cooldown = caster.ability_cooldowns[ability_id] - current_time # type: ignore
-                return {"success": False, "message": f"{ability.name} is on cooldown for {remaining_cooldown:.1f} more seconds."}
+                return {"success": False, "message": f"{ability_display_name} is on cooldown for {remaining_cooldown:.1f} more seconds."}
             
             caster.ability_cooldowns[ability_id] = current_time + ability.cooldown # type: ignore
             await self._character_manager.mark_character_dirty(guild_id_str, character_id)
-            print(f"AbilityManager: Ability '{ability.name}' cooldown set for {character_id} for {ability.cooldown}s.")
+            print(f"AbilityManager: Ability '{ability_display_name}' cooldown set for {character_id} for {ability.cooldown}s.")
 
         # Delegate effect processing to RuleEngine (new method to be created in RuleEngine)
         # RuleEngine.process_ability_effects(caster, ability, target_entity, guild_id, **kwargs)
@@ -186,9 +190,9 @@ class AbilityManager:
             target_entity = None
             if target_id:
                 # Attempt to get target as Character or NPC
-                target_entity = await self._character_manager.get_character(guild_id_str, target_id)
-                if not target_entity and self._character_manager._npc_manager_ref: # Assuming a way to access NpcManager
-                     target_entity = await self._character_manager._npc_manager_ref.get_npc(guild_id_str, target_id)
+                target_entity = self._character_manager.get_character(guild_id_str, target_id) # Assuming sync
+                if not target_entity and hasattr(self._character_manager, 'npc_manager') and self._character_manager.npc_manager:
+                     target_entity = self._character_manager.npc_manager.get_npc(guild_id_str, target_id) # Assuming sync
 
             outcomes = await self._rule_engine.process_ability_effects(
                 caster=caster, 
@@ -197,12 +201,12 @@ class AbilityManager:
                 guild_id=guild_id_str,
                 **kwargs 
             )
-            print(f"AbilityManager: Ability '{ability.name}' activated by '{character_id}'. Outcomes: {outcomes}")
-            return {"success": True, "message": f"{ability.name} activated successfully!", "outcomes": outcomes}
+            print(f"AbilityManager: Ability '{ability_display_name}' activated by '{character_id}'. Outcomes: {outcomes}")
+            return {"success": True, "message": f"{ability_display_name} activated successfully!", "outcomes": outcomes}
         except Exception as e:
-            print(f"AbilityManager: Error during ability effect processing for '{ability.name}': {e}")
+            print(f"AbilityManager: Error during ability effect processing for '{ability_display_name}': {e}")
             # Consider if resources/cooldowns should be reverted on error
-            return {"success": False, "message": f"Error processing effects for {ability.name}."}
+            return {"success": False, "message": f"Error processing effects for {ability_display_name}."}
 
     async def process_passive_abilities(self, guild_id: str, character_id: str, event_type: str, event_data: Dict[str, Any], **kwargs: Any) -> None:
         """
