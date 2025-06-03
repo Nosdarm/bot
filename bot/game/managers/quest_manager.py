@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     # Add these:
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.services.openai_service import OpenAIService
+    from bot.ai.ai_response_validator import AIResponseValidator # Added validator
+    from typing import Union # For updated return type
+
     # The import for 'Quest' model is removed as per instruction 10, assuming dicts are used.
 
 class QuestManager:
@@ -38,7 +41,8 @@ class QuestManager:
         game_log_manager: Optional["GameLogManager"] = None,
         # New parameters
         multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None,
-        openai_service: Optional["OpenAIService"] = None
+        openai_service: Optional["OpenAIService"] = None,
+        ai_validator: Optional["AIResponseValidator"] = None # Added validator
     ):
         self._db_adapter = db_adapter
         self._settings = settings if settings else {} # Ensure settings is a dict
@@ -52,6 +56,7 @@ class QuestManager:
         # Store new services
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
+        self._ai_validator = ai_validator # Store validator
 
         # guild_id -> character_id -> quest_id -> quest_data
         self._active_quests: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -132,62 +137,146 @@ class QuestManager:
         character_id_str = str(character_id)
         return list(self._active_quests.get(guild_id_str, {}).get(character_id_str, {}).values())
 
-    def start_quest(self, guild_id: str, character_id: str, quest_template_id: str) -> Optional[Dict[str, Any]]:
-        """Starts a new quest for a character."""
+    async def start_quest(self, guild_id: str, character_id: str, quest_template_id: str, **kwargs: Any) -> Optional[Union[Dict[str, Any], Dict[str, str]]]:
+        """
+        Starts a new quest for a character.
+        If AI generation is used and successful, it saves the content for moderation
+        and returns a dict with status 'pending_moderation' and 'request_id'.
+        Otherwise, it creates the quest directly and returns the quest data dictionary.
+        Returns None on failure.
+        """
         guild_id_str = str(guild_id)
         character_id_str = str(character_id)
         quest_template_id_str = str(quest_template_id)
 
-        template = self.get_quest_template(guild_id_str, quest_template_id_str)
-        if not template:
-            print(f"Error: Quest template '{quest_template_id_str}' not found for guild '{guild_id_str}'.")
-            return None
+        ai_generated_quest_data: Optional[Dict[str, Any]] = None
+        template_data_from_campaign: Optional[Dict[str, Any]] = None
+        trigger_ai_generation = False
 
-        # Basic check for character existence (if character_manager is available)
-        if self._character_manager:
-            # Assuming get_character_by_id returns None if not found
-            if not self._character_manager.get_character_by_id(guild_id_str, character_id_str):
-                print(f"Error: Character '{character_id_str}' not found in guild '{guild_id_str}'.")
+        if quest_template_id_str.startswith("AI:"):
+            trigger_ai_generation = True
+            print(f"QuestManager: AI generation triggered by keyword for quest '{quest_template_id_str}'.")
+        else:
+            template_data_from_campaign = self.get_quest_template(guild_id_str, quest_template_id_str)
+            if not template_data_from_campaign:
+                print(f"QuestManager: Quest template '{quest_template_id_str}' not found. Triggering AI generation.")
+                trigger_ai_generation = True
+
+        if trigger_ai_generation:
+            quest_concept = quest_template_id_str
+            if quest_template_id_str.startswith("AI:"):
+                quest_concept = quest_template_id_str.replace("AI:", "", 1)
+
+            ai_generated_quest_data = await self.generate_quest_details_from_ai(
+                guild_id=guild_id_str,
+                quest_idea=quest_concept,
+                triggering_entity_id=character_id_str
+            )
+            if ai_generated_quest_data is None:
+                print(f"QuestManager: AI generation failed for concept '{quest_concept}'. Quest creation aborted.")
+                return None # AI generation failed
+
+            # --- Moderation Step for AI Generated Quest Data ---
+            user_id = kwargs.get('user_id')
+            if not user_id:
+                print(f"QuestManager: CRITICAL - user_id not found in kwargs for AI quest generation. Aborting moderation save.")
                 return None
             
+            request_id = str(uuid.uuid4())
+            content_type = 'quest'
+            try:
+                # ai_generated_quest_data is already a dict from the validator
+                data_json = json.dumps(ai_generated_quest_data)
+                if self._db_adapter:
+                    await self._db_adapter.save_pending_moderation_request(
+                        request_id, guild_id_str, str(user_id), content_type, data_json
+                    )
+                    print(f"QuestManager: AI-generated quest data for '{quest_concept}' saved for moderation. Request ID: {request_id}")
+                    return {"status": "pending_moderation", "request_id": request_id}
+                else:
+                    print(f"QuestManager: ERROR - DB adapter not available. Cannot save quest for moderation.")
+                    return None # Or handle differently, e.g., proceed without moderation if allowed by policy
+            except Exception as e_mod_save:
+                print(f"QuestManager: ERROR saving AI quest content for moderation: {e_mod_save}")
+                traceback.print_exc()
+                return None # Failed to save for moderation
+
+        # --- This part below is now only for NON-AI generated quests (i.e., from template_data_from_campaign) ---
+        # Basic check for character existence
+        if self._character_manager and not self._character_manager.get_character_by_id(guild_id_str, character_id_str):
+            print(f"Error: Character '{character_id_str}' not found in guild '{guild_id_str}'. Cannot start quest.")
+            return None
+
         self._active_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, {})
         
-        # Check if a quest from this template is already active (using template_id for this check)
-        # This logic might need refinement: what if multiple instances of the same quest type are allowed?
-        # For now, assume only one active instance per template_id.
-        for existing_quest in self._active_quests[guild_id_str][character_id_str].values():
-            if existing_quest.get("template_id") == quest_template_id_str:
-                print(f"Warning: Quest (Template: '{quest_template_id_str}') already active for character '{character_id_str}'.")
-                return existing_quest
+        # Prevent starting the same quest template if it's already active (unless AI generated a unique one)
+        # If AI generated the quest, it's unique by its new quest_id, so this check is more for campaign quests.
+        if not ai_generated_quest_data and template_data_from_campaign:
+            for existing_quest in self._active_quests[guild_id_str][character_id_str].values():
+                if existing_quest.get("template_id") == quest_template_id_str:
+                    print(f"Warning: Quest (Template: '{quest_template_id_str}') already active for character '{character_id_str}'.")
+                    return existing_quest
 
-        quest_id = str(uuid.uuid4()) # Unique ID for this specific quest instance
-        new_quest_data = {
-            "id": quest_id,
-            "template_id": quest_template_id_str,
-            "character_id": character_id_str,
-            "status": "active", # e.g., active, completed, failed
-            "start_time": time.time(),
-            "objectives": [obj.copy() for obj in template.get("objectives", [])], # Deep copy objectives
-            "progress": {}, # To store progress for each objective, e.g., {"objective_id_1": 5}
-            "data": template.get("data", {}).copy(), # Copy any other non-structural template data
-        }
+        quest_id = str(uuid.uuid4())
+
+        # Populate new_quest_data: AI data takes precedence
+        if ai_generated_quest_data:
+            # Assume ai_generated_quest_data is a dict with keys like 'name', 'description', 'objectives', 'rewards', etc.
+            # And that it has been validated by generate_quest_details_from_ai
+            new_quest_data = {
+                "id": quest_id, # Fresh unique ID
+                "template_id": ai_generated_quest_data.get("template_id", f"AI_gen_{quest_id[:8]}"), # Use AI provided or generate one
+                "character_id": character_id_str,
+                "status": "active",
+                "start_time": time.time(),
+                "name_i18n": ai_generated_quest_data.get("name_i18n", {"en": "AI Generated Quest"}),
+                "description_i18n": ai_generated_quest_data.get("description_i18n", {"en": "An adventure awaits!"}),
+                "objectives": ai_generated_quest_data.get("objectives", []), # Expects list of objective dicts
+                "rewards_i18n": ai_generated_quest_data.get("rewards_i18n", {}), # Expects dict
+                "progress": {}, # Initialize progress
+                "data": ai_generated_quest_data.get("data", {}), # Any other custom data from AI
+                "giver_entity_id": ai_generated_quest_data.get("giver_entity_id"), # Optional: NPC/entity who gave the quest
+                "location_id": ai_generated_quest_data.get("location_id"), # Optional: relevant location
+                "is_ai_generated": True,
+            }
+        elif template_data_from_campaign:
+            new_quest_data = {
+                "id": quest_id,
+                "template_id": quest_template_id_str,
+                "character_id": character_id_str,
+                "status": "active",
+                "start_time": time.time(),
+                "name_i18n": template_data_from_campaign.get("name_i18n", {"en": template_data_from_campaign.get("name", "Unnamed Quest")}),
+                "description_i18n": template_data_from_campaign.get("description_i18n", {"en": template_data_from_campaign.get("description", "No description.")}),
+                "objectives": [obj.copy() for obj in template_data_from_campaign.get("objectives", [])],
+                "rewards_i18n": template_data_from_campaign.get("rewards_i18n", {}),
+                "progress": {},
+                "data": template_data_from_campaign.get("data", {}).copy(),
+                "giver_entity_id": template_data_from_campaign.get("giver_entity_id"),
+                "location_id": template_data_from_campaign.get("location_id"),
+                "is_ai_generated": False,
+            }
+        else:
+            # This case should ideally not be reached if logic is correct (either template found or AI triggered)
+            print(f"Critical Error: No template data and no AI data for quest '{quest_template_id_str}'. Aborting.")
+            return None
         
         self._active_quests[guild_id_str][character_id_str][quest_id] = new_quest_data
         self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
         
-        # print(f"Quest '{quest_id}' (Template: '{quest_template_id_str}') started for character '{character_id_str}'.")
-        
-        if self._consequence_processor:
+        # Handle consequences for non-AI path
+        if self._consequence_processor and template_data_from_campaign: # Ensure this runs only for campaign quests now
             context = self._build_consequence_context(guild_id_str, character_id_str, new_quest_data)
-            start_consequences = template.get("consequences", {}).get("on_start", [])
+            start_consequences = template_data_from_campaign.get("consequences", {}).get("on_start", [])
             if start_consequences:
                 self._consequence_processor.process_consequences(start_consequences, context)
         
-        return new_quest_data
+        print(f"Quest '{new_quest_data.get('name_i18n', {}).get('en', quest_id)}' (ID: {quest_id}) started from campaign template for char {character_id_str}.")
+        return new_quest_data # Return quest data dict for non-AI path
 
     async def generate_quest_details_from_ai(self, guild_id: str, quest_idea: str, triggering_entity_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
-        Uses MultilingualPromptGenerator and OpenAIService to generate detailed
+        Uses MultilingualPromptGenerator, OpenAIService, and AIResponseValidator to generate detailed
         quest data based on an idea or trigger.
 
         Args:
@@ -196,14 +285,11 @@ class QuestManager:
             triggering_entity_id: Optional ID of the character/NPC initiating or targeted by the quest, for context.
 
         Returns:
-            A dictionary containing the structured, multilingual quest data from the AI,
-            or None if generation fails.
+            A dictionary containing the structured, validated, multilingual quest data from the AI,
+            or None if generation or validation fails.
         """
-        if not self._multilingual_prompt_generator:
-            print("QuestManager ERROR: MultilingualPromptGenerator is not available.")
-            return None
-        if not self._openai_service:
-            print("QuestManager ERROR: OpenAIService is not available.")
+        if not self._multilingual_prompt_generator or not self._openai_service or not self._ai_validator:
+            print("QuestManager ERROR: AI services (PromptGen, OpenAI, Validator) not fully available.")
             return None
 
         print(f"QuestManager: Generating AI details for quest idea '{quest_idea}' in guild {guild_id}.")
@@ -212,32 +298,66 @@ class QuestManager:
             guild_id=guild_id,
             quest_idea=quest_idea,
             triggering_entity_id=triggering_entity_id
+            # Potentially add more context like existing NPC/item IDs if validator needs them for this structure
         )
 
         system_prompt = prompt_messages["system"]
         user_prompt = prompt_messages["user"]
 
         quest_generation_settings = self._settings.get("quest_generation_ai_settings", {})
-        max_tokens = quest_generation_settings.get("max_tokens", 2500) # Quests can be long
+        max_tokens = quest_generation_settings.get("max_tokens", 2500)
         temperature = quest_generation_settings.get("temperature", 0.65)
 
-        generated_data = await self._openai_service.generate_structured_multilingual_content(
+        ai_response = await self._openai_service.generate_structured_multilingual_content(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=max_tokens,
             temperature=temperature
         )
 
-        if generated_data and "error" not in generated_data:
-            print(f"QuestManager: Successfully generated AI details for quest idea '{quest_idea}'.")
-            # Further validation of the quest structure might be needed here.
-            return generated_data
+        if not ai_response or "error" in ai_response or not isinstance(ai_response.get("json_string"), str):
+            error_detail = ai_response.get("error") if ai_response else "Unknown error or invalid format from AI service"
+            raw_text = ai_response.get("raw_text", "") if ai_response else ""
+            print(f"QuestManager ERROR: Failed to generate AI content for quest '{quest_idea}'. Error: {error_detail}")
+            if raw_text: print(f"QuestManager: Raw AI response: {raw_text[:500]}...")
+            return None
+
+        generated_content_str = ai_response["json_string"]
+
+        # TODO: Determine existing IDs needed for validation context if any for quests.
+        # For now, passing empty sets as placeholders.
+        validation_result = await self._ai_validator.validate_ai_response(
+            ai_json_string=generated_content_str,
+            expected_structure="single_quest", # Define this structure in AIResponseValidator
+            existing_npc_ids=set(), # Placeholder
+            existing_quest_ids=set(), # Placeholder
+            existing_item_template_ids=set() # Placeholder
+        )
+
+        if validation_result.get('global_errors'):
+            print(f"QuestManager ERROR: AI content validation failed with global errors for quest '{quest_idea}': {validation_result['global_errors']}")
+            return None
+
+        if not validation_result.get('entities'):
+            print(f"QuestManager ERROR: AI content validation produced no entities for quest '{quest_idea}'.")
+            return None
+
+        quest_validation_details = validation_result['entities'][0] # Expecting one quest
+
+        if quest_validation_details.get('errors'):
+            print(f"QuestManager WARNING: Validation errors for quest '{quest_idea}': {quest_validation_details['errors']}")
+        if quest_validation_details.get('notifications'):
+            print(f"QuestManager INFO: Validation notifications for quest '{quest_idea}': {quest_validation_details['notifications']}")
+        if quest_validation_details.get('requires_moderation'):
+            print(f"QuestManager CRITICAL: Quest data for '{quest_idea}' requires moderation. Raw: {generated_content_str[:500]}...")
+            return None # Or handle moderation queue
+
+        overall_status = validation_result.get("overall_status")
+        if overall_status == "success" or overall_status == "success_with_autocorrections":
+            print(f"QuestManager: Successfully validated AI details for quest '{quest_idea}'. Status: {overall_status}")
+            return quest_validation_details.get('validated_data') # This is the dict to be used
         else:
-            error_detail = generated_data.get("error") if generated_data else "Unknown error"
-            raw_text = generated_data.get("raw_text", "") if generated_data else ""
-            print(f"QuestManager ERROR: Failed to generate AI details for quest idea '{quest_idea}'. Error: {error_detail}")
-            if raw_text:
-                print(f"QuestManager: Raw response from AI was: {raw_text[:500]}...")
+            print(f"QuestManager ERROR: Unhandled validation status '{overall_status}' for quest '{quest_idea}'.")
             return None
 
     def complete_quest(self, guild_id: str, character_id: str, quest_id: str) -> bool:
@@ -485,6 +605,72 @@ class QuestManager:
     #         # Consider logging the full traceback using traceback.format_exc()
     #         # Consider logging the full traceback using traceback.format_exc()
     #         return {}
+
+    async def start_quest_from_moderated_data(self, guild_id: str, character_id: str, quest_data: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Starts a new quest for a character using already validated and approved moderated data.
+        This method bypasses AI generation and direct validation steps.
+        """
+        guild_id_str = str(guild_id)
+        character_id_str = str(character_id)
+
+        print(f"QuestManager: Starting quest from moderated data for character {character_id_str} in guild {guild_id_str}.")
+
+        if not self._character_manager or not self._character_manager.get_character_by_id(guild_id_str, character_id_str):
+            print(f"Error: Character '{character_id_str}' not found in guild '{guild_id_str}'. Cannot start quest from moderated data.")
+            return None
+
+        # Ensure quest_data has an ID, or assign a new one.
+        # The moderated data should retain its unique ID if one was part of it,
+        # or the moderation request_id could be used if it's suitable and unique for quests.
+        # For new quests, a fresh UUID is best.
+        quest_id = quest_data.get('id', str(uuid.uuid4()))
+        if quest_data.get('id') != quest_id : # If we generated a new one
+             print(f"QuestManager: Assigned new ID {quest_id} to quest from moderated data.")
+
+
+        # Construct new_quest_data directly from the approved quest_data
+        # It's assumed quest_data contains all necessary fields like name_i18n, description_i18n, objectives, rewards_i18n etc.
+        new_quest_data = {
+            "id": quest_id,
+            "template_id": quest_data.get("template_id", f"AI_mod_{quest_id[:8]}"), # Use provided or generate one
+            "character_id": character_id_str,
+            "status": "active", # Start as active
+            "start_time": time.time(),
+            "name_i18n": quest_data.get("name_i18n", {"en": "Moderated Quest"}),
+            "description_i18n": quest_data.get("description_i18n", {"en": "An adventure approved by the Masters!"}),
+            "objectives": quest_data.get("objectives", []), # Should be a list of objective dicts
+            "rewards_i18n": quest_data.get("rewards_i18n", {}),
+            "progress": {}, # Initialize progress
+            "data": quest_data.get("data", {}), # Any other custom data
+            "giver_entity_id": quest_data.get("giver_entity_id"),
+            "location_id": quest_data.get("location_id"),
+            "is_ai_generated": True, # Mark as AI-originated
+            "is_moderated": True, # Optionally, add a flag to indicate it passed moderation
+        }
+
+        # Ensure objectives are mutable copies if they come from a shared template structure (though less likely for AI data)
+        if isinstance(new_quest_data["objectives"], list):
+            new_quest_data["objectives"] = [obj.copy() for obj in new_quest_data["objectives"] if isinstance(obj, dict)]
+
+
+        self._active_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, {})[quest_id] = new_quest_data
+        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+
+        print(f"Quest '{new_quest_data.get('name_i18n', {}).get('en', quest_id)}' (ID: {quest_id}) started from moderated data for char {character_id_str}.")
+
+        # Handle 'on_start' consequences if defined in the quest data
+        if self._consequence_processor:
+            consequences_context = self._build_consequence_context(guild_id_str, character_id_str, new_quest_data)
+            # Use the passed context for managers, but quest_data for the quest itself
+            consequences_context.update(context) # Merge the broader command context
+
+            start_consequences = quest_data.get("consequences", {}).get("on_start", [])
+            if start_consequences:
+                self._consequence_processor.process_consequences(start_consequences, consequences_context)
+
+        return new_quest_data
+
 
 # No __main__ block in the final library file unless specifically for testing within this file.
 # For this refactoring task, it's better to remove it if it was part of the original conflicted file.
