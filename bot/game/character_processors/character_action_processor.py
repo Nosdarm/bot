@@ -5,6 +5,7 @@ import json
 import uuid
 import traceback
 import asyncio
+from collections import defaultdict
 # ИСПРАВЛЕНИЕ: Убедимся, что все необходимые типы импортированы
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable
 
@@ -100,6 +101,10 @@ class CharacterActionProcessor:
 
         self._event_stage_processor = event_stage_processor
         self._event_action_processor = event_action_processor
+
+        # For tracking active actions per character per guild
+        # Structure: Dict[guild_id_str, Dict[character_id_str, Set[action_type_str]]]
+        self.active_character_actions: Dict[str, Dict[str, Set[str]]] = defaultdict(lambda: defaultdict(set))
 
 
         print("CharacterActionProcessor initialized.")
@@ -259,9 +264,13 @@ class CharacterActionProcessor:
 
         # --- Устанавливаем текущее действие ---
         char.current_action = action_data
-        char.current_action = action_data
-        self._character_manager.mark_character_dirty(getattr(char, 'guild_id', None), character_id) # Use mark_character_dirty
-        self._character_manager._entities_with_active_action.setdefault(getattr(char, 'guild_id', None), set()).add(character_id) # Ensure guild key exists
+        # self._character_manager.mark_character_dirty(getattr(char, 'guild_id', None), character_id) # Use mark_character_dirty
+        # self._character_manager._entities_with_active_action.setdefault(getattr(char, 'guild_id', None), set()).add(character_id) # Ensure guild key exists
+
+        char_guild_id_str = str(getattr(char, 'guild_id', 'unknown_guild'))
+        self._character_manager.mark_character_dirty(char_guild_id_str, character_id)
+        self._character_manager._entities_with_active_action.setdefault(char_guild_id_str, set()).add(character_id)
+
 
         if char not in modified_entities:
             modified_entities.append(char)
@@ -360,10 +369,11 @@ class CharacterActionProcessor:
              print(f"CharacterActionProcessor: Warning: Character {character_id} model has no 'action_queue' list or it's incorrect type. Creating empty list.")
              char.action_queue = [] # Создаем пустую очередь, если нет или некорректная
 
-        char.action_queue.append(action_data)
-        char.action_queue.append(action_data)
-        self._character_manager.mark_character_dirty(getattr(char, 'guild_id', None), character_id)
-        self._character_manager._entities_with_active_action.setdefault(getattr(char, 'guild_id', None), set()).add(character_id)
+        char.action_queue.append(action_data) # Appending only once
+
+        char_guild_id_str = str(getattr(char, 'guild_id', 'unknown_guild'))
+        self._character_manager.mark_character_dirty(char_guild_id_str, character_id)
+        self._character_manager._entities_with_active_action.setdefault(char_guild_id_str, set()).add(character_id)
 
         if char not in modified_entities:
             modified_entities.append(char)
@@ -392,87 +402,87 @@ class CharacterActionProcessor:
 
     # Метод обработки тика для ОДНОГО персонажа (ПЕРЕНЕСЕН ИЗ CharacterManager)
     # WorldSimulationProcessor будет вызывать этот метод для каждого ID персонажа, находящегося в кеше CharacterManager._entities_with_active_action.
-    async def process_tick(self, char_id: str, game_time_delta: float, **kwargs) -> None:
-        """
-        Обрабатывает тик для текущего ИНДИВИДУАЛЬНОГО действия персонажа.
-        Этот метод вызывается WorldSimulationProcessor для каждого активного персонажа.
-        Обновляет прогресс, завершает действие при необходимости, начинает следующее из очереди.
-        kwargs: Дополнительные менеджеры/сервисы (time_manager, send_callback_factory и т.т.), переданные WSP.
-        """
-        # print(f"CharacterActionProcessor: Processing tick for character {char_id}...") # Бывает очень шумно
+    # async def process_tick(self, char_id: str, game_time_delta: float, **kwargs) -> None: # This is the first one, removing it.
+    #     """
+    #     Обрабатывает тик для текущего ИНДИВИДУАЛЬНОГО действия персонажа.
+    #     Этот метод вызывается WorldSimulationProcessor для каждого активного персонажа.
+    #     Обновляет прогресс, завершает действие при необходимости, начинает следующее из очереди.
+    #     kwargs: Дополнительные менеджеры/сервисы (time_manager, send_callback_factory и т.т.), переданные WSP.
+    #     """
+    #     # print(f"CharacterActionProcessor: Processing tick for character {char_id}...") # Бывает очень шумно
 
-        # Получаем персонажа из менеджера персонажей (это синхронный вызов)
-        char = self._character_manager.get_character(char_id)
-        # Проверяем, что персонаж все еще в кеше. Если нет или у него нет действия И пустая очередь, удаляем из активных (в менеджере персонажей) и выходим.
-        if not char or (getattr(char, 'current_action', None) is None and not getattr(char, 'action_queue', [])):
-             # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
-             # _entities_with_active_action доступен напрямую для процессора.
-             self._character_manager._entities_with_active_action.discard(char_id)
-             # print(f"CharacterActionProcessor: Skipping tick for character {char_id} (not found, no action, or empty queue).")
-             return
+    #     # Получаем персонажа из менеджера персонажей (это синхронный вызов)
+    #     char = self._character_manager.get_character(char_id)
+    #     # Проверяем, что персонаж все еще в кеше. Если нет или у него нет действия И пустая очередь, удаляем из активных (в менеджере персонажей) и выходим.
+    #     if not char or (getattr(char, 'current_action', None) is None and not getattr(char, 'action_queue', [])):
+    #          # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
+    #          # _entities_with_active_action доступен напрямую для процессора.
+    #          self._character_manager._entities_with_active_action.discard(char_id)
+    #          # print(f"CharacterActionProcessor: Skipping tick for character {char_id} (not found, no action, or empty queue).")
+    #          return
 
-        current_action = getattr(char, 'current_action', None)
-        action_completed = False # Флаг завершения
-
-
-        # --- Обновляем прогресс текущего действия (если оно есть) ---
-        if current_action is not None:
-             duration = current_action.get('total_duration', 0.0)
-             if duration is None: # Обрабатываем случай, если total_duration None (например, перманентное действие)
-                 # print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' has None duration. Assuming it's ongoing.") # Бывает шумно
-                 # Ничего не делаем с прогрессом, действие продолжается перманентно до принудительной отмены или другого триггера.
-                 pass # Прогресс не меняется, dirty не помечается из-за прогресса.
-             elif duration <= 0:
-                  print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' is instant (duration <= 0). Marking as completed.")
-                  action_completed = True
-             else:
-                  progress = current_action.get('progress', 0.0)
-                  if not isinstance(progress, (int, float)):
-                       print(f"CharacterActionProcessor: Warning: Progress for char {char_id} action '{current_action.get('type', 'Unknown')}' is not a number ({progress}). Resetting to 0.0.")
-                       progress = 0.0
-
-                  current_action['progress'] = progress + game_time_delta
-                  char.current_action = current_action # Убедимся, что изменение сохраняется в объекте Character
-                  # Помечаем персонажа как измененного через его менеджер
-                  self._character_manager._dirty_characters.add(char_id)
-
-                  # print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}'. Progress: {current_action['progress']:.2f}/{duration:.1f}") # Debug
-
-                  # --- Проверяем завершение действия ---
-                  if current_action['progress'] >= duration:
-                       print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' completed.")
-                       action_completed = True
+    #     current_action = getattr(char, 'current_action', None)
+    #     action_completed = False # Флаг завершения
 
 
-        # --- Обработка завершения действия ---
-        # Этот блок выполняется, ЕСЛИ действие завершилось в этом тике.
-        if action_completed and current_action is not None:
-             # complete_action сбросит current_action, пометит dirty, и начнет следующее из очереди (если есть)
-             # Передаем все kwargs из WorldTick дальше в complete_action
-             await self.complete_action(char_id, current_action, **kwargs)
+    #     # --- Обновляем прогресс текущего действия (если оно есть) ---
+    #     if current_action is not None:
+    #          duration = current_action.get('total_duration', 0.0)
+    #          if duration is None: # Обрабатываем случай, если total_duration None (например, перманентное действие)
+    #              # print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' has None duration. Assuming it's ongoing.") # Бывает шумно
+    #              # Ничего не делаем с прогрессом, действие продолжается перманентно до принудительной отмены или другого триггера.
+    #              pass # Прогресс не меняется, dirty не помечается из-за прогресса.
+    #          elif duration <= 0:
+    #               print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' is instant (duration <= 0). Marking as completed.")
+    #               action_completed = True
+    #          else:
+    #               progress = current_action.get('progress', 0.0)
+    #               if not isinstance(progress, (int, float)):
+    #                    print(f"CharacterActionProcessor: Warning: Progress for char {char_id} action '{current_action.get('type', 'Unknown')}' is not a number ({progress}). Resetting to 0.0.")
+    #                    progress = 0.0
+
+    #               current_action['progress'] = progress + game_time_delta
+    #               char.current_action = current_action # Убедимся, что изменение сохраняется в объекте Character
+    #               # Помечаем персонажа как измененного через его менеджер
+    #               self._character_manager._dirty_characters.add(char_id)
+
+    #               # print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}'. Progress: {current_action['progress']:.2f}/{duration:.1f}") # Debug
+
+    #               # --- Проверяем завершение действия ---
+    #               if current_action['progress'] >= duration:
+    #                    print(f"CharacterActionProcessor: Char {char_id} action '{current_action.get('type', 'Unknown')}' completed.")
+    #                    action_completed = True
 
 
-        # --- Проверяем, нужно ли удалить из активных после завершения или если не было действия и очередь пуста ---
-        # complete_action уже запустил следующее действие ИЛИ оставил current_action = None.
-        # process_tick должен удалить из _entities_with_active_action, если персонаж больше не активен.
-        # Проверяем состояние персонажа СНОВА после завершения действия и запуска следующего.
-        # Убедимся, что у объекта Character есть атрибуты current_action и action_queue перед проверкой
-        if getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue):
-             # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
-             # _entities_with_active_action доступен напрямую для процессора.
-             # TODO: This needs guild_id. Assuming char.guild_id is available.
-             char_guild_id = getattr(char, 'guild_id', None)
-             if char_guild_id:
-                 self._character_manager._entities_with_active_action.get(char_guild_id, set()).discard(char_id)
-             else:
-                 print(f"CharacterActionProcessor (process_tick): Warning: Could not determine guild_id for char {char_id} to update active_entities set.")
-
-             # print(f"CharacterActionProcessor: Character {char_id} has no more actions. Removed from active list.")
+    #     # --- Обработка завершения действия ---
+    #     # Этот блок выполняется, ЕСЛИ действие завершилось в этом тике.
+    #     if action_completed and current_action is not None:
+    #          # complete_action сбросит current_action, пометит dirty, и начнет следующее из очереди (если есть)
+    #          # Передаем все kwargs из WorldTick дальше в complete_action
+    #          await self.complete_action(char_id, current_action, **kwargs)
 
 
-        # Сохранение обновленного состояния персонажа (если он помечен как dirty) произойдет в save_all_characters.
-        # process_tick пометил персонажа как dirty, если прогресс изменился.
-        # complete_action пометил персонажа как dirty, если действие завершилось и/или очередь изменилась.
+    #     # --- Проверяем, нужно ли удалить из активных после завершения или если не было действия и очередь пуста ---
+    #     # complete_action уже запустил следующее действие ИЛИ оставил current_action = None.
+    #     # process_tick должен удалить из _entities_with_active_action, если персонаж больше не активен.
+    #     # Проверяем состояние персонажа СНОВА после завершения действия и запуска следующего.
+    #     # Убедимся, что у объекта Character есть атрибуты current_action и action_queue перед проверкой
+    #     if getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue):
+    #          # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
+    #          # _entities_with_active_action доступен напрямую для процессора.
+    #          # TODO: This needs guild_id. Assuming char.guild_id is available.
+    #          char_guild_id = getattr(char, 'guild_id', None)
+    #          if char_guild_id:
+    #              self._character_manager._entities_with_active_action.get(char_guild_id, set()).discard(char_id)
+    #          else:
+    #              print(f"CharacterActionProcessor (process_tick): Warning: Could not determine guild_id for char {char_id} to update active_entities set after action completion.")
+
+    #          # print(f"CharacterActionProcessor: Character {char_id} has no more actions. Removed from active list.")
+
+
+    #     # Сохранение обновленного состояния персонажа (если он помечен как dirty) произойдет в save_all_characters.
+    #     # process_tick пометил персонажа как dirty, если прогресс изменился.
+    #     # complete_action пометил персонажа как dirty, если действие завершилось и/или очередь изменилась.
 
 
     # Метод для завершения ИНДИВИДУАЛЬНОГО действия персонажа (ПЕРЕНЕСЕН ИЗ CharacterManager)
@@ -1011,12 +1021,15 @@ class CharacterActionProcessor:
         # Убедимся, что у объекта Character есть атрибуты current_action и action_queue перед проверкой
         if not char or (getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue)):
              # Удаляем из кеша сущностей с активным действием через менеджер персонажей.
-             # _entities_with_active_action доступен напрямую для процессора.
-             self._character_manager._entities_with_active_action.discard(char_id)
+             char_guild_id_str = str(getattr(char, 'guild_id', 'unknown_guild')) if char else 'unknown_guild'
+             if char_guild_id_str in self._character_manager._entities_with_active_action:
+                 self._character_manager._entities_with_active_action[char_guild_id_str].discard(char_id)
+                 if not self._character_manager._entities_with_active_action[char_guild_id_str]:
+                     del self._character_manager._entities_with_active_action[char_guild_id_str]
              # print(f"CharacterActionProcessor: Skipping tick for character {char_id} (not found, no action, or empty queue).")
              return
 
-        current_action = getattr(char, 'current_action', None)
+        current_action = getattr(char, 'current_action', None) # char is guaranteed to be not None here
         action_completed = False # Флаг завершения
 
 

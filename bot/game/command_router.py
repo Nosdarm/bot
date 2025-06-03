@@ -3,6 +3,7 @@
 print("--- Начинается загрузка: command_router.py")
 
 import asyncio
+import json
 import traceback
 import shlex # For better argument parsing (handles quotes)
 import uuid # Needed for is_uuid_format example
@@ -344,6 +345,7 @@ class CommandRouter:
         author_id = context['author_id']
         guild_id = context['guild_id']
         char_manager = context.get('character_manager')
+        error_messages = context.get('settings', {}).get('error_messages', {}) # Assuming error_messages are in settings
 
         if not char_manager:
             await send_callback("Character manager is not available.")
@@ -384,9 +386,13 @@ class CommandRouter:
                 else:
                     await send_callback(f"Failed to create character '{name}'.")
             except ValueError as ve: # Catches int(author_id) conversion error
-                await send_callback(f"Error: Invalid user ID format. {ve}")
+                error_template = error_messages.get("CHARACTER_CREATION_INVALID_USER_ID", "Error: Invalid user ID format. {details}")
+                response = error_template.format(details=ve) if error_template else f"Error: Invalid user ID format. {ve}"
+                await send_callback(response)
             except Exception as e:
-                await send_callback(f"An error occurred while creating character '{name}': {e}")
+                error_template = error_messages.get("CHARACTER_CREATION_GENERAL_ERROR", "An error occurred while creating character '{character_name}': {error_details}")
+                response = error_template.format(character_name=name, error_details=e) if error_template else f"An error occurred while creating character '{name}': {e}"
+                await send_callback(response)
                 print(f"Error in handle_character (create): {e}")
                 traceback.print_exc()
 
@@ -489,17 +495,41 @@ class CommandRouter:
         entity_id_to_inspect = sub_args[0] 
 
         try:
-            relationships = relationship_manager.get_relationships_for_entity(guild_id, entity_id_to_inspect)
+            relationships = await relationship_manager.get_relationships_for_entity(guild_id, entity_id_to_inspect) # Assuming this returns List[Dict] or List[RelationshipObject]
             if not relationships:
                 await send_callback(f"ℹ️ No relationships found for entity `{entity_id_to_inspect}` in this guild.")
                 return
 
             response_lines = [f"Relationships for Entity `{entity_id_to_inspect}`:"]
-            for rel in relationships:
-                other_entity_id = rel.entity2_id if rel.entity1_id == entity_id_to_inspect else rel.entity1_id
-                other_entity_type = rel.entity2_type if rel.entity1_type == entity_id_to_inspect else rel.entity1_type
+            for rel_data in relationships: # Assuming rel_data is a dictionary or an object
+                if isinstance(rel_data, dict):
+                    entity1_id = rel_data.get('entity1_id')
+                    entity2_id = rel_data.get('entity2_id')
+                    entity1_type = rel_data.get('entity1_type')
+                    # entity2_type = rel_data.get('entity2_type') # Not directly used if we always show the "other"
+                    relationship_type = rel_data.get('relationship_type', 'unknown')
+                    strength = rel_data.get('strength', 0.0)
+                    details = rel_data.get('details')
+                elif hasattr(rel_data, 'entity1_id'): # Assuming it's an object
+                    entity1_id = rel_data.entity1_id
+                    entity2_id = rel_data.entity2_id
+                    entity1_type = rel_data.entity1_type
+                    # entity2_type = rel_data.entity2_type
+                    relationship_type = getattr(rel_data, 'relationship_type', 'unknown')
+                    strength = getattr(rel_data, 'strength', 0.0)
+                    details = getattr(rel_data, 'details', None)
+                else:
+                    response_lines.append(f"- Malformed relationship data: {rel_data}")
+                    continue
+
+                other_entity_id = entity2_id if entity1_id == entity_id_to_inspect else entity1_id
+                # To get other_entity_type, we'd need it stored or infer it. Assuming it's part of rel_data or object.
+                # For simplicity, if entity1_id is the one we inspect, other_entity_type is entity2_type.
+                # This part of logic might need adjustment based on actual data structure from get_relationships_for_entity
+                other_entity_type = getattr(rel_data, 'entity2_type') if entity1_id == entity_id_to_inspect and hasattr(rel_data, 'entity2_type') else getattr(rel_data, 'entity1_type', 'UnknownType')
+
                 response_lines.append(
-                    f"- With `{other_entity_id}` ({other_entity_type}): **{rel.relationship_type}** (Strength: {rel.strength:.2f}). Details: _{rel.details or 'N/A'}_"
+                    f"- With `{other_entity_id}` ({other_entity_type}): **{relationship_type}** (Strength: {strength:.2f}). Details: _{details or 'N/A'}_"
                 )
             await send_callback("\n".join(response_lines))
         except Exception as e:
@@ -609,16 +639,20 @@ class CommandRouter:
 
         try:
             author_discord_id = int(author_id_str)
-            player_char = char_manager.get_character_by_discord_id(guild_id, author_discord_id)
+            player_char = await char_manager.get_character_by_discord_id(guild_id, author_discord_id)
             if not player_char:
                 await send_callback(f"You do not have an active character in this guild. Use `{self._command_prefix}character create <name>` to create one.")
                 return
             character_id = player_char.id
         except ValueError: # Catches int(author_id_str) conversion error
-            await send_callback("Invalid user ID format.")
+            error_template = error_messages.get("INVALID_USER_ID_FORMAT", "Invalid user ID format.")
+            response = error_template if error_template else "Invalid user ID format."
+            await send_callback(response)
             return
         except Exception as e: # Catches other errors during character fetch
-            await send_callback(f"Error fetching your character: {e}")
+            error_template = error_messages.get("CHARACTER_FETCH_ERROR", "Error fetching your character: {details}")
+            response = error_template.format(details=e) if error_template else f"Error fetching your character: {e}"
+            await send_callback(response)
             print(f"CommandRouter: Error fetching character for {author_id_str} in guild {guild_id}: {e}") # Log for server admin
             traceback.print_exc()
             return
@@ -639,7 +673,8 @@ class CommandRouter:
                     await send_callback("No quests currently available or active for you.")
                     return
                 
-                response = f"**Your Quests, {player_char.name}:**\n"
+                char_name = getattr(player_char, 'name', 'Unknown Character')
+                response = f"**Your Quests, {char_name}:**\n"
                 for q_data in quest_list: # Assuming q_data is a dict with 'name', 'description', 'status'
                     response += f"- **{q_data.get('name', q_data.get('id'))}** ({q_data.get('status', 'unknown')})\n"
                     response += f"  _{q_data.get('description', 'No description.')}_\n"
@@ -680,7 +715,8 @@ class CommandRouter:
             elif isinstance(quest_start_result, dict) and 'id' in quest_start_result: # Successfully started (non-AI or pre-approved AI)
                 # QuestManager.start_quest should return quest name or details for a better message
                 quest_name = quest_start_result.get('name_i18n', {}).get('en', quest_template_id_arg)
-                await send_callback(f"Quest '{quest_name}' started for {player_char.name}!")
+                char_name = getattr(player_char, 'name', 'Unknown Character')
+                await send_callback(f"Quest '{quest_name}' started for {char_name}!")
             else: # None or other unexpected result
                 await send_callback(f"Failed to start quest '{quest_template_id_arg}'. You may not meet prerequisites, the quest may be already active/completed, it might not exist, or AI generation failed.")
             
@@ -778,15 +814,19 @@ class CommandRouter:
             return
 
         try:
-            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            player_char = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
             if not player_char:
                 await send_callback(f"You need an active character to interact with NPCs. Use `{self._command_prefix}character create <name>`.")
                 return
         except ValueError: # Catches int(author_id_str) conversion error
-            await send_callback("Invalid user ID format.")
+            error_template = error_messages.get("INVALID_USER_ID_FORMAT", "Invalid user ID format.")
+            response = error_template if error_template else "Invalid user ID format."
+            await send_callback(response)
             return
         except Exception as e: # Catches other errors during character fetch
-            await send_callback(f"Error fetching your character: {e}")
+            error_template = error_messages.get("CHARACTER_FETCH_ERROR", "Error fetching your character: {details}")
+            response = error_template.format(details=e) if error_template else f"Error fetching your character: {e}"
+            await send_callback(response)
             print(f"CommandRouter: Error fetching character for {author_id_str} in guild {guild_id}: {e}")
             traceback.print_exc()
             return
@@ -907,7 +947,9 @@ class CommandRouter:
             return
 
         try:
-            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            player_char = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            player_char = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            player_char = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
             if not player_char:
                 await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
                 return
@@ -1134,12 +1176,16 @@ class CommandRouter:
             else:
                 await send_callback(f"Could not start combat with {target_npc_name}. They might be too powerful, or something went wrong.")
                 
-        except ValueError: 
-            await send_callback("Invalid user ID format.")
+        except ValueError:
+            error_template = error_messages.get("INVALID_USER_ID_FORMAT", "Invalid user ID format.")
+            response = error_template if error_template else "Invalid user ID format."
+            await send_callback(response)
         except Exception as e:
             print(f"CommandRouter: Error in handle_fight against '{target_identifier}': {e}")
             traceback.print_exc()
-            await send_callback(f"An error occurred while trying to initiate combat: {e}")
+            error_template = error_messages.get("COMBAT_INITIATION_ERROR", "An error occurred while trying to initiate combat: {details}")
+            response = error_template.format(details=e) if error_template else f"An error occurred while trying to initiate combat: {e}"
+            await send_callback(response)
 
 
     @command("hide")
@@ -1169,7 +1215,7 @@ class CommandRouter:
             return
 
         try:
-            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            player_char = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
             if not player_char:
                 await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
                 return
@@ -1189,11 +1235,15 @@ class CommandRouter:
                 await send_callback("Could not attempt to hide at this time. You might be busy or in an unsuitable location.")
                 
         except ValueError: # For int(author_id_str)
-            await send_callback("Invalid user ID format.")
+            error_template = error_messages.get("INVALID_USER_ID_FORMAT", "Invalid user ID format.")
+            response = error_template if error_template else "Invalid user ID format."
+            await send_callback(response)
         except Exception as e:
             print(f"CommandRouter: Error in handle_hide: {e}")
             traceback.print_exc()
-            await send_callback(f"An error occurred while trying to hide: {e}")
+            error_template = error_messages.get("HIDE_ACTION_ERROR", "An error occurred while trying to hide: {details}")
+            response = error_template.format(details=e) if error_template else f"An error occurred while trying to hide: {e}"
+            await send_callback(response)
 
 
     @command("steal")
@@ -1233,7 +1283,7 @@ class CommandRouter:
             return
 
         try:
-            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            player_char = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
             if not player_char:
                 await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
                 return
@@ -1278,11 +1328,15 @@ class CommandRouter:
                 await send_callback(f"Could not attempt to steal from {target_npc_name} at this time. You might be busy.")
                 
         except ValueError: # For int(author_id_str)
-            await send_callback("Invalid user ID format.")
+            error_template = error_messages.get("INVALID_USER_ID_FORMAT", "Invalid user ID format.")
+            response = error_template if error_template else "Invalid user ID format."
+            await send_callback(response)
         except Exception as e:
             print(f"CommandRouter: Error in handle_steal for target '{target_identifier}': {e}")
             traceback.print_exc()
-            await send_callback(f"An error occurred while trying to steal: {e}")
+            error_template = error_messages.get("STEAL_ACTION_ERROR", "An error occurred while trying to steal: {details}")
+            response = error_template.format(details=e) if error_template else f"An error occurred while trying to steal: {e}"
+            await send_callback(response)
 
 
     @command("use")
@@ -1333,7 +1387,7 @@ class CommandRouter:
             return
 
         try:
-            player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+            player_char = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
             if not player_char:
                 await send_callback(f"You do not have an active character. Use `{self._command_prefix}character create <name>`.")
                 return
@@ -1375,11 +1429,15 @@ class CommandRouter:
                 await send_callback(f"Could not use item '{item_instance_id}'. You might be busy, not own the item, or the target is invalid.")
                 
         except ValueError: # For int(author_id_str)
-            await send_callback("Invalid user ID format.")
+            error_template = error_messages.get("INVALID_USER_ID_FORMAT", "Invalid user ID format.")
+            response = error_template if error_template else "Invalid user ID format."
+            await send_callback(response)
         except Exception as e:
             print(f"CommandRouter: Error in handle_use for item '{item_instance_id}': {e}")
             traceback.print_exc()
-            await send_callback(f"An error occurred while trying to use the item: {e}")
+            error_template = error_messages.get("USE_ITEM_ERROR", "An error occurred while trying to use the item: {details}")
+            response = error_template.format(details=e) if error_template else f"An error occurred while trying to use the item: {e}"
+            await send_callback(response)
 
 
     @command("gm")
@@ -1481,7 +1539,7 @@ class CommandRouter:
                 await self._notify_master_of_pending_content(request_id, guild_id, author_id_str, context)
                 # Optionally apply 'awaiting_moderation' to GM's character if they have one and it's desired
                 if char_manager and status_manager:
-                    gm_character = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+                    gm_character = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
                     if gm_character:
                         await status_manager.add_status_effect_to_entity(
                             target_id=gm_character.id, target_type='Character',
@@ -1537,7 +1595,7 @@ class CommandRouter:
                     return
                 final_triggering_char_id = char_to_assign.id
             else: # Default to GM's character if one exists
-                gm_character = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+                gm_character = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
                 if gm_character:
                     final_triggering_char_id = gm_character.id
 
@@ -1562,7 +1620,8 @@ class CommandRouter:
                 await send_callback(f"Quest data for '{quest_idea_or_template_id}' generated for character '{final_triggering_char_id}' and submitted for moderation. Request ID: `{request_id}`.")
                 await self._notify_master_of_pending_content(request_id, guild_id, author_id_str, context)
                 if status_manager and char_manager: # Apply to GM's char if they are the requester
-                    gm_character = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+                    gm_character = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+                    gm_character = await char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
                     if gm_character:
                         await status_manager.add_status_effect_to_entity(
                             target_id=gm_character.id, target_type='Character',
@@ -1672,11 +1731,11 @@ class CommandRouter:
                     char_mgr = context.get('character_manager')
                     npc_mgr = context.get('npc_manager')
                     # Check if it's a character
-                    char_obj = char_mgr.get_character(guild_id, entity_id_to_inspect) if char_mgr else None
+                    char_obj = await char_mgr.get_character(guild_id, entity_id_to_inspect) if char_mgr else None
                     if char_obj:
                         entity_name = getattr(char_obj, 'name', entity_id_to_inspect)
                     else: # If not a character, check if it's an NPC
-                        npc_obj = npc_mgr.get_npc(guild_id, entity_id_to_inspect) if npc_mgr else None
+                        npc_obj = await npc_mgr.get_npc(guild_id, entity_id_to_inspect) if npc_mgr else None
                         if npc_obj:
                             entity_name = getattr(npc_obj, 'name', entity_id_to_inspect)
                     
@@ -1684,17 +1743,22 @@ class CommandRouter:
                     
                     if relations:
                         response = f"**Relationships for {entity_name} (`{entity_id_to_inspect}`):**\n"
-                        for rel in relations:
-                            target_id_val = rel.get('target_id', 'Unknown Target') 
-                            # Attempt to get target name for better display
-                            target_name_str = target_id_val 
-                            if char_mgr and char_mgr.get_character(guild_id, target_id_val):
-                                target_name_str = getattr(char_mgr.get_character(guild_id, target_id_val), 'name', target_id_val)
-                            elif npc_mgr and npc_mgr.get_npc(guild_id, target_id_val):
-                                target_name_str = getattr(npc_mgr.get_npc(guild_id, target_id_val), 'name', target_id_val)
+                        for rel_dict in relations: # relations is List[Dict[str, Any]]
+                            # Assuming Relationship object was converted to dict by get_relationships_for_entity
+                            # If it's still Relationship objects, access attributes directly e.g. rel.target_id
+                            target_id_val = rel_dict.get('target_id', 'Unknown Target')
+                            target_name_str = target_id_val
+                            # Check target type to fetch name correctly
+                            target_char = await char_mgr.get_character(guild_id, target_id_val) if char_mgr else None
+                            if target_char:
+                                target_name_str = getattr(target_char, 'name', target_id_val)
+                            else:
+                                target_npc = await npc_mgr.get_npc(guild_id, target_id_val) if npc_mgr else None
+                                if target_npc:
+                                    target_name_str = getattr(target_npc, 'name', target_id_val)
                             
-                            rel_type = rel.get('type', 'unknown')
-                            strength = rel.get('strength', 0.0)
+                            rel_type = rel_dict.get('type', 'unknown')
+                            strength = rel_dict.get('strength', 0.0)
                             response += f"- With **{target_name_str}** (`{target_id_val}`): Type: `{rel_type}`, Strength: `{strength:.1f}`\n"
                         
                         # Discord message length limit is 2000 characters
@@ -1893,7 +1957,11 @@ class CommandRouter:
 
     async def _notify_master_of_pending_content(self, request_id: str, guild_id: str, user_id: str, context: Dict[str, Any]):
         """Helper to notify Master channel about content awaiting moderation."""
-        db_adapter = context.get('persistence_manager').get_db_adapter() # Assuming PM provides DB adapter
+        persistence_manager = context.get('persistence_manager')
+        if not persistence_manager:
+            print("CommandRouter: ERROR - PersistenceManager not available for Master notification.")
+            return
+        db_adapter = persistence_manager.get_db_adapter()
         if not db_adapter:
             print("CommandRouter: ERROR - DB adapter not available via PersistenceManager for Master notification.")
             return
@@ -1966,6 +2034,11 @@ class CommandRouter:
         Fetches request, calls relevant manager, removes status, notifies user, deletes request.
         """
         send_to_master_channel = context['send_to_command_channel'] # For feedback to the master using the command
+        if not self._persistence_manager:
+            print("CommandRouter:_activate_approved_content ERROR - PersistenceManager is None.")
+            await send_to_master_channel(f"Error: PersistenceManager unavailable during content activation for {request_id}.")
+            return False
+
         db_adapter = self._persistence_manager.get_db_adapter()
         if not db_adapter:
             print("CommandRouter:_activate_approved_content ERROR - DB adapter not available.")
@@ -1998,14 +2071,19 @@ class CommandRouter:
             if content_type == 'npc':
                 if npc_manager:
                     entity_id_or_data = await npc_manager.create_npc_from_moderated_data(guild_id, approved_data, context)
-                    if entity_id_or_data:
-                        npc_obj = npc_manager.get_npc(guild_id, entity_id_or_data)
-                        entity_info_for_user_notification = f"NPC '{getattr(npc_obj, 'name', entity_id_or_data)}' (ID: {entity_id_or_data})"
+                    if entity_id_or_data: # This is the NPC ID
+                        npc_obj = await npc_manager.get_npc(guild_id, entity_id_or_data)
+                        if npc_obj:
+                            entity_info_for_user_notification = f"NPC '{getattr(npc_obj, 'name', entity_id_or_data)}' (ID: {entity_id_or_data})"
+                        else:
+                            entity_info_for_user_notification = f"NPC (ID: {entity_id_or_data}, failed to fetch details)"
+                    else: # npc_manager.create_npc_from_moderated_data returned None
+                         entity_info_for_user_notification = f"NPC (Type: {content_type}, failed to create from moderated data)"
                 else: await send_to_master_channel("Error: NpcManager not available for NPC activation.")
 
             elif content_type == 'quest':
                 if quest_manager and character_manager:
-                    player_char = character_manager.get_character_by_discord_id(guild_id, int(original_user_id))
+                    player_char = await character_manager.get_character_by_discord_id(guild_id, int(original_user_id))
                     if not player_char:
                         await send_to_master_channel(f"Error: Original user {original_user_id} does not have an active character in guild {guild_id} to assign the quest to. Quest {request_id} cannot be activated.")
                         # Optionally update moderation request status to 'activation_failed'
@@ -2034,14 +2112,14 @@ class CommandRouter:
         except Exception as e_activate:
             print(f"CommandRouter:_activate_approved_content ERROR activating content for request {request_id}: {e_activate}")
             traceback.print_exc()
-            await send_to_master_channel(f"❌ Critical error during content activation for request {request_id}: {e_activate}. Content remains in moderation queue with status '{moderation_request['status']}'.")
+            await send_to_master_channel(f"❌ Critical error during content activation for request {request_id}: {e_activate}. Content remains in moderation queue with status '{moderation_request.get('status', 'unknown')}'.") # Safe access to status
             return False # Do not proceed to delete moderation request or notify user of success
 
         if activation_successful:
             print(f"CommandRouter: Content from request {request_id} (Type: {content_type}) successfully activated.")
 
             if character_manager and status_manager:
-                player_char_to_update = character_manager.get_character_by_discord_id(guild_id, int(original_user_id))
+                player_char_to_update = await character_manager.get_character_by_discord_id(guild_id, int(original_user_id))
                 if player_char_to_update:
                     removed_count = await status_manager.remove_status_effects_by_type(
                         player_char_to_update.id, 'Character', 'awaiting_moderation', guild_id, context
@@ -2095,6 +2173,10 @@ class CommandRouter:
             return
 
         request_id = args[0]
+        if not self._persistence_manager:
+            await send_callback("Error: PersistenceManager is unavailable.")
+            print("CommandRouter: ERROR - PersistenceManager is None for handle_approve_content.")
+            return
         db_adapter = self._persistence_manager.get_db_adapter()
         if not db_adapter:
             await send_callback("Error: Database service is unavailable.")
@@ -2165,6 +2247,10 @@ class CommandRouter:
         request_id = args[0]
         reason = " ".join(args[1:]) if len(args) > 1 else "No reason provided."
 
+        if not self._persistence_manager:
+            await send_callback("Error: PersistenceManager is unavailable.")
+            print("CommandRouter: ERROR - PersistenceManager is None for handle_reject_content.")
+            return
         db_adapter = self._persistence_manager.get_db_adapter()
         if not db_adapter:
             await send_callback("Error: Database service is unavailable.")
@@ -2197,7 +2283,7 @@ class CommandRouter:
                 character_manager: Optional["CharacterManager"] = context.get('character_manager')
                 status_manager: Optional["StatusManager"] = context.get('status_manager')
                 if character_manager and status_manager:
-                    player_char_to_update = character_manager.get_character_by_discord_id(request_guild_id, int(original_user_id))
+                    player_char_to_update = await character_manager.get_character_by_discord_id(request_guild_id, int(original_user_id))
                     if player_char_to_update:
                         removed_count = await status_manager.remove_status_effects_by_type(
                             player_char_to_update.id, 'Character', 'awaiting_moderation', request_guild_id, context
@@ -2251,6 +2337,10 @@ class CommandRouter:
         request_id = args[0]
         json_edited_data_str = " ".join(args[1:]) # Join all remaining args to form the JSON string
 
+        if not self._persistence_manager:
+            await send_callback("Error: PersistenceManager is unavailable.")
+            print("CommandRouter: ERROR - PersistenceManager is None for handle_edit_content.")
+            return
         db_adapter = self._persistence_manager.get_db_adapter()
         ai_validator: Optional["AIResponseValidator"] = context.get('ai_validator') # Get from main context
 
@@ -2258,7 +2348,7 @@ class CommandRouter:
             await send_callback("Error: Database service is unavailable.")
             print("CommandRouter: ERROR - DB adapter not available for handle_edit_content.")
             return
-        if not ai_validator:
+        if not ai_validator: # This ai_validator comes from the main context setup in GameManager
             await send_callback("Error: AIResponseValidator service is unavailable. Cannot validate edits.")
             print("CommandRouter: ERROR - AIResponseValidator not in context for handle_edit_content.")
             return
@@ -2290,14 +2380,21 @@ class CommandRouter:
             # This step assumes the validator can handle the structure without full existing ID context if not provided.
             validation_result = await ai_validator.validate_ai_response(
                 ai_json_string=json_edited_data_str, # Pass the string directly
-                expected_structure=original_content_type, # e.g., "single_npc", "single_quest"
-                existing_npc_ids=set(),      # Placeholder - ideally fetch if relevant for content_type
-                existing_quest_ids=set(),    # Placeholder
-                existing_item_template_ids=set(), # Placeholder
-                existing_location_template_ids=set(self._location_manager._location_templates.get(guild_id, {}).keys()) if self._location_manager else set()
+                expected_structure=f"single_{original_content_type}", # e.g., "single_npc", "single_quest"
+                existing_npc_ids=set(self._npc_manager.get_all_npc_ids_for_guild(guild_id)) if self._npc_manager else set(),
+                existing_quest_ids=set(self._quest_manager.get_all_quest_template_ids(guild_id)) if self._quest_manager else set(),
+                existing_item_template_ids=set(self._item_manager.get_all_item_template_ids(guild_id)) if self._item_manager else set()
+                # Assuming location_manager and its _location_templates is how template IDs are stored
+                # existing_location_template_ids=set(self._location_manager._location_templates.get(guild_id, {}).keys()) if self._location_manager else set()
             )
 
-            if not validation_result.get('overall_status', '').startswith("success"):
+            # Check the overall status and individual entity errors
+            # The validation_result for "single_x" structure will have one entity in 'entities' list
+            overall_status = validation_result.get("overall_status", "error")
+            entity_validation = validation_result.get("entities", [{}])[0] if validation_result.get("entities") else {}
+            entity_status = entity_validation.get("status", "requires_moderation")
+
+            if overall_status == "error" or entity_status == "requires_moderation":
                 errors = validation_result.get('global_errors', [])
                 entity_errors = validation_result.get('entities', [{}])[0].get('errors', [])
                 all_errors = errors + entity_errors
