@@ -95,7 +95,7 @@ class RuleEngine:
         if rules_data is not None:
             self._rules_data = rules_data
         else:
-            self._rules_data = self._settings.get('rules_data', {}) # Fallback to settings
+            self._rules_data = self._settings.get('game_rules', {}) # Fallback to settings
         
         print("RuleEngine initialized.")
 
@@ -105,7 +105,7 @@ class RuleEngine:
         """
         print("RuleEngine: Loading rules data...")
         # Предполагаем, что правила не зависят от guild_id и загружаются глобально
-        self._rules_data = self._settings.get('rules_data', {})
+        self._rules_data = self._settings.get('game_rules', {})
         print(f"RuleEngine: Loaded {len(self._rules_data)} rules entries.")
 
     # Добавляем методы load_state и save_state для совместимости с PersistenceManager
@@ -378,9 +378,34 @@ class RuleEngine:
         """
         # Здесь можно добавить логику, например, на основе расы/класса, если они есть в данных
         # или просто вернуть дефолтные, как сейчас в CharacterManager
-        print("RuleEngine: Generating initial character stats. (Placeholder)")
-        return self._rules_data.get('initial_stats_template', {'strength': 10, 'dexterity': 10, 'intelligence': 10})
+        print("RuleEngine: Generating initial character stats.")
+        default_stats = self._rules_data.get("character_stats_rules", {}).get("default_initial_stats", {'strength': 10, 'dexterity': 10, 'constitution': 10, 'intelligence': 10, 'wisdom': 10, 'charisma': 10})
+        return default_stats.copy()  # Return a copy to prevent modification of the original rules data
 
+    def _calculate_attribute_modifier(self, attribute_value: int) -> int:
+        """
+        Calculates the modifier for a given attribute value based on the formula in rules_data.
+        """
+        char_stats_rules = self._rules_data.get("character_stats_rules", {})
+        formula_str = char_stats_rules.get("attribute_modifier_formula", "(attribute_value - 10) // 2")
+
+        # Basic sanitization/validation for the formula string to prevent arbitrary code execution.
+        # This is a simplified approach. For production, a more robust expression parser/evaluator is recommended.
+        allowed_chars = "attribute_value()+-*/0123456789 " # Whitelist characters
+        if not all(char in allowed_chars for char in formula_str):
+            print(f"RuleEngine: Warning: Invalid characters in attribute_modifier_formula: '{formula_str}'. Using default.")
+            formula_str = "(attribute_value - 10) // 2"
+
+        try:
+            # Replace placeholder and evaluate.
+            # Ensure 'attribute_value' is the only variable available in the eval scope.
+            # Using a limited globals/locals dict for eval.
+            modifier = eval(formula_str, {"__builtins__": {}}, {"attribute_value": attribute_value})
+            return int(modifier)
+        except Exception as e:
+            print(f"RuleEngine: Error evaluating attribute_modifier_formula '{formula_str}': {e}. Using default calculation.")
+            # Fallback to default if formula is malformed or causes error
+            return (attribute_value - 10) // 2
 
     async def choose_combat_action_for_npc(
         self,
@@ -1436,10 +1461,10 @@ class RuleEngine:
         situational_modifier: int = 0, 
         associated_stat: Optional[str] = None, # e.g., "strength" for Athletics
         **kwargs: Any
-    ) -> tuple[bool, int, int]:
+    ) -> tuple[bool, int, int, Optional[str]]:
         """
         Resolves a generic skill check for a character.
-        Returns: (success: bool, total_skill_value: int, d20_roll: int)
+        Returns: (success: bool, total_skill_value: int, d20_roll: int, crit_status: Optional[str])
         """
         # Ensure character has skills and stats attributes
         character_skills = getattr(character, 'skills', {})
@@ -1453,19 +1478,12 @@ class RuleEngine:
         stat_modifier = 0
         # Determine associated stat if not provided
         if not associated_stat:
-            # Simple default mapping (can be expanded or moved to rules_data)
-            skill_stat_map = {
-                "athletics": "strength", "acrobatics": "dexterity", "stealth": "dexterity",
-                "perception": "wisdom", "insight": "wisdom", "survival": "wisdom", "medicine": "wisdom",
-                "persuasion": "charisma", "deception": "charisma", "intimidation": "charisma", "performance": "charisma",
-                "investigation": "intelligence", "lore": "intelligence", "arcana": "intelligence", "religion": "intelligence",
-                # Add more skill-stat mappings as needed
-            }
+            skill_stat_map = self._rules_data.get("skill_rules", {}).get("skill_stat_map", {})
             associated_stat = skill_stat_map.get(skill_name.lower())
 
         if associated_stat:
             stat_value = character_stats.get(associated_stat, 10) # Default to 10 if stat not present
-            stat_modifier = (stat_value - 10) // 2 # Standard D&D modifier calculation
+            stat_modifier = self._calculate_attribute_modifier(stat_value)
 
         try:
             roll_result_dict = await self._resolve_dice_roll("1d20", context=kwargs) # Pass context if _resolve_dice_roll uses it
@@ -1475,10 +1493,24 @@ class RuleEngine:
             d20_roll = 10 # Fallback roll
 
         total_skill_value = d20_roll + skill_value + stat_modifier + situational_modifier
-        success = total_skill_value >= difficulty_class
 
-        print(f"RuleEngine: Skill Check ({skill_name.capitalize()} DC {difficulty_class}): Roll={d20_roll}, SkillVal={skill_value}, StatMod({associated_stat or 'N/A'})={stat_modifier}, SitMod={situational_modifier} -> Total={total_skill_value}. Success: {success}")
-        return success, total_skill_value, d20_roll
+        crit_rules = self._rules_data.get("check_rules", {})
+        crit_success_roll = crit_rules.get("critical_success", {}).get("natural_roll", 20)
+        crit_failure_roll = crit_rules.get("critical_failure", {}).get("natural_roll", 1)
+
+        crit_status: Optional[str] = None
+        success: bool # Declare success here to be assigned in conditional block
+        if d20_roll == crit_success_roll and crit_rules.get("critical_success", {}).get("auto_succeeds", True):
+            success = True
+            crit_status = "critical_success"
+        elif d20_roll == crit_failure_roll and crit_rules.get("critical_failure", {}).get("auto_fails", True):
+            success = False
+            crit_status = "critical_failure"
+        else:
+            success = total_skill_value >= difficulty_class
+
+        print(f"RuleEngine: Skill Check ({skill_name.capitalize()} DC {difficulty_class}): Roll={d20_roll}, SkillVal={skill_value}, StatMod({associated_stat or 'N/A'})={stat_modifier}, SitMod={situational_modifier} -> Total={total_skill_value}. Success: {success} (Crit: {crit_status})")
+        return success, total_skill_value, d20_roll, crit_status
 
     async def resolve_attack_roll(
         self, 
@@ -1515,7 +1547,7 @@ class RuleEngine:
         elif attack_type.startswith("spell_"): primary_stat_name = "intelligence" # Or based on spell's casting stat
         
         primary_stat_value = attacker_stats.get(primary_stat_name, 10)
-        stat_modifier = (primary_stat_value - 10) // 2
+        stat_modifier = self._calculate_attribute_modifier(primary_stat_value)
         attack_bonus += stat_modifier
         
         # Placeholder for proficiency bonus (e.g., from skills or character level)
@@ -1532,24 +1564,35 @@ class RuleEngine:
         except ValueError:
             d20_roll = 10 # Fallback
 
-        crit_status: Optional[str] = None
-        if d20_roll == 20:
-            crit_status = "critical_hit"
-        elif d20_roll == 1:
-            crit_status = "critical_miss"
+        # crit_status: Optional[str] = None # Already defined
+        # if d20_roll == 20:
+        #     crit_status = "critical_hit"
+        # elif d20_roll == 1:
+        #     crit_status = "critical_miss"
+        crit_rules = self._rules_data.get("check_rules", {})
+        crit_success_roll = crit_rules.get("critical_success", {}).get("natural_roll", 20)
+        crit_failure_roll = crit_rules.get("critical_failure", {}).get("natural_roll", 1)
 
-        attack_total = d20_roll + attack_bonus + situational_modifiers
+        crit_status: Optional[str] = None
+        if d20_roll == crit_success_roll:
+            crit_status = "critical_hit"
+            # hit = True # Crit success usually auto-hits, specific game rule
+        elif d20_roll == crit_failure_roll:
+            crit_status = "critical_miss"
+            # hit = False # Crit failure usually auto-misses
+
+        total_attack_value = d20_roll + attack_bonus + situational_modifiers
         
         hit = False
-        if crit_status == "critical_hit":
+        if crit_status == "critical_hit": # If it's a critical hit (e.g. nat 20), it's a hit.
             hit = True
-        elif crit_status == "critical_miss":
+        elif crit_status == "critical_miss": # If it's a critical miss (e.g. nat 1), it's a miss.
             hit = False
-        else:
-            hit = attack_total >= defender_ac
+        else: # Otherwise, compare total against AC.
+            hit = total_attack_value >= defender_ac
             
-        print(f"RuleEngine: Attack Roll ({attack_type}): AttackerBonus={attack_bonus}, DefenderAC={defender_ac} | Roll={d20_roll} -> Total={attack_total}. Hit: {hit} (Crit: {crit_status})")
-        return hit, attack_total, d20_roll, crit_status
+        print(f"RuleEngine: Attack Roll ({attack_type}): AttackerBonus={attack_bonus}, DefenderAC={defender_ac} | Roll={d20_roll} -> Total={total_attack_value}. Hit: {hit} (Crit: {crit_status})")
+        return hit, total_attack_value, d20_roll, crit_status
 
     async def calculate_damage(
         self, 
@@ -1579,9 +1622,9 @@ class RuleEngine:
         # 2. Add attacker's relevant stat modifier (placeholder)
         # This needs to be determined by weapon type (str for melee, dex for finesse/ranged) or spell casting stat.
         # For simplicity, let's assume a generic "damage_modifier" stat or use strength.
-        stat_damage_modifier = (attacker_stats.get("strength", 10) - 10) // 2 # Example for melee
-        # if weapon and weapon.type == "ranged": stat_damage_modifier = (attacker_stats.get("dexterity", 10) - 10) // 2
-        # if spell: stat_damage_modifier = (attacker_stats.get(spell.casting_stat, 10) - 10) // 2
+        stat_damage_modifier = self._calculate_attribute_modifier(attacker_stats.get("strength", 10)) # Example for melee
+        # if weapon and weapon.type == "ranged": stat_damage_modifier = self._calculate_attribute_modifier(attacker_stats.get("dexterity", 10))
+        # if spell: stat_damage_modifier = self._calculate_attribute_modifier(attacker_stats.get(spell.casting_stat, 10))
         
         total_damage = rolled_damage + stat_damage_modifier
 
@@ -1605,12 +1648,20 @@ class RuleEngine:
         if defender:
             defender_stats = getattr(defender, 'stats', {})
             if not isinstance(defender_stats, dict): defender_stats = {}
-            # Example:
-            # resistances = defender_stats.get("resistances", {}) # e.g., {"fire": 0.5, "slashing": 0.75}
-            # vulnerabilities = defender_stats.get("vulnerabilities", {}) # e.g., {"bludgeoning": 1.5}
-            # if damage_type in resistances: total_damage *= resistances[damage_type]
-            # if damage_type in vulnerabilities: total_damage *= vulnerabilities[damage_type]
-            pass # Placeholder for resistance/vulnerability logic
+
+            damage_calc_rules = self._rules_data.get("combat_rules", {}).get("damage_calculation", {})
+            resistances = damage_calc_rules.get("resistances", {}) # e.g. {"fire": 0.5}
+            vulnerabilities = damage_calc_rules.get("vulnerabilities", {}) # e.g. {"cold": 1.5}
+            immunities = damage_calc_rules.get("immunities", []) # e.g. ["poison"]
+
+            if damage_type in immunities:
+                total_damage = 0
+                print(f"RuleEngine: Target is immune to {damage_type}.")
+            else:
+                if damage_type in resistances:
+                    total_damage *= resistances[damage_type]
+                if damage_type in vulnerabilities:
+                    total_damage *= vulnerabilities[damage_type]
 
         final_damage = max(0, int(round(total_damage))) # Ensure damage is not negative and is an integer
         
@@ -1644,57 +1695,231 @@ class RuleEngine:
             print("RuleEngine: Warning: TimeManager not available or get_current_game_time missing. Returning 0.0 as game time.")
             return 0.0
 
-    async def award_experience(self, character: "Character", amount: int, **kwargs: Any) -> None:
-        """Awards experience points to a character."""
-        # TODO: Actual XP logic, check for level up
+    async def award_experience(self, character: "Character", amount: int, source_type: str, guild_id: str, source_id: Optional[str] = None,  **kwargs: Any) -> None:
         char_id = getattr(character, 'id', 'UnknownCharacter')
-        print(f"RuleEngine (Stub): Awarding {amount} XP to character {char_id}.")
-        # character.experience += amount
-        # self.check_for_level_up(character, **kwargs)
-        # if self._character_manager: await self._character_manager.mark_character_dirty(character.guild_id, character.id)
-        pass
+        current_xp = getattr(character, 'experience', 0)
 
-    async def check_for_level_up(self, character: "Character", **kwargs: Any) -> bool:
-        """Checks if a character has enough XP to level up and handles the process."""
-        # TODO: Implement XP thresholds, stat increases, new abilities/spells.
+        # Placeholder: could use xp_awards from rules to scale 'amount' based on source_type
+        # For example:
+        # xp_awards_config = self._rules_data.get("experience_rules", {}).get("xp_awards", {})
+        # if source_type == "combat" and source_id: # source_id could be CR of monster
+        #    amount = int(amount * xp_awards_config.get("combat",{}).get("cr_scaling_factor", 1.0))
+
+        if amount <= 0: # No XP to award or invalid amount
+            # print(f"RuleEngine: No XP awarded to character {char_id} (Amount: {amount}).")
+            return
+
+        character.experience = current_xp + amount
+        print(f"RuleEngine: Awarded {amount} XP to character {char_id} (Source: {source_type}). Total XP: {character.experience}")
+
+        leveled_up = await self.check_for_level_up(character, guild_id, **kwargs)
+        # check_for_level_up will mark dirty if level up occurs. If no level up, but XP changed, mark dirty here.
+        if not leveled_up and self._character_manager:
+            self._character_manager.mark_character_dirty(guild_id, char_id)
+
+
+    async def check_for_level_up(self, character: "Character", guild_id: str, **kwargs: Any) -> bool:
         char_id = getattr(character, 'id', 'UnknownCharacter')
-        print(f"RuleEngine (Stub): Checking for level up for character {char_id}. Returning False.")
-        return False
+        xp_rules = self._rules_data.get("experience_rules", {})
+        xp_to_level_config = xp_rules.get("xp_to_level_up", {})
+        xp_table = xp_to_level_config.get("values", {}) # This should be like {"2": 1000, "3": 3000, ...}
 
-    async def calculate_initiative(self, combatants: List[Union["Character", "NPC"]], **kwargs: Any) -> List[tuple[str, int]]:
-        """Calculates initiative for combatants."""
-        # TODO: Implement initiative based on Dexterity, feats, etc.
-        print(f"RuleEngine (Stub): Calculating initiative for {len(combatants)} combatants. Shuffling for now.")
+        general_settings = self._rules_data.get("general_settings", {})
+        max_level = general_settings.get("max_character_level", 20)
+
+        if not hasattr(character, 'level'): character.level = 1
+        if not hasattr(character, 'experience'): character.experience = 0
+
+        leveled_up_this_check = False
+
+        while getattr(character, 'level', 1) < max_level:
+            current_level = getattr(character, 'level', 1)
+            next_level_str = str(current_level + 1) # XP table is often indexed by the level to reach
+
+            xp_needed_for_next = xp_table.get(next_level_str)
+            # The GAME_RULES_STRUCTURE implies xp_table stores total XP to reach a level.
+            # Example: Level 1 needs 0 XP. To reach Level 2, needs 1000 TOTAL XP. To reach Level 3, needs 3000 TOTAL XP.
+
+            if xp_needed_for_next is None:
+                print(f"RuleEngine: XP requirement for level {next_level_str} not found in rules. Cannot level up {char_id} further this way.")
+                break
+
+            if character.experience >= xp_needed_for_next:
+                character.level = current_level + 1
+                # No XP subtraction if table is total XP needed. If it were XP *from previous level*, then subtract.
+
+                print(f"RuleEngine: Character {char_id} leveled up to level {character.level}!")
+                leveled_up_this_check = True
+
+                # Placeholder: Apply actual level up benefits (stats, skills, abilities)
+                # This would likely call another method: await self.apply_level_up_benefits(character, guild_id, **kwargs)
+
+                if self._character_manager: # Mark dirty for each level gained
+                    self._character_manager.mark_character_dirty(guild_id, char_id)
+            else:
+                # Not enough XP for the *next* level
+                break
         
-        initiative_list: List[tuple[str, int]] = []
-        # Shuffle for randomness, assign placeholder scores
-        random.shuffle(combatants) 
+        if leveled_up_this_check:
+            print(f"RuleEngine: Character {char_id} finished level up checks. Current level: {character.level}, XP: {character.experience}")
+
+        return leveled_up_this_check
+
+    async def calculate_initiative(self, combatants: List[Union["Character", "NPC"]], guild_id: str, **kwargs: Any) -> List[tuple[str, int]]:
+        print(f"RuleEngine: Calculating initiative for {len(combatants)} combatants using configured formula.")
+        initiative_list: List[tuple[str, float]] = [] # Store float for precision with tie_breaker
+
+        combat_rules = self._rules_data.get("combat_rules", {})
+        formula_str = combat_rules.get("initiative_formula", "dexterity_modifier") # Default to dex_mod
+        tie_breaker_roll_str = combat_rules.get("initiative_tie_breaker_die", "1d4")
+        initiative_base_die = combat_rules.get("initiative_base_die_roll", "1d20")
+
         for i, combatant in enumerate(combatants):
             combatant_id = getattr(combatant, 'id', f"unknown_combatant_{i}")
-            # Placeholder initiative score (e.g., d20 + dex_mod)
-            # For now, just use index or a random number
-            initiative_score = random.randint(1, 20) + i 
+            entity_stats = getattr(combatant, 'stats', {})
+            if not isinstance(entity_stats, dict): entity_stats = {}
+
+            calculated_initiative_from_formula = 0.0 # Use float for potential division
+
+            # Simplified formula parsing: "stat1_modifier [+-] stat2_modifier/K [+-] K2"
+            # Handles terms separated by '+' or '-', with optional division by a constant for a term.
+            # Example: "dexterity_modifier + wisdom_modifier / 2 - 1"
+
+            # Normalize formula: remove spaces and ensure it starts with a sign for parsing
+            normalized_formula = formula_str.replace(" ", "")
+            if not (normalized_formula.startswith('+') or normalized_formula.startswith('-')):
+                normalized_formula = '+' + normalized_formula
+
+            # Split by operators while keeping them
+            tokens = re.split(r'([+\-])', normalized_formula)
+            if not tokens[0]: # If starts with an operator, re.split might produce an empty first element
+                tokens = tokens[1:]
+
+            current_value = 0.0
+            idx = 0
+            while idx < len(tokens):
+                operator = tokens[idx]
+                term_str = tokens[idx+1]
+                idx += 2
+
+                term_val = 0.0
+                term_parts = term_str.split('/')
+                main_term = term_parts[0]
+                divisor = 1.0
+
+                if len(term_parts) > 1:
+                    try:
+                        divisor = float(term_parts[1])
+                        if divisor == 0:
+                            print(f"RuleEngine: Warning: Division by zero in initiative formula term: {term_str}. Ignoring division.")
+                            divisor = 1.0
+                    except ValueError:
+                        print(f"RuleEngine: Warning: Could not parse divisor in initiative formula term: {term_str}. Ignoring division.")
+
+                if "_modifier" in main_term:
+                    stat_name = main_term.split("_modifier")[0]
+                    stat_value = entity_stats.get(stat_name, 10)
+                    term_val = float(self._calculate_attribute_modifier(stat_value))
+                else:
+                    try:
+                        term_val = float(main_term) # If it's a constant
+                    except ValueError:
+                        print(f"RuleEngine: Warning: Could not parse constant in initiative formula term: {main_term}")
+
+                term_val /= divisor
+
+                if operator == '+':
+                    current_value += term_val
+                elif operator == '-':
+                    current_value -= term_val
+
+            calculated_initiative_from_formula = current_value
+
+            tie_breaker_value = 0.0
+            if tie_breaker_roll_str:
+                try:
+                    roll_res = await self.resolve_dice_roll(tie_breaker_roll_str, context=kwargs) # resolve_dice_roll is already async
+                    tie_breaker_value = float(roll_res.get('total', 0))
+                except ValueError:
+                    print(f"RuleEngine: Warning: Invalid tie_breaker_die format '{tie_breaker_roll_str}'. Defaulting to random float.")
+                    tie_breaker_value = random.random()
+
+            base_roll_obj = await self.resolve_dice_roll(initiative_base_die, context=kwargs) # resolve_dice_roll is already async
+            d_roll_value = base_roll_obj.get('total', 10)
+
+            initiative_score = float(d_roll_value) + calculated_initiative_from_formula + (tie_breaker_value / 100.0)
+
             initiative_list.append((combatant_id, initiative_score))
         
-        # Sort by initiative score, descending
         initiative_list.sort(key=lambda x: x[1], reverse=True)
-        print(f"RuleEngine (Stub): Initiative order: {initiative_list}")
-        return initiative_list
 
-    async def apply_equipment_effects(self, character: "Character", item: "Item", equipping: bool, **kwargs: Any) -> None:
-        """Applies or removes effects of equipping/unequipping an item."""
-        # TODO: Modify character stats, grant/remove abilities/status effects based on item properties.
+        final_initiative_list = [(id_val, int(round(score))) for id_val, score in initiative_list]
+
+        print(f"RuleEngine: Initiative order: {final_initiative_list}")
+        return final_initiative_list
+
+    async def apply_equipment_effects(self, character: "Character", item_data: Dict[str, Any], equipping: bool, guild_id: str, **kwargs: Any) -> None:
         char_id = getattr(character, 'id', 'UnknownCharacter')
-        item_id = getattr(item, 'id', 'UnknownItem') if not isinstance(item, dict) else item.get('id', 'UnknownItem')
+        item_id = item_data.get('id', 'UnknownItem')
+        item_template_id = item_data.get('template_id')
+
         action = "equipping" if equipping else "unequipping"
-        print(f"RuleEngine (Stub): Applying equipment effects for character {char_id} {action} item {item_id}.")
-        # Example:
-        # if equipping:
-        #     if item.properties.get("bonus_strength"): character.stats["strength"] += item.properties["bonus_strength"]
-        # else:
-        #     if item.properties.get("bonus_strength"): character.stats["strength"] -= item.properties["bonus_strength"]
-        # if self._character_manager: await self._character_manager.mark_character_dirty(character.guild_id, character.id)
-        pass
+        print(f"RuleEngine: Applying equipment effects for character {char_id} {action} item {item_id} (Template: {item_template_id}).")
+
+        if not self._item_manager:
+            print("RuleEngine: ItemManager not available. Cannot apply equipment effects.")
+            return
+        if not item_template_id:
+            print("RuleEngine: Item template ID missing. Cannot apply equipment effects.")
+            return
+
+        item_template = self._item_manager.get_item_template(guild_id, item_template_id)
+        if not item_template:
+            print(f"RuleEngine: Item template {item_template_id} not found.")
+            return
+
+        properties = getattr(item_template, 'properties', {})
+        if not isinstance(properties, dict): properties = {}
+
+        bonuses = properties.get("bonuses") # Expecting format like {"strength": 1, "stealth_skill": 5, "armor_class": 2}
+
+        if not bonuses or not isinstance(bonuses, dict):
+            # print(f"RuleEngine: No valid bonuses found on item {item_template_id} for {action}.")
+            return
+
+        # Ensure character has stats and skills attributes
+        if not hasattr(character, 'stats') or not isinstance(character.stats, dict):
+            character.stats = {}
+        if not hasattr(character, 'skills') or not isinstance(character.skills, dict):
+            character.skills = {} # Assuming skills are Dict[str, int]
+
+        for key, value in bonuses.items():
+            try:
+                bonus_value = int(value)
+                multiplier = 1 if equipping else -1
+
+                if key in character.stats:
+                    character.stats[key] = character.stats.get(key, 0) + (bonus_value * multiplier)
+                    print(f"RuleEngine: {action} item {item_id} changed stat {key} by {bonus_value * multiplier} for char {char_id}. New value: {character.stats[key]}")
+                elif key.endswith("_skill") and key.split("_skill")[0] in self._rules_data.get("skill_rules", {}).get("skill_stat_map", {}):
+                    skill_name = key.split("_skill")[0]
+                    character.skills[skill_name] = character.skills.get(skill_name, 0) + (bonus_value * multiplier)
+                    print(f"RuleEngine: {action} item {item_id} changed skill {skill_name} by {bonus_value * multiplier} for char {char_id}. New value: {character.skills[skill_name]}")
+                elif key == "armor_class": # AC is often a direct bonus, not a base stat to modify this way
+                     # Special handling for AC might be needed if it's not a simple addition to a base stat
+                     # For now, assume it's a direct modification to an 'armor_class' stat if it exists.
+                     # A more robust system would recalculate AC based on armor, dex, etc.
+                    character.stats[key] = character.stats.get(key, 0) + (bonus_value * multiplier)
+                    print(f"RuleEngine: {action} item {item_id} changed stat {key} by {bonus_value * multiplier} for char {char_id}. New value: {character.stats[key]}")
+                else:
+                    # print(f"RuleEngine: Unknown bonus key '{key}' on item {item_template_id}.")
+                    pass # Silently ignore unknown bonus types for now
+
+            except ValueError:
+                print(f"RuleEngine: Invalid bonus value '{value}' for key '{key}' on item {item_template_id}.")
+
+        if self._character_manager:
+            self._character_manager.mark_character_dirty(guild_id, char_id)
 
     async def resolve_saving_throw(
         self, 
@@ -1703,13 +1928,16 @@ class RuleEngine:
         difficulty_class: int, 
         situational_modifier: int = 0,
         **kwargs: Any
-    ) -> bool:
-        """Resolves a saving throw for a character against a DC."""
+    ) -> tuple[bool, int, int, Optional[str]]:
+        """
+        Resolves a saving throw for a character against a DC.
+        Returns: (success: bool, total_save_value: int, d20_roll: int, crit_status: Optional[str])
+        """
         entity_stats = getattr(character, 'stats', {})
         if not isinstance(entity_stats, dict): entity_stats = {}
 
         stat_value = entity_stats.get(stat_to_save_with.lower(), 10) # Default to 10 if stat not present
-        stat_modifier = (stat_value - 10) // 2
+        stat_modifier = self._calculate_attribute_modifier(stat_value)
 
         try:
             roll_result_dict = await self._resolve_dice_roll("1d20", context=kwargs)
@@ -1718,11 +1946,25 @@ class RuleEngine:
             d20_roll = 10 # Fallback
 
         total_save_value = d20_roll + stat_modifier + situational_modifier
-        success = total_save_value >= difficulty_class
+
+        crit_rules = self._rules_data.get("check_rules", {})
+        crit_success_roll = crit_rules.get("critical_success", {}).get("natural_roll", 20)
+        crit_failure_roll = crit_rules.get("critical_failure", {}).get("natural_roll", 1)
+
+        crit_status: Optional[str] = None
+        success: bool # Declare success here
+        if d20_roll == crit_success_roll and crit_rules.get("critical_success", {}).get("auto_succeeds", True):
+            success = True
+            crit_status = "critical_success"
+        elif d20_roll == crit_failure_roll and crit_rules.get("critical_failure", {}).get("auto_fails", True):
+            success = False
+            crit_status = "critical_failure"
+        else:
+            success = total_save_value >= difficulty_class
         
         char_id = getattr(character, 'id', 'UnknownEntity')
-        print(f"RuleEngine: Saving Throw ({stat_to_save_with.capitalize()} DC {difficulty_class}) for {char_id}: Roll={d20_roll}, StatMod={stat_modifier}, SitMod={situational_modifier} -> Total={total_save_value}. Success: {success}")
-        return success
+        print(f"RuleEngine: Saving Throw ({stat_to_save_with.capitalize()} DC {difficulty_class}) for {char_id}: Roll={d20_roll}, StatMod={stat_modifier}, SitMod={situational_modifier} -> Total={total_save_value}. Success: {success} (Crit: {crit_status})")
+        return success, total_save_value, d20_roll, crit_status
 
     # --- End of Core Combat and Skill Resolution Methods ---
 
@@ -1897,7 +2139,7 @@ class RuleEngine:
         primary_stat = check_config.get('primary_stat') # e.g., "dexterity"
         if primary_stat and hasattr(actor, 'stats') and isinstance(actor.stats, dict):
             stat_value = actor.stats.get(primary_stat, 10)
-            stat_mod = (stat_value - 10) // 2
+            stat_mod = self._calculate_attribute_modifier(stat_value)
             calculated_modifier += stat_mod
             modifier_details_dict[primary_stat] = stat_mod
 
@@ -1952,19 +2194,35 @@ class RuleEngine:
         # 6. Determine Outcome
         result.is_success = result.total_roll_value >= actual_dc
         
-        # Critical success/failure logic (simple d20 based for now)
-        d20_roll = result.rolls[0] if result.rolls and result.roll_formula.startswith("1d20") else 0
-        
-        if d20_roll == 20 and check_config.get('allow_critical_success', True):
+        # Critical success/failure logic
+        main_check_rules = self._rules_data.get("check_rules", {})
+        crit_success_config = check_config.get("critical_success", main_check_rules.get("critical_success", {}))
+        crit_failure_config = check_config.get("critical_failure", main_check_rules.get("critical_failure", {}))
+
+        # Determine the actual d20 roll value if applicable (e.g. if roll_formula is "1d20" or similar)
+        # This assumes the first roll in result.rolls corresponds to the primary d20 if it's a d20-based check.
+        # A more robust way would be to inspect roll_result_data for a 'natural_d20_roll' or similar key if resolve_dice_roll provided it.
+        d20_roll_for_crit_check = 0
+        if result.rolls and (result.roll_formula.startswith("1d20") or "d20" in result.roll_formula): # Basic check if d20 was involved
+            # This assumes the "main" d20 roll is the first one if multiple dice (e.g. advantage/disadvantage not yet handled here)
+             # or if the roll_string was complex like "1d20+1d4". For simple "1d20", result.rolls[0] is fine.
+            d20_roll_for_crit_check = result.rolls[0]
+
+        crit_success_roll_val = crit_success_config.get("natural_roll", 20)
+        crit_failure_roll_val = crit_failure_config.get("natural_roll", 1)
+
+        if d20_roll_for_crit_check == crit_success_roll_val and crit_success_config.get("auto_succeeds", True):
             result.is_critical = True
-            result.is_success = True # Crit success is always a success
+            result.is_success = True
             result.outcome = CheckOutcome.CRITICAL_SUCCESS
-        elif d20_roll == 1 and check_config.get('allow_critical_failure', True):
+        elif d20_roll_for_crit_check == crit_failure_roll_val and crit_failure_config.get("auto_fails", True):
             result.is_critical = True
-            result.is_success = False # Crit failure is always a failure
+            result.is_success = False # Crit failure overrides numerical success
             result.outcome = CheckOutcome.CRITICAL_FAILURE
         else:
+            # Standard success is already set in result.is_success
             result.outcome = CheckOutcome.SUCCESS if result.is_success else CheckOutcome.FAILURE
+            result.is_critical = False # Ensure is_critical is false if not a crit
 
         # 7. Populate Description
         result.description = (

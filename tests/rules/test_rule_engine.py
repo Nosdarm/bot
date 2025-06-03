@@ -1,296 +1,205 @@
-import pytest
-import asyncio # For async test functions
-from unittest.mock import MagicMock, AsyncMock, patch # For mocking
+# tests/rules/test_rule_engine.py
+import unittest
+from unittest.mock import MagicMock, patch
+import asyncio # Required for IsolatedAsyncioTestCase
+from typing import Optional # For type hinting in test methods
 
-# Models and Enums to test
-from bot.game.models.check_models import CheckOutcome, DetailedCheckResult
-from bot.game.models.character import Character # Assuming Character model for entity_obj
-from bot.game.models.npc import NPC # Assuming NPC model for entity_obj
-
-# Class to test
 from bot.game.rules.rule_engine import RuleEngine
+from bot.game.models.character import Character
+from bot.game.models.check_models import CheckOutcome, DetailedCheckResult
 
-# Managers that RuleEngine might interact with (even if mocked)
-# from bot.game.managers.character_manager import CharacterManager
-# from bot.game.managers.npc_manager import NpcManager
+# If RuleEngine methods are async, test class should inherit from IsolatedAsyncioTestCase
+class TestRuleEngine(unittest.IsolatedAsyncioTestCase):
 
-# Default rules_data for testing
-DEFAULT_TEST_RULES_DATA = {
-    "checks": {
-        "SimpleSuccessCheck": {
-            "roll_formula": "1d20",
-            "default_dc": 10,
-            "critical_success_roll": 20,
-            "critical_failure_roll": 1,
-            "modifier_sources": [] # No modifiers for this simple check
-        },
-        "SimpleFailureCheck": {
-            "roll_formula": "1d20",
-            "default_dc": 15,
-            "critical_success_roll": 20,
-            "critical_failure_roll": 1,
-            "modifier_sources": []
-        },
-        "AttackRoll_Hit": {
-            "roll_formula": "1d20",
-            "modifier_sources": [{"type": "stat_bonus", "stat": "strength", "scale": 1}], # Example
-            "opposed_by": {"type": "stat", "stat": "armor_class", "source": "target"},
-            "critical_success_roll": 20,
-            "critical_failure_roll": 1
-        },
-        "AttackRoll_Miss": {
-            "roll_formula": "1d20",
-            "modifier_sources": [{"type": "stat_bonus", "stat": "strength", "scale": 1}],
-            "opposed_by": {"type": "stat", "stat": "armor_class", "source": "target"},
-            "critical_success_roll": 20,
-            "critical_failure_roll": 1
-        },
-        "StealthVsPerception": {
-            "roll_formula": "1d20",
-            "modifier_sources": [{"type": "skill", "skill": "stealth"}],
-            "opposed_by": {"type": "check", "check_type": "PerceptionCheck", "source": "target"},
-            "critical_success_margin": 5,
-            "critical_failure_margin": -5 # Or "absolute_margin_failure": 5
-        },
-        "PerceptionCheck": { # For the opposed part of StealthVsPerception
-            "roll_formula": "1d20",
-            "modifier_sources": [{"type": "skill", "skill": "perception"}],
-            "uses_dc": True # This implies it can be rolled against a DC if not opposed directly
-        },
-        "CritSuccessMarginCheck": {
-            "roll_formula": "1d20",
-            "default_dc": 10,
-            "critical_success_roll": 19, # Natural 19 or 20 is crit
-            "critical_success_margin": 5, # Also crit if roll beats DC by 5+
-            "modifier_sources": []
-        },
-        "CritFailureMarginCheck": {
-            "roll_formula": "1d20",
-            "default_dc": 15,
-            "critical_failure_roll": 2, # Natural 1 or 2 is crit fail
-            "critical_failure_margin": -5, # Also crit fail if roll is 5+ below DC
-            "modifier_sources": []
-        }
-    },
-    "stats_config": { # Example stats for modifier calculations
-        "strength": {"default": 10},
-        "dexterity": {"default": 10},
-        "armor_class": {"default": 10}
-    },
-    "skills_config": { # Example skills
-        "stealth": {"default_value": 0},
-        "perception": {"default_value": 0}
-    }
-}
+    # Helper for async lambda in mocks if AsyncMock is not directly used for side_effect
+    async def _async_return_val(self, val):
+        return val
 
-
-@pytest.fixture
-def rule_engine_instance():
-    # Create a RuleEngine instance with mocked dependencies if necessary
-    # For now, assume CharacterManager and NpcManager are used by _get_entity_data_for_check
-    mock_char_manager = MagicMock()
-    mock_npc_manager = MagicMock()
-    
-    engine = RuleEngine(
-        settings={'rules_data': DEFAULT_TEST_RULES_DATA},
-        character_manager=mock_char_manager,
-        npc_manager=mock_npc_manager
-    )
-    # engine._rules_data = DEFAULT_TEST_RULES_DATA # Ensure rules_data is set
-    return engine
-
-@pytest.mark.asyncio
-async def test_resolve_check_simple_success_fixed_roll(rule_engine_instance: RuleEngine):
-    # Mock the internal dice roll to control the outcome
-    with patch.object(rule_engine_instance, 'resolve_dice_roll', new_callable=AsyncMock) as mock_dice_roll:
-        mock_dice_roll.return_value = {'rolls': [15], 'total': 15, 'num_dice': 1, 'dice_sides': 20, 'modifier': 0}
-
-        # Mock _get_entity_data_for_check to return minimal data as it's not used by SimpleSuccessCheck modifiers
-        with patch.object(rule_engine_instance, '_get_entity_data_for_check', new_callable=AsyncMock) as mock_get_entity:
-            mock_get_entity.return_value = {
-                "id": "player1", "type": "Character", "stats": {}, "skills": {}, 
-                "status_effects": [], "inventory": [], "name": "Player One",
-                "current_hp": 10, "max_hp": 10, "is_alive": True
+    def test_calculate_attribute_modifier(self):
+        rules = {
+            "character_stats_rules": {
+                "attribute_modifier_formula": "(attribute_value - 10) // 2"
             }
+        }
+        engine = RuleEngine(rules_data=rules)
+        self.assertEqual(engine._calculate_attribute_modifier(10), 0)
+        self.assertEqual(engine._calculate_attribute_modifier(12), 1)
+        self.assertEqual(engine._calculate_attribute_modifier(15), 2)
+        self.assertEqual(engine._calculate_attribute_modifier(7), -2)
 
-            result = await rule_engine_instance.resolve_check(
-                check_type="SimpleSuccessCheck",
-                entity_doing_check_id="player1",
-                entity_doing_check_type="Character",
-                context={'guild_id': 'test_guild'}
-            )
+        rules_alt_formula = {
+            "character_stats_rules": {
+                "attribute_modifier_formula": "attribute_value // 3" # Test alternative
+            }
+        }
+        engine_alt = RuleEngine(rules_data=rules_alt_formula)
+        self.assertEqual(engine_alt._calculate_attribute_modifier(10), 3)
 
-            assert result.outcome == CheckOutcome.SUCCESS
-            assert result.is_success is True
-            assert result.is_critical is False
-            assert result.total_roll_value == 15
-            assert result.target_value == 10 # default_dc for SimpleSuccessCheck
+    def test_generate_initial_character_stats(self):
+        expected_stats = {"strength": 12, "dexterity": 11, "constitution": 10, "intelligence": 9, "wisdom": 8, "charisma": 7}
+        rules = {
+            "character_stats_rules": {
+                "default_initial_stats": expected_stats.copy()
+            }
+        }
+        engine = RuleEngine(rules_data=rules)
+        initial_stats = engine.generate_initial_character_stats()
+        self.assertEqual(initial_stats, expected_stats)
+        self.assertIsNot(initial_stats, expected_stats, "Should return a copy") # Check it's a copy
 
-@pytest.mark.asyncio
-async def test_resolve_check_simple_failure_fixed_roll(rule_engine_instance: RuleEngine):
-    with patch.object(rule_engine_instance, 'resolve_dice_roll', new_callable=AsyncMock) as mock_dice_roll:
-        mock_dice_roll.return_value = {'rolls': [5], 'total': 5} # num_dice, etc. are not strictly needed by resolve_check itself for this test
+    async def test_resolve_skill_check_success_and_crit(self):
+        rules = {
+            "skill_rules": {
+                "skill_stat_map": {"investigation": "intelligence"}
+            },
+            "character_stats_rules": {
+                "attribute_modifier_formula": "(attribute_value - 10) // 2"
+            },
+            "check_rules": {
+                "default_roll_formula": "1d20",
+                "critical_success": {"natural_roll": 20, "auto_succeeds": True},
+                "critical_failure": {"natural_roll": 1, "auto_fails": True}
+            }
+        }
+        engine = RuleEngine(rules_data=rules)
 
-        with patch.object(rule_engine_instance, '_get_entity_data_for_check', new_callable=AsyncMock) as mock_get_entity:
-            mock_get_entity.return_value = {"id": "player1", "type": "Character", "stats": {}, "skills": {}} # Minimal
+        # Mock character
+        mock_character = Character(id="char1", discord_user_id=123, name_i18n={"en": "Tester"}, guild_id="test_guild")
+        mock_character.stats = {"intelligence": 14} # +2 modifier
+        mock_character.skills = {"investigation": 3} # Skill value 3
 
-            result = await rule_engine_instance.resolve_check(
-                check_type="SimpleFailureCheck", # DC 15
-                entity_doing_check_id="player1",
-                entity_doing_check_type="Character",
-                context={'guild_id': 'test_guild'}
-            )
+        # Mock dice roll to control outcome
+        # Python's patching of async methods can be tricky.
+        # If resolve_dice_roll is async, its mock needs to be an async mock.
+        # For simplicity in this example, if resolve_dice_roll is truly async,
+        # the test might need adjustment or a more sophisticated mock setup.
+        # Assuming resolve_dice_roll can be awaited.
 
-            assert result.outcome == CheckOutcome.FAILURE
-            assert result.is_success is False
-            assert result.is_critical is False
-            assert result.total_roll_value == 5
-            assert result.target_value == 15
+        # Test case 1: Normal success
+        with patch.object(engine, 'resolve_dice_roll', new_callable=unittest.mock.AsyncMock, return_value={"total": 15, "rolls": [15]}) as mock_roll_15:
+            success, total_val, roll, crit_status = await engine.resolve_skill_check(mock_character, "investigation", 20)
+            self.assertTrue(success)
+            self.assertEqual(total_val, 20)
+            self.assertEqual(roll, 15)
+            self.assertIsNone(crit_status)
+            mock_roll_15.assert_awaited_once_with("1d20", {}) # context is positional
 
-@pytest.mark.asyncio
-async def test_resolve_check_critical_success_roll(rule_engine_instance: RuleEngine):
-    with patch.object(rule_engine_instance, 'resolve_dice_roll', new_callable=AsyncMock) as mock_dice_roll:
-        mock_dice_roll.return_value = {'rolls': [20], 'total': 20}
-        with patch.object(rule_engine_instance, '_get_entity_data_for_check', new_callable=AsyncMock) as mock_get_entity:
-            mock_get_entity.return_value = {"id": "player1", "type": "Character", "stats": {}, "skills": {}}
 
-            result = await rule_engine_instance.resolve_check(
-                check_type="SimpleSuccessCheck", # DC 10, Crit Success 20
-                entity_doing_check_id="player1",
-                entity_doing_check_type="Character",
-                context={'guild_id': 'test_guild'}
-            )
-            assert result.outcome == CheckOutcome.CRITICAL_SUCCESS
-            assert result.is_success is True
-            assert result.is_critical is True
-            assert result.total_roll_value == 20
+        # Test case 2: Critical Success
+        with patch.object(engine, 'resolve_dice_roll', new_callable=unittest.mock.AsyncMock, return_value={"total": 20, "rolls": [20]}) as mock_roll_20:
+            success, _, _, crit_status = await engine.resolve_skill_check(mock_character, "investigation", 25) # DC higher than possible non-crit
+            self.assertTrue(success)
+            self.assertEqual(crit_status, "critical_success")
+            mock_roll_20.assert_awaited_once_with("1d20", {}) # context is positional
 
-@pytest.mark.asyncio
-async def test_resolve_check_critical_failure_roll(rule_engine_instance: RuleEngine):
-    with patch.object(rule_engine_instance, 'resolve_dice_roll', new_callable=AsyncMock) as mock_dice_roll:
-        mock_dice_roll.return_value = {'rolls': [1], 'total': 1}
-        with patch.object(rule_engine_instance, '_get_entity_data_for_check', new_callable=AsyncMock) as mock_get_entity:
-            mock_get_entity.return_value = {"id": "player1", "type": "Character", "stats": {}, "skills": {}}
+        # Test case 3: Critical Failure
+        with patch.object(engine, 'resolve_dice_roll', new_callable=unittest.mock.AsyncMock, return_value={"total": 1, "rolls": [1]}) as mock_roll_1:
+            success, _, _, crit_status = await engine.resolve_skill_check(mock_character, "investigation", 5) # DC lower than possible non-crit fail
+            self.assertFalse(success)
+            self.assertEqual(crit_status, "critical_failure")
+            mock_roll_1.assert_awaited_once_with("1d20", {}) # context is positional
 
-            result = await rule_engine_instance.resolve_check(
-                check_type="SimpleSuccessCheck", # DC 10, Crit Fail 1
-                entity_doing_check_id="player1",
-                entity_doing_check_type="Character",
-                context={'guild_id': 'test_guild'}
-            )
-            assert result.outcome == CheckOutcome.CRITICAL_FAILURE
-            assert result.is_success is False
-            assert result.is_critical is True
-            assert result.total_roll_value == 1
+    async def test_calculate_damage_with_resistance_vulnerability(self):
+        rules = {
+            "combat_rules": {
+                "damage_calculation": {
+                    "resistances": {"fire": 0.5},
+                    "vulnerabilities": {"cold": 2.0},
+                    "immunities": ["poison"]
+                }
+            },
+            "character_stats_rules": { # Needed for stat modifier in damage calc
+                "attribute_modifier_formula": "(attribute_value - 10) // 2"
+            }
+        }
+        engine = RuleEngine(rules_data=rules)
+        mock_attacker = Character(id="attacker", discord_user_id=124, name_i18n={"en": "Attacker"}, guild_id="test_guild")
+        mock_attacker.stats = {"strength": 10} # +0 modifier for simplicity
 
-@pytest.mark.asyncio
-async def test_resolve_check_attack_roll_hit_with_modifier(rule_engine_instance: RuleEngine):
-    # Mock _get_entity_data_for_check to provide stats for attacker and target
-    async def mock_get_entity_data_side_effect(entity_id, entity_type, requested_keys, context):
-        if entity_id == "attacker":
-            return {"id": "attacker", "type": "Character", "stats": {"strength": 16}, "skills": {}} # STR mod +3
-        elif entity_id == "target":
-            return {"id": "target", "type": "NPC", "stats": {"armor_class": 12}, "skills": {}}
-        return {}
+        mock_defender = Character(id="defender", discord_user_id=125, name_i18n={"en": "Defender"}, guild_id="test_guild")
+        mock_defender.stats = {} # Stats not directly used by defender in this specific test path
 
-    with patch.object(rule_engine_instance, '_get_entity_data_for_check', side_effect=mock_get_entity_data_side_effect) as mock_get_entity:
-        with patch.object(rule_engine_instance, 'resolve_dice_roll', new_callable=AsyncMock) as mock_dice_roll:
-            mock_dice_roll.return_value = {'rolls': [10], 'total': 10} # Roll 10
-
-            # This test will use the placeholder modifier logic in resolve_check for now.
-            # The placeholder modifier is 0. So 10 (roll) + 0 (placeholder mod) = 10. Target AC is 12. This should be a miss.
-            # Once modifier logic is implemented, this test will need to be updated.
-            # For now, let's adjust expectation or the test to reflect placeholder state.
-            # Expected: roll 10 + 0 (placeholder) = 10. AC 12. Miss.
-            # If we assume modifier_sources IS partially processed by placeholder:
-            # "modifier_sources": [{"type": "stat_bonus", "stat": "strength", "scale": 1}]
-            # The current placeholder in resolve_check does:
-            # calculated_modifier = 0
-            # modifier_details_dict = {"placeholder_bonus": 0, "sources": check_config.get('modifier_sources', [])}
-            # So, calculated_modifier will indeed be 0.
-
-            result = await rule_engine_instance.resolve_check(
-                check_type="AttackRoll_Hit", # Uses strength mod, opposed by AC
-                entity_doing_check_id="attacker",
-                entity_doing_check_type="Character",
-                target_entity_id="target",
-                target_entity_type="NPC",
-                context={'guild_id': 'test_guild'}
-            )
+        # Mock dice roll for base damage
+        with patch.object(engine, 'resolve_dice_roll', new_callable=unittest.mock.AsyncMock, return_value={"total": 10, "rolls": [10]}) as mock_base_damage_roll:
+            # Fire damage (resisted)
+            damage = await engine.calculate_damage(mock_attacker, mock_defender, "1d10", "fire", False)
+            self.assertEqual(damage, 5) # 10 * 0.5
+            mock_base_damage_roll.assert_awaited_once_with("1d10", {}) # context is positional
             
-            # With placeholder modifier logic (modifier_applied = 0):
-            # Roll 10 + 0 = 10. Target AC = 12. Expected: Miss.
-            assert result.total_roll_value == 10 
-            assert result.modifier_applied == 0 # Placeholder behavior
-            assert result.target_value == 12 # Target's AC
-            assert result.is_success is False
-            assert result.outcome == CheckOutcome.FAILURE
+            # Cold damage (vulnerable)
+            mock_base_damage_roll.reset_mock()
+            # Re-patching or ensuring the mock is set up for multiple different return values if needed, or re-assign return_value
+            # For this test, return_value is constant, so reset_mock is enough before next assert_awaited_once_with
+            damage = await engine.calculate_damage(mock_attacker, mock_defender, "1d10", "cold", False)
+            self.assertEqual(damage, 20) # 10 * 2.0
+            mock_base_damage_roll.assert_awaited_once_with("1d10", {}) # context is positional
 
-@pytest.mark.asyncio
-async def test_resolve_check_unsupported_check_type(rule_engine_instance: RuleEngine):
-    with patch.object(rule_engine_instance, '_get_entity_data_for_check', new_callable=AsyncMock) as mock_get_entity:
-        mock_get_entity.return_value = {"id": "player1", "type": "Character", "stats": {}, "skills": {}}
+            # Poison damage (immune)
+            mock_base_damage_roll.reset_mock()
+            damage = await engine.calculate_damage(mock_attacker, mock_defender, "1d10", "poison", False)
+            self.assertEqual(damage, 0)
+            mock_base_damage_roll.assert_awaited_once_with("1d10", {}) # context is positional
+
+
+            # Normal damage (unaffected)
+            mock_base_damage_roll.reset_mock()
+            damage = await engine.calculate_damage(mock_attacker, mock_defender, "1d10", "slashing", False)
+            self.assertEqual(damage, 10)
+            mock_base_damage_roll.assert_awaited_once_with("1d10", {}) # context is positional
     
-        result = await rule_engine_instance.resolve_check(
-            check_type="NonExistentCheck",
-            entity_doing_check_id="player1",
-            entity_doing_check_type="Character",
-            context={'guild_id': 'test_guild'}
-        )
-        assert result.outcome == CheckOutcome.FAILURE # Default for errors
-        assert "Unsupported check_type: NonExistentCheck" in result.description
-        assert result.is_success is False
+    async def test_check_for_level_up(self):
+        rules = {
+            "general_settings": {"max_character_level": 5},
+            "experience_rules": {
+                "xp_to_level_up": {
+                    "type": "table",
+                    "values": {
+                        "1": 0, "2": 100, "3": 300, "4": 600, "5": 1000
+                    }
+                }
+            }
+        }
+        engine = RuleEngine(rules_data=rules)
+        # Mock CharacterManager for the mark_character_dirty call
+        engine._character_manager = MagicMock()
 
-@pytest.mark.asyncio
-async def test_resolve_check_crit_success_by_margin(rule_engine_instance: RuleEngine):
-    rule_engine_instance._rules_data["checks"]["CritSuccessMarginCheck"]["critical_success_roll"] = 20 # Natural 20 only for this test part
-    
-    with patch.object(rule_engine_instance, 'resolve_dice_roll', new_callable=AsyncMock) as mock_dice_roll:
-        mock_dice_roll.return_value = {'rolls': [14], 'total': 14} # Roll 14. DC 10. Margin 5. (14-10=4, not enough for margin crit)
-        with patch.object(rule_engine_instance, '_get_entity_data_for_check', new_callable=AsyncMock) as mock_get_entity:
-            mock_get_entity.return_value = {"id": "player1", "type": "Character", "stats": {}, "skills": {}}
+        char = Character(id="char1", discord_user_id=126, name_i18n={"en": "LvlUpTester"}, guild_id="test_guild")
+        char.level = 1
+        char.experience = 0
 
-            result_normal_success = await rule_engine_instance.resolve_check(
-                check_type="CritSuccessMarginCheck",
-                entity_doing_check_id="player1",
-                entity_doing_check_type="Character",
-                context={'guild_id': 'test_guild'}
-            )
-            assert result_normal_success.outcome == CheckOutcome.SUCCESS
-            assert result_normal_success.is_critical is False
-            assert result_normal_success.total_roll_value == 14
+        # Not enough for level 2
+        char.experience = 50
+        leveled = await engine.check_for_level_up(char, "test_guild")
+        self.assertFalse(leveled)
+        self.assertEqual(char.level, 1)
 
-        mock_dice_roll.return_value = {'rolls': [15], 'total': 15} # Roll 15. DC 10. Margin 5. (15-10=5, IS a margin crit)
-        with patch.object(rule_engine_instance, '_get_entity_data_for_check', new_callable=AsyncMock) as mock_get_entity:
-            mock_get_entity.return_value = {"id": "player1", "type": "Character", "stats": {}, "skills": {}}
-            result_crit_success = await rule_engine_instance.resolve_check(
-                check_type="CritSuccessMarginCheck",
-                entity_doing_check_id="player1",
-                entity_doing_check_type="Character",
-                context={'guild_id': 'test_guild'}
-            )
-            assert result_crit_success.outcome == CheckOutcome.CRITICAL_SUCCESS
-            assert result_crit_success.is_critical is True
-            assert result_crit_success.total_roll_value == 15
+        # Enough for level 2
+        char.experience = 100
+        leveled = await engine.check_for_level_up(char, "test_guild")
+        self.assertTrue(leveled)
+        self.assertEqual(char.level, 2)
+        self.assertEqual(char.experience, 100)
 
-@pytest.mark.asyncio
-async def test_resolve_check_input_difficulty_dc_used(rule_engine_instance: RuleEngine):
-    with patch.object(rule_engine_instance, 'resolve_dice_roll', new_callable=AsyncMock) as mock_dice_roll:
-        mock_dice_roll.return_value = {'rolls': [12], 'total': 12}
-        with patch.object(rule_engine_instance, '_get_entity_data_for_check', new_callable=AsyncMock) as mock_get_entity:
-            mock_get_entity.return_value = {"id": "player1", "type": "Character", "stats": {}, "skills": {}}
+        # Reset to L1, give enough XP for multiple levels
+        char.level = 1
+        char.experience = 650 # Enough for L2 (100), L3 (300), L4 (600)
 
-            result = await rule_engine_instance.resolve_check(
-                check_type="SimpleSuccessCheck", # Default DC is 10
-                entity_doing_check_id="player1",
-                entity_doing_check_type="Character",
-                difficulty_dc=15, # Override with 15
-                context={'guild_id': 'test_guild'}
-            )
-            assert result.target_value == 15 # Should use the provided DC
-            assert result.difficulty_dc == 15 # Ensure it's stored
-            assert result.is_success is False # 12 vs 15
-            assert result.outcome == CheckOutcome.FAILURE
+        leveled = await engine.check_for_level_up(char, "test_guild")
+        self.assertTrue(leveled)
+        self.assertEqual(char.level, 4) # Should reach L4
+        self.assertEqual(char.experience, 650)
 
-# TODO: Add tests for opposed checks once the logic for `opposed_by: {"type": "check"}` is more than a placeholder.
-# TODO: Add tests that verify actual modifier calculation once that part of `resolve_check` is implemented.
+        # Try to level past max
+        char.level = 4 # Start at L4
+        char.experience = 2000 # More than enough for level 5 (1000)
+        leveled = await engine.check_for_level_up(char, "test_guild")
+        self.assertTrue(leveled)
+        self.assertEqual(char.level, 5) # Max level
+
+        # Already at max level
+        leveled = await engine.check_for_level_up(char, "test_guild")
+        self.assertFalse(leveled) # No level up occurred
+        self.assertEqual(char.level, 5)
+
+if __name__ == '__main__':
+    unittest.main()
