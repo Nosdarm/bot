@@ -863,11 +863,8 @@ class SqliteAdapter:
 
             insert_into_inventory_new_sql = """
                 INSERT INTO inventory_new (inventory_id, player_id, item_template_id, amount)
-<<<<<<< HEAD
                 SELECT inventory_id, player_id, item_template_id, amount 
-=======
                 SELECT inventory_id, player_id, item_template_id, amount
->>>>>>> fix/db-schema-and-hp-refactor
                 FROM inventory;
             """
             await cursor.execute(insert_into_inventory_new_sql)
@@ -997,11 +994,8 @@ class SqliteAdapter:
                     mp INTEGER DEFAULT 0,
                     attack INTEGER DEFAULT 0,
                     defense INTEGER DEFAULT 0,
-<<<<<<< HEAD
                     hp REAL DEFAULT 100.0, 
-=======
                     hp REAL DEFAULT 100.0,
->>>>>>> fix/db-schema-and-hp-refactor
                     UNIQUE(discord_user_id, guild_id),
                     UNIQUE(name, guild_id)
                 );

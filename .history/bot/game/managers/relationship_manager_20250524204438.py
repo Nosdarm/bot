@@ -1,5 +1,4 @@
 # bot/game/managers/relationship_manager.py
-<<<<<<< HEAD
 from __future__ import annotations
 import json
 import uuid
@@ -10,7 +9,6 @@ if TYPE_CHECKING:
     # from bot.game.models.relationship import Relationship # If you create a model
 
 class RelationshipManager:
-=======
 
 from __future__ import annotations
 import uuid
@@ -29,12 +27,10 @@ class RelationshipManager:
     """
     Manages relationships between entities in the game.
     """
->>>>>>> origin/fix-quest-manager-lint
     required_args_for_load: List[str] = ["guild_id"]
     required_args_for_save: List[str] = ["guild_id"]
     required_args_for_rebuild: List[str] = ["guild_id"]
 
-<<<<<<< HEAD
     def __init__(self, db_adapter: Optional[SqliteAdapter] = None, settings: Optional[Dict[str, Any]] = None, **kwargs):
         self._db_adapter = db_adapter
         self._settings = settings if settings is not None else {}
@@ -114,7 +110,6 @@ class RelationshipManager:
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
         print(f"RelationshipManager: Rebuild runtime caches for guild {str(guild_id)} (no complex runtime caches).")
         pass
-=======
     def __init__(self, db_adapter: Optional["SqliteAdapter"], settings: Optional[Dict[str, Any]]):
         print("Initializing RelationshipManager...")
         self._db_adapter: Optional["SqliteAdapter"] = db_adapter
@@ -445,4 +440,3 @@ class RelationshipManager:
         print(f"RelationshipManager: Runtime caches rebuilt for guild {guild_id_str}. Entities in map: {len(entity_map)}")
 
 ```
->>>>>>> origin/fix-quest-manager-lint

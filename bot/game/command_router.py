@@ -84,6 +84,7 @@ if TYPE_CHECKING:
 
     # Import the PartyCommandHandler for type hinting
     from bot.game.command_handlers.party_handler import PartyCommandHandler # <--- ТИПИЗАЦИЯ ОБРАБОТЧИКА ПАРТИИ
+    from bot.game.managers.game_manager import GameManager # Add this line
 
 
 # Define Type Aliases for callbacks explicitly if used in type hints
@@ -129,6 +130,7 @@ class CommandRouter:
         location_manager: "LocationManager",
         rule_engine: "RuleEngine",
         party_command_handler: "PartyCommandHandler",
+        game_manager: "GameManager", # Add game_manager parameter
 
 
         # --- Optional Dependencies ---
@@ -174,6 +176,7 @@ class CommandRouter:
         self._relationship_manager = relationship_manager 
         self._quest_manager = quest_manager
         self._conflict_resolver = conflict_resolver # Added ConflictResolver from kwargs
+        self._game_manager: "GameManager" = game_manager # Store game_manager
 
         self._openai_service = openai_service
         self._item_manager = item_manager
@@ -260,6 +263,7 @@ class CommandRouter:
             'relationship_manager': self._relationship_manager, 
             'quest_manager': self._quest_manager,
             'conflict_resolver': self._conflict_resolver, # Add to context
+            'game_manager': self._game_manager, # Add game_manager to context
 
         }
 
@@ -599,6 +603,7 @@ class CommandRouter:
 
     @command("quest")
     async def handle_quest(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        error_messages = context.get('settings', {}).get('error_messages', {}) # Define error_messages
         """
         Manages character quests.
         Usage:
@@ -766,6 +771,7 @@ class CommandRouter:
 
     @command("npc")
     async def handle_npc(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        error_messages = context.get('settings', {}).get('error_messages', {}) # Define error_messages
         """
         Interact with Non-Player Characters.
         Usage:
@@ -905,6 +911,7 @@ class CommandRouter:
         """Allows the player to buy an item from the current location's market.
         Usage: {prefix}buy <item_template_id> [quantity]
         """
+        error_messages = context.get('settings', {}).get('error_messages', {}) # Define error_messages
         send_callback = context.get('send_to_command_channel')
         if not send_callback:
             print("CommandRouter: Error: send_to_command_channel not found for handle_buy.")
@@ -1003,6 +1010,7 @@ class CommandRouter:
         """Allows the player to craft an item from a recipe.
         Usage: {prefix}craft <recipe_id> [quantity]
         """
+        error_messages = context.get('settings', {}).get('error_messages', {}) # Define error_messages
         send_callback = context.get('send_to_command_channel')
         if not send_callback:
             print("CommandRouter: Error: send_to_command_channel not found for handle_craft.")
@@ -1079,6 +1087,7 @@ class CommandRouter:
         """Initiates combat with a target NPC.
         Usage: {prefix}fight <target_npc_id_or_name>
         """
+        error_messages = context.get('settings', {}).get('error_messages', {}) # Define error_messages
         send_callback = context.get('send_to_command_channel')
         if not send_callback:
             print("CommandRouter: Error: send_to_command_channel not found for handle_fight.")
@@ -1191,6 +1200,7 @@ class CommandRouter:
     @command("hide")
     async def handle_hide(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
         """Allows the player to attempt to hide in their current location."""
+        error_messages = context.get('settings', {}).get('error_messages', {}) # Define error_messages
         send_callback = context.get('send_to_command_channel')
         if not send_callback:
             print("CommandRouter: Error: send_to_command_channel not found for handle_hide.")
@@ -1251,6 +1261,7 @@ class CommandRouter:
         """Allows the player to attempt to steal from a target NPC.
         Usage: {prefix}steal <target_npc_id_or_name>
         """
+        error_messages = context.get('settings', {}).get('error_messages', {}) # Define error_messages
         send_callback = context.get('send_to_command_channel')
         if not send_callback:
             print("CommandRouter: Error: send_to_command_channel not found for handle_steal.")
@@ -1345,6 +1356,7 @@ class CommandRouter:
         Usage: {prefix}use <item_instance_id> [target_id]
         Note: If target_id is an NPC, it will be assumed. If it's another player, that needs specific handling or target_type.
         """
+        error_messages = context.get('settings', {}).get('error_messages', {}) # Define error_messages
         send_callback = context.get('send_to_command_channel')
         if not send_callback:
             print("CommandRouter: Error: send_to_command_channel not found for handle_use.")
@@ -1885,6 +1897,19 @@ class CommandRouter:
 
             await send_callback(response_message[:1990]) # Trim if too long
 
+            if result.get('overall_state_changed_for_party') and self._game_manager:
+                current_guild_id = context.get('guild_id') # guild_id should be in context
+                if current_guild_id:
+                    print(f"CommandRouter: Overall state changed for party, triggering save for guild {current_guild_id} via GameManager.")
+                    try:
+                        await self._game_manager.save_game_state_after_action(current_guild_id)
+                    except Exception as e_save:
+                        print(f"CommandRouter: Error calling save_game_state_after_action: {e_save}")
+                        # Optionally send a message to user/master if save fails critically
+                        # await send_callback(f"Critical error: Failed to save game state after party actions: {e_save}")
+                else:
+                    print("CommandRouter: Warning: overall_state_changed_for_party is true, but guild_id not found in context for saving.")
+
         except Exception as e:
             print(f"CommandRouter: Error in handle_party_submit_actions_placeholder: {e}")
             traceback.print_exc()
@@ -2039,6 +2064,7 @@ class CommandRouter:
             await send_to_master_channel(f"Error: PersistenceManager unavailable during content activation for {request_id}.")
             return False
             
+
         db_adapter = self._persistence_manager.get_db_adapter()
         if not db_adapter:
             print("CommandRouter:_activate_approved_content ERROR - DB adapter not available.")
@@ -2388,6 +2414,12 @@ class CommandRouter:
                 # existing_location_template_ids=set(self._location_manager._location_templates.get(guild_id, {}).keys()) if self._location_manager else set()
             )
             
+            # Check the overall status and individual entity errors
+            # The validation_result for "single_x" structure will have one entity in 'entities' list
+            overall_status = validation_result.get("overall_status", "error")
+            entity_validation = validation_result.get("entities", [{}])[0] if validation_result.get("entities") else {}
+            entity_status = entity_validation.get("status", "requires_moderation")
+
             # Check the overall status and individual entity errors
             # The validation_result for "single_x" structure will have one entity in 'entities' list
             overall_status = validation_result.get("overall_status", "error")

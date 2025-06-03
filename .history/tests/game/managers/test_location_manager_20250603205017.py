@@ -223,7 +223,6 @@ class TestLocationManagerMoveEntity(unittest.IsolatedAsyncioTestCase): # Renamed
         self.assertEqual(departure_trigger_call.kwargs['context']['location_instance_id'], self.from_location_id)
         self.assertEqual(departure_trigger_call.args[0], DUMMY_LOCATION_TEMPLATE_DATA["on_exit_triggers"])
 
-<<<<<<< HEAD
 if __name__ == '__main__':
     unittest.main()
 
@@ -252,7 +251,6 @@ class TestLocationManagerAICreation(unittest.IsolatedAsyncioTestCase):
         self.mock_prompt_generator = AsyncMock()
         self.mock_openai_service = AsyncMock()
         self.mock_ai_validator = AsyncMock()
-=======
     async def test_successfully_moves_character(self):
         # Similar to test_successfully_moves_party, but for Character
         self.mock_character_manager.update_character_location = AsyncMock(return_value=True)
@@ -543,13 +541,11 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
         self.mock_settings = MagicMock() # Using MagicMock for easier attribute access like self.mock_settings.guilds
         self.mock_rule_engine = AsyncMock()
         # For now, only essential dependencies. Others will be added if specific methods need them.
->>>>>>> jules_wip_416423358468440045
 
         self.location_manager = LocationManager(
             db_adapter=self.mock_db_adapter,
             settings=self.mock_settings,
             rule_engine=self.mock_rule_engine,
-<<<<<<< HEAD
             event_manager=self.mock_event_manager,
             character_manager=self.mock_character_manager,
             npc_manager=self.mock_npc_manager,
@@ -568,7 +564,6 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
             ai_validator=self.mock_ai_validator
         )
         # Ensure internal caches are initialized as dicts
-=======
             event_manager=AsyncMock(), # Add all required by __init__
             character_manager=AsyncMock(),
             npc_manager=AsyncMock(),
@@ -585,13 +580,11 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
         )
 
         # Initialize caches for testing purposes, assuming they are dicts
->>>>>>> jules_wip_416423358468440045
         self.location_manager._location_templates = {}
         self.location_manager._location_instances = {}
         self.location_manager._dirty_instances = {}
         self.location_manager._deleted_instances = {}
 
-<<<<<<< HEAD
     async def test_create_location_instance_ai_pending_moderation(self):
         guild_id = "test_guild_loc_ai_success"
         template_id_arg = "AI:generate_haunted_mansion"
@@ -752,7 +745,6 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
 # However, typically you'd run tests with `python -m unittest discover` or similar.
 if __name__ == '__main__':
     unittest.main()
-=======
         self.guild_id = "test_guild_1"
         # Ensure guild-specific caches are initialized before each test if needed by the test
         # For example, in a test for get_location_instance:
@@ -1449,4 +1441,3 @@ if __name__ == '__main__':
 
         self.assertNotIn(guild_id, self.location_manager._location_instances)
         self.assertNotIn(guild_id, self.location_manager._dirty_instances)
->>>>>>> jules_wip_416423358468440045
