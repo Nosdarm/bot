@@ -1,9 +1,21 @@
 {
+  "main_bot_language": "ru",
+  "npc_generation_ai_settings": {
+    "max_tokens": 2000,
+    "temperature": 0.7,
+    "model": "gpt-4-turbo-preview"
+  },
   "active_guild_ids": ["1364930265591320586"],
   "item_templates": {
     "potion_health_minor": {
-        "name": "Minor Healing Potion",
-        "description": "A common potion that restores a small amount of health.",
+        "name_i18n": {
+            "en": "Minor Healing Potion",
+            "ru": "Малое зелье лечения"
+        },
+        "description_i18n": {
+            "en": "A common potion that restores a small amount of health.",
+            "ru": "Обычное зелье, восстанавливающее небольшое количество здоровья."
+        },
         "type": "potion",
         "icon": "🧪",
         "weight": 0.1,
@@ -13,8 +25,14 @@
         "properties": { "effect_type": "heal", "amount": 20, "target": "self", "sfx": "glug" }
     },
     "sword_iron_short": {
-        "name": "Iron Shortsword",
-        "description": "A basic but reliable iron shortsword.",
+        "name_i18n": {
+            "en": "Iron Shortsword",
+            "ru": "Железный короткий меч"
+        },
+        "description_i18n": {
+            "en": "A basic but reliable iron shortsword.",
+            "ru": "Простой, но надежный железный короткий меч."
+        },
         "type": "weapon",
         "icon": "⚔️",
         "weight": 1.5,
@@ -23,8 +41,14 @@
         "properties": { "damage": "1d6", "damage_type": "slashing", "skill_used": "short_blades", "equip_slot": "main_hand", "parry_bonus": 1 }
     },
     "leather_jerkin": {
-        "name": "Leather Jerkin",
-        "description": "A simple leather jerkin offering basic protection.",
+        "name_i18n": {
+            "en": "Leather Jerkin",
+            "ru": "Кожаная куртка"
+        },
+        "description_i18n": {
+            "en": "A simple leather jerkin offering basic protection.",
+            "ru": "Простая кожаная куртка, предлагающая базовую защиту."
+        },
         "type": "armor",
         "icon": "👕",
         "weight": 2.0,
@@ -33,8 +57,14 @@
         "properties": { "defense": 3, "armor_type": "light", "equip_slot": "chest", "stealth_penalty": 0 }
     },
     "iron_ore_chunk": {
-        "name": "Iron Ore Chunk",
-        "description": "A chunk of raw iron ore.",
+        "name_i18n": {
+            "en": "Iron Ore Chunk",
+            "ru": "Кусок железной руды"
+        },
+        "description_i18n": {
+            "en": "A chunk of raw iron ore.",
+            "ru": "Кусок необработанной железной руды."
+        },
         "type": "resource",
         "icon": "🪨",
         "weight": 0.5,
@@ -42,8 +72,14 @@
         "properties": { "stackable": true, "max_stack": 20, "crafting_material_type": "metal_ore" }
     },
     "gold_coin": {
-        "name": "Gold Coin",
-        "description": "A standard gold coin.",
+        "name_i18n": {
+            "en": "Gold Coin",
+            "ru": "Золотая монета"
+        },
+        "description_i18n": {
+            "en": "A standard gold coin.",
+            "ru": "Стандартная золотая монета."
+        },
         "type": "currency",
         "icon": "🪙",
         "weight": 0.01,
