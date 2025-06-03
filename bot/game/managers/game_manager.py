@@ -741,6 +741,42 @@ class GameManager:
             print(f"GameManager: ❌ Critical error in world tick loop: {e}")
             traceback.print_exc()
 
+    async def save_game_state_after_action(self, guild_id: str) -> None:
+        """
+        Saves the game state for a specific guild after an action has been processed.
+        """
+        if not self._persistence_manager:
+            print(f"GameManager: PersistenceManager not available. Cannot save game state for guild {guild_id} after action.")
+            return
+
+        print(f"GameManager: Saving game state for guild {guild_id} after action...")
+        try:
+            save_context_kwargs: Dict[str, Any] = {
+                'rule_engine': self.rule_engine, 'time_manager': self.time_manager,
+                'location_manager': self.location_manager, 'event_manager': self.event_manager,
+                'character_manager': self.character_manager, 'item_manager': self.item_manager,
+                'status_manager': self.status_manager, 'combat_manager': self.combat_manager,
+                'crafting_manager': self.crafting_manager, 'economy_manager': self.economy_manager,
+                'npc_manager': self.npc_manager, 'party_manager': self.party_manager,
+                'dialogue_manager': self.dialogue_manager,
+                'quest_manager': self.quest_manager,
+                'relationship_manager': self.relationship_manager,
+                'game_log_manager': self.game_log_manager,
+                'conflict_resolver': self.conflict_resolver,
+                'db_adapter': self._db_adapter,
+                'send_callback_factory': self._get_discord_send_callback,
+                'settings': self._settings,
+                'discord_client': self._discord_client,
+            }
+            await self._persistence_manager.save_game_state(
+                guild_ids=[str(guild_id)],
+                **save_context_kwargs
+            )
+            print(f"GameManager: Game state saved successfully for guild {guild_id} after action.")
+        except Exception as e:
+            print(f"GameManager: ❌ Error saving game state for guild {guild_id} after action: {e}")
+            traceback.print_exc()
+
 
     async def shutdown(self) -> None:
         print("GameManager: Running shutdown...")

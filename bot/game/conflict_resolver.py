@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..database.sqlite_adapter import SqliteAdapter
     # Импорт класса Character для аннотаций типов
     from .models.character import Character
+    from .managers.game_log_manager import GameLogManager
 
 # Placeholder for actual RuleEngine and NotificationService classes
 # from ..core.rule_engine import RuleEngine # Assuming RuleEngine might be in a core module
@@ -30,7 +31,7 @@ class ConflictResolver:
     """
 
     # Аннотация для db_adapter теперь ссылается на импортированный (в TYPE_CHECKING) класс
-    def __init__(self, rule_engine: Any, rules_config_data: Dict[str, Any], notification_service: Any, db_adapter: 'SqliteAdapter'):
+    def __init__(self, rule_engine: Any, rules_config_data: Dict[str, Any], notification_service: Any, db_adapter: 'SqliteAdapter', game_log_manager: Optional['GameLogManager'] = None):
         """
         Инициализирует ConflictResolver.
 
@@ -45,7 +46,8 @@ class ConflictResolver:
         self.rules_config = rules_config_data
         self.notification_service = notification_service
         self.db_adapter = db_adapter # Store the db_adapter
-        print(f"ConflictResolver initialized with db_adapter.")
+        self.game_log_manager = game_log_manager
+        print(f"ConflictResolver initialized with db_adapter and game_log_manager {'present' if game_log_manager else 'not present'}.")
 
     async def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]], guild_id: str) -> List[Dict[str, Any]]:
 
@@ -328,6 +330,15 @@ class ConflictResolver:
 
         print(f"Conflict {conflict_id} ({conflict_type_id}) automatically resolved.")
         print(f"Outcome: {conflict['outcome']['outcome_key']}, Winner: {conflict['outcome'].get('winner_id')}")
+
+        if self.game_log_manager:
+            await self.game_log_manager.log_event(
+                guild_id=str(conflict.get("guild_id")),
+                event_type="conflict_resolution_auto",
+                message=f"Conflict {conflict_id} ({conflict_type_id}) resolved automatically. Winner: {conflict['outcome'].get('winner_id')}. Outcome: {conflict['outcome']['outcome_key']}",
+                related_entities=conflict.get("involved_entities", []),
+                metadata={"conflict_id": conflict_id, "outcome": conflict['outcome']}
+            )
         return conflict
 
 
@@ -424,6 +435,14 @@ class ConflictResolver:
                  print(f"❌ Error sending notification for conflict {conflict_id}: {e}")
                  traceback.print_exc()
 
+        if self.game_log_manager:
+            await self.game_log_manager.log_event(
+                guild_id=str(guild_id),
+                event_type="conflict_manual_preparation",
+                message=f"Conflict {conflict_id} ({conflict_type_id}) requires manual resolution. Notification: {formatted_message}",
+                related_entities=conflict.get("involved_entities", []),
+                metadata={"conflict_id": conflict_id}
+            )
 
         return {
             "conflict_id": conflict_id,
@@ -537,6 +556,20 @@ class ConflictResolver:
 
 
         print(f"Conflict {conflict_id} resolved manually by Master. Outcome: {outcome_type}. Details: {original_conflict['outcome']}")
+
+        if self.game_log_manager:
+            guild_id_for_log = original_conflict.get('guild_id')
+            if guild_id_for_log: # Ensure guild_id is available
+                await self.game_log_manager.log_event(
+                    guild_id=str(guild_id_for_log),
+                    event_type="conflict_resolution_manual",
+                    message=f"Conflict {conflict_id} resolved by master. Outcome: {outcome_type}. Details: {original_conflict['outcome'].get('description')}",
+                    related_entities=original_conflict.get("involved_entities", []),
+                    metadata={"conflict_id": conflict_id, "master_outcome": outcome_type, "resolution_params": params, "full_outcome": original_conflict['outcome']}
+                )
+            else:
+                print(f"Warning: Could not log manual conflict resolution for {conflict_id} due to missing guild_id in original_conflict.")
+
 
         return {
             "success": True,

@@ -24,6 +24,7 @@ from bot.game.rules import skill_rules # If skill_check rule is needed
 
 # Import ConflictResolver
 from bot.game.conflict_resolver import ConflictResolver
+from bot.game.managers.game_log_manager import GameLogManager
 
 
 class ActionProcessor:
@@ -47,7 +48,8 @@ class ActionProcessor:
                       ctx_channel_id: int,
                       discord_user_id: int,
                       action_type: str,
-                      action_data: Dict[str, Any]
+                      action_data: Dict[str, Any],
+                      game_log_manager: Optional[GameLogManager] = None
                       ) -> Dict[str, Any]:
         """
         Processes a player action. Determines target, calls rules/managers, involves event manager,
@@ -122,6 +124,14 @@ class ActionProcessor:
                 f"Видимые персонажи/NPC (пример): {', '.join([c.name for c in char_manager.get_characters_in_location(location.id) if c.id != character.id][:3]) if char_manager.get_characters_in_location(location.id) else 'нет'}. "
             )
             description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=400)
+            if game_log_manager and character:
+                await game_log_manager.log_event(
+                    guild_id=str(game_state.guild_id),
+                    event_type="player_action",
+                    message=f"{character.name} used {action_type} to look at {location.name}.",
+                    related_entities=[{"id": str(character.id), "type": "character"}, {"id": str(location.id), "type": "location"}],
+                    channel_id=str(ctx_channel_id)
+                )
             return {"success": True, "message": f"**Локация:** {location.name}\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": False}
 
 
@@ -183,6 +193,18 @@ class ActionProcessor:
 
 
             # Send description and indicate state change for GameManager to save
+            if game_log_manager and character and target_location:
+                await game_log_manager.log_event(
+                    guild_id=str(game_state.guild_id),
+                    event_type="player_action",
+                    message=f"{character.name} moved from {location.name} to {target_location.name}.",
+                    related_entities=[
+                        {"id": str(character.id), "type": "character"},
+                        {"id": str(location.id), "type": "location"},
+                        {"id": str(target_location.id), "type": "location"}
+                    ],
+                    channel_id=str(ctx_channel_id)
+                )
             return {"success": True, "message": f"**Мастер:** {description}", "target_channel_id": final_output_channel_id, "state_changed": True}
 
 
@@ -244,8 +266,16 @@ class ActionProcessor:
              mech_summary = check_result.get("description", "Проверка выполнена.")
              state_changed = check_result.get("is_critical_failure", False) # Crit fail might change state
 
-
-             return {"success": True, "message": f"_{mech_summary}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed}
+            if game_log_manager and character:
+                await game_log_manager.log_event(
+                    guild_id=str(game_state.guild_id),
+                    event_type="player_action",
+                    message=f"{character.name} attempted skill check {skill_name} for {target_description}. Success: {check_result.get('is_success')}",
+                    related_entities=[{"id": str(character.id), "type": "character"}],
+                    channel_id=str(ctx_channel_id),
+                    metadata={"skill_name": skill_name, "complexity": complexity, "result": check_result}
+                )
+            return {"success": True, "message": f"_{mech_summary}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed}
 
 
         # --- Add Handlers for other core Action Types (placeholder) ---
@@ -268,7 +298,8 @@ class ActionProcessor:
                                 openai_service: OpenAIService,
                                 party_actions_data: List[Tuple[str, str]],  # List[(character_id, collected_actions_json_string)]
                                 ctx_channel_id_fallback: int,
-                                conflict_resolver: Optional[ConflictResolver] = None
+                                conflict_resolver: Optional[ConflictResolver] = None,
+                                game_log_manager: Optional[GameLogManager] = None
                                 ) -> Dict[str, Any]:
         """
         Processes actions for a list of characters, typically a party.
@@ -342,6 +373,14 @@ class ActionProcessor:
                 # Further processing will involve iterating these conflicts and calling
                 # resolve_conflict_automatically or prepare_for_manual_resolution.
                 # For now, just log and return.
+                if game_log_manager:
+                    await game_log_manager.log_event(
+                        guild_id=str(game_state.guild_id),
+                        event_type="conflict_identification",
+                        message=f"{len(identified_conflicts)} conflicts identified for party.",
+                        related_entities=[{"id": p_id, "type": "character"} for p_id in parsed_actions_map.keys()],
+                        # metadata={"conflicts": identified_conflicts} # This might be too verbose for logs
+                    )
                 return {"success": True, "message": f"Conflict analysis initiated. {len(identified_conflicts)} potential conflicts found.", "identified_conflicts": identified_conflicts, "individual_action_results": [], "overall_state_changed": False} # Placeholder
             else:
                 print("ActionProcessor: No conflicts identified by ConflictResolver. Proceeding with individual action processing (or could stop here if desired).")
@@ -399,8 +438,10 @@ class ActionProcessor:
                         game_state=game_state, char_manager=char_manager, loc_manager=loc_manager,
                         event_manager=event_manager, rule_engine=rule_engine, openai_service=openai_service,
                         ctx_channel_id=ctx_channel_id_for_action, discord_user_id=character.discord_user_id,
-                        action_type=action_type, action_data=action_data
+                        action_type=action_type, action_data=action_data, game_log_manager=game_log_manager
                     )
+                    if game_state.game_manager:
+                        await game_state.game_manager.save_game_state_after_action(game_state.guild_id)
                     all_individual_results.append({"character_id": character_id, "action_original_text": original_text, **single_action_result})
                     if single_action_result.get("state_changed", False):
                         overall_state_changed_for_party = True
