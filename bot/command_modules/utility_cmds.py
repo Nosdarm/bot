@@ -1,7 +1,7 @@
 # bot/command_modules/utility_cmds.py
 import discord
 from discord import app_commands, Interaction
-from typing import Optional, TYPE_CHECKING, Dict, Any, List
+from typing import Optional, TYPE_CHECKING, Dict, Any, List, cast # Added cast
 import traceback
 
 import json # Added for JSON operations
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 async def cmd_undo(interaction: Interaction):
     """Allows a player to undo their last collected game action from the action queue."""
     await interaction.response.defer(ephemeral=True)
-    bot: RPGBot = interaction.client
+    bot = cast(RPGBot, interaction.client) # Used cast
 
     try:
         if not bot.game_manager or not bot.game_manager.character_manager:
@@ -40,18 +40,18 @@ async def cmd_undo(interaction: Interaction):
             return
 
         actions_list: List[Dict[str, Any]] = []
-        if character.собранные_действия_JSON:
+        if character.collected_actions_json: # Changed attribute name
             try:
-                actions_list = json.loads(character.собранные_действия_JSON)
+                actions_list = json.loads(character.collected_actions_json) # Changed attribute name
                 if not isinstance(actions_list, list): # Ensure it's a list
                     # If it's a dict (single action previously), wrap it in a list then pop.
                     # Or consider it an invalid state and clear. For simplicity, let's clear if not list.
                     actions_list = []
-                    print(f"Warning: собранные_действия_JSON for char {character.id} was not a list. Cleared for undo.")
+                    print(f"Warning: collected_actions_json for char {character.id} was not a list. Cleared for undo.") # Changed attribute name
             except json.JSONDecodeError:
                 await interaction.followup.send("Error: Could not parse your collected actions. Please contact an admin.", ephemeral=True)
                 # Optionally clear the invalid JSON
-                character.собранные_действия_JSON = "[]"
+                character.collected_actions_json = "[]" # Changed attribute name
                 character_manager.mark_character_dirty(guild_id_str, character.id)
                 await character_manager.save_character(character, guild_id=guild_id_str)
                 return
@@ -64,7 +64,7 @@ async def cmd_undo(interaction: Interaction):
         undone_action = actions_list.pop()
 
         # Update the character's collected actions
-        character.собранные_действия_JSON = json.dumps(actions_list)
+        character.collected_actions_json = json.dumps(actions_list) # Changed attribute name
         character_manager.mark_character_dirty(guild_id_str, character.id)
         await character_manager.save_character(character, guild_id=guild_id_str)
 

@@ -7,6 +7,7 @@ import discord
 import asyncio
 import traceback
 from typing import Optional, Dict, Any, List
+from discord.abc import Messageable # Added for global_send_message
 
 # Правильные импорты для slash commands и контекста
 from discord.ext import commands # Changed to commands.Bot
@@ -81,7 +82,7 @@ def load_settings_from_file(file_path: str) -> Dict[str, Any]:
 
 # --- Definition of the RPGBot class ---
 class RPGBot(commands.Bot): # Changed base class to commands.Bot
-    def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
+    def __init__(self, game_manager: Optional[GameManager], openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
         super().__init__(command_prefix=command_prefix, intents=intents)
         self.game_manager = game_manager
         self.debug_guild_ids = debug_guild_ids # Store it for later use in on_ready tree sync
@@ -100,7 +101,10 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
         self.add_application_commands_from_modules()
 
     async def on_ready(self):
-        print(f'Logged in as {self.user.name} ({self.user.id})')
+        if self.user:
+            print(f'Logged in as {self.user.name} ({self.user.id})')
+        else:
+            print('Logged in, but self.user is None initially.') # Should be populated by login
         if self.game_manager:
             print("GameManager is initialized in RPGBot.")
 
@@ -132,8 +136,11 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
 
         # Retrieve GameManager
         if not self.game_manager:
-            # Use proper logging if available, otherwise print
             logging.warning("GameManager not available in on_message.")
+            return
+
+        if not self.game_manager.character_manager:
+            logging.warning("NLU: CharacterManager not available in on_message. Cannot process message for NLU or character interaction.")
             return
 
         # NLU processing should not happen for DMs if guild_id is essential for NLU context
@@ -165,7 +172,7 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
             
             # To interact with CharacterManager, we'd typically do:
             char_model = await self.game_manager.character_manager.get_character_by_discord_id(
-                user_id=message.author.id,
+                discord_user_id=message.author.id, # Changed user_id to discord_user_id
                 guild_id=str(message.guild.id)
             )
 
@@ -242,7 +249,7 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
                     logging.info(f"Input: User {message.author.id} (CharID: {char_model.id}) is in '{current_status}' state. Raw message: \"{message.content}\"")
 
                     if current_status == 'диалог':
-                        if hasattr(self.game_manager, 'dialogue_manager') and self.game_manager.dialogue_manager:
+                        if self.game_manager and self.game_manager.dialogue_manager: # Added check for game_manager itself too
                             logging.debug(f"Input: Routing message from {char_model.name} to DialogueManager.")
                             try:
                                 await self.game_manager.dialogue_manager.process_player_dialogue_message(
@@ -254,7 +261,7 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
                             except Exception as dialogue_err:
                                 logging.error(f"Input: Error calling process_player_dialogue_message for {char_model.name}: {dialogue_err}", exc_info=True)
                         else:
-                            logging.warning(f"Input: DialogueManager not available for character {char_model.name} in 'диалог' state.")
+                            logging.warning(f"Input: DialogueManager not available (or GameManager is None) for character {char_model.name} in 'диалог' state.")
 
                     elif current_status == 'бой':
                         # Combat is typically command-driven. Raw text might be for chat or out-of-band communication.
@@ -341,7 +348,7 @@ _rpg_bot_instance_for_global_send: Optional[RPGBot] = None
 async def global_send_message(channel_id: int, content: str, **kwargs):
     if _rpg_bot_instance_for_global_send:
         channel = _rpg_bot_instance_for_global_send.get_channel(channel_id)
-        if channel:
+        if channel and isinstance(channel, Messageable): # Added isinstance check
             try:
                 await channel.send(content, **kwargs)
             except Exception as e:
@@ -378,14 +385,57 @@ async def cmd_gm_simulate(interaction: Interaction): # Changed ctx to interactio
 
     await interaction.response.defer(ephemeral=True) # Defer response
 
-    if game_mngr:
-        await game_mngr.run_simulation_tick(
-            server_id=interaction.guild_id, # Use interaction.guild_id
-            # send_message_callback is handled by GameManager's internal setup
-        )
-        await interaction.followup.send("**Мастер:** Шаг симуляции мира завершен!")
-    else:
-        await interaction.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен или игра не начата. Используйте `/start_game`.")
+    if game_mngr and game_mngr._world_simulation_processor:
+        try:
+            # Constructing full context here is complex and not ideal.
+            # This is a partial fix to address AttributeError, but functionality depends on WorldSimulationProcessor's needs.
+            # A proper fix might involve a dedicated method in GameManager to trigger a single tick with context.
+            tick_context = {
+                'rule_engine': game_mngr.rule_engine, 'time_manager': game_mngr.time_manager,
+                'location_manager': game_mngr.location_manager, 'event_manager': game_mngr.event_manager,
+                'character_manager': game_mngr.character_manager, 'item_manager': game_mngr.item_manager,
+                'status_manager': game_mngr.status_manager, 'combat_manager': game_mngr.combat_manager,
+                'crafting_manager': game_mngr.crafting_manager, 'economy_manager': game_mngr.economy_manager,
+                'npc_manager': game_mngr.npc_manager, 'party_manager': game_mngr.party_manager,
+                'openai_service': game_mngr.openai_service,
+                'quest_manager': game_mngr.quest_manager,
+                'relationship_manager': game_mngr.relationship_manager,
+                'dialogue_manager': game_mngr.dialogue_manager,
+                'game_log_manager': game_mngr.game_log_manager,
+                'consequence_processor': game_mngr.consequence_processor,
+                'on_enter_action_executor': game_mngr._on_enter_action_executor,
+                'stage_description_generator': game_mngr._stage_description_generator,
+                'event_stage_processor': game_mngr._event_stage_processor,
+                'event_action_processor': game_mngr._event_action_processor,
+                'character_action_processor': game_mngr._character_action_processor,
+                'character_view_service': game_mngr._character_view_service,
+                'party_action_processor': game_mngr._party_action_processor,
+                'persistence_manager': game_mngr._persistence_manager,
+                'conflict_resolver': game_mngr.conflict_resolver,
+                'db_adapter': game_mngr._db_adapter,
+                'nlu_data_service': game_mngr.nlu_data_service,
+                'prompt_context_collector': game_mngr.prompt_context_collector,
+                'multilingual_prompt_generator': game_mngr.multilingual_prompt_generator,
+                'send_callback_factory': game_mngr._get_discord_send_callback,
+                'settings': game_mngr._settings,
+                'discord_client': game_mngr._discord_client,
+                'guild_id': str(interaction.guild_id) # Adding guild_id to context
+            }
+            # Filter out None values from context as WSP might not expect them
+            tick_context_filtered = {k: v for k, v in tick_context.items() if v is not None}
+
+            await game_mngr._world_simulation_processor.process_world_tick(
+                game_time_delta=game_mngr._tick_interval_seconds, # Using default interval
+                **tick_context_filtered
+            )
+            await interaction.followup.send("**Мастер:** Шаг симуляции мира завершен!")
+        except Exception as e:
+            logging.error(f"Error in cmd_gm_simulate calling process_world_tick: {e}", exc_info=True)
+            await interaction.followup.send(f"**Мастер:** Ошибка при выполнении шага симуляции: {e}", ephemeral=True)
+    elif not game_mngr:
+        await interaction.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен.", ephemeral=True)
+    else: # game_mngr exists but _world_simulation_processor is None
+        await interaction.followup.send("**Мастер:** WorldSimulationProcessor не доступен. Невозможно запустить симуляцию.", ephemeral=True)
 
 
 # --- Main Bot Entry Point ---
