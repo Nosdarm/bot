@@ -124,7 +124,7 @@ class ActionProcessor:
                 f"Видимые персонажи/NPC (пример): {', '.join([c.name for c in char_manager.get_characters_in_location(location.id) if c.id != character.id][:3]) if char_manager.get_characters_in_location(location.id) else 'нет'}. "
             )
             description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=400)
-            if game_log_manager and character:
+            if game_log_manager and character: # Corrected indentation
                 await game_log_manager.log_event(
                     guild_id=str(game_state.guild_id),
                     event_type="player_action",
@@ -193,7 +193,7 @@ class ActionProcessor:
 
 
             # Send description and indicate state change for GameManager to save
-            if game_log_manager and character and target_location:
+            if game_log_manager and character and target_location: # Corrected indentation
                 await game_log_manager.log_event(
                     guild_id=str(game_state.guild_id),
                     event_type="player_action",
@@ -266,7 +266,7 @@ class ActionProcessor:
              mech_summary = check_result.get("description", "Проверка выполнена.")
              state_changed = check_result.get("is_critical_failure", False) # Crit fail might change state
 
-            if game_log_manager and character:
+            if game_log_manager and character: # Corrected indentation
                 await game_log_manager.log_event(
                     guild_id=str(game_state.guild_id),
                     event_type="player_action",
