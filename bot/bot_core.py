@@ -6,7 +6,7 @@ import logging # For enhanced logging
 import discord
 import asyncio
 import traceback
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, cast
 
 # Правильные импорты для slash commands и контекста
 from discord.ext import commands # Changed to commands.Bot
@@ -81,9 +81,9 @@ def load_settings_from_file(file_path: str) -> Dict[str, Any]:
 
 # --- Definition of the RPGBot class ---
 class RPGBot(commands.Bot): # Changed base class to commands.Bot
-    def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
+    def __init__(self, game_manager: Optional[GameManager], openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
         super().__init__(command_prefix=command_prefix, intents=intents)
-        self.game_manager = game_manager
+        self.game_manager: Optional[GameManager] = game_manager
         self.debug_guild_ids = debug_guild_ids # Store it for later use in on_ready tree sync
         self.openai_service = openai_service # Though game_manager might also hold a reference to it
 
@@ -132,8 +132,10 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
 
         # Retrieve GameManager
         if not self.game_manager:
-            # Use proper logging if available, otherwise print
-            logging.warning("GameManager not available in on_message.")
+            logging.warning("GameManager not initialized in on_message.")
+            return
+        if not self.game_manager.character_manager:
+            logging.warning("CharacterManager not initialized in on_message.")
             return
 
         # NLU processing should not happen for DMs if guild_id is essential for NLU context
@@ -165,7 +167,7 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
             
             # To interact with CharacterManager, we'd typically do:
             char_model = await self.game_manager.character_manager.get_character_by_discord_id(
-                user_id=message.author.id,
+                discord_user_id=message.author.id,
                 guild_id=message.guild.id
             )
 
@@ -335,15 +337,21 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
     if _rpg_bot_instance_for_global_send:
         channel = _rpg_bot_instance_for_global_send.get_channel(channel_id)
         if channel:
-            try:
-                await channel.send(content, **kwargs)
-            except Exception as e:
-                print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
+            if isinstance(channel, discord.abc.Messageable):
+                try:
+                    await channel.send(content, **kwargs)
+                except Exception as e:
+                    print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
+            else:
+                # Log this appropriately
+                print(f"Warning: Channel {channel_id} is not Messageable (type: {type(channel)}). Cannot send message globally.")
         else:
             print(f"Warning: Channel {channel_id} not found by global_send_message.")
     else:
         print("Warning: _rpg_bot_instance_for_global_send not set. Cannot send message.")
 
+def get_bot_instance() -> Optional[RPGBot]:
+    return _rpg_bot_instance_for_global_send
 
 # --- Simulation Trigger Command (GM only) - DEFINITION as a separate function ---
 # Accesses GameManager via ctx.bot.game_manager if commands are structured as Cogs or similar.
@@ -360,7 +368,11 @@ async def cmd_gm_simulate(interaction: Interaction): # Changed ctx to interactio
         await interaction.response.send_message("Error: Bot instance is not configured correctly.", ephemeral=True)
         return
 
+    # bot_instance is now confirmed to be RPGBot
     game_mngr = bot_instance.game_manager
+    if not game_mngr:
+        await interaction.response.send_message("Error: GameManager not available on bot instance.", ephemeral=True)
+        return
 
     # TODO: Update is_master_or_admin and is_gm_channel to accept interaction and use game_mngr
     # from bot.command_modules.game_setup_cmds import is_master_or_admin

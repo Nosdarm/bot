@@ -203,7 +203,7 @@ class QuestManager:
 
         # --- This part below is now only for NON-AI generated quests (i.e., from template_data_from_campaign) ---
         # Basic check for character existence
-        if self._character_manager and not self._character_manager.get_character_by_id(guild_id_str, character_id_str):
+        if self._character_manager and not self._character_manager.get_character(guild_id_str, character_id_str): # Changed get_character_by_id to get_character
             print(f"Error: Character '{character_id_str}' not found in guild '{guild_id_str}'. Cannot start quest.")
             return None
 
@@ -267,9 +267,15 @@ class QuestManager:
         # Handle consequences for non-AI path
         if self._consequence_processor and template_data_from_campaign: # Ensure this runs only for campaign quests now
             context = self._build_consequence_context(guild_id_str, character_id_str, new_quest_data)
-            start_consequences = template_data_from_campaign.get("consequences", {}).get("on_start", [])
-            if start_consequences:
-                self._consequence_processor.process_consequences(start_consequences, context)
+            consequences_value = template_data_from_campaign.get("consequences", {}).get("on_start", [])
+            consequences_to_process: List[Dict[str, Any]] = []
+            if isinstance(consequences_value, dict):
+                consequences_to_process = [consequences_value]
+            elif isinstance(consequences_value, list):
+                consequences_to_process = consequences_value
+
+            if consequences_to_process:
+                self._consequence_processor.process_consequences(consequences_to_process, context)
         
         print(f"Quest '{new_quest_data.get('name_i18n', {}).get('en', quest_id)}' (ID: {quest_id}) started from campaign template for char {character_id_str}.")
         return new_quest_data # Return quest data dict for non-AI path
@@ -385,9 +391,15 @@ class QuestManager:
 
         if self._consequence_processor and template:
             context = self._build_consequence_context(guild_id_str, character_id_str, quest_data)
-            completion_consequences = template.get("consequences", {}).get("on_complete", [])
-            if completion_consequences:
-                self._consequence_processor.process_consequences(completion_consequences, context)
+            consequences_value = template.get("consequences", {}).get("on_complete", [])
+            consequences_to_process: List[Dict[str, Any]] = []
+            if isinstance(consequences_value, dict):
+                consequences_to_process = [consequences_value]
+            elif isinstance(consequences_value, list):
+                consequences_to_process = consequences_value
+
+            if consequences_to_process:
+                self._consequence_processor.process_consequences(consequences_to_process, context)
 
         self._completed_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, []).append(quest_id_str)
         del self._active_quests[guild_id_str][character_id_str][quest_id_str]
@@ -416,9 +428,15 @@ class QuestManager:
 
         if self._consequence_processor and template:
             context = self._build_consequence_context(guild_id_str, character_id_str, quest_data)
-            failure_consequences = template.get("consequences", {}).get("on_fail", [])
-            if failure_consequences:
-                self._consequence_processor.process_consequences(failure_consequences, context)
+            consequences_value = template.get("consequences", {}).get("on_fail", [])
+            consequences_to_process: List[Dict[str, Any]] = []
+            if isinstance(consequences_value, dict):
+                consequences_to_process = [consequences_value]
+            elif isinstance(consequences_value, list):
+                consequences_to_process = consequences_value
+
+            if consequences_to_process:
+                self._consequence_processor.process_consequences(consequences_to_process, context)
         
         del self._active_quests[guild_id_str][character_id_str][quest_id_str]
         if not self._active_quests[guild_id_str][character_id_str]: # Cleanup
@@ -665,9 +683,15 @@ class QuestManager:
             # Use the passed context for managers, but quest_data for the quest itself
             consequences_context.update(context) # Merge the broader command context
 
-            start_consequences = quest_data.get("consequences", {}).get("on_start", [])
-            if start_consequences:
-                self._consequence_processor.process_consequences(start_consequences, consequences_context)
+            consequences_value = quest_data.get("consequences", {}).get("on_start", [])
+            consequences_to_process: List[Dict[str, Any]] = []
+            if isinstance(consequences_value, dict):
+                consequences_to_process = [consequences_value]
+            elif isinstance(consequences_value, list):
+                consequences_to_process = consequences_value
+
+            if consequences_to_process:
+                self._consequence_processor.process_consequences(consequences_to_process, consequences_context)
 
         return new_quest_data
 

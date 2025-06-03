@@ -8,7 +8,7 @@ The validator can also perform auto-corrections (like clamping values) and flags
 content that requires manual moderation.
 """
 import json
-from typing import List, Dict, Any, Optional, Union, cast, Set
+from typing import List, Dict, Any, Optional, Union, cast, Set, Callable
 
 from .rules_schema import GameRules # Implicitly import others like RoleStatRules
 # Game models are used for type hinting and as a structural reference,
@@ -19,6 +19,9 @@ from bot.game.models.item import Item
 
 # Define a type alias for the block validator result for clarity
 BlockValidationResult = Dict[str, Any]
+
+# Type alias for the specific signature of block validator functions
+ValidatorFuncType = Callable[[Dict[str, Any], Optional[Set[str]], Optional[Set[str]], Optional[Set[str]]], BlockValidationResult]
 
 class AIResponseValidator:
     """
@@ -570,7 +573,7 @@ class AIResponseValidator:
             # No entities to process, return immediately with global error
             return {"overall_status": "error", "entities": entities, "global_errors": global_errors}
 
-        validator_func: Optional[callable] = None # To satisfy type checker before assignment
+        validator_func: Optional[ValidatorFuncType] = None
         is_list = False # Flag to indicate if parsed_data should be a list of entities
 
         # Determine the correct block validator function based on expected_structure
@@ -609,13 +612,20 @@ class AIResponseValidator:
                         })
                         continue
                     # Call the appropriate block validator for the dictionary item
-                    entities.append(validator_func(cast(Dict[str, Any], item_data_uncast), **context_args))
+                    if validator_func:
+                        entities.append(validator_func(cast(Dict[str, Any], item_data_uncast), **context_args))
+                    # If validator_func is None here, it means expected_structure was unknown,
+                    # and global_errors would have been populated. The loop continues,
+                    # but no validation for this item happens.
         else: # Expected a single dictionary entity
             if not isinstance(parsed_data, dict):
                 global_errors.append(f"Expected a dictionary for '{expected_structure}', but got {type(parsed_data).__name__}.")
             else:
                 # Call the appropriate block validator for the single dictionary
-                entities.append(validator_func(cast(Dict[str, Any], parsed_data), **context_args))
+                if validator_func:
+                    entities.append(validator_func(cast(Dict[str, Any], parsed_data), **context_args))
+                # If validator_func is None, global_errors related to unknown expected_structure
+                # would have already been set.
 
         # Determine overall_status based on global_errors and individual entity statuses
         overall_status = "success" # Default assumption

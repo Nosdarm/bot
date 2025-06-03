@@ -139,7 +139,7 @@ class SqliteAdapter:
             cursor = await self._conn.execute(sql, params or ())
             rows = await cursor.fetchall()
             await cursor.close()
-            return rows
+            return list(rows) # Ensure it's a list for type checker
         except Exception as e:
             print(f"SqliteAdapter: ❌ Error fetching all SQL: {sql} | params: {params} | {e}")
             traceback.print_exc()
@@ -755,6 +755,7 @@ class SqliteAdapter:
     async def _migrate_v6_to_v7(self, cursor: Cursor) -> None:
         """Миграция с Версии 6 на Версию 7 (копирование inventory.quantity в inventory.amount и удаление inventory.quantity)."""
         print("SqliteAdapter: Running v6 to v7 migration (inventory quantity -> amount cleanup)...")
+        fk_actually_enabled: bool = False # Initialize here
         await cursor.execute("PRAGMA busy_timeout = 5000;")
 
         await cursor.execute("PRAGMA table_info(inventory);")
@@ -790,8 +791,9 @@ class SqliteAdapter:
 
         try:
             # Temporarily disable foreign keys only if they are on.
-            original_fk_status = await cursor.execute("PRAGMA foreign_keys;")
-            original_fk_enabled_row = await original_fk_status.fetchone()
+            original_fk_status_cursor = await cursor.execute("PRAGMA foreign_keys;")
+            original_fk_enabled_row = await original_fk_status_cursor.fetchone()
+            # fk_actually_enabled is already initialized, assign here
             fk_actually_enabled = original_fk_enabled_row[0] == 1 if original_fk_enabled_row else False
 
             if fk_actually_enabled:

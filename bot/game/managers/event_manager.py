@@ -430,7 +430,8 @@ class EventManager:
             self.mark_event_dirty(guild_id_str, eid)
 
 
-            print(f"EventManager: Event '{eid}' ('{event.name}') created for guild {guild_id_str} in channel {event.channel_id}. Marked dirty.")
+            event_display_name = getattr(event, 'name', eid) # Safe name access
+            print(f"EventManager: Event '{eid}' ('{event_display_name}') created for guild {guild_id_str} in channel {event.channel_id}. Marked dirty.")
 
             # Optional: Trigger RuleEngine hook for event creation?
             # rule_engine = kwargs.get('rule_engine', self._rule_engine)
