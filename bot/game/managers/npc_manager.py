@@ -271,12 +271,11 @@ class NpcManager:
             print(f"NpcManager: No CampaignLoader or get_npc_archetypes method. Triggering AI generation for '{npc_template_id}'.")
             trigger_ai_generation = True
 
-<<<<<<< HEAD
         # Layering: kwargs > archetype_data > generated/default
         final_name_i18n = kwargs.get('name_i18n', archetype_data_loaded.get('name_i18n', {"en": base_name, "ru": base_name}) if archetype_data_loaded else {"en": base_name, "ru": base_name})
         
         # Stats: Start with RuleEngine, then layer archetype, then layer specific kwargs
-=======
+
         if trigger_ai_generation:
             npc_id_concept = npc_template_id # Or derive a concept, e.g., npc_template_id.split(":")[-1]
             if npc_template_id.startswith("AI:"):
@@ -328,7 +327,6 @@ class NpcManager:
         }
 
         # 1. Apply RuleEngine generated stats (if no AI stats)
->>>>>>> ai-moderation-flow
         rule_engine = self._rule_engine or kwargs.get('rule_engine')
         if rule_engine and hasattr(rule_engine, 'generate_initial_npc_stats') and not (ai_generated_data and 'stats' in ai_generated_data):
             try:
@@ -356,7 +354,6 @@ class NpcManager:
             final_data['backstory'] = archetype_data_loaded.get('backstory', final_data['backstory'])
             # Potentially other fields from archetype_data
 
-<<<<<<< HEAD
         final_inventory = kwargs.get('inventory', archetype_data_loaded.get('inventory', base_inventory) if archetype_data_loaded else base_inventory)
         final_archetype_name = kwargs.get('archetype', archetype_data_loaded.get('archetype', base_archetype_name) if archetype_data_loaded else base_archetype_name)
         final_traits = kwargs.get('traits', archetype_data_loaded.get('traits', base_traits) if archetype_data_loaded else base_traits)
@@ -369,7 +366,7 @@ class NpcManager:
         final_motivation_i18n = kwargs.get('motivation_i18n', archetype_data_loaded.get('motivation_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
         final_dialogue_hints_i18n = kwargs.get('dialogue_hints_i18n', archetype_data_loaded.get('dialogue_hints_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
         final_visual_description_i18n = kwargs.get('visual_description_i18n', archetype_data_loaded.get('visual_description_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
-=======
+
         # 3. Layer AI Generated Data (if available)
         # AI data is expected to be comprehensive.
         # It might have 'name_i18n', 'backstory_i18n', 'description_i18n' etc.
@@ -384,7 +381,6 @@ class NpcManager:
                  # If 'name' is not also provided by AI, we might need to set a default 'name' from 'name_i18n'
                  if 'name' not in ai_generated_data and isinstance(ai_generated_data['name_i18n'], dict):
                      final_data['name'] = next(iter(ai_generated_data['name_i18n'].values()), final_data['name'])
->>>>>>> ai-moderation-flow
 
 
             if isinstance(ai_generated_data.get('stats'), dict):
@@ -433,12 +429,10 @@ class NpcManager:
             # Prepare the full data dictionary for NPC.from_dict
             data_for_npc_object: Dict[str, Any] = {
                 'id': npc_id,
-<<<<<<< HEAD
                 'template_id': archetype_id_to_load, # Store the archetype/template ID used
                 'name_i18n': final_name_i18n,
-=======
+
                 'template_id': archetype_id_to_load, # Original template ID or concept
->>>>>>> ai-moderation-flow
                 'guild_id': guild_id_str,
                 'location_id': location_id,
                 'current_action': None,
@@ -450,7 +444,6 @@ class NpcManager:
                 'is_alive': kwargs.get('is_alive', True),
                 'status_effects': [], # Status effects usually added post-creation
                 'is_temporary': bool(kwargs.get('is_temporary', False)),
-<<<<<<< HEAD
                 'archetype': final_archetype_name,
                 'traits': final_traits,
                 'desires': final_desires,
@@ -461,8 +454,7 @@ class NpcManager:
                 'motivation_i18n': final_motivation_i18n,
                 'dialogue_hints_i18n': final_dialogue_hints_i18n,
                 'visual_description_i18n': final_visual_description_i18n,
-=======
->>>>>>> ai-moderation-flow
+
             }
             # Add all fields from final_data (name, stats, inventory, archetype, traits, etc.)
             data_for_npc_object.update(final_data)
@@ -1071,7 +1063,7 @@ class NpcManager:
                            continue # Skip this NPC if invalid or wrong guild
 
                        template_id = getattr(npc, 'template_id', None)
-                        name_i18n = getattr(npc, 'name_i18n', {"en": "Unnamed NPC", "ru": "Безымянный NPC"})
+                       name_i18n = getattr(npc, 'name_i18n', {"en": "Unnamed NPC", "ru": "Безымянный NPC"})
                        location_id = getattr(npc, 'location_id', None)
                        stats = getattr(npc, 'stats', {})
                        inventory = getattr(npc, 'inventory', [])
@@ -1084,16 +1076,16 @@ class NpcManager:
                        is_alive = getattr(npc, 'is_alive', True)
                        status_effects = getattr(npc, 'status_effects', [])
                        is_temporary = getattr(npc, 'is_temporary', False)
-                        archetype = getattr(npc, 'archetype', "commoner")
-                        traits = getattr(npc, 'traits', [])
-                        desires = getattr(npc, 'desires', [])
-                        motives = getattr(npc, 'motives', [])
-                        backstory_i18n = getattr(npc, 'backstory_i18n', {"en": "", "ru": ""})
-                        role_i18n = getattr(npc, 'role_i18n', {"en": "", "ru": ""})
-                        personality_i18n = getattr(npc, 'personality_i18n', {"en": "", "ru": ""})
-                        motivation_i18n = getattr(npc, 'motivation_i18n', {"en": "", "ru": ""})
-                        dialogue_hints_i18n = getattr(npc, 'dialogue_hints_i18n', {"en": "", "ru": ""})
-                        visual_description_i18n = getattr(npc, 'visual_description_i18n', {"en": "", "ru": ""})
+                       archetype = getattr(npc, 'archetype', "commoner")
+                       traits = getattr(npc, 'traits', [])
+                       desires = getattr(npc, 'desires', [])
+                       motives = getattr(npc, 'motives', [])
+                       backstory_i18n = getattr(npc, 'backstory_i18n', {"en": "", "ru": ""})
+                       role_i18n = getattr(npc, 'role_i18n', {"en": "", "ru": ""})
+                       personality_i18n = getattr(npc, 'personality_i18n', {"en": "", "ru": ""})
+                       motivation_i18n = getattr(npc, 'motivation_i18n', {"en": "", "ru": ""})
+                       dialogue_hints_i18n = getattr(npc, 'dialogue_hints_i18n', {"en": "", "ru": ""})
+                       visual_description_i18n = getattr(npc, 'visual_description_i18n', {"en": "", "ru": ""})
 
                        # Ensure data types are suitable for JSON dumping
                        if not isinstance(name_i18n, dict): name_i18n = {"en": str(name_i18n), "ru": str(name_i18n)} # Basic fallback if not dict

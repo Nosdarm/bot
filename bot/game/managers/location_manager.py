@@ -1038,7 +1038,6 @@ class LocationManager:
         if isinstance(triggers, list) and engine and hasattr(engine, 'execute_triggers'):
             print(f"LocationManager: Executing {len(triggers)} OnExit triggers for {entity_type} {entity_id} from location {location_id} (guild {guild_id_str}).")
             try:
-                 # --- Начало блока try (отступ 4 пробела от if) ---
                  trigger_context = {
                      **kwargs,
                      'location_instance_id': location_id,

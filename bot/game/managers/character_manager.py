@@ -193,7 +193,8 @@ class CharacterManager:
          guild_chars = self._characters.get(str(guild_id))
          if guild_chars:
               for char in guild_chars.values():
-                  if isinstance(char, Character) and char.name == name:
+                  # Use getattr for safer access to name, fallback to id if name is missing
+                  if isinstance(char, Character) and getattr(char, 'name', char.id) == name:
                       return char
          return None
 
@@ -1028,6 +1029,7 @@ class CharacterManager:
     async def remove_item_from_inventory(self, guild_id: str, character_id: str, item_id: str, quantity: int = 1, **kwargs: Any) -> bool:
          """Удаляет предмет из инвентаря персонажа для определенной гильдии."""
          guild_id_str = str(guild_id)
+         item_entry: Optional[Dict[str, Any]] = None # Initialize item_entry
          # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
          char = self.get_character(guild_id_str, character_id)
          if not char:

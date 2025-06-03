@@ -291,7 +291,7 @@ class PartyManager:
             self.mark_party_dirty(guild_id_str, new_id)
 
 
-            print(f"PartyManager: Party {new_id} ('{party.name}') created for guild {guild_id_str}. Leader: {leader_id_str}. Members: {member_ids_str}. Location: {current_location_id}")
+            print(f"PartyManager: Party {new_id} ('{getattr(party, 'name', new_id)}') created for guild {guild_id_str}. Leader: {leader_id_str}. Members: {member_ids_str}. Location: {current_location_id}")
             # TODO: Notify participants? (Through send_callback_factory from kwargs)
 
             return party # Return the Party object
@@ -919,7 +919,8 @@ class PartyManager:
                 print(f"PartyManager: Warning: Non-string member_id '{member_player_id_str}' in party {party.id} player_ids_list. Skipping.")
                 continue
 
-            member_char = await self._character_manager.get_character_by_player_id(player_id=member_player_id_str, guild_id=guild_id)
+            # Changed get_character_by_player_id to get_character_by_discord_id and removed await
+            member_char = self._character_manager.get_character_by_discord_id(discord_user_id=int(member_player_id_str), guild_id=guild_id) # Assuming player_id_str is discord_user_id
             if member_char and member_char.location_id == location_id and member_char.current_game_status == 'ожидание_обработку':
                 ready_members.append(member_char)
         return ready_members
@@ -955,7 +956,8 @@ class PartyManager:
 
         for pid_str in all_member_ids:
             if not isinstance(pid_str, str): continue
-            char = await self._character_manager.get_character_by_player_id(player_id=pid_str, guild_id=guild_id)
+            # Changed get_character_by_player_id to get_character_by_discord_id and removed await
+            char = self._character_manager.get_character_by_discord_id(discord_user_id=int(pid_str), guild_id=guild_id) # Assuming pid_str is discord_user_id
             if char and char.location_id == location_id:
                 total_members_in_location.append(char)
         
