@@ -152,11 +152,6 @@ class CommandRouter:
         campaign_loader: Optional["CampaignLoader"] = None,
         relationship_manager: Optional["RelationshipManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
-<<<<<<< HEAD
-        conflict_resolver: Optional["ConflictResolver"] = None, # Added ConflictResolver
-=======
-        conflict_resolver: Optional["ConflictResolver"] = None, # Added ConflictResolver parameter
->>>>>>> jules_wip_8142786043997061140
 
     ):
         print("Initializing CommandRouter...")
@@ -175,11 +170,7 @@ class CommandRouter:
         self._campaign_loader = campaign_loader
         self._relationship_manager = relationship_manager 
         self._quest_manager = quest_manager
-<<<<<<< HEAD
-        self._conflict_resolver = conflict_resolver # Use the injected dependency
-=======
-        self._conflict_resolver = conflict_resolver # Assign from parameter
->>>>>>> jules_wip_8142786043997061140
+        self._conflict_resolver = kwargs.get('conflict_resolver') # Added ConflictResolver from kwargs
 
         self._openai_service = openai_service
         self._item_manager = item_manager
@@ -374,14 +365,9 @@ class CommandRouter:
             name = char_args[0]
             # Prevent TypeError: create_character() got multiple values for keyword argument 'guild_id'
             context_copy = context.copy()
-            if 'guild_id' in context_copy: # guild_id is passed explicitly
+            if 'guild_id' in context_copy:
                 del context_copy['guild_id']
             
-            # context_copy is already defined from context.copy()
-            # Ensure no other explicit parameters are in context_copy to avoid TypeError
-            context_copy.pop('discord_id', None) # Remove if somehow present, though not typical in context
-            context_copy.pop('name', None)       # Remove if somehow present, though not typical in context
-
             try:
                 # Ensure author_id is passed as discord_id
                 # Ensure guild_id is passed directly and not duplicated in context_copy
@@ -389,7 +375,7 @@ class CommandRouter:
                     guild_id=guild_id, 
                     discord_id=int(author_id), 
                     name=name, 
-                    **context_copy # Use the cleaned context_copy
+                    **context_copy
                 )
                 if char_id:
                     await send_callback(f"Character '{name}' (ID: {char_id}) created successfully for user {message.author.mention}!")
@@ -1631,33 +1617,7 @@ class CommandRouter:
         from bot.game.models.game_state import GameState # Assuming GameState model
         mock_game_state = GameState(guild_id=guild_id) # Basic mock
 
-        processed_character_ids = []
-
-        # --- Before action processing: Save submitted actions to character ---
-        if char_manager and guild_id:
-            for char_id, actions_json_str in party_actions_data:
-                character_obj = char_manager.get_character(guild_id, char_id)
-                if character_obj:
-                    processed_character_ids.append(char_id) # Keep track of characters we touch
-                    try:
-                        # Validate if actions_json_str is valid JSON.
-                        # json.loads(actions_json_str) # Commented out as Character model might handle validation or expect string
-                        character_obj.collected_actions_json = actions_json_str
-                        char_manager.mark_character_dirty(guild_id, char_id)
-                        print(f"CommandRouter: Saved collected_actions_json for character {char_id}.")
-                    except Exception as e: # Catch JSON parsing errors or other issues
-                        print(f"CommandRouter: Error setting collected_actions_json for {char_id}: {e}")
-                        await send_callback(f"⚠️ Error with submitted actions for character {char_id}: Invalid format. Please ensure it's valid JSON.")
-                        # Decide if we should skip processing for this character or the whole party
-                        # For now, we'll still add to processed_character_ids to clear it later,
-                        # but action_processor might also need to handle this error.
-                else:
-                    print(f"CommandRouter: Character {char_id} not found in guild {guild_id} when trying to save collected_actions_json.")
-                    await send_callback(f"⚠️ Character {char_id} not found. Cannot process actions.")
-
-
         try:
-            # Call the main action processing logic
             result = await action_processor_instance.process_party_actions(
                 game_state=mock_game_state,
                 char_manager=char_manager,
@@ -1669,20 +1629,6 @@ class CommandRouter:
                 ctx_channel_id_fallback=message.channel.id,
                 conflict_resolver=self._conflict_resolver # Pass it again here, it will take precedence
             )
-            
-            # --- After action processing: Clear submitted actions from character ---
-            if char_manager and guild_id:
-                for char_id_to_clear in processed_character_ids: # Iterate over characters we touched
-                    character_obj_to_clear = char_manager.get_character(guild_id, char_id_to_clear)
-                    if character_obj_to_clear:
-                        if hasattr(character_obj_to_clear, 'collected_actions_json'):
-                            character_obj_to_clear.collected_actions_json = None
-                            char_manager.mark_character_dirty(guild_id, char_id_to_clear)
-                            print(f"CommandRouter: Cleared collected_actions_json for character {char_id_to_clear}.")
-                        else:
-                            print(f"CommandRouter: Character {char_id_to_clear} missing collected_actions_json attribute on cleanup.")
-                    else:
-                        print(f"CommandRouter: Character {char_id_to_clear} not found on cleanup in guild {guild_id}.")
             
             response_message = f"Party actions submitted for party '{party_id_arg}'. Result:\n"
             response_message += f"Success: {result.get('success')}\n"
