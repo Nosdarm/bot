@@ -7,7 +7,7 @@ import uuid
 from bot.game.managers.character_manager import CharacterManager
 from bot.game.managers.location_manager import LocationManager
 from bot.game.managers.item_manager import ItemManager
-from bot.game.rules.rule_engine import RuleEngine # Assuming a concrete RuleEngine might be needed for some trigger tests
+from bot.game.managers.rule_engine import RuleEngine # Assuming a concrete RuleEngine might be needed for some trigger tests
 
 # Models
 from bot.game.models.character import Character

@@ -574,6 +574,7 @@ class AIResponseValidator:
             return {"overall_status": "error", "entities": entities, "global_errors": global_errors}
 
         validator_func: Optional[ValidatorFuncType] = None
+        validator_func: Optional[Callable[..., Any]] = None # To satisfy type checker before assignment
         is_list = False # Flag to indicate if parsed_data should be a list of entities
 
         # Determine the correct block validator function based on expected_structure
@@ -617,6 +618,8 @@ class AIResponseValidator:
                     # If validator_func is None here, it means expected_structure was unknown,
                     # and global_errors would have been populated. The loop continues,
                     # but no validation for this item happens.
+                    # If validator_func is None here, it implies an issue with expected_structure that wasn't caught
+                    # by the initial return, though that path should ideally prevent this.
         else: # Expected a single dictionary entity
             if not isinstance(parsed_data, dict):
                 global_errors.append(f"Expected a dictionary for '{expected_structure}', but got {type(parsed_data).__name__}.")
@@ -626,6 +629,7 @@ class AIResponseValidator:
                     entities.append(validator_func(cast(Dict[str, Any], parsed_data), **context_args))
                 # If validator_func is None, global_errors related to unknown expected_structure
                 # would have already been set.
+                # If validator_func is None here, similar to the list case, an error in logic or unhandled expected_structure.
 
         # Determine overall_status based on global_errors and individual entity statuses
         overall_status = "success" # Default assumption

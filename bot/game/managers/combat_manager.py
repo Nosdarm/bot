@@ -138,7 +138,9 @@ class CombatManager:
             if p_type == "Character":
                 char = self._character_manager.get_character(guild_id_str, p_id)
                 if char:
-                    entity_name = getattr(char, 'name', p_id)
+                    # Use i18n name access
+                    name_i18n_dict = getattr(char, 'name_i18n', {})
+                    entity_name = name_i18n_dict.get('en', p_id) if isinstance(name_i18n_dict, dict) else p_id
                     entity_hp = int(getattr(char, 'hp', 10))
                     entity_max_hp = int(getattr(char, 'max_health', 10))
                     stats = getattr(char, 'stats', {})
@@ -149,7 +151,9 @@ class CombatManager:
             elif p_type == "NPC":
                 npc = self._npc_manager.get_npc(guild_id_str, p_id)
                 if npc:
-                    entity_name = getattr(npc, 'name', p_id)
+                    # Use i18n name access
+                    name_i18n_dict = getattr(npc, 'name_i18n', {})
+                    entity_name = name_i18n_dict.get('en', p_id) if isinstance(name_i18n_dict, dict) else p_id
                     entity_hp = int(getattr(npc, 'health', 10)) # NPC model uses 'health'
                     entity_max_hp = int(getattr(npc, 'max_health', 10))
                     stats = getattr(npc, 'stats', {})
@@ -221,10 +225,14 @@ class CombatManager:
                           if first_actor_participant_obj:
                               if first_actor_participant_obj.entity_type == "Character" and self._character_manager:
                                   actor_char = self._character_manager.get_character(guild_id_str, first_actor_participant_obj.entity_id)
-                                  if actor_char: first_actor_name = actor_char.name
+                                  if actor_char:
+                                      name_i18n_dict = getattr(actor_char, 'name_i18n', {})
+                                      first_actor_name = name_i18n_dict.get('en', first_actor_participant_obj.entity_id) if isinstance(name_i18n_dict, dict) else first_actor_participant_obj.entity_id
                               elif first_actor_participant_obj.entity_type == "NPC" and self._npc_manager:
                                   actor_npc = self._npc_manager.get_npc(guild_id_str, first_actor_participant_obj.entity_id)
-                                  if actor_npc: first_actor_name = actor_npc.name
+                                  if actor_npc:
+                                      name_i18n_dict = getattr(actor_npc, 'name_i18n', {})
+                                      first_actor_name = name_i18n_dict.get('en', first_actor_participant_obj.entity_id) if isinstance(name_i18n_dict, dict) else first_actor_participant_obj.entity_id
                           start_message += f" {first_actor_name} goes first!"
                       await send_cb(start_message)
                   except Exception as e:

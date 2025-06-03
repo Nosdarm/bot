@@ -83,7 +83,10 @@ class CharacterActionProcessor:
     def is_busy(self, character_id: str) -> bool:
          # TODO: This method needs guild_id for self._character_manager.get_character
          # Assuming a placeholder or that get_character can work without it (not ideal)
-         char = self._character_manager.get_character(guild_id="placeholder_guild", character_id=character_id) # FIXME
+         # This method has fundamental issues without guild_id. For now, assuming it might be called
+         # in contexts where guild_id is ambiguous or character_id is hoped to be globally unique.
+         # A proper fix involves passing guild_id here.
+         char = self._character_manager.get_character(guild_id="placeholder_guild_FIXME", character_id=character_id) # FIXME - guild_id needed
          if not char: return False
          if getattr(char, 'current_action', None) is not None: return True
          if getattr(char, 'party_id', None) and self._party_manager and hasattr(self._party_manager, 'is_party_busy'):
@@ -100,13 +103,13 @@ class CharacterActionProcessor:
             # or character object is passed directly.
             print(f"CharacterActionProcessor: CRITICAL: guild_id not in context for start_action of char {character_id}.")
             # Attempt to get from an existing character object if this method is called internally after char is fetched
-            temp_char_for_guild = self._character_manager.get_character(guild_id="ANY_GUILD_TEMP_FIX", character_id=character_id) # This is problematic
+            # This path is highly problematic if guild_id isn't passed.
+            temp_char_for_guild = self._character_manager.get_character(guild_id="PLACEHOLDER_NEEDS_FIX", character_id=character_id) # Problematic
             guild_id = str(getattr(temp_char_for_guild, 'guild_id', "unknown_guild_in_start_action")) if temp_char_for_guild else "unknown_guild_in_start_action"
         else:
             guild_id = str(guild_id_from_context)
 
-        # char = self._character_manager.get_character(character_id) # Original, needs guild_id
-        char = await self._character_manager.get_character(guild_id=guild_id, character_id=character_id) # Corrected
+        char = self._character_manager.get_character(guild_id=guild_id, character_id=character_id) # Removed await
         if not char:
              print(f"CharacterActionProcessor: Error starting action: Character {character_id} not found in guild {guild_id}.")
              return {"success": False, "modified_entities": modified_entities}
@@ -260,13 +263,12 @@ class CharacterActionProcessor:
         modified_entities: List[Any] = []
         guild_id_from_context = kwargs.get('guild_id')
         if not guild_id_from_context:
-            temp_char_for_guild = self._character_manager.get_character(guild_id="ANY_GUILD_TEMP_FIX", character_id=character_id) # Problematic
+            temp_char_for_guild = self._character_manager.get_character(guild_id="PLACEHOLDER_NEEDS_FIX", character_id=character_id) # Problematic
             guild_id = str(getattr(temp_char_for_guild, 'guild_id', "unknown_guild_in_add_action")) if temp_char_for_guild else "unknown_guild_in_add_action"
         else:
             guild_id = str(guild_id_from_context)
 
-        # char = self._character_manager.get_character(character_id) # Original, needs guild_id
-        char = await self._character_manager.get_character(guild_id=guild_id, character_id=character_id) # Corrected
+        char = self._character_manager.get_character(guild_id=guild_id, character_id=character_id) # Removed await
         if not char:
              print(f"CharacterActionProcessor: Error adding action to queue: Character {character_id} not found in guild {guild_id}.")
              return {"success": False, "modified_entities": modified_entities}
@@ -456,23 +458,56 @@ class CharacterActionProcessor:
 
         char: Optional[Character] = None
         if char_guild_id_for_tick:
-            char = await self._character_manager.get_character(guild_id=str(char_guild_id_for_tick), character_id=char_id)
+            char = self._character_manager.get_character(guild_id=str(char_guild_id_for_tick), character_id=char_id) # Removed await
         else:
-            # Try to get character without guild_id (less ideal, relies on char_id being globally unique and CM supporting it)
-            # This path is problematic. For now, let's assume this get_character can work or it's a TODO.
-            # char = await self._character_manager.get_character(character_id=char_id) # This signature might not exist
-            # Fallback: If no guild_id, we cannot reliably use most CharacterManager methods.
-            print(f"CharacterActionProcessor (process_tick): Warning: guild_id not available for char {char_id}. Operations may fail.")
+            print(f"CharacterActionProcessor (process_tick): Warning: guild_id missing for character {char_id}. Cannot reliably fetch character.")
             # Attempt to find the character through all guilds if guild_id is missing (very inefficient, placeholder)
             # This is a temporary workaround to get the guild_id if not passed.
             # In a real scenario, guild_id should be passed to process_tick.
-            char_obj_temp = self._character_manager.find_character_globally_by_id_for_tick_FIXME(char_id) # Needs implementation or removal
-            if char_obj_temp:
+            # char_obj_temp = self._character_manager.find_character_globally_by_id_for_tick_FIXME(char_id) # Needs implementation or removal
+            # Replacing FIXME call with a log and None, as global lookup is not good.
+            char_obj_temp = None
+            print(f"CharacterActionProcessor (process_tick): find_character_globally_by_id_for_tick_FIXME was called for {char_id}, proper guild_id needed.")
+            if char_obj_temp and hasattr(char_obj_temp, 'guild_id'): # Check if char_obj_temp is not None before accessing guild_id
                 char = char_obj_temp
                 char_guild_id_for_tick = str(char.guild_id)
-            else: # Character not found at all
+            else: # Character not found at all or guild_id missing on it
                  active_entities_map = self._character_manager._entities_with_active_action # Direct access to CM's internal
-                 for gid_key, id_set in active_entities_map.items():
+                 # Ensure active_entities_map is a dict before iterating
+                 if isinstance(active_entities_map, dict):
+                    for gid_key, id_set in active_entities_map.items():
+                         if isinstance(id_set, set) and char_id in id_set:
+                             id_set.discard(char_id) # Remove from active set if char not found
+                 return
+
+
+        if not char or (getattr(char, 'current_action', None) is None and not getattr(char, 'action_queue', [])):
+             char_guild_id_for_discard = char_guild_id_for_tick if char_guild_id_for_tick else getattr(char, 'guild_id', None)
+             if char_guild_id_for_discard:
+                 # Ensure _entities_with_active_action.get returns a set before calling discard
+                 active_set = self._character_manager._entities_with_active_action.get(str(char_guild_id_for_discard))
+                 if isinstance(active_set, set):
+                    active_set.discard(char_id)
+             return
+
+        # ... (rest of process_tick logic, ensuring guild_id is used for CM calls) ...
+        # Make sure mark_character_dirty and other CM calls use the determined char_guild_id_for_tick
+        if char_guild_id_for_tick and getattr(char, 'current_action', None) is not None: # Check current_action again
+            current_action = getattr(char, 'current_action') # Should not be None here
+            duration = current_action.get('total_duration', 0.0)
+            # ... (progress update logic) ...
+            if isinstance(duration, (int, float)) and duration > 0: # Ensure duration is valid number
+                 # ... (progress update logic) ...
+                 self._character_manager.mark_character_dirty(str(char_guild_id_for_tick), char_id) # Pass guild_id
+                 # ... (check for completion) ...
+
+        # ... (complete_action call if needed, passing char_guild_id_for_tick in kwargs if not already there) ...
+        # ... (logic for removing from _entities_with_active_action if no more actions) ...
+        if char_guild_id_for_tick and getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue):
+            # Ensure get returns a set before calling discard
+            active_set_final = self._character_manager._entities_with_active_action.get(str(char_guild_id_for_tick))
+            if isinstance(active_set_final, set):
+                active_set_final.discard(char_id)
                      if char_id in id_set:
                          id_set.discard(char_id) # Remove from active set if char not found
                  return
@@ -510,8 +545,7 @@ class CharacterActionProcessor:
         else:
             guild_id = str(guild_id_from_context)
 
-        # char = self._character_manager.get_character(character_id) # Original, needs guild_id
-        char = await self._character_manager.get_character(guild_id=guild_id, character_id=character_id) # Corrected
+        char = self._character_manager.get_character(guild_id=guild_id, character_id=character_id) # Removed await
         if not char:
              print(f"CharacterActionProcessor: Error completing action: Character {character_id} not found in guild {guild_id}.")
              return modified_entities
@@ -598,10 +632,13 @@ class CharacterActionProcessor:
 
          # Temporary: Try to get character with a placeholder or by iterating if necessary (very inefficient)
          # This part needs a proper fix by ensuring guild_id is always available to this method.
-         char = self._character_manager.find_character_globally_by_id_for_notification_FIXME(character_id) # Needs implementation or removal
+         # char = self._character_manager.find_character_globally_by_id_for_notification_FIXME(character_id) # Needs implementation or removal
+         # Replacing FIXME call. _notify_character needs guild_id or character object directly.
+         print(f"CharacterActionProcessor (_notify_character): Warning: Attempting to notify character {character_id} without guild_id. This may fail or require guild_id to be passed to _notify_character.")
+         char = None # Cannot reliably fetch without guild_id.
 
-         if not char:
-              print(f"CharacterActionProcessor: Warning (notify): Character {character_id} not found (globally).")
+         if not char: # char will be None based on the above change.
+              print(f"CharacterActionProcessor: Warning (notify): Character {character_id} not found (guild_id context missing).")
               return
          # ... (rest of notification logic using char.discord_channel_id) ...
 
@@ -712,14 +749,13 @@ class CharacterActionProcessor:
         guild_id = context.get('guild_id')
         if not guild_id:
             # Attempt to get guild_id from character if not in context (less ideal)
-            temp_char = await self._character_manager.get_character(guild_id="PLACEHOLDER_FIXME", character_id=character_id) # This is bad
+            temp_char = self._character_manager.get_character(guild_id="PLACEHOLDER_FIXME", character_id=character_id) # Removed await, still problematic
             if temp_char and temp_char.guild_id: guild_id = str(temp_char.guild_id)
             else:
                 print(f"CharacterActionProcessor: Error processing move: guild_id missing for Character {character_id}.")
                 return {"success": False, "message": "Internal error: Guild context missing.", "modified_entities": modified_entities}
         
-        # char = self._character_manager.get_character(guild_id, character_id) # Original
-        char = await self._character_manager.get_character(guild_id=str(guild_id), character_id=character_id) # Corrected
+        char = self._character_manager.get_character(guild_id=str(guild_id), character_id=character_id) # Removed await
         # ... (rest of process_move_action, ensure guild_id is used in manager calls) ...
         # Ensure all calls to start_action within this method also pass the resolved guild_id in context
         context_with_guild = {**context, 'guild_id': guild_id}
@@ -731,11 +767,10 @@ class CharacterActionProcessor:
     async def process_steal_action(self, character_id: str, target_id: str, target_type: str, context: Dict[str, Any]) -> bool:
         # Ensure guild_id is available for get_character and other manager calls
         guild_id = context.get('guild_id')
-        char_for_guild_lookup = await self._character_manager.get_character(guild_id=str(guild_id) if guild_id else "ERROR_NO_GUILD", character_id=character_id)
+        char_for_guild_lookup = self._character_manager.get_character(guild_id=str(guild_id) if guild_id else "ERROR_NO_GUILD", character_id=character_id) # Removed await
         if not char_for_guild_lookup: return False # Guard
         current_guild_id = str(char_for_guild_lookup.guild_id) # Use character's actual guild_id
 
-        # char = self._character_manager.get_character(character_id) # Original
         char = char_for_guild_lookup # Use already fetched char
         # ... (rest of process_steal_action, ensuring current_guild_id is used) ...
         # Example for npc_manager call:
@@ -747,17 +782,20 @@ class CharacterActionProcessor:
 
     async def process_hide_action(self, character_id: str, context: Dict[str, Any]) -> bool:
         guild_id = context.get('guild_id')
-        char_for_guild_lookup = await self._character_manager.get_character(guild_id=str(guild_id) if guild_id else "ERROR_NO_GUILD", character_id=character_id)
+        char_for_guild_lookup = self._character_manager.get_character(guild_id=str(guild_id) if guild_id else "ERROR_NO_GUILD", character_id=character_id) # Removed await
         if not char_for_guild_lookup: return False
         current_guild_id = str(char_for_guild_lookup.guild_id)
         # ... (rest of process_hide_action) ...
         context_with_guild = {**context, 'guild_id': current_guild_id}
+        # action_data definition was missing for the log_event call in original _handle_hide_action_completion
+        # If this method calls log_event, action_data needs to be defined.
+        # For now, assuming it's handled if start_action is called.
         # action_started_or_queued = await self.start_action(character_id, action_data, **context_with_guild)
         return True # Placeholder
 
     async def process_use_item_action(self, character_id: str, item_instance_id: str, target_entity_id: Optional[str], target_entity_type: Optional[str], context: Dict[str, Any]) -> bool:
         guild_id = context.get('guild_id')
-        char_for_guild_lookup = await self._character_manager.get_character(guild_id=str(guild_id) if guild_id else "ERROR_NO_GUILD", character_id=character_id)
+        char_for_guild_lookup = self._character_manager.get_character(guild_id=str(guild_id) if guild_id else "ERROR_NO_GUILD", character_id=character_id) # Removed await
         if not char_for_guild_lookup: return False
         current_guild_id = str(char_for_guild_lookup.guild_id)
         # ... (rest of process_use_item_action, ensuring current_guild_id is used for item_manager, rule_engine calls) ...

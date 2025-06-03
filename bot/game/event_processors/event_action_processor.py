@@ -186,7 +186,10 @@ class EventActionProcessor:
 
         # --- Check essential dependencies are present ---
         # This check *must* happen on the _inst variables retrieved above
-        if event_manager_inst is None or character_manager_inst is None or loc_manager_inst is None or rule_engine_inst is None or send_callback_factory_inst is None:
+        # Ensure guild_id is available from context before fetching event
+        guild_id_from_context = kwargs.get('guild_id') # Attempt to get guild_id from kwargs first
+
+        if event_manager_inst is None or character_manager_inst is None or loc_manager_inst is None or rule_engine_inst is None or send_callback_factory_inst is None or guild_id_from_context is None:
              # Collect names of missing dependencies
              missing_deps = [name for name, dep in [
                  ('event_manager', event_manager_inst),
@@ -211,10 +214,12 @@ class EventActionProcessor:
              return {"stage_transitioned": False, "message": error_message, "modified_entities": modified_entities}
 
         # --- Now that essential dependencies are confirmed, proceed using _inst variables ---
+        # guild_id_from_context is confirmed not None here
+        guild_id = str(guild_id_from_context) # Ensure it's a string
 
-        event: Optional["Event"] = event_manager_inst.get_event(event_id)
+        event: Optional["Event"] = event_manager_inst.get_event(guild_id=guild_id, event_id=event_id) # Added guild_id
         if not event:
-             print(f"EventActionProcessor Error: Event {event_id} not found for player action.")
+             print(f"EventActionProcessor Error: Event {event_id} not found for player action in guild {guild_id}.") # Added guild_id to log
              channel_id_for_error = channel_id_from_kwargs
              return_message = "❌ Ошибка: Событие не найдено."
              if channel_id_for_error is not None:

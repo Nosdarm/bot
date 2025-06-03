@@ -2,8 +2,6 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 import json
 import uuid
-from typing import Optional, Dict, Any
-
 
 from bot.game.command_router import CommandRouter
 from bot.game.managers.npc_manager import NpcManager

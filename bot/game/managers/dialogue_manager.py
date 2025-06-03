@@ -1,3 +1,4 @@
+# Test comment
 # bot/game/managers/dialogue_manager.py
 
 from __future__ import annotations
@@ -323,6 +324,11 @@ class DialogueManager:
                      # Ensure channel_id is int before passing to factory
                      processed_channel_id = int(dialogue_channel_id_val)
                      send_cb = send_callback_factory(processed_channel_id)
+            dialogue_channel_id_val = dialogue_data.get('channel_id')
+            if send_cb_factory and dialogue_channel_id_val is not None:
+                 try:
+                     dialogue_channel_id_int = int(dialogue_channel_id_val)
+                     send_cb = send_cb_factory(dialogue_channel_id_int)
                      # TODO: Get participant names etc.
                      start_message = f"Начинается диалог ({tpl_id_str})!" # Basic message for now
                      # Get start stage dialogue text from template using RuleEngine?
@@ -341,12 +347,15 @@ class DialogueManager:
                                  if stage_text: start_message += f"\n{stage_text}"
                          except Exception as e_text: print(f"DialogueManager: Error getting start dialogue text for {new_id}: {e_text}"); # traceback already imported
 
-
                      await send_cb(start_message)
                  except (ValueError, TypeError) as e_int: # Catch error from int(dialogue_channel_id_val)
                       print(f"DialogueManager: Invalid channel_id format '{dialogue_channel_id_val}' for dialogue {new_id}: {e_int}")
                  except Exception as e_send:
                       print(f"DialogueManager: Error sending dialogue start message for {new_id} to channel {dialogue_channel_id_val}: {e_send}"); # traceback already imported
+                 except ValueError:
+                     print(f"DialogueManager: Invalid channel_id format '{dialogue_channel_id_val}' for dialogue {new_id}. Cannot send start message.")
+                 except Exception as e: # Other errors from send_cb_factory or send_cb
+                      print(f"DialogueManager: Error sending dialogue start message for {new_id} to channel {dialogue_channel_id_val}: {e}"); traceback.print_exc();
 
 
             return new_id # Return the created dialogue ID
@@ -413,25 +422,14 @@ class DialogueManager:
             # Pass all necessary context to RuleEngine
             dialogue_context = {**kwargs, 'guild_id': guild_id_str, 'dialogue_id': dialogue_id_str, 'participant_id': p_id_str, 'action_data': action_data} # Add specific dialogue info
 
-            # RuleEngine could return:
-            # - The next_stage_id (str)
-            # - A special value indicating dialogue end (e.g., None, or a specific end state ID)
-            # - Commands/actions to be executed (e.g., give item, start combat, end event)
-            # - Updated dialogue state variables
-
-            # Let's assume RuleEngine modifies dialogue_data in place and/or returns a command/outcome.
-            # A common pattern is for RuleEngine to return a tuple like (next_stage_id, commands_list, updated_state_vars_dict)
-            # Or simpler: RuleEngine returns {next_stage_id: str | None, commands: List[Dict], feedback_message: str | None}
-
-            # For now, let's assume RuleEngine updates dialogue_data in place and its primary return is the next_stage_id or None if dialogue ends.
-            # And RuleEngine sends feedback messages directly using send_callback_factory from context.
-
-            outcome = await rule_engine.process_dialogue_action(
-                dialogue_data=dialogue_data, # Pass the dialogue data dict (RuleEngine might modify this directly)
-                participant_id=p_id_str,
-                action_data=action_data,
-                context=dialogue_context # Pass full context
-            )
+            # FIXME: RuleEngine.process_dialogue_action method does not exist. Implement or remove.
+            # outcome = await rule_engine.process_dialogue_action(
+            #     dialogue_data=dialogue_data, # Pass the dialogue data dict (RuleEngine might modify this directly)
+            #     participant_id=p_id_str,
+            #     action_data=action_data,
+            #     context=dialogue_context # Pass full context
+            # )
+            print(f"DialogueManager: FIXME: Call to rule_engine.process_dialogue_action skipped for dialogue {dialogue_id_str} as method is missing.")
             # If RuleEngine modifies dialogue_data in place, it's already updated in our cache dictionary.
 
             # --- 3. Update dialogue state based on RuleEngine outcome ---
@@ -442,9 +440,17 @@ class DialogueManager:
             # The RuleEngine should set 'current_stage_id' or 'is_active' = False within dialogue_data if needed.
             # Let's check if 'is_active' was set to False by RuleEngine or if current_stage_id became an end stage.
             is_dialogue_active_after_action = dialogue_data.get('is_active', True) # Check state after RuleEngine processed
-            # Also check if current_stage_id is a special 'end' stage ID defined in template/settings?
-            # Example: Check if current_stage_id is in the template's end_stages list
-            tpl = self.get_dialogue_template(guild_id_str, dialogue_data.get('template_id'))
+
+            template_id_val = dialogue_data.get('template_id')
+            if not isinstance(template_id_val, str):
+                print(f"DialogueManager: Invalid or missing template_id in dialogue {dialogue_id_str} for guild {guild_id_str}. Cannot determine end stages.")
+                # Potentially end the dialogue if template_id is crucial and missing/invalid.
+                # For now, we'll proceed, but this might lead to issues if end_stages can't be determined.
+                # If we proceed, tpl will be None, and end_stages will default to ['end'].
+                tpl = None
+            else:
+                tpl = self.get_dialogue_template(guild_id_str, template_id_val)
+
             end_stages = tpl.get('end_stages', ['end']) if tpl else ['end'] # Default end stages
 
             if not is_dialogue_active_after_action or dialogue_data.get('current_stage_id') in end_stages:
@@ -565,9 +571,11 @@ class DialogueManager:
 
         # TODO: Trigger dialogue end logic (RuleEngine?)
         rule_engine = cleanup_context.get('rule_engine', self._rule_engine) # type: Optional["RuleEngine"]
-        if rule_engine and hasattr(rule_engine, 'trigger_dialogue_end'): # Assuming RuleEngine method
-             try: await rule_engine.trigger_dialogue_end(dialogue_data, context=cleanup_context)
-             except Exception as e: print(f"DialogueManager: Error triggering dialogue end logic for {dialogue_id_str} in guild {guild_id_str}: {e}"); traceback.print_exc();
+        # FIXME: RuleEngine.trigger_dialogue_end method does not exist. Implement or remove.
+        # if rule_engine and hasattr(rule_engine, 'trigger_dialogue_end'): # Assuming RuleEngine method
+        #      try: await rule_engine.trigger_dialogue_end(dialogue_data, context=cleanup_context)
+        #      except Exception as e: print(f"DialogueManager: Error triggering dialogue end logic for {dialogue_id_str} in guild {guild_id_str}: {e}"); traceback.print_exc();
+        print(f"DialogueManager: FIXME: Call to rule_engine.trigger_dialogue_end skipped for dialogue {dialogue_id_str} as method is missing.")
 
 
         print(f"DialogueManager: Dialogue {dialogue_id_str} cleanup processes complete for guild {guild_id_str}.")
