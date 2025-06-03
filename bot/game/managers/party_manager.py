@@ -1200,7 +1200,8 @@ class PartyManager:
         individual_action_results: List[Dict[str, Any]],
         party_name: str,
         location_name: str,
-        character_manager: "CharacterManager" # Pass CharacterManager for name resolution
+        character_manager: "CharacterManager", # Keep this
+        guild_id: str # Add this
     ) -> str:
         report_parts = [
             f"Turn Report for Party: {party_name} in {location_name}",
@@ -1213,30 +1214,20 @@ class PartyManager:
                 char_id = result.get("character_id")
                 char_name = char_id # Default to ID
                 if char_id and character_manager:
-                    # Assuming character_manager.get_character needs guild_id,
-                    # but we don't have individual char guild_id here easily.
-                    # This is a simplification; proper name resolution might need more context.
-                    # For now, let's assume CharacterManager can get by ID if it's globally unique in cache for this context,
-                    # or we rely on PartyManager's guild_id context for all characters.
-                    # A better approach would be if individual_action_results already contained character_name.
-                    # For this exercise, we'll try a simple lookup, acknowledging its limits.
-                    # This part highlights a potential issue: format_turn_report needs guild_id for char_manager.get_character
-                    # Let's assume for now char_id is sufficient for a name hint or the calling context handles guild.
-                    # For now, we will just use char_id as name if manager is not passed or char not found.
-                    # A more robust solution would be to enrich action_results with names earlier.
-                    # For this specific implementation, we will just show ID to avoid complex lookups without guild_id.
-
-                    # Simplified: If character_manager was available and get_character could work with just ID (if IDs are globally unique)
-                    # char = character_manager.get_character(None, char_id) # Passing None for guild_id is problematic
-                    # if char and hasattr(char, 'name'):
-                    #    char_name = getattr(char, 'name')
-                    pass # Keeping char_name as char_id for now due to guild_id complexity here.
+                    # Use guild_id to fetch the character
+                    char = character_manager.get_character(guild_id, char_id)
+                    if char:
+                        char_name = getattr(char, 'name', char_id)
 
                 action_text = result.get("action_original_text", "Unknown action")
                 outcome_message = result.get("message", "No outcome message.")
                 success_str = "Success" if result.get("success") else "Failure"
 
-                report_parts.append(f"Character {char_name}: Action '{action_text}' -> {success_str}. Outcome: {outcome_message}")
+                report_parts.append(f"Character: {char_name}")
+                report_parts.append(f"Action: {action_text}")
+                report_parts.append(f"Status: {success_str}")
+                report_parts.append(f"Outcome: {outcome_message}")
+                report_parts.append("---")
 
         report_parts.append("----------------------------------------------------")
         report_parts.append("End of Turn.")
