@@ -62,6 +62,8 @@ if TYPE_CHECKING:
     from bot.game.services.consequence_processor import ConsequenceProcessor
     from bot.services.nlu_data_service import NLUDataService # For NLU Data Service
     from bot.game.conflict_resolver import ConflictResolver
+    from bot.ai.prompt_context_collector import PromptContextCollector
+    from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
 
 
     # Типы Callable для Type Checking, если они используются в аннотациях (SendCallbackFactory используется напрямую в __init__)
@@ -117,6 +119,8 @@ class GameManager:
         self.campaign_loader: Optional[CampaignLoader] = None
         self.consequence_processor: Optional[ConsequenceProcessor] = None
         self.nlu_data_service: Optional["NLUDataService"] = None # For NLU Data Service
+        self.prompt_context_collector: Optional["PromptContextCollector"] = None
+        self.multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None
 
         # Процессоры и вспомогательные сервисы (используем строковые литералы)
         self._on_enter_action_executor: Optional["OnEnterActionExecutor"] = None
@@ -192,6 +196,8 @@ class GameManager:
             # Conflict Resolver and its data
             from bot.game.conflict_resolver import ConflictResolver
             from bot.game.models.rules_config_definition import EXAMPLE_RULES_CONFIG
+            from bot.ai.prompt_context_collector import PromptContextCollector
+            from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     # from bot.services.db_service import DBService # This can be removed from TYPE_CHECKING if imported above
 
 # Ensure no duplicate or misplaced DBService import within methods or other blocks
@@ -200,7 +206,12 @@ class GameManager:
             self.rule_engine = RuleEngine(settings=self._settings.get('rule_settings', {}))
             self.time_manager = TimeManager(db_adapter=self._db_adapter, settings=self._settings.get('time_settings', {}))
             self.location_manager = LocationManager(db_adapter=self._db_adapter, settings=self._settings.get('location_settings', {}))
-            self.event_manager = EventManager(db_adapter=self._db_adapter, settings=self._settings.get('event_settings', {}))
+            self.event_manager = EventManager(
+                db_adapter=self._db_adapter,
+                settings=self._settings.get('event_settings', {}),
+                openai_service=self.openai_service
+                # multilingual_prompt_generator will be set later
+            )
             # CharacterManager (создание экземпляра и внедрение части зависимостей)
             self.character_manager = CharacterManager(
                 db_adapter=self._db_adapter,
@@ -256,8 +267,10 @@ class GameManager:
             self.npc_manager = NpcManager(
                 db_adapter=self._db_adapter, settings=self._settings.get('npc_settings', {}),
                 item_manager=self.item_manager, rule_engine=self.rule_engine,
-                combat_manager=self.combat_manager, status_manager=self.status_manager
-                # NpcManager может нуждаться в других менеджерах (Location?) - проверить его __init__
+                combat_manager=self.combat_manager, status_manager=self.status_manager,
+                # dialogue_manager, location_manager, game_log_manager are already passed later via direct attribute assignment
+                # Add the new AI services here:
+                openai_service=self.openai_service # Pass the instance
             )
             self.party_manager = PartyManager(
                 db_adapter=self._db_adapter, settings=self._settings.get('party_settings', {}),
@@ -335,7 +348,10 @@ class GameManager:
                 settings=self._settings.get('quest_settings', {}),
                 consequence_processor=self.consequence_processor,
                 character_manager=self.character_manager,
-                game_log_manager=self.game_log_manager
+                game_log_manager=self.game_log_manager,
+                # Add openai_service here
+                openai_service=self.openai_service
+                # multilingual_prompt_generator will be set later
             )
 
             if self.consequence_processor is not None and self.quest_manager is not None:
@@ -496,7 +512,9 @@ class GameManager:
                 dialogue_manager=self.dialogue_manager,
                 quest_manager=self.quest_manager,
                 relationship_manager=self.relationship_manager,
-                game_log_manager=self.game_log_manager
+                game_log_manager=self.game_log_manager,
+                # Add multilingual_prompt_generator here
+                multilingual_prompt_generator=self.multilingual_prompt_generator
             )
             print("GameManager: WorldSimulationProcessor instantiated.")
 
@@ -572,6 +590,8 @@ class GameManager:
                     'db_adapter': self._db_adapter, # Still passing adapter directly if some old components need it
                     'db_service': self.db_service,   # Pass DBService as well
                     'nlu_data_service': self.nlu_data_service, # Pass NLUDataService
+                    'prompt_context_collector': self.prompt_context_collector,
+                    'multilingual_prompt_generator': self.multilingual_prompt_generator,
                     'send_callback_factory': self._get_discord_send_callback,
                     'settings': self._settings,
                     'discord_client': self._discord_client,
@@ -589,6 +609,69 @@ class GameManager:
                 print("GameManager: Warning: Skipping state load, PersistenceManager not available.")
 
             # Initial data population is done before this point.
+
+            # --- Instantiate AI Content Generation Services ---
+            if self.character_manager and \
+               self.npc_manager and \
+               self.quest_manager and \
+               self.relationship_manager and \
+               self.item_manager and \
+               self.location_manager and \
+               self.event_manager and \
+               hasattr(self, 'ability_manager') and self.ability_manager and \
+               hasattr(self, 'spell_manager') and self.spell_manager: # Check for new ability/spell managers
+
+                print("GameManager: Instantiating PromptContextCollector...")
+                self.prompt_context_collector = PromptContextCollector(
+                    settings=self._settings, # Pass the main settings dictionary
+                    character_manager=self.character_manager,
+                    npc_manager=self.npc_manager,
+                    quest_manager=self.quest_manager,
+                    relationship_manager=self.relationship_manager,
+                    item_manager=self.item_manager,
+                    location_manager=self.location_manager,
+                    ability_manager=self.ability_manager, # Pass AbilityManager
+                    spell_manager=self.spell_manager,     # Pass SpellManager
+                    event_manager=self.event_manager
+                )
+                print("GameManager: PromptContextCollector instantiated.")
+
+                # Determine main bot language
+                # Assumes 'main_language_code' is in the global settings file (data/settings.json)
+                # and loaded into self._settings
+                main_bot_language = self._settings.get('main_language_code', 'ru') # Default to 'ru'
+                print(f"GameManager: Main bot language code: {main_bot_language}")
+
+                print("GameManager: Instantiating MultilingualPromptGenerator...")
+                self.multilingual_prompt_generator = MultilingualPromptGenerator(
+                    context_collector=self.prompt_context_collector,
+                    main_bot_language=main_bot_language
+                )
+                print("GameManager: MultilingualPromptGenerator instantiated.")
+            else:
+                self.prompt_context_collector = None
+                self.multilingual_prompt_generator = None
+                print("GameManager: Warning: Could not instantiate AI prompt generation services due to missing manager dependencies.")
+
+            # Ensure these new services are passed to other components that might need them,
+            # for example, WorldSimulationProcessor or CommandRouter if they directly trigger content generation.
+            # Example: (Update constructor or add setters to these classes if they need the generator)
+            # if self._world_simulation_processor and self.multilingual_prompt_generator:
+            #     self._world_simulation_processor.set_prompt_generator(self.multilingual_prompt_generator)
+            # if self._command_router and self.multilingual_prompt_generator:
+            #     self._command_router.set_prompt_generator(self.multilingual_prompt_generator)
+
+            if self.npc_manager and hasattr(self.npc_manager, '_multilingual_prompt_generator') and self.multilingual_prompt_generator:
+                self.npc_manager._multilingual_prompt_generator = self.multilingual_prompt_generator
+                print("GameManager: Assigned MultilingualPromptGenerator to NpcManager.")
+
+            if self.quest_manager and hasattr(self.quest_manager, '_multilingual_prompt_generator') and self.multilingual_prompt_generator:
+                self.quest_manager._multilingual_prompt_generator = self.multilingual_prompt_generator
+                print("GameManager: Assigned MultilingualPromptGenerator to QuestManager.")
+
+            if self.event_manager and hasattr(self.event_manager, '_multilingual_prompt_generator') and self.multilingual_prompt_generator:
+                self.event_manager._multilingual_prompt_generator = self.multilingual_prompt_generator
+                print("GameManager: Assigned MultilingualPromptGenerator to EventManager.")
 
             # 6) Запуск цикла тика мира
             # Запускаем цикл тика ТОЛЬКО если WorldSimulationProcessor доступен
@@ -715,6 +798,8 @@ class GameManager:
                             'conflict_resolver': self.conflict_resolver, # For tick context
                             'db_adapter': self._db_adapter,
                             'nlu_data_service': self.nlu_data_service, # Pass NLUDataService
+                            'prompt_context_collector': self.prompt_context_collector,
+                            'multilingual_prompt_generator': self.multilingual_prompt_generator,
                             'send_callback_factory': self._get_discord_send_callback,
                             'settings': self._settings,
                             'discord_client': self._discord_client,
@@ -763,6 +848,8 @@ class GameManager:
                 'relationship_manager': self.relationship_manager,
                 'game_log_manager': self.game_log_manager,
                 'conflict_resolver': self.conflict_resolver,
+                'prompt_context_collector': self.prompt_context_collector,
+                'multilingual_prompt_generator': self.multilingual_prompt_generator,
                 'db_adapter': self._db_adapter,
                 'send_callback_factory': self._get_discord_send_callback,
                 'settings': self._settings,
@@ -815,6 +902,8 @@ class GameManager:
                     'relationship_manager': self.relationship_manager,
                     'game_log_manager': self.game_log_manager,
                     'conflict_resolver': self.conflict_resolver, # For save context
+                    'prompt_context_collector': self.prompt_context_collector,
+                    'multilingual_prompt_generator': self.multilingual_prompt_generator,
                     'db_adapter': self._db_adapter,
                     'send_callback_factory': self._get_discord_send_callback,
                     'settings': self._settings,

@@ -48,6 +48,8 @@ if TYPE_CHECKING:
     # from bot.game.managers.event_manager import EventManager
     from bot.game.rules.rule_engine import RuleEngine
     from bot.services.campaign_loader import CampaignLoader # Added for type hint
+    from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
+    from bot.services.openai_service import OpenAIService
 
     # Добавляем процессоры, если они используются в аннотациях методов
     # from bot.game.character_processors.character_action_processor import CharacterActionProcessor
@@ -102,6 +104,8 @@ class NpcManager:
         # event_manager: Optional["EventManager"] = None, # if needed
         location_manager: Optional["LocationManager"] = None, # if needed for default loc logic
         game_log_manager: Optional["GameLogManager"] = None,
+        multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None, # New
+        openai_service: Optional["OpenAIService"] = None # New
     ):
         print("Initializing NpcManager...")
         self._db_adapter = db_adapter
@@ -118,6 +122,8 @@ class NpcManager:
         # self._event_manager = event_manager
         self._location_manager = location_manager # Store LocationManager if needed
         self._game_log_manager = game_log_manager
+        self._multilingual_prompt_generator = multilingual_prompt_generator
+        self._openai_service = openai_service
 
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
@@ -726,6 +732,62 @@ class NpcManager:
     # Methods for persistence (called by PersistenceManager):
     # These methods must work per-guild
     # required_args_for_load, required_args_for_save, required_args_for_rebuild already defined as class attributes
+
+    async def generate_npc_details_from_ai(self, guild_id: str, npc_id_concept: str, player_level_for_scaling: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """
+        Uses MultilingualPromptGenerator and OpenAIService to generate detailed
+        NPC profile data based on an ID or concept.
+
+        Args:
+            guild_id: The ID of the guild.
+            npc_id_concept: An ID of an existing NPC to flesh out, or a string concept for a new NPC.
+            player_level_for_scaling: Optional player level to guide content difficulty/scale.
+
+        Returns:
+            A dictionary containing the structured, multilingual NPC data from the AI,
+            or None if generation fails.
+        """
+        if not self._multilingual_prompt_generator:
+            print("NpcManager ERROR: MultilingualPromptGenerator is not available.")
+            return None
+        if not self._openai_service:
+            print("NpcManager ERROR: OpenAIService is not available.")
+            return None
+
+        print(f"NpcManager: Generating AI details for NPC concept '{npc_id_concept}' in guild {guild_id}.")
+
+        # 1. Get the structured prompt from MultilingualPromptGenerator
+        prompt_messages = self._multilingual_prompt_generator.generate_npc_profile_prompt(
+            guild_id=guild_id,
+            npc_id_idea=npc_id_concept,
+            player_level_override=player_level_for_scaling
+        )
+
+        system_prompt = prompt_messages["system"]
+        user_prompt = prompt_messages["user"]
+
+        # 2. Call OpenAIService
+        npc_generation_settings = self._settings.get("npc_generation_ai_settings", {})
+        max_tokens = npc_generation_settings.get("max_tokens", 2000)
+        temperature = npc_generation_settings.get("temperature", 0.6)
+
+        generated_data = await self._openai_service.generate_structured_multilingual_content(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+
+        if generated_data and "error" not in generated_data:
+            print(f"NpcManager: Successfully generated AI details for NPC '{npc_id_concept}'.")
+            return generated_data
+        else:
+            error_detail = generated_data.get("error") if generated_data else "Unknown error"
+            raw_text = generated_data.get("raw_text", "") if generated_data else ""
+            print(f"NpcManager ERROR: Failed to generate AI details for NPC '{npc_id_concept}'. Error: {error_detail}")
+            if raw_text:
+                print(f"NpcManager: Raw response from AI was: {raw_text[:500]}...")
+            return None
 
     # ИСПРАВЛЕНИЕ: save_state должен принимать guild_id
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:

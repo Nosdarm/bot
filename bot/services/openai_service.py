@@ -156,3 +156,88 @@ class OpenAIService:
             print(f"OpenAIService ERROR: Error calling OpenAI API for NPC response ({npc_name}): {e}")
             traceback.print_exc()
             return None
+
+    async def generate_structured_multilingual_content(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: Optional[int] = None, # Consider a larger default for complex JSON
+        temperature: float = 0.5  # May need adjustment for structured output
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Generates structured multilingual content as JSON from the AI.
+        :param system_prompt: Instructions for the AI, including JSON format.
+        :param user_prompt: The specific request and comprehensive context.
+        :param max_tokens: Max length of the response.
+        :param temperature: Controls creativity.
+        Returns a dictionary parsed from the AI's JSON response, or None on error.
+        """
+        if not self.is_available() or not self._client:
+            print(f"OpenAIService PLACEHOLDER: generate_structured_multilingual_content called (Model: {self._model}). AI not available.")
+            # Placeholder for structured content might be more complex.
+            # For now, returning None or a simple error structure.
+            return {"error": "AI service not available.", "ru": "Сервис ИИ недоступен.", "en": "AI service not available."}
+
+        effective_max_tokens = max_tokens if max_tokens is not None else self._default_max_tokens
+        # For JSON, we might need more tokens than simple text. Consider increasing default for this method.
+        # For example: effective_max_tokens = max_tokens if max_tokens is not None else 1500
+
+        print(f"OpenAIService: generate_structured_multilingual_content called (Model: {self._model}, Max Tokens: {effective_max_tokens}, Temp: {temperature})")
+
+        try:
+            # Some models perform better with JSON if explicitly told to use JSON mode,
+            # if the API supports it (e.g., response_format={"type": "json_object"} for newer OpenAI models)
+            # This example uses the standard chat completion.
+            completion_params = {
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "model": self._model,
+                "max_tokens": effective_max_tokens,
+                "temperature": temperature,
+            }
+            # Example for enabling JSON mode if using compatible OpenAI models/API versions:
+            # if self._model in ["gpt-4-1106-preview", "gpt-3.5-turbo-1106"]: # Check your model version
+            #     completion_params["response_format"] = {"type": "json_object"}
+
+
+            response = await self._client.chat.completions.create(**completion_params)
+
+            raw_response_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else None
+
+            if not raw_response_text:
+                print("OpenAIService ERROR: Empty response from API.")
+                return {"error": "Empty response from API.", "ru": "Пустой ответ от API.", "en": "Empty response from API."}
+
+            print("OpenAIService: Received raw response. Attempting to parse JSON...")
+            # The response might contain leading/trailing text around the JSON block,
+            # or the JSON might be malformed. Robust parsing is needed.
+            # Try to find JSON block if it's embedded:
+            try:
+                # Attempt to parse the whole string first
+                parsed_json = json.loads(raw_response_text)
+                print("OpenAIService: Successfully parsed JSON response.")
+                return parsed_json
+            except json.JSONDecodeError as e_direct:
+                # If direct parsing fails, try to extract JSON from Markdown code blocks
+                print(f"OpenAIService: Direct JSON parsing failed ({e_direct}). Trying to extract from Markdown code block.")
+                if raw_response_text.startswith("```json") and raw_response_text.endswith("```"):
+                    json_block = raw_response_text[len("```json"):-len("```")].strip()
+                    try:
+                        parsed_json = json.loads(json_block)
+                        print("OpenAIService: Successfully parsed JSON from Markdown code block.")
+                        return parsed_json
+                    except json.JSONDecodeError as e_markdown:
+                        print(f"OpenAIService ERROR: Failed to parse JSON even from Markdown block: {e_markdown}")
+                        print(f"Raw response was: {raw_response_text}")
+                        return {"error": "Failed to parse JSON response from AI.", "details": str(e_markdown), "raw_text": raw_response_text}
+                else:
+                    print(f"OpenAIService ERROR: Response is not valid JSON and not in a Markdown code block.")
+                    print(f"Raw response was: {raw_response_text}")
+                    return {"error": "Response is not valid JSON.", "raw_text": raw_response_text}
+
+        except Exception as e:
+            print(f"OpenAIService ERROR: Error calling OpenAI API for structured content: {e}")
+            traceback.print_exc()
+            return {"error": f"Internal error with AI service: {e}", "ru": f"Внутренняя ошибка с сервисом ИИ: {e}", "en": f"Internal error with AI service: {e}"}
