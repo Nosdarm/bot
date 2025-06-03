@@ -81,6 +81,12 @@ class NPC:
     # Visual description
     visual_description_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""})
 
+    # Guild ID
+    guild_id: Optional[str] = None
+
+    # Relationships with other entities
+    relationships: Dict[str, Any] = field(default_factory=dict)
+
     # Optional: Store raw AI generated data if needed for debugging or regeneration
     # raw_ai_data: Optional[Dict[str, Any]] = None
 
@@ -130,6 +136,8 @@ class NPC:
             'faction_affiliations': self.faction_affiliations,
             'visual_description_i18n': self.visual_description_i18n,
             # 'raw_ai_data': self.raw_ai_data,
+            'guild_id': self.guild_id,
+            'relationships': self.relationships,
             # TODO: Включите другие поля, если добавили
             # 'description': self.description,
             # 'ai_state': self.ai_state,

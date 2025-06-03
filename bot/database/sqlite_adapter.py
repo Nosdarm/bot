@@ -93,8 +93,13 @@ class SqliteAdapter:
             raise ConnectionError("Database connection is not established.")
         try:
             cursor = await self._conn.execute(sql, params or ())
-            last_id = cursor.lastrowid
+            last_id: Optional[int] = cursor.lastrowid # type: ignore # lastrowid is int, but can be 0; ensuring Optional for broader cases
             await self._conn.commit()
+            # Explicitly return None if last_id is 0, as 0 might not be a valid row ID for some ORMs/logics
+            # However, sqlite's lastrowid is 0 if the statement wasn't a successful row-inserting one.
+            # For AUTOINCREMENT PKs, it's the ID. If the table doesn't have such a PK, it's 0.
+            # The change to Optional[int] in signature is the main goal.
+            # Returning last_id (which could be 0) is fine if the caller expects Optional[int].
             return last_id
         except Exception as e:
             print(f"SqliteAdapter: ❌ Error executing INSERT SQL (with lastrowid): {sql} | params: {params} | {e}")
