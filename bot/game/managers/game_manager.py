@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from bot.game.command_handlers.party_handler import PartyCommandHandler # <--- ТИПИЗАЦИЯ PartyCommandHandler
     # Роутер команд
     from bot.game.command_router import CommandRouter
+    from bot.game.managers.game_manager import GameManager # Add this line
     
     # Новые менеджеры и сервисы для TYPE_CHECKING
     from bot.game.managers.ability_manager import AbilityManager # Added for type hint
@@ -545,6 +546,7 @@ class GameManager:
                     # --- Передаем созданный PartyCommandHandler ---
                     party_command_handler=self._party_command_handler, # <--- ДОБАВЛЕНО!
                     conflict_resolver=self.conflict_resolver, # Pass ConflictResolver to CommandRouter
+                    game_manager=self, # Add this argument
                     # New injections for CommandRouter
                     quest_manager=self.quest_manager,
                     dialogue_manager=self.dialogue_manager,
