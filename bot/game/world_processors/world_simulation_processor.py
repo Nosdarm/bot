@@ -35,6 +35,7 @@ from bot.game.managers.game_log_manager import GameLogManager
 
 # --- Импорт Сервисов ---
 from bot.services.openai_service import OpenAIService
+from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
 
 # --- Импорт Процессоров ---
 from bot.game.event_processors.event_stage_processor import EventStageProcessor
@@ -112,6 +113,7 @@ class WorldSimulationProcessor:
                  quest_manager: Optional[QuestManager] = None,
                  relationship_manager: Optional[RelationshipManager] = None,
                  game_log_manager: Optional[GameLogManager] = None,
+                 multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None,
                 ):
         print("Initializing WorldSimulationProcessor...")
         # --- Сохранение всех переданных аргументов в self._... ---
@@ -147,6 +149,7 @@ class WorldSimulationProcessor:
         self._quest_manager = quest_manager
         self._relationship_manager = relationship_manager
         self._game_log_manager = game_log_manager
+        self._multilingual_prompt_generator = multilingual_prompt_generator
 
         # TODO: Сохраните другие опциональные менеджеры/сервисы
 
@@ -740,6 +743,84 @@ class WorldSimulationProcessor:
 
 
     # --- Вспомогательные методы ---
+
+    async def generate_dynamic_event_narrative(self, guild_id: str, event_concept: str, related_entities: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+        """
+        Uses AI to generate a narrative for a dynamic world event or a general
+        atmospheric description of world changes.
+
+        Args:
+            guild_id: The ID of the guild.
+            event_concept: A string describing the event concept or desired narrative.
+            related_entities: Optional list of entity IDs (characters, locations, factions) relevant to the event.
+
+        Returns:
+            A dictionary containing the structured, multilingual narrative content,
+            or None if generation fails.
+        """
+        if not self._multilingual_prompt_generator:
+            print("WorldSimulationProcessor ERROR: MultilingualPromptGenerator is not available.")
+            return None
+        if not self._openai_service: # Should have been caught by generator check too
+            print("WorldSimulationProcessor ERROR: OpenAIService is not available.")
+            return None
+        if not self._settings:
+            print("WorldSimulationProcessor ERROR: Settings are not available.")
+            return None
+
+        print(f"WorldSimulationProcessor: Generating AI narrative for event concept '{event_concept}' in guild {guild_id}.")
+
+        context_data = self._multilingual_prompt_generator.context_collector.get_full_context(
+            guild_id=guild_id,
+            # Potentially pass related_entities to focus the context if get_full_context supports it
+        )
+
+        # Create a specific task prompt for this generation type
+        specific_task_prompt = f"""
+        Generate a rich, atmospheric narrative or dynamic event description for the game world.
+        Event Concept/Narrative Idea: {event_concept}
+        Potentially involved entities (use context for them if provided): {related_entities if related_entities else "General world atmosphere"}
+
+        The output should include:
+        - title_i18n (multilingual title for this event/narrative snippet)
+        - description_i18n (multilingual, detailed narrative text. This could describe changes in the world, a developing situation, or an unfolding event.)
+        - affected_locations_i18n (optional, list of location names/IDs with multilingual notes on how they are affected)
+        - involved_npcs_i18n (optional, list of NPC names/IDs with multilingual notes on their involvement)
+        - potential_player_hooks_i18n (optional, multilingual ideas on how players might get involved or notice this)
+
+        Ensure all textual fields are in the specified multilingual JSON format ({{"en": "...", "ru": "..."}}).
+        Incorporate elements from the lore and current world state context.
+        """
+
+        prompt_messages = self._multilingual_prompt_generator._build_full_prompt_for_openai(
+            specific_task_prompt=specific_task_prompt,
+            context_data=context_data
+        )
+
+        system_prompt = prompt_messages["system"]
+        user_prompt = prompt_messages["user"]
+
+        ai_settings = self._settings.get("world_event_ai_settings", {})
+        max_tokens = ai_settings.get("max_tokens", 1500)
+        temperature = ai_settings.get("temperature", 0.7)
+
+        generated_data = await self._openai_service.generate_structured_multilingual_content(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+
+        if generated_data and "error" not in generated_data:
+            print(f"WorldSimulationProcessor: Successfully generated AI narrative for '{event_concept}'.")
+            return generated_data
+        else:
+            error_detail = generated_data.get("error") if generated_data else "Unknown error"
+            raw_text = generated_data.get("raw_text", "") if generated_data else ""
+            print(f"WorldSimulationProcessor ERROR: Failed to generate AI narrative for '{event_concept}'. Error: {error_detail}")
+            if raw_text:
+                print(f"WorldSimulationProcessor: Raw response from AI was: {raw_text[:500]}...")
+            return None
 
     def _check_event_for_auto_transition(self, event: Event) -> Optional[str]:
         # ... (логика _check_event_for_auto_transition остается прежней, она использует self._атрибуты и Event объект) ...

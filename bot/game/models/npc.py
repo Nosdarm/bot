@@ -61,7 +61,28 @@ class NPC:
     traits: List[str] = field(default_factory=list)  # Личностные черты
     desires: List[str] = field(default_factory=list)  # Желания NPC
     motives: List[str] = field(default_factory=list)  # Мотивы NPC
-    backstory_i18n: Dict[str, str] = field(default_factory=lambda: {"en": ""})  # Краткая предыстория
+    backstory_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""})
+
+    # New fields for AI generation:
+    role_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""})
+    personality_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""}) # For more descriptive personality text
+    motivation_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""}) # For more descriptive motivation text
+    dialogue_hints_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""})
+
+    known_abilities: List[str] = field(default_factory=list) # List of Ability IDs
+    known_spells: List[str] = field(default_factory=list)   # List of Spell IDs
+
+    # For storing skills with proficiency levels, similar to Character model
+    skills: Dict[str, int] = field(default_factory=dict) # e.g., {"stealth": 50, "alchemy": 30}
+
+    faction_affiliations: List[Dict[str, Any]] = field(default_factory=list)
+    # Example: [{"faction_id": "guild_id", "rank_i18n": {"en": "Member", "ru": "Участник"}, "reputation": 50}]
+
+    # Visual description
+    visual_description_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""})
+
+    # Optional: Store raw AI generated data if needed for debugging or regeneration
+    # raw_ai_data: Optional[Dict[str, Any]] = None
 
     # TODO: Добавьте другие поля, если необходимо для вашей логики NPC
     # Например:
@@ -97,6 +118,18 @@ class NPC:
             'desires': self.desires,
             'motives': self.motives,
             'backstory_i18n': self.backstory_i18n,
+
+            # Add new fields
+            'role_i18n': self.role_i18n,
+            'personality_i18n': self.personality_i18n,
+            'motivation_i18n': self.motivation_i18n,
+            'dialogue_hints_i18n': self.dialogue_hints_i18n,
+            'known_abilities': self.known_abilities,
+            'known_spells': self.known_spells,
+            'skills': self.skills,
+            'faction_affiliations': self.faction_affiliations,
+            'visual_description_i18n': self.visual_description_i18n,
+            # 'raw_ai_data': self.raw_ai_data,
             # TODO: Включите другие поля, если добавили
             # 'description': self.description,
             # 'ai_state': self.ai_state,
@@ -170,7 +203,10 @@ class NPC:
         if backstory_i18n is None:
             backstory = data.get('backstory', "") # Default to empty string if old field is missing
             backstory_i18n = {"en": backstory}
-        
+        elif not isinstance(backstory_i18n, dict): # Ensure it's a dict if not None
+            backstory_i18n = {"en": str(backstory_i18n)}
+
+
         if not isinstance(traits, list):
             print(f"NPC Model: Warning: Loaded traits for NPC {npc_id} is not a list ({type(traits).__name__}). Initializing as empty list.")
             traits = []
@@ -180,6 +216,31 @@ class NPC:
         if not isinstance(motives, list):
             print(f"NPC Model: Warning: Loaded motives for NPC {npc_id} is not a list ({type(motives).__name__}). Initializing as empty list.")
             motives = []
+
+        # Handle new fields
+        role_i18n = data.get('role_i18n', {"en": "", "ru": ""}) or {"en": "", "ru": ""}
+        personality_i18n = data.get('personality_i18n', {"en": "", "ru": ""}) or {"en": "", "ru": ""}
+        motivation_i18n = data.get('motivation_i18n', {"en": "", "ru": ""}) or {"en": "", "ru": ""}
+        dialogue_hints_i18n = data.get('dialogue_hints_i18n', {"en": "", "ru": ""}) or {"en": "", "ru": ""}
+
+        known_abilities = data.get('known_abilities', []) or []
+        if not isinstance(known_abilities, list): known_abilities = []
+
+        known_spells = data.get('known_spells', []) or []
+        if not isinstance(known_spells, list): known_spells = []
+
+        skills = data.get('skills', {}) or {}
+        if not isinstance(skills, dict): skills = {}
+
+        faction_affiliations = data.get('faction_affiliations', []) or []
+        if not isinstance(faction_affiliations, list): faction_affiliations = []
+
+        visual_description_i18n = data.get('visual_description_i18n', {"en": "", "ru": ""}) or {"en": "", "ru": ""}
+        # raw_ai_data = data.get('raw_ai_data')
+
+        # guild_id and relationships are handled by existing logic if they are at the end of constructor
+        guild_id_val = data.get('guild_id') # Existing logic already handles this if it's a required field
+        relationships_val = data.get('relationships', {}) or {} # Existing logic
 
         return NPC(
             id=npc_id,
@@ -203,6 +264,21 @@ class NPC:
             desires=desires,
             motives=motives,
             backstory_i18n=backstory_i18n,
+
+            # Pass new fields to constructor
+            role_i18n=role_i18n,
+            personality_i18n=personality_i18n,
+            motivation_i18n=motivation_i18n,
+            dialogue_hints_i18n=dialogue_hints_i18n,
+            known_abilities=known_abilities,
+            known_spells=known_spells,
+            skills=skills,
+            faction_affiliations=faction_affiliations,
+            visual_description_i18n=visual_description_i18n,
+            # raw_ai_data=raw_ai_data,
+
+            guild_id=guild_id_val, # Use the value extracted earlier
+            relationships=relationships_val, # Use the value extracted earlier
             # TODO: Передайте другие поля в конструктор
             # description=description,
             # ai_state=ai_state,

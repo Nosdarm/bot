@@ -13,6 +13,9 @@ if TYPE_CHECKING:
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.services.consequence_processor import ConsequenceProcessor  # Changed path
     from bot.game.managers.game_log_manager import GameLogManager
+    # Add these:
+    from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
+    from bot.services.openai_service import OpenAIService
     # The import for 'Quest' model is removed as per instruction 10, assuming dicts are used.
 
 class QuestManager:
@@ -33,6 +36,9 @@ class QuestManager:
         relationship_manager: Optional["RelationshipManager"] = None,
         consequence_processor: Optional["ConsequenceProcessor"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
+        # New parameters
+        multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None,
+        openai_service: Optional["OpenAIService"] = None
     ):
         self._db_adapter = db_adapter
         self._settings = settings if settings else {} # Ensure settings is a dict
@@ -43,6 +49,9 @@ class QuestManager:
         self._relationship_manager = relationship_manager
         self._consequence_processor = consequence_processor
         self._game_log_manager = game_log_manager
+        # Store new services
+        self._multilingual_prompt_generator = multilingual_prompt_generator
+        self._openai_service = openai_service
 
         # guild_id -> character_id -> quest_id -> quest_data
         self._active_quests: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -175,6 +184,61 @@ class QuestManager:
                 self._consequence_processor.process_consequences(start_consequences, context)
         
         return new_quest_data
+
+    async def generate_quest_details_from_ai(self, guild_id: str, quest_idea: str, triggering_entity_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Uses MultilingualPromptGenerator and OpenAIService to generate detailed
+        quest data based on an idea or trigger.
+
+        Args:
+            guild_id: The ID of the guild.
+            quest_idea: A string describing the quest concept or trigger.
+            triggering_entity_id: Optional ID of the character/NPC initiating or targeted by the quest, for context.
+
+        Returns:
+            A dictionary containing the structured, multilingual quest data from the AI,
+            or None if generation fails.
+        """
+        if not self._multilingual_prompt_generator:
+            print("QuestManager ERROR: MultilingualPromptGenerator is not available.")
+            return None
+        if not self._openai_service:
+            print("QuestManager ERROR: OpenAIService is not available.")
+            return None
+
+        print(f"QuestManager: Generating AI details for quest idea '{quest_idea}' in guild {guild_id}.")
+
+        prompt_messages = self._multilingual_prompt_generator.generate_quest_prompt(
+            guild_id=guild_id,
+            quest_idea=quest_idea,
+            triggering_entity_id=triggering_entity_id
+        )
+
+        system_prompt = prompt_messages["system"]
+        user_prompt = prompt_messages["user"]
+
+        quest_generation_settings = self._settings.get("quest_generation_ai_settings", {})
+        max_tokens = quest_generation_settings.get("max_tokens", 2500) # Quests can be long
+        temperature = quest_generation_settings.get("temperature", 0.65)
+
+        generated_data = await self._openai_service.generate_structured_multilingual_content(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+
+        if generated_data and "error" not in generated_data:
+            print(f"QuestManager: Successfully generated AI details for quest idea '{quest_idea}'.")
+            # Further validation of the quest structure might be needed here.
+            return generated_data
+        else:
+            error_detail = generated_data.get("error") if generated_data else "Unknown error"
+            raw_text = generated_data.get("raw_text", "") if generated_data else ""
+            print(f"QuestManager ERROR: Failed to generate AI details for quest idea '{quest_idea}'. Error: {error_detail}")
+            if raw_text:
+                print(f"QuestManager: Raw response from AI was: {raw_text[:500]}...")
+            return None
 
     def complete_quest(self, guild_id: str, character_id: str, quest_id: str) -> bool:
         """Marks a quest as completed if all objectives are met."""
