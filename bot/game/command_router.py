@@ -377,9 +377,10 @@ class CommandRouter:
             if 'guild_id' in context_copy: # guild_id is passed explicitly
                 del context_copy['guild_id']
             
-            # Define a variable literally named 'kwargs' from context_copy
-            # to address the Pylance error "kwargs is not defined" at the unpacking site.
-            kwargs = context_copy
+            # context_copy is already defined from context.copy()
+            # Ensure no other explicit parameters are in context_copy to avoid TypeError
+            context_copy.pop('discord_id', None) # Remove if somehow present, though not typical in context
+            context_copy.pop('name', None)       # Remove if somehow present, though not typical in context
 
             try:
                 # Ensure author_id is passed as discord_id
@@ -388,7 +389,7 @@ class CommandRouter:
                     guild_id=guild_id, 
                     discord_id=int(author_id), 
                     name=name, 
-                    **kwargs # Use the variable named kwargs
+                    **context_copy # Use the cleaned context_copy
                 )
                 if char_id:
                     await send_callback(f"Character '{name}' (ID: {char_id}) created successfully for user {message.author.mention}!")
