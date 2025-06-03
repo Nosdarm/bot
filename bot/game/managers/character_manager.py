@@ -938,30 +938,33 @@ class CharacterManager:
         return True
 
     # Метод уже принимает guild_id и **kwargs
-    async def update_character_location(self, character_id: str, location_id: Optional[str], guild_id: str, **kwargs: Any) -> bool:
-        """Обновляет локацию персонажа для определенной гильдии."""
+    async def update_character_location(self, character_id: str, location_id: Optional[str], guild_id: str, **kwargs: Any) -> Optional["Character"]:
+        """Обновляет локацию персонажа для определенной гильдии и возвращает измененный объект Character или None."""
         guild_id_str = str(guild_id)
         # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
         char = self.get_character(guild_id_str, character_id)
         if not char:
             print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to update location.")
-            return False
+            return None
 
         # Убедимся, что у объекта Character есть атрибут location_id перед изменением
         if not hasattr(char, 'location_id'):
              print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'location_id' attribute.")
-             return False # Не удалось установить location_id, если атрибут отсутствует
+             return None # Не удалось установить location_id, если атрибут отсутствует
 
         # Ensure location_id is str or None
         resolved_location_id = str(location_id) if location_id is not None else None
 
-        if getattr(char, 'location_id', None) == resolved_location_id:
-             return True # Already there
+        old_location_id = getattr(char, 'location_id', None) # Get old location for logging/events
+
+        if old_location_id == resolved_location_id:
+             # print(f"CharacterManager: Character {character_id} already in location {resolved_location_id}. No update needed.") # Debug
+             return char # Already there, return the character object
 
         char.location_id = resolved_location_id # Set the updated location ID
 
         self.mark_character_dirty(guild_id_str, character_id) # Помечаем измененным для этой гильдии
-        print(f"CharacterManager: Updated location for character {character_id} in guild {guild_id_str} to {resolved_location_id}.")
+        print(f"CharacterManager: Updated location for character {character_id} in guild {guild_id_str} from {old_location_id} to {resolved_location_id}.")
 
         # TODO: Trigger arrival/departure events here or delegate
         # Example: if self._location_manager and hasattr(self._location_manager, 'handle_entity_departure'):
@@ -969,8 +972,7 @@ class CharacterManager:
         # if self._location_manager and hasattr(self._location_manager, 'handle_entity_arrival'):
         # await self._location_manager.handle_entity_arrival(char.id, "Character", new_location_id, context=kwargs)
 
-
-        return True
+        return char # Возвращаем измененный объект Character
 
     # ИСПРАВЛЕНИЕ: Добавляем guild_id и **kwargs
     async def add_item_to_inventory(self, guild_id: str, character_id: str, item_id: str, quantity: int = 1, **kwargs: Any) -> bool:
@@ -1429,6 +1431,111 @@ class CharacterManager:
     #      """Сбросить dialogue_id/state персонажа когда он покидает диалог."""
     #      # Similar logic
     #      pass
+
+    async def save_character(self, character: "Character", guild_id: str) -> bool:
+        """
+        Saves a single character entity to the database using an UPSERT operation.
+        Ensures all relevant fields of the Character model are saved.
+        Handles serialization of complex types (e.g., to JSON strings).
+        """
+        if self._db_adapter is None:
+            print(f"CharacterManager: Error: DB adapter missing for guild {guild_id}. Cannot save character {character.id}.")
+            # Consider raising an error or returning a more specific status
+            return False
+
+        guild_id_str = str(guild_id) # Ensure guild_id is a string
+
+        # Validate that the character belongs to the specified guild
+        if str(character.guild_id) != guild_id_str:
+            print(f"CharacterManager: Error: Character {character.id} guild_id ({character.guild_id}) "
+                  f"does not match provided guild_id ({guild_id_str}) for saving.")
+            return False
+
+        try:
+            # Convert Character object to dictionary
+            # The to_dict() method in Character model should be kept up-to-date
+            char_data = character.to_dict()
+
+            # Prepare data for SQL query, ensuring JSON serialization for complex types
+            # The order of parameters must match the order of columns in the SQL query.
+            # The 'name' column in the DB stores the 'name_i18n' dict as JSON.
+            # 'собранные_действия_JSON' is assumed to be already a JSON string from the model.
+
+            db_params = (
+                char_data.get('id'),
+                char_data.get('discord_user_id'),
+                json.dumps(char_data.get('name_i18n', {})), # 'name' column stores name_i18n
+                char_data.get('guild_id'),
+                char_data.get('location_id'),
+                json.dumps(char_data.get('stats', {})),
+                json.dumps(char_data.get('inventory', [])),
+                json.dumps(char_data.get('current_action')) if char_data.get('current_action') is not None else None,
+                json.dumps(char_data.get('action_queue', [])),
+                char_data.get('party_id'),
+                json.dumps(char_data.get('state_variables', {})),
+                float(char_data.get('hp', 0.0)), # Ensure float
+                float(char_data.get('max_health', 0.0)), # Ensure float
+                int(char_data.get('is_alive', True)), # Boolean as integer
+                json.dumps(char_data.get('status_effects', [])),
+                int(char_data.get('level', 1)), # Ensure int
+                int(char_data.get('experience', 0)), # Ensure int
+                int(char_data.get('unspent_xp',0)), # Ensure int
+                json.dumps(char_data.get('active_quests', [])),
+                json.dumps(char_data.get('known_spells', [])),
+                json.dumps(char_data.get('spell_cooldowns', {})),
+                json.dumps(char_data.get('skills', {})),
+                json.dumps(char_data.get('known_abilities', [])),
+                json.dumps(char_data.get('ability_cooldowns', {})),
+                json.dumps(char_data.get('flags', [])),
+                char_data.get('char_class'),
+                char_data.get('selected_language'),
+                char_data.get('current_game_status'),
+                char_data.get('собранные_действия_JSON'), # Already a JSON string
+                char_data.get('current_party_id')
+            )
+
+            # SQL for UPSERT (INSERT OR REPLACE)
+            # Column names must match the 'players' table schema.
+            # This list of columns should correspond to Character.to_dict() keys + DB structure.
+            upsert_sql = '''
+            INSERT OR REPLACE INTO players (
+                id, discord_user_id, name, guild_id, location_id,
+                stats, inventory, current_action, action_queue, party_id,
+                state_variables, hp, max_health, is_alive, status_effects,
+                level, experience, unspent_xp, active_quests, known_spells,
+                spell_cooldowns, skills, known_abilities, ability_cooldowns, flags,
+                char_class, selected_language, current_game_status, собранные_действия_JSON, current_party_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''' # 30 columns, 30 placeholders
+
+            # Execute the database operation
+            await self._db_adapter.execute(upsert_sql, db_params)
+            # print(f"CharacterManager: Successfully saved character {character.id} for guild {guild_id_str}.") # Debug log
+
+            # If the character was saved, remove it from the dirty set for this guild
+            # This is crucial to avoid re-saving unchanged data
+            guild_dirty_set = self._dirty_characters.get(guild_id_str)
+            if guild_dirty_set:
+                guild_dirty_set.discard(character.id)
+                if not guild_dirty_set: # If the set becomes empty
+                    del self._dirty_characters[guild_id_str]
+
+            return True
+
+        except json.JSONDecodeError as je:
+            print(f"CharacterManager: JSON encoding error saving character {character.id} for guild {guild_id_str}: {je}")
+            traceback.print_exc()
+            return False
+        except AttributeError as ae: # Catch issues if char_data is missing expected keys from to_dict
+            print(f"CharacterManager: Attribute error preparing data for character {character.id} (guild {guild_id_str}): {ae}. "
+                  "This might indicate Character.to_dict() is missing fields or data is malformed.")
+            traceback.print_exc()
+            return False
+        except Exception as e:
+            # Log any other errors during the save process
+            print(f"CharacterManager: Error saving character {character.id} for guild {guild_id_str}: {e}")
+            traceback.print_exc()
+            return False
 
 
 # --- Конец класса CharacterManager ---
