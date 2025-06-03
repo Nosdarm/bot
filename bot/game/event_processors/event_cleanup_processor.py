@@ -1,5 +1,5 @@
 import json # Optional
-from typing import Dict, Optional, Any, List, callable # Types
+from typing import Dict, Optional, Any, List, Callable # Types, changed callable to Callable
 
 # Import models (for type hinting or data structures)
 from bot.game.models.event import Event # Needed for event object
@@ -27,7 +27,7 @@ class EventCleanupProcessor:
     # Получает ended event object и ВСЕ менеджеры/сервисы для выполнения задач.
     async def cleanup_event(self,
                             event: Event, # Объект завершенного события (для данных о том, что чистить)
-                            send_message_callback: Optional[callable] = None, # Для отправки финальных сообщений (если EM не сделал)
+                            send_message_callback: Optional[Callable] = None, # Для отправки финальных сообщений (если EM не сделал)
                             reason: str = "Завершено.", # Причина завершения
 
                             # !!! ПЕРЕДАЙТЕ ВСЕ МЕНЕДЖЕРЫ, НЕОБХОДИМЫЕ ДЛЯ ЗАДАЧ ОЧИСТКИ НИЖЕ !!!
@@ -48,8 +48,8 @@ class EventCleanupProcessor:
         Не удаляет само событие из коллекции - это делает EventManager после вызова этого метода.
         """
         # event object is assumed to be valid (though ended) when called.
-
-        print(f"Event Cleanup Processor: Starting cleanup for event {event.name} ({event.id}). Reason: {reason}")
+        event_name_for_log = getattr(event, 'name_i18n', {}).get('en', event.id) # Safe name access
+        print(f"Event Cleanup Processor: Starting cleanup for event {event_name_for_log} ({event.id}). Reason: {reason}")
 
 
         # --- Выполнение Задач Очистки (Делегирование Менеджерам) ---

@@ -68,10 +68,24 @@ class PartyCommandHandler:
         """
         send_callback = context['send_to_command_channel']
         guild_id = context.get('guild_id')
-        author_id = context.get('author_id')
-
+        author_id_from_context = context.get('author_id') # Renamed to avoid conflict with parameter name in sub-handlers
 
         if guild_id is None:
+            await send_callback("❌ Команды партии доступны только на сервере.")
+            return
+
+        if author_id_from_context is None:
+            await send_callback("❌ Ошибка: Не удалось определить ваш ID пользователя. Команда партии отменена.")
+            # Log this, as it indicates an issue with context propagation or how the command was invoked
+            print(f"PartyCommandHandler: Aborted party command in guild {guild_id or 'UnknownGuild'} due to missing author_id in context.")
+            return
+
+        # Assuming author_id_from_context is now guaranteed to be not None.
+        # The sub-handlers expect `author_id: str`. If author_id_from_context can be other types,
+        # conversion or further checks might be needed. For now, assume it's the correct string ID.
+        author_id = str(author_id_from_context) # Ensure it's a string for sub-handlers
+
+        if not args:
             await send_callback("❌ Команды партии доступны только на сервере.")
             return
 

@@ -301,13 +301,16 @@ class EconomyManager:
                   # calculate_market_price needs market inventory, item template, quantity, is_selling, context
                   # Pass the retrieved market_inv (copy), item_template (dict), quantity, is_selling flag, and the full kwargs context
                   # RuleEngine is expected to use guild_id from context or implicitly from managers in context
-                  price = await rule_engine.calculate_market_price(
-                      market_inventory=market_inv, # Pass the market inventory data (copy)
-                      item_template=item_template, # Pass the item template data (dict)
-                      quantity=resolved_quantity,
-                      is_selling=is_selling,
-                      context=kwargs # Pass the full kwargs context (includes guild_id, managers etc.)
-                  )
+                  # FIXME: RuleEngine.calculate_market_price method does not exist. Implement or remove.
+                  # price = await rule_engine.calculate_market_price(
+                  #     market_inventory=market_inv, # Pass the market inventory data (copy)
+                  #     item_template=item_template, # Pass the item template data (dict)
+                  #     quantity=resolved_quantity,
+                  #     is_selling=is_selling,
+                  #     context=kwargs # Pass the full kwargs context (includes guild_id, managers etc.)
+                  # )
+                  price = None # Fallback since method is missing
+                  print(f"EconomyManager: FIXME: Call to rule_engine.calculate_market_price skipped for item {tpl_id_str} as method is missing.")
                   # Ensure returned price is numeric
                   if isinstance(price, (int, float)) and price >= 0:
                        return price
@@ -757,7 +760,9 @@ class EconomyManager:
                    # process_economy_tick needs guild_id and context
                    # RuleEngine is expected to iterate through markets for this guild, apply restock/price changes etc.
                    # RuleEngine should call add/remove_items_to_market and mark_market_dirty on this manager.
-                   await rule_engine.process_economy_tick(guild_id=guild_id_str, context=kwargs)
+                   # FIXME: RuleEngine.process_economy_tick method does not exist. Implement or remove.
+                   # await rule_engine.process_economy_tick(guild_id=guild_id_str, context=kwargs)
+                   print(f"EconomyManager: FIXME: Call to rule_engine.process_economy_tick skipped for guild {guild_id_str} as method is missing.")
 
               except Exception as e:
                    print(f"EconomyManager: ❌ Error processing economy tick for guild {guild_id_str}: {e}")
