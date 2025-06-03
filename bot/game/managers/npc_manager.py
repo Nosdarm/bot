@@ -250,7 +250,7 @@ class NpcManager:
                 traceback.print_exc()
 
         # Layering: kwargs > archetype_data > generated/default
-        final_name = kwargs.get('name', archetype_data_loaded.get('name', base_name) if archetype_data_loaded else base_name)
+        final_name_i18n = kwargs.get('name_i18n', archetype_data_loaded.get('name_i18n', {"en": base_name, "ru": base_name}) if archetype_data_loaded else {"en": base_name, "ru": base_name})
         
         # Stats: Start with RuleEngine, then layer archetype, then layer specific kwargs
         rule_engine = self._rule_engine or kwargs.get('rule_engine')
@@ -278,14 +278,20 @@ class NpcManager:
         final_traits = kwargs.get('traits', archetype_data_loaded.get('traits', base_traits) if archetype_data_loaded else base_traits)
         final_desires = kwargs.get('desires', archetype_data_loaded.get('desires', base_desires) if archetype_data_loaded else base_desires)
         final_motives = kwargs.get('motives', archetype_data_loaded.get('motives', base_motives) if archetype_data_loaded else base_motives)
-        final_backstory = kwargs.get('backstory', archetype_data_loaded.get('backstory', base_backstory) if archetype_data_loaded else base_backstory)
+        # Ensure i18n fields are dictionaries
+        final_backstory_i18n = kwargs.get('backstory_i18n', archetype_data_loaded.get('backstory_i18n', {"en": base_backstory, "ru": base_backstory}) if archetype_data_loaded else {"en": base_backstory, "ru": base_backstory})
+        final_role_i18n = kwargs.get('role_i18n', archetype_data_loaded.get('role_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
+        final_personality_i18n = kwargs.get('personality_i18n', archetype_data_loaded.get('personality_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
+        final_motivation_i18n = kwargs.get('motivation_i18n', archetype_data_loaded.get('motivation_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
+        final_dialogue_hints_i18n = kwargs.get('dialogue_hints_i18n', archetype_data_loaded.get('dialogue_hints_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
+        final_visual_description_i18n = kwargs.get('visual_description_i18n', archetype_data_loaded.get('visual_description_i18n', {"en": "", "ru": ""}) if archetype_data_loaded else {"en": "", "ru": ""})
 
 
         try:
             data: Dict[str, Any] = {
                 'id': npc_id,
                 'template_id': archetype_id_to_load, # Store the archetype/template ID used
-                'name': final_name,
+                'name_i18n': final_name_i18n,
                 'guild_id': guild_id_str,
                 'location_id': location_id,
                 'stats': final_stats,
@@ -303,7 +309,12 @@ class NpcManager:
                 'traits': final_traits,
                 'desires': final_desires,
                 'motives': final_motives,
-                'backstory': final_backstory,
+                'backstory_i18n': final_backstory_i18n,
+                'role_i18n': final_role_i18n,
+                'personality_i18n': final_personality_i18n,
+                'motivation_i18n': final_motivation_i18n,
+                'dialogue_hints_i18n': final_dialogue_hints_i18n,
+                'visual_description_i18n': final_visual_description_i18n,
             }
             npc = NPC.from_dict(data)
 
@@ -855,7 +866,7 @@ class NpcManager:
                            continue # Skip this NPC if invalid or wrong guild
 
                        template_id = getattr(npc, 'template_id', None)
-                       name = getattr(npc, 'name', 'Unnamed NPC')
+                        name_i18n = getattr(npc, 'name_i18n', {"en": "Unnamed NPC", "ru": "Безымянный NPC"})
                        location_id = getattr(npc, 'location_id', None)
                        stats = getattr(npc, 'stats', {})
                        inventory = getattr(npc, 'inventory', [])
@@ -868,6 +879,16 @@ class NpcManager:
                        is_alive = getattr(npc, 'is_alive', True)
                        status_effects = getattr(npc, 'status_effects', [])
                        is_temporary = getattr(npc, 'is_temporary', False)
+                        archetype = getattr(npc, 'archetype', "commoner")
+                        traits = getattr(npc, 'traits', [])
+                        desires = getattr(npc, 'desires', [])
+                        motives = getattr(npc, 'motives', [])
+                        backstory_i18n = getattr(npc, 'backstory_i18n', {"en": "", "ru": ""})
+                        role_i18n = getattr(npc, 'role_i18n', {"en": "", "ru": ""})
+                        personality_i18n = getattr(npc, 'personality_i18n', {"en": "", "ru": ""})
+                        motivation_i18n = getattr(npc, 'motivation_i18n', {"en": "", "ru": ""})
+                        dialogue_hints_i18n = getattr(npc, 'dialogue_hints_i18n', {"en": "", "ru": ""})
+                        visual_description_i18n = getattr(npc, 'visual_description_i18n', {"en": "", "ru": ""})
 
                        # Ensure data types are suitable for JSON dumping
                        if not isinstance(stats, dict): stats = {}
@@ -904,9 +925,14 @@ class NpcManager:
                            int(bool(is_temporary)), # Save bool as integer (0 or 1)
                         getattr(npc, 'archetype', "commoner"),
                         json.dumps(getattr(npc, 'traits', [])),
-                        json.dumps(getattr(npc, 'desires', [])),
-                        json.dumps(getattr(npc, 'motives', [])),
-                        getattr(npc, 'backstory', "")
+                        json.dumps(desires),
+                        json.dumps(motives),
+                        json.dumps(backstory_i18n),
+                        json.dumps(role_i18n),
+                        json.dumps(personality_i18n),
+                        json.dumps(motivation_i18n),
+                        json.dumps(dialogue_hints_i18n),
+                        json.dumps(visual_description_i18n)
                        ))
                        upserted_npc_ids.add(str(npc_id)) # Track IDs prepared for upsert
 
@@ -977,7 +1003,7 @@ class NpcManager:
         try:
             # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
             sql = '''
-            SELECT id, template_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype, traits, desires, motives, backstory
+            SELECT id, template_id, name_i18n, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype, traits, desires, motives, backstory_i18n, role_i18n, personality_i18n, motivation_i18n, dialogue_hints_i18n, visual_description_i18n
             FROM npcs WHERE guild_id = ?
             '''
             rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
@@ -1015,6 +1041,12 @@ class NpcManager:
 
 
                 # Parse JSON fields, handle None/malformed data gracefully
+                try:
+                    data['name_i18n'] = json.loads(data.get('name_i18n') or '{}') if isinstance(data.get('name_i18n'), (str, bytes)) else {"en": "Error NPC", "ru": "Ошибка NPC"}
+                except (json.JSONDecodeError, TypeError):
+                    print(f"NpcManager: Warning: Failed to parse name_i18n for NPC {npc_id} in guild {guild_id_str}. Setting to default. Data: {data.get('name_i18n')}")
+                    data['name_i18n'] = {"en": "Error NPC", "ru": "Ошибка NPC"}
+
                 try:
                     data['stats'] = json.loads(data.get('stats') or '{}') if isinstance(data.get('stats'), (str, bytes)) else {}
                 except (json.JSONDecodeError, TypeError):
@@ -1074,7 +1106,14 @@ class NpcManager:
                 except (json.JSONDecodeError, TypeError):
                     print(f"NpcManager: Warning: Failed to parse motives for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('motives')}")
                     data['motives'] = []
-                data['backstory'] = data.get('backstory', "")
+
+                i18n_fields_to_load = ['backstory_i18n', 'role_i18n', 'personality_i18n', 'motivation_i18n', 'dialogue_hints_i18n', 'visual_description_i18n']
+                for field in i18n_fields_to_load:
+                    try:
+                        data[field] = json.loads(data.get(field) or '{}') if isinstance(data.get(field), (str, bytes)) else {}
+                    except (json.JSONDecodeError, TypeError):
+                        print(f"NpcManager: Warning: Failed to parse {field} for NPC {npc_id} in guild {guild_id_str}. Setting to {{}}. Data: {data.get(field)}")
+                        data[field] = {}
 
 
                 # Ensure required object IDs are strings or None
@@ -1306,11 +1345,11 @@ class NpcManager:
             # Columns are listed in the save_state method's SQL query
 
             db_params = (
-                npc_data.get('id'),
-                npc_data.get('template_id'),
-                json.dumps(npc_data.get('name_i18n', {})), # Save i18n name as JSON
-                guild_id_str, # Explicitly use the provided guild_id
-                npc_data.get('location_id'),
+                npc_data.get('id'), # id
+                npc_data.get('template_id'), # template_id
+                json.dumps(npc_data.get('name_i18n', {})), # name_i18n
+                guild_id_str, # guild_id
+                npc_data.get('location_id'), # location_id
                 json.dumps(npc_data.get('stats', {})),
                 json.dumps(npc_data.get('inventory', [])),
                 json.dumps(npc_data.get('current_action')), # Can be None
@@ -1323,21 +1362,27 @@ class NpcManager:
                 json.dumps(npc_data.get('status_effects', [])),
                 int(bool(npc_data.get('is_temporary', False))),
                 npc_data.get('archetype', "commoner"),
-                json.dumps(npc_data.get('traits', [])),
-                json.dumps(npc_data.get('desires', [])),
-                json.dumps(npc_data.get('motives', [])),
-                json.dumps(npc_data.get('backstory_i18n', {})) # Save i18n backstory as JSON
+                json.dumps(npc_data.get('traits', [])), # traits
+                json.dumps(npc_data.get('desires', [])), # desires
+                json.dumps(npc_data.get('motives', [])), # motives
+                json.dumps(npc_data.get('backstory_i18n', {})), # backstory_i18n
+                json.dumps(npc_data.get('role_i18n', {})), # role_i18n
+                json.dumps(npc_data.get('personality_i18n', {})), # personality_i18n
+                json.dumps(npc_data.get('motivation_i18n', {})), # motivation_i18n
+                json.dumps(npc_data.get('dialogue_hints_i18n', {})), # dialogue_hints_i18n
+                json.dumps(npc_data.get('visual_description_i18n', {})) # visual_description_i18n
             )
 
             upsert_sql = '''
             INSERT OR REPLACE INTO npcs (
-                id, template_id, name, guild_id, location_id,
+                id, template_id, name_i18n, guild_id, location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, health, max_health, is_alive, status_effects,
-                is_temporary, archetype, traits, desires, motives, backstory
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_temporary, archetype, traits, desires, motives, backstory_i18n,
+                role_i18n, personality_i18n, motivation_i18n, dialogue_hints_i18n, visual_description_i18n
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             '''
-            # 21 columns, 21 placeholders.
+            # 26 columns, 26 placeholders.
 
             await self._db_adapter.execute(upsert_sql, db_params)
             print(f"NpcManager: Successfully saved NPC {npc_id} for guild {guild_id_str}.")
