@@ -136,7 +136,7 @@ class CharacterManager:
 
     # Используем строковый литерал в аннотации возвращаемого типа
     # ИСПРАВЛЕНИЕ: Принимаем guild_id
-    def get_character_by_discord_id(self, guild_id: str, discord_user_id: int) -> Optional["Character"]:
+    async def get_character_by_discord_id(self, guild_id: str, discord_user_id: int) -> Optional["Character"]:
         """Получить персонажа по Discord User ID для определенной гильдии."""
         guild_id_str = str(guild_id)
         # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
