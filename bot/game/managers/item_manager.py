@@ -1046,5 +1046,106 @@ class ItemManager:
 
 # --- Конец класса ItemManager ---
 
+    async def save_item(self, item: "Item", guild_id: str) -> bool:
+        """
+        Saves a single item instance to the database using an UPSERT operation.
+        The 'item' argument is an Item model object.
+        """
+        if self._db_adapter is None:
+            print(f"ItemManager: Error: DB adapter missing for guild {guild_id}. Cannot save item {getattr(item, 'id', 'N/A')}.")
+            return False
+
+        guild_id_str = str(guild_id)
+        item_id = getattr(item, 'id', None)
+
+        if not item_id:
+            print(f"ItemManager: Error: Item object is missing an 'id'. Cannot save.")
+            return False
+
+        # It's good practice to ensure the item logically belongs to the guild if such a check is possible.
+        # The Item model itself doesn't store guild_id directly, it's contextual via ItemManager.
+
+        try:
+            item_data_from_model = item.to_dict()
+
+            # Prepare data for DB columns based on 'items' table schema used in ItemManager
+            # Columns: id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary
+
+            db_id = item_data_from_model.get('id')
+            db_template_id = item_data_from_model.get('template_id')
+
+            # guild_id comes from the method argument
+            db_guild_id = guild_id_str
+
+            db_owner_id = item_data_from_model.get('owner_id')
+            # Item model doesn't have owner_type, try getattr or assume from context if necessary
+            db_owner_type = getattr(item, 'owner_type', None)
+
+            db_location_id = item_data_from_model.get('location_id')
+
+            # Item model doesn't have quantity, try getattr
+            db_quantity = getattr(item, 'quantity', 1.0)
+            if not isinstance(db_quantity, (int, float)): db_quantity = 1.0
+
+            db_state_variables = item_data_from_model.get('state_variables', {})
+            if not isinstance(db_state_variables, dict): db_state_variables = {}
+
+            db_is_temporary = item_data_from_model.get('is_temporary', False)
+
+            db_params = (
+                db_id,
+                db_template_id,
+                db_guild_id,
+                db_owner_id,
+                db_owner_type,
+                db_location_id,
+                float(db_quantity),
+                json.dumps(db_state_variables),
+                int(bool(db_is_temporary))
+            )
+
+            upsert_sql = '''
+            INSERT OR REPLACE INTO items (
+                id, template_id, guild_id, owner_id, owner_type,
+                location_id, quantity, state_variables, is_temporary
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            '''
+            # 9 columns, 9 placeholders.
+
+            await self._db_adapter.execute(upsert_sql, db_params)
+            print(f"ItemManager: Successfully saved item {db_id} for guild {guild_id_str}.")
+
+            # If this item was marked as dirty, clean it from the dirty set for this guild
+            if guild_id_str in self._dirty_items and db_id in self._dirty_items[guild_id_str]:
+                self._dirty_items[guild_id_str].discard(db_id)
+                if not self._dirty_items[guild_id_str]: # If set becomes empty
+                    del self._dirty_items[guild_id_str]
+
+            # Also, ensure the in-memory cache (_items) is updated if this method is called
+            # with an Item object that might not be the same instance as in the cache (if cache stores dicts).
+            # The ItemManager cache _items stores dicts. So, we should update it.
+            cached_item_dict = {
+                'id': db_id,
+                'template_id': db_template_id,
+                'guild_id': db_guild_id,
+                'owner_id': db_owner_id,
+                'owner_type': db_owner_type,
+                'location_id': db_location_id,
+                'quantity': float(db_quantity),
+                'state_variables': db_state_variables, # Store the dict, not the JSON string
+                'is_temporary': bool(db_is_temporary)
+            }
+            self._items.setdefault(guild_id_str, {})[db_id] = cached_item_dict
+            # Update lookup caches as well, as owner/location might have changed
+            self._update_lookup_caches_remove(guild_id_str, cached_item_dict) # Remove old entry first (safer if key fields changed)
+            self._update_lookup_caches_add(guild_id_str, cached_item_dict)   # Add new/updated entry
+
+            return True
+
+        except Exception as e:
+            print(f"ItemManager: Error saving item {item_id} for guild {guild_id_str}: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return False
 
 print("DEBUG: item_manager.py module loaded.")

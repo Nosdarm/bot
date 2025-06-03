@@ -152,7 +152,11 @@ class CommandRouter:
         campaign_loader: Optional["CampaignLoader"] = None,
         relationship_manager: Optional["RelationshipManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
+<<<<<<< HEAD
         conflict_resolver: Optional["ConflictResolver"] = None, # Added ConflictResolver
+=======
+        conflict_resolver: Optional["ConflictResolver"] = None, # Added ConflictResolver parameter
+>>>>>>> jules_wip_8142786043997061140
 
     ):
         print("Initializing CommandRouter...")
@@ -171,7 +175,11 @@ class CommandRouter:
         self._campaign_loader = campaign_loader
         self._relationship_manager = relationship_manager 
         self._quest_manager = quest_manager
+<<<<<<< HEAD
         self._conflict_resolver = conflict_resolver # Use the injected dependency
+=======
+        self._conflict_resolver = conflict_resolver # Assign from parameter
+>>>>>>> jules_wip_8142786043997061140
 
         self._openai_service = openai_service
         self._item_manager = item_manager

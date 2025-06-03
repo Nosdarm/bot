@@ -195,7 +195,4 @@ EXAMPLE_RULES_CONFIG = {
 # Modifiers like "haste_buff" or "encumbered_debuff" would be looked up on the character/entity
 # involved in the conflict, and their values (e.g., +2 agility, -10% speed) would be applied
 # to the relevant skill/stat check.
-<<<<<<< HEAD
-
-=======
->>>>>>> jules_wip_8142786043997061140
+"""

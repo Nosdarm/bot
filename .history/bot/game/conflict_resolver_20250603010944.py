@@ -1,0 +1,563 @@
+"""
+Module for the ConflictResolver class, responsible for identifying and managing
+game conflicts based on player actions and defined rules.
+"""
+
+from typing import Any, Dict, List, Optional
+import uuid # For generating unique conflict IDs
+
+# Placeholder for actual RuleEngine and NotificationService classes
+# from ..core.rule_engine import RuleEngine # Assuming RuleEngine might be in a core module
+# from ..services.notification_service import NotificationService # Assuming a notification service
+
+
+class ConflictResolver:
+    """
+    Identifies, manages, and resolves conflicts that arise from player actions
+    based on the game's rules configuration.
+    """
+
+    def __init__(self, rule_engine: Any, rules_config_data: Dict[str, Any], notification_service: Any):
+        """
+        Initializes the ConflictResolver.
+
+        Args:
+            rule_engine: An instance of the RuleEngine (placeholder: Any).
+                         This engine will be used for checks like skill checks, stat checks, etc.
+            rules_config_data: A dictionary containing the loaded rules configuration
+                               (as defined in rules_config_definition.py).
+            notification_service: A service object responsible for sending notifications
+                                  (placeholder: Any).
+        """
+        self.rule_engine = rule_engine
+        self.rules_config = rules_config_data
+        self.notification_service = notification_service
+        self.pending_manual_resolutions: Dict[str, Dict[str, Any]] = {}
+        print(f"ConflictResolver initialized with rule_engine: {rule_engine}, "
+              f"rules_config_data: (keys: {list(rules_config_data.keys()) if rules_config_data else 'empty'}), "
+              f"notification_service: {notification_service}, "
+              f"pending_manual_resolutions store initialized.")
+
+    def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """
+        Analyzes a map of player actions to identify potential conflicts.
+        If a conflict requires manual resolution, it calls prepare_for_manual_resolution.
+        If automatic, it calls resolve_conflict_automatically (or returns it for later processing).
+
+        Args:
+            player_actions_map: A dictionary where keys are player IDs (str) and
+                                values are lists of actions (Dict[str, Any])
+                                submitted by that player for the current turn/tick.
+                                Example action: {'type': 'MOVE', 'target_space': 'A1', 'player_id': 'p1'}
+
+        Returns:
+            A list of conflict resolution instruction dictionaries.
+            For automatic conflicts, this might be the resolved conflict itself.
+            For manual conflicts, this will be the result of prepare_for_manual_resolution.
+        """
+        print(f"Analyzing actions for conflicts: {player_actions_map}")
+        # Placeholder logic for identifying conflicts.
+        # This should be replaced with robust conflict detection based on rules_config.
+        
+        processed_conflict_results: List[Dict[str, Any]] = []
+
+        # Example: Simple check for two players moving to the same space
+        space_claims: Dict[str, List[Dict[str, Any]]] = {}
+        for player_id, actions in player_actions_map.items():
+            for action in actions:
+                # Assuming action format is like {'type': 'MOVE', 'target_space': 'A1', ...}
+                if action.get("type") == "MOVE":
+                    target_space = action.get("target_space")
+                    if target_space:
+                        if target_space not in space_claims:
+                            space_claims[target_space] = []
+                        # Add player_id to action if not already present (it should be from ActionProcessor)
+                        action_with_player_id = action.copy()
+                        if "player_id" not in action_with_player_id:
+                            action_with_player_id["player_id"] = player_id
+                        space_claims[target_space].append(action_with_player_id)
+        
+        for space_id, conflicting_actions in space_claims.items():
+            if len(conflicting_actions) > 1: # Potential conflict
+                conflict_type_id = "simultaneous_move_to_limited_space" # Example type
+                rule_definition = self.rules_config.get(conflict_type_id)
+
+                if not rule_definition:
+                    print(f"Warning: No rule definition found for conflict type '{conflict_type_id}'. Skipping.")
+                    continue
+
+                involved_player_ids = list(set(act["player_id"] for act in conflicting_actions)) # Unique player IDs
+                
+                # Construct a preliminary conflict object
+                # Note: The 'conflict_id' will be properly generated by prepare_for_manual_resolution if needed
+                # or could be added by resolve_conflict_automatically.
+                # For this example, analyze_actions_for_conflicts doesn't assign a final ID itself
+                # if it passes off to other methods that do.
+                current_conflict_details = {
+                    "type": conflict_type_id,
+                    "involved_players": involved_player_ids,
+                    "details": { # Details specific to this conflict type
+                        "space_id": space_id,
+                        "actions": conflicting_actions # The raw actions that caused it
+                    },
+                    "status": "identified" 
+                }
+                print(f"Identified preliminary conflict: {current_conflict_details}")
+
+                if rule_definition.get("manual_resolution_required"):
+                    # This will generate ID, store, and notify
+                    prepared_manual_conflict = self.prepare_for_manual_resolution(current_conflict_details)
+                    processed_conflict_results.append(prepared_manual_conflict)
+                else:
+                    # For automatic, we might resolve immediately or queue it.
+                    # For now, let's assume immediate resolution attempt.
+                    resolved_auto_conflict = self.resolve_conflict_automatically(current_conflict_details)
+                    processed_conflict_results.append(resolved_auto_conflict)
+        
+        # Example for "contested_resource_grab" (manual)
+        # This requires different parsing of player_actions_map, e.g., two players GRAB same item_id
+        # Placeholder for such logic:
+        # if a_contested_resource_grab_is_detected:
+        #    grab_conflict_type = "contested_resource_grab"
+        #    grab_rule = self.rules_config.get(grab_conflict_type)
+        #    if grab_rule and grab_rule.get("manual_resolution_required"):
+        #        # Construct grab_conflict_details similar to above
+        #        # grab_conflict_details = { "type": grab_conflict_type, ... }
+        #        # prepared_grab_conflict = self.prepare_for_manual_resolution(grab_conflict_details)
+        #        # processed_conflict_results.append(prepared_grab_conflict)
+        #        pass
+
+
+        return processed_conflict_results
+
+    def resolve_conflict_automatically(self, conflict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Attempts to resolve a given conflict automatically based on rules.
+
+        Args:
+            conflict: A conflict dictionary, as produced by analyze_actions_for_conflicts.
+                      It should contain the 'type' key to look up rules in self.rules_config.
+
+        Returns:
+            The conflict dictionary updated with the resolution outcome.
+            Example outcome: {
+                'conflict_id': 'unique_conflict_id_123',
+                'type': 'simultaneous_move_to_limited_space',
+                'involved_players': ['p1', 'p2'],
+                'details': {'space_id': 'A1', ...},
+                'status': 'resolved_automatically',
+                'outcome': {
+                    'winner': 'p1',
+                    'loser': 'p2',
+                    'effects': ['p1_moves_to_A1', 'p2_action_fails']
+                }
+            }
+        """
+        print(f"Attempting to resolve conflict automatically: {conflict.get('type')} involving {conflict.get('involved_players')}")
+        conflict_type_id = conflict.get("type")
+        
+        # Ensure conflict_id exists or generate one if this method is the final step for auto conflicts
+        conflict_id = conflict.get("conflict_id")
+        if not conflict_id:
+            conflict_id = f"auto_res_{uuid.uuid4().hex[:8]}"
+            conflict["conflict_id"] = conflict_id
+
+        if not conflict_type_id or conflict_type_id not in self.rules_config:
+            print(f"Error: Unknown conflict type '{conflict_type_id}' or not in rules_config for conflict {conflict_id}.")
+            conflict["status"] = "resolution_failed_unknown_type"
+            return conflict
+
+        rule = self.rules_config[conflict_type_id]
+        # This method should only be called if manual_resolution_required is False.
+        # However, an extra check or assertion could be useful.
+        if rule.get("manual_resolution_required"):
+            print(f"Error: Conflict {conflict_id} ({conflict_type_id}) is marked for manual resolution but attempted automatic. Routing to manual.")
+            # This case should ideally be caught by analyze_actions_for_conflicts
+            return self.prepare_for_manual_resolution(conflict)
+
+        # Placeholder for automatic resolution logic:
+        # 1. Get the 'automatic_resolution' rules for the conflict type.
+        # 2. Perform the specified 'check_type' (e.g., skill_check, opposed_check)
+        #    using self.rule_engine.
+        # 3. Determine the outcome based on 'outcome_rules'.
+        # 4. Populate the 'outcome' field in the conflict dictionary.
+
+        # This is highly dependent on RuleEngine and the specific rule structure
+        auto_res_config = rule.get("automatic_resolution", {})
+        config_check_type = auto_res_config.get("check_type") # This is the key for RuleEngine's _rules_data.checks
+
+        if not config_check_type:
+            conflict["status"] = "resolution_failed_no_check_type"
+            conflict["outcome"] = {"description": "Automatic resolution rule is missing 'check_type'."}
+            return conflict
+
+        involved_players = conflict.get("involved_players", [])
+        if not involved_players:
+            conflict["status"] = "resolution_failed_no_players"
+            conflict["outcome"] = {"description": "No players involved in the conflict."}
+            return conflict
+
+        # --- Prepare for RuleEngine.resolve_check ---
+        # For opposed checks, we need at least two players.
+        # For single-entity checks against a DC, we need one.
+        
+        actor_id = involved_players[0] # By convention, first player is the primary actor
+        # TODO: Determine actor_type (Character/NPC). For now, assume Character. This needs to come from player_actions_map or a character lookup.
+        actor_type = "Character" 
+        
+        target_id = involved_players[1] if len(involved_players) > 1 else None
+        target_type = "Character" if target_id else None # Assume Character if target exists
+
+        # Context for RuleEngine.resolve_check might include specific modifiers from conflict rule
+        # or situational modifiers from the game state (not implemented here yet).
+        # The `actor_check_details` and `target_check_details` from rules_config
+        # should guide what's passed or how RuleEngine's check_config is structured.
+        # For instance, `skill_or_stat_to_use` from rules_config could be passed in `context`
+        # if `config_check_type` in RuleEngine is generic.
+        
+        # For now, we assume `config_check_type` (e.g., "initiative_check") in RuleEngine's
+        # config already defines which stats/skills to use, or `resolve_check` can infer them.
+        # If `rules_config.automatic_resolution.actor_check_details.skill_or_stat_to_use` needs
+        # to be passed to `resolve_check`, it would go into the `context` argument.
+
+        # Placeholder: Directly call RuleEngine.resolve_check if it's async
+        # If RuleEngine is not async, this needs to be handled differently.
+        # For now, let's assume a synchronous call or that an async wrapper exists if needed.
+        
+        # This part is a conceptual placeholder for calling the RuleEngine.
+        # Actual implementation depends on whether RuleEngine.resolve_check is async
+        # and how it expects character data (IDs are fine, it fetches data).
+        
+        # --- Simulate calling RuleEngine for the actor ---
+        # This call is conceptual. In a real async setup:
+        # actor_check_result = await self.rule_engine.resolve_check(...)
+        actor_check_result_payload = { # Mocking RuleEngine's DetailedCheckResult
+            "total_roll_value": 15, "is_success": True, "outcome": "SUCCESS", 
+            "description": "Actor check placeholder", "rolls": [10], "modifier_applied": 5
+        }
+        print(f"Simulating RuleEngine check for actor {actor_id} using check type '{config_check_type}'. Result: {actor_check_result_payload['total_roll_value']}")
+
+        actor_roll = actor_check_result_payload["total_roll_value"]
+        final_outcome_key = "tie" # Default
+        winner_id = None
+
+        if auto_res_config.get("check_type") == "opposed_check" or len(involved_players) > 1:
+            if not target_id:
+                conflict["status"] = "resolution_failed_no_target_for_opposed_check"
+                conflict["outcome"] = {"description": "Opposed check requires a target."}
+                return conflict
+
+            # --- Simulate calling RuleEngine for the target (for opposed checks) ---
+            target_check_result_payload = { # Mocking RuleEngine's DetailedCheckResult
+                 "total_roll_value": 12, "is_success": True, "outcome": "SUCCESS", 
+                 "description": "Target check placeholder", "rolls": [7], "modifier_applied": 5
+            }
+            print(f"Simulating RuleEngine check for target {target_id} using check type '{config_check_type}'. Result: {target_check_result_payload['total_roll_value']}")
+            target_roll = target_check_result_payload["total_roll_value"]
+
+            outcome_rules = auto_res_config.get("outcome_rules", {})
+            if outcome_rules.get("higher_wins", True):
+                if actor_roll > target_roll:
+                    final_outcome_key = "actor_wins"
+                    winner_id = actor_id
+                elif target_roll > actor_roll:
+                    final_outcome_key = "target_wins"
+                    winner_id = target_id
+                else: # Tie
+                    # Apply tie-breaker rule
+                    tie_breaker = outcome_rules.get("tie_breaker_rule", "random")
+                    if tie_breaker == "actor_preference":
+                        final_outcome_key = "actor_wins" # Could map to a specific "tie_actor_wins" if defined
+                        winner_id = actor_id
+                    elif tie_breaker == "target_preference":
+                        final_outcome_key = "target_wins" # Could map to "tie_target_wins"
+                        winner_id = target_id
+                    elif tie_breaker == "random":
+                        if self.rule_engine and hasattr(self.rule_engine, "resolve_dice_roll"): # Check if rule_engine can roll
+                             # conceptual: tie_roll = await self.rule_engine.resolve_dice_roll("1d2") 
+                             # if tie_roll['total'] == 1: final_outcome_key = "actor_wins"; winner_id = actor_id
+                             # else: final_outcome_key = "target_wins"; winner_id = target_id
+                            print("Simulating random tie-break: actor wins")
+                            final_outcome_key = "actor_wins"; winner_id = actor_id
+                        else: # Fallback if no dice roller
+                            final_outcome_key = "actor_wins"; winner_id = actor_id # Default to actor on random tie without roller
+                    # TODO: Implement "stat_comparison:stat_name" tie-breaker
+                    else: # Default tie outcome if complex tie-breaker not handled
+                        final_outcome_key = "tie" 
+                        # Winner might remain None or be determined by a default if 'tie' outcome implies a winner
+            else: # Lower wins (less common)
+                if actor_roll < target_roll: final_outcome_key = "actor_wins"; winner_id = actor_id
+                elif target_roll < actor_roll: final_outcome_key = "target_wins"; winner_id = target_id
+                else: # Tie, handle as above
+                    final_outcome_key = "tie" 
+        
+        else: # Single entity check against a DC (or no DC, success always)
+            outcome_rules = auto_res_config.get("outcome_rules", {})
+            success_threshold = outcome_rules.get("success_threshold")
+            if success_threshold is not None:
+                if actor_roll >= success_threshold:
+                    final_outcome_key = "actor_wins" # Represents success for the actor
+                    winner_id = actor_id
+                else:
+                    final_outcome_key = "target_wins" # Represents failure for the actor (or "environment wins")
+            else: # No specific threshold, assume success or use a default outcome
+                final_outcome_key = "actor_wins" 
+                winner_id = actor_id
+                print(f"Warning: No success_threshold for non-opposed check '{config_check_type}'. Defaulting to actor_wins.")
+
+        # Get the descriptive outcome
+        resolved_outcome_details = auto_res_config.get("outcome_rules", {}).get("outcomes", {}).get(final_outcome_key, {})
+        
+        conflict["status"] = "resolved_automatically"
+        conflict["outcome"] = {
+            "winner_id": winner_id,
+            "actor_roll": actor_roll,
+            "target_roll": target_roll if target_id else None,
+            "outcome_key": final_outcome_key,
+            "description": resolved_outcome_details.get("description", "Outcome automatically resolved."),
+            "effects": resolved_outcome_details.get("effects", [])
+        }
+        
+        print(f"Conflict {conflict_id} ({conflict_type_id}) automatically resolved. Outcome: {final_outcome_key}, Winner: {winner_id}. Details: {conflict['outcome']}")
+        return conflict
+
+    def prepare_for_manual_resolution(self, conflict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Prepares a conflict for manual resolution by a Master/GM.
+        This might involve generating a unique ID if not already present,
+        formatting a notification message, and storing it for the Master.
+
+        Args:
+            conflict: A conflict dictionary. It must include 'type', 'involved_players', and 'details'.
+                      'conflict_id' can be pre-assigned or will be generated here.
+
+        Returns:
+            A dictionary containing the 'conflict_id' and a message for the caller,
+            indicating that the conflict is awaiting manual resolution.
+            Example: {
+                'conflict_id': 'generated_uuid',
+                'status': 'awaiting_manual_resolution',
+                'message': "Conflict [generated_uuid] (type: ...) is awaiting manual resolution."
+            }
+        """
+        conflict_type_id = conflict.get("type")
+        if not conflict_type_id or conflict_type_id not in self.rules_config:
+            error_msg = f"Error preparing for manual resolution: Unknown conflict type '{conflict_type_id}'."
+            print(error_msg)
+            return {"status": "preparation_failed_unknown_type", "message": error_msg, "original_conflict": conflict}
+
+        conflict_id = conflict.get("conflict_id") or uuid.uuid4().hex
+        conflict["conflict_id"] = conflict_id # Ensure the conflict object has the ID
+
+        print(f"Preparing conflict '{conflict_id}' ({conflict_type_id}) for manual resolution.")
+
+        self.pending_manual_resolutions[conflict_id] = conflict.copy() # Store a copy
+
+        rule = self.rules_config[conflict_type_id]
+        notification_fmt = rule.get("notification_format", {})
+        message_template = notification_fmt.get("message", "Manual resolution required for {conflict_id}: {type}")
+        
+        # Prepare placeholders for formatting the message
+        # Ensure all placeholders defined in the rule's notification_format are covered.
+        # Common placeholders: conflict_id, type, involved_players, details.
+        # Specific detail keys (e.g. space_id, resource_name) come from conflict['details'].
+        placeholders = {
+            "conflict_id": conflict_id,
+            "type": conflict_type_id,
+            "description": rule.get("description", "N/A"),
+            "involved_players_list": conflict.get("involved_players", []), # Raw list
+            "player_ids_str": ", ".join(conflict.get("involved_players", ["UnknownPlayers"])), # Comma-separated string
+            **(conflict.get('details', {})) 
+        }
+        # Add individual player placeholders like player1_id, player2_id if needed by templates
+        for i, player_id_val in enumerate(conflict.get("involved_players", [])):
+            placeholders[f"player{i+1}_id"] = player_id_val
+            if i == 0: placeholders["actor_id"] = player_id_val # common alias
+            if i == 1: placeholders["target_id"] = player_id_val # common alias
+        
+        try:
+            formatted_message = message_template.format_map(placeholders)
+        except KeyError as e:
+            formatted_message = f"Manual resolution required for {conflict_id} ({conflict_type_id}). Error formatting notification: Missing key {e}."
+            print(f"Error formatting notification for {conflict_id}: {e}. Template: '{message_template}', Placeholders: {list(placeholders.keys())}")
+
+        # Update the stored conflict with this formatted message for context
+        self.pending_manual_resolutions[conflict_id]["master_notification_message"] = formatted_message
+        
+        # Use the notification_service
+        if self.notification_service:
+            if isinstance(self.notification_service, str): # Placeholder behavior
+                print(f"--- MANUAL RESOLUTION REQUIRED ---")
+                print(f"Notification Service (placeholder: {self.notification_service}):")
+                print(formatted_message)
+                print(f"--- END NOTIFICATION ---")
+            else:
+                # Assuming notification_service has a method like send_master_alert
+                # self.notification_service.send_master_alert(conflict_id, formatted_message, conflict_details=conflict)
+                print(f"Simulating sending to actual notification service: {formatted_message}")
+        
+        return {
+            "conflict_id": conflict_id,
+            "status": "awaiting_manual_resolution",
+            "message": f"Conflict '{conflict_id}' ({conflict_type_id}) requires manual resolution. Notification sent to Master.",
+            "details_for_master": formatted_message # This can be part of the return if the caller also needs it
+        }
+
+    def process_master_resolution(self, conflict_id: str, outcome_type: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Processes the resolution details provided by a Master/GM for a conflict
+            that required manual intervention from the `pending_manual_resolutions` store.
+
+        Args:
+            conflict_id: The unique ID of the conflict being resolved.
+            outcome_type: A string indicating the type of outcome chosen by the Master
+                          (e.g., "actor_wins", "target_wins", "custom_outcome").
+            params: Optional dictionary of parameters if the outcome requires them.
+
+        Returns:
+            A dictionary confirming the resolution and the outcome.
+        """
+        print(f"Processing Master resolution for conflict_id: {conflict_id}, outcome_type: {outcome_type}, params: {params}")
+
+        if conflict_id not in self.pending_manual_resolutions:
+            return {
+                "success": False,
+                "conflict_id": conflict_id,
+                "message": f"Error: Conflict ID '{conflict_id}' not found in pending manual resolutions."
+            }
+
+        original_conflict = self.pending_manual_resolutions.pop(conflict_id) # Retrieve and remove
+        
+        print(f"Retrieved original conflict data for {conflict_id}: {original_conflict.get('type')} involving {original_conflict.get('involved_players')}")
+
+        # Placeholder for applying the Master's resolution:
+        # 1. Validate outcome_type against the conflict's rule definition (if rules specify allowed manual outcomes).
+        # 2. Determine actual game effects based on outcome_type and params.
+        #    This might involve looking up `effects` in the rule definition for the chosen outcome,
+        #    or applying custom logic if outcome_type is "custom_outcome".
+        # 3. These effects would then be applied to the game state by another system component
+        #    (e.g., an EffectApplier or by returning them to the GameEngine/ActionProcessor).
+
+        final_resolution_details = {
+            "conflict_id": conflict_id,
+            "original_conflict_type": original_conflict.get("type"),
+            "resolved_by": "master", # In a real system, this would be the Master's ID
+            "chosen_outcome": outcome_type,
+            "parameters_applied": params if params else {},
+            "status": "resolved_manually",
+            "placeholder_effects": [f"effect_master_chose_{outcome_type}_for_{conflict_id}"] # Placeholder
+        }
+        
+        print(f"Conflict {conflict_id} resolved manually. Outcome: {final_resolution_details}")
+        return {
+            "success": True,
+            "message": f"Conflict '{conflict_id}' resolved by Master as '{outcome_type}'.",
+            "resolution_details": final_resolution_details
+        }
+
+if __name__ == '__main__':
+    # Example Usage (for testing purposes)
+    print("--- ConflictResolver Example Usage ---")
+
+    # Mock services and data
+    mock_rule_engine = "MockRuleEngineInstance"
+    mock_notification_service = "MockNotificationServiceInstance"
+    
+    # Simplified rules_config for example
+    sample_rules_config = {
+        "simultaneous_move_to_limited_space": {
+            "description": "Two entities attempt to move into the same space that can only occupy one.",
+            "manual_resolution_required": False,
+            "automatic_resolution": {
+                "check_type": "opposed_check",
+                "actor_check_details": {"skill_or_stat_to_use": "agility"},
+                "target_check_details": {"skill_or_stat_to_use": "agility"},
+                "outcome_rules": {
+                    "higher_wins": True,
+                    "tie_breaker_rule": "random",
+                    "outcomes": {
+                        "actor_wins": {"description": "Actor gets space.", "effects": ["actor_moves"]},
+                        "target_wins": {"description": "Target gets space.", "effects": ["target_moves"]},
+                    }
+                }
+            },
+            "notification_format": { # Even if auto, can have a format for logging/review
+                 "message": "Conflict: {actor_id} vs {target_id} for space {space_id}.",
+                 "placeholders": ["actor_id", "target_id", "space_id"]
+            }
+        },
+        "item_dispute": {
+            "description": "Two players claim the same item.",
+            "manual_resolution_required": True,
+            "notification_format": {
+                "message": "Manual resolution needed: Player {actor_id} and Player {target_id} dispute item {item_id}.",
+                "placeholders": ["actor_id", "target_id", "item_id"]
+            }
+        }
+    }
+
+    resolver = ConflictResolver(mock_rule_engine, sample_rules_config, mock_notification_service)
+
+    print("\n--- Testing analyze_actions_for_conflicts ---")
+    player_actions = {
+        "player1": [{"type": "MOVE", "target_space": "X1Y1", "speed": 10}],
+        "player2": [{"type": "MOVE", "target_space": "X1Y1", "speed": 12}],
+        "player3": [{"type": "GRAB", "item_id": "gold_idol", "target_item_location": "altar"}],
+        "player4": [{"type": "GRAB", "item_id": "gold_idol", "target_item_location": "altar"}], # Needs different conflict type
+    }
+    conflicts = resolver.analyze_actions_for_conflicts(player_actions)
+    # Note: The example analyze_actions_for_conflicts only looks for MOVE conflicts.
+    # To detect item_dispute, more logic would be needed there.
+
+    if not conflicts:
+        print("No conflicts identified by basic analyzer.")
+    
+    for conflict in conflicts:
+        print(f"\n--- Processing Conflict: {conflict.get('conflict_id')} ---")
+        
+        rule_for_conflict = sample_rules_config.get(conflict["type"])
+        if not rule_for_conflict:
+            print(f"No rule found for conflict type {conflict['type']}")
+            continue
+
+        if rule_for_conflict.get("manual_resolution_required"):
+            print("Manual resolution path:")
+            prepared_conflict = resolver.prepare_for_manual_resolution(conflict)
+            print(f"Prepared for manual: {prepared_conflict.get('manual_resolution_info')}")
+            
+            # Simulate Master resolving it
+            if prepared_conflict.get('status') == 'awaiting_manual_resolution':
+                resolved_manually = resolver.process_master_resolution(
+                    conflict_id=prepared_conflict['conflict_id'],
+                    outcome_type="actor_wins", # Example master decision
+                    params={"reason": "Master decided player1 was quicker"}
+                )
+                print(f"Manually resolved outcome: {resolved_manually}")
+        else:
+            print("Automatic resolution path:")
+            auto_resolved_conflict = resolver.resolve_conflict_automatically(conflict)
+            print(f"Automatically resolved outcome: {auto_resolved_conflict}")
+
+    # Example for a purely manual conflict
+    print("\n--- Testing purely manual conflict ---")
+    manual_conflict_example = {
+        "conflict_id": "manual_item_dispute_001",
+        "type": "item_dispute", # This type is set to manual_resolution_required = True
+        "involved_players": ["player3", "player4"],
+        "details": {"item_id": "gold_idol", "location": "altar"},
+        "status": "pending_resolution"
+    }
+    
+    prepared_manual_conflict = resolver.prepare_for_manual_resolution(manual_conflict_example)
+    print(f"Prepared manual conflict: {prepared_manual_conflict.get('manual_resolution_info')}")
+    
+    if prepared_manual_conflict.get('status') == 'awaiting_manual_resolution':
+        final_manual_outcome = resolver.process_master_resolution(
+            conflict_id=prepared_manual_conflict['conflict_id'],
+            outcome_type="custom_split",
+            params={"player3_gets": "idol_top_half", "player4_gets": "idol_bottom_half"}
+        )
+        print(f"Final manual outcome: {final_manual_outcome}")
+
+    print("\n--- End of Example Usage ---")
+
