@@ -947,7 +947,7 @@ class CharacterManager:
 
         # Ensure location_id is str or None
         resolved_location_id = str(location_id) if location_id is not None else None
-        
+
         old_location_id = getattr(char, 'location_id', None) # Get old location for logging/events
 
         if old_location_id == resolved_location_id:
@@ -1453,7 +1453,7 @@ class CharacterManager:
             # The order of parameters must match the order of columns in the SQL query.
             # The 'name' column in the DB stores the 'name_i18n' dict as JSON.
             # 'собранные_действия_JSON' is assumed to be already a JSON string from the model.
-            
+
             db_params = (
                 char_data.get('id'),
                 char_data.get('discord_user_id'),
@@ -1512,7 +1512,7 @@ class CharacterManager:
                 guild_dirty_set.discard(character.id)
                 if not guild_dirty_set: # If the set becomes empty
                     del self._dirty_characters[guild_id_str]
-            
+
             return True
 
         except json.JSONDecodeError as je:

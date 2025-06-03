@@ -821,7 +821,7 @@ class GameManager:
             return
 
         print(f"GameManager: Received {len(modified_entities)} entities for specific saving.")
-        
+
         # Import models needed for isinstance checks INSIDE the method or at TYPE_CHECKING level
         # to avoid circular dependencies at module load time if GameManager is imported by models.
         # However, for runtime isinstance checks, they need to be available.
@@ -837,7 +837,7 @@ class GameManager:
         for entity in modified_entities:
             entity_id = getattr(entity, 'id', 'UnknownID')
             guild_id_from_entity = getattr(entity, 'guild_id', None)
-            
+
             if not guild_id_from_entity:
                 # Attempt to get guild_id from context if available (e.g. from a Character or NPC's location)
                 # This is a fallback and might not always be reliable.
@@ -851,7 +851,7 @@ class GameManager:
                 if not guild_id_from_entity:
                     print(f"GameManager (save_specific_entities): Warning - Could not determine guild_id for entity ID {entity_id} of type {type(entity).__name__}. Skipping save.")
                     continue
-            
+
             guild_id_str = str(guild_id_from_entity)
 
             try:
@@ -859,7 +859,7 @@ class GameManager:
                     if self.character_manager:
                         await self.character_manager.save_character(entity, guild_id_str)
                     else: print(f"GameManager: CharacterManager not available. Cannot save Character {entity_id}.")
-                
+
                 elif isinstance(entity, NPC):
                     if self.npc_manager:
                         await self.npc_manager.save_npc(entity, guild_id_str)
@@ -874,7 +874,7 @@ class GameManager:
                     if self.location_manager:
                         await self.location_manager.save_location(entity, guild_id_str)
                     else: print(f"GameManager: LocationManager not available. Cannot save Location {entity_id}.")
-                
+
                 elif isinstance(entity, dict) and 'template_id' in entity and entity.get('guild_id') == guild_id_str and 'state' in entity:
                     # This is a fallback for location instances if they are still dicts in some paths
                     if self.location_manager and hasattr(self.location_manager, 'save_location_instance_data'): # Requires specific method
@@ -891,24 +891,24 @@ class GameManager:
                     if self.event_manager:
                         await self.event_manager.save_event(entity, guild_id_str)
                     else: print(f"GameManager: EventManager not available. Cannot save Event {entity_id}.")
-                
+
                 elif isinstance(entity, Item):
                     if self.item_manager:
                         await self.item_manager.save_item(entity, guild_id_str)
                     else: print(f"GameManager: ItemManager not available. Cannot save Item {entity_id}.")
-                
+
                 elif isinstance(entity, StatusEffect):
                     if self.status_manager:
                         await self.status_manager.save_status_effect(entity, guild_id_str)
                     else: print(f"GameManager: StatusManager not available. Cannot save StatusEffect {entity_id}.")
-                
+
                 else:
                     print(f"GameManager (save_specific_entities): Unknown entity type for saving: {type(entity).__name__} (ID: {entity_id}). Skipping.")
 
             except Exception as e:
                 print(f"GameManager (save_specific_entities): Error saving entity ID {entity_id} of type {type(entity).__name__} for guild {guild_id_str}: {e}")
                 traceback.print_exc()
-        
+
         print(f"GameManager: Finished specific saving for {len(modified_entities)} entities.")
 
 

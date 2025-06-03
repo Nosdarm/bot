@@ -1229,7 +1229,7 @@ class NpcManager:
         if not npc_id:
             print(f"NpcManager: Error: NPC object is missing an 'id'. Cannot save.")
             return False
-        
+
         # Ensure the NPC's internal guild_id matches the provided guild_id
         # The NPC object from NPC.from_dict in create_npc already gets guild_id.
         npc_internal_guild_id = getattr(npc, 'guild_id', None)
@@ -1242,7 +1242,7 @@ class NpcManager:
 
             # Prepare data for DB columns based on 'npcs' table schema
             # Columns are listed in the save_state method's SQL query
-            
+
             db_params = (
                 npc_data.get('id'),
                 npc_data.get('template_id'),
@@ -1269,9 +1269,9 @@ class NpcManager:
 
             upsert_sql = '''
             INSERT OR REPLACE INTO npcs (
-                id, template_id, name, guild_id, location_id, 
-                stats, inventory, current_action, action_queue, party_id, 
-                state_variables, health, max_health, is_alive, status_effects, 
+                id, template_id, name, guild_id, location_id,
+                stats, inventory, current_action, action_queue, party_id,
+                state_variables, health, max_health, is_alive, status_effects,
                 is_temporary, archetype, traits, desires, motives, backstory
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             '''
@@ -1279,17 +1279,17 @@ class NpcManager:
 
             await self._db_adapter.execute(upsert_sql, db_params)
             print(f"NpcManager: Successfully saved NPC {npc_id} for guild {guild_id_str}.")
-            
+
             # If this NPC was marked as dirty, clean it from the dirty set for this guild
             if guild_id_str in self._dirty_npcs and npc_id in self._dirty_npcs[guild_id_str]:
                 self._dirty_npcs[guild_id_str].discard(npc_id)
                 if not self._dirty_npcs[guild_id_str]: # If set becomes empty
                     del self._dirty_npcs[guild_id_str]
-            
+
             # Ensure the cached object is the one that was saved, if it's a different instance.
             # NpcManager's cache _npcs stores NPC objects directly.
             self._npcs.setdefault(guild_id_str, {})[npc_id] = npc
-            
+
             return True
 
         except Exception as e:

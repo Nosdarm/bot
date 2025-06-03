@@ -1067,7 +1067,7 @@ class RuleEngine:
                                     self._character_manager.mark_character_dirty(guild_id, target_id_for_effect)
                                 elif target_type_for_effect == "NPC":
                                     self._npc_manager.mark_npc_dirty(guild_id, target_id_for_effect)
-                            
+
                             outcome_details.update({"status_effect_id": status_effect_id, "duration": duration, "applied_status_instance_id": new_status_id})
                             print(f"RuleEngine: Applied status effect '{status_effect_id}' to {target_id_for_effect} for {duration}s. Instance ID: {new_status_id}")
                     else:
@@ -1077,7 +1077,7 @@ class RuleEngine:
                 elif effect_type == "summon":
                     npc_archetype_id = effect_data.get('summon_npc_archetype_id')
                     count = effect_data.get('count', 1)
-                    summon_location_id = getattr(caster, 'location_id', None) 
+                    summon_location_id = getattr(caster, 'location_id', None)
 
                     if npc_archetype_id and summon_location_id and self._npc_manager:
                         summoned_npcs_ids = []
@@ -1106,14 +1106,14 @@ class RuleEngine:
 
                 elif effect_type in ["buff_stat", "debuff_stat"]:
                     stat_to_modify = effect_data.get('stat')
-                    amount = effect_data.get('amount') 
-                    duration = effect_data.get('duration', 60) 
+                    amount = effect_data.get('amount')
+                    duration = effect_data.get('duration', 60)
 
                     if stat_to_modify and amount is not None and target_id_for_effect and target_type_for_effect and self._status_manager:
                         status_effect_properties = {
                             "modifies_stat": stat_to_modify,
-                            "modifier_amount": amount if effect_type == "buff_stat" else -amount, 
-                            "is_multiplier": effect_data.get("is_multiplier", False) 
+                            "modifier_amount": amount if effect_type == "buff_stat" else -amount,
+                            "is_multiplier": effect_data.get("is_multiplier", False)
                         }
                         status_template_id_for_mod = effect_data.get("status_effect_template_id_override", f"mod_{stat_to_modify}_{'buff' if effect_type == 'buff_stat' else 'debuff'}")
 
@@ -1268,17 +1268,17 @@ class RuleEngine:
                                 self._character_manager.mark_character_dirty(guild_id, target_id_for_effect)
                             elif target_type_for_effect == "NPC":
                                 self._npc_manager.mark_npc_dirty(guild_id, target_id_for_effect)
-                        
+
                         outcome_details.update({"status_effect_id": status_effect_id, "duration": duration, "applied_status_instance_id": new_status_id})
                         print(f"RuleEngine (Ability): Applied status effect '{status_effect_id}' to {target_id_for_effect} for {duration}s.")
                     else:
                         outcome_details["message"] = "Missing status_effect_id, target, type, or StatusManager for apply_status_effect."
                         print(f"RuleEngine (Ability) apply_status_effect: Missing data or StatusManager. StatusID: {status_effect_id}, TargetID: {target_id_for_effect}, TargetType: {target_type_for_effect}")
                 
-                elif effect_type == "modify_stat": 
+                elif effect_type == "modify_stat":
                     stat_to_modify = effect_data.get('stat')
                     amount = effect_data.get('amount')
-                    duration = effect_data.get('duration', 60) 
+                    duration = effect_data.get('duration', 60)
                     status_template_id_for_mod = effect_data.get("status_effect_template_id", f"temp_mod_{stat_to_modify}")
 
                     if stat_to_modify and amount is not None and target_id_for_effect and target_type_for_effect and self._status_manager:
@@ -1286,7 +1286,7 @@ class RuleEngine:
                             "modifies_stat": stat_to_modify,
                             "modifier_amount": amount,
                             "is_multiplier": effect_data.get("is_multiplier", False),
-                            "modifier_type": effect_data.get("modifier_type", "flat") 
+                            "modifier_type": effect_data.get("modifier_type", "flat")
                         }
                         new_status_id = await self._status_manager.add_status_effect_to_entity(
                             guild_id=guild_id,
@@ -1304,7 +1304,7 @@ class RuleEngine:
                                 self._character_manager.mark_character_dirty(guild_id, target_id_for_effect)
                             elif target_type_for_effect == "NPC":
                                 self._npc_manager.mark_npc_dirty(guild_id, target_id_for_effect)
-                        
+
                         outcome_details.update({"stat_modified": stat_to_modify, "modification_amount": amount, "duration": duration, "applied_status_instance_id": new_status_id})
                         print(f"RuleEngine (Ability): Applied temporary stat modification '{stat_to_modify}' to {target_id_for_effect} by {amount} for {duration}s.")
                     else:
@@ -1313,13 +1313,13 @@ class RuleEngine:
 
                 elif effect_type == "grant_flag":
                     flag_to_grant = effect_data.get('flag')
-                    if flag_to_grant and actual_target: 
+                    if flag_to_grant and actual_target:
                         if not hasattr(actual_target, 'flags') or actual_target.flags is None:
                             print(f"RuleEngine (Ability): Target '{target_id_for_effect}' missing 'flags' attribute. Initializing.")
-                            actual_target.flags = [] 
+                            actual_target.flags = []
                         
-                        if flag_to_grant not in actual_target.flags: 
-                            actual_target.flags.append(flag_to_grant) 
+                        if flag_to_grant not in actual_target.flags:
+                            actual_target.flags.append(flag_to_grant)
                             if actual_target not in modified_entities: modified_entities.append(actual_target)
                             if target_type_for_effect == "Character":
                                 self._character_manager.mark_character_dirty(guild_id, target_id_for_effect)
@@ -1337,26 +1337,26 @@ class RuleEngine:
                     sfx_id = effect_data.get('sfx_id', ability.sfx_on_activation)
                     if sfx_id:
                         outcome_details.update({"sfx_played": sfx_id})
-                        print(f"RuleEngine (Ability): Playing SFX '{sfx_id}' for ability '{ability.name}'.") 
+                        print(f"RuleEngine (Ability): Playing SFX '{sfx_id}' for ability '{ability.name}'.")
                     else:
                         outcome_details["message"] = "Missing sfx_id for play_sfx effect."
                 
                 elif effect_type == "deal_weapon_damage_modifier":
                     status_effect_id = effect_data.get("status_effect_id", f"empowered_attack_{ability.id}")
-                    duration = effect_data.get("duration_seconds", 6) 
+                    duration = effect_data.get("duration_seconds", 6)
                     
-                    if self._status_manager and caster_id: 
+                    if self._status_manager and caster_id:
                         status_properties = {
                             "damage_multiplier": effect_data.get("damage_multiplier", 1.0),
                             "accuracy_penalty": effect_data.get("accuracy_penalty", 0),
                         }
                         new_status_id = await self._status_manager.add_status_effect_to_entity(
                             guild_id=guild_id,
-                            target_id=caster_id, 
-                            target_type="Character", 
+                            target_id=caster_id,
+                            target_type="Character",
                             status_type=status_effect_id, # Corrected
                             duration=duration, # Corrected
-                            source_id=caster_id, 
+                            source_id=caster_id,
                             state_variables=status_properties, # Corrected
                             **kwargs # Pass full context
                         )
