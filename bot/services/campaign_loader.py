@@ -1,7 +1,7 @@
 import json
 from typing import Dict, Any, Optional, List
 
-class CampaignLoader:
+class CampaignLoaderService:
     """
     Handles loading campaign data from a JSON file.
     """
@@ -112,7 +112,7 @@ class CampaignLoader:
 
 # Example Usage (for testing purposes)
 if __name__ == '__main__':
-    loader = CampaignLoader()
+    loader = CampaignLoaderService()
 
     # Create a dummy campaign file for testing
     dummy_campaign_data = {
