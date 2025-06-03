@@ -2,7 +2,7 @@
 
 import discord
 from discord import app_commands, Interaction
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, cast # Added cast
 import traceback
 
 # Corrected imports
@@ -58,7 +58,7 @@ def is_gm_channel(interaction: Interaction, game_manager: Optional['GameManager'
 @app_commands.command(name="start_game", description="GM Command: Starts a new game session in this channel.")
 async def cmd_start_game(interaction: Interaction):
     # Type hint for bot
-    bot: RPGBot = interaction.client
+    bot = cast(RPGBot, interaction.client) # Used cast
     if not bot.game_manager:
         await interaction.response.send_message("Game Manager not available.", ephemeral=True)
         return
@@ -80,7 +80,7 @@ async def cmd_join_game(interaction: Interaction):
 )
 async def cmd_start_new_character(interaction: Interaction, name: str, race: str):
     await interaction.response.defer(ephemeral=True)
-    bot: RPGBot = interaction.client # Correct type hint
+    bot = cast(RPGBot, interaction.client) # Used cast
 
     try:
         if not bot.game_manager or \
