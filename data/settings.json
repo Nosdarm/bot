@@ -50,5 +50,311 @@
         "value": 1,
         "properties": { "stackable": true }
     }
+  },
+  "game_rules": {
+    "general_settings": {
+      "max_character_level": 20,
+      "attribute_cap": 20,
+      "skill_cap": 100
+    },
+    "experience_rules": {
+      "xp_to_level_up": {
+        "type": "table",
+        "values": {
+          "1": 0,
+          "2": 1000,
+          "3": 3000,
+          "4": 6000,
+          "5": 10000
+        }
+      },
+      "xp_awards": {
+        "combat": {
+          "base_xp_per_cr": 100,
+          "cr_scaling_factor": 1.2,
+          "party_bonus_factor": 1.0
+        },
+        "quest": {
+          "base_xp_per_difficulty": 200,
+          "story_quest_multiplier": 1.5
+        },
+        "skill_use": {
+          "xp_per_successful_check": 5,
+          "difficulty_multiplier": 1.1
+        }
+      },
+      "party_xp_distribution": {
+        "method": "even_split",
+        "level_range_penalty": 0.8
+      }
+    },
+    "character_stats_rules": {
+      "attributes": {
+        "strength": {
+          "description": "Physical power and carrying capacity."
+        },
+        "dexterity": {
+          "description": "Agility, reflexes, and accuracy."
+        },
+        "constitution": {
+          "description": "Health, stamina, and resilience."
+        },
+        "intelligence": {
+          "description": "Reasoning, memory, and knowledge."
+        },
+        "wisdom": {
+          "description": "Perception, intuition, and willpower."
+        },
+        "charisma": {
+          "description": "Force of personality, leadership, and social skills."
+        }
+      },
+      "attribute_modifier_formula": "(attribute_value - 10) // 2",
+      "default_initial_stats": {
+        "strength": 10,
+        "dexterity": 10,
+        "constitution": 10,
+        "intelligence": 10,
+        "wisdom": 10,
+        "charisma": 10
+      },
+      "derived_stats": {
+        "max_health": {
+          "base_formula": "10 + constitution_modifier + (level * (5 + constitution_modifier))",
+          "per_level_bonus_from_class": true
+        },
+        "armor_class": {
+          "base": 10,
+          "dex_modifier_applies": true,
+          "max_dex_bonus_from_armor_type": {
+            "heavy": 0,
+            "medium": 2
+          }
+        },
+        "initiative": {
+          "base_stat": "dexterity_modifier"
+        }
+      }
+    },
+    "skill_rules": {
+      "default_skill_cap": 100,
+      "skill_improvement_on_use": {
+        "enabled": true,
+        "base_chance": 0.1,
+        "dc_factor": 0.01,
+        "current_skill_factor": -0.005
+      },
+      "skill_stat_map": {
+        "athletics": "strength",
+        "acrobatics": "dexterity",
+        "stealth": "dexterity",
+        "perception": "wisdom",
+        "insight": "wisdom",
+        "survival": "wisdom",
+        "medicine": "wisdom",
+        "persuasion": "charisma",
+        "deception": "charisma",
+        "intimidation": "charisma",
+        "performance": "charisma",
+        "investigation": "intelligence",
+        "knowledge_arcana": "intelligence",
+        "knowledge_history": "intelligence",
+        "knowledge_nature": "intelligence",
+        "lockpicking": "dexterity",
+        "pickpocket": "dexterity"
+      }
+    },
+    "check_rules": {
+      "dice_roll_notation": "NdX+M",
+      "default_roll_formula": "1d20",
+      "critical_success": {
+        "natural_roll": 20,
+        "auto_succeeds": true,
+        "additional_effect": "max_damage_or_double_effect"
+      },
+      "critical_failure": {
+        "natural_roll": 1,
+        "auto_fails": true,
+        "additional_effect": "fumble_or_negative_consequence"
+      },
+      "difficulty_classes": {
+        "very_easy": 5,
+        "easy": 10,
+        "medium": 15,
+        "hard": 20,
+        "very_hard": 25,
+        "nearly_impossible": 30
+      },
+      "modifier_sources": [
+        "primary_stat",
+        "relevant_skill",
+        "status_effects",
+        "equipment_bonus",
+        "situational_context"
+      ]
+    },
+    "combat_rules": {
+      "initiative_formula": "dexterity_modifier + perception_modifier/2",
+      "surprise_round": {
+        "enabled": true,
+        "perception_dc_vs_stealth": true
+      },
+      "attack_roll_formula": "1d20 + attack_bonus + primary_stat_modifier + proficiency_bonus",
+      "damage_calculation": {
+        "base_damage": "weapon_dice_or_spell_damage",
+        "stat_modifier_applies": true,
+        "critical_hit_multiplier": 2.0,
+        "resistances": {
+          "physical": 0.5,
+          "fire": 0.75
+        },
+        "vulnerabilities": {
+          "bludgeoning": 1.5,
+          "cold": 2.0
+        },
+        "immunities": [
+          "poison_gas"
+        ],
+        "damage_types": [
+          "slashing",
+          "piercing",
+          "bludgeoning",
+          "fire",
+          "cold",
+          "lightning",
+          "acid",
+          "poison",
+          "necrotic",
+          "radiant",
+          "psychic",
+          "force",
+          "arcane"
+        ]
+      },
+      "armor_class_calculation": "base_ac_from_armor + dexterity_modifier (up_to_max) + shield_bonus + other_bonuses",
+      "death_and_dying": {
+        "dying_condition_at_zero_hp": true,
+        "death_saves_dc": 10,
+        "max_failures": 3,
+        "stabilize_on_successes": 3,
+        "death_on_massive_damage_threshold": 50
+      }
+    },
+    "status_effect_rules": {
+      "stacking_rules": {
+        "default": "duration_extends",
+        "buffs": "intensity_increases_up_to_cap",
+        "debuffs": "duration_extends"
+      },
+      "default_durations": {
+        "short": 60,
+        "medium": 300,
+        "long": 3600
+      },
+      "dispelling_rules": {
+        "base_dc": 10,
+        "level_modifier": 1
+      }
+    },
+    "equipment_rules": {
+      "slots": [
+        "main_hand",
+        "off_hand",
+        "head",
+        "chest",
+        "legs",
+        "feet",
+        "hands",
+        "ring1",
+        "ring2",
+        "amulet",
+        "belt"
+      ],
+      "stat_bonuses_on_items": "defined_in_item_properties",
+      "skill_bonuses_on_items": "defined_in_item_properties",
+      "attunement_limit": 3,
+      "item_durability": {
+        "enabled": false,
+        "degrade_on_use_chance": 0.01,
+        "repair_costs_factor": 0.25
+      }
+    },
+    "economy_rules": {
+      "base_currency_name": "Gold Pieces",
+      "base_item_prices": "defined_in_item_templates_value",
+      "price_multipliers": {
+        "location_demand_factor": {
+          "min": 0.8,
+          "max": 1.5
+        },
+        "faction_reputation_discount": {
+          "hostile": 2.0,
+          "neutral": 1.0,
+          "friendly": 0.9,
+          "honored": 0.8
+        },
+        "barter_skill_influence": 0.05
+      },
+      "vendor_gold_refresh_rate": 1000
+    },
+    "loot_rules": {
+      "loot_tables_by_enemy_cr": {
+        "cr_0_1": {
+          "common_items": 0.5,
+          "gold_dice": "1d6"
+        },
+        "cr_2_5": {
+          "common_items": 0.7,
+          "uncommon_items": 0.2,
+          "gold_dice": "2d10*5"
+        }
+      },
+      "drop_chances": {
+        "common": 0.8,
+        "uncommon": 0.15,
+        "rare": 0.04,
+        "legendary": 0.01
+      },
+      "magic_item_generation_rules": {
+        "prefix_suffix_system": true,
+        "base_modifier_chance": 0.1
+      }
+    },
+    "conflict_resolution": {
+      "default_manual_resolution_required": false,
+      "types": {
+        "simultaneous_move": {
+          "description": "Two entities try to move to the same limited space.",
+          "resolution_check": "opposed_dexterity_check"
+        }
+      }
+    },
+    "checks": {
+      "athletics_check": {
+        "description": "A check for physical prowess, climbing, jumping, etc.",
+        "roll_formula": "1d20",
+        "primary_stat": "strength",
+        "relevant_skill": "athletics",
+        "allow_critical_success": true,
+        "allow_critical_failure": true,
+        "default_dc": 12
+      },
+      "stealth_check": {
+        "description": "A check for moving unseen and unheard.",
+        "roll_formula": "1d20",
+        "primary_stat": "dexterity",
+        "relevant_skill": "stealth",
+        "default_dc_against_perception": true
+      },
+      "spell_attack_intelligence": {
+        "description": "An attack roll for a spell using Intelligence as the casting stat.",
+        "roll_formula": "1d20",
+        "primary_stat": "intelligence",
+        "relevant_skill": "spellcasting_proficiency_bonus",
+        "target_dc_stat": "armor_class",
+        "allow_critical_success": true,
+        "allow_critical_failure": true
+      }
+    }
   }
 }
