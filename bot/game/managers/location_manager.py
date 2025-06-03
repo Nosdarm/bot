@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from bot.game.character_processors.character_view_service import CharacterViewService
     from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor
     from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator
+    from bot.game.models.location import Location # Import Location model
 
 
 # Define Callback Types
@@ -929,7 +930,7 @@ class LocationManager:
         if not loc_id:
             print(f"LocationManager: Error: Location object is missing an 'id'. Cannot save.")
             return False
-        
+
         # Ensure the location's internal guild_id (if exists) matches the provided guild_id
         # This depends on whether Location model itself holds guild_id. Assuming it might.
         loc_guild_id = getattr(location, 'guild_id', guild_id_str)
@@ -942,23 +943,23 @@ class LocationManager:
 
             # Prepare data for DB columns based on 'locations' table schema
             # id, guild_id, template_id, name, description, exits, state_variables, is_active
-            
+
             db_id = loc_data.get('id')
             db_template_id = loc_data.get('template_id') # Location object should have this if it's an instance
-            
+
             # Name and description will store i18n dicts as JSON strings
             db_name_i18n = loc_data.get('name_i18n', {"en": "Unknown Location"})
             db_description_i18n = loc_data.get('description_template_i18n', {"en": ""}) # Or descriptions_i18n
-            
+
             db_exits = loc_data.get('exits', [])
             db_is_active = loc_data.get('is_active', True) # Default to True if not specified
 
             # Collect remaining fields into state_variables
             # These are fields from to_dict() not directly mapped to main columns
-            standard_fields = {'id', '_id', 'name_i18n', 'description_template_i18n', 'exits', 
+            standard_fields = {'id', '_id', 'name_i18n', 'description_template_i18n', 'exits',
                                'template_id', 'is_active', 'guild_id',
                                'name', 'description_template'} # Include legacy names to exclude
-            
+
             state_vars_dict = {k: v for k, v in loc_data.items() if k not in standard_fields}
             # If location object has an explicit 'state' or 'state_variables' field, merge it.
             explicit_state = loc_data.get('state', loc_data.get('state_variables'))
@@ -979,7 +980,7 @@ class LocationManager:
 
             upsert_sql = '''
             INSERT OR REPLACE INTO locations (
-                id, guild_id, template_id, name, description, 
+                id, guild_id, template_id, name, description,
                 exits, state_variables, is_active
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             '''
@@ -987,13 +988,13 @@ class LocationManager:
 
             await self._db_adapter.execute(upsert_sql, db_params)
             print(f"LocationManager: Successfully saved location instance {db_id} for guild {guild_id_str}.")
-            
+
             # If this location instance was marked as dirty, clean it from the dirty set
             if guild_id_str in self._dirty_instances and db_id in self._dirty_instances[guild_id_str]:
                 self._dirty_instances[guild_id_str].discard(db_id)
                 if not self._dirty_instances[guild_id_str]: # If set becomes empty
                     del self._dirty_instances[guild_id_str]
-            
+
             return True
 
         except Exception as e:

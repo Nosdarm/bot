@@ -219,7 +219,7 @@ class StatusManager:
                 'duration': resolved_duration, # None для постоянного
                 'applied_at': applied_at, # None если time_manager недоступен?
                 'source_id': source_id,
-                guild_id=guild_id_str, 
+                'guild_id': guild_id_str,
                 'state_variables': kwargs.get('state_variables', {}), # Allow passing initial state_variables
             }
 
@@ -531,17 +531,17 @@ class StatusManager:
                         print(f"StatusManager: Warning: Skipping upsert for invalid StatusEffect object: {eff}. Missing mandatory attributes.")
                         continue
 
-                    sv_json = json.dumps(getattr(eff, 'state_variables', {})) 
+                    sv_json = json.dumps(getattr(eff, 'state_variables', {}))
 
                     data_to_upsert.append((
                         eff.id, eff.status_type, eff.target_id, eff.target_type,
-                        eff.duration, eff.applied_at, eff.source_id, 
+                        eff.duration, eff.applied_at, eff.source_id,
                         sv_json,
-                        eff.guild_id 
+                        eff.guild_id
                     ))
-                    upserted_status_ids.add(eff.id) 
+                    upserted_status_ids.add(eff.id)
 
-                if data_to_upsert: 
+                if data_to_upsert:
                      await self._db_adapter.execute_many(sql_upsert, data_to_upsert)
                      print(f"StatusManager: Successfully upserted {len(data_to_upsert)} statuses for guild {guild_id_str}.")
                      if guild_id_str in self._dirty_status_effects: # Check if key exists before difference_update
@@ -733,7 +733,7 @@ class StatusManager:
         if not effect_id:
             print(f"StatusManager: Error: StatusEffect object is missing an 'id'. Cannot save.")
             return False
-        
+
         # Ensure the status_effect's internal guild_id (if exists on the object, though not typical for this model)
         # matches the provided guild_id. For StatusEffect, guild_id is usually contextual.
         # However, the DB table 'statuses' has a guild_id column, so we must save it.
@@ -743,7 +743,7 @@ class StatusManager:
             effect_data = status_effect.to_dict()
 
             # Prepare data for DB columns based on 'statuses' table schema
-            # Columns: id, status_type, target_id, target_type, duration, applied_at, 
+            # Columns: id, status_type, target_id, target_type, duration, applied_at,
             #          source_id, state_variables, guild_id
 
             db_id = effect_data.get('id')
@@ -753,14 +753,14 @@ class StatusManager:
             db_duration = effect_data.get('duration') # Can be None or float
             db_applied_at = effect_data.get('applied_at') # Can be None or float
             db_source_id = effect_data.get('source_id') # Can be None
-            
+
             db_state_variables = effect_data.get('state_variables', {})
-            if not isinstance(db_state_variables, dict): 
+            if not isinstance(db_state_variables, dict):
                 db_state_variables = {}
-            
+
             # guild_id comes from the method argument
             db_guild_id = guild_id_str
-            
+
             db_params = (
                 db_id,
                 db_status_type,
@@ -775,7 +775,7 @@ class StatusManager:
 
             upsert_sql = '''
             INSERT OR REPLACE INTO statuses (
-                id, status_type, target_id, target_type, duration, 
+                id, status_type, target_id, target_type, duration,
                 applied_at, source_id, state_variables, guild_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             '''
@@ -783,19 +783,19 @@ class StatusManager:
 
             await self._db_adapter.execute(upsert_sql, db_params)
             print(f"StatusManager: Successfully saved status effect {db_id} for guild {guild_id_str}.")
-            
+
             # If this status effect was marked as dirty, clean it from the dirty set for this guild
             if guild_id_str in self._dirty_status_effects and db_id in self._dirty_status_effects[guild_id_str]:
                 self._dirty_status_effects[guild_id_str].discard(db_id)
                 if not self._dirty_status_effects[guild_id_str]: # If set becomes empty
                     del self._dirty_status_effects[guild_id_str]
-            
+
             # Also, ensure the in-memory cache (_status_effects) is updated/contains this object instance
             # The StatusManager cache _status_effects stores StatusEffect objects directly.
             # So, if the passed status_effect object is the one from the cache, it's already up-to-date.
             # If it's a new instance or a copy, we should ensure the cache has the saved version.
             self._status_effects.setdefault(guild_id_str, {})[db_id] = status_effect
-            
+
             return True
 
         except Exception as e:

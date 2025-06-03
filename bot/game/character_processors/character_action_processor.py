@@ -31,6 +31,7 @@ from bot.game.managers.combat_manager import CombatManager
 from bot.game.managers.status_manager import StatusManager
 from bot.game.managers.party_manager import PartyManager # PartyManager нужен для is_busy
 from bot.game.managers.npc_manager import NpcManager # Нужен для действий, взаимодействующих с NPC
+from bot.game.managers.game_log_manager import GameLogManager # Import GameLogManager
 
 # TODO: Импорт процессоров, если они нужны в complete_action (напр., EventStageProcessor для триггеров)
 from bot.game.event_processors.event_stage_processor import EventStageProcessor
@@ -147,7 +148,7 @@ class CharacterActionProcessor:
         """
         modified_entities: List[Any] = []
         print(f"CharacterActionProcessor: Attempting to start action for character {character_id}: {action_data.get('type')}")
-        
+
         char = self._character_manager.get_character(character_id)
         if not char:
              print(f"CharacterActionProcessor: Error starting action: Character {character_id} not found.")
@@ -261,20 +262,20 @@ class CharacterActionProcessor:
         char.current_action = action_data
         self._character_manager.mark_character_dirty(getattr(char, 'guild_id', None), character_id) # Use mark_character_dirty
         self._character_manager._entities_with_active_action.setdefault(getattr(char, 'guild_id', None), set()).add(character_id) # Ensure guild key exists
-        
+
         if char not in modified_entities:
             modified_entities.append(char)
 
         success_message = f"Character {getattr(char, 'name', character_id)} started action: {action_type}."
         print(f"CharacterActionProcessor: {success_message} Duration: {action_data['total_duration']:.1f}. Marked as dirty.")
-        
+
         # Log action start
         if self._game_log_manager:
             log_message = f"Character {getattr(char, 'name', character_id)} started action: {action_type}."
             related_entities_log = [{"type": "character", "id": character_id}]
             if action_data.get('target_id'):
                 related_entities_log.append({"type": action_data.get('target_type', 'unknown'), "id": action_data.get('target_id')})
-            
+
             await self._game_log_manager.log_event(
                 guild_id=getattr(char, 'guild_id', 'unknown_guild'),
                 event_type="PLAYER_ACTION_START",
@@ -284,7 +285,7 @@ class CharacterActionProcessor:
                 context_data={
                     "action_type": action_type,
                     "action_details": action_data,
-                    "success": True 
+                    "success": True
                 }
             )
         return {"success": True, "modified_entities": modified_entities, "message": success_message}
@@ -315,7 +316,7 @@ class CharacterActionProcessor:
              return {"success": False, "modified_entities": modified_entities}
 
         rule_engine = kwargs.get('rule_engine', self._rule_engine)
-        location_manager = kwargs.get('location_manager', self._location_manager) 
+        location_manager = kwargs.get('location_manager', self._location_manager)
 
         if action_type == 'move':
              target_location_id = action_data.get('target_location_id')
@@ -363,13 +364,13 @@ class CharacterActionProcessor:
         char.action_queue.append(action_data)
         self._character_manager.mark_character_dirty(getattr(char, 'guild_id', None), character_id)
         self._character_manager._entities_with_active_action.setdefault(getattr(char, 'guild_id', None), set()).add(character_id)
-        
+
         if char not in modified_entities:
             modified_entities.append(char)
-        
+
         queue_message = f"Action '{action_data['type']}' added to queue for character {getattr(char, 'name', character_id)}. Queue length: {len(char.action_queue)}."
         print(f"CharacterActionProcessor: {queue_message} Marked as dirty.")
-        
+
         # Log action queued
         if self._game_log_manager:
             log_message = f"Character {getattr(char, 'name', character_id)} queued action: {action_type}."
@@ -485,11 +486,11 @@ class CharacterActionProcessor:
         """
         modified_entities: List[Any] = []
         print(f"CharacterActionProcessor: Completing action for character {character_id}: {completed_action_data.get('type')}")
-        
+
         char = self._character_manager.get_character(character_id)
         if not char:
              print(f"CharacterActionProcessor: Error completing action: Character {character_id} not found.")
-             return modified_entities 
+             return modified_entities
 
         # Add character to modified_entities by default as action completion likely changes it (current_action, queue)
         if char not in modified_entities:
@@ -529,11 +530,11 @@ class CharacterActionProcessor:
         try:
             if action_type == 'move':
                  target_location_id = callback_data.get('target_location_id')
-                 old_location_id = getattr(char, 'location_id', None) 
+                 old_location_id = getattr(char, 'location_id', None)
 
                  if target_location_id and location_manager and hasattr(location_manager, 'handle_entity_arrival') and hasattr(location_manager, 'handle_entity_departure'):
                       print(f"CharacterActionProcessor: Updating character {character_id} location in cache from {old_location_id} to {target_location_id}.")
-                      
+
                       # CharacterManager.update_character_location now returns the modified character
                       modified_char_from_location_update = await self._character_manager.update_character_location(
                           character_id, target_location_id, getattr(char, 'guild_id', None), **kwargs
@@ -932,7 +933,7 @@ class CharacterActionProcessor:
         # Если очередь пуста после завершения действия и current_action стал None,
         # персонаж будет удален из _entities_with_active_action в конце process_tick.
         # (Логика удаления из _entities_with_active_action уже в process_tick этого процессора)
-        
+
         # Log action completion
         if self._game_log_manager:
             log_message = f"Character {getattr(char, 'name', character_id)} completed action: {action_type}."
@@ -951,10 +952,10 @@ class CharacterActionProcessor:
                     "action_type": action_type,
                     "completed_action_details": completed_action_data,
                     # Include any specific results if available, e.g. if steal was successful
-                    # "outcome_details": steal_outcome if action_type == 'steal' else None 
+                    # "outcome_details": steal_outcome if action_type == 'steal' else None
                 }
             )
-        
+
         return modified_entities
 
 
@@ -1079,7 +1080,7 @@ class CharacterActionProcessor:
         """
         modified_entities: List[Any] = []
         print(f"CharacterActionProcessor: Processing move action for char {character_id} to loc {target_location_id}.")
-        
+
         # TODO: CharacterManager.get_character needs guild_id. This context must provide it.
         guild_id = context.get('guild_id')
         if not guild_id:
@@ -1090,14 +1091,14 @@ class CharacterActionProcessor:
         if not char:
             print(f"CharacterActionProcessor: Error processing move: Character {character_id} in guild {guild_id} not found.")
             return {"success": False, "message": "Character not found.", "modified_entities": modified_entities}
-        
+
         if char not in modified_entities: # Add char if found, as it might be modified by starting action
             modified_entities.append(char)
 
         action_data = {
             'type': 'move',
             'target_location_id': target_location_id,
-            'callback_data': {'target_location_id': target_location_id} 
+            'callback_data': {'target_location_id': target_location_id}
         }
 
         start_action_result = await self.start_action(character_id, action_data, **context)
@@ -1109,7 +1110,7 @@ class CharacterActionProcessor:
 
         if success:
             location_manager = context.get('location_manager', self._location_manager)
-            location_name = target_location_id 
+            location_name = target_location_id
             if location_manager and hasattr(location_manager, 'get_location_name'):
                 char_guild_id = getattr(char, 'guild_id', guild_id) # Use guild_id from context as fallback
                 if char_guild_id:
@@ -1325,7 +1326,7 @@ class CharacterActionProcessor:
 
     async def process_party_actions(
         self,
-        game_manager: Any, 
+        game_manager: Any,
         guild_id: str,
         actions_to_process: List[Dict[str, Any]], # This now expects a flat list of actions, potentially ordered
         context: Dict[str, Any]
@@ -1346,41 +1347,41 @@ class CharacterActionProcessor:
         # if reordering was done by PartyManager (after ConflictResolver).
         for action_entry in actions_to_process:
             character_id = action_entry.get("character_id")
-            action_data_for_char = action_entry.get("action_data") 
+            action_data_for_char = action_entry.get("action_data")
             original_input_text = action_entry.get("original_input_text", action_data_for_char.get("type") if action_data_for_char else "Unknown Action")
-            
+
             if not character_id or not isinstance(action_data_for_char, dict):
                 print(f"CharacterActionProcessor (process_party_actions): Skipping invalid action entry: {action_entry}")
                 individual_action_results.append({
-                    "character_id": character_id, 
+                    "character_id": character_id,
                     "action_original_text": original_input_text,
-                    "success": False, 
-                    "message": "Invalid action entry structure.", 
+                    "success": False,
+                    "message": "Invalid action entry structure.",
                     "modified_entities": []
                 })
                 continue
 
             action_context = {**context, 'guild_id': guild_id}
             action_result = await self.start_action(character_id, action_data_for_char, **action_context)
-            
+
             action_succeeded = action_result.get("success", False)
             entities_modified_by_action = action_result.get("modified_entities", [])
-            
+
             individual_action_results.append({
                 "character_id": character_id,
                 "action_type": action_data_for_char.get("type"),
                 "action_original_text": original_input_text,
                 "success": action_succeeded,
-                "message": action_result.get("message"), 
+                "message": action_result.get("message"),
                 "modified_entities_count": len(entities_modified_by_action)
             })
 
-            if action_succeeded: 
-                overall_state_changed_for_party = True 
+            if action_succeeded:
+                overall_state_changed_for_party = True
                 for entity in entities_modified_by_action:
                     if entity not in all_modified_entities_in_turn:
                         all_modified_entities_in_turn.append(entity)
-                
+
                 # Save entities modified by this specific action immediately
                 if entities_modified_by_action:
                     print(f"CharacterActionProcessor (process_party_actions): Saving {len(entities_modified_by_action)} entities for char {character_id} action.")
@@ -1390,7 +1391,7 @@ class CharacterActionProcessor:
                     else:
                         print(f"CharacterActionProcessor (process_party_actions): ERROR - game_manager does not have save_specific_entities method.")
 
-            # NOTE: For durational actions, start_action only initiates. 
+            # NOTE: For durational actions, start_action only initiates.
             # Modifications often happen in complete_action, called by process_tick.
             # The immediate save here will only save changes from start_action.
             # Changes from complete_action would need to be saved when process_tick -> complete_action runs.
