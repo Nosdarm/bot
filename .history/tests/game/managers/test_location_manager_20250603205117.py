@@ -582,13 +582,11 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
         )
 
         # Initialize caches for testing purposes, assuming they are dicts
->>>>>>> jules_wip_416423358468440045
         self.location_manager._location_templates = {}
         self.location_manager._location_instances = {}
         self.location_manager._dirty_instances = {}
         self.location_manager._deleted_instances = {}
 
-<<<<<<< HEAD
     async def test_create_location_instance_ai_pending_moderation(self):
         guild_id = "test_guild_loc_ai_success"
         template_id_arg = "AI:generate_haunted_mansion"
@@ -749,7 +747,6 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
 # However, typically you'd run tests with `python -m unittest discover` or similar.
 if __name__ == '__main__':
     unittest.main()
-=======
         self.guild_id = "test_guild_1"
         # Ensure guild-specific caches are initialized before each test if needed by the test
         # For example, in a test for get_location_instance:
@@ -1446,4 +1443,3 @@ if __name__ == '__main__':
 
         self.assertNotIn(guild_id, self.location_manager._location_instances)
         self.assertNotIn(guild_id, self.location_manager._dirty_instances)
->>>>>>> jules_wip_416423358468440045

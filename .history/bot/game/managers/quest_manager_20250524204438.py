@@ -1,7 +1,6 @@
 # bot/game/managers/quest_manager.py
 
 from __future__ import annotations
-<<<<<<< HEAD
 import traceback
 import json # Added for serializing objectives_status
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING # Added Set for _dirty_quests
@@ -13,7 +12,6 @@ if TYPE_CHECKING:
     # Add other manager imports if they become direct dependencies of QuestManager
 
 class QuestManager:
-=======
 import json
 import uuid
 import time 
@@ -39,12 +37,10 @@ class QuestManager:
     Manages quests: loading templates, creating instances, persistence, and lifecycle.
     Works on a per-guild basis.
     """
->>>>>>> origin/fix-quest-manager-lint
     required_args_for_load: List[str] = ["guild_id"]
     required_args_for_save: List[str] = ["guild_id"]
     required_args_for_rebuild: List[str] = ["guild_id"]
 
-<<<<<<< HEAD
     def __init__(
         self,
         db_adapter: Optional[SqliteAdapter] = None,
@@ -66,7 +62,6 @@ class QuestManager:
         
         self._dirty_quests: Dict[str, Set[str]] = {} # {guild_id: set_of_character_ids_with_dirty_quests}
         
-=======
     def __init__(self, 
                  db_adapter: Optional["SqliteAdapter"], 
                  settings: Optional[Dict[str, Any]], 
@@ -89,20 +84,17 @@ class QuestManager:
         
         self._dirty_quests: Dict[str, Set[str]] = {}
         self._deleted_quest_ids: Dict[str, Set[str]] = {}
->>>>>>> origin/fix-quest-manager-lint
         print("QuestManager initialized.")
 
     def load_quest_templates(self, guild_id: str, campaign_data: Optional[Dict[str, Any]] = None) -> None:
         guild_id_str = str(guild_id)
         print(f"QuestManager: Loading quest templates for guild {guild_id_str}...")
-<<<<<<< HEAD
         self._quest_templates.pop(guild_id_str, None)
         guild_templates_cache = self._quest_templates.setdefault(guild_id_str, {})
 
         loaded_from_campaign = False
         if campaign_data and "quest_templates" in campaign_data:
             templates_list: List[Dict[str, Any]] = campaign_data.get("quest_templates", [])
-=======
         self._quest_templates.pop(guild_id_str, None) 
         guild_templates_cache = self._quest_templates.setdefault(guild_id_str, {})
 
@@ -111,12 +103,10 @@ class QuestManager:
         # Using "quests" here as specified for this subtask.
         if campaign_data and "quests" in campaign_data: 
             templates_list: List[Dict[str, Any]] = campaign_data.get("quests", [])
->>>>>>> origin/fix-quest-manager-lint
             if isinstance(templates_list, list):
                 for template_dict in templates_list:
                     if isinstance(template_dict, dict) and "id" in template_dict:
                         tpl_id = str(template_dict["id"])
-<<<<<<< HEAD
                         # Basic validation/defaulting for a quest template
                         template_dict.setdefault('name', f"Unnamed Quest ({tpl_id})")
                         template_dict.setdefault('description', "No description.")
@@ -445,7 +435,6 @@ class QuestManager:
         pass
 
 ```
-=======
                         template_dict.setdefault('name', f"Unnamed Quest ({tpl_id})")
                         template_dict.setdefault('stages', {}) 
                         guild_templates_cache[tpl_id] = template_dict
@@ -794,4 +783,3 @@ class QuestManager:
             self._dirty_quests.setdefault(guild_id_str, set()).add(quest_id_str)
 
 print("DEBUG: QuestManager module defined.")
->>>>>>> origin/fix-quest-manager-lint

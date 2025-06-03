@@ -25,27 +25,28 @@ if TYPE_CHECKING:
 async def cmd_interact(interaction: Interaction, target: str, action_str: str, details: Optional[str] = None): # Renamed action to action_str to avoid conflict
     await interaction.response.defer(ephemeral=True)
 
-    game_mngr = None
-    if hasattr(interaction.client, 'game_manager'):
-        game_mngr_candidate = getattr(interaction.client, 'game_manager')
-        if TYPE_CHECKING: # Ensure type checker knows about GameManager methods if available
-             assert isinstance(game_mngr_candidate, GameManager)
-        game_mngr = game_mngr_candidate
+    # game_mngr = None
+    # if hasattr(interaction.client, 'game_manager'):
+    #     game_mngr_candidate = getattr(interaction.client, 'game_manager')
+    #     if TYPE_CHECKING: # Ensure type checker knows about GameManager methods if available
+    #          assert isinstance(game_mngr_candidate, GameManager)
+    #     game_mngr = game_mngr_candidate
 
-    if game_mngr and hasattr(game_mngr, 'process_player_action'): # Check if method exists
-         # This command is still a placeholder and uses the old process_player_action structure
-         # It should be refactored to use DBService and specific game logic like other commands.
-         response_data = await game_mngr.process_player_action(
-             server_id=str(interaction.guild_id),
-             discord_user_id=interaction.user.id,
-             action_type="interact", # This action_type might need to be handled by process_player_action
-             action_data={"target": target, "action": action_str, "details": details}
-         )
-         await interaction.followup.send(response_data.get("message", "**Ошибка:** Неизвестный ответ от мастера."), ephemeral=True)
-    elif game_mngr:
-        await interaction.followup.send("The '/interact' command is not fully implemented for the new system yet.", ephemeral=True)
-    else:
-         await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна.", ephemeral=True)
+    # if game_mngr and hasattr(game_mngr, 'process_player_action'): # Check if method exists
+    #      # This command is still a placeholder and uses the old process_player_action structure
+    #      # It should be refactored to use DBService and specific game logic like other commands.
+    #      response_data = await game_mngr.process_player_action(
+    #          server_id=str(interaction.guild_id),
+    #          discord_user_id=interaction.user.id,
+    #          action_type="interact", # This action_type might need to be handled by process_player_action
+    #          action_data={"target": target, "action": action_str, "details": details}
+    #      )
+    #      await interaction.followup.send(response_data.get("message", "**Ошибка:** Неизвестный ответ от мастера."), ephemeral=True)
+    # elif game_mngr:
+    #     await interaction.followup.send("The '/interact' command is not fully implemented for the new system yet.", ephemeral=True)
+    # else:
+    #      await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна.", ephemeral=True)
+    await interaction.followup.send("The '/interact' command is currently under refactoring. Please try again later.", ephemeral=True)
 
 import random # For basic combat roll
 
@@ -72,7 +73,11 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
 
         guild_id = str(interaction.guild_id)
         discord_user_id = interaction.user.id
-        channel_id = interaction.channel_id # For combat messages
+
+        if not interaction.channel:
+            await interaction.followup.send("Error: This command cannot be used in a context without a channel.", ephemeral=True)
+            return
+        channel_id = interaction.channel.id # For combat messages
 
         player_data = await db_service.get_player_by_discord_id(discord_user_id=discord_user_id, guild_id=guild_id)
         if not player_data:
@@ -101,7 +106,7 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
                 if actor_participant_obj and game_mngr: # Need GameManager to access other entity managers
                     if actor_participant_obj.entity_type == "NPC" and game_mngr.npc_manager:
                         npc_actor = game_mngr.npc_manager.get_npc(guild_id, actor_participant_obj.entity_id)
-                        if npc_actor: actor_name = npc_actor.name
+                        if npc_actor: actor_name = getattr(npc_actor, 'name_i18n', {}).get('en', 'Unknown NPC')
                     # Could add Character type here if players can fight players
 
                 await interaction.followup.send(f"You are already in combat! It's {actor_name}'s turn.", ephemeral=True)
@@ -157,10 +162,10 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
                 p_name = "Unknown"
                 if p_obj.entity_type == "Character" and game_mngr.character_manager:
                     p_char = game_mngr.character_manager.get_character(guild_id, p_obj.entity_id)
-                    if p_char: p_name = p_char.name
+                    if p_char: p_name = getattr(p_char, 'name_i18n', {}).get('en', 'Unknown Character')
                 elif p_obj.entity_type == "NPC" and game_mngr.npc_manager:
                     p_npc = game_mngr.npc_manager.get_npc(guild_id, p_obj.entity_id)
-                    if p_npc: p_name = p_npc.name
+                    if p_npc: p_name = getattr(p_npc, 'name_i18n', {}).get('en', 'Unknown NPC')
                 init_messages.append(f"{p_name} (Initiative: {p_obj.initiative})")
 
             initiative_summary = ", ".join(init_messages)
@@ -172,10 +177,10 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
                 if fa_obj:
                     if fa_obj.entity_type == "Character" and game_mngr.character_manager:
                         fa_char = game_mngr.character_manager.get_character(guild_id, fa_obj.entity_id)
-                        if fa_char: first_actor_name = fa_char.name
+                        if fa_char: first_actor_name = getattr(fa_char, 'name_i18n', {}).get('en', 'Unknown Character')
                     elif fa_obj.entity_type == "NPC" and game_mngr.npc_manager:
                         fa_npc = game_mngr.npc_manager.get_npc(guild_id, fa_obj.entity_id)
-                        if fa_npc: first_actor_name = fa_npc.name
+                        if fa_npc: first_actor_name = getattr(fa_npc, 'name_i18n', {}).get('en', 'Unknown NPC')
 
             response_message = (
                 f"⚔️ Combat started with **{npc_name}**! ⚔️\n"
@@ -191,7 +196,7 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
                     guild_id=guild_id, event_type="COMBAT_START", message=log_msg,
                     player_id_column=player_id, # If player initiated
                     related_entities={"combat_id": new_combat.id, "participants": [p.entity_id for p in new_combat.participants]},
-                    context_data={"location_id": player_location_id, "channel_id": channel_id}
+                    context_data={"location_id": player_location_id, "channel_id": channel_id} # Use validated channel_id
                 )
             except Exception as log_e:
                 print(f"Error logging combat start: {log_e}")
@@ -244,7 +249,11 @@ async def cmd_talk(interaction: Interaction, npc_name: str, message: str):
 
         guild_id = str(interaction.guild_id)
         discord_user_id = interaction.user.id
-        channel_id = interaction.channel_id if interaction.channel else 0 # Fallback if channel is None
+
+        if not interaction.channel:
+            await interaction.followup.send("Error: This command cannot be used in a context without a channel.", ephemeral=True)
+            return
+        channel_id = interaction.channel.id
 
         # --- Get Player Data ---
         player_data = await db_service.get_player_by_discord_id(discord_user_id=discord_user_id, guild_id=guild_id)
@@ -367,7 +376,7 @@ async def cmd_end_turn(interaction: Interaction):
         guild_id = str(interaction.guild_id)
         discord_user_id = interaction.user.id
 
-        char_model = await character_manager.get_character_by_discord_id(user_id=discord_user_id, guild_id=guild_id)
+        char_model = character_manager.get_character_by_discord_id(discord_user_id=discord_user_id, guild_id=guild_id) # Removed await
 
         if char_model:
             if char_model.current_game_status == 'ожидание_обработку':
@@ -420,7 +429,7 @@ async def cmd_end_party_turn(interaction: Interaction):
         channel_id = interaction.channel_id # For the system message later
 
         # --- Get Sender's Character and Party ---
-        sender_char = await character_manager.get_character_by_discord_id(user_id=discord_user_id, guild_id=guild_id)
+        sender_char = character_manager.get_character_by_discord_id(discord_user_id=discord_user_id, guild_id=guild_id) # Removed await
         if not sender_char:
             await interaction.followup.send("Не удалось найти вашего персонажа. Используйте `/start`.", ephemeral=True)
             return
@@ -429,7 +438,7 @@ async def cmd_end_party_turn(interaction: Interaction):
             await interaction.followup.send("Вы не состоите в группе.", ephemeral=True)
             return
 
-        party = await party_manager.get_party(party_id=sender_char.party_id, guild_id=guild_id)
+        party = await party_manager.get_party(party_id=sender_char.party_id, guild_id=guild_id) # Keep await if get_party is async
         if not party:
             # This case should ideally be handled by ensuring party_id on character is valid or cleared.
             await interaction.followup.send(f"Не удалось найти вашу группу (ID: {sender_char.party_id}). Это может быть ошибка данных. Попробуйте пересоздать группу или обратитесь к администратору.", ephemeral=True)
@@ -446,14 +455,14 @@ async def cmd_end_party_turn(interaction: Interaction):
             # Assuming /end_turn is preferred for individual action clearing.
             await character_manager.update_character(sender_char)
             processed_members_count += 1
-            updated_member_names.append(sender_char.name)
+            updated_member_names.append(getattr(sender_char, 'name_i18n', {}).get('en', 'Unknown Character'))
 
         for member_player_id in party.player_ids_list:
             # Skip the sender if they were already processed (which they were, just above)
             if member_player_id == sender_char.id:
                 continue
 
-            member_char = await character_manager.get_character_by_player_id(player_id=member_player_id, guild_id=guild_id)
+            member_char = character_manager.get_character_by_discord_id(discord_user_id=int(member_player_id), guild_id=guild_id) # Changed, removed await, assume int
             
             if member_char and member_char.location_id == sender_char_location_id:
                 if member_char.current_game_status != 'ожидание_обработку':
@@ -461,7 +470,7 @@ async def cmd_end_party_turn(interaction: Interaction):
                     # As with sender, assume individual /end_turn handles action clearing.
                     await character_manager.update_character(member_char)
                     processed_members_count += 1
-                    updated_member_names.append(member_char.name)
+                    updated_member_names.append(getattr(member_char, 'name_i18n', {}).get('en', 'Unknown Character'))
             elif member_char:
                 # Member is in the party but not in the same location - do nothing to them.
                 pass

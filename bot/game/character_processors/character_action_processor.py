@@ -267,6 +267,7 @@ class CharacterActionProcessor:
         # self._character_manager.mark_character_dirty(getattr(char, 'guild_id', None), character_id) # Use mark_character_dirty
         # self._character_manager._entities_with_active_action.setdefault(getattr(char, 'guild_id', None), set()).add(character_id) # Ensure guild key exists
         
+
         char_guild_id_str = str(getattr(char, 'guild_id', 'unknown_guild'))
         self._character_manager.mark_character_dirty(char_guild_id_str, character_id)
         self._character_manager._entities_with_active_action.setdefault(char_guild_id_str, set()).add(character_id)
@@ -371,6 +372,7 @@ class CharacterActionProcessor:
 
         char.action_queue.append(action_data) # Appending only once
         
+
         char_guild_id_str = str(getattr(char, 'guild_id', 'unknown_guild'))
         self._character_manager.mark_character_dirty(char_guild_id_str, character_id)
         self._character_manager._entities_with_active_action.setdefault(char_guild_id_str, set()).add(character_id)

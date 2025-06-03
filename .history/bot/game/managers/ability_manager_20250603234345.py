@@ -137,6 +137,14 @@ class AbilityManager:
         ability = await self.get_ability(guild_id_str, ability_id) # get_ability is async, await is fine
         if not ability:
             return {"success": False, "message": f"Ability '{ability_id}' not found."}
+        
+        ability_display_name = getattr(ability, 'name', ability.id)
+
+        if not ability.type.startswith("activated_"):
+            return {"success": False, "message": f"Ability '{ability_display_name}' is not an activatable ability."}
+
+
+        ability_display_name = getattr(ability, 'name', ability.id)
 
         if not ability.type.startswith("activated_"):
             return {"success": False, "message": f"Ability '{ability_display_name}' is not an activatable ability."}
