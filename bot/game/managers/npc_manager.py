@@ -900,7 +900,7 @@ class NpcManager:
 
 
                        stats_json = json.dumps(stats)
-                       inv_json = json.dumps(inventory)
+                       inv_json = json.dumps(inventory) # Corrected indentation
                        curr_json = json.dumps(current_action) if current_action is not None else None
                        queue_json = json.dumps(action_queue)
                        state_json = json.dumps(state_variables)
@@ -924,16 +924,16 @@ class NpcManager:
                            int(bool(is_alive)), # Save bool as integer (0 or 1)
                            status_json,
                            int(bool(is_temporary)), # Save bool as integer (0 or 1)
-                        getattr(npc, 'archetype', "commoner"),
-                        json.dumps(getattr(npc, 'traits', [])),
-                        json.dumps(desires),
-                        json.dumps(motives),
-                        json.dumps(backstory_i18n),
-                        json.dumps(role_i18n),
-                        json.dumps(personality_i18n),
-                        json.dumps(motivation_i18n),
-                        json.dumps(dialogue_hints_i18n),
-                        json.dumps(visual_description_i18n)
+                           getattr(npc, 'archetype', "commoner"),
+                           json.dumps(getattr(npc, 'traits', [])),
+                           json.dumps(desires),
+                           json.dumps(motives),
+                           json.dumps(backstory_i18n),
+                           json.dumps(role_i18n),
+                           json.dumps(personality_i18n),
+                           json.dumps(motivation_i18n),
+                           json.dumps(dialogue_hints_i18n),
+                           json.dumps(visual_description_i18n)
                        ))
                        upserted_npc_ids.add(str(npc_id)) # Track IDs prepared for upsert
 

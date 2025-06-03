@@ -267,16 +267,16 @@ class ActionProcessor:
              mech_summary = check_result.get("description", "Проверка выполнена.")
              state_changed = check_result.get("is_critical_failure", False) # Crit fail might change state
 
-            # Logging before return
-            if game_log_manager and character:
-                await game_log_manager.log_event(
-                    guild_id=str(game_state.guild_id),
-                    event_type="player_action",
-                    message=f"{character.name} attempted skill check {skill_name} for {target_description}. Success: {check_result.get('is_success')}",
-                    related_entities=[{"id": str(character.id), "type": "character"}],
-                    channel_id=str(ctx_channel_id),
-                    metadata={"skill_name": skill_name, "complexity": complexity, "result": check_result}
-                )
+             # Logging before return
+             if game_log_manager and character:
+                 await game_log_manager.log_event(
+                     guild_id=str(game_state.guild_id),
+                     event_type="player_action",
+                     message=f"{character.name} attempted skill check {skill_name} for {target_description}. Success: {check_result.get('is_success')}",
+                     related_entities=[{"id": str(character.id), "type": "character"}],
+                     channel_id=str(ctx_channel_id),
+                     metadata={"skill_name": skill_name, "complexity": complexity, "result": check_result}
+                 )
             return {"success": True, "message": f"_{mech_summary}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed}
 
 
@@ -285,11 +285,11 @@ class ActionProcessor:
         # elif action_type == "attack": ...
         # elif action_type == "use_item": ...
         # elif action_type == "craft": ...
+        # ... other specific action handlers ...
 
-
-        # Placeholder response for unhandled action types
-        print(f"Action type '{action_type}' not handled by any specific processor.")
-        return {"success": False, "message": f"**Мастер:** Действие '{action_type}' не поддерживается.", "target_channel_id": ctx_channel_id, "state_changed": False}
+        # Final catch-all for unhandled action types
+        print(f"Action type '{action_type}' not handled by any specific processor in self.process.")
+        return {"success": False, "message": f"**Мастер:** Действие '{action_type}' не поддерживается или не распознано.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
     async def process_party_actions(self,
                                 game_state: GameState,
