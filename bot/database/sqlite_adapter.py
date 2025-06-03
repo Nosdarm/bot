@@ -83,7 +83,7 @@ class SqliteAdapter:
                  print(f"SqliteAdapter: Error during rollback: {rb_e}")
             raise
 
-    async def execute_insert(self, sql: str, params: Optional[Union[Tuple, List]] = None) -> int:
+    async def execute_insert(self, sql: str, params: Optional[Union[Tuple, List]] = None) -> Optional[int]:
         """
         Выполняет INSERT запрос и возвращает rowid последней вставленной строки.
         Предполагает, что таблица использует INTEGER PRIMARY KEY AUTOINCREMENT.

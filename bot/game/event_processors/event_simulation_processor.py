@@ -1,6 +1,5 @@
 import json
-from typing import Dict, Optional, Any, List # Standard types
-from typing import callable, Type # Ensure callable and Type are imported
+from typing import Dict, Optional, Any, List, Callable, Type # Standard types, changed callable to Callable
 
 # Models
 from bot.game.models.event import Event, EventStage
@@ -38,7 +37,7 @@ class EventSimulationProcessor:
      # All manager arguments (character_manager, loc_manager, npc_manager, etc.) are needed if used below.
      async def run_simulation(self,
                               event: Event, # The event object to modify (passed by reference)
-                              send_message_callback: callable, # Callback for messages from simulation
+                              send_message_callback: Callable, # Callback for messages from simulation, changed callable to Callable
 
                               # !!! PASS ALL MANAGERS/SERVICES NEEDED HERE !!!
                               character_manager: CharacterManager, # Needs CM
@@ -62,7 +61,8 @@ class EventSimulationProcessor:
 
           current_stage = event.get_current_stage()
           if not current_stage: # Check for invalid stage
-              print(f"Error: Event {event.name} invalid stage {event.current_stage_id} during simulation.")
+              event_name_for_log = getattr(event, 'name_i18n', {}).get('en', event.id) # Safe name access
+              print(f"Error: Event {event_name_for_log} invalid stage {event.current_stage_id} during simulation.")
               # Error state -> let WorldSimulator/EventManager.end_event handle.
               return
 
@@ -71,12 +71,15 @@ class EventSimulationProcessor:
           if event.template_id == "improvised_premise_event":
               # Placeholder: Improvised simulation logic (ambient updates, nudges via AI).
               # Needs specific logic for improvised events, probably using time passed (time_manager?), openai_service, send_message_callback.
-              # print(f"Simulation tick processed (ambient/nudge logic only) for improvised event {event.name} ({event.id}).")
+              event_name_for_log = getattr(event, 'name_i18n', {}).get('en', event.id) # Safe name access
+              # print(f"Simulation tick processed (ambient/nudge logic only) for improvised event {event_name_for_log} ({event.id}).")
               return # Skip standard simulation for improvised events
 
 
           # --- Standard Template Event Simulation Logic ---
-          print(f"Simulating tick for template event {event.name} ({event.id}) stage {current_stage.name}...")
+          event_name_for_log = getattr(event, 'name_i18n', {}).get('en', event.id) # Safe name access
+          stage_name_for_log = getattr(current_stage, 'name_i18n', {}).get('en', getattr(current_stage, 'id', 'UnknownStage')) # Safe stage name access
+          print(f"Simulating tick for template event {event_name_for_log} ({event.id}) stage {stage_name_for_log}...")
 
           # --- 1. Update State Variables for Simulation (e.g., Increment timer) ---
           state_variables_updated_in_this_tick = False
@@ -103,8 +106,12 @@ class EventSimulationProcessor:
                        # ... resolution logic (as in previous versions of this code block) ...
                        # Example resolution for 'all_players_in_location':
                        if target_param == 'all_players_in_location' and character_manager:
-                            players_in_location = character_manager.get_characters_in_location(event.location_id)
-                            targets_to_check_ids = [p.id for p in players_in_location]
+                            # Assuming event.location_id is the instance ID
+                            # CharacterManager.get_characters_in_location needs guild_id.
+                            # Assuming event object has guild_id
+                            if hasattr(event, 'guild_id') and event.guild_id:
+                                players_in_location = character_manager.get_characters_in_location(guild_id=str(event.guild_id), location_id=event.location_id)
+                                targets_to_check_ids = [p.id for p in players_in_location]
                        # ... other resolution logic ...
 
 
@@ -128,7 +135,7 @@ class EventSimulationProcessor:
                'passive_check_results': passive_check_results, # Add collected results
                # Add other sim context if needed by conditions (location object etc)
                'event_object': event,
-               'location_object': loc_manager.get_location(event.location_id) if loc_manager else None,
+               'location_object': loc_manager.get_location_instance(str(event.guild_id), event.location_id) if loc_manager and hasattr(event, 'guild_id') and event.guild_id else None, # Use get_location_instance and check guild_id
            }
 
           triggered_outcome_id = self._condition_checker.check_outcome_conditions(
@@ -140,9 +147,9 @@ class EventSimulationProcessor:
 
           # --- 4. If an outcome condition IS met -> ADVANCE STAGE ---
           if triggered_outcome_id and triggered_outcome_id in current_stage.outcomes:
-               next_stage_definition = current_stage.outcomes.get(triggered_outcome_id)
-               if next_stage_definition and 'next_stage_id' in next_stage_definition:
-                   next_stage_id = next_stage_definition['next_stage_id']
+               next_stage_event_outcome = current_stage.outcomes.get(triggered_outcome_id) # This is an EventOutcome object
+               if next_stage_event_outcome and hasattr(next_stage_event_outcome, 'next_stage_id') and next_stage_event_outcome.next_stage_id:
+                   next_stage_id = next_stage_event_outcome.next_stage_id
                    print(f"Template Sim triggered outcome '{triggered_outcome_id}' -> advance to stage '{next_stage_id}'.")
 
                    # --- Trigger stage advancement via StageProcessor instance. ---
