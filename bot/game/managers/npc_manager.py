@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from bot.services.campaign_loader import CampaignLoader # Added for type hint
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.services.openai_service import OpenAIService
+    from bot.ai.ai_response_validator import AIResponseValidator # Added import
 
     # Добавляем процессоры, если они используются в аннотациях методов
     # from bot.game.character_processors.character_action_processor import CharacterActionProcessor
@@ -105,7 +106,8 @@ class NpcManager:
         location_manager: Optional["LocationManager"] = None, # if needed for default loc logic
         game_log_manager: Optional["GameLogManager"] = None,
         multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None, # New
-        openai_service: Optional["OpenAIService"] = None # New
+        openai_service: Optional["OpenAIService"] = None, # New
+        ai_validator: Optional["AIResponseValidator"] = None # New for validation
     ):
         print("Initializing NpcManager...")
         self._db_adapter = db_adapter
@@ -124,6 +126,7 @@ class NpcManager:
         self._game_log_manager = game_log_manager
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
+        self._ai_validator = ai_validator # Store the validator instance
 
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
@@ -778,15 +781,65 @@ class NpcManager:
             temperature=temperature
         )
 
-        if generated_data and "error" not in generated_data:
-            print(f"NpcManager: Successfully generated AI details for NPC '{npc_id_concept}'.")
-            return generated_data
-        else:
-            error_detail = generated_data.get("error") if generated_data else "Unknown error"
+        if not generated_data or "error" in generated_data or not isinstance(generated_data.get("json_string"), str):
+            error_detail = generated_data.get("error") if generated_data else "Unknown error or invalid format from AI service"
             raw_text = generated_data.get("raw_text", "") if generated_data else ""
             print(f"NpcManager ERROR: Failed to generate AI details for NPC '{npc_id_concept}'. Error: {error_detail}")
             if raw_text:
                 print(f"NpcManager: Raw response from AI was: {raw_text[:500]}...")
+            return None
+
+        generated_content_str = generated_data["json_string"]
+
+        if not self._ai_validator:
+            print(f"NpcManager WARNING: AIResponseValidator not available for guild {guild_id}. Returning raw AI data for NPC '{npc_id_concept}'. This may be unsafe.")
+            # Depending on policy, either return raw (less safe) or None
+            # For now, let's assume raw JSON string is what this method used to return conceptually.
+            # However, the goal is to return a Dict[str, Any] for NPC.from_dict().
+            # So, if no validator, we might try to parse it, but it's risky.
+            # Let's return None if validator is critical path.
+            print("NpcManager ERROR: AIResponseValidator is critical but not available. Cannot proceed with NPC generation.")
+            return None
+
+        # For single_npc generation, existing IDs are usually not needed unless the NPC links to pre-existing entities.
+        # These are placeholders for now.
+        validation_result = await self._ai_validator.validate_ai_response(
+            ai_json_string=generated_content_str,
+            expected_structure="single_npc",
+            existing_npc_ids=set(),
+            existing_quest_ids=set(),
+            existing_item_template_ids=set()
+        )
+
+        if validation_result.get('global_errors'):
+            print(f"NpcManager ERROR: AI content validation failed with global errors for NPC '{npc_id_concept}': {validation_result['global_errors']}")
+            return None
+
+        if not validation_result.get('entities'):
+            print(f"NpcManager ERROR: AI content validation produced no entities for NPC '{npc_id_concept}'.")
+            return None
+
+        npc_validation_details = validation_result['entities'][0]
+
+        if npc_validation_details.get('errors'):
+            print(f"NpcManager WARNING: Validation errors for NPC '{npc_id_concept}': {npc_validation_details['errors']}")
+
+        if npc_validation_details.get('notifications'):
+            print(f"NpcManager INFO: Validation notifications for NPC '{npc_id_concept}': {npc_validation_details['notifications']}")
+
+        if npc_validation_details.get('requires_moderation'):
+            print(f"NpcManager CRITICAL: NPC data for '{npc_id_concept}' requires moderation. Raw data: {generated_content_str[:500]}...")
+            # In a full system, this data might be saved to a moderation queue.
+            # For now, returning None to prevent use of unmoderated problematic data.
+            return None
+            # Alternative: return {"requires_moderation": True, "data": npc_validation_details.get('validated_data')}
+
+        overall_status = validation_result.get("overall_status")
+        if overall_status == "success" or overall_status == "success_with_autocorrections":
+            print(f"NpcManager: Successfully validated AI details for NPC '{npc_id_concept}'. Status: {overall_status}")
+            return npc_validation_details.get('validated_data')
+        else:
+            print(f"NpcManager ERROR: Unhandled validation status '{overall_status}' for NPC '{npc_id_concept}'.")
             return None
 
     # ИСПРАВЛЕНИЕ: save_state должен принимать guild_id
