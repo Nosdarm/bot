@@ -42,30 +42,56 @@ class Quest(BaseModel):
         self.influence_level = influence_level
         self.prerequisites = prerequisites if prerequisites is not None else []
         self.connections = connections if connections is not None else {}
+        self.guild_id = guild_id # Set guild_id early
+
+        self.quest_giver_details_i18n = quest_giver_details_i18n if quest_giver_details_i18n is not None else {"en": "", "ru": ""}
+        self.consequences_summary_i18n = consequences_summary_i18n if consequences_summary_i18n is not None else {"en": "", "ru": ""}
         
         # Process stages for i18n
         processed_stages = {}
         if stages:
             for stage_id, stage_data in stages.items():
                 new_stage_data = stage_data.copy()
-                # Internationalize 'title' if present
+                # Internationalize 'title'
                 if 'title' in new_stage_data and 'title_i18n' not in new_stage_data:
-                    new_stage_data['title_i18n'] = {"en": new_stage_data.pop('title')}
+                    new_stage_data['title_i18n'] = {"en": new_stage_data.pop('title'), "ru": new_stage_data.get('title', '')}
                 elif 'title' in new_stage_data and 'title_i18n' in new_stage_data:
-                     new_stage_data.pop('title') # Prefer i18n version
+                    new_stage_data.pop('title')
+                new_stage_data.setdefault('title_i18n', {"en": "", "ru": ""})
                 
-                # Internationalize 'description' (of stage) if present
+                # Internationalize 'description' (of stage)
                 if 'description' in new_stage_data and 'description_i18n' not in new_stage_data:
-                    new_stage_data['description_i18n'] = {"en": new_stage_data.pop('description')}
+                    new_stage_data['description_i18n'] = {"en": new_stage_data.pop('description'), "ru": new_stage_data.get('description', '')}
                 elif 'description' in new_stage_data and 'description_i18n' in new_stage_data:
-                    new_stage_data.pop('description') # Prefer i18n version
+                    new_stage_data.pop('description')
+                new_stage_data.setdefault('description_i18n', {"en": "", "ru": ""})
+
+                # NEW: Internationalize 'requirements_description' for stage
+                if 'requirements_description' in new_stage_data and 'requirements_description_i18n' not in new_stage_data:
+                    new_stage_data['requirements_description_i18n'] = {"en": new_stage_data.pop('requirements_description'), "ru": new_stage_data.get('requirements_description', '')}
+                elif 'requirements_description' in new_stage_data and 'requirements_description_i18n' in new_stage_data:
+                    new_stage_data.pop('requirements_description')
+                new_stage_data.setdefault('requirements_description_i18n', {"en": "", "ru": ""})
+
+                # NEW: Internationalize 'alternative_solutions' for stage
+                if 'alternative_solutions' in new_stage_data and 'alternative_solutions_i18n' not in new_stage_data:
+                    new_stage_data['alternative_solutions_i18n'] = {"en": new_stage_data.pop('alternative_solutions'), "ru": new_stage_data.get('alternative_solutions', '')}
+                elif 'alternative_solutions' in new_stage_data and 'alternative_solutions_i18n' in new_stage_data:
+                    new_stage_data.pop('alternative_solutions')
+                new_stage_data.setdefault('alternative_solutions_i18n', {"en": "", "ru": ""})
                 
+                # Ensure other expected AI fields for stages default if not present
+                new_stage_data.setdefault('objective_type', "")
+                new_stage_data.setdefault('target', None)
+                new_stage_data.setdefault('quantity', 0)
+                new_stage_data.setdefault('skill_check', None)
+
                 processed_stages[stage_id] = new_stage_data
         self.stages = processed_stages
         
         self.rewards = rewards if rewards is not None else {}
         self.npc_involvement = npc_involvement if npc_involvement is not None else {}
-        self.guild_id = guild_id
+        # self.guild_id = guild_id # Already set
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes the Quest object to a dictionary."""
@@ -80,6 +106,8 @@ class Quest(BaseModel):
             "stages": self.stages, # Assumes stages are already in i18n format internally
             "rewards": self.rewards,
             "npc_involvement": self.npc_involvement,
+            "quest_giver_details_i18n": self.quest_giver_details_i18n,
+            "consequences_summary_i18n": self.consequences_summary_i18n,
             "guild_id": self.guild_id,
         })
         return data
@@ -118,7 +146,10 @@ class Quest(BaseModel):
             stages=data_copy.get("stages", {}), # Pass as is, __init__ handles i18n
             rewards=data_copy.get("rewards", {}),
             npc_involvement=data_copy.get("npc_involvement", {}),
-            guild_id=data_copy.get("guild_id", "")
+            guild_id=data_copy.get("guild_id", ""),
+            # New fields
+            quest_giver_details_i18n=data_copy.get("quest_giver_details_i18n", {"en": "", "ru": ""}) or {"en": "", "ru": ""},
+            consequences_summary_i18n=data_copy.get("consequences_summary_i18n", {"en": "", "ru": ""}) or {"en": "", "ru": ""}
         )
 
 # Example usage (optional, for testing)
