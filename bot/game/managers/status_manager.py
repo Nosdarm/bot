@@ -804,4 +804,34 @@ class StatusManager:
             print(traceback.format_exc())
             return False
 
+    async def remove_status_effects_by_type(self, target_id: str, target_type: str, status_type_to_remove: str, guild_id: str, context: Dict[str, Any]) -> int:
+        """
+        Removes all status effect instances of a specific type from a target entity.
+        Returns the count of removed status effects.
+        """
+        guild_id_str = str(guild_id)
+        target_id_str = str(target_id)
+        removed_count = 0
+
+        if guild_id_str not in self._status_effects:
+            return 0 # No statuses for this guild
+
+        # Iterate over a copy of items for safe removal
+        statuses_to_check = list(self._status_effects.get(guild_id_str, {}).values())
+
+        for status_effect in statuses_to_check:
+            if isinstance(status_effect, StatusEffect) and \
+               status_effect.target_id == target_id_str and \
+               status_effect.target_type == target_type and \
+               status_effect.status_type == status_type_to_remove:
+
+                print(f"StatusManager: Removing status '{status_effect.id}' (type: {status_type_to_remove}) from {target_type} {target_id_str} in guild {guild_id_str}.")
+                removed_id = await self.remove_status_effect(status_effect.id, guild_id_str, **context)
+                if removed_id:
+                    removed_count += 1
+
+        if removed_count > 0:
+            print(f"StatusManager: Removed {removed_count} instances of status type '{status_type_to_remove}' from {target_type} {target_id_str} in guild {guild_id_str}.")
+        return removed_count
+
 # Конец класса StatusManager

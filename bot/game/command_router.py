@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from bot.game.managers.relationship_manager import RelationshipManager 
     from bot.game.managers.quest_manager import QuestManager
     from bot.game.conflict_resolver import ConflictResolver # For type hinting
+    from bot.ai.ai_response_validator import AIResponseValidator # For handle_edit_content
 
 
     # Добавляем другие менеджеры, которые могут быть в context kwargs
@@ -645,13 +646,40 @@ class CommandRouter:
                 if not quest_action_args:
                     await send_callback(f"Usage: {self._command_prefix}quest start <quest_template_id>")
                     return
-                quest_template_id = quest_action_args[0]
-                success = await quest_manager.start_quest(character_id, quest_template_id, guild_id, context)
-                if success:
-                    # QuestManager should ideally return quest name or details for a better message
-                    await send_callback(f"Quest '{quest_template_id}' started!")
-                else:
-                    await send_callback(f"Failed to start quest '{quest_template_id}'. You may not meet prerequisites, or the quest is already active/completed, or it doesn't exist.")
+            quest_template_id_arg = quest_action_args[0]
+
+            # Pass user_id (author_id_str) to start_quest via kwargs within context
+            extended_context = {**context, 'user_id': author_id_str}
+
+            # QuestManager.start_quest now returns either a dict (for direct start or pending) or None
+            quest_start_result = await quest_manager.start_quest(
+                guild_id=guild_id,
+                character_id=character_id,
+                quest_template_id=quest_template_id_arg,
+                **extended_context # Pass user_id and other context items
+            )
+
+            if isinstance(quest_start_result, dict) and quest_start_result.get("status") == "pending_moderation":
+                request_id = quest_start_result["request_id"]
+                await send_callback(f"📜 Your request for quest '{quest_template_id_arg}' has been submitted for moderation (ID: `{request_id}`). You'll be notified when it's reviewed, and your character will be temporarily unable to perform most actions.")
+
+                # Apply 'awaiting_moderation' status to the player's character
+                status_manager: Optional["StatusManager"] = context.get('status_manager')
+                if status_manager and player_char: # player_char is already fetched
+                    await status_manager.add_status_effect_to_entity(
+                        target_id=player_char.id, target_type='Character',
+                        status_type='awaiting_moderation', guild_id=guild_id, duration=None,
+                        source_id=f"quest_generation_user_{author_id_str}"
+                    )
+
+                await self._notify_master_of_pending_content(request_id, guild_id, author_id_str, context)
+
+            elif isinstance(quest_start_result, dict) and 'id' in quest_start_result: # Successfully started (non-AI or pre-approved AI)
+                # QuestManager.start_quest should return quest name or details for a better message
+                quest_name = quest_start_result.get('name_i18n', {}).get('en', quest_template_id_arg)
+                await send_callback(f"Quest '{quest_name}' started for {player_char.name}!")
+            else: # None or other unexpected result
+                await send_callback(f"Failed to start quest '{quest_template_id_arg}'. You may not meet prerequisites, the quest may be already active/completed, it might not exist, or AI generation failed.")
             
             elif subcommand == "complete":
                 if not quest_action_args:
@@ -1424,32 +1452,175 @@ class CommandRouter:
             is_temp_str = gm_args[3].lower() if len(gm_args) > 3 else "false"
             is_temporary_bool = is_temp_str == "true"
 
-            npc_manager = context.get('npc_manager')
+            npc_manager: Optional["NpcManager"] = context.get('npc_manager')
             if not npc_manager:
                 await send_callback("Error: NpcManager is not available.")
                 return
             
-            # Optional: Spawn at GM's character current location if loc_id is None
-            # char_manager = context.get('character_manager')
-            # if loc_id is None and char_manager and author_id_str:
-            #    gm_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
-            #    if gm_char: loc_id = getattr(gm_char, 'location_id', None)
+            char_manager: Optional["CharacterManager"] = context.get('character_manager')
+            status_manager: Optional["StatusManager"] = context.get('status_manager')
 
-            created_npc_id = await npc_manager.create_npc(
+            # Pass user_id for moderation tracking
+            creation_kwargs = {**context, 'user_id': author_id_str}
+
+            created_npc_info = await npc_manager.create_npc(
                 guild_id=guild_id,
                 npc_template_id=template_id,
                 location_id=loc_id,
                 name=npc_name_arg, 
                 is_temporary=is_temporary_bool,
-                # state_variables={}, # Example: if NpcManager.create_npc supports more kwargs
-                **context # Pass full context
+                **creation_kwargs
             )
-            if created_npc_id:
-                new_npc = npc_manager.get_npc(guild_id, created_npc_id)
+
+            if isinstance(created_npc_info, dict) and created_npc_info.get("status") == "pending_moderation":
+                request_id = created_npc_info["request_id"]
+                await send_callback(f"NPC data for '{template_id}' generated and submitted for moderation. Request ID: `{request_id}`. You (GM) will be notified in the Master channel.")
+                await self._notify_master_of_pending_content(request_id, guild_id, author_id_str, context)
+                # Optionally apply 'awaiting_moderation' to GM's character if they have one and it's desired
+                if char_manager and status_manager:
+                    gm_character = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+                    if gm_character:
+                        await status_manager.add_status_effect_to_entity(
+                            target_id=gm_character.id, target_type='Character',
+                            status_type='awaiting_moderation', guild_id=guild_id, duration=None,
+                            source_id="gm_command_npc_creation"
+                        )
+                        await send_callback(f"Note: Your character has been temporarily marked as 'Awaiting Moderation'. This status may restrict actions.")
+            elif isinstance(created_npc_info, str): # Actual NPC ID returned (non-AI path)
+                npc_id = created_npc_info
+                new_npc = npc_manager.get_npc(guild_id, npc_id)
                 display_name = getattr(new_npc, 'name', template_id) if new_npc else template_id
-                await send_callback(f"NPC '{display_name}' (ID: `{created_npc_id}`) created successfully at location `{getattr(new_npc, 'location_id', 'N/A')}`.")
+                await send_callback(f"NPC '{display_name}' (ID: `{npc_id}`) created successfully (non-AI path) at location `{getattr(new_npc, 'location_id', 'N/A')}`.")
+            else: # None or unexpected
+                await send_callback(f"Failed to create NPC from template '{template_id}'. It might have failed AI generation, validation, or an unexpected error occurred.")
+
+        elif subcommand == "ai_create_quest":
+            if not guild_id:
+                await send_callback("Error: This GM command must be used in a server channel.")
+                return
+            if not gm_args:
+                await send_callback(f"Usage: {self._command_prefix}gm ai_create_quest <quest_idea_or_ai_template_id> [triggering_character_id (optional, defaults to GM's char if exists)]")
+                return
+
+            quest_idea_or_template_id = gm_args[0]
+            # Optional: allow specifying a character ID for whom the quest is generated, or default to GM's character
+            # For now, let's assume it's for the GM or a general quest not tied to a specific character at generation time via command
+            # The QuestManager.start_quest takes character_id, so if this is for a specific player, it should be provided.
+            # If it's a general world quest template being generated, start_quest might not be the right direct call,
+            # but it was modified to handle "AI:" prefix. Let's assume "AI:new_world_quest" could be a template_id.
+            # For player-initiated quest generation, the player's char_id would be used.
+            # For GM, if they want to assign to someone, they'd pass char_id. If not, how to handle?
+            # Let's assume for now, if GM uses this, the quest is generated and the GM is notified.
+            # The actual assignment to a character might be a separate step or if quest_manager.start_quest implies it needs a character.
+            # The current `start_quest` requires a `character_id`.
+
+            triggering_char_id_arg = gm_args[1] if len(gm_args) > 1 else None
+            char_manager: Optional["CharacterManager"] = context.get('character_manager')
+            status_manager: Optional["StatusManager"] = context.get('status_manager')
+            quest_manager: Optional["QuestManager"] = context.get('quest_manager')
+
+            if not quest_manager:
+                await send_callback("Error: QuestManager is not available.")
+                return
+            if not char_manager: # Needed to resolve triggering_char_id_arg or GM's char
+                await send_callback("Error: CharacterManager is not available.")
+                return
+
+            final_triggering_char_id = None
+            if triggering_char_id_arg:
+                char_to_assign = char_manager.get_character(guild_id, triggering_char_id_arg)
+                if not char_to_assign:
+                    await send_callback(f"Error: Specified character ID '{triggering_char_id_arg}' not found.")
+                    return
+                final_triggering_char_id = char_to_assign.id
+            else: # Default to GM's character if one exists
+                gm_character = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+                if gm_character:
+                    final_triggering_char_id = gm_character.id
+
+            if not final_triggering_char_id:
+                await send_callback("Error: A triggering character ID is required to start/generate a quest, and neither a specific one was provided nor could the GM's character be found.")
+                return
+
+            creation_kwargs = {**context, 'user_id': author_id_str}
+
+            # start_quest expects character_id, quest_template_id, guild_id, **kwargs
+            # We use quest_idea_or_template_id as the quest_template_id for start_quest
+            # If it starts with "AI:", QuestManager will treat it as an AI generation request.
+            quest_info = await quest_manager.start_quest(
+                guild_id=guild_id,
+                character_id=final_triggering_char_id,
+                quest_template_id=quest_idea_or_template_id,
+                **creation_kwargs
+            )
+
+            if isinstance(quest_info, dict) and quest_info.get("status") == "pending_moderation":
+                request_id = quest_info["request_id"]
+                await send_callback(f"Quest data for '{quest_idea_or_template_id}' generated for character '{final_triggering_char_id}' and submitted for moderation. Request ID: `{request_id}`.")
+                await self._notify_master_of_pending_content(request_id, guild_id, author_id_str, context)
+                if status_manager and char_manager: # Apply to GM's char if they are the requester
+                    gm_character = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+                    if gm_character:
+                        await status_manager.add_status_effect_to_entity(
+                            target_id=gm_character.id, target_type='Character',
+                            status_type='awaiting_moderation', guild_id=guild_id, duration=None,
+                            source_id="gm_command_quest_creation"
+                        )
+                        await send_callback(f"Note: Your (GM) character has been temporarily marked as 'Awaiting Moderation'.")
+            elif isinstance(quest_info, dict) and 'id' in quest_info : # Quest started directly (non-AI path from template)
+                await send_callback(f"Quest '{quest_info.get('name_i18n',{}).get('en', quest_info['id'])}' started directly for character '{final_triggering_char_id}' from template.")
             else:
-                await send_callback(f"Failed to create NPC from template '{template_id}'.")
+                await send_callback(f"Failed to start or generate quest '{quest_idea_or_template_id}'. It might have failed AI generation, validation, or an unexpected error occurred.")
+
+        elif subcommand == "ai_create_location":
+            if not guild_id:
+                await send_callback("Error: This GM command must be used in a server channel.")
+                return
+            if not gm_args:
+                await send_callback(f"Usage: {self._command_prefix}gm ai_create_location <location_idea_or_ai_template_id> [initial_state_json (optional)] [name (optional)] [description (optional)] [exits_json (optional)]")
+                return
+
+            location_idea_or_template_id = gm_args[0]
+            # For simplicity, explicit overrides like initial_state, name, etc., for AI generated locations are not handled here.
+            # The AI should generate these. If these need to be forced, the moderation "edit" step is more appropriate.
+
+            location_manager: Optional["LocationManager"] = context.get('location_manager')
+            char_manager: Optional["CharacterManager"] = context.get('character_manager')
+            status_manager: Optional["StatusManager"] = context.get('status_manager')
+
+            if not location_manager:
+                await send_callback("Error: LocationManager is not available.")
+                return
+
+            creation_kwargs = {**context, 'user_id': author_id_str}
+
+            # create_location_instance expects template_id as the main identifier
+            # If it starts with "AI:", LocationManager will treat it as AI generation.
+            location_info = await location_manager.create_location_instance(
+                guild_id=guild_id,
+                template_id=location_idea_or_template_id,
+                # Optional params like initial_state, instance_name etc. are not passed here for AI path
+                # as AI is expected to generate them. They are used for template-based creation.
+                **creation_kwargs
+            )
+
+            if isinstance(location_info, dict) and location_info.get("status") == "pending_moderation":
+                request_id = location_info["request_id"]
+                await send_callback(f"Location data for '{location_idea_or_template_id}' generated and submitted for moderation. Request ID: `{request_id}`.")
+                await self._notify_master_of_pending_content(request_id, guild_id, author_id_str, context)
+                if status_manager and char_manager: # Apply to GM's char if they are the requester
+                    gm_character = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
+                    if gm_character:
+                        await status_manager.add_status_effect_to_entity(
+                            target_id=gm_character.id, target_type='Character',
+                            status_type='awaiting_moderation', guild_id=guild_id, duration=None,
+                            source_id="gm_command_location_creation"
+                        )
+                        await send_callback(f"Note: Your (GM) character has been temporarily marked as 'Awaiting Moderation'.")
+            elif isinstance(location_info, dict) and 'id' in location_info: # Location instance created directly
+                await send_callback(f"Location '{location_info.get('name_i18n',{}).get('en', location_info['id'])}' (ID: {location_info['id']}) created directly from template.")
+            else:
+                await send_callback(f"Failed to create or generate location '{location_idea_or_template_id}'. It might have failed AI generation, validation, or an unexpected error occurred.")
 
         elif subcommand == "delete_npc":
             if not guild_id:
@@ -1680,7 +1851,7 @@ class CommandRouter:
 
         if params_json_arg:
             try:
-                import json # Ensure json is imported
+                # import json # json is already imported at the top level of the module
                 parsed_params = json.loads(params_json_arg)
                 if not isinstance(parsed_params, dict):
                     await send_callback("Error: params_json must be a valid JSON object (dictionary).")
@@ -1717,6 +1888,444 @@ class CommandRouter:
             traceback.print_exc()
             await send_callback(f"An unexpected error occurred while resolving conflict: {e}")
 
+    async def _notify_master_of_pending_content(self, request_id: str, guild_id: str, user_id: str, context: Dict[str, Any]):
+        """Helper to notify Master channel about content awaiting moderation."""
+        db_adapter = context.get('persistence_manager').get_db_adapter() # Assuming PM provides DB adapter
+        if not db_adapter:
+            print("CommandRouter: ERROR - DB adapter not available via PersistenceManager for Master notification.")
+            return
+
+        master_channel_id_str = self._settings.get('guild_specific_settings', {}).get(guild_id, {}).get('master_notification_channel_id')
+        if not master_channel_id_str:
+            master_channel_id_str = self._settings.get('default_master_notification_channel_id')
+
+        if not master_channel_id_str:
+            print(f"CommandRouter: WARNING - Master notification channel ID not configured for guild {guild_id} or globally.")
+            return
+
+        try:
+            master_channel_id = int(master_channel_id_str)
+        except ValueError:
+            print(f"CommandRouter: ERROR - Invalid Master notification channel ID format: {master_channel_id_str}")
+            return
+
+        send_to_master_channel = self._send_callback_factory(master_channel_id)
+
+        try:
+            moderation_request = await db_adapter.get_pending_moderation_request(request_id)
+            if not moderation_request:
+                print(f"CommandRouter: ERROR - Could not fetch moderation request {request_id} for notification.")
+                await send_to_master_channel(f"Error: Could not retrieve details for moderation request {request_id}.")
+                return
+
+            content_type = moderation_request["content_type"]
+            data_json = moderation_request["data"]
+
+            # Import generate_summary from bot.utils.text_utils
+            try:
+                from bot.utils.text_utils import generate_summary
+                summary = generate_summary(data_json, content_type)
+            except ImportError:
+                print("CommandRouter: ERROR - Could not import generate_summary. Summary will be basic.")
+                summary = f"Raw Data: {data_json[:150]}..."
+            except Exception as e_summary:
+                print(f"CommandRouter: ERROR generating summary for request {request_id}: {e_summary}")
+                summary = f"Error generating summary. Raw Data: {data_json[:150]}..."
+
+            notif_message = (
+                f"📢 **New Content Awaiting Moderation!**\n"
+                f"---------------------------------------\n"
+                f"**Request ID:** `{request_id}`\n"
+                f"**User:** <@{user_id}> (ID: `{user_id}`)\n"
+                f"**Type:** `{content_type.capitalize()}`\n"
+                f"**Guild ID:** `{guild_id}`\n"
+                f"**Content Summary:**\n```\n{summary}\n```\n"
+                f"---------------------------------------\n"
+                f"**Actions (example):**\n"
+                f"`/master approve {request_id}`\n"
+                f"`/master reject {request_id}`\n"
+                f"`/master edit {request_id} <json_data>` (use with caution, ensure valid JSON)"
+            )
+            await send_to_master_channel(notif_message)
+            print(f"CommandRouter: Master notification sent for request {request_id} to channel {master_channel_id}.")
+
+        except Exception as e:
+            print(f"CommandRouter: ERROR - Failed to send Master notification for request {request_id}: {e}")
+            traceback.print_exc()
+            try:
+                await send_to_master_channel(f"Critical Error: Failed to process and send notification for moderation request {request_id}. Check logs.")
+            except Exception:
+                pass # Avoid error loops
+
+    async def _activate_approved_content(self, request_id: str, context: Dict[str, Any]) -> bool:
+        """
+        Activates content from an approved moderation request.
+        Fetches request, calls relevant manager, removes status, notifies user, deletes request.
+        """
+        send_to_master_channel = context['send_to_command_channel'] # For feedback to the master using the command
+        db_adapter = self._persistence_manager.get_db_adapter()
+        if not db_adapter:
+            print("CommandRouter:_activate_approved_content ERROR - DB adapter not available.")
+            await send_to_master_channel(f"Error: DB adapter unavailable during content activation for {request_id}.")
+            return False
+
+        moderation_request = await db_adapter.get_pending_moderation_request(request_id)
+        if not moderation_request:
+            print(f"CommandRouter:_activate_approved_content ERROR - Request {request_id} not found in DB for activation.")
+            await send_to_master_channel(f"Error: Request {request_id} not found for activation.")
+            return False
+
+        original_user_id = moderation_request["user_id"] # This is Discord User ID (string)
+        guild_id = moderation_request["guild_id"]
+        content_type = moderation_request["content_type"]
+        data_json = moderation_request["data"]
+        approved_data = json.loads(data_json)
+
+        npc_manager: Optional["NpcManager"] = context.get('npc_manager')
+        quest_manager: Optional["QuestManager"] = context.get('quest_manager')
+        location_manager: Optional["LocationManager"] = context.get('location_manager')
+        character_manager: Optional["CharacterManager"] = context.get('character_manager')
+        status_manager: Optional["StatusManager"] = context.get('status_manager')
+
+        entity_id_or_data: Any = None
+        activation_successful = False
+        entity_info_for_user_notification = "N/A"
+
+        try:
+            if content_type == 'npc':
+                if npc_manager:
+                    entity_id_or_data = await npc_manager.create_npc_from_moderated_data(guild_id, approved_data, context)
+                    if entity_id_or_data:
+                        npc_obj = npc_manager.get_npc(guild_id, entity_id_or_data)
+                        entity_info_for_user_notification = f"NPC '{getattr(npc_obj, 'name', entity_id_or_data)}' (ID: {entity_id_or_data})"
+                else: await send_to_master_channel("Error: NpcManager not available for NPC activation.")
+
+            elif content_type == 'quest':
+                if quest_manager and character_manager:
+                    player_char = character_manager.get_character_by_discord_id(guild_id, int(original_user_id))
+                    if not player_char:
+                        await send_to_master_channel(f"Error: Original user {original_user_id} does not have an active character in guild {guild_id} to assign the quest to. Quest {request_id} cannot be activated.")
+                        # Optionally update moderation request status to 'activation_failed'
+                        # await db_adapter.update_pending_moderation_request(request_id, 'activation_failed_no_char', context['author_id'])
+                        return False
+
+                    # Pass the resolved character_id to start_quest_from_moderated_data
+                    entity_id_or_data = await quest_manager.start_quest_from_moderated_data(guild_id, player_char.id, approved_data, context)
+                    if entity_id_or_data and isinstance(entity_id_or_data, dict):
+                         quest_name = entity_id_or_data.get('name_i18n',{}).get('en', entity_id_or_data.get('id'))
+                         entity_info_for_user_notification = f"Quest '{quest_name}' (ID: {entity_id_or_data.get('id')}) for character {player_char.name}"
+
+                else: await send_to_master_channel("Error: QuestManager or CharacterManager not available for Quest activation.")
+
+            elif content_type == 'location':
+                if location_manager:
+                    # create_location_instance_from_moderated_data takes user_id (Discord ID) for the generated_locations table
+                    entity_id_or_data = await location_manager.create_location_instance_from_moderated_data(guild_id, approved_data, original_user_id, context)
+                    if entity_id_or_data and isinstance(entity_id_or_data, dict):
+                        loc_name = entity_id_or_data.get('name_i18n',{}).get('en', entity_id_or_data.get('id'))
+                        entity_info_for_user_notification = f"Location '{loc_name}' (ID: {entity_id_or_data.get('id')})"
+                else: await send_to_master_channel("Error: LocationManager not available for Location activation.")
+
+            activation_successful = entity_id_or_data is not None
+
+        except Exception as e_activate:
+            print(f"CommandRouter:_activate_approved_content ERROR activating content for request {request_id}: {e_activate}")
+            traceback.print_exc()
+            await send_to_master_channel(f"❌ Critical error during content activation for request {request_id}: {e_activate}. Content remains in moderation queue with status '{moderation_request['status']}'.")
+            return False # Do not proceed to delete moderation request or notify user of success
+
+        if activation_successful:
+            print(f"CommandRouter: Content from request {request_id} (Type: {content_type}) successfully activated.")
+
+            if character_manager and status_manager:
+                player_char_to_update = character_manager.get_character_by_discord_id(guild_id, int(original_user_id))
+                if player_char_to_update:
+                    removed_count = await status_manager.remove_status_effects_by_type(
+                        player_char_to_update.id, 'Character', 'awaiting_moderation', guild_id, context
+                    )
+                    print(f"CommandRouter: Removed {removed_count} 'awaiting_moderation' statuses from character {player_char_to_update.id} (User: {original_user_id}).")
+                    # Notify user of approval and status removal (placeholder)
+                    print(f"PLACEHOLDER: Notify user {original_user_id} that content '{entity_info_for_user_notification}' was approved and 'awaiting_moderation' status removed.")
+                    # Example actual notification (would require user object or DM channel):
+                    # try:
+                    #     user_discord_obj = await self._client.fetch_user(int(original_user_id)) # Assuming self._client is available
+                    #     if user_discord_obj:
+                    #         await user_discord_obj.send(f"🎉 Your content submission '{entity_info_for_user_notification}' (Request ID: {request_id}) has been approved and is now active! Your 'Awaiting Moderation' status has been lifted.")
+                    # except Exception as e_notify:
+                    #     print(f"CommandRouter: Failed to send DM notification to user {original_user_id}: {e_notify}")
+                else:
+                    print(f"CommandRouter: WARNING - Could not find character for user {original_user_id} in guild {guild_id} to remove 'awaiting_moderation' status.")
+            else:
+                print("CommandRouter: WARNING - CharacterManager or StatusManager not available for status removal.")
+
+            await db_adapter.delete_pending_moderation_request(request_id)
+            print(f"CommandRouter: Moderation request {request_id} deleted after successful activation.")
+            return True
+        else:
+            await send_to_master_channel(f"⚠️ Activation failed for content type '{content_type}' from request {request_id}. Check logs. Content remains in moderation queue with status '{moderation_request['status']}'.")
+            print(f"CommandRouter:_activate_approved_content - Activation failed for {content_type} from request {request_id}. Entity data was None.")
+            # Consider updating status to 'activation_failed'
+            # await db_adapter.update_pending_moderation_request(request_id, 'activation_failed', context['author_id'])
+            return False
+
+    @command("approve")
+    async def handle_approve_content(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Approves AI-generated content that is pending moderation.
+        Usage: {prefix}approve <request_id>
+        """
+        send_callback = context['send_to_command_channel']
+        author_id_str = str(message.author.id)
+        guild_id = context.get('guild_id') # Guild context of the command
+
+        # GM Access Control
+        gm_ids = [str(gm_id) for gm_id in self._settings.get('bot_admins', [])]
+        if author_id_str not in gm_ids:
+            await send_callback("Access Denied: This command is for Masters only.")
+            return
+
+        if not guild_id:
+            await send_callback("Error: This command should be used in a server channel.")
+            return
+
+        if not args:
+            await send_callback(f"Usage: {self._command_prefix}approve <request_id>")
+            return
+
+        request_id = args[0]
+        db_adapter = self._persistence_manager.get_db_adapter()
+        if not db_adapter:
+            await send_callback("Error: Database service is unavailable.")
+            print("CommandRouter: ERROR - DB adapter not available for handle_approve_content.")
+            return
+
+        try:
+            moderation_request = await db_adapter.get_pending_moderation_request(request_id)
+
+            if not moderation_request:
+                await send_callback(f"Error: Moderation request ID `{request_id}` not found.")
+                return
+
+            original_user_id = moderation_request["user_id"]
+            request_guild_id = moderation_request["guild_id"] # Guild ID from the request itself
+
+            if moderation_request["status"] != 'pending':
+                await send_callback(f"Error: Request `{request_id}` is already actioned (status: {moderation_request['status']}).")
+                return
+
+            # Update status to 'approved'
+            update_success = await db_adapter.update_pending_moderation_request(
+                request_id,
+                status='approved',
+                moderator_id=author_id_str
+            )
+
+            if update_success:
+                await send_callback(f"✅ Request `{request_id}` status updated to 'approved'. Attempting content activation...")
+                activation_success = await self._activate_approved_content(request_id, context) # guild_id for activation comes from request
+                if activation_success:
+                    await send_callback(f"🚀 Content from request `{request_id}` successfully activated and request removed.")
+                else:
+                    await send_callback(f"⚠️ Request `{request_id}` was marked 'approved', but content activation failed. Please check logs. The request item has NOT been deleted.")
+                    # Revert status or set to 'activation_failed' ?
+                    # For now, it remains 'approved' but not deleted.
+            else:
+                await send_callback(f"Error: Failed to update status for request `{request_id}` in the database.")
+
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_approve_content for ID '{request_id}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An unexpected error occurred while approving content: {e}")
+
+    @command("reject")
+    async def handle_reject_content(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Rejects AI-generated content that is pending moderation.
+        Usage: {prefix}reject <request_id> [reason...]
+        """
+        send_callback = context['send_to_command_channel']
+        author_id_str = str(message.author.id)
+        guild_id = context.get('guild_id')
+
+        # GM Access Control
+        gm_ids = [str(gm_id) for gm_id in self._settings.get('bot_admins', [])]
+        if author_id_str not in gm_ids:
+            await send_callback("Access Denied: This command is for Masters only.")
+            return
+
+        if not guild_id:
+            await send_callback("Error: This command should be used in a server channel.")
+            return
+
+        if not args:
+            await send_callback(f"Usage: {self._command_prefix}reject <request_id> [reason...]")
+            return
+
+        request_id = args[0]
+        reason = " ".join(args[1:]) if len(args) > 1 else "No reason provided."
+
+        db_adapter = self._persistence_manager.get_db_adapter()
+        if not db_adapter:
+            await send_callback("Error: Database service is unavailable.")
+            print("CommandRouter: ERROR - DB adapter not available for handle_reject_content.")
+            return
+
+        try:
+            moderation_request = await db_adapter.get_pending_moderation_request(request_id)
+
+            if not moderation_request:
+                await send_callback(f"Error: Moderation request ID `{request_id}` not found.")
+                return
+
+            if moderation_request["status"] != 'pending':
+                await send_callback(f"Error: Request `{request_id}` is already actioned (status: {moderation_request['status']}).")
+                return
+
+            # For this subtask, we delete. Alternative: update status to 'rejected'.
+            deleted = await db_adapter.delete_pending_moderation_request(request_id)
+
+            if deleted:
+                original_user_id = moderation_request["user_id"]
+                request_guild_id = moderation_request["guild_id"]
+                content_type = moderation_request["content_type"]
+
+                await send_callback(f"🗑️ Content request `{request_id}` rejected and deleted.")
+                print(f"MASTER ACTION: Request {request_id} (User: {original_user_id}, Type: {content_type}) rejected by Master {author_id_str}. Reason: {reason}")
+
+                # Actual removal of status and notification to user
+                character_manager: Optional["CharacterManager"] = context.get('character_manager')
+                status_manager: Optional["StatusManager"] = context.get('status_manager')
+                if character_manager and status_manager:
+                    player_char_to_update = character_manager.get_character_by_discord_id(request_guild_id, int(original_user_id))
+                    if player_char_to_update:
+                        removed_count = await status_manager.remove_status_effects_by_type(
+                            player_char_to_update.id, 'Character', 'awaiting_moderation', request_guild_id, context
+                        )
+                        print(f"CommandRouter: Removed {removed_count} 'awaiting_moderation' statuses from character {player_char_to_update.id} (User: {original_user_id}) due to rejection.")
+                        # Notify user of rejection (placeholder)
+                        print(f"PLACEHOLDER: Notify user {original_user_id} that content request {request_id} was rejected. Reason: {reason}")
+                        # Example actual notification:
+                        # try:
+                        #     user_discord_obj = await self._client.fetch_user(int(original_user_id))
+                        #     if user_discord_obj:
+                        #         await user_discord_obj.send(f"😢 Your content submission (Request ID: {request_id}, Type: {content_type}) was rejected by a Master. Reason: {reason}. Your 'Awaiting Moderation' status has been lifted.")
+                        # except Exception as e_notify:
+                        #     print(f"CommandRouter: Failed to send DM notification for rejection to user {original_user_id}: {e_notify}")
+                    else:
+                        print(f"CommandRouter: WARNING - Could not find character for user {original_user_id} in guild {request_guild_id} to remove 'awaiting_moderation' status after rejection.")
+                else:
+                    print("CommandRouter: WARNING - CharacterManager or StatusManager not available for status removal after rejection.")
+            else:
+                await send_callback(f"Error: Failed to delete request `{request_id}` from the database. It might have been deleted already.")
+
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_reject_content for ID '{request_id}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An unexpected error occurred while rejecting content: {e}")
+
+    @command("edit")
+    async def handle_edit_content(self, message: Message, args: List[str], context: Dict[str, Any]) -> None:
+        """Edits and approves AI-generated content that is pending moderation.
+        Usage: {prefix}edit <request_id> <json_edited_data>
+        Example: {prefix}edit some-uuid-123 '{{"name_i18n":{{"en":"Slightly Better Name"}}, "archetype":"Guard"}}'
+        """
+        send_callback = context['send_to_command_channel']
+        author_id_str = str(message.author.id)
+        guild_id = context.get('guild_id')
+
+        # GM Access Control
+        gm_ids = [str(gm_id) for gm_id in self._settings.get('bot_admins', [])]
+        if author_id_str not in gm_ids:
+            await send_callback("Access Denied: This command is for Masters only.")
+            return
+
+        if not guild_id:
+            await send_callback("Error: This command should be used in a server channel.")
+            return
+
+        if len(args) < 2:
+            await send_callback(f"Usage: {self._command_prefix}edit <request_id> <json_edited_data>")
+            return
+
+        request_id = args[0]
+        json_edited_data_str = " ".join(args[1:]) # Join all remaining args to form the JSON string
+
+        db_adapter = self._persistence_manager.get_db_adapter()
+        ai_validator: Optional["AIResponseValidator"] = context.get('ai_validator') # Get from main context
+
+        if not db_adapter:
+            await send_callback("Error: Database service is unavailable.")
+            print("CommandRouter: ERROR - DB adapter not available for handle_edit_content.")
+            return
+        if not ai_validator:
+            await send_callback("Error: AIResponseValidator service is unavailable. Cannot validate edits.")
+            print("CommandRouter: ERROR - AIResponseValidator not in context for handle_edit_content.")
+            return
+
+        try:
+            moderation_request = await db_adapter.get_pending_moderation_request(request_id)
+
+            if not moderation_request:
+                await send_callback(f"Error: Moderation request ID `{request_id}` not found.")
+                return
+
+            if moderation_request["status"] != 'pending':
+                await send_callback(f"Error: Request `{request_id}` is already actioned (status: {moderation_request['status']}). Cannot edit.")
+                return
+
+            original_content_type = moderation_request["content_type"]
+
+            try:
+                edited_data_dict = json.loads(json_edited_data_str)
+                if not isinstance(edited_data_dict, dict):
+                    await send_callback("Error: Edited data must be a valid JSON object (dictionary).")
+                    return
+            except json.JSONDecodeError as e_json:
+                await send_callback(f"Error parsing JSON for edited data: {e_json}. Please ensure it's valid JSON.")
+                return
+
+            # Validate the edited data
+            # For existing IDs, we might need to fetch them based on content type, or pass empty sets for now.
+            # This step assumes the validator can handle the structure without full existing ID context if not provided.
+            validation_result = await ai_validator.validate_ai_response(
+                ai_json_string=json_edited_data_str, # Pass the string directly
+                expected_structure=original_content_type, # e.g., "single_npc", "single_quest"
+                existing_npc_ids=set(),      # Placeholder - ideally fetch if relevant for content_type
+                existing_quest_ids=set(),    # Placeholder
+                existing_item_template_ids=set(), # Placeholder
+                existing_location_template_ids=set(self._location_manager._location_templates.get(guild_id, {}).keys()) if self._location_manager else set()
+            )
+
+            if not validation_result.get('overall_status', '').startswith("success"):
+                errors = validation_result.get('global_errors', [])
+                entity_errors = validation_result.get('entities', [{}])[0].get('errors', [])
+                all_errors = errors + entity_errors
+                await send_callback(f"Error: Edited data failed validation for type '{original_content_type}'. Errors: {all_errors if all_errors else 'Unknown validation error.'}")
+                return
+
+            # Update status to 'approved_edited' (or similar) and the data
+            success = await db_adapter.update_pending_moderation_request(
+                request_id,
+                status='approved_edited',
+                moderator_id=author_id_str,
+                data_json=json_edited_data_str # Save the validated, edited JSON string
+            )
+
+            if success:
+                original_user_id = moderation_request["user_id"] # Fetched from the original request
+                request_guild_id = moderation_request["guild_id"]
+
+                await send_callback(f"✅ Request `{request_id}` status updated to 'approved_edited'. Attempting content activation with edits...")
+                activation_success = await self._activate_approved_content(request_id, context) # guild_id for activation comes from request
+                if activation_success:
+                    await send_callback(f"🚀 Content from request `{request_id}` (edited) successfully activated and request removed.")
+                else:
+                    await send_callback(f"⚠️ Request `{request_id}` was marked 'approved_edited', but content activation failed. Please check logs. The request item has NOT been deleted.")
+            else:
+                await send_callback(f"Error: Failed to update status/data for request `{request_id}` in the database.")
+
+        except Exception as e:
+            print(f"CommandRouter: Error in handle_edit_content for ID '{request_id}': {e}")
+            traceback.print_exc()
+            await send_callback(f"An unexpected error occurred while editing content: {e}")
 
 def is_uuid_format(s: str) -> bool:
      """Проверяет, выглядит ли строка как UUID (простая проверка формата)."""

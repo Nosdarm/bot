@@ -21,8 +21,8 @@ class SqliteAdapter:
     в методах execute, execute_insert, execute_many.
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
-    # ОБНОВЛЕНО: Добавлена таблица pending_conflicts
-    LATEST_SCHEMA_VERSION = 13
+    # ОБНОВЛЕНО: Добавлена таблица generated_locations
+    LATEST_SCHEMA_VERSION = 15
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -1166,6 +1166,46 @@ class SqliteAdapter:
         print("SqliteAdapter: 'pending_conflicts' table created and index applied IF NOT EXISTS.")
         print("SqliteAdapter: v12 to v13 migration complete.")
 
+    async def _migrate_v13_to_v14(self, cursor: Cursor) -> None:
+        """Миграция с Версии 13 на Версию 14 (добавление таблицы pending_moderation_requests)."""
+        print("SqliteAdapter: Running v13 to v14 migration (creating pending_moderation_requests table)...")
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pending_moderation_requests (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                content_type TEXT NOT NULL, -- e.g., 'npc', 'location', 'quest'
+                data TEXT NOT NULL, -- JSON string of AI-generated content
+                status TEXT NOT NULL DEFAULT 'pending', -- e.g., 'pending', 'approved', 'rejected', 'edited'
+                created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+                moderator_id TEXT NULL,
+                moderated_at REAL NULL
+            );
+        ''')
+        # Add indices
+        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_pending_moderation_guild_id ON pending_moderation_requests (guild_id);''')
+        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_pending_moderation_user_id ON pending_moderation_requests (user_id);''')
+        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_pending_moderation_status ON pending_moderation_requests (status);''')
+        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_pending_moderation_guild_status ON pending_moderation_requests (guild_id, status);''')
+        print("SqliteAdapter: 'pending_moderation_requests' table created and indices applied.")
+        print("SqliteAdapter: v13 to v14 migration complete.")
+
+    async def _migrate_v14_to_v15(self, cursor: Cursor) -> None:
+        """Миграция с Версии 14 на Версию 15 (добавление таблицы generated_locations)."""
+        print("SqliteAdapter: Running v14 to v15 migration (creating generated_locations table)...")
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS generated_locations (
+                location_id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                user_id TEXT NOT NULL, -- Discord user ID of the player who initiated the generation
+                generated_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+                FOREIGN KEY(location_id) REFERENCES locations(id) ON DELETE CASCADE
+            );
+        ''')
+        # Add index for faster lookups
+        await cursor.execute('''CREATE INDEX IF NOT EXISTS idx_generated_locations_guild_user ON generated_locations (guild_id, user_id);''')
+        print("SqliteAdapter: 'generated_locations' table created and index applied.")
+        print("SqliteAdapter: v14 to v15 migration complete.")
 
     # --- Методы для работы с таблицей pending_conflicts ---
 
@@ -1182,28 +1222,88 @@ class SqliteAdapter:
                 created_at = strftime('%s','now');
         """
         await self.execute(sql, (conflict_id, guild_id, conflict_data))
-        # print(f"SqliteAdapter: Saved pending conflict '{conflict_id}' for guild '{guild_id}'.") # Keep prints minimal in core adapter methods
 
     async def get_pending_conflict(self, conflict_id: str) -> Optional[Row]:
         """Retrieves a pending manual conflict by its ID."""
         sql = "SELECT id, guild_id, conflict_data FROM pending_conflicts WHERE id = ?;"
         row = await self.fetchone(sql, (conflict_id,))
-        # print(f"SqliteAdapter: Fetched pending conflict '{conflict_id}': {row is not None}")
         return row
 
     async def delete_pending_conflict(self, conflict_id: str) -> None:
         """Deletes a pending manual conflict by its ID."""
         sql = "DELETE FROM pending_conflicts WHERE id = ?;"
         await self.execute(sql, (conflict_id,))
-        # print(f"SqliteAdapter: Deleted pending conflict '{conflict_id}'.") # Keep prints minimal
 
     async def get_pending_conflicts_by_guild(self, guild_id: str) -> List[Row]:
         """Retrieves all pending manual conflicts for a specific guild."""
         sql = "SELECT id, guild_id, conflict_data FROM pending_conflicts WHERE guild_id = ? ORDER BY created_at DESC;"
         rows = await self.fetchall(sql, (guild_id,))
-        # print(f"SqliteAdapter: Fetched {len(rows)} pending conflicts for guild '{guild_id}'.")
         return rows
 
+    # --- Методы для работы с таблицей pending_moderation_requests ---
+
+    async def save_pending_moderation_request(self, request_id: str, guild_id: str, user_id: str, content_type: str, data_json: str, status: str = 'pending') -> None:
+        """Saves a new pending moderation request."""
+        if not isinstance(data_json, str):
+            raise TypeError("data_json must be a JSON string.")
+        sql = """
+            INSERT INTO pending_moderation_requests (id, guild_id, user_id, content_type, data, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, strftime('%s','now'))
+        """
+        # Ensure created_at is set by the database default or explicitly if needed
+        await self.execute(sql, (request_id, guild_id, user_id, content_type, data_json, status))
+
+    async def get_pending_moderation_request(self, request_id: str) -> Optional[Row]:
+        """Retrieves a pending moderation request by its ID."""
+        sql = "SELECT * FROM pending_moderation_requests WHERE id = ?;"
+        row = await self.fetchone(sql, (request_id,))
+        return row
+
+    async def update_pending_moderation_request(self, request_id: str, status: str, moderator_id: Optional[str], data_json: Optional[str] = None) -> bool:
+        """Updates the status, moderator, and optionally data of a moderation request."""
+        if data_json is not None and not isinstance(data_json, str):
+            raise TypeError("data_json must be a JSON string if provided.")
+
+        if data_json is not None:
+            sql = """
+                UPDATE pending_moderation_requests
+                SET status = ?, moderator_id = ?, data = ?, moderated_at = strftime('%s','now')
+                WHERE id = ?;
+            """
+            params = (status, moderator_id, data_json, request_id)
+        else:
+            sql = """
+                UPDATE pending_moderation_requests
+                SET status = ?, moderator_id = ?, moderated_at = strftime('%s','now')
+                WHERE id = ?;
+            """
+            params = (status, moderator_id, request_id)
+
+        cursor = await self.execute(sql, params)
+        return cursor.rowcount > 0
+
+
+    async def delete_pending_moderation_request(self, request_id: str) -> bool:
+        """Deletes a pending moderation request by its ID."""
+        sql = "DELETE FROM pending_moderation_requests WHERE id = ?;"
+        cursor = await self.execute(sql, (request_id,))
+        return cursor.rowcount > 0
+
+    async def get_pending_requests_by_guild(self, guild_id: str, status: str = 'pending') -> List[Row]:
+        """Retrieves all pending moderation requests for a specific guild, optionally filtered by status."""
+        sql = "SELECT * FROM pending_moderation_requests WHERE guild_id = ? AND status = ? ORDER BY created_at ASC;"
+        rows = await self.fetchall(sql, (guild_id, status))
+        return rows
+
+    # --- Методы для работы с таблицей generated_locations ---
+    async def add_generated_location(self, location_id: str, guild_id: str, user_id: str) -> None:
+        """Marks a location as having been generated by a user."""
+        sql = """
+            INSERT INTO generated_locations (location_id, guild_id, user_id, generated_at)
+            VALUES (?, ?, ?, strftime('%s','now'))
+            ON CONFLICT(location_id) DO NOTHING; -- If already marked, do nothing
+        """
+        await self.execute(sql, (location_id, guild_id, user_id))
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")
