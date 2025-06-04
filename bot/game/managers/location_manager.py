@@ -876,7 +876,6 @@ class LocationManager:
             print(f"LocationManager: Executing {len(triggers)} OnExit triggers for {entity_type} {entity_id} from location {location_id} (guild {guild_id_str}).")
             try:
                  # --- Начало блока try (отступ 4 пробела от if) ---
-                 # --- Начало блока try (отступ 4 пробела от if) ---
                  trigger_context = {
                      **kwargs,
                      'location_instance_id': location_id,
@@ -887,11 +886,6 @@ class LocationManager:
                  }
                  await engine.execute_triggers(triggers, context=trigger_context)
                  print(f"LocationManager: OnExit triggers executed for {entity_type} {entity_id}.")
-            # --- Конец блока try ---
-            except Exception as e: # <--- except должен быть на том же уровне отступа, что и try
-                 print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
-                 traceback.print_exc() # <--- print и traceback должны быть внутри except блока (отступ 4 пробела от except)
-        # --- Конец блока if ---
             # --- Конец блока try ---
             except Exception as e: # <--- except должен быть на том же уровне отступа, что и try
                  print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
@@ -930,7 +924,6 @@ class LocationManager:
 
                   if instance_id and is_active:
                        try: # <-- Corrected Indentation Start
-                       try: # <-- Corrected Indentation Start
                             template_id = instance_data.get('template_id')
                             template = self.get_location_static(guild_id_str, template_id)
 
@@ -943,15 +936,9 @@ class LocationManager:
                                 template=template,
                                 context=managers_context
                             )
-
-                       except Exception as e: # <-- Corrected Indentation (aligned with try)
-
                        except Exception as e: # <-- Corrected Indentation (aligned with try)
                            print(f"LocationManager: ❌ Error processing tick for location instance {instance_id} in guild {guild_id_str}: {e}")
                            traceback.print_exc() # <-- Corrected Indentation (aligned with print above)
-
-                           traceback.print_exc() # <-- Corrected Indentation (aligned with print above)
-
          elif rule_engine:
               print(f"LocationManager: Warning: RuleEngine injected/found, but 'process_location_tick' method not found for tick processing.")
 
