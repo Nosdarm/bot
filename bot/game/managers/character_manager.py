@@ -1517,7 +1517,7 @@ class CharacterManager:
                 char_data.get('char_class'),
                 char_data.get('selected_language'),
                 char_data.get('current_game_status'),
-                char_data.get('собранные_действия_JSON'), # Already a JSON string
+                char_data.get('collected_actions_json'), # Already a JSON string
                 char_data.get('current_party_id')
             )
 
@@ -1531,7 +1531,7 @@ class CharacterManager:
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, experience, unspent_xp, active_quests, known_spells,
                 spell_cooldowns, skills, known_abilities, ability_cooldowns, flags,
-                char_class, selected_language, current_game_status, собранные_действия_JSON, current_party_id
+                char_class, selected_language, current_game_status, collected_actions_json, current_party_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''' # 30 columns, 30 placeholders
 
