@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
+from bot.utils.i18n_utils import get_i18n_text # Import the new utility
 
 # Модель NPC не нуждается в импорте других менеджеров или сервисов.
 # Она просто хранит данные.
@@ -18,10 +19,13 @@ class NPC:
     template_id: str
 
     # Отображаемое имя NPC (может отличаться от имени в шаблоне для уникальных NPC)
-    name: str # Derived from name_i18n by NpcManager or from_dict
+    # name: str # This will become a property
     name_i18n: Dict[str, str] # e.g. {"en": "Guard", "ru": "Стражник"}
-    description_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""})
-    persona_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""}) # For npcs table
+    description_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "A mysterious figure.", "ru": "Загадочная фигура."})
+    persona_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "Stoic and observant.", "ru": "Стоический и наблюдательный."}) # For npcs table
+
+    # Language context for this NPC instance, might be overridden by interaction context
+    selected_language: Optional[str] = "en"
 
     # ID локации, где находится NPC, если он не в инвентаре/партии
     location_id: Optional[str] = None
@@ -107,20 +111,47 @@ class NPC:
     # description: Optional[str] # Описание экземпляра NPC
     # ai_state: Optional[Dict[str, Any]] # Словарь для состояния AI
 
+    @property
+    def name(self) -> str:
+        """Returns the internationalized name of the NPC."""
+        # Defaulting to "en" if selected_language is not set.
+        # GameManager's default language should be the ultimate fallback.
+        lang_to_use = self.selected_language if self.selected_language else "en"
+        return get_i18n_text(self.to_dict_for_i18n(), "name", lang_to_use, "en")
+
+    @property
+    def description(self) -> str:
+        """Returns the internationalized description of the NPC."""
+        lang_to_use = self.selected_language if self.selected_language else "en"
+        return get_i18n_text(self.to_dict_for_i18n(), "description", lang_to_use, "en")
+
+    @property
+    def persona(self) -> str:
+        """Returns the internationalized persona of the NPC."""
+        lang_to_use = self.selected_language if self.selected_language else "en"
+        return get_i18n_text(self.to_dict_for_i18n(), "persona", lang_to_use, "en")
+
+    def to_dict_for_i18n(self) -> Dict[str, Any]:
+        """Helper to provide a dictionary structure for get_i18n_text for properties."""
+        return {
+            "name_i18n": self.name_i18n,
+            "description_i18n": self.description_i18n,
+            "persona_i18n": self.persona_i18n,
+            "id": self.id # Useful fallback for name if i18n is empty
+        }
 
     def to_dict(self) -> Dict[str, Any]:
         """Преобразует объект NPC в словарь для сериализации."""
-        # Используйте dataclasses.asdict() если не нужна спец. логика
-        # from dataclasses import asdict
-        # return asdict(self)
-
         data = {
             'id': self.id,
             'template_id': self.template_id,
-            'name': self.name, # Derived name
-            'name_i18n': self.name_i18n,
-            'description_i18n': self.description_i18n,
-            'persona_i18n': self.persona_i18n,
+            'name': self.name, # Property value
+            'name_i18n': self.name_i18n, # Source data
+            'description': self.description, # Property value
+            'description_i18n': self.description_i18n, # Source data
+            'persona': self.persona, # Property value
+            'persona_i18n': self.persona_i18n, # Source data
+            'selected_language': self.selected_language,
             'location_id': self.location_id,
             'owner_id': self.owner_id,
             'is_temporary': self.is_temporary,
@@ -191,23 +222,32 @@ class NPC:
         if name_i18n_val is None:
             if plain_name_val is None:
                 raise ValueError("Missing 'name' or 'name_i18n' key in data for NPC.from_dict")
-            name_i18n_val = {"en": plain_name_val, "ru": plain_name_val} # Default i18n from plain name
+            name_i18n_val = {"en": plain_name_val} # CORRECTED: Default i18n from plain name, default key "en"
+            print(f"NPC FromDict: Warning - NPC '{npc_id}' missing 'name_i18n', created from 'name': {plain_name_val}")
 
-        if plain_name_val is None: # If only name_i18n is present, derive plain_name
-            selected_lang = data.get('selected_language', 'en') # Assume a way to get preferred lang
-            plain_name_val = name_i18n_val.get(selected_lang, list(name_i18n_val.values())[0] if name_i18n_val else npc_id)
+
+        # No need to derive plain_name_val here if 'name' is a property.
+        # The property will handle it.
 
         description_i18n_val = data.get('description_i18n')
-        if description_i18n_val is None and 'description' in data: # Backward compatibility for plain description
-            description_i18n_val = {"en": data.get('description',""), "ru": data.get('description',"")}
-        elif description_i18n_val is None:
-            description_i18n_val = {"en": "", "ru": ""}
+        if description_i18n_val is None:
+            plain_description = data.get('description')
+            if plain_description is not None:
+                description_i18n_val = {"en": plain_description}
+                print(f"NPC FromDict: Warning - NPC '{npc_id}' missing 'description_i18n', created from 'description'.")
+            else:
+                description_i18n_val = {"en": "A mysterious figure."} # Default fallback
 
         persona_i18n_val = data.get('persona_i18n')
-        if persona_i18n_val is None and 'persona' in data: # Backward compatibility for plain persona
-            persona_i18n_val = {"en": data.get('persona',""), "ru": data.get('persona',"")}
-        elif persona_i18n_val is None:
-            persona_i18n_val = {"en": "", "ru": ""}
+        if persona_i18n_val is None:
+            plain_persona = data.get('persona')
+            if plain_persona is not None:
+                persona_i18n_val = {"en": plain_persona}
+                print(f"NPC FromDict: Warning - NPC '{npc_id}' missing 'persona_i18n', created from 'persona'.")
+            else:
+                persona_i18n_val = {"en": "Stoic and observant."} # Default fallback
+
+        selected_language_val = data.get('selected_language', "en") # Default to "en"
 
         # Опциональные поля с значениями по умолчанию
         location_id = data.get('location_id')
@@ -300,10 +340,11 @@ class NPC:
         return NPC(
             id=npc_id,
             template_id=template_id,
-            name=plain_name_val,
+            # name=plain_name_val, # Name is a property
             name_i18n=name_i18n_val,
-            description_i18n=description_i18n_val,
-            persona_i18n=persona_i18n_val,
+            description_i18n=description_i18n_val, # Pass the source
+            persona_i18n=persona_i18n_val, # Pass the source
+            selected_language=selected_language_val,
             location_id=location_id,
             owner_id=owner_id,
             is_temporary=is_temporary,

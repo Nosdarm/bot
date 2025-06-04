@@ -98,31 +98,70 @@ class CampaignLoader:
 
         if locations_data and isinstance(locations_data, list):
             print(f"CampaignLoader: Populating {len(locations_data)} locations for guild '{guild_id}'...")
+            default_lang = self._settings.get('game_rules', {}).get('default_bot_language', 'en')
+
             for loc_def in locations_data:
                 loc_id = loc_def.get("id")
-                name = loc_def.get("name")
-                description = loc_def.get("description", "")
-                # 'connections' in JSON should map to 'exits' in DBService.create_location
-                exits_data = {conn: conn for conn in loc_def.get("connections", [])} # Simple mapping for now
-
-                if not loc_id or not name:
-                    print(f"CampaignLoader: Skipping location due to missing id or name: {loc_def}")
+                if not loc_id:
+                    print(f"CampaignLoader: Skipping location due to missing id: {loc_def}")
                     continue
 
+                # Handle name_i18n
+                name_i18n = loc_def.get("name_i18n")
+                if not isinstance(name_i18n, dict) or not name_i18n:
+                    plain_name = loc_def.get("name")
+                    if plain_name:
+                        name_i18n = {default_lang: plain_name}
+                        print(f"CampaignLoader: Location ID '{loc_id}' missing 'name_i18n', using plain 'name' for default lang '{default_lang}'.")
+                    else:
+                        print(f"CampaignLoader: Skipping location ID '{loc_id}' due to missing 'name_i18n' and 'name'.")
+                        continue
+
+                # Handle description_i18n (for template description)
+                description_i18n = loc_def.get("description_i18n") # This should be the template's description
+                if not isinstance(description_i18n, dict) or not description_i18n:
+                    plain_description = loc_def.get("description")
+                    if plain_description:
+                        description_i18n = {default_lang: plain_description}
+                    else:
+                        description_i18n = {default_lang: "A place of little note."} # Default fallback
+
+                # Handle exits/connections - assuming exits_data is prepared as needed for db_service
+                # If world_map.json is used, its processing would happen here or be passed.
+                # For now, using existing simple connections logic, but this is where richer exit data would be integrated.
+                exits_data = {conn: conn for conn in loc_def.get("connections", [])}
+
+                # Handle other properties that might be stored in a 'properties' JSON field in the DB
+                # e.g., static_connections from world_map.json could be stored here if not directly mapped to exits.
+                properties = loc_def.get("properties", {})
+                if "exits" not in properties and loc_def.get("connections"): # Store raw connections if needed
+                    properties["raw_connections"] = loc_def.get("connections")
+
+
+                # Assuming db_service.create_location can handle name_i18n and description_i18n as dicts
+                # and will serialize them to JSON strings for DB storage.
                 try:
                     existing_loc = await self._db_service.get_location(loc_id, guild_id=guild_id)
                     if not existing_loc:
+                        # The call to create_location needs to be updated if its signature changes for i18n
+                        # For now, assuming it expects dicts for name_i18n and description_i18n
+                        # and a 'properties' field for other static data.
                         await self._db_service.create_location(
                             loc_id=loc_id,
-                            name=name,
-                            description=description,
+                            # name=name_i18n.get(default_lang, loc_id), # Old: pass plain name
+                            name_i18n=name_i18n, # New: pass dict
+                            # description=description_i18n.get(default_lang, ""), # Old: pass plain desc
+                            description_i18n=description_i18n, # New: pass dict (template desc)
                             guild_id=guild_id,
-                            exits=exits_data, # Pass connections as exits
-                            template_id=loc_def.get("template_id", loc_id) # Use id as template_id if not specified
+                            exits=exits_data,
+                            template_id=loc_def.get("template_id", loc_id),
+                            properties=properties # Pass other static properties
                         )
-                        print(f"CampaignLoader: Created location '{name}' (ID: {loc_id}) for guild '{guild_id}'.")
+                        display_name = name_i18n.get(default_lang, loc_id)
+                        print(f"CampaignLoader: Created location '{display_name}' (ID: {loc_id}) for guild '{guild_id}'.")
                     else:
-                        print(f"CampaignLoader: Location '{name}' (ID: {loc_id}) already exists for guild '{guild_id}', skipping.")
+                        display_name = name_i18n.get(default_lang, loc_id)
+                        print(f"CampaignLoader: Location '{display_name}' (ID: {loc_id}) already exists for guild '{guild_id}', skipping.")
                 except Exception as e:
                     print(f"CampaignLoader: Error creating location '{name}' (ID: {loc_id}) for guild '{guild_id}': {e}")
                     traceback.print_exc()
