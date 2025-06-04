@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from bot.game.managers.item_manager import ItemManager
     from bot.game.managers.location_manager import LocationManager # Potentially for context
     from bot.game.models.character import Character as CharacterModel
+    from bot.game.rules.rule_engine import RuleEngine
     # Item model might not be directly used if ItemManager returns dicts
     # from bot.game.models.item import Item
 
@@ -25,17 +26,21 @@ async def cmd_inventory(interaction: Interaction):
 
     try:
         if not bot.game_manager or \
-           not bot.game_manager.character_manager or \
-           not bot.game_manager.item_manager:
-            await interaction.followup.send("Error: Core game services (Character or Item Manager) are not fully initialized.", ephemeral=True)
+           not bot.game_manager.character_manager: # Item manager check will be done separately
+            await interaction.followup.send("Error: Core game services (Game Manager or Character Manager) are not fully initialized.", ephemeral=True)
             return
 
         character_manager: 'CharacterManager' = bot.game_manager.character_manager
+
+        if not bot.game_manager.item_manager:
+            await interaction.followup.send("Error: Item Manager is not available.", ephemeral=True)
+            return
         item_manager: 'ItemManager' = bot.game_manager.item_manager
+
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
 
-        character: Optional[CharacterModel] = await character_manager.get_character_by_discord_id(
+        character: Optional[CharacterModel] = character_manager.get_character_by_discord_id(
             guild_id=guild_id_str,
             discord_user_id=discord_user_id_int
         )
@@ -113,21 +118,27 @@ async def cmd_pickup(interaction: Interaction, item_name: str):
 
     try:
         if not bot.game_manager or \
-           not bot.game_manager.character_manager or \
-           not bot.game_manager.item_manager or \
-           not bot.game_manager.location_manager: # LocationManager might be needed for context or item finding
-            await interaction.followup.send("Error: Core game services are not fully initialized.", ephemeral=True)
+           not bot.game_manager.character_manager:
+            await interaction.followup.send("Error: Core game services (Game Manager or Character Manager) are not fully initialized.", ephemeral=True)
             return
-
         character_manager: 'CharacterManager' = bot.game_manager.character_manager
+
+        if not bot.game_manager.item_manager:
+            await interaction.followup.send("Error: Item Manager is not available.", ephemeral=True)
+            return
         item_manager: 'ItemManager' = bot.game_manager.item_manager
-        # location_manager: 'LocationManager' = bot.game_manager.location_manager # Available if needed
-        db_service_for_logging = bot.game_manager.db_service # Keep for logging for now
+
+        if not bot.game_manager.location_manager:
+            await interaction.followup.send("Error: Location Manager is not available.", ephemeral=True)
+            return
+        # location_manager: 'LocationManager' = bot.game_manager.location_manager # Define if used directly
+
+        db_service_for_logging = bot.game_manager.db_service # Keep for logging for now, assuming db_service is present if game_manager is
 
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
 
-        character: Optional[CharacterModel] = await character_manager.get_character_by_discord_id(
+        character: Optional[CharacterModel] = character_manager.get_character_by_discord_id(
             guild_id=guild_id_str,
             discord_user_id=discord_user_id_int
         )
@@ -250,7 +261,7 @@ async def cmd_equip(interaction: Interaction, item_name: str):
        not bot.game_manager.character_manager or \
        not bot.game_manager.item_manager or \
        not bot.game_manager.rule_engine:
-        await interaction.followup.send("Error: Core game services are not fully initialized.", ephemeral=True)
+        await interaction.followup.send("Error: Core game services (Character, Item, or RuleEngine Manager) are not fully initialized.", ephemeral=True)
         return
 
     char_manager: "CharacterManager" = bot.game_manager.character_manager
@@ -260,7 +271,7 @@ async def cmd_equip(interaction: Interaction, item_name: str):
     discord_user_id_int = interaction.user.id
 
     try:
-        character: Optional[CharacterModel] = await char_manager.get_character_by_discord_id(
+        character: Optional[CharacterModel] = char_manager.get_character_by_discord_id(
             guild_id=guild_id_str, discord_user_id=discord_user_id_int
         )
         if not character:
@@ -377,7 +388,7 @@ async def cmd_unequip(interaction: Interaction, slot_or_item_name: str):
        not bot.game_manager.character_manager or \
        not bot.game_manager.item_manager or \
        not bot.game_manager.rule_engine:
-        await interaction.followup.send("Error: Core game services are not fully initialized.", ephemeral=True)
+        await interaction.followup.send("Error: Core game services (Character, Item, or RuleEngine Manager) are not fully initialized.", ephemeral=True)
         return
 
     char_manager: "CharacterManager" = bot.game_manager.character_manager
@@ -387,7 +398,7 @@ async def cmd_unequip(interaction: Interaction, slot_or_item_name: str):
     discord_user_id_int = interaction.user.id
 
     try:
-        character: Optional[CharacterModel] = await char_manager.get_character_by_discord_id(
+        character: Optional[CharacterModel] = char_manager.get_character_by_discord_id(
             guild_id=guild_id_str, discord_user_id=discord_user_id_int
         )
         if not character:
