@@ -458,7 +458,7 @@ async def cmd_end_turn(interaction: Interaction):
             return
 
         char_model.current_game_status = 'ожидание_обработку'
-        char_model.collected_actions_json = "[]" # Changed attribute name
+        # Removed: char_model.collected_actions_json = "[]"
 
         character_manager.mark_character_dirty(guild_id, char_model.id)
         await character_manager.save_character(char_model, guild_id=guild_id) # Assuming save_character is async

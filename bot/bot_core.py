@@ -2,12 +2,10 @@
 
 import os
 import json
-import logging
 import discord
 import asyncio
 import traceback
-from typing import Optional, Dict, Any, List, cast
-from discord.abc import Messageable # Added for global_send_message
+from typing import Optional, Dict, Any, List
 
 # Правильные импорты для slash commands и контекста
 from discord.ext import commands # Changed to commands.Bot
@@ -26,9 +24,6 @@ from bot.game.managers.game_manager import GameManager
 # PersistenceManager из main.py не используется, GameManager создает свой SqliteAdapter
 # from bot.game.persistence import PersistenceManager
 
-# Импорт парсера действий игрока
-from bot.nlu.player_action_parser import parse_player_action
-
 # Импорты функций команд (Они должны быть определены в этих файлах и затем импортированы здесь)
 import bot.command_modules.general_cmds
 import bot.command_modules.game_setup_cmds
@@ -36,7 +31,6 @@ import bot.command_modules.exploration_cmds
 import bot.command_modules.action_cmds
 import bot.command_modules.inventory_cmds
 import bot.command_modules.utility_cmds
-from bot.command_modules.master_cmds import MasterCommandsCog
 # Импортируйте другие command_modules здесь
 
 
@@ -85,14 +79,21 @@ def load_settings_from_file(file_path: str) -> Dict[str, Any]:
 
 # --- Definition of the RPGBot class ---
 class RPGBot(commands.Bot): # Changed base class to commands.Bot
-    def __init__(self, game_manager: Optional[GameManager], openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
+    def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
         super().__init__(command_prefix=command_prefix, intents=intents)
-        self.game_manager: Optional[GameManager] = game_manager
+        self.game_manager = game_manager
         self.debug_guild_ids = debug_guild_ids # Store it for later use in on_ready tree sync
         self.openai_service = openai_service # Though game_manager might also hold a reference to it
 
-        # global_openai_service and global_game_manager are removed as per refactoring.
-        # Command modules should access these via interaction.client (RPGBot instance).
+        # TODO: Review if global_openai_service is still needed by any command module directly
+        # If so, they need to be updated to use self.openai_service or self.game_manager.openai_service
+        global global_openai_service
+        global_openai_service = self.openai_service
+
+        # TODO: Review global_game_manager usage in command modules.
+        # Commands should ideally get GameManager via ctx.bot.game_manager
+        global global_game_manager
+        global_game_manager = self.game_manager
 
         # self.add_application_commands_from_modules() # This will be handled by setup_hook
 
@@ -148,11 +149,7 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
 
 
     async def on_ready(self):
-        if self.user:
-            print(f'Logged in as {self.user.name} ({self.user.id})')
-        else:
-            print("Error: Bot user object not available on_ready.")
-            print('Logged in, but self.user is None initially.') # Should be populated by login
+        print(f'Logged in as {self.user.name} ({self.user.id})')
         if self.game_manager:
             print("GameManager is initialized in RPGBot.")
 
@@ -168,188 +165,45 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
             print("Command tree synced globally.")
         print('Bot is ready!')
 
-    async def on_message(self, message: discord.Message):
-        # Ignore messages from bots
-        if message.author.bot:
-            return
+    def add_application_commands_from_modules(self):
+        # This approach assumes command functions are decorated with @slash_command
+        # and are available in the imported modules.
+        # discord.py V2 automatically discovers these in cogs or if added via self.add_application_command.
+        # For functions directly decorated, we need to add them to the CommandTree.
 
-        # Ignore messages starting with the command prefix (these are handled by process_commands)
-        if message.content.startswith(str(self.command_prefix)):
-            await self.process_commands(message)
-            return
+        # General commands
+        self.tree.add_command(bot.command_modules.general_cmds.cmd_ping)
 
-        # Basic check for guild messages only (NLU might not apply to DMs in the same way)
-        if not message.guild:
-            return
+        # Game setup commands
+        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_game) # Placeholder
+        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_join_game) # Placeholder
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_new_character) # New /start command
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_bot_language) # Add new /set_bot_language command
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_master_channel)
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_system_channel)
+        # TODO: Add other game_setup_cmds (set_gm, set_gm_channel, etc.)
 
-        # Retrieve GameManager
-        if not self.game_manager:
-            logging.warning("GameManager not available in on_message.")
-            return
+        # Exploration commands
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_look)
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_move)
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_check)
 
-        if not self.game_manager.character_manager:
-            logging.warning("NLU: CharacterManager not available in on_message. Cannot process message for NLU or character interaction.")
-            return
+        # Action commands
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_interact) # Placeholder, needs refactor
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_fight) # Refactored from cmd_attack
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_talk)
 
-        # NLU processing should not happen for DMs if guild_id is essential for NLU context
-        # The check `if not guild_id_str:` later handles this, but good to be aware.
+        # Inventory commands
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_inventory)
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_pickup)
 
-        # No direct CharacterManager on RPGBot, it's within GameManager
-        # character_manager = self.game_manager.character_manager # Assuming this path exists
+        # Utility commands
+        self.tree.add_command(bot.command_modules.utility_cmds.cmd_undo)
+        self.tree.add_command(bot.command_modules.utility_cmds.cmd_lang) # Add the new /lang command
 
-        # Attempt to fetch the player's Character object
-        try:
-            # Assuming GameManager has a method to get a character by discord_user_id and guild_id
-            # This might involve going through a CharacterManager instance held by GameManager
-            # For example: character = await self.game_manager.character_manager.get_character_by_discord_id(message.author.id, message.guild.id)
-            # The exact method depends on GameManager's implementation.
-            # For now, let's assume a placeholder or a direct way if RPGBot is tightly coupled.
-            
-            # Placeholder: Direct access or a simplified method for fetching character
-            # In a real scenario, this would be:
-            # character = await self.game_manager.character_manager.get_character_by_discord_id(
-            # user_id=message.author.id, guild_id=message.guild.id
-            # )
-            # For the purpose of this subtask, we'll assume such a character object can be fetched.
-            # We need to simulate fetching or get a placeholder for `current_game_status`.
-            # Since we don't have the Character model definition here, we'll use a mock approach.
-
-            # SIMULATED: Fetch character (replace with actual call when CharacterManager is integrated)
-            # This part is tricky without knowing the exact Character model and CharacterManager API.
-            # Let's assume game_manager has a method like `get_character_status_for_nlu`
-            
-            # To interact with CharacterManager, we'd typically do:
-            char_model = await self.game_manager.character_manager.get_character_by_discord_id(
-                discord_user_id=message.author.id, # Changed user_id to discord_user_id
-                guild_id=str(message.guild.id)
-            )
-
-            if not char_model:
-                logging.warning(f"NLU: No character found for User {message.author.id} in Guild {message.guild.id}. Message ignored for NLU.")
-                return
-
-            if char_model: # This check is now slightly redundant due to the one above, but harmless
-                logging.debug(f"NLU: Character {char_model.id} found for User {message.author.id}.")
-                busy_statuses = ['бой', 'диалог', 'торговля']
-                if char_model.current_game_status not in busy_statuses:
-                    logging.info(f"NLU: Processing message for User {message.author.id} (CharID: {char_model.id}, Guild: {message.guild.id}): \"{message.content}\"")
-                    
-                    language = char_model.selected_language if char_model.selected_language else "en"
-                    logging.info(f"NLU: Detected language for User {message.author.id}: {language}")
-
-                    nlu_service = self.game_manager.nlu_data_service
-                    guild_id_str = str(message.guild.id) # Already checked message.guild is not None
-
-                    if nlu_service:
-                        logging.debug(f"NLU: NLUDataService is available. Fetching game terms for Guild {guild_id_str}, Lang {language}.")
-                        # Potentially log count of entities if NLUDataService returns that, or do it in NLUDataService itself.
-                    else:
-                        logging.warning(f"NLU: NLUDataService is NOT available. Parsing will use fallbacks.")
-
-                    try:
-                        # CRITICAL: parse_player_action is now async, so it needs to be awaited.
-                        parsed_action = await parse_player_action(
-                            text=message.content,
-                            language=language,
-                            guild_id=guild_id_str,
-                            game_terms_db=nlu_service
-                        )
-
-                        if parsed_action:
-                            intent, entities = parsed_action
-                            logging.info(f"NLU: Recognized for User {message.author.id}: Intent='{intent}', Entities={entities}")
-                            
-                            action_data = {"intent": intent, "entities": entities, "original_text": message.content}
-                            
-                            # Action accumulation logic
-                            actions_list = []
-                            if char_model.собранные_действия_JSON:
-                                try:
-                                    actions_list = json.loads(char_model.собранные_действия_JSON)
-                                    if not isinstance(actions_list, list): # Ensure it's a list
-                                        actions_list = [actions_list] # Convert to list if it was a single dict
-                                except json.JSONDecodeError:
-                                    logging.warning(f"NLU: Could not parse existing собранные_действия_JSON for char {char_model.id}. Initializing new list.")
-                                    actions_list = []
-                            
-                            actions_list.append(action_data)
-                            updated_actions_json = json.dumps(actions_list)
-                            
-                            logging.debug(f"NLU: Appending action for User {message.author.id}. New actions JSON: {updated_actions_json}")
-                            
-                            char_model.собранные_действия_JSON = updated_actions_json
-                            
-                            # Mark character as dirty before saving
-                            self.game_manager.character_manager.mark_character_dirty(str(message.guild.id), char_model.id)
-                            try:
-                                # Call save_character instead of update_character
-                                await self.game_manager.character_manager.save_character(char_model, guild_id=str(message.guild.id))
-                                logging.info(f"NLU: Successfully saved character {char_model.id} with accumulated actions JSON.")
-                            except Exception as char_save_err:
-                                logging.error(f"NLU: Failed to save character {char_model.id} after NLU parsing: {char_save_err}", exc_info=True)
-                        else:
-                            logging.info(f"NLU: No action recognized for User {message.author.id} (Lang: {language}): \"{message.content}\"")
-
-                    except Exception as nlu_err:
-                        logging.error(f"NLU: Error during NLU processing or character update for User {message.author.id}: {nlu_err}", exc_info=True)
-                else: # Player is in a 'busy' state (бой, диалог, торговля)
-                    current_status = char_model.current_game_status
-                    logging.info(f"Input: User {message.author.id} (CharID: {char_model.id}) is in '{current_status}' state. Raw message: \"{message.content}\"")
-
-                    if current_status == 'диалог':
-                        if self.game_manager and self.game_manager.dialogue_manager: # Added check for game_manager itself too
-                            logging.debug(f"Input: Routing message from {char_model.name} to DialogueManager.")
-                            try:
-                                await self.game_manager.dialogue_manager.process_player_dialogue_message(
-                                    character=char_model,
-                                    message_text=message.content,
-                                    channel_id=message.channel.id,
-                                    guild_id=str(message.guild.id) # Pass guild_id
-                                )
-                            except Exception as dialogue_err:
-                                logging.error(f"Input: Error calling process_player_dialogue_message for {char_model.name}: {dialogue_err}", exc_info=True)
-                        else:
-                            logging.warning(f"Input: DialogueManager not available (or GameManager is None) for character {char_model.name} in 'диалог' state.")
-
-                    elif current_status == 'бой':
-                        # Combat is typically command-driven. Raw text might be for chat or out-of-band communication.
-                        # For now, just log. If specific raw text parsing is needed in combat,
-                        # a CombatManager.process_player_combat_message could be implemented.
-                        logging.info(f"Input: Message from {char_model.name} received while in 'бой' state. Content: \"{message.content}\". (Typically command-driven)")
-                        # Example if a handler was to be added:
-                        # if hasattr(self.game_manager, 'combat_manager') and self.game_manager.combat_manager:
-                        #     await self.game_manager.combat_manager.process_player_combat_message(char_model, message.content, message.channel.id)
-
-                    elif current_status == 'торговля':
-                        # Similar to dialogue, a TradeManager could handle raw text.
-                        # For now, just log.
-                        logging.info(f"Input: Message from {char_model.name} received while in 'торговля' state. Content: \"{message.content}\".")
-                        # Example if a handler was to be added:
-                        # if hasattr(self.game_manager, 'trade_manager') and self.game_manager.trade_manager:
-                        #     await self.game_manager.trade_manager.process_player_trade_message(char_model, message.content, message.channel.id)
-                    
-                    else:
-                        # Should not happen if busy_statuses list is accurate
-                        logging.warning(f"Input: User {message.author.id} (CharID: {char_model.id}) in unhandled busy status '{current_status}'. Message: \"{message.content}\"")
-            else:
-                logging.debug(f"NLU: No character found for User {message.author.id} in Guild {message.guild.id}. Message: \"{message.content}\"")
-
-        except Exception as e:
-            logging.error(f"NLU: Error in on_message NLU handling for User {message.author.id}: {e}", exc_info=True)
-
-        # Important: ensure commands are still processed if the message wasn't handled by NLU
-        # or if NLU is meant to augment rather than replace commands.
-        # If the message started with a prefix, it's already handled above.
-        # If NLU is intended for non-prefix messages, then process_commands might not be needed here
-        # unless you have a system where non-prefixed messages can also be commands.
-        # For now, if it didn't start with a prefix and wasn't handled by NLU to consume it,
-        # it might be ignored or passed to a default handler if one existed.
-        # commands.Bot processes commands based on prefix, so non-prefixed messages are generally ignored
-        # by the command processing system unless explicitly handled by on_message.
-        # The current structure already calls self.process_commands for prefixed messages.
-        # Non-prefixed messages are now flowing through the NLU logic.
-
-    # add_application_commands_from_modules method removed as its logic is moved to setup_hook.
+        # Simulation Trigger Command
+        # cmd_gm_simulate is already an app_command.Command, so it should be added directly.
+        self.tree.add_command(cmd_gm_simulate) # Defined below
 
 # --- Global Helper for sending messages (e.g., from GameManager) ---
 # This needs access to the bot instance.
@@ -361,21 +215,15 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
     if _rpg_bot_instance_for_global_send:
         channel = _rpg_bot_instance_for_global_send.get_channel(channel_id)
         if channel:
-            if isinstance(channel, discord.abc.Messageable):
-                try:
-                    await channel.send(content, **kwargs)
-                except Exception as e:
-                    print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
-            else:
-                # Log this appropriately
-                print(f"Warning: Channel {channel_id} is not Messageable (type: {type(channel)}). Cannot send message globally.")
-        else: # This else corresponds to 'if channel:' after removing the redundant block
+            try:
+                await channel.send(content, **kwargs)
+            except Exception as e:
+                print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
+        else:
             print(f"Warning: Channel {channel_id} not found by global_send_message.")
     else:
         print("Warning: _rpg_bot_instance_for_global_send not set. Cannot send message.")
 
-def get_bot_instance() -> Optional[RPGBot]:
-    return _rpg_bot_instance_for_global_send
 
 # --- Simulation Trigger Command (GM only) - DEFINITION as a separate function ---
 # Accesses GameManager via ctx.bot.game_manager if commands are structured as Cogs or similar.
@@ -392,49 +240,25 @@ async def cmd_gm_simulate(interaction: Interaction): # Changed ctx to interactio
         await interaction.response.send_message("Error: Bot instance is not configured correctly.", ephemeral=True)
         return
 
-    # bot_instance is now confirmed to be RPGBot
     game_mngr = bot_instance.game_manager
-    if not game_mngr:
-        await interaction.response.send_message("Error: GameManager not available on bot instance.", ephemeral=True)
-        return
 
-    # Permissions checks
-    if not is_master_or_admin(interaction, game_mngr):
-        await interaction.response.send_message("**Мастер:** Только Истинный Мастер может управлять ходом времени!", ephemeral=True)
-        return
-
-    if not is_gm_channel(interaction, game_mngr):
-        await interaction.response.send_message("**Мастер:** Эту команду можно использовать только в специальном канале Мастера Игры.", ephemeral=True)
-        return
+    # TODO: Update is_master_or_admin and is_gm_channel to accept interaction and use game_mngr
+    # from bot.command_modules.game_setup_cmds import is_master_or_admin
+    # For now, assume it's okay or True for testing this structural change
+    # if not is_master_or_admin(interaction, game_mngr): # Placeholder for updated check
+    #     await interaction.response.send_message("**Мастер:** Только Истинный Мастер может управлять ходом времени!", ephemeral=True)
+    #     return
 
     await interaction.response.defer(ephemeral=True) # Defer response
 
-    if game_mngr and game_mngr._world_simulation_processor:
-        try:
-            # Get the context from GameManager
-            guild_id_str = str(interaction.guild_id)
-            if not guild_id_str: # Should not happen with guild commands, but good practice
-                 await interaction.followup.send("**Мастер:** Не удалось определить ID сервера для симуляции.", ephemeral=True)
-                 return
-
-            tick_context = game_mngr.get_world_simulation_context(guild_id_str)
-            
-            # Filter out None values from context as WSP might not expect them
-            # (or if get_world_simulation_context guarantees no Nones for required keys, this could be removed)
-            tick_context_filtered = {k: v for k, v in tick_context.items() if v is not None}
-
-            await game_mngr._world_simulation_processor.process_world_tick(
-                game_time_delta=game_mngr._tick_interval_seconds, # Using default interval
-                **tick_context_filtered
-            )
-            await interaction.followup.send("**Мастер:** Шаг симуляции мира завершен!")
-        except Exception as e:
-            logging.error(f"Error in cmd_gm_simulate calling process_world_tick: {e}", exc_info=True)
-            await interaction.followup.send(f"**Мастер:** Ошибка при выполнении шага симуляции: {e}", ephemeral=True)
-    elif not game_mngr:
-        await interaction.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен.", ephemeral=True)
-    else: # game_mngr exists but _world_simulation_processor is None
-        await interaction.followup.send("**Мастер:** WorldSimulationProcessor не доступен. Невозможно запустить симуляцию.", ephemeral=True)
+    if game_mngr:
+        await game_mngr.run_simulation_tick(
+            server_id=interaction.guild_id, # Use interaction.guild_id
+            # send_message_callback is handled by GameManager's internal setup
+        )
+        await interaction.followup.send("**Мастер:** Шаг симуляции мира завершен!")
+    else:
+        await interaction.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен или игра не начата. Используйте `/start_game`.")
 
 
 # --- Main Bot Entry Point ---
@@ -515,8 +339,10 @@ async def start_bot():
     )
     rpg_bot.game_manager = game_manager # Now set the game_manager in RPGBot
 
-    # global_game_manager removed as per refactoring.
-    # Command modules should access GameManager via interaction.client.game_manager.
+    # Update the global_game_manager reference now that it's fully initialized
+    # TODO: phase this out by updating command modules
+    global global_game_manager
+    global_game_manager = game_manager
 
     print("GameManager instantiated. Running setup...")
     try:
