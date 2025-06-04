@@ -163,8 +163,12 @@ async def cmd_start_new_character(interaction: Interaction, name: str, race: str
         # For now, use the input `race` parameter for the message.
         char_race_display = race
 
+        # Assuming new_char_model.level is available and defaults to 1
+        char_level_display = new_char_model.level if hasattr(new_char_model, 'level') else 1
+
         response_message = (
-            f"Welcome, {char_name_display} the {char_race_display}! Your adventure begins in {location_name_display}.\n"
+            f"Welcome, {char_name_display} the {char_race_display} (Level {char_level_display})! "
+            f"Your adventure begins in {location_name_display}.\n"
             f"Use `/look` to see your surroundings."
         )
         await interaction.followup.send(response_message, ephemeral=False)

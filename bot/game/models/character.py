@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field # Import dataclass and field
+from bot.utils.i18n_utils import get_i18n_text # Import the new utility
 
 # TODO: Импортировать другие модели, если Character имеет на них ссылки (напр., Item)
 # from bot.game.models.item import Item
@@ -11,9 +12,10 @@ from dataclasses import dataclass, field # Import dataclass and field
 class Character:
     id: str
     discord_user_id: int
-    name: str # Derived from name_i18n based on selected_language, populated by from_dict
+    # name: str # This will become a property
     name_i18n: Dict[str, str] # e.g., {"en": "Name", "ru": "Имя"}
     guild_id: str
+    selected_language: Optional[str] = "en" # Player's preferred language, default to 'en'
     
     location_id: Optional[str] = None
     stats: Dict[str, Any] = field(default_factory=dict) # e.g., {"health": 100, "mana": 50, "strength": 10, "intelligence": 12}
@@ -53,7 +55,7 @@ class Character:
     # 'char_class' is fine.
 
     # New fields for player status and preferences
-    selected_language: Optional[str] = None # Player's preferred language
+    # selected_language: Optional[str] = None # Player's preferred language - MOVED UP
     current_game_status: Optional[str] = None # E.g., "active", "paused", "in_tutorial"
     collected_actions_json: Optional[str] = None # JSON string of collected actions (DB column name)
     current_party_id: Optional[str] = None # ID of the party the player is currently in (fk to parties table)
@@ -85,6 +87,22 @@ class Character:
         if 'intelligence' not in self.stats:
             self.stats['intelligence'] = 10 # Default intelligence
 
+    @property
+    def name(self) -> str:
+        """Returns the internationalized name of the character."""
+        # Assumes GameManager.get_default_bot_language() will be the ultimate source for default_lang.
+        # For now, hardcoding "en" as a fallback if self.selected_language is None.
+        # A more robust solution would involve passing game_manager or settings to access the global default.
+        # However, selected_language should ideally always be set for a character.
+        character_specific_lang = self.selected_language if self.selected_language else "en"
+        # The default_lang for get_i18n_text should ideally be the global default ("en" typically)
+        return get_i18n_text(self.to_dict_for_i18n_name(), "name", character_specific_lang, "en")
+
+    def to_dict_for_i18n_name(self) -> Dict[str, Any]:
+        """Helper to provide a dictionary structure for get_i18n_text for the name property."""
+        return {"name_i18n": self.name_i18n, "id": self.id}
+
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Character:
         """Creates a Character instance from a dictionary."""
@@ -93,25 +111,23 @@ class Character:
         if 'id' not in data or 'discord_user_id' not in data:
             raise ValueError("Missing core fields (id, discord_user_id) for Character.from_dict")
 
-        # Ensure name_i18n exists, derive name if not present directly
-        if 'name_i18n' not in data and 'name' in data: # Backwards compatibility if only 'name' is provided
-            data['name_i18n'] = {'en': data['name'], 'ru': data['name']} # Simple default
-        elif 'name_i18n' not in data:
-             raise ValueError("Missing 'name_i18n' (and 'name') for Character.from_dict")
-
-        if 'name' not in data: # If 'name' is not pre-derived by CharacterManager
-            selected_lang = data.get('selected_language', 'en')
-            name_i18n_dict = data.get('name_i18n', {})
-            data['name'] = name_i18n_dict.get(selected_lang, list(name_i18n_dict.values())[0] if name_i18n_dict else data.get('id'))
+        if 'name_i18n' not in data:
+            if 'name' in data: # Backwards compatibility if only 'name' (string) is provided
+                print(f"Warning: Character '{data.get('id')}' is missing 'name_i18n', creating from 'name'. Consider updating data source.")
+                data['name_i18n'] = {'en': data['name']} # Default to English
+            else: # If neither name_i18n nor name is present
+                print(f"Warning: Character '{data.get('id')}' is missing 'name_i18n' and 'name'. Using ID as fallback name.")
+                data['name_i18n'] = {'en': data['id']}
 
 
         # Populate known fields, providing defaults for new/optional ones if missing in data
         init_data = {
             'id': data.get('id'),
             'discord_user_id': data.get('discord_user_id'),
-            'name': data.get('name'), # Derived name
-            'name_i18n': data.get('name_i18n'), # Source of truth for name
+            # 'name' is now a property, not passed to __init__
+            'name_i18n': data.get('name_i18n'),
             'guild_id': data.get('guild_id'),
+            'selected_language': data.get('selected_language', "en"), # Default to "en"
             'location_id': data.get('location_id'),
             'stats': data.get('stats', {}),
             'inventory': data.get('inventory', []),
@@ -143,7 +159,7 @@ class Character:
             'skills': data.get('skills', {}),
             'known_abilities': data.get('known_abilities', []),
 
-            'selected_language': data.get('selected_language'),
+            # 'selected_language' moved up
             'current_game_status': data.get('current_game_status'),
             'collected_actions_json': data.get('collected_actions_json', data.get('собранные_действия_JSON')), # Handle old key
             'current_party_id': data.get('current_party_id'),
@@ -158,25 +174,21 @@ class Character:
 
     def to_dict(self) -> Dict[str, Any]:
         """Converts the Character instance to a dictionary for serialization."""
-        # dataclasses.asdict(self) could be used for simple cases,
-        # but a manual approach gives more control if needed (e.g., for complex objects in fields)
-        # For now, a direct mapping of fields should be fine.
-        
         # Ensure stats reflects current health/max_health before saving
-        # This is important if self.hp is modified directly elsewhere
-        # and should be the source of truth for stats dict.
-        if self.stats is None: self.stats = {} # Should be initialized by default_factory
+        if self.stats is None: self.stats = {}
         self.stats['hp'] = self.hp
         self.stats['max_health'] = self.max_health
         
-        # Return name for convenience, though name_i18n is the source
-        # CharacterManager's save_character will primarily use name_i18n for the 'name' DB column.
+        # name_i18n is the source of truth. The 'name' property handles dynamic lookup.
+        # When serializing, we primarily need name_i18n.
+        # Including 'name' (the resolved one) can be useful for debugging or direct display if lang is fixed.
         return {
             "id": self.id,
             "discord_user_id": self.discord_user_id,
-            "name": self.name,
+            "name": self.name, # Include the resolved name for convenience
             "name_i18n": self.name_i18n,
             "guild_id": self.guild_id,
+            "selected_language": self.selected_language,
             "location_id": self.location_id,
             "stats": self.stats,
             "inventory": self.inventory, # Assuming items are dicts or simple serializable objects

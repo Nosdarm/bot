@@ -2,6 +2,7 @@ from __future__ import annotations
 import uuid
 from typing import Dict, Any, List, Optional
 from bot.game.models.base_model import BaseModel
+from bot.utils.i18n_utils import get_i18n_text # Import the new utility
 
 class Quest(BaseModel):
     """
@@ -11,6 +12,7 @@ class Quest(BaseModel):
                  id: Optional[str] = None,
                  name_i18n: Optional[Dict[str, str]] = None,
                  description_i18n: Optional[Dict[str, str]] = None,
+                 selected_language: Optional[str] = "en", # Language context
                  status: str = "available",
                  influence_level: str = "local",
                  prerequisites: Optional[List[str]] = None,
@@ -118,17 +120,70 @@ class Quest(BaseModel):
 
         # Add a 'consequences' field for generated quests, distinct from 'connections'
         self.consequences: Dict[str, Any] = {} # Parsed from consequences_json_str by manager if needed
+        self.selected_language = selected_language if selected_language else "en"
 
+
+    def _get_current_lang(self) -> str:
+        return self.selected_language or "en"
+
+    def _get_i18n_data_for_quest(self) -> Dict[str, Any]:
+        """Helper to provide a dictionary structure for get_i18n_text for quest properties."""
+        return {
+            "name_i18n": self.name_i18n,
+            "description_i18n": self.description_i18n,
+            "quest_giver_details_i18n": self.quest_giver_details_i18n,
+            "consequences_summary_i18n": self.consequences_summary_i18n,
+            "id": self.id # Fallback for name
+        }
 
     @property
     def name(self) -> str:
-        """Provides a plain text name for the quest, derived from name_i18n."""
-        # Assuming a default language preference can be accessed, e.g., from settings or a global context.
-        # For simplicity, using 'en' or the first available language.
-        default_lang = "en" # This could be configurable
-        if self.name_i18n:
-            return self.name_i18n.get(default_lang, next(iter(self.name_i18n.values()), str(self.id)))
-        return str(self.id) # Fallback to ID if name_i18n is empty or not set
+        """Provides the internationalized name for the quest."""
+        return get_i18n_text(self._get_i18n_data_for_quest(), "name", self._get_current_lang(), "en")
+
+    @property
+    def description(self) -> str:
+        """Provides the internationalized description for the quest."""
+        return get_i18n_text(self._get_i18n_data_for_quest(), "description", self._get_current_lang(), "en")
+
+    @property
+    def quest_giver_details(self) -> str:
+        """Provides the internationalized quest giver details."""
+        return get_i18n_text(self._get_i18n_data_for_quest(), "quest_giver_details", self._get_current_lang(), "en")
+
+    @property
+    def consequences_summary(self) -> str:
+        """Provides the internationalized consequences summary."""
+        return get_i18n_text(self._get_i18n_data_for_quest(), "consequences_summary", self._get_current_lang(), "en")
+
+    def get_stage_title(self, stage_id: str) -> str:
+        """Gets the internationalized title for a specific quest stage."""
+        stage = self.stages.get(stage_id)
+        if not stage:
+            return f"Stage '{stage_id}' not found"
+        # Pass the stage itself as data_dict to get_i18n_text
+        return get_i18n_text(stage, "title", self._get_current_lang(), "en")
+
+    def get_stage_description(self, stage_id: str) -> str:
+        """Gets the internationalized description for a specific quest stage."""
+        stage = self.stages.get(stage_id)
+        if not stage:
+            return f"Stage '{stage_id}' not found"
+        return get_i18n_text(stage, "description", self._get_current_lang(), "en")
+
+    def get_stage_requirements_description(self, stage_id: str) -> str:
+        """Gets the internationalized requirements description for a specific quest stage."""
+        stage = self.stages.get(stage_id)
+        if not stage:
+            return f"Stage '{stage_id}' not found"
+        return get_i18n_text(stage, "requirements_description", self._get_current_lang(), "en")
+
+    def get_stage_alternative_solutions(self, stage_id: str) -> str:
+        """Gets the internationalized alternative solutions for a specific quest stage."""
+        stage = self.stages.get(stage_id)
+        if not stage:
+            return f"Stage '{stage_id}' not found"
+        return get_i18n_text(stage, "alternative_solutions", self._get_current_lang(), "en")
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes the Quest object to a dictionary."""
@@ -136,6 +191,7 @@ class Quest(BaseModel):
         data.update({
             "name_i18n": self.name_i18n,
             "description_i18n": self.description_i18n,
+            "selected_language": self.selected_language,
             "status": self.status,
             "influence_level": self.influence_level,
             "prerequisites": self.prerequisites, # This is List[str] for standard quests
@@ -147,6 +203,11 @@ class Quest(BaseModel):
             "consequences_summary_i18n": self.consequences_summary_i18n,
             "guild_id": self.guild_id,
             "is_ai_generated": self.is_ai_generated,
+            # Resolved properties for convenience
+            "name": self.name,
+            "description": self.description,
+            "quest_giver_details": self.quest_giver_details,
+            "consequences_summary": self.consequences_summary,
             # Include raw JSON strings if they need to be persisted and were the source
             "stages_json_str": self.stages_json_str,
             "rewards_json_str": self.rewards_json_str,
@@ -231,7 +292,8 @@ class Quest(BaseModel):
             rewards_json_str=rewards_json_str,
             prerequisites_json_str=prerequisites_json_str,
             consequences_json_str=consequences_json_str,
-            ai_prompt_context_json_str=ai_prompt_context_json_str
+            ai_prompt_context_json_str=ai_prompt_context_json_str,
+            selected_language=data_copy.get("selected_language", "en")
         )
 
         # If consequences were passed as a parsed dict (not json string)

@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.dialogue_manager import DialogueManager
     from bot.game.managers.game_log_manager import GameLogManager
+    from bot.game.managers.lore_manager import LoreManager # Added for type hint
     from bot.game.services.campaign_loader import CampaignLoader
     from bot.game.services.consequence_processor import ConsequenceProcessor
     from bot.services.nlu_data_service import NLUDataService # For NLU Data Service
@@ -128,6 +129,7 @@ class GameManager:
         self.nlu_data_service: Optional["NLUDataService"] = None # For NLU Data Service
         self.ability_manager: Optional["AbilityManager"] = None # Added
         self.spell_manager: Optional["SpellManager"] = None   # Added
+        self.lore_manager: Optional["LoreManager"] = None # Added LoreManager attribute
         self.prompt_context_collector: Optional["PromptContextCollector"] = None
         self.multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None
 
@@ -204,6 +206,7 @@ class GameManager:
             from bot.services.nlu_data_service import NLUDataService # Import for instantiation
             from bot.game.managers.ability_manager import AbilityManager
             from bot.game.managers.spell_manager import SpellManager
+            from bot.game.managers.lore_manager import LoreManager # Import LoreManager for instantiation
             
             # Conflict Resolver and its data
             from bot.game.conflict_resolver import ConflictResolver
@@ -395,6 +398,10 @@ class GameManager:
                 self.nlu_data_service = None
                 print("GameManager: Warning: DB adapter is None, NLUDataService not instantiated.")
 
+            # LoreManager
+            self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_adapter=self._db_adapter)
+            print("GameManager: LoreManager instantiated.")
+
             print("GameManager: New services and managers instantiated.")
 
             # Процессоры и роутер команд (создание экземпляров)
@@ -530,7 +537,8 @@ class GameManager:
                      status_manager=self.status_manager,
                      crafting_manager=self.crafting_manager,
                      economy_manager=self.economy_manager,
-                     party_manager=self.party_manager # Может быть None
+                     party_manager=self.party_manager, # Может быть None
+                     lore_manager=self.lore_manager # Pass LoreManager
                      # TODO: PersistenceManager может нуждаться в других менеджерах
                  )
                  print("GameManager: PersistenceManager instantiated.")
@@ -621,6 +629,7 @@ class GameManager:
                     'relationship_manager': self.relationship_manager,
                     'dialogue_manager': self.dialogue_manager,
                     'game_log_manager': self.game_log_manager,
+                    'lore_manager': self.lore_manager, # Pass LoreManager
                     'campaign_loader': self.campaign_loader,
                     'consequence_processor': self.consequence_processor,
                     'on_enter_action_executor': self._on_enter_action_executor,
@@ -954,6 +963,7 @@ class GameManager:
                     'quest_manager': self.quest_manager,
                     'relationship_manager': self.relationship_manager,
                     'game_log_manager': self.game_log_manager,
+                    'lore_manager': self.lore_manager, # Pass LoreManager
                     'ability_manager': self.ability_manager,
                     'spell_manager': self.spell_manager,
                     'conflict_resolver': self.conflict_resolver, # For save context
@@ -1173,6 +1183,44 @@ class GameManager:
             return "en" # Hardcoded default if cache is missing
         return self._rules_config_cache.get('default_bot_language', 'en') # Default to 'en' if key is missing
 
+    def get_max_party_size(self) -> int:
+        """Gets the maximum party size from the cached rules configuration."""
+        default_size = 4
+        if self._rules_config_cache is None:
+            print("GameManager: Warning - RulesConfig cache is not populated. Defaulting max_party_size to 4.")
+            return default_size
+
+        party_rules = self._rules_config_cache.get('party_rules')
+        if not isinstance(party_rules, dict):
+            print(f"GameManager: Warning - 'party_rules' not found or not a dict in RulesConfig. Defaulting max_party_size to {default_size}.")
+            return default_size
+
+        max_size = party_rules.get('max_size')
+        if not isinstance(max_size, int):
+            print(f"GameManager: Warning - 'max_size' not found or not an int in party_rules. Defaulting max_party_size to {default_size}.")
+            return default_size
+
+        return max_size
+
+    def get_action_cooldown(self, action_type: str) -> float:
+        """Gets the action cooldown for a specific action_type from the cached rules configuration."""
+        default_cooldown = 5.0
+        if self._rules_config_cache is None:
+            print(f"GameManager: Warning - RulesConfig cache is not populated. Defaulting cooldown for '{action_type}' to {default_cooldown}s.")
+            return default_cooldown
+
+        cooldown_rules = self._rules_config_cache.get('action_rules', {}).get('cooldowns')
+        if not isinstance(cooldown_rules, dict):
+            print(f"GameManager: Warning - 'action_rules.cooldowns' not found or not a dict in RulesConfig. Defaulting cooldown for '{action_type}' to {default_cooldown}s.")
+            return default_cooldown
+
+        cooldown = cooldown_rules.get(action_type)
+        if not isinstance(cooldown, (float, int)): # Allow int, convert to float
+            print(f"GameManager: Warning - Cooldown for '{action_type}' not found or not a number in action_rules.cooldowns. Defaulting to {default_cooldown}s.")
+            return default_cooldown
+
+        return float(cooldown)
+
     async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
         """
         Sets the default bot language in the rules configuration and saves it to the database.
@@ -1274,6 +1322,7 @@ class GameManager:
                 'relationship_manager': self.relationship_manager,
                 'dialogue_manager': self.dialogue_manager,
                 'game_log_manager': self.game_log_manager,
+                            'lore_manager': self.lore_manager, # Pass LoreManager
                 'consequence_processor': self.consequence_processor,
                 'campaign_loader': self.campaign_loader,
                 'on_enter_action_executor': self._on_enter_action_executor,
