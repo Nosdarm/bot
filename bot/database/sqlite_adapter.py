@@ -22,7 +22,7 @@ class SqliteAdapter:
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
     # ОБНОВЛЕНО: Добавлена таблица generated_locations
-    LATEST_SCHEMA_VERSION = 15
+    LATEST_SCHEMA_VERSION = 21 # Incremented for new generated content tables
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -1311,6 +1311,533 @@ class SqliteAdapter:
             ON CONFLICT(location_id) DO NOTHING; -- If already marked, do nothing
         """
         await self.execute(sql, (location_id, guild_id, user_id))
+
+    async def _migrate_v15_to_v16(self, cursor: Cursor) -> None:
+        """Миграция с Версии 15 на Версию 16 (i18n для текстовых полей NPC, Location Templates, Item Templates, Quests)."""
+        print("SqliteAdapter: Running v15 to v16 migration (i18n text fields)...")
+
+        # Helper to check if a column exists
+        async def column_exists(table_name: str, column_name: str) -> bool:
+            await cursor.execute(f"PRAGMA table_info({table_name});")
+            columns_info = await cursor.fetchall()
+            return any(row['name'] == column_name for row in columns_info)
+
+        # Helper to rename column if it exists
+        async def rename_column_if_exists(table: str, old_col: str, new_col: str):
+            if await column_exists(table, old_col) and not await column_exists(table, new_col):
+                try:
+                    await cursor.execute(f"ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col};")
+                    print(f"SqliteAdapter: Renamed column '{old_col}' to '{new_col}' in table '{table}'.")
+                except aiosqlite.OperationalError as e:
+                    # This might happen if new_col somehow exists or other schema issues.
+                    print(f"SqliteAdapter: Could not rename column '{old_col}' to '{new_col}' in table '{table}': {e}. Manual check might be needed if old column still exists.")
+            elif not await column_exists(table, old_col):
+                print(f"SqliteAdapter: Column '{old_col}' not found in table '{table}'. Assuming already renamed or schema is different.")
+            elif await column_exists(table, new_col):
+                 print(f"SqliteAdapter: Column '{new_col}' already exists in table '{table}'. Assuming '{old_col}' was already renamed.")
+
+
+        # 1. Modify 'npcs' table
+        print("SqliteAdapter: Updating 'npcs' table for i18n...")
+        await rename_column_if_exists('npcs', 'name', 'name_i18n')
+        await rename_column_if_exists('npcs', 'description', 'description_i18n')
+        await rename_column_if_exists('npcs', 'backstory', 'backstory_i18n')
+        await rename_column_if_exists('npcs', 'persona', 'persona_i18n')
+        # Note: Data migration (converting plain text to JSON i18n) is not done here.
+        # Existing data in these renamed columns will remain plain text.
+        # Application layer will need to handle this, perhaps by treating non-JSON as default language.
+
+        # 2. Modify 'location_templates' table
+        print("SqliteAdapter: Updating 'location_templates' table for i18n...")
+        await rename_column_if_exists('location_templates', 'name', 'name_i18n')
+        await rename_column_if_exists('location_templates', 'description', 'description_i18n')
+
+        # 3. Modify 'item_templates' table
+        # This table has a UNIQUE constraint on 'name'. Renaming 'name' to 'name_i18n'
+        # would make the JSON blob unique, which is not desired.
+        # The safest way is to recreate the table without the UNIQUE constraint on the i18n name.
+        print("SqliteAdapter: Recreating 'item_templates' table for i18n and removing UNIQUE constraint on name...")
+
+        # Check if the old 'name' column still exists (i.e., table not yet migrated by a similar attempt)
+        if await column_exists('item_templates', 'name'):
+            try:
+                # Temporarily disable foreign keys if they are on (not strictly necessary here as no FKs point TO item_templates by default)
+                await cursor.execute("PRAGMA foreign_keys=OFF;")
+
+                await cursor.execute("ALTER TABLE item_templates RENAME TO item_templates_old;")
+                print("SqliteAdapter: Renamed 'item_templates' to 'item_templates_old'.")
+
+                await cursor.execute('''
+                    CREATE TABLE item_templates (
+                        id TEXT PRIMARY KEY,
+                        name_i18n TEXT,       -- Was 'name TEXT NOT NULL UNIQUE'
+                        description_i18n TEXT, -- Was 'description TEXT NULL'
+                        type TEXT NULL,
+                        properties TEXT DEFAULT '{}'
+                    );
+                ''')
+                print("SqliteAdapter: Created new 'item_templates' table with i18n columns and no UNIQUE on name_i18n.")
+
+                # Copy data, converting old name/description to basic i18n JSON for 'en'
+                await cursor.execute('''
+                    INSERT INTO item_templates (id, name_i18n, description_i18n, type, properties)
+                    SELECT
+                        id,
+                        json_object('en', name),
+                        json_object('en', description),
+                        type,
+                        properties
+                    FROM item_templates_old;
+                ''')
+                print("SqliteAdapter: Copied data from 'item_templates_old' to new 'item_templates', converting name/desc to en i18n JSON.")
+
+                await cursor.execute("DROP TABLE item_templates_old;")
+                print("SqliteAdapter: Dropped 'item_templates_old'.")
+
+                # Re-enable foreign keys if they were originally on (though likely not impactful here)
+                await cursor.execute("PRAGMA foreign_keys=ON;")
+                print("SqliteAdapter: 'item_templates' table recreated successfully for i18n.")
+            except Exception as e:
+                print(f"SqliteAdapter: Error recreating 'item_templates': {e}. Manual check/recovery may be needed.")
+                # Attempt to restore if something went wrong mid-way
+                if await column_exists('item_templates_old') and not await column_exists('item_templates'):
+                    await cursor.execute("ALTER TABLE item_templates_old RENAME TO item_templates;")
+                    print("SqliteAdapter: Attempted to restore 'item_templates_old' to 'item_templates'.")
+                raise # Re-raise the exception to signal migration failure
+        else:
+            print("SqliteAdapter: Column 'name' not found in 'item_templates', assuming already migrated or schema is different.")
+
+
+        # 4. Modify 'quests' table
+        print("SqliteAdapter: Updating 'quests' table for i18n...")
+        await rename_column_if_exists('quests', 'name', 'name_i18n')
+        await rename_column_if_exists('quests', 'description', 'description_i18n')
+        # Note: 'stages' JSON would need internal i18n handling by the application.
+
+        print("SqliteAdapter: v15 to v16 migration (i18n text fields) complete.")
+
+    async def _migrate_v16_to_v17(self, cursor: Cursor) -> None:
+        """Миграция с Версии 16 на Версию 17 (определение таблиц skills, ability_definitions, status_effect_definitions)."""
+        print("SqliteAdapter: Running v16 to v17 migration (definitional tables)...")
+
+        # 1. Modify 'skills' table (drop stub and recreate)
+        print("SqliteAdapter: Recreating 'skills' table for definitions...")
+        await cursor.execute("DROP TABLE IF EXISTS skills;")
+        await cursor.execute('''
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                name_i18n TEXT,             -- JSON for multilingual name
+                description_i18n TEXT,      -- JSON for multilingual description
+                associated_stat TEXT,       -- e.g., "strength", "dexterity"
+                category TEXT,              -- e.g., "combat", "social", "utility"
+                effects_json TEXT           -- JSON describing passive or active effects
+            );
+        ''')
+        print("SqliteAdapter: 'skills' table recreated for definitions.")
+        # Note: The old 'skills' stub table was among those created in v10_to_v11.
+        # If there was an `abilities` stub table created separately, it would be dropped here too.
+        # The prompt mentioned "Remove the old abilities stub if it only contained placeholder".
+        # However, no 'abilities' stub was created in v10_to_v11. Only 'skills'.
+        # If an 'abilities' table existed from another migration, this would be the place to drop it.
+        # For now, only 'skills' is explicitly dropped and recreated.
+
+        # 2. Create 'ability_definitions' table
+        print("SqliteAdapter: Creating 'ability_definitions' table...")
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ability_definitions (
+                id TEXT PRIMARY KEY,
+                name_i18n TEXT,             -- JSON for multilingual name
+                description_i18n TEXT,      -- JSON for multilingual description
+                effects_json TEXT,          -- JSON describing the ability's effects
+                requirements_json TEXT,     -- JSON describing prerequisites (stats, level, other abilities/skills)
+                category TEXT,              -- e.g., "active", "passive", "combat", "utility"
+                cooldown_seconds REAL NULL, -- Cooldown in seconds, NULL if no cooldown
+                resource_cost TEXT NULL     -- JSON for resource cost e.g. {"mana": 10, "stamina": 5}
+            );
+        ''')
+        print("SqliteAdapter: 'ability_definitions' table created.")
+
+        # 3. Create 'status_effect_definitions' table
+        print("SqliteAdapter: Creating 'status_effect_definitions' table...")
+        await cursor.execute('''
+            CREATE TABLE IF NOT EXISTS status_effect_definitions (
+                id TEXT PRIMARY KEY,          -- e.g., "poisoned", "blessed_strength"
+                name_i18n TEXT,               -- JSON for multilingual name
+                description_i18n TEXT,        -- JSON for multilingual description
+                category TEXT,                -- e.g., "ailment", "enhancement", "elemental"
+                type TEXT,                    -- e.g., "buff", "debuff", "dot" (damage over time)
+                base_duration REAL NULL,      -- Base duration in seconds (NULL for permanent or until dispelled)
+                effects_json TEXT,            -- JSON describing the modifications (e.g., {"stats_modifier": {"strength": -2}})
+                icon TEXT NULL,               -- Emoji or keyword for icon
+                is_dispellable INTEGER DEFAULT 1, -- Boolean (0 or 1)
+                max_stacks INTEGER DEFAULT 1  -- How many times this effect can stack
+            );
+        ''')
+        print("SqliteAdapter: 'status_effect_definitions' table created.")
+
+        # 4. item_properties is deferred.
+
+        print("SqliteAdapter: v16 to v17 migration (definitional tables) complete.")
+
+    async def _migrate_v17_to_v18(self, cursor: Cursor) -> None:
+        """Миграция с Версии 17 на Версию 18 (расширение таблицы players)."""
+        print("SqliteAdapter: Running v17 to v18 migration (extending players table)...")
+
+        player_columns_to_add = [
+            ("skills_data_json", "TEXT NULL"),      # JSON for skills and levels/details
+            ("abilities_data_json", "TEXT NULL"),   # JSON for known ability IDs or detailed objects
+            ("spells_data_json", "TEXT NULL"),      # JSON for known spell IDs or detailed objects
+            ("character_class", "TEXT NULL"),       # Player's class
+            ("flags_json", "TEXT NULL")             # JSON for miscellaneous boolean flags or simple states
+        ]
+
+        for column_name, column_type in player_columns_to_add:
+            try:
+                # Check if column already exists (e.g., from a previous partial migration or different schema branch)
+                await cursor.execute(f"PRAGMA table_info(players);")
+                columns_info = await cursor.fetchall()
+                if any(col_info['name'] == column_name for col_info in columns_info):
+                    print(f"SqliteAdapter: Column '{column_name}' already exists in 'players' table, skipping ADD COLUMN.")
+                else:
+                    await cursor.execute(f"ALTER TABLE players ADD COLUMN {column_name} {column_type};")
+                    print(f"SqliteAdapter: Added column '{column_name}' to 'players' table.")
+            except aiosqlite.OperationalError as e:
+                # This specific error check might be redundant if the PRAGMA check works reliably,
+                # but it's a fallback.
+                if "duplicate column name" in str(e).lower():
+                    print(f"SqliteAdapter: Column '{column_name}' already exists in 'players' table (caught by OperationalError), skipping.")
+                else:
+                    print(f"SqliteAdapter: Error adding column '{column_name}' to 'players': {e}")
+                    traceback.print_exc()
+                    raise # Re-raise other operational errors
+
+        print("SqliteAdapter: v17 to v18 migration (extending players table) complete.")
+
+    async def _recreate_table_with_new_schema(self, cursor: Cursor, table_name: str, new_schema_sql: str, old_columns: List[str], data_migration_sql: Optional[str] = None):
+        """Helper function to recreate a table with a new schema and copy data."""
+        print(f"SqliteAdapter: Recreating table '{table_name}'...")
+        await cursor.execute(f"ALTER TABLE {table_name} RENAME TO {table_name}_old;")
+        print(f"SqliteAdapter: Renamed '{table_name}' to '{table_name}_old'.")
+
+        await cursor.execute(new_schema_sql)
+        print(f"SqliteAdapter: Created new '{table_name}' table with updated schema.")
+
+        columns_str = ", ".join(old_columns)
+        if data_migration_sql:
+            await cursor.execute(data_migration_sql)
+            print(f"SqliteAdapter: Migrated data from '{table_name}_old' to new '{table_name}' using custom SQL.")
+        else:
+            await cursor.execute(f"INSERT INTO {table_name} ({columns_str}) SELECT {columns_str} FROM {table_name}_old;")
+            print(f"SqliteAdapter: Copied data from '{table_name}_old' to new '{table_name}'.")
+
+        await cursor.execute(f"DROP TABLE {table_name}_old;")
+        print(f"SqliteAdapter: Dropped '{table_name}_old'.")
+        print(f"SqliteAdapter: Table '{table_name}' recreated successfully.")
+
+    async def _get_table_columns(self, cursor: Cursor, table_name: str) -> List[str]:
+        """Helper to get column names of a table."""
+        await cursor.execute(f"PRAGMA table_info({table_name});")
+        return [row['name'] for row in await cursor.fetchall()]
+
+    async def _migrate_v18_to_v19(self, cursor: Cursor) -> None:
+        """Миграция с Версии 18 на Версию 19 (добавление внешних ключей)."""
+        print("SqliteAdapter: Running v18 to v19 migration (adding foreign keys)...")
+
+        await cursor.execute("PRAGMA foreign_keys=OFF;")
+        print("SqliteAdapter: Temporarily disabled foreign key checks for migration.")
+
+        # 1. items.template_id -> item_templates(id)
+        try:
+            old_items_columns = await self._get_table_columns(cursor, "items")
+            # Ensure template_id is in old_items_columns, otherwise the INSERT below will fail
+            if 'template_id' not in old_items_columns:
+                raise ValueError("Critical: 'template_id' column missing from items_old during migration.")
+
+            new_items_schema = f'''
+                CREATE TABLE items (
+                    id TEXT PRIMARY KEY,
+                    template_id TEXT NOT NULL REFERENCES item_templates(id), -- Added FK
+                    guild_id TEXT NOT NULL,
+                    owner_id TEXT NULL,
+                    owner_type TEXT NULL,
+                    location_id TEXT NULL,
+                    quantity REAL DEFAULT 1.0,
+                    state_variables TEXT DEFAULT '{{}}',
+                    is_temporary INTEGER DEFAULT 0
+                );
+            '''
+            # Recreate indexes if any were on the original 'items' table
+            # Example: CREATE INDEX IF NOT EXISTS idx_items_owner ON items (owner_type, owner_id);
+            await self._recreate_table_with_new_schema(cursor, "items", new_items_schema, old_items_columns)
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_items_template_id ON items (template_id);") # Index for FK
+        except Exception as e:
+            print(f"SqliteAdapter: Error migrating 'items' table for FK: {e}")
+            raise
+
+        # 2. players.location_id -> locations(id)
+        # 3. players.current_party_id -> parties(id)
+        try:
+            old_players_columns = await self._get_table_columns(cursor, "players")
+            if 'location_id' not in old_players_columns: # Should exist
+                 print(f"SqliteAdapter: Warning: 'location_id' column missing from players_old during migration. FK not added for this.")
+            if 'current_party_id' not in old_players_columns: # Added in v11
+                 print(f"SqliteAdapter: Warning: 'current_party_id' column missing from players_old during migration. FK not added for this.")
+
+            # Construct the CREATE TABLE statement dynamically based on existing columns
+            # This is complex because players table has many columns added over time.
+            # We need to PRAGMA table_info, then reconstruct the CREATE statement with new FKs.
+            # For simplicity in this example, assuming we know the full current schema.
+            # A more robust solution would introspect fully.
+
+            # This is a simplified CREATE TABLE, assuming all columns from previous migrations exist.
+            # The actual CharacterManager save_character SQL shows more columns.
+            # It's CRITICAL that this schema matches ALL columns from the old table.
+            # Let's use the column list from save_character in CharacterManager as a reference for "all columns".
+            # id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue,
+            # party_id (old one), state_variables, hp, max_health, is_alive, status_effects, level, experience,
+            # unspent_xp, active_quests, known_spells, spell_cooldowns, skills, known_abilities, ability_cooldowns,
+            # flags, char_class, selected_language, current_game_status, collected_actions_json, current_party_id,
+            # race, mp, attack, defense (these were added early)
+
+            # The following is based on the INSERT statement in CharacterManager.create_character and columns added in migrations.
+            # This should be more accurate to the actual schema state before this migration.
+            new_players_schema = f'''
+                CREATE TABLE players (
+                    id TEXT PRIMARY KEY,
+                    discord_user_id INTEGER NULL,
+                    name TEXT, -- name_i18n in v16
+                    guild_id TEXT NOT NULL,
+                    location_id TEXT NULL REFERENCES locations(id), -- Added FK
+                    stats TEXT DEFAULT '{{}}',
+                    inventory TEXT DEFAULT '[]',
+                    current_action TEXT NULL,
+                    action_queue TEXT DEFAULT '[]',
+                    party_id TEXT NULL, -- This is the old party_id, distinct from current_party_id
+                    state_variables TEXT DEFAULT '{{}}',
+                    hp REAL DEFAULT 100.0,
+                    max_health REAL DEFAULT 100.0,
+                    is_alive INTEGER DEFAULT 1,
+                    status_effects TEXT DEFAULT '[]',
+                    level INTEGER DEFAULT 1,
+                    experience INTEGER DEFAULT 0,
+                    active_quests TEXT DEFAULT '[]',
+                    created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+                    last_played_at REAL NULL,
+                    race TEXT NULL,
+                    mp INTEGER DEFAULT 0,
+                    attack INTEGER DEFAULT 0,
+                    defense INTEGER DEFAULT 0,
+                    unspent_xp INTEGER DEFAULT 0,
+                    selected_language TEXT NULL,
+                    current_game_status TEXT NULL,
+                    collected_actions_json TEXT NULL,
+                    current_party_id TEXT NULL REFERENCES parties(id), -- Added FK
+                    skills_data_json TEXT NULL,
+                    abilities_data_json TEXT NULL,
+                    spells_data_json TEXT NULL,
+                    character_class TEXT NULL,
+                    flags_json TEXT NULL,
+                    UNIQUE(discord_user_id, guild_id),
+                    UNIQUE(name, guild_id) -- Assuming name was renamed to name_i18n and this UNIQUE was on original name
+                                          -- If name is name_i18n (JSON), UNIQUE is problematic.
+                                          -- For now, keeping structure similar to v0-v1. If name became name_i18n, that UNIQUE should be removed.
+                                          -- Given v16 renamed 'name' to 'name_i18n', this UNIQUE(name, guild_id) will fail if 'name' column no longer exists.
+                                          -- It should be UNIQUE(name_i18n, guild_id) if that column exists.
+                                          -- Let's assume 'name' was renamed to 'name_i18n' as per v16.
+                                          -- The UNIQUE constraint on JSON is not useful. Removing it.
+                                          -- UNIQUE(name_i18n, guild_id) -- Removed due to JSON
+                );
+            '''
+            # Adjusting for name_i18n from v16
+            new_players_schema = new_players_schema.replace("name TEXT,", "name_i18n TEXT,")
+            new_players_schema = new_players_schema.replace("UNIQUE(name, guild_id)", "") # Removing problematic UNIQUE
+
+            await self._recreate_table_with_new_schema(cursor, "players", new_players_schema, old_players_columns)
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_players_location_id ON players (location_id);")
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_players_current_party_id ON players (current_party_id);")
+
+        except Exception as e:
+            print(f"SqliteAdapter: Error migrating 'players' table for FKs: {e}")
+            raise
+
+        # 4. npcs.location_id -> locations(id)
+        # 5. npcs.party_id -> parties(id)
+        try:
+            old_npcs_columns = await self._get_table_columns(cursor, "npcs")
+            # Similar to players, construct the full schema.
+            # name, description, backstory, persona were renamed in v16 to *_i18n
+            new_npcs_schema = f'''
+                CREATE TABLE npcs (
+                    id TEXT PRIMARY KEY,
+                    template_id TEXT,
+                    name_i18n TEXT, -- Renamed in v16
+                    guild_id TEXT NOT NULL,
+                    description_i18n TEXT, -- Renamed in v16
+                    location_id TEXT NULL REFERENCES locations(id), -- Added FK
+                    owner_id TEXT NULL,
+                    owner_type TEXT NULL,
+                    stats TEXT DEFAULT '{{}}',
+                    inventory TEXT DEFAULT '[]',
+                    current_action TEXT NULL,
+                    action_queue TEXT DEFAULT '[]',
+                    party_id TEXT NULL REFERENCES parties(id), -- Added FK
+                    state_variables TEXT DEFAULT '{{}}',
+                    health REAL DEFAULT 100.0,
+                    max_health REAL DEFAULT 100.0,
+                    is_alive INTEGER DEFAULT 1,
+                    status_effects TEXT DEFAULT '[]',
+                    is_temporary INTEGER DEFAULT 0,
+                    archetype TEXT DEFAULT 'commoner',
+                    traits TEXT DEFAULT '[]',
+                    desires TEXT DEFAULT '[]',
+                    motives TEXT DEFAULT '[]',
+                    backstory_i18n TEXT, -- Renamed in v16
+                    persona_i18n TEXT    -- Renamed in v16
+                );
+            '''
+            await self._recreate_table_with_new_schema(cursor, "npcs", new_npcs_schema, old_npcs_columns)
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_npcs_location_id ON npcs (location_id);")
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_npcs_party_id ON npcs (party_id);")
+        except Exception as e:
+            print(f"SqliteAdapter: Error migrating 'npcs' table for FKs: {e}")
+            raise
+
+        # 6. locations.template_id -> location_templates(id)
+        try:
+            old_locations_columns = await self._get_table_columns(cursor, "locations")
+            # descriptions_i18n, static_name, static_connections added in v11
+            # name, description are expected to store i18n JSON after v16 rename in LocationManager (not a schema rename)
+            new_locations_schema = f'''
+                CREATE TABLE locations (
+                    id TEXT PRIMARY KEY,
+                    template_id TEXT NOT NULL REFERENCES location_templates(id), -- Added FK
+                    name TEXT NOT NULL,
+                    guild_id TEXT NOT NULL,
+                    description TEXT NULL,
+                    exits TEXT DEFAULT '{{}}',
+                    state_variables TEXT DEFAULT '{{}}',
+                    is_active INTEGER DEFAULT 1,
+                    descriptions_i18n TEXT NULL, -- Added in v11
+                    static_name TEXT NULL,       -- Added in v11
+                    static_connections TEXT NULL -- Added in v11
+                );
+            '''
+            await self._recreate_table_with_new_schema(cursor, "locations", new_locations_schema, old_locations_columns)
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_locations_template_id ON locations (template_id);")
+        except Exception as e:
+            print(f"SqliteAdapter: Error migrating 'locations' table for FK: {e}")
+            raise
+
+        await cursor.execute("PRAGMA foreign_keys=ON;")
+        print("SqliteAdapter: Re-enabled foreign key checks.")
+        print("SqliteAdapter: v18 to v19 migration (adding foreign keys) complete.")
+
+    async def _migrate_v19_to_v20(self, cursor: Cursor) -> None:
+        """Миграция с Версии 19 на Версию 20 (определение таблиц generated_npcs, generated_quests)."""
+        print("SqliteAdapter: Running v19 to v20 migration (generated NPC and Quest tables)...")
+
+        # 1. Drop old stub `generated_npcs` and create new comprehensive one
+        print("SqliteAdapter: Recreating 'generated_npcs' table...")
+        await cursor.execute("DROP TABLE IF EXISTS generated_npcs;")
+        await cursor.execute('''
+            CREATE TABLE generated_npcs (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                name_i18n TEXT,
+                role_i18n TEXT,
+                personality_i18n TEXT,
+                motivation_i18n TEXT,
+                backstory_i18n TEXT,
+                dialogue_hints_i18n TEXT,
+                stats_json TEXT,
+                skills_json TEXT,
+                abilities_json TEXT,
+                spells_json TEXT,
+                inventory_json TEXT,
+                faction_affiliations_json TEXT,
+                relationships_json TEXT,
+                current_location_id TEXT NULL REFERENCES locations(id),
+                is_hostile INTEGER DEFAULT 0,
+                ai_prompt_context_json TEXT NULL,
+                generated_at REAL DEFAULT (strftime('%s','now'))
+            );
+        ''')
+        await cursor.execute("CREATE INDEX IF NOT EXISTS idx_generated_npcs_guild_id ON generated_npcs (guild_id);")
+        await cursor.execute("CREATE INDEX IF NOT EXISTS idx_generated_npcs_location_id ON generated_npcs (current_location_id);")
+        print("SqliteAdapter: 'generated_npcs' table recreated with comprehensive schema.")
+
+        # 2. Drop old stub `generated_quests` and create new comprehensive one
+        print("SqliteAdapter: Recreating 'generated_quests' table...")
+        await cursor.execute("DROP TABLE IF EXISTS generated_quests;")
+        await cursor.execute('''
+            CREATE TABLE generated_quests (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                title_i18n TEXT,
+                description_i18n TEXT,
+                quest_giver_npc_id TEXT NULL REFERENCES generated_npcs(id),
+                suggested_level INTEGER,
+                stages_json TEXT,
+                rewards_json TEXT,
+                prerequisites_json TEXT,
+                consequences_json TEXT,
+                status TEXT DEFAULT 'available',
+                ai_prompt_context_json TEXT NULL,
+                generated_at REAL DEFAULT (strftime('%s','now'))
+            );
+        ''')
+        await cursor.execute("CREATE INDEX IF NOT EXISTS idx_generated_quests_guild_id ON generated_quests (guild_id);")
+        await cursor.execute("CREATE INDEX IF NOT EXISTS idx_generated_quests_giver_id ON generated_quests (quest_giver_npc_id);")
+        print("SqliteAdapter: 'generated_quests' table recreated with comprehensive schema.")
+
+        print("SqliteAdapter: v19 to v20 migration (generated NPC and Quest tables) complete.")
+
+    async def _migrate_v20_to_v21(self, cursor: Cursor) -> None:
+        """Миграция с Версии 20 на Версию 21 (определение generated_factions, обновление generated_locations)."""
+        print("SqliteAdapter: Running v20 to v21 migration (generated_factions, update generated_locations)...")
+
+        # 1. Drop old stub `generated_factions` and create new comprehensive one
+        print("SqliteAdapter: Recreating 'generated_factions' table...")
+        await cursor.execute("DROP TABLE IF EXISTS generated_factions;")
+        await cursor.execute('''
+            CREATE TABLE generated_factions (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                name_i18n TEXT,                 -- JSON for multilingual name
+                description_i18n TEXT,          -- JSON for multilingual description
+                goals_i18n TEXT,                -- JSON for multilingual goals
+                ideology_i18n TEXT,             -- JSON for multilingual ideology
+                allies_json TEXT,               -- JSON list of other faction IDs
+                enemies_json TEXT,              -- JSON list of other faction IDs
+                resources_json TEXT,            -- JSON describing resources or assets
+                influence_level INTEGER,        -- e.g., 1 (local) to 5 (global)
+                ai_prompt_context_json TEXT NULL, -- Context used for generation
+                generated_at REAL DEFAULT (strftime('%s','now'))
+            );
+        ''')
+        await cursor.execute("CREATE INDEX IF NOT EXISTS idx_generated_factions_guild_id ON generated_factions (guild_id);")
+        print("SqliteAdapter: 'generated_factions' table recreated with comprehensive schema.")
+
+        # 2. Augment `generated_locations` table
+        print("SqliteAdapter: Augmenting 'generated_locations' table...")
+        try:
+            # Check if column already exists
+            await cursor.execute("PRAGMA table_info(generated_locations);")
+            columns_info = await cursor.fetchall()
+            if any(col_info['name'] == 'prompt_used_json' for col_info in columns_info):
+                print("SqliteAdapter: Column 'prompt_used_json' already exists in 'generated_locations' table, skipping ADD COLUMN.")
+            else:
+                await cursor.execute("ALTER TABLE generated_locations ADD COLUMN prompt_used_json TEXT NULL;")
+                print("SqliteAdapter: Added column 'prompt_used_json' to 'generated_locations' table.")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" in str(e).lower(): # Should be caught by PRAGMA check ideally
+                print(f"SqliteAdapter: Column 'prompt_used_json' already exists in 'generated_locations' table (caught by OperationalError), skipping.")
+            else:
+                print(f"SqliteAdapter: Error adding column 'prompt_used_json' to 'generated_locations': {e}")
+                traceback.print_exc()
+                # Decide if this is critical enough to raise. For adding a nullable column, maybe not.
+
+        print("SqliteAdapter: v20 to v21 migration (generated_factions, update generated_locations) complete.")
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")

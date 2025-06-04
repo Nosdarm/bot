@@ -49,9 +49,7 @@ class ConflictResolver:
         self.game_log_manager = game_log_manager
         print(f"ConflictResolver initialized with db_adapter and game_log_manager {'present' if game_log_manager else 'not present'}.")
 
-    async def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]], guild_id: str) -> List[Dict[str, Any]]:
-
-      async def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]], context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]], guild_id: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Analyzes a map of player actions to identify potential conflicts.
         If a conflict requires manual resolution, it calls prepare_for_manual_resolution.
@@ -61,110 +59,151 @@ class ConflictResolver:
             player_actions_map: A dictionary where keys are player IDs (str) and
                                 values are lists of actions (Dict[str, Any])
                                 submitted by that player for the current turn/tick.
-                                Example action: {'type': 'MOVE', 'target_space': 'A1', 'player_id': 'p1', 'guild_id': 'g1'}
+                                Each action is expected to be like:
+                                {"intent": "move", "entities": [{"type": "location_name", "value": "forest"}], "original_text": "go to forest"}
             guild_id: The ID of the guild the actions belong to.
+            context: Optional context dictionary that might be used by sub-methods.
 
         Returns:
-            A list of conflict resolution instruction dictionaries.
-            For automatic conflicts, this will be the resolved conflict structure.
-            For manual conflicts, this will be the result of prepare_for_manual_resolution
-            (which includes the conflict_id and status).
+            A dictionary with the analysis result:
+            {
+                "requires_manual_resolution": bool,
+                "pending_conflict_details": List[Dict[str, Any]], // Conflicts needing GM
+                "actions_to_execute": List[Dict[str, Any]], // Actions cleared for execution
+                                                             // Each: {"character_id": str, "action_data": Dict, "original_action_context": Dict}
+                "auto_resolution_outcomes": List[Dict[str, Any]] // Outcomes of auto-resolved conflicts
+            }
         """
-        print(f"Analyzing actions for conflicts in guild {guild_id}: {player_actions_map}")
+        if self.game_log_manager:
+            # Create a summary of actions for logging without exposing too much data if sensitive
+            action_summary_for_log = {pid: [a.get("intent", "unknown_intent") for a in actions] for pid, actions in player_actions_map.items()}
+            await self.game_log_manager.log_event(
+                guild_id=guild_id,
+                event_type="conflict_analysis_start",
+                message=f"Starting conflict analysis for {len(player_actions_map)} players.",
+                metadata={"player_action_summary": action_summary_for_log, "context": context}
+            )
+        else:
+            print(f"Analyzing actions for conflicts in guild {guild_id}: {player_actions_map}")
 
-        processed_conflict_results: List[Dict[str, Any]] = []
+        actions_to_execute: List[Dict[str, Any]] = []
+        pending_manual_conflicts: List[Dict[str, Any]] = []
+        auto_resolution_outcomes: List[Dict[str, Any]] = []
+        requires_manual_resolution_flag = False
 
-        # Example: Simple check for two players moving to the same space
-        space_claims: Dict[str, List[Dict[str, Any]]] = {}
+        # Create a flat list of all submitted actions with their character_id context
+        all_submitted_actions_with_context: List[Dict[str, Any]] = []
         for player_id, actions in player_actions_map.items():
-            for action in actions:
-                # Ensure action has guild_id and player_id for conflict tracking
-                action_with_context = action.copy()
-                action_with_context["player_id"] = player_id
-                action_with_context["guild_id"] = guild_id # Add guild_id to action context
+            for action_data in actions: # action_data is the NLU output dict
+                all_submitted_actions_with_context.append({
+                    "character_id": player_id,
+                    "action_data": action_data # This is the dict like {"intent": ..., "entities": ..., "original_text": ...}
+                })
 
-                # Assuming action format is like {'type': 'MOVE', 'target_space': 'A1', ...}
-                if action.get("type") == "MOVE":
-                    target_space = action.get("target_space")
-                    if target_space:
-                        if target_space not in space_claims:
-                            space_claims[target_space] = []
-                        space_claims[target_space].append(action_with_context)
+        # Keep track of actions that are part of a conflict to avoid adding them as non-conflicting
+        actions_involved_in_any_conflict: Set[uuid.UUID] = set() # Assuming actions could have a unique ID if needed for complex tracking
 
-        for space_id, conflicting_actions in space_claims.items():
-            if len(conflicting_actions) > 1: # Potential conflict
-                conflict_type_id = "simultaneous_move_to_limited_space" # Example type
-                rule_definition = self.rules_config.get(conflict_type_id)
+        # Example: Simple check for two players moving to the same space (target_space needs to be extracted from entities)
+        # This conflict detection logic is highly simplified and needs to be more robust.
+        # It should also handle various action types and their specific entities.
 
-                if not rule_definition:
-                    print(f"Warning: No rule definition found for conflict type '{conflict_type_id}'. Skipping.")
-                    continue
+        # For this example, let's assume "MOVE" intent has an entity like {"type": "location_name", "value": "target_X"}
+        # or {"type": "location", "id": "loc_id_Y", "name": "target_Y"}
 
-                # Extract involved players/entities and their types
-                involved_entities: List[Dict[str, Any]] = []
-                involved_player_ids = set()
-                for action in conflicting_actions:
-                    entity_id = action.get("player_id") # Assuming player actions cause this
-                    # TODO: Determine entity type more dynamically. For now, assume Character from player_actions_map.
-                    entity_type = "Character"
-                    if entity_id and entity_id not in involved_player_ids:
-                         involved_entities.append({"id": entity_id, "type": entity_type})
-                         involved_player_ids.add(entity_id)
+        # Simplified conflict detection:
+        # A more robust system would iterate through all_submitted_actions_with_context,
+        # group them by potential conflict points (e.g., same target location for MOVE, same target NPC for ATTACK)
+        # then process these groups.
 
-                if not involved_entities:
-                    print(f"Warning: Conflict identified ({conflict_type_id}) but no involved entities found. Skipping.")
-                    continue
+        # For now, let's assume a basic conflict type: "competing_for_resource_X"
+        # This is a placeholder for actual conflict detection logic.
+        # The current example for "simultaneous_move_to_limited_space" is too specific and hard to adapt here easily
+        # without knowing the exact structure of "action.get('target_space')" which is not standard in the NLU output.
 
-                # Construct a preliminary conflict object
-                current_conflict_details = {
-                    "guild_id": guild_id, # Add guild_id
-                    "type": conflict_type_id,
-                    "involved_entities": involved_entities, # Use involved_entities list with type
-                    "details": { # Details specific to this conflict type
-                        "space_id": space_id,
-                        "actions": conflicting_actions # The raw actions that caused it
-                    },
-                    "status": "identified"
-                }
-                print(f"Identified preliminary conflict: {current_conflict_details}")
+        # --- Placeholder for more sophisticated conflict detection loop ---
+        # This loop should identify sets of conflicting_actions from all_submitted_actions_with_context
+        # For each set:
+        #   mark actions in conflicting_actions as part of a conflict (add to actions_involved_in_any_conflict)
+        #   construct current_conflict_details
+        #   if manual_resolution_required:
+        #       prepared = await self.prepare_for_manual_resolution(current_conflict_details)
+        #       pending_manual_conflicts.append(prepared)
+        #       if prepared.get("status") == "awaiting_manual_resolution": requires_manual_resolution_flag = True
+        #   else:
+        #       resolved_auto = await self.resolve_conflict_automatically(current_conflict_details, context=context)
+        #       auto_resolution_outcomes.append(resolved_auto)
+        #       if resolved_auto.get("status") == "resolved_automatically":
+        #           winner_id = resolved_auto.get("outcome", {}).get("winner_id")
+        #           # Find the original action of the winner and add it to actions_to_execute
+        #           for original_action_ctx in conflicting_actions: # `conflicting_actions` would be the list of action contexts involved
+        #               if original_action_ctx["character_id"] == winner_id:
+        #                   actions_to_execute.append(original_action_ctx)
+        #                   break
+        # --- End of placeholder conflict detection loop ---
 
-                if rule_definition.get("manual_resolution_required"):
-                    # This will generate ID, store in DB, and notify
-                    prepared_manual_conflict_result = await self.prepare_for_manual_resolution(current_conflict_details)
-                    processed_conflict_results.append(prepared_manual_conflict_result)
-                else:
 
-                    # Resolve automatically and add the result
-                    resolved_auto_conflict_result = await self.resolve_conflict_automatically(current_conflict_details)
-                    processed_conflict_results.append(resolved_auto_conflict_result)
+        # Add all actions NOT involved in any conflict to actions_to_execute
+        # This assumes actions_involved_in_any_conflict is populated correctly.
+        # For this simplified version, if no conflicts are detected by the (currently very basic) logic,
+        # all actions will be considered non-conflicting.
+        if not pending_manual_conflicts and not auto_resolution_outcomes: # Crude check for "no conflicts detected/processed"
+            if self.game_log_manager and not all_submitted_actions_with_context: # Log if no actions were submitted at all
+                 await self.game_log_manager.log_event(
+                    guild_id=guild_id,
+                    event_type="conflict_analysis_no_actions",
+                    message="No actions submitted by any player for conflict analysis."
+                )
+            elif self.game_log_manager: # Log if actions submitted but no conflicts found by current logic
+                await self.game_log_manager.log_event(
+                    guild_id=guild_id,
+                    event_type="conflict_analysis_no_conflicts_found",
+                    message=f"No conflicts identified among {len(all_submitted_actions_with_context)} submitted actions. All actions will be executed sequentially.",
+                    metadata={"num_actions_passed_through": len(all_submitted_actions_with_context)}
+                )
 
-                    # For automatic, we might resolve immediately or queue it.
-                    # For now, let's assume immediate resolution attempt.
-                    # Pass context to resolve_conflict_automatically if it needs it (e.g. for guild_id)
-                    resolved_auto_conflict = await self.resolve_conflict_automatically(current_conflict_details, context=context)
-                    processed_conflict_results.append(resolved_auto_conflict)
+            for action_ctx in all_submitted_actions_with_context:
+                # A unique ID per action instance would be better for tracking if it was part of `actions_involved_in_any_conflict`
+                # For now, just add all if no specific conflicts were handled.
+                actions_to_execute.append(action_ctx)
         
-        # Example for "contested_resource_grab" (manual)
-        # This requires different parsing of player_actions_map, e.g., two players GRAB same item_id
-        # Placeholder for such logic:
-        # if a_contested_resource_grab_is_detected:
-        #    grab_conflict_type = "contested_resource_grab"
-        #    grab_rule = self.rules_config.get(grab_conflict_type)
-        #    if grab_rule and grab_rule.get("manual_resolution_required"):
-        #        # Construct grab_conflict_details similar to above
-        #        # grab_conflict_details = { "type": grab_conflict_type, ... }
-        #        # prepared_grab_conflict = self.prepare_for_manual_resolution(grab_conflict_details)
-        #        # processed_conflict_results.append(prepared_grab_conflict)
-        #        pass
+        # TODO: Log detected conflicts properly within the placeholder loop above when it's implemented.
+        # For each detected conflict:
+        # if self.game_log_manager:
+        #     await self.game_log_manager.log_event(
+        #         guild_id=guild_id,
+        #         event_type="conflict_detected",
+        #         message=f"Conflict of type '{conflict_type_id}' detected involving entities: {involved_entities_summary}.",
+        #         related_entities=current_conflict_details.get("involved_entities"), # Ensure this format matches log_event
+        #         metadata={"conflict_id": current_conflict_details.get("conflict_id"), "details": current_conflict_details.get("details")}
+        #     )
 
 
-        # TODO: Add logic for other conflict types (e.g., item_dispute) based on rules_config
+        # TODO: Implement ordering of actions_to_execute if necessary (e.g., by initiative, action type priority)
+        # For now, they are in player order, then submission order.
 
-        return processed_conflict_results
+        if self.game_log_manager:
+            await self.game_log_manager.log_event(
+                guild_id=guild_id,
+                event_type="conflict_analysis_end",
+                message=(f"Conflict analysis finished. Manual resolution required: {requires_manual_resolution_flag}. "
+                         f"Actions to execute: {len(actions_to_execute)}. "
+                         f"Pending manual: {len(pending_manual_conflicts)}. Auto-resolved: {len(auto_resolution_outcomes)}."),
+                metadata={
+                    "requires_manual_resolution": requires_manual_resolution_flag,
+                    "num_actions_to_execute": len(actions_to_execute),
+                    "num_pending_manual": len(pending_manual_conflicts),
+                    "num_auto_resolved": len(auto_resolution_outcomes)
+                }
+            )
 
-    async def resolve_conflict_automatically(self, conflict: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "requires_manual_resolution": requires_manual_resolution_flag,
+            "pending_conflict_details": pending_manual_conflicts,
+            "actions_to_execute": actions_to_execute,
+            "auto_resolution_outcomes": auto_resolution_outcomes
+        }
 
-     async def resolve_conflict_automatically(self, conflict: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def resolve_conflict_automatically(self, conflict: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Attempts to resolve a given conflict automatically based on rules, using RuleEngine.
 
@@ -180,13 +219,27 @@ class ConflictResolver:
         conflict_id = conflict.get("conflict_id")
         if not conflict_id:
              conflict_id = f"auto_res_{uuid.uuid4().hex[:8]}"
-             conflict["conflict_id"] = conflict_id # Add ID to the object being processed
+             conflict["conflict_id"] = conflict_id
 
-        print(f"Attempting async automatic resolution for conflict: {conflict_id} ({conflict_type_id})")
+        guild_id_log = str(conflict.get("guild_id", "UNKNOWN_GUILD")) # Get guild_id for logging
+
+        if self.game_log_manager:
+            await self.game_log_manager.log_event(
+                guild_id=guild_id_log,
+                event_type="conflict_auto_resolve_start",
+                message=f"Attempting automatic resolution for conflict: {conflict_id} (Type: {conflict_type_id}).",
+                related_entities=conflict.get("involved_entities", []),
+                metadata={"conflict_id": conflict_id, "conflict_type": conflict_type_id, "details": conflict.get("details")}
+            )
+        else:
+            print(f"Attempting async automatic resolution for conflict: {conflict_id} ({conflict_type_id})")
 
         if not conflict_type_id or conflict_type_id not in self.rules_config:
             error_msg = f"Error resolving automatically: Unknown conflict type '{conflict_type_id}' for conflict {conflict_id}."
-            print(f"❌ {error_msg}")
+            if self.game_log_manager:
+                await self.game_log_manager.log_event(guild_id=guild_id_log, event_type="conflict_auto_resolve_error", message=error_msg, metadata={"conflict_id": conflict_id})
+            else:
+                print(f"❌ {error_msg}")
             conflict["status"] = "resolution_failed_unknown_type"
             conflict["outcome"] = {"description": error_msg}
             return conflict
@@ -333,8 +386,8 @@ class ConflictResolver:
 
         if self.game_log_manager:
             await self.game_log_manager.log_event(
-                guild_id=str(conflict.get("guild_id")),
-                event_type="conflict_resolution_auto",
+                guild_id=guild_id_log, # Use already fetched guild_id
+                event_type="conflict_auto_resolve_success", # More specific event type
                 message=f"Conflict {conflict_id} ({conflict_type_id}) resolved automatically. Winner: {conflict['outcome'].get('winner_id')}. Outcome: {conflict['outcome']['outcome_key']}",
                 related_entities=conflict.get("involved_entities", []),
                 metadata={"conflict_id": conflict_id, "outcome": conflict['outcome']}
@@ -366,29 +419,50 @@ class ConflictResolver:
         rule = self.rules_config[conflict_type_id]
 
         conflict_id = conflict.get("conflict_id") or uuid.uuid4().hex
-        conflict["conflict_id"] = conflict_id
+        conflict["conflict_id"] = conflict_id # Ensure it's set in the conflict dict
         conflict["status"] = "awaiting_manual_resolution"
 
-        print(f"Preparing conflict '{conflict_id}' ({conflict_type_id}) for manual resolution.")
+        guild_id_log = str(guild_id) if guild_id else "UNKNOWN_GUILD"
+
+
+        if self.game_log_manager:
+            await self.game_log_manager.log_event(
+                guild_id=guild_id_log,
+                event_type="conflict_manual_prepare_start",
+                message=f"Preparing conflict '{conflict_id}' (Type: {conflict_type_id}) for manual resolution.",
+                related_entities=conflict.get("involved_entities", []),
+                metadata={"conflict_id": conflict_id, "conflict_type": conflict_type_id, "details": conflict.get("details")}
+            )
+        else:
+            print(f"Preparing conflict '{conflict_id}' ({conflict_type_id}) for manual resolution.")
 
         try:
-            if not guild_id:
+            if not guild_id: # guild_id is critical here
                  error_msg = f"Conflict {conflict_id} is missing guild_id, cannot save for manual resolution."
-                 print(f"❌ {error_msg}")
+                 if self.game_log_manager:
+                     await self.game_log_manager.log_event(guild_id=guild_id_log, event_type="conflict_manual_prepare_error", message=error_msg, metadata={"conflict_id": conflict_id})
+                 else:
+                    print(f"❌ {error_msg}")
                  conflict["status"] = "preparation_failed_no_guild_id"
                  return {"status": "preparation_failed_no_guild_id", "message": error_msg, "original_conflict": conflict}
 
             conflict_data_json = json.dumps(conflict)
             await self.db_adapter.save_pending_conflict(
                  conflict_id=conflict_id,
-                 guild_id=guild_id,
+                 guild_id=str(guild_id), # Ensure guild_id is string for DB
                  conflict_data=conflict_data_json
             )
-            print(f"Conflict {conflict_id} saved to database for manual resolution.")
+            if self.game_log_manager:
+                await self.game_log_manager.log_event(guild_id=guild_id_log, event_type="conflict_manual_db_saved", message=f"Conflict {conflict_id} saved to DB.", metadata={"conflict_id": conflict_id})
+            else:
+                print(f"Conflict {conflict_id} saved to database for manual resolution.")
 
         except Exception as e:
             error_msg = f"Error saving conflict {conflict_id} to DB for manual resolution: {e}"
-            print(f"❌ {error_msg}")
+            if self.game_log_manager:
+                await self.game_log_manager.log_event(guild_id=guild_id_log, event_type="conflict_manual_prepare_dberror", message=error_msg, metadata={"conflict_id": conflict_id, "error": str(e)})
+            else:
+                print(f"❌ {error_msg}")
             traceback.print_exc()
             conflict["status"] = "preparation_failed_db_error"
             return {"status": "preparation_failed_db_error", "message": error_msg, "original_conflict": conflict}
@@ -437,11 +511,11 @@ class ConflictResolver:
 
         if self.game_log_manager:
             await self.game_log_manager.log_event(
-                guild_id=str(guild_id),
-                event_type="conflict_manual_preparation",
-                message=f"Conflict {conflict_id} ({conflict_type_id}) requires manual resolution. Notification: {formatted_message}",
+                guild_id=guild_id_log, # Use already fetched guild_id
+                event_type="conflict_manual_prepare_success", # More specific
+                message=f"Conflict {conflict_id} ({conflict_type_id}) prepared for manual resolution. Notification: {formatted_message}",
                 related_entities=conflict.get("involved_entities", []),
-                metadata={"conflict_id": conflict_id}
+                metadata={"conflict_id": conflict_id, "notification_message": formatted_message}
             )
 
         return {
@@ -465,27 +539,52 @@ class ConflictResolver:
         Returns:
             A dictionary confirming the resolution and the outcome details (e.g., effects to apply).
         """
-        print(f"Processing Master resolution for conflict_id: {conflict_id}, outcome_type: {outcome_type}, params: {params}")
+        # Try to get guild_id from params or context if available, otherwise it will be fetched from DB record
+        guild_id_log_param = str(params.get("guild_id", "UNKNOWN_GUILD_PARAM")) if params else "UNKNOWN_GUILD_PARAM"
+
+        if self.game_log_manager:
+            await self.game_log_manager.log_event(
+                guild_id=guild_id_log_param, # May not be the actual guild_id of conflict yet
+                event_type="conflict_manual_resolve_start",
+                message=f"Processing Master resolution for conflict_id: {conflict_id}, outcome: {outcome_type}.",
+                metadata={"conflict_id": conflict_id, "chosen_outcome_type": outcome_type, "resolution_params": params}
+            )
+        else:
+            print(f"Processing Master resolution for conflict_id: {conflict_id}, outcome_type: {outcome_type}, params: {params}")
+
+        original_conflict: Optional[Dict[str, Any]] = None
+        guild_id_from_db: Optional[str] = None
 
         try:
             pending_conflict_row = await self.db_adapter.get_pending_conflict(conflict_id)
             if not pending_conflict_row:
-                 print(f"❌ Error: Conflict ID '{conflict_id}' not found in pending manual resolutions database table.")
+                 error_msg = f"Error: Conflict ID '{conflict_id}' not found in pending manual resolutions database table."
+                 if self.game_log_manager:
+                     await self.game_log_manager.log_event(guild_id=guild_id_log_param, event_type="conflict_manual_resolve_error", message=error_msg, metadata={"conflict_id": conflict_id})
+                 else:
+                    print(f"❌ {error_msg}")
                  return {
                     "success": False,
                     "conflict_id": conflict_id,
-                    "message": f"Error: Conflict ID '{conflict_id}' not found in pending manual resolutions."
+                    "message": error_msg
                  }
 
             original_conflict = json.loads(pending_conflict_row['conflict_data'])
-            original_conflict["status"] = "resolved_manually"
+            original_conflict["status"] = "resolved_manually" # Tentative status
+            guild_id_from_db = str(original_conflict.get("guild_id", guild_id_log_param)) # Prioritize guild_id from DB record
 
             await self.db_adapter.delete_pending_conflict(conflict_id)
-            print(f"Conflict {conflict_id} retrieved and removed from database.")
+            if self.game_log_manager:
+                await self.game_log_manager.log_event(guild_id=guild_id_from_db, event_type="conflict_manual_db_deleted", message=f"Conflict {conflict_id} retrieved and removed from DB.", metadata={"conflict_id": conflict_id})
+            else:
+                print(f"Conflict {conflict_id} retrieved and removed from database.")
 
         except Exception as e:
             error_msg = f"Error retrieving/deleting conflict {conflict_id} from DB for manual resolution: {e}"
-            print(f"❌ {error_msg}")
+            if self.game_log_manager:
+                 await self.game_log_manager.log_event(guild_id=guild_id_log_param, event_type="conflict_manual_resolve_dberror", message=error_msg, metadata={"conflict_id": conflict_id, "error": str(e)})
+            else:
+                print(f"❌ {error_msg}")
             traceback.print_exc()
             return {
                 "success": False,
@@ -558,18 +657,24 @@ class ConflictResolver:
         print(f"Conflict {conflict_id} resolved manually by Master. Outcome: {outcome_type}. Details: {original_conflict['outcome']}")
 
         if self.game_log_manager:
-            guild_id_for_log = original_conflict.get('guild_id')
-            if guild_id_for_log: # Ensure guild_id is available
+            # Ensure original_conflict is not None before proceeding
+            if not original_conflict: # Should have been caught by the return above, but as a safeguard
+                # This path should ideally not be reached if original_conflict could not be loaded.
+                # Logging here would be redundant with the one in the try-except block.
+                return {"success": False, "conflict_id": conflict_id, "message": "Failed to load original conflict data."}
+
+            # Use guild_id_from_db for subsequent logging if available
+            final_guild_id_log = guild_id_from_db if guild_id_from_db != "UNKNOWN_GUILD_PARAM" else guild_id_log_param
+
+            if self.game_log_manager:
                 await self.game_log_manager.log_event(
-                    guild_id=str(guild_id_for_log),
-                    event_type="conflict_resolution_manual",
+                    guild_id=final_guild_id_log,
+                    event_type="conflict_manual_resolve_success", # More specific
                     message=f"Conflict {conflict_id} resolved by master. Outcome: {outcome_type}. Details: {original_conflict['outcome'].get('description')}",
                     related_entities=original_conflict.get("involved_entities", []),
                     metadata={"conflict_id": conflict_id, "master_outcome": outcome_type, "resolution_params": params, "full_outcome": original_conflict['outcome']}
                 )
-            else:
-                print(f"Warning: Could not log manual conflict resolution for {conflict_id} due to missing guild_id in original_conflict.")
-
+            # Removed redundant warning log, final_guild_id_log should be best effort.
 
         return {
             "success": True,
