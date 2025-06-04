@@ -47,7 +47,6 @@ if TYPE_CHECKING:
     from bot.game.models.quest import Quest
     # Assume GameState model is available for mocking
     from bot.game.models.game_state import GameState
-    from bot.game.event_processors.event_stage_processor import EventStageProcessor
 
 
     # Managers (use string literals)
@@ -73,9 +72,8 @@ if TYPE_CHECKING:
     from bot.services.campaign_loader import CampaignLoader
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.quest_manager import QuestManager
-    from bot.game.conflict_resolver import ConflictResolver # For type hinting
+    from bot.game.managers.conflict_resolver import ConflictResolver # For type hinting
     from bot.ai.ai_response_validator import AIResponseValidator # For handle_edit_content
-    
 
 
     # Добавляем другие менеджеры, которые могут быть в context kwargs

@@ -82,7 +82,7 @@ async def _send_location_embed(
                     # get_connected_locations likely returns template IDs. We need to find an instance.
                     # This logic might need adjustment based on how exits and instances are linked.
                     # For now, let's assume we want to display the name of the target template.
-                    target_loc_template_data = location_manager.get_location_static(guild_id, target_loc_template_id) # Changed get_location_template_by_id to get_location_static
+        target_loc_template_data = location_manager.get_location_static(guild_id, target_loc_template_id) # Changed get_location_template_by_id to get_location_static
                     if target_loc_template_data:
                         exit_display_parts.append(f"{exit_name_or_direction.capitalize()} to {target_loc_template_data.get('name', 'an unnamed area')}")
                     else:
@@ -394,7 +394,7 @@ async def cmd_check(interaction: Interaction, skill_name: str, complexity: str =
 
     if global_game_manager_imported_successfully and global_game_manager_instance:
         response_data = await global_game_manager_instance.process_player_action(
-            server_id=str(interaction.guild_id), # Ensure guild_id is string
+            server_id=interaction.guild_id,
             discord_user_id=interaction.user.id,
             action_type="skill_check",
             action_data={
@@ -405,42 +405,37 @@ async def cmd_check(interaction: Interaction, skill_name: str, complexity: str =
             ctx_channel_id=interaction.channel_id
         )
         target_channel_id = response_data.get("target_channel_id", interaction.channel_id)
-        
-        # Ensure bot_instance_for_channel is correctly fetched if get_bot_instance_func is available
-        bot_instance_for_channel = None
-        if get_bot_instance_func:
-            bot_instance_for_channel = get_bot_instance_func()
-        
-        target_channel = None
-        if bot_instance_for_channel and target_channel_id:
-            # Ensure target_channel_id is an int if get_channel expects an int
-            try:
-                target_channel = bot_instance_for_channel.get_channel(int(target_channel_id))
-            except ValueError:
-                print(f"Warning: target_channel_id '{target_channel_id}' is not a valid integer. Falling back to interaction.channel.")
-                target_channel = interaction.channel 
-        else: # Fallback to interaction.channel if bot_instance or target_channel_id is problematic
-            target_channel = interaction.channel
-
+        bot_instance_for_channel = get_bot_instance_func() if get_bot_instance_func else None
+        target_channel = bot_instance_for_channel.get_channel(target_channel_id) if bot_instance_for_channel else None
         message_to_send = response_data.get("message", "Произошла ошибка при выполнении проверки.")
 
-        # Ensure interaction.channel is not None before trying to access its attributes or methods
-        interaction_channel_exists_and_sendable = interaction.channel and hasattr(interaction.channel, 'send')
-
-        if target_channel and hasattr(target_channel, 'send') and target_channel.id != (interaction.channel.id if interaction.channel else None) :
+        if target_channel and target_channel.id != interaction.channel_id :
             await target_channel.send(message_to_send)
-             # Always send a followup to the interaction itself if the main message went to a different channel
-            await interaction.followup.send(f"You attempt a {skill_name} check... (Response sent to designated channel).", ephemeral=True)
-        else: # Send to the interaction's channel (as followup) or handle error if interaction.channel is not sendable
-            if interaction_channel_exists_and_sendable:
-                await interaction.followup.send(message_to_send, ephemeral=True)
-            else:
-                print(f"Error: interaction.channel is not sendable and target_channel was not suitable. Message: {message_to_send}")
-                # As a last resort, try to send to followup if the interaction itself is the problem, though this is unlikely if defer worked.
-                await interaction.followup.send("Error: Could not send message to the channel.", ephemeral=True)
+            await interaction.followup.send(f"You attempt a {skill_name} check...", ephemeral=True)
+        else:
+            await interaction.followup.send(message_to_send, ephemeral=True)
+
+    elif game_manager_accessible_via_client:
+        await interaction.followup.send("'/check' command is awaiting full refactor to the new system. For now, it's offline.", ephemeral=True)
     else:
-        # This 'else' corresponds to 'if global_game_manager_imported_successfully and global_game_manager_instance:'
-        await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна или не инициализирована должным образом для команды /check.", ephemeral=True)
+        await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна.", ephemeral=True)
+    # TODO: Implement/fix game_manager.process_player_action or replace with new logic.
+    # Commenting out the old logic for now.
+    # if hasattr(bot.game_manager, 'process_player_action'):
+    #     response_data = await bot.game_manager.process_player_action(
+    #         server_id=str(interaction.guild_id), # Corrected: pass str(interaction.guild_id)
+    #         discord_user_id=interaction.user.id,
+    #         action_type="skill_check",
+    #         action_data={
+    #             "skill_name": skill_name,
+    #             "complexity": complexity,
+    #             "target_description": target_description or f"совершить действие, требующее навыка {skill_name}"
+    #         },
+    #         ctx_channel_id=interaction.channel_id # Corrected: pass interaction.channel_id
+    #     )
+    #     # ... (rest of the old message sending logic) ...
+    # else:
+    await interaction.followup.send("The '/check' command is currently being reworked. Please try again later.", ephemeral=True)
 
 # Note: The _generate_location_details_embed function was not directly mentioned for changes
 # in the prompt other than how it's called. Assuming its internal logic is fine for now,

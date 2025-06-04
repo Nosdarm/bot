@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     # Add other managers/services that might be in context kwargs (e.g., from CommandRouter/WSP)
     from bot.game.managers.location_manager import LocationManager
     # from bot.game.managers.event_manager import EventManager
-    from bot.game.managers.game_log_manager import GameLogManager # Assuming path
+    from bot.managers.game_log_manager import GameLogManager # Assuming path
 
 
 # Type aliases for callbacks (defined outside TYPE_CHECKING if used in __init__ signature)

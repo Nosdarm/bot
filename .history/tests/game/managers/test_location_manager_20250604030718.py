@@ -47,7 +47,7 @@ class TestLocationManagerMoveEntity(unittest.IsolatedAsyncioTestCase): # Renamed
     def setUp(self):
         # Mock all dependencies for LocationManager's __init__
         self.mock_db_adapter = AsyncMock()
-        self.mock_settings = MagicMock()
+        self.mock_settings = {"guilds": {"test_guild_1": {}}}
         self.mock_rule_engine = AsyncMock()
         self.mock_event_manager = AsyncMock()
         # Ensure all managers that can be involved in a move are mocked
@@ -79,6 +79,9 @@ class TestLocationManagerMoveEntity(unittest.IsolatedAsyncioTestCase): # Renamed
             time_manager=self.mock_time_manager,
             send_callback_factory=self.mock_send_callback_factory,
             # Pass the other entity managers during LocationManager init
+            character_manager=self.mock_character_manager,
+            npc_manager=self.mock_npc_manager,
+            item_manager=self.mock_item_manager,
             event_stage_processor=self.mock_event_stage_processor,
             event_action_processor=self.mock_event_action_processor,
             on_enter_action_executor=self.mock_on_enter_action_executor,
@@ -230,7 +233,7 @@ class TestLocationManagerAICreation(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.mock_db_adapter = AsyncMock()
-        self.mock_settings = MagicMock() # Basic settings
+        self.mock_settings = {"campaign_data": {"location_templates": []}} # Basic settings
         self.mock_rule_engine = AsyncMock()
         self.mock_event_manager = AsyncMock()
         self.mock_character_manager = AsyncMock()
@@ -251,94 +254,38 @@ class TestLocationManagerAICreation(unittest.IsolatedAsyncioTestCase):
         self.mock_openai_service = AsyncMock()
         self.mock_ai_validator = AsyncMock()
 
-        # Basic instance variables
-        self.guild_id = "test_guild_1" # Matching DUMMY_LOCATION_INSTANCE_FROM/TO guild_id
-        self.entity_id = "character_for_aic_test"
-        self.from_location_id = DUMMY_LOCATION_INSTANCE_FROM["id"]
-        self.to_location_id = DUMMY_LOCATION_INSTANCE_TO["id"]
-
-        # Instantiate LocationManager
-        self.location_manager = LocationManager(
-            db_adapter=self.mock_db_adapter,
-            settings=self.mock_settings,
-            rule_engine=self.mock_rule_engine,
-            event_manager=self.mock_event_manager,
-            character_manager=self.mock_character_manager,
-            npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager,
-            combat_manager=self.mock_combat_manager,
-            status_manager=self.mock_status_manager,
-            party_manager=self.mock_party_manager,
-            time_manager=self.mock_time_manager,
-            send_callback_factory=self.mock_send_callback_factory,
-            event_stage_processor=self.mock_event_stage_processor,
-            event_action_processor=self.mock_event_action_processor,
-            on_enter_action_executor=self.mock_on_enter_action_executor,
-            stage_description_generator=self.mock_stage_description_generator
-            # AI mocks (multilingual_prompt_generator, openai_service, ai_validator) are not passed
-            # to LocationManager constructor based on current understanding of its __init__.
-            # Tests requiring these will set them directly on the manager instance if needed.
-        )
-
-        # Initialize LocationManager's internal caches
-        # Using DUMMY_LOCATION_INSTANCE_TO["template_id"] for the second template for simplicity
-        # Ensure this template_id is different from DUMMY_LOCATION_TEMPLATE_DATA["id"] if specific data matters
-        # For now, just copying DUMMY_LOCATION_TEMPLATE_DATA for both.
-        tpl_north_region_entrance_id = DUMMY_LOCATION_INSTANCE_TO["template_id"]
-        template_data_north = DUMMY_LOCATION_TEMPLATE_DATA.copy()
-        template_data_north["id"] = tpl_north_region_entrance_id # Ensure the ID is correct
-
-        self.location_manager._location_templates = {
-            self.guild_id: {
-                DUMMY_LOCATION_TEMPLATE_DATA["id"]: DUMMY_LOCATION_TEMPLATE_DATA.copy(),
-                tpl_north_region_entrance_id: template_data_north
-            }
-        }
-        self.location_manager._location_instances = {
-            self.guild_id: {
-                DUMMY_LOCATION_INSTANCE_FROM["id"]: DUMMY_LOCATION_INSTANCE_FROM.copy(),
-                DUMMY_LOCATION_INSTANCE_TO["id"]: DUMMY_LOCATION_INSTANCE_TO.copy()
-            }
-        }
-        self.location_manager._dirty_instances = {}
-        self.location_manager._deleted_instances = {}
-
     async def test_successfully_moves_character(self):
         # Similar to test_successfully_moves_party, but for Character
         self.mock_character_manager.update_character_location = AsyncMock(return_value=True)
 
-        # Mocks for get_location_instance and get_location_static are important.
-        # The side_effect functions will use the self.location_manager instance
-        # whose caches were populated in asyncSetUp.
-        def get_location_instance_side_effect(guild_id, instance_id):
-            if guild_id == self.guild_id:
-                return self.location_manager._location_instances[guild_id].get(instance_id)
-            return None
-        self.location_manager.get_location_instance = MagicMock(side_effect=get_location_instance_side_effect)
-
-        def get_location_static_side_effect(guild_id, template_id):
-            if guild_id == self.guild_id:
-                return self.location_manager._location_templates[guild_id].get(template_id)
-            return None
-        self.location_manager.get_location_static = MagicMock(side_effect=get_location_static_side_effect)
-        
+        self.location_manager.get_location_instance = MagicMock(
+            side_effect=lambda gid, iid: DUMMY_LOCATION_INSTANCE_FROM.copy() if iid == self.from_location_id else (DUMMY_LOCATION_INSTANCE_TO.copy() if iid == self.to_location_id else None)
+        )
+        self.location_manager.get_location_static = MagicMock(
+            side_effect=lambda gid, tid: self.location_manager._location_templates[gid].get(tid)
+        )
         self.mock_rule_engine.execute_triggers = AsyncMock()
 
         result = await self.location_manager.move_entity(
             guild_id=self.guild_id,
-            entity_id=self.entity_id, 
+            entity_id=self.entity_id, # Using the generic entity_id from setUp
             entity_type="Character",
             from_location_id=self.from_location_id,
             to_location_id=self.to_location_id,
-            character_manager=self.mock_character_manager, 
+            character_manager=self.mock_character_manager, # Pass the correct manager
             rule_engine=self.mock_rule_engine
         )
         self.assertTrue(result)
         self.mock_character_manager.update_character_location.assert_called_once_with(
-            self.guild_id,
+            # Note: The actual call signature for character_manager.update_character_location
+            # might be (character_id, new_location_id, guild_id=guild_id, context=ANY)
+            # or (guild_id, character_id, new_location_id, context=ANY).
+            # Adjusting based on a common pattern where guild_id might be first or keyword.
+            # The key is that all necessary info is passed.
+            self.guild_id, # Assuming guild_id is the first positional argument
             self.entity_id,
-            self.to_location_id,
-            context=unittest.mock.ANY # Updated assertion
+            self.to_location_id
+            # If context is passed: context=unittest.mock.ANY
         )
         self.assertEqual(self.mock_rule_engine.execute_triggers.call_count, 2) # Departure and arrival
 
@@ -596,25 +543,7 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
         self.mock_db_adapter = AsyncMock()
         self.mock_settings = MagicMock() # Using MagicMock for easier attribute access like self.mock_settings.guilds
         self.mock_rule_engine = AsyncMock()
-        # Initialize all mock managers that LocationManager depends on
-        self.mock_event_manager = AsyncMock()
-        self.mock_character_manager = AsyncMock()
-        self.mock_npc_manager = AsyncMock()
-        self.mock_item_manager = AsyncMock()
-        self.mock_combat_manager = AsyncMock()
-        self.mock_status_manager = AsyncMock()
-        self.mock_party_manager = AsyncMock()
-        self.mock_time_manager = AsyncMock()
-        self.mock_send_callback_factory = MagicMock()
-        self.mock_event_stage_processor = AsyncMock()
-        self.mock_event_action_processor = AsyncMock()
-        self.mock_on_enter_action_executor = AsyncMock()
-        self.mock_stage_description_generator = AsyncMock()
-        self.mock_prompt_generator = AsyncMock()  # AI related mock
-        self.mock_openai_service = AsyncMock()    # AI related mock
-        self.mock_ai_validator = AsyncMock()      # AI related mock
-
-        self.guild_id = "test_guild_1" # Added guild_id initialization
+        # For now, only essential dependencies. Others will be added if specific methods need them.
 
         self.location_manager = LocationManager(
             db_adapter=self.mock_db_adapter,
@@ -636,6 +565,22 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
             multilingual_prompt_generator=self.mock_prompt_generator,
             openai_service=self.mock_openai_service,
             ai_validator=self.mock_ai_validator
+        
+        # Ensure internal caches are initialized as dicts
+        
+            event_manager=AsyncMock(), # Add all required by __init__
+            character_manager=AsyncMock(),
+            npc_manager=AsyncMock(),
+            item_manager=AsyncMock(),
+            combat_manager=AsyncMock(),
+            status_manager=AsyncMock(),
+            party_manager=AsyncMock(),
+            time_manager=AsyncMock(),
+            send_callback_factory=MagicMock(),
+            event_stage_processor=AsyncMock(),
+            event_action_processor=AsyncMock(),
+            on_enter_action_executor=AsyncMock(),
+            stage_description_generator=AsyncMock()
         )
 
         # Initialize caches for testing purposes, assuming they are dicts
@@ -643,7 +588,6 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
         self.location_manager._location_instances = {}
         self.location_manager._dirty_instances = {}
         self.location_manager._deleted_instances = {}
-        self.location_manager._dirty_templates = {} # Initialize _dirty_templates
 
     async def test_create_location_instance_ai_pending_moderation(self):
         guild_id = "test_guild_loc_ai_success"
@@ -806,6 +750,11 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
+        self.guild_id = "test_guild_1"
+        # Ensure guild-specific caches are initialized before each test if needed by the test
+        # For example, in a test for get_location_instance:
+        # self.location_manager._location_instances[self.guild_id] = {}
+
     async def test_init_manager(self):
         self.assertEqual(self.location_manager._db_adapter, self.mock_db_adapter)
         self.assertEqual(self.location_manager._settings, self.mock_settings)
@@ -871,8 +820,8 @@ if __name__ == '__main__':
         self.assertEqual(self.location_manager._location_instances[guild_id]["inst2"]["is_dirty"], True) # is_dirty flag from DB
 
         # Verify dirty/deleted lists are cleared for the guild
-        self.assertEqual(self.location_manager._dirty_instances.get(guild_id, set()), set())
-        self.assertEqual(self.location_manager._deleted_instances.get(guild_id, set()), set())
+        self.assertNotIn(guild_id, self.location_manager._dirty_instances) # or self.assertEqual(self.location_manager._dirty_instances[guild_id], set())
+        self.assertNotIn(guild_id, self.location_manager._deleted_instances)
 
     async def test_load_state_no_data(self):
         guild_id = self.guild_id
@@ -948,8 +897,7 @@ if __name__ == '__main__':
              inst2_data["exits"], inst2_data["state_variables"], inst2_data["is_active"]),
         ]
         self.assertCountEqual(args[1], expected_db_data)
-        self.assertEqual(self.location_manager._dirty_instances.get(guild_id, set()), set()) # Should be cleared
-        self.assertEqual(self.location_manager._deleted_instances.get(guild_id, set()), set()) # Should remain empty
+        self.assertNotIn(guild_id, self.location_manager._dirty_instances) # Should be cleared
 
     async def test_save_state_deleted_instances(self):
         guild_id = self.guild_id
@@ -968,9 +916,9 @@ if __name__ == '__main__':
         # For example, for two items: "DELETE FROM location_instances WHERE guild_id = ? AND id IN (?, ?)"
         self.assertIn("DELETE FROM location_instances WHERE guild_id = ? AND id IN", args[0])
         self.assertEqual(args[1][0], guild_id) # First param is guild_id
-        self.assertCountEqual(list(args[1][1:]), [deleted_id1, deleted_id2]) # Corrected: check all IDs
+        self.assertCountEqual(list(args[1][1]), [deleted_id1, deleted_id2]) # Second param is list of IDs
 
-        self.assertEqual(self.location_manager._deleted_instances.get(guild_id, set()), set()) # Should be cleared
+        self.assertNotIn(guild_id, self.location_manager._deleted_instances) # Should be cleared
 
     async def test_save_state_no_changes(self):
         guild_id = self.guild_id
@@ -981,8 +929,8 @@ if __name__ == '__main__':
 
         self.mock_db_adapter.execute_many.assert_not_called()
         self.mock_db_adapter.execute.assert_not_called()
-        self.assertEqual(self.location_manager._dirty_instances.get(guild_id, set()), set())
-        self.assertEqual(self.location_manager._deleted_instances.get(guild_id, set()), set())
+        self.assertNotIn(guild_id, self.location_manager._dirty_instances)
+        self.assertNotIn(guild_id, self.location_manager._deleted_instances)
 
     async def test_save_state_guild_not_loaded_previously(self):
         guild_id = "new_guild_save"
@@ -992,8 +940,8 @@ if __name__ == '__main__':
         self.mock_db_adapter.execute_many.assert_not_called()
         self.mock_db_adapter.execute.assert_not_called()
         # Caches should not be created for this guild if there was nothing to save
-        self.assertEqual(self.location_manager._dirty_instances.get(guild_id, set()), set())
-        self.assertEqual(self.location_manager._deleted_instances.get(guild_id, set()), set())
+        self.assertNotIn(guild_id, self.location_manager._dirty_instances)
+        self.assertNotIn(guild_id, self.location_manager._deleted_instances)
 
     async def test_get_default_location_id_guild_specific_exists(self):
         guild_id = self.guild_id
@@ -1059,93 +1007,104 @@ if __name__ == '__main__':
 
     async def test_save_location_template_success(self): # Renamed to be specific
         guild_id = self.guild_id
-        template_to_save = {
-            "id": "tpl_save_me",
-            "guild_id": guild_id,
-            "name": "Savable Template",
-            "description": "A template that can be saved.",
-            "properties": {"is_special": True, "max_capacity": 10},
-            "exits": {"north": "tpl_another_area", "south": "tpl_yet_another_area"},
-            "initial_state": {"status": "peaceful", "ambient_sound": "birds_chirping.mp3"},
-            "on_enter_triggers": [{"action": "play_sound", "sound_id": "welcome_sound"}],
-            "on_exit_triggers": [{"action": "log_event", "event_name": "player_exited"}],
-            "available_actions": ["look", "search", "rest"],
-            "items": ["item_basic_sword", "item_healing_potion"], # List of item IDs
-            "channel_id": "channel_for_template",
-            "is_template_dirty": True
-        }
+        template_to_save = Location(
+            id="tpl_save_me",
+            guild_id=guild_id,
+            name="Savable Template",
+            description="A template that can be saved.",
+            properties={"is_special": True, "max_capacity": 10},
+            exits={"north": "tpl_another_area", "south": "tpl_yet_another_area"},
+            initial_state={"status": "peaceful", "ambient_sound": "birds_chirping.mp3"},
+            on_enter_triggers=[{"action": "play_sound", "sound_id": "welcome_sound"}],
+            on_exit_triggers=[{"action": "log_event", "event_name": "player_exited"}],
+            available_actions=["look", "search", "rest"],
+            items=["item_basic_sword", "item_healing_potion"], # List of item IDs
+            channel_id="channel_for_template",
+            is_template_dirty=True # Assuming this flag exists on the model or is tracked by manager
+        )
 
-        # Ensure the dirty_templates cache for the guild is initialized and includes the template
-        if guild_id not in self.location_manager._dirty_templates:
-            self.location_manager._dirty_templates[guild_id] = set()
-        self.location_manager._dirty_templates[guild_id].add(template_to_save["id"])
+        # Assume manager tracks dirty templates separately or this method handles it
+        # For this test, let's assume there's a _dirty_templates cache
+        # If not, this part of assert needs to change based on actual dirty mechanism for templates
+        self.location_manager._dirty_templates = {guild_id: {template_to_save.id}}
+
 
         await self.location_manager.save_location(template_to_save)
 
         self.mock_db_adapter.execute.assert_called_once()
         args, _ = self.mock_db_adapter.execute.call_args
 
+        # Check the SQL command (should be an UPSERT or REPLACE for templates)
         self.assertIn("REPLACE INTO location_templates", args[0])
+
+        # Check the parameters passed to the DB
         expected_params = (
-            template_to_save["id"],
-            template_to_save["guild_id"],
-            template_to_save["name"],
-            template_to_save["description"],
-            json.dumps(template_to_save["properties"]),
-            json.dumps(template_to_save["exits"]),
-            json.dumps(template_to_save["initial_state"]),
-            json.dumps(template_to_save["on_enter_triggers"]),
-            json.dumps(template_to_save["on_exit_triggers"]),
-            json.dumps(template_to_save["available_actions"]),
-            json.dumps(template_to_save["items"]),
-            template_to_save["channel_id"],
-            template_to_save["is_template_dirty"]
+            template_to_save.id,
+            template_to_save.guild_id,
+            template_to_save.name,
+            template_to_save.description,
+            '{"is_special": true, "max_capacity": 10}',  # JSON string for properties
+            '{"north": "tpl_another_area", "south": "tpl_yet_another_area"}',  # JSON string for exits
+            '{"status": "peaceful", "ambient_sound": "birds_chirping.mp3"}',  # JSON string for initial_state
+            '[{"action": "play_sound", "sound_id": "welcome_sound"}]',  # JSON string for on_enter_triggers
+            '[{"action": "log_event", "event_name": "player_exited"}]',  # JSON string for on_exit_triggers
+            '["look", "search", "rest"]',  # JSON string for available_actions
+            '["item_basic_sword", "item_healing_potion"]',  # JSON string for items
+            template_to_save.channel_id,
+            True # template_to_save.is_template_dirty
         )
         self.assertEqual(args[1], expected_params)
-        self.assertNotIn(template_to_save["id"], self.location_manager._dirty_templates.get(guild_id, set()))
+
+        # Verify the template is removed from the dirty set after saving
+        self.assertNotIn(template_to_save.id, self.location_manager._dirty_templates.get(guild_id, set()))
 
     async def test_save_location_instance_via_save_location(self):
+        # This test assumes `save_location` can also be used for instances if the object
+        # passed is a Location model populated like an instance.
+        # This depends heavily on the design of `save_location`.
+        # If `save_location` is strictly for templates, this test is invalid.
+        # Based on "instance is removed from the dirty set if applicable" from prompt.
         guild_id = self.guild_id
-        instance_to_save = {
-            "id": "inst_save_me_too",
-            "guild_id": guild_id,
-            "template_id": "tpl_parent",
-            "name": "Savable Instance",
-            "description": "An instance being saved via save_location.",
-            "exits": {"west": "another_inst_id"},
-            "state_variables": {"is_door_open": False, "light_level": 5},
-            "is_active": True
-            # No 'is_dirty' key in the dict itself, manager tracks this internally
-        }
+        instance_to_save = Location( # Using Location model as if it's an instance
+            id="inst_save_me_too",
+            guild_id=guild_id,
+            template_id="tpl_parent", # Instances usually have a template_id
+            name="Savable Instance",
+            description="An instance being saved via save_location.",
+            exits={"west": "another_inst_id"}, # Instance specific exits
+            state_variables={"is_door_open": False, "light_level": 5}, # Instance specific state
+            is_active=True,
+            # Not all template fields would be here for an instance typically (e.g. on_enter_triggers)
+            # Forcing some to None or empty to simulate an instance structure within Location model
+            properties=None, initial_state=None, on_enter_triggers=None, on_exit_triggers=None,
+            available_actions=None, items=None, channel_id=None, is_template_dirty=False
+        )
+        instance_to_save.is_dirty = True # Simulate it being a dirty instance
 
-        # Ensure the instance is in _location_instances and marked in _dirty_instances
-        if guild_id not in self.location_manager._location_instances:
-            self.location_manager._location_instances[guild_id] = {}
-        self.location_manager._location_instances[guild_id][instance_to_save["id"]] = instance_to_save
-        
-        if guild_id not in self.location_manager._dirty_instances:
-            self.location_manager._dirty_instances[guild_id] = set()
-        self.location_manager._dirty_instances[guild_id].add(instance_to_save["id"])
+        self.location_manager._dirty_instances[guild_id] = {instance_to_save.id}
+        self.location_manager._location_instances[guild_id] = {instance_to_save.id: instance_to_save} # So save can fetch it if needed
 
-
-        await self.location_manager.save_location(instance_to_save, is_instance=True)
+        # This call implies save_location can figure out it's an instance
+        # or the Location model has fields to distinguish
+        await self.location_manager.save_location(instance_to_save, is_instance=True) # Added is_instance hint
 
         self.mock_db_adapter.execute.assert_called_once()
         args, _ = self.mock_db_adapter.execute.call_args
         self.assertIn("REPLACE INTO location_instances", args[0])
 
         expected_instance_params = (
-            instance_to_save["id"],
-            instance_to_save["guild_id"],
-            instance_to_save["template_id"],
-            instance_to_save["name"],
-            instance_to_save["description"],
-            json.dumps(instance_to_save["exits"]),
-            json.dumps(instance_to_save["state_variables"]),
-            instance_to_save["is_active"]
+            instance_to_save.id,
+            instance_to_save.guild_id,
+            instance_to_save.template_id,
+            instance_to_save.name,
+            instance_to_save.description,
+            '{"west": "another_inst_id"}', # exits
+            '{"is_door_open": false, "light_level": 5}', # state_variables
+            instance_to_save.is_active
         )
         self.assertEqual(args[1], expected_instance_params)
-        self.assertNotIn(instance_to_save["id"], self.location_manager._dirty_instances.get(guild_id, set()))
+        self.assertNotIn(instance_to_save.id, self.location_manager._dirty_instances.get(guild_id, set()))
+
 
     async def test_create_location_instance_success(self):
         guild_id = self.guild_id
@@ -1388,38 +1347,28 @@ if __name__ == '__main__':
 
         # Mock CharacterManager
         mock_char_manager = AsyncMock()
-        char1 = MagicMock()
-        char1.id = "char1_in_loc"
-        char1.guild_id = guild_id
-        char2 = MagicMock()
-        char2.id = "char2_in_loc"
-        char2.guild_id = guild_id
+        char1 = MagicMock() char1.id = "char1_in_loc"; char1.guild_id = guild_id
+        char2 = MagicMock(); char2.id = "char2_in_loc"; char2.guild_id = guild_id
         mock_char_manager.get_characters_in_location.return_value = [char1, char2]
         self.location_manager._character_manager = mock_char_manager # Inject mock
 
         # Mock NpcManager
         mock_npc_manager = AsyncMock()
-        npc1 = MagicMock()
-        npc1.id = "npc1_in_loc"
-        npc1.guild_id = guild_id
+        npc1 = MagicMock(); npc1.id = "npc1_in_loc"; npc1.guild_id = guild_id
         mock_npc_manager.get_npcs_in_location.return_value = [npc1]
         self.location_manager._npc_manager = mock_npc_manager
 
         # Mock ItemManager (assuming items might be directly in a location instance, or associated)
         # This depends heavily on ItemManager's design. For simplicity, let's assume a similar pattern.
         mock_item_manager = AsyncMock()
-        item1 = MagicMock()
-        item1.id = "item1_in_loc"
-        item1.guild_id = guild_id
+        item1 = MagicMock(); item1.id = "item1_in_loc"; item1.guild_id = guild_id
         mock_item_manager.get_items_in_location.return_value = [item1] # Fictional method for example
         mock_item_manager.remove_item_from_world = AsyncMock() # Fictional method
         self.location_manager._item_manager = mock_item_manager
 
         # Mock PartyManager
         mock_party_manager = AsyncMock()
-        party1 = MagicMock()
-        party1.id = "party1_in_loc"
-        party1.guild_id = guild_id
+        party1 = MagicMock(); party1.id = "party1_in_loc"; party1.guild_id = guild_id
         mock_party_manager.get_parties_in_location.return_value = [party1]
         # Parties might be moved to a default location or disbanded. Let's assume moved.
         self.location_manager._party_manager = mock_party_manager
