@@ -543,7 +543,7 @@ class PartyManager:
                            member_ids_list = getattr(party, 'player_ids_list', []) 
                            state_variables = getattr(party, 'state_variables', {})
                            current_action = getattr(party, 'current_action', None)
-                           name_i18n_dict = getattr(party, 'name_i18n', {"en": f"Party {getattr(party, 'id', 'N/A')}"})
+                            name_i18n_dict = getattr(party, 'name_i18n', {"en": f"Party {getattr(party, 'id', 'N/A')}"})
                            current_location_id = getattr(party, 'current_location_id', None)
                            turn_status = getattr(party, 'turn_status', "pending_actions")
 

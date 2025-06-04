@@ -17,7 +17,7 @@ class DetailedCheckResult:
     roll_formula: str
     rolls: List[int]
     modifier_applied: int  # The total modifier value that was applied
-    modifier_details: List[Dict[str, Any]]  # Breakdown of how the modifier was calculated, e.g., [{"value": 2, "source": "stat:strength"}, {"value": 1, "source": "item:magic_sword"}]
+    modifier_details: Dict[str, Any]  # Breakdown of how the modifier was calculated (e.g., {"stat_bonus": 2, "item_bonus": 1})
     total_roll_value: int  # sum(rolls) + modifier_applied
     target_value: Optional[int]  # The DC or the result of the target's opposed check
     outcome: CheckOutcome  # Enum value
