@@ -1,6 +1,6 @@
 import discord
 # from discord import slash_command # Or commands.Cog - Replaced by app_commands
-from typing import Optional, TYPE_CHECKING # Added TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, cast # Added TYPE_CHECKING and cast
 
 # --- Temporary global references ---
 # from bot.bot_core import global_game_manager # REMOVE THIS LINE
@@ -23,12 +23,12 @@ if TYPE_CHECKING:
 async def cmd_interact(interaction: Interaction, target: str, action_str: str, details: Optional[str] = None): # Renamed action to action_str to avoid conflict
     await interaction.response.defer(ephemeral=True)
 
-    game_mngr = None
+    game_mngr: Optional['GameManager'] = None # Keep Optional since it might not exist
     if hasattr(interaction.client, 'game_manager'):
-        game_mngr_candidate = getattr(interaction.client, 'game_manager')
-        if TYPE_CHECKING: # Ensure type checker knows about GameManager methods if available
-             assert isinstance(game_mngr_candidate, GameManager)
-        game_mngr = game_mngr_candidate
+        # Ensure RPGBot is imported under TYPE_CHECKING
+        client_bot = cast('RPGBot', interaction.client)
+        if client_bot.game_manager: # Check if game_manager itself is not None
+            game_mngr = client_bot.game_manager
 
     if game_mngr and hasattr(game_mngr, 'process_player_action'): # Check if method exists
          # This command is still a placeholder and uses the old process_player_action structure
@@ -55,17 +55,21 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
     await interaction.response.defer(ephemeral=False) # Combat is generally public
 
     try:
-        if not hasattr(interaction.client, 'game_manager') or \
-           not hasattr(interaction.client.game_manager, 'db_service') or \
-           not hasattr(interaction.client.game_manager, 'combat_manager'): # Check for combat_manager
-            await interaction.followup.send("Error: Core game services (DB or Combat) are not fully initialized.", ephemeral=True)
+        client_bot = cast('RPGBot', interaction.client)
+        if not client_bot.game_manager:
+            await interaction.followup.send("Critical Error: GameManager not found on bot client.", ephemeral=True)
             return
 
-        client_bot: 'RPGBot' = interaction.client
-        db_service: 'DBService' = client_bot.game_manager.db_service
-        combat_manager: 'CombatManager' = client_bot.game_manager.combat_manager # Get CombatManager
-        # game_manager for other calls if needed (though combat_manager should handle most combat logic)
-        game_mngr: 'GameManager' = client_bot.game_manager
+        game_mngr_instance = client_bot.game_manager
+
+        if not hasattr(game_mngr_instance, 'db_service') or \
+           not hasattr(game_mngr_instance, 'combat_manager'):
+            await interaction.followup.send("Error: Core game services (DB or Combat) are not fully initialized on GameManager.", ephemeral=True)
+            return
+
+        db_service: 'DBService' = game_mngr_instance.db_service
+        combat_manager: 'CombatManager' = game_mngr_instance.combat_manager
+        game_mngr: 'GameManager' = game_mngr_instance
 
 
         guild_id = str(interaction.guild_id)
@@ -225,15 +229,24 @@ async def cmd_talk(interaction: Interaction, npc_name: str, message: str):
 
     try:
         # --- Setup and Checks ---
-        if not hasattr(interaction.client, 'game_manager') or \
-           not hasattr(interaction.client.game_manager, 'db_service') or \
-           not hasattr(interaction.client.game_manager, 'openai_service'): # Check for openai_service
-            await interaction.followup.send("Error: Core game services (DB or AI) are not fully initialized.", ephemeral=True)
+        client_bot = cast('RPGBot', interaction.client)
+        if not client_bot.game_manager:
+            await interaction.followup.send("Critical Error: GameManager not found on bot client.", ephemeral=True)
+            return
+        game_mngr_instance = client_bot.game_manager
+
+        if not hasattr(game_mngr_instance, 'db_service') or \
+           not hasattr(game_mngr_instance, 'openai_service'):
+            await interaction.followup.send("Error: Core game services (DB or AI) are not fully initialized on GameManager.", ephemeral=True)
             return
 
-        client_bot: 'RPGBot' = interaction.client
-        db_service: 'DBService' = client_bot.game_manager.db_service
-        openai_service: 'OpenAIService' = client_bot.game_manager.openai_service # Get OpenAI service
+        db_service: 'DBService' = game_mngr_instance.db_service
+        openai_service_candidate = game_mngr_instance.openai_service # This is Optional
+
+        if not openai_service_candidate: # Explicit check for openai_service being None
+            await interaction.followup.send("The AI for dialogue is currently unavailable (service not loaded). Please try again later.", ephemeral=True)
+            return
+        openai_service: 'OpenAIService' = openai_service_candidate
 
         if not openai_service.is_available():
             await interaction.followup.send("The AI for dialogue is currently unavailable. Please try again later.", ephemeral=True)
@@ -242,7 +255,12 @@ async def cmd_talk(interaction: Interaction, npc_name: str, message: str):
 
         guild_id = str(interaction.guild_id)
         discord_user_id = interaction.user.id
-        channel_id = interaction.channel_id if interaction.channel else 0 # Fallback if channel is None
+
+        if interaction.channel:
+            channel_id = interaction.channel.id # This is an int
+        else:
+            print(f"Warning: interaction.channel is None for cmd_talk by user {interaction.user.id}. Using channel_id 0.")
+            channel_id = 0
 
         # --- Get Player Data ---
         player_data = await db_service.get_player_by_discord_id(discord_user_id=discord_user_id, guild_id=guild_id)
