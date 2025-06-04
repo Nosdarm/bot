@@ -5,7 +5,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands # For Bot type hint if needed in future
 import json
-from typing import Optional, TYPE_CHECKING
+import typing # Ensure typing is imported
+from typing import Optional, TYPE_CHECKING, Dict, Any, cast # Added Dict, Any, cast
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
@@ -13,40 +14,44 @@ if TYPE_CHECKING:
     from bot.game.managers.status_manager import StatusManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.database.sqlite_adapter import SqliteAdapter
-    from bot.game.game_manager import GameManager
+    from bot.game.managers.game_manager import GameManager
+    from bot.game.managers.npc_manager import NpcManager
+    from bot.game.managers.item_manager import ItemManager
+    from bot.game.managers.event_manager import EventManager
+    from bot.game.rules.rule_engine import RuleEngine
+    from bot.game.managers.time_manager import TimeManager
+    from bot.game.event_processors.event_stage_processor import EventStageProcessor
+    from bot.game.event_processors.event_action_processor import EventActionProcessor
+    from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor
+    from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator
+    from bot.ai.ai_response_validator import AIResponseValidator
 
-# Assuming is_master_or_admin can be adapted or is available in game_setup_cmds
-# For now, let's use a placeholder structure and adapt the call.
+
+# Import RPGBot for type checking in the check function
+from bot.bot_core import RPGBot
+# Corrected GameManager import path
+from bot.game.managers.game_manager import GameManager
 from bot.command_modules.game_setup_cmds import is_master_or_admin
 
-# Placeholder/Adapter check function for app_commands
+
 async def is_master_or_admin_check_for_app_command(interaction: discord.Interaction) -> bool:
     """
     Checks if the user invoking the command is a Master or Admin.
     Adapter for app_commands to use the existing logic from game_setup_cmds.
     """
-    # The original is_master_or_admin expects a Context-like object and a GameManager.
-    # We need to simulate this or adapt is_master_or_admin if it's strictly for Context.
-    # For now, assuming interaction.client has game_manager and is_master_or_admin can handle it.
-    if not hasattr(interaction.client, 'game_manager'):
-        print("is_master_or_admin_check_for_app_command: RPGBot instance (interaction.client) does not have game_manager.")
+    bot_instance = interaction.client
+    if not isinstance(bot_instance, RPGBot):
+        print("Error: Bot instance not found or not RPGBot type in check.")
         return False
 
-    # Create a lightweight object that mimics discord.ext.commands.Context enough for is_master_or_admin
-    class MockContext:
-        def __init__(self, interaction_obj: discord.Interaction):
-            self.author = interaction_obj.user
-            self.guild = interaction_obj.guild
-            self.channel = interaction_obj.channel
-            # Add other attributes if is_master_or_admin needs them
+    game_mngr = bot_instance.game_manager
+    if not game_mngr:
+        print("Error: GameManager not found in check.")
+        return False
 
-    mock_ctx = MockContext(interaction)
-    bot_instance = interaction.client
-    # Type cast to RPGBot to satisfy type hints for game_manager
-    if TYPE_CHECKING:
-        bot_instance = typing.cast(RPGBot, bot_instance)
-
-    return await is_master_or_admin(mock_ctx, bot_instance.game_manager)
+    # is_master_or_admin is synchronous, so no await here
+    # It expects (interaction, game_manager)
+    return is_master_or_admin(interaction, game_mngr)
 
 
 class MasterCommandsCog(commands.Cog):
@@ -61,19 +66,33 @@ class MasterCommandsCog(commands.Cog):
         """
         await interaction.response.defer(ephemeral=True)
 
-        bot_instance: RPGBot = interaction.client
-        if not bot_instance or not hasattr(bot_instance, 'game_manager'):
-            await interaction.followup.send("Ошибка: Экземпляр бота или игровой менеджер не найден.", ephemeral=True)
+        bot_instance = cast(RPGBot, interaction.client)
+        if not isinstance(bot_instance, RPGBot):
+            await interaction.followup.send("Ошибка: Экземпляр бота не настроен правильно.", ephemeral=True)
+            return
+        game_mngr: Optional[GameManager] = bot_instance.game_manager
+        if not game_mngr:
+            await interaction.followup.send("Ошибка: Менеджер игры недоступен.", ephemeral=True)
             return
 
-        db_adapter: SqliteAdapter = bot_instance.game_manager._db_adapter
-        loc_manager: LocationManager = bot_instance.game_manager.location_manager
-        status_manager: StatusManager = bot_instance.game_manager.status_manager
-        char_manager: CharacterManager = bot_instance.game_manager.character_manager
-
-        if not all([db_adapter, loc_manager, status_manager, char_manager]):
-            await interaction.followup.send("Ошибка: Один или несколько менеджеров не инициализированы.", ephemeral=True)
+        db_adapter: Optional[SqliteAdapter] = game_mngr._db_adapter
+        if not db_adapter:
+            await interaction.followup.send("Ошибка: Адаптер базы данных недоступен.", ephemeral=True)
             return
+        loc_manager: Optional[LocationManager] = game_mngr.location_manager
+        if not loc_manager:
+            await interaction.followup.send("Ошибка: Менеджер локаций недоступен.", ephemeral=True)
+            return
+        status_manager: Optional[StatusManager] = game_mngr.status_manager
+        if not status_manager:
+            await interaction.followup.send("Ошибка: Менеджер статусов недоступен.", ephemeral=True)
+            return
+        char_manager: Optional[CharacterManager] = game_mngr.character_manager
+        if not char_manager:
+            await interaction.followup.send("Ошибка: Менеджер персонажей недоступен.", ephemeral=True)
+            return
+
+        player_char = None # Initialize player_char to None
 
         try:
             moderation_request_row = await db_adapter.get_pending_moderation_request(request_id)
@@ -126,18 +145,20 @@ class MasterCommandsCog(commands.Cog):
                         guild_id=str(interaction.guild_id)
                     )
                     if player_char and player_char.id:
-                        # Assuming StatusManager uses character_id for 'Character' target_type
-                        status_removal_context = {"source": "moderation_approval"} # Example context
+                        status_removal_context = {"source": "moderation_approval"}
                         await status_manager.remove_status_effects_by_type(
                             target_id=player_char.id,
-                            target_type='Character', # Make sure this matches StatusManager's expectation
+                            target_type='Character',
                             status_type_to_remove='waiting_moderation',
                             guild_id=str(interaction.guild_id),
                             context=status_removal_context
                         )
                         print(f"MasterCmds: Removed 'waiting_moderation' status from character {player_char.id} (User: {user_id_str}).")
-                    elif not player_char:
-                         print(f"MasterCmds: Could not find character for user ID {user_id_str} to remove 'waiting_moderation' status.")
+                    else: # player_char is None
+                         print(f"MasterCmds: Could not find character for user ID {user_id_str} to remove 'waiting_moderation' status. Skipping status removal.")
+                except ValueError: # Error converting user_id_str to int
+                    print(f"MasterCmds: Invalid user ID format '{user_id_str}'. Skipping status removal.")
+                    player_char = None # Ensure player_char is None if conversion failed
                 except Exception as e_status:
                     print(f"MasterCmds: Error removing 'waiting_moderation' status for user {user_id_str}: {e_status}")
                     # Non-critical, log and continue
@@ -145,27 +166,28 @@ class MasterCommandsCog(commands.Cog):
                 await db_adapter.delete_pending_moderation_request(request_id)
 
                 # --- Trigger post-save logic (14) for approved location ---
-                if player_char and created_instance_data: # player_char fetched for status removal
-                    arrival_context = {
+                if player_char and created_instance_data:
+                    arrival_context: Dict[str, Any] = {
                         'guild_id': str(interaction.guild_id),
                         'player_id': player_char.id,
                         'character': player_char,
                         'location_manager': loc_manager,
                         'character_manager': char_manager,
-                        'npc_manager': bot_instance.game_manager.npc_manager,
-                        'item_manager': bot_instance.game_manager.item_manager,
-                        'event_manager': bot_instance.game_manager.event_manager,
                         'status_manager': status_manager,
-                        'rule_engine': bot_instance.game_manager.rule_engine,
-                        'time_manager': bot_instance.game_manager.time_manager,
-                        'send_callback_factory': bot_instance.game_manager.send_callback_factory,
                         'location_instance_data': created_instance_data,
-                         # Add other managers from bot_instance.game_manager if available and relevant
-                        'event_stage_processor': bot_instance.game_manager.event_stage_processor,
-                        'event_action_processor': bot_instance.game_manager.event_action_processor,
-                        'on_enter_action_executor': bot_instance.game_manager.on_enter_action_executor,
-                        'stage_description_generator': bot_instance.game_manager.stage_description_generator,
                     }
+                    # Add other managers if they exist
+                    if game_mngr.npc_manager: arrival_context['npc_manager'] = game_mngr.npc_manager
+                    if game_mngr.item_manager: arrival_context['item_manager'] = game_mngr.item_manager
+                    if game_mngr.event_manager: arrival_context['event_manager'] = game_mngr.event_manager
+                    if game_mngr.rule_engine: arrival_context['rule_engine'] = game_mngr.rule_engine
+                    if game_mngr.time_manager: arrival_context['time_manager'] = game_mngr.time_manager
+                    if game_mngr.send_callback_factory: arrival_context['send_callback_factory'] = game_mngr.send_callback_factory
+                    if game_mngr.event_stage_processor: arrival_context['event_stage_processor'] = game_mngr.event_stage_processor
+                    if game_mngr.event_action_processor: arrival_context['event_action_processor'] = game_mngr.event_action_processor
+                    if game_mngr.on_enter_action_executor: arrival_context['on_enter_action_executor'] = game_mngr.on_enter_action_executor
+                    if game_mngr.stage_description_generator: arrival_context['stage_description_generator'] = game_mngr.stage_description_generator
+
                     try:
                         print(f"MasterCmds: Triggering handle_entity_arrival for approved location {new_instance_id} for character {player_char.id}.")
                         await loc_manager.handle_entity_arrival(
@@ -176,9 +198,8 @@ class MasterCommandsCog(commands.Cog):
                         )
                     except Exception as e_arrival:
                         print(f"MasterCmds: ERROR during post-approval logic (handle_entity_arrival) for location {new_instance_id}: {e_arrival}")
-                        # Log error, but the main approval process was successful.
                 elif not player_char:
-                    print(f"MasterCmds: WARNING - player_char not found for post-approval logic (handle_entity_arrival) for location {new_instance_id}. User ID: {user_id_str}")
+                    print(f"MasterCmds: WARNING - player_char (User ID: {user_id_str}) not found. Skipping post-approval handle_entity_arrival for location {new_instance_id}.")
                 # --- End of post-save logic ---
 
                 await interaction.followup.send(f"Контент для запроса '{request_id}' (тип: {content_type}) одобрен и создан. ID нового инстанса: {new_instance_id}", ephemeral=True)
@@ -202,18 +223,29 @@ class MasterCommandsCog(commands.Cog):
         """
         await interaction.response.defer(ephemeral=True)
 
-        bot_instance: RPGBot = interaction.client
-        if not bot_instance or not hasattr(bot_instance, 'game_manager'):
-            await interaction.followup.send("Ошибка: Экземпляр бота или игровой менеджер не найден.", ephemeral=True)
+        bot_instance = cast(RPGBot, interaction.client)
+        if not isinstance(bot_instance, RPGBot):
+            await interaction.followup.send("Ошибка: Экземпляр бота не настроен правильно.", ephemeral=True)
+            return
+        game_mngr: Optional[GameManager] = bot_instance.game_manager
+        if not game_mngr:
+            await interaction.followup.send("Ошибка: Менеджер игры недоступен.", ephemeral=True)
             return
 
-        db_adapter: SqliteAdapter = bot_instance.game_manager._db_adapter
-        status_manager: StatusManager = bot_instance.game_manager.status_manager
-        char_manager: CharacterManager = bot_instance.game_manager.character_manager
-
-        if not all([db_adapter, status_manager, char_manager]):
-            await interaction.followup.send("Ошибка: Один или несколько менеджеров не инициализированы.", ephemeral=True)
+        db_adapter: Optional[SqliteAdapter] = game_mngr._db_adapter
+        if not db_adapter:
+            await interaction.followup.send("Ошибка: Адаптер базы данных недоступен.", ephemeral=True)
             return
+        status_manager: Optional[StatusManager] = game_mngr.status_manager
+        if not status_manager:
+            await interaction.followup.send("Ошибка: Менеджер статусов недоступен.", ephemeral=True)
+            return
+        char_manager: Optional[CharacterManager] = game_mngr.character_manager
+        if not char_manager:
+            await interaction.followup.send("Ошибка: Менеджер персонажей недоступен.", ephemeral=True)
+            return
+
+        player_char = None # Initialize
 
         try:
             moderation_request_row = await db_adapter.get_pending_moderation_request(request_id)
@@ -240,8 +272,8 @@ class MasterCommandsCog(commands.Cog):
                         guild_id=str(interaction.guild_id)
                     )
                     if player_char and player_char.id:
-                        player_char_id_log = player_char.id
-                        status_removal_context = {"source": "moderation_rejection"} # Example context
+                        player_char_id_log = player_char.id # type: ignore
+                        status_removal_context = {"source": "moderation_rejection"}
                         await status_manager.remove_status_effects_by_type(
                             target_id=player_char.id,
                             target_type='Character',
@@ -250,8 +282,12 @@ class MasterCommandsCog(commands.Cog):
                             context=status_removal_context
                         )
                         print(f"MasterCmds: Removed 'waiting_moderation' status from character {player_char.id} (User: {user_id_str}) due to rejection.")
-                    elif not player_char:
-                         print(f"MasterCmds: Could not find character for user ID {user_id_str} to remove 'waiting_moderation' status after rejection.")
+                    else: # player_char is None
+                         print(f"MasterCmds: Could not find character for user ID {user_id_str} to remove 'waiting_moderation' status after rejection. Skipping status removal.")
+                         player_char_id_log = "N/A" # Ensure it's defined for the log
+                except ValueError: # Error converting user_id_str to int
+                    print(f"MasterCmds: Invalid user ID format '{user_id_str}'. Skipping status removal for rejection.")
+                    player_char_id_log = "N/A" # Ensure it's defined
                 except Exception as e_status:
                     print(f"MasterCmds: Error removing 'waiting_moderation' status for user {user_id_str} after rejection: {e_status}")
                     # Log and continue, as the main action (rejection) is done.
@@ -279,20 +315,33 @@ class MasterCommandsCog(commands.Cog):
         """
         await interaction.response.defer(ephemeral=True)
 
-        bot_instance: RPGBot = interaction.client
-        if not bot_instance or not hasattr(bot_instance, 'game_manager'):
-            await interaction.followup.send("Ошибка: Экземпляр бота или игровой менеджер не найден.", ephemeral=True)
+        bot_instance = cast(RPGBot, interaction.client)
+        if not isinstance(bot_instance, RPGBot):
+            await interaction.followup.send("Ошибка: Экземпляр бота не настроен правильно.", ephemeral=True)
+            return
+        game_mngr: Optional[GameManager] = bot_instance.game_manager
+        if not game_mngr:
+            await interaction.followup.send("Ошибка: Менеджер игры недоступен.", ephemeral=True)
             return
 
-        db_adapter: SqliteAdapter = bot_instance.game_manager._db_adapter
-        loc_manager: LocationManager = bot_instance.game_manager.location_manager
-        status_manager: StatusManager = bot_instance.game_manager.status_manager
-        char_manager: CharacterManager = bot_instance.game_manager.character_manager
-        # ai_validator = bot_instance.game_manager.ai_validator # Needed for re-validation
-
-        if not all([db_adapter, loc_manager, status_manager, char_manager]): # ai_validator removed for now
-            await interaction.followup.send("Ошибка: Один или несколько менеджеров не инициализированы.", ephemeral=True)
+        db_adapter: Optional[SqliteAdapter] = game_mngr._db_adapter
+        if not db_adapter:
+            await interaction.followup.send("Ошибка: Адаптер базы данных недоступен.", ephemeral=True)
             return
+        loc_manager: Optional[LocationManager] = game_mngr.location_manager
+        if not loc_manager:
+            await interaction.followup.send("Ошибка: Менеджер локаций недоступен.", ephemeral=True)
+            return
+        status_manager: Optional[StatusManager] = game_mngr.status_manager
+        if not status_manager:
+            await interaction.followup.send("Ошибка: Менеджер статусов недоступен.", ephemeral=True)
+            return
+        char_manager: Optional[CharacterManager] = game_mngr.character_manager
+        if not char_manager:
+            await interaction.followup.send("Ошибка: Менеджер персонажей недоступен.", ephemeral=True)
+            return
+
+        player_char = None # Initialize
 
         try:
             moderation_request_row = await db_adapter.get_pending_moderation_request(request_id)
@@ -352,8 +401,53 @@ class MasterCommandsCog(commands.Cog):
             #     # For now, we use the parsed `edited_location_data` directly.
             # else:
             #     print("MasterCmds: AI Validator not available for re-validating edited content.")
-            print(f"TODO: Re-validate edited_location_data for request {request_id} using AIResponseValidator by Master {interaction.user.id}.")
+            # print(f"TODO: Re-validate edited_location_data for request {request_id} using AIResponseValidator by Master {interaction.user.id}.")
             # Proceeding with Master's JSON as is for now.
+            if loc_manager and loc_manager._ai_validator:
+                try:
+                    edited_data_json_for_validation = json.dumps(edited_location_data)
+                    validation_result = await loc_manager._ai_validator.validate_ai_response(
+                        ai_json_string=edited_data_json_for_validation,
+                        expected_structure="single_location",
+                        # Provide existing_..._ids if necessary for context. For simplicity, not passing them now.
+                        # existing_location_template_ids=set(loc_manager._location_templates.get(str(interaction.guild_id), {}).keys())
+                    )
+                    if validation_result.get('global_errors') or \
+                       validation_result.get('overall_status') == "requires_moderation" or \
+                       not validation_result.get('entities') or \
+                       (validation_result.get('entities') and validation_result['entities'][0].get('errors')):
+
+                        error_detail_list = validation_result.get('global_errors', [])
+                        if validation_result.get('entities') and validation_result['entities'][0].get('errors'):
+                             error_detail_list.extend(validation_result['entities'][0]['errors'])
+                        if not error_detail_list and (validation_result.get('overall_status') == "requires_moderation" or not validation_result.get('entities')):
+                            error_detail_list.append(f"Validation status: {validation_result.get('overall_status')}, or no entities returned.")
+
+                        error_detail_str = "; ".join(error_detail_list) if error_detail_list else "Validation failed with no specific errors."
+                        await interaction.followup.send(f"Ошибка: Предоставленный JSON для редактирования не прошел валидацию. Детали: {error_detail_str}", ephemeral=True)
+                        return
+
+                    # Use the validated_data from the result if re-validation is successful
+                    if validation_result.get('entities'):
+                        validated_entity_data = validation_result['entities'][0].get('validated_data')
+                        if validated_entity_data:
+                             edited_location_data = validated_entity_data
+                             print(f"MasterCmds: Successfully re-validated and used AI-corrected data for request {request_id}.")
+                        else:
+                             print(f"MasterCmds: Warning - Re-validation passed but no validated_data in entity for request {request_id}. Using original edit.")
+                    else:
+                         print(f"MasterCmds: Warning - Re-validation passed but no entities in result for request {request_id}. Using original edit.")
+
+
+                except Exception as e_val:
+                    await interaction.followup.send(f"Ошибка при пере-валидации отредактированных данных: {e_val}", ephemeral=True)
+                    return
+            else:
+                # Log a warning but proceed if validator is not available
+                print(f"MasterCmds: WARNING - AI Validator not available on LocationManager. Using edited data for request {request_id} as is.")
+                # Depending on policy, you might choose to send a followup to the user:
+                # await interaction.followup.send("Предупреждение: Валидатор AI недоступен, отредактированные данные будут использованы как есть. Возможны непредвиденные ошибки.", ephemeral=True)
+
 
             creation_context = {
                 "guild_id": str(interaction.guild_id),
@@ -386,10 +480,15 @@ class MasterCommandsCog(commands.Cog):
                             guild_id=str(interaction.guild_id), context=status_removal_context
                         )
                         print(f"MasterCmds: Removed 'waiting_moderation' status from char {player_char.id} (User: {user_id_str}) after edit/approval.")
+                    else: # player_char is None
+                        print(f"MasterCmds: Could not find character for user ID {user_id_str} to remove 'waiting_moderation' status after edit. Skipping status removal.")
+                except ValueError: # Error converting user_id_str to int
+                    print(f"MasterCmds: Invalid user ID format '{user_id_str}'. Skipping status removal after edit.")
+                    player_char = None # Ensure player_char is None
                 except Exception as e_status:
                     print(f"MasterCmds: Error removing 'waiting_moderation' status for user {user_id_str} after edit/approval: {e_status}")
 
-                # Update request to 'edited' and then delete (or just update if audit log needed)
+                # Update request to 'edited' and then delete
                 try:
                     await db_adapter.update_pending_moderation_request(
                         request_id,
@@ -406,28 +505,28 @@ class MasterCommandsCog(commands.Cog):
                     # Non-critical for instance creation, but log it.
 
                 # --- Trigger post-save logic (14) for edited and approved location ---
-                # player_char should be available from the status removal step.
-                # created_instance_data is the dict of the newly created location.
                 if player_char and created_instance_data:
-                    arrival_context = {
+                    arrival_context: Dict[str, Any] = {
                         'guild_id': str(interaction.guild_id),
                         'player_id': player_char.id,
                         'character': player_char,
                         'location_manager': loc_manager,
                         'character_manager': char_manager,
-                        'npc_manager': bot_instance.game_manager.npc_manager,
-                        'item_manager': bot_instance.game_manager.item_manager,
-                        'event_manager': bot_instance.game_manager.event_manager,
                         'status_manager': status_manager,
-                        'rule_engine': bot_instance.game_manager.rule_engine,
-                        'time_manager': bot_instance.game_manager.time_manager,
-                        'send_callback_factory': bot_instance.game_manager.send_callback_factory,
                         'location_instance_data': created_instance_data,
-                        'event_stage_processor': bot_instance.game_manager.event_stage_processor,
-                        'event_action_processor': bot_instance.game_manager.event_action_processor,
-                        'on_enter_action_executor': bot_instance.game_manager.on_enter_action_executor,
-                        'stage_description_generator': bot_instance.game_manager.stage_description_generator,
                     }
+                    # Add other managers if they exist
+                    if game_mngr.npc_manager: arrival_context['npc_manager'] = game_mngr.npc_manager
+                    if game_mngr.item_manager: arrival_context['item_manager'] = game_mngr.item_manager
+                    if game_mngr.event_manager: arrival_context['event_manager'] = game_mngr.event_manager
+                    if game_mngr.rule_engine: arrival_context['rule_engine'] = game_mngr.rule_engine
+                    if game_mngr.time_manager: arrival_context['time_manager'] = game_mngr.time_manager
+                    if game_mngr.send_callback_factory: arrival_context['send_callback_factory'] = game_mngr.send_callback_factory # type: ignore
+                    if game_mngr.event_stage_processor: arrival_context['event_stage_processor'] = game_mngr.event_stage_processor
+                    if game_mngr.event_action_processor: arrival_context['event_action_processor'] = game_mngr.event_action_processor
+                    if game_mngr.on_enter_action_executor: arrival_context['on_enter_action_executor'] = game_mngr.on_enter_action_executor
+                    if game_mngr.stage_description_generator: arrival_context['stage_description_generator'] = game_mngr.stage_description_generator
+
                     try:
                         print(f"MasterCmds: Triggering handle_entity_arrival for edited/approved location {new_instance_id} for character {player_char.id}.")
                         await loc_manager.handle_entity_arrival(
@@ -438,8 +537,8 @@ class MasterCommandsCog(commands.Cog):
                         )
                     except Exception as e_arrival:
                         print(f"MasterCmds: ERROR during post-edit/approval logic (handle_entity_arrival) for location {new_instance_id}: {e_arrival}")
-                elif not player_char:
-                     print(f"MasterCmds: WARNING - player_char not found for post-edit/approval logic (handle_entity_arrival) for location {new_instance_id}. User ID: {user_id_str}")
+                elif not player_char: # This check is after player_char might have been set to None due to ValueError
+                     print(f"MasterCmds: WARNING - player_char (User ID: {user_id_str}) not found or invalid. Skipping post-edit/approval handle_entity_arrival for location {new_instance_id}.")
                 # --- End of post-save logic ---
 
                 await interaction.followup.send(f"Контент для запроса '{request_id}' (тип: {content_type}) успешно отредактирован, одобрен и создан. ID нового инстанса: {new_instance_id}", ephemeral=True)

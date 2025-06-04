@@ -458,10 +458,10 @@ async def cmd_end_turn(interaction: Interaction):
             return
 
         char_model.current_game_status = 'ожидание_обработку'
-        char_model.collected_actions_json = "[]" # Changed attribute name
+        char_model.собранные_действия_JSON = "[]" # Changed attribute name
 
         character_manager.mark_character_dirty(guild_id, char_model.id)
-        await character_manager.save_character(char_model, guild_id=guild_id) # Assuming save_character is async
+        await character_manager.save_character(character=char_model, guild_id=guild_id)
 
         await interaction.followup.send("Ваш ход завершен. Действия будут обработаны.", ephemeral=True)
 
@@ -526,11 +526,11 @@ async def cmd_end_party_turn(interaction: Interaction):
             # Note: собранные_действия_JSON for the sender should ideally be cleared by their own /end_turn.
             # If /end_party_turn is the *only* way they end their turn, then actions should be cleared here.
             # Assuming /end_turn is preferred for individual action clearing.
-            await character_manager.update_character(sender_char)
+            character_manager.mark_character_dirty(guild_id, sender_char.id) # Mark dirty before save
+            await character_manager.save_character(character=sender_char, guild_id=guild_id)
             processed_members_count += 1
-            updated_member_names.append(getattr(sender_char, 'name_i18n', {}).get('en', 'Unknown Character'))
-            character_manager.mark_character_dirty(guild_id, sender_char.id)
-            await character_manager.save_character(sender_char, guild_id=guild_id)
+            # updated_member_names.append(getattr(sender_char, 'name_i18n', {}).get('en', 'Unknown Character')) # This was redundant with the one below
+            # await character_manager.save_character(sender_char, guild_id=guild_id) # This save is redundant, already done
             updated_member_names.append(sender_name_display)
 
         for member_char_id in party.player_ids_list:
@@ -543,11 +543,11 @@ async def cmd_end_party_turn(interaction: Interaction):
                 if member_char.current_game_status != 'ожидание_обработку':
                     member_char.current_game_status = 'ожидание_обработку'
                     # As with sender, assume individual /end_turn handles action clearing.
-                    await character_manager.update_character(member_char)
+                    character_manager.mark_character_dirty(guild_id, member_char.id) # Mark dirty before save
+                    await character_manager.save_character(character=member_char, guild_id=guild_id)
                     processed_members_count += 1
-                    updated_member_names.append(getattr(member_char, 'name_i18n', {}).get('en', 'Unknown Character'))
-                    character_manager.mark_character_dirty(guild_id, member_char.id)
-                    await character_manager.save_character(member_char, guild_id=guild_id)
+                    # updated_member_names.append(getattr(member_char, 'name_i18n', {}).get('en', 'Unknown Character')) # This was redundant
+                    # await character_manager.save_character(member_char, guild_id=guild_id) # This save is redundant
                     member_name_display = member_char.name_i18n.get(language, member_char.name_i18n.get('en', 'Another Player'))
                     updated_member_names.append(member_name_display)
             elif member_char:

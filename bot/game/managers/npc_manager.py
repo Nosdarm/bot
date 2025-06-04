@@ -328,17 +328,17 @@ class NpcManager:
 
         # 1. Apply RuleEngine generated stats (if no AI stats)
         rule_engine = self._rule_engine or kwargs.get('rule_engine')
-        if rule_engine and hasattr(rule_engine, 'generate_initial_npc_stats') and not (ai_generated_data and 'stats' in ai_generated_data):
+        # L332: RuleEngine has generate_initial_character_stats, not generate_initial_npc_stats.
+        if rule_engine and hasattr(rule_engine, 'generate_initial_character_stats') and not (ai_generated_data and 'stats' in ai_generated_data):
             try:
-                generated_stats = await rule_engine.generate_initial_npc_stats(
-                    npc_template_id=archetype_id_to_load,
-                    guild_id=guild_id_str,
-                    **kwargs
-                )
+                # TODO: Consider making generate_initial_character_stats more generic or add NPC specific version.
+                # Calling generate_initial_character_stats without specific NPC context for now.
+                generated_stats = rule_engine.generate_initial_character_stats() # Synchronous call
                 if isinstance(generated_stats, dict):
                     final_data['stats'].update(generated_stats)
+                    print(f"NpcManager: Applied RuleEngine initial stats for NPC concept '{archetype_id_to_load}'.")
             except Exception as e:
-                print(f"NpcManager: Error generating NPC stats via RuleEngine: {e}")
+                print(f"NpcManager: Error generating NPC stats via RuleEngine (using generate_initial_character_stats): {e}")
                 traceback.print_exc()
 
         # 2. Layer Archetype Data (if loaded and no AI data)
@@ -534,9 +534,21 @@ class NpcManager:
 
             # Status Cleanup (Statuses on this NPC)
             sm = cleanup_context.get('status_manager') # type: Optional["StatusManager"]
-            if sm and hasattr(sm, 'remove_status_effects_by_target'): # Or clean_up_for_entity
-                try: await sm.remove_status_effects_by_target(npc_id, 'NPC', context=cleanup_context) # Assumes method handles guild_id via context
-                except Exception: traceback.print_exc(); print(f"NpcManager: Error during status cleanup for NPC {npc_id} in guild {guild_id_str}.")
+            # L537: remove_status_effects_by_target does not exist. Iterate and remove.
+            if sm and hasattr(sm, 'remove_status_effect') and hasattr(npc, 'status_effects') and isinstance(npc.status_effects, list):
+                # npc.status_effects should be a list of status_effect_ids if populated by StatusManager
+                status_ids_to_remove = list(npc.status_effects) # Iterate over a copy
+                if status_ids_to_remove:
+                    print(f"NpcManager: Removing {len(status_ids_to_remove)} status effects from NPC {npc_id} in guild {guild_id_str}.")
+                    for status_id_to_remove_from_list in status_ids_to_remove:
+                        try:
+                            await sm.remove_status_effect(status_effect_id=str(status_id_to_remove_from_list), guild_id=guild_id_str, **cleanup_context)
+                        except Exception as e_stat_rem:
+                             print(f"NpcManager: Error removing status effect {status_id_to_remove_from_list} during NPC cleanup: {e_stat_rem}")
+                             traceback.print_exc()
+            elif sm:
+                 print(f"NpcManager: StatusManager available but NPC {npc_id} has no status_effects list or it's invalid, or remove_status_effect method missing.")
+
 
             # Party Cleanup (Remove NPC from their party)
             pm = cleanup_context.get('party_manager') # type: Optional["PartyManager"]
