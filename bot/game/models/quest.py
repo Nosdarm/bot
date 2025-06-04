@@ -241,95 +241,97 @@ class Quest(BaseModel):
         return quest_obj
 
 # Example usage (optional, for testing)
-# if __name__ == '__main__':
-    # Create a sample quest (OLD __main__ REMOVED as per typical model file structure)
-    # ... (old __main__ content would be here if kept) ...
-        "description": "An ancient artifact has been lost, and it's up to you to find it.", # Old format
-        "guild_id": "guild_123",
-        "stages": {
-            "stage_1": {
-                "title": "Find Clues", # Old format
-                "description": "Search the old library for clues.", # Old format
-                "objectives": [{"type": "interact", "target": "npc_librarian"}]
-            },
-            "stage_2": {
-                "title_i18n": {"en": "Retrieve the Artifact", "ru": "Добудьте Артефакт"}, # New format
-                "description_i18n": {"en": "The artifact is in the dragon's lair.", "ru": "Артефакт в логове дракона."},
-                "objectives": [{"type": "defeat_enemy", "enemy_id": "dragon_boss"}]
-            }
-        },
-        "rewards": {"experience": 100, "items": ["rare_sword_id"]},
-        "npc_involvement": {"giver": "npc_elder_1", "target_location": "dungeon_of_shadows"}
-    }
-    quest1 = Quest.from_dict(quest_data)
-    quest1.status = "active"
-    assert quest1.name_i18n == {"en": "The Lost Artifact"}
-    assert quest1.description_i18n == {"en": "An ancient artifact has been lost, and it's up to you to find it."}
-    assert quest1.stages["stage_1"]["title_i18n"] == {"en": "Find Clues"}
-    assert quest1.stages["stage_1"]["description_i18n"] == {"en": "Search the old library for clues."}
-    assert "title" not in quest1.stages["stage_1"] # Old key should be removed
-    assert quest1.stages["stage_2"]["title_i18n"] == {"en": "Retrieve the Artifact", "ru": "Добудьте Артефакт"}
-    quest1.prerequisites.append("previous_quest_completed")
-
-    print("Quest 1 ID:", quest1.id)
-    print("Quest 1 Dict:", quest1.to_dict())
-    print("Quest 1 Stage 1 Title i18n:", quest1.stages["stage_1"]["title_i18n"])
-
-
-    # Create another quest with minimal data to test defaults (using new i18n fields directly)
-    quest2_data = {
-        "id": "fixed_quest_id_002",
-        "name_i18n": {"en": "Simple Task", "ru": "Простое Задание"},
-        "guild_id": "guild_456"
-    }
-    quest2 = Quest.from_dict(quest2_data)
-    print("\nQuest 2 ID:", quest2.id)
-    print("Quest 2 Name i18n:", quest2.name_i18n)
-    print("Quest 2 Description i18n (default):", quest2.description_i18n)
-    print("Quest 2 Dict:", quest2.to_dict())
-
-    # Test creation with no data (should use all defaults)
-    # For Quest(), need to provide guild_id if it's required by logic, but not by __init__ default
-    quest3 = Quest(guild_id="guild_789") 
-    print("\nQuest 3 ID:", quest3.id)
-    print("Quest 3 Name i18n (default):", quest3.name_i18n)
-    print("Quest 3 Dict:", quest3.to_dict())
-    # quest3.guild_id = "guild_789" # Set if not passed in init and required elsewhere
-    # print("Quest 3 Dict (after guild_id):", quest3.to_dict())
-
-    # Test creation with explicit None for optional fields (using old field names for from_dict conversion)
-    quest4_data = {
-        "name": "Test None Quest", # Old format
-        "guild_id": "guild_abc",
-        "prerequisites": None,
-        "connections": None,
-        "stages": None, # Will become {}
-        "rewards": None, # Will become {}
-        "npc_involvement": None, # Will become {}
-    }
-    quest4 = Quest.from_dict(quest4_data)
-    print("\nQuest 4 ID:", quest4.id)
-    assert quest4.name_i18n == {"en": "Test None Quest"}
-    assert quest4.stages == {}
-    print("Quest 4 Dict:", quest4.to_dict())
-
-    # Verifying BaseModel's id creation
-    base_instance = BaseModel()
-    print(f"\nBaseModel instance ID: {base_instance.id}")
-    base_instance_with_id = BaseModel(id="custom_id_base")
-    print(f"BaseModel instance with custom ID: {base_instance_with_id.id}")
-
-    quest_instance_no_id = Quest(guild_id="test_guild")
-    print(f"Quest instance (no id provided) ID: {quest_instance_no_id.id}")
-    quest_instance_with_id = Quest(id="custom_id_quest", guild_id="test_guild")
-    print(f"Quest instance (id provided) ID: {quest_instance_with_id.id}")
-
-    # Checking from_dict behavior with an ID present in the dictionary
-    quest_from_dict_with_id = Quest.from_dict({"id": "existing_id_123", "name": "From Dict With ID", "guild_id": "test_guild"})
-    print(f"Quest from_dict (id in data) ID: {quest_from_dict_with_id.id}, Name: {quest_from_dict_with_id.name}")
-
-    # Checking from_dict behavior without an ID in the dictionary
-    quest_from_dict_no_id = Quest.from_dict({"name": "From Dict No ID", "guild_id": "test_guild"})
-    print(f"Quest from_dict (no id in data) ID: {quest_from_dict_no_id.id}, Name: {quest_from_dict_no_id.name}")
+# # if __name__ == '__main__':
+#     # Create a sample quest (OLD __main__ REMOVED as per typical model file structure)
+#     # ... (old __main__ content would be here if kept) ...
+#     quest_data = { # Added assignment for quest_data
+#         "name_i18n": {"en": "The Lost Artifact"}, # Old format
+#         "description": "An ancient artifact has been lost, and it's up to you to find it.", # Old format
+#         "guild_id": "guild_123",
+#         "stages": {
+#             "stage_1": {
+#                 "title": "Find Clues", # Old format
+#                 "description": "Search the old library for clues.", # Old format
+#                 "objectives": [{"type": "interact", "target": "npc_librarian"}]
+#             },
+#             "stage_2": {
+#                 "title_i18n": {"en": "Retrieve the Artifact", "ru": "Добудьте Артефакт"}, # New format
+#                 "description_i18n": {"en": "The artifact is in the dragon's lair.", "ru": "Артефакт в логове дракона."},
+#                 "objectives": [{"type": "defeat_enemy", "enemy_id": "dragon_boss"}]
+#             }
+#         },
+#         "rewards": {"experience": 100, "items": ["rare_sword_id"]},
+#         "npc_involvement": {"giver": "npc_elder_1", "target_location": "dungeon_of_shadows"}
+#     }
+#     quest1 = Quest.from_dict(quest_data)
+#     quest1.status = "active"
+#     assert quest1.name_i18n == {"en": "The Lost Artifact"}
+#     assert quest1.description_i18n == {"en": "An ancient artifact has been lost, and it's up to you to find it."}
+#     assert quest1.stages["stage_1"]["title_i18n"] == {"en": "Find Clues"}
+#     assert quest1.stages["stage_1"]["description_i18n"] == {"en": "Search the old library for clues."}
+#     assert "title" not in quest1.stages["stage_1"] # Old key should be removed
+#     assert quest1.stages["stage_2"]["title_i18n"] == {"en": "Retrieve the Artifact", "ru": "Добудьте Артефакт"}
+#     quest1.prerequisites.append("previous_quest_completed")
+#
+#     print("Quest 1 ID:", quest1.id)
+#     print("Quest 1 Dict:", quest1.to_dict())
+#     print("Quest 1 Stage 1 Title i18n:", quest1.stages["stage_1"]["title_i18n"])
+#
+#
+#     # Create another quest with minimal data to test defaults (using new i18n fields directly)
+#     quest2_data = {
+#         "id": "fixed_quest_id_002",
+#         "name_i18n": {"en": "Simple Task", "ru": "Простое Задание"},
+#         "guild_id": "guild_456"
+#     }
+#     quest2 = Quest.from_dict(quest2_data)
+#     print("\nQuest 2 ID:", quest2.id)
+#     print("Quest 2 Name i18n:", quest2.name_i18n)
+#     print("Quest 2 Description i18n (default):", quest2.description_i18n)
+#     print("Quest 2 Dict:", quest2.to_dict())
+#
+#     # Test creation with no data (should use all defaults)
+#     # For Quest(), need to provide guild_id if it's required by logic, but not by __init__ default
+#     quest3 = Quest(guild_id="guild_789")
+#     print("\nQuest 3 ID:", quest3.id)
+#     print("Quest 3 Name i18n (default):", quest3.name_i18n)
+#     print("Quest 3 Dict:", quest3.to_dict())
+#     # quest3.guild_id = "guild_789" # Set if not passed in init and required elsewhere
+#     # print("Quest 3 Dict (after guild_id):", quest3.to_dict())
+#
+#     # Test creation with explicit None for optional fields (using old field names for from_dict conversion)
+#     quest4_data = {
+#         "name": "Test None Quest", # Old format
+#         "guild_id": "guild_abc",
+#         "prerequisites": None,
+#         "connections": None,
+#         "stages": None, # Will become {}
+#         "rewards": None, # Will become {}
+#         "npc_involvement": None, # Will become {}
+#     }
+#     quest4 = Quest.from_dict(quest4_data)
+#     print("\nQuest 4 ID:", quest4.id)
+#     assert quest4.name_i18n == {"en": "Test None Quest"}
+#     assert quest4.stages == {}
+#     print("Quest 4 Dict:", quest4.to_dict())
+#
+#     # Verifying BaseModel's id creation
+#     base_instance = BaseModel()
+#     print(f"\nBaseModel instance ID: {base_instance.id}")
+#     base_instance_with_id = BaseModel(id="custom_id_base")
+#     print(f"BaseModel instance with custom ID: {base_instance_with_id.id}")
+#
+#     quest_instance_no_id = Quest(guild_id="test_guild")
+#     print(f"Quest instance (no id provided) ID: {quest_instance_no_id.id}")
+#     quest_instance_with_id = Quest(id="custom_id_quest", guild_id="test_guild")
+#     print(f"Quest instance (id provided) ID: {quest_instance_with_id.id}")
+#
+#     # Checking from_dict behavior with an ID present in the dictionary
+#     quest_from_dict_with_id = Quest.from_dict({"id": "existing_id_123", "name": "From Dict With ID", "guild_id": "test_guild"})
+#     print(f"Quest from_dict (id in data) ID: {quest_from_dict_with_id.id}, Name: {quest_from_dict_with_id.name}")
+#
+#     # Checking from_dict behavior without an ID in the dictionary
+#     quest_from_dict_no_id = Quest.from_dict({"name": "From Dict No ID", "guild_id": "test_guild"})
+#     print(f"Quest from_dict (no id in data) ID: {quest_from_dict_no_id.id}, Name: {quest_from_dict_no_id.name}")
 
 

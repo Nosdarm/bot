@@ -24,10 +24,10 @@ class NPC:
     persona_i18n: Dict[str, str] = field(default_factory=lambda: {"en": "", "ru": ""}) # For npcs table
 
     # ID локации, где находится NPC, если он не в инвентаре/партии
-    location_id: Optional[str]
+    location_id: Optional[str] = None
 
     # ID сущности-владельца (например, ID события, если NPC создан событием)
-    owner_id: Optional[str]
+    owner_id: Optional[str] = None
 
     # Флаг, указывающий, является ли NPC временным (например, для автоматической очистки после события)
     is_temporary: bool = False

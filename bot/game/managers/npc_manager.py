@@ -926,7 +926,7 @@ class NpcManager:
         print(f"NpcManager: Generating AI details for NPC concept '{npc_id_concept}' in guild {guild_id}.")
 
         # 1. Get the structured prompt from MultilingualPromptGenerator
-        prompt_messages = self._multilingual_prompt_generator.generate_npc_profile_prompt(
+        prompt_messages = await self._multilingual_prompt_generator.generate_npc_profile_prompt(
             guild_id=guild_id,
             npc_id_idea=npc_id_concept,
             player_level_override=player_level_for_scaling
