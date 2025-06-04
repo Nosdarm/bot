@@ -174,9 +174,10 @@ class LocationManager:
         loaded_instances_count = 0
 
         try:
-            # Corrected column names based on schema
+            # Added descriptions_i18n to SELECT
             sql_instances = '''
-            SELECT id, template_id, name, description, exits, state_variables, is_active, guild_id FROM locations WHERE guild_id = ?
+            SELECT id, template_id, name, description, descriptions_i18n, exits, state_variables, is_active, guild_id
+            FROM locations WHERE guild_id = ?
             '''
             rows_instances = await db_adapter.fetchall(sql_instances, (guild_id_str,))
             if rows_instances:
@@ -184,20 +185,36 @@ class LocationManager:
 
                  for row in rows_instances:
                       try:
-                           instance_id_raw = row['id'] # Use direct access
-                           loaded_guild_id_raw = row['guild_id'] # Use direct access
+                           instance_id_raw = row['id']
+                           loaded_guild_id_raw = row['guild_id']
 
                            if instance_id_raw is None or str(loaded_guild_id_raw) != guild_id_str:
                                 print(f"LocationManager: Warning: Skipping instance row with invalid ID ('{instance_id_raw}') or mismatched guild_id ('{loaded_guild_id_raw}') during load for guild {guild_id_str}. Row: {row}.")
                                 continue
 
                            instance_id = str(instance_id_raw)
-                           template_id = str(row['template_id']) if row['template_id'] is not None else None # Use direct access
-                           instance_name = row['name'] # Use direct access
-                           instance_description = row['description'] # Use direct access
-                           instance_exits_json = row['exits'] # Use direct access
-                           instance_state_json_raw = row['state_variables'] # Use direct access
-                           is_active = row['is_active'] if 'is_active' in row.keys() else 0 # Check key existence
+                           template_id = str(row['template_id']) if row['template_id'] is not None else None
+
+                           # name and description from DB are treated as potential i18n JSON strings
+                           # or plain text for the default language. Location model handles this.
+                           raw_name_from_db = row['name']
+                           raw_description_from_db = row['description'] # This is for description_template_i18n
+
+                           # Load instance-specific descriptions_i18n
+                           descriptions_i18n_json = row.get('descriptions_i18n')
+                           instance_descriptions_i18n_dict = {}
+                           if isinstance(descriptions_i18n_json, str):
+                               try:
+                                   instance_descriptions_i18n_dict = json.loads(descriptions_i18n_json)
+                               except json.JSONDecodeError:
+                                   print(f"LocationManager: Warning: Invalid JSON in descriptions_i18n for instance {instance_id}. Treating as plain text for 'en'.")
+                                   instance_descriptions_i18n_dict = {"en": descriptions_i18n_json}
+                           elif isinstance(descriptions_i18n_json, dict): # Already a dict (e.g. if mock returns dict)
+                                instance_descriptions_i18n_dict = descriptions_i18n_json
+
+                           instance_exits_json = row['exits']
+                           instance_state_json_raw = row['state_variables']
+                           is_active = row['is_active'] if 'is_active' in row.keys() else 0
 
                            instance_state_data = json.loads(instance_state_json_raw or '{}') if isinstance(instance_state_json_raw, (str, bytes)) else {}
                            if not isinstance(instance_state_data, dict):
@@ -209,33 +226,45 @@ class LocationManager:
                                instance_exits = {}
                                print(f"LocationManager: Warning: Exits data for instance ID {instance_id} not a dict ({type(instance_exits)}) for guild {guild_id_str}. Resetting.")
 
-
-                           instance_data: Dict[str, Any] = {
+                           # Prepare data for Location.from_dict or direct cache
+                           # The Location model's from_dict will handle creating name_i18n from raw_name_from_db
+                           # and description_template_i18n from raw_description_from_db.
+                           instance_data_for_model: Dict[str, Any] = {
                                'id': instance_id,
                                'guild_id': guild_id_str,
                                'template_id': template_id,
-                               'name': str(instance_name) if instance_name is not None else None,
-                               'description': str(instance_description) if instance_description is not None else None,
+                               'name': raw_name_from_db, # Pass raw name, model converts to name_i18n
+                               'description_template': raw_description_from_db, # Pass raw template desc
+                               'descriptions_i18n': instance_descriptions_i18n_dict, # Parsed instance-specific descriptions
                                'exits': instance_exits,
-                               'state': instance_state_data,
-                               'is_active': bool(is_active)
+                               'state': instance_state_data, # Renamed from 'state_variables' to 'state' for model
+                               'is_active': bool(is_active),
+                               # Include other fields from DB if Location model expects them directly
+                               'static_name': row.get('static_name'),
+                               'static_connections': row.get('static_connections')
                            }
 
-                           if instance_data.get('template_id') is not None:
-                               template = self.get_location_static(guild_id_str, instance_data['template_id'])
-                               if not template:
-                                    print(f"LocationManager: Warning: Template '{instance_data['template_id']}' not found for instance '{instance_id}' in guild {guild_id_str} during load.")
+                           # If caching dicts directly:
+                           # guild_instances_cache[instance_id] = instance_data_for_model
+                           # If caching Location objects (preferred for consistency):
+                           from bot.game.models.location import Location # Local import
+                           location_obj = Location.from_dict(instance_data_for_model)
+                           guild_instances_cache[location_obj.id] = location_obj.to_dict() # Store as dict in cache for now to match existing type
+
+                           # Validation (template existence check can remain the same)
+                           if template_id is not None:
+                               if not self.get_location_static(guild_id_str, template_id):
+                                    print(f"LocationManager: Warning: Template '{template_id}' not found for instance '{instance_id}' in guild {guild_id_str} during load.")
                            else:
                                 print(f"LocationManager: Warning: Instance ID {instance_id} missing template_id for guild {guild_id_str} during load.")
-                                continue
+                                continue # Or handle as location without template
 
-                           guild_instances_cache[instance_data['id']] = instance_data
                            loaded_instances_count += 1
 
                       except json.JSONDecodeError:
-                          print(f"LocationManager: Error decoding JSON for instance row (ID: {row['id'] if 'id' in row.keys() else 'N/A'}, guild: {row['guild_id'] if 'guild_id' in row.keys() else 'N/A'}): {traceback.format_exc()}. Skipping instance row.");
+                          print(f"LocationManager: Error decoding JSON for instance row (ID: {row.get('id', 'N/A')}, guild: {row.get('guild_id', 'N/A')}): {traceback.format_exc()}. Skipping instance row.");
                       except Exception as e:
-                          print(f"LocationManager: Error processing instance row (ID: {row['id'] if 'id' in row.keys() else 'N/A'}, guild: {row['guild_id'] if 'guild_id' in row.keys() else 'N/A'}): {e}. Skipping instance row."); traceback.print_exc();
+                          print(f"LocationManager: Error processing instance row (ID: {row.get('id', 'N/A')}, guild: {row.get('guild_id', 'N/A')}): {e}. Skipping instance row."); traceback.print_exc();
 
 
                  print(f"LocationManager: Loaded {loaded_instances_count} instances for guild {guild_id_str}.")
@@ -286,30 +315,43 @@ class LocationManager:
 
 
             # Обновить или вставить измененные инстансы для этого guild_id
-            instances_to_upsert_list = [ inst for id in list(dirty_instances_set) if (inst := guild_instances_cache.get(id)) is not None ]
+            instances_to_upsert_list = [inst for id_key in list(dirty_instances_set) if (inst := guild_instances_cache.get(id_key)) is not None]
 
             if instances_to_upsert_list:
                  print(f"LocationManager: Upserting {len(instances_to_upsert_list)} instances for guild {guild_id_str}...")
-                 # Corrected column names based on schema
-                 upsert_sql = ''' INSERT OR REPLACE INTO locations (id, guild_id, template_id, name, description, exits, state_variables, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?) '''
+                 # Added descriptions_i18n to SQL
+                 upsert_sql = '''
+                 INSERT OR REPLACE INTO locations (
+                     id, guild_id, template_id, name, description, descriptions_i18n,
+                     exits, state_variables, is_active
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ''' # 9 columns
                  data_to_upsert = []
                  upserted_instance_ids: Set[str] = set()
 
-                 for instance_data in instances_to_upsert_list:
+                 for instance_data_dict in instances_to_upsert_list: # instance_data_dict is a dict from cache
                       try:
-                          instance_id = instance_data.get('id')
-                          instance_guild_id = instance_data.get('guild_id')
+                          instance_id = instance_data_dict.get('id')
+                          instance_guild_id = instance_data_dict.get('guild_id')
 
                           if instance_id is None or str(instance_guild_id) != guild_id_str:
                               print(f"LocationManager: Warning: Skipping upsert for instance with invalid ID ('{instance_id}') or mismatched guild ('{instance_guild_id}') during save for guild {guild_id_str}. Expected guild {guild_id_str}.")
                               continue
 
-                          template_id = instance_data.get('template_id')
-                          instance_name = instance_data.get('name')
-                          instance_description = instance_data.get('description')
-                          instance_exits = instance_data.get('exits', {})
-                          state_variables = instance_data.get('state', {})
-                          is_active = instance_data.get('is_active', True)
+                          template_id = instance_data_dict.get('template_id')
+
+                          # name_i18n from model/cache should be used for 'name' column (as JSON string)
+                          # description_template_i18n for 'description' column (as JSON string)
+                          name_i18n_dict = instance_data_dict.get('name_i18n', {"en": instance_id})
+                          desc_template_i18n_dict = instance_data_dict.get('description_template_i18n', {"en": ""})
+
+                          # This is the new instance-specific descriptions_i18n
+                          instance_descriptions_i18n_dict = instance_data_dict.get('descriptions_i18n', {})
+
+                          instance_exits = instance_data_dict.get('exits', {})
+                          # 'state_variables' in DB, 'state' in model/cache dict
+                          state_variables = instance_data_dict.get('state', instance_data_dict.get('state_variables', {}))
+                          is_active = instance_data_dict.get('is_active', True)
 
                           if not isinstance(state_variables, dict):
                               print(f"LocationManager: Warning: Instance {instance_id} state_variables is not a dict ({type(state_variables)}) for guild {guild_id_str}. Saving as empty dict.")
@@ -317,17 +359,21 @@ class LocationManager:
                           if not isinstance(instance_exits, dict):
                               print(f"LocationManager: Warning: Instance {instance_id} exits is not a dict ({type(instance_exits)}) for guild {guild_id_str}. Saving as empty dict.")
                               instance_exits = {}
+                          if not isinstance(instance_descriptions_i18n_dict, dict):
+                              print(f"LocationManager: Warning: Instance {instance_id} descriptions_i18n is not a dict ({type(instance_descriptions_i18n_dict)}). Saving as empty dict.")
+                              instance_descriptions_i18n_dict = {}
 
 
                           data_to_upsert.append((
-                              str(instance_id),
-                              guild_id_str,
-                              str(template_id) if template_id is not None else None,
-                              str(instance_name) if instance_name is not None else None,
-                              str(instance_description) if instance_description is not None else None,
-                              json.dumps(instance_exits),
-                              json.dumps(state_variables),
-                              int(bool(is_active)),
+                              str(instance_id), # id
+                              guild_id_str,     # guild_id
+                              str(template_id) if template_id is not None else None, # template_id
+                              json.dumps(name_i18n_dict),               # name (stores name_i18n JSON)
+                              json.dumps(desc_template_i18n_dict),      # description (stores template_description_i18n JSON)
+                              json.dumps(instance_descriptions_i18n_dict), # descriptions_i18n (stores instance specific i18n JSON)
+                              json.dumps(instance_exits),               # exits
+                              json.dumps(state_variables),              # state_variables
+                              int(bool(is_active)),                     # is_active
                           ));
                           upserted_instance_ids.add(str(instance_id))
 

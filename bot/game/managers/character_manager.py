@@ -361,10 +361,13 @@ class CharacterManager:
 
 
         # Подготавливаем данные для вставки в DB и создания модели
+        name_i18n_data = {"en": name, "ru": name} # Basic i18n structure
+
         data: Dict[str, Any] = {
             'id': new_id, # UUID как TEXT
             'discord_user_id': discord_id, # Значение из параметра discord_id
-            'name': name,
+            'name': name, # Original name for direct use if needed, Character model might store it separately or just use name_i18n
+            'name_i18n': name_i18n_data, # NEW
             'guild_id': guild_id_str, # <-- Добавляем guild_id_str
             'location_id': resolved_initial_location_id, # Может быть None
             'stats': stats, # dict
@@ -381,25 +384,45 @@ class CharacterManager:
             'experience': experience,
             'unspent_xp': unspent_xp,
             'selected_language': default_player_language, # Add this
-            'collected_actions_json': None # Default for new character
-            # ... другие поля из модели Character ...
+            'collected_actions_json': None, # Default for new character
+            # New fields for DB v18+
+            'skills_data_json': json.dumps([]), # Default to empty list JSON
+            'abilities_data_json': json.dumps([]), # Default to empty list JSON
+            'spells_data_json': json.dumps([]), # Default to empty list JSON
+            'character_class': kwargs.get('character_class', 'Adventurer'), # Default class
+            'flags_json': json.dumps({}) # Default to empty dict JSON
         }
 
+        # Data for Character.from_dict (Python types)
+        model_data = data.copy()
+        model_data['name_i18n'] = name_i18n_data
+        model_data['skills_data'] = []
+        model_data['abilities_data'] = []
+        model_data['spells_data'] = []
+        model_data['flags'] = {}
+        # Remove *_json suffixed keys if model attributes don't have them
+        del model_data['skills_data_json']
+        del model_data['abilities_data_json']
+        del model_data['spells_data_json']
+        del model_data['flags_json']
+
+
         # Преобразуем в JSON для сохранения в DB
+        # Note: The 'name' column in DB will store name_i18n JSON.
         sql = """
         INSERT INTO players (
             id, discord_user_id, name, guild_id, location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
             hp, max_health, is_alive, status_effects, level, experience, unspent_xp,
-            selected_language, collected_actions_json
-            -- , ... другие колонки ...
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
+            selected_language, collected_actions_json,
+            skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """ # 25 placeholders
         # Убедитесь, что порядок параметров соответствует колонкам в SQL
         db_params = (
             data['id'],
             data['discord_user_id'],
-            data['name'],
+            json.dumps(data['name_i18n']), # Store name_i18n dict as JSON in 'name' column
             data['guild_id'], # <-- Параметр guild_id_str
             data['location_id'],
             json.dumps(data['stats']),
@@ -415,9 +438,14 @@ class CharacterManager:
             data['level'],
             data['experience'],
             data['unspent_xp'],
-            data['selected_language'], # Add this value
-            data['collected_actions_json']
-            # ... другие параметры ...
+            data['selected_language'],
+            data['collected_actions_json'],
+            # New fields
+            data['skills_data_json'],
+            data['abilities_data_json'],
+            data['spells_data_json'],
+            data['character_class'],
+            data['flags_json']
         )
 
         if self._db_adapter is None:
@@ -431,7 +459,7 @@ class CharacterManager:
 
 
             # Создаем объект модели Character из данных (данные уже в формате Python объектов)
-            char = Character.from_dict(data)
+            char = Character.from_dict(model_data) # Use model_data with Python types
 
 
             # ИСПРАВЛЕНИЕ: Добавляем персонажа в per-guild кеши
@@ -503,43 +531,65 @@ class CharacterManager:
         characters_to_save = [guild_chars_cache[cid] for cid in list(dirty_char_ids_for_guild_set) if cid in guild_chars_cache]
         if characters_to_save:
              print(f"CharacterManager: Upserting {len(characters_to_save)} characters for guild {guild_id_str}...")
-             # INSERT OR REPLACE SQL для обновления существующих или вставки новых
+             # INSERT OR REPLACE SQL для обновления существующих или вставки новых.
+             # This SQL should now match the save_character method's SQL.
              upsert_sql = '''
-             INSERT OR REPLACE INTO players
-             (id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, level, experience, unspent_xp, collected_actions_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             '''
+             INSERT OR REPLACE INTO players (
+                id, discord_user_id, name, guild_id, location_id,
+                stats, inventory, current_action, action_queue, party_id,
+                state_variables, hp, max_health, is_alive, status_effects,
+                level, experience, unspent_xp, active_quests, known_spells,
+                spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json, -- DB specific column names
+                character_class, selected_language, current_game_status, collected_actions_json, current_party_id
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ''' # 30 placeholders
              data_to_upsert = []
              upserted_char_ids: Set[str] = set() # Track IDs that were successfully prepared for upsert
 
-             for char in characters_to_save:
+             for char_obj in characters_to_save: # Renamed to char_obj to avoid conflict with char module if any
                  try:
                      # Убеждаемся, что у объекта Character есть все нужные атрибуты
-                     char_id = getattr(char, 'id', None)
-                     discord_user_id = getattr(char, 'discord_user_id', None)
-                     char_name = getattr(char, 'name', None)
-                     char_guild_id = getattr(char, 'guild_id', None)
+                     char_id = getattr(char_obj, 'id', None)
+                     discord_user_id = getattr(char_obj, 'discord_user_id', None)
+                     # name_i18n is a dict on model, char_name is for logging
+                     char_name_i18n_dict = getattr(char_obj, 'name_i18n', {"en": getattr(char_obj, 'name', "Unknown")})
+                     char_guild_id = getattr(char_obj, 'guild_id', None)
 
                      # Дополнительная проверка на критически важные атрибуты и совпадение guild_id
-                     if char_id is None or discord_user_id is None or char_name is None or char_guild_id is None or str(char_guild_id) != guild_id_str:
-                         print(f"CharacterManager: Warning: Skipping upsert for character with missing mandatory attributes or mismatched guild ({getattr(char, 'id', 'N/A')}, guild {getattr(char, 'guild_id', 'N/A')}). Expected guild {guild_id_str}.")
+                     if char_id is None or discord_user_id is None or not char_name_i18n_dict or char_guild_id is None or str(char_guild_id) != guild_id_str:
+                         print(f"CharacterManager: Warning: Skipping upsert for character with missing mandatory attributes or mismatched guild ({getattr(char_obj, 'id', 'N/A')}, guild {getattr(char_obj, 'guild_id', 'N/A')}). Expected guild {guild_id_str}.")
                          continue # Пропускаем этого персонажа
 
-                     location_id = getattr(char, 'location_id', None)
-                     stats = getattr(char, 'stats', {})
-                     inventory = getattr(char, 'inventory', [])
-                     current_action = getattr(char, 'current_action', None)
-                     action_queue = getattr(char, 'action_queue', [])
-                     party_id = getattr(char, 'party_id', None)
-                     state_variables = getattr(char, 'state_variables', {})
-                     hp = getattr(char, 'hp', 100.0)
-                     max_health = getattr(char, 'max_health', 100.0)
-                     is_alive = getattr(char, 'is_alive', True)
-                     status_effects = getattr(char, 'status_effects', [])
-                     level = getattr(char, 'level', 1)
-                     experience = getattr(char, 'experience', 0)
-                     unspent_xp = getattr(char, 'unspent_xp', 0)
-                     collected_actions_json = getattr(char, 'collected_actions_json', None) # Should be string or None
+                     location_id = getattr(char_obj, 'location_id', None)
+                     stats = getattr(char_obj, 'stats', {})
+                     inventory = getattr(char_obj, 'inventory', [])
+                     current_action = getattr(char_obj, 'current_action', None)
+                     action_queue = getattr(char_obj, 'action_queue', [])
+                     party_id = getattr(char_obj, 'party_id', None) # This is the old party_id field
+                     state_variables = getattr(char_obj, 'state_variables', {})
+                     hp = getattr(char_obj, 'hp', 100.0)
+                     max_health = getattr(char_obj, 'max_health', 100.0)
+                     is_alive = getattr(char_obj, 'is_alive', True)
+                     status_effects = getattr(char_obj, 'status_effects', [])
+                     level = getattr(char_obj, 'level', 1)
+                     experience = getattr(char_obj, 'experience', 0)
+                     unspent_xp = getattr(char_obj, 'unspent_xp', 0)
+                     collected_actions_json = getattr(char_obj, 'collected_actions_json', None) # Should be string or None
+
+                     # New fields from Character model (Python types)
+                     active_quests = getattr(char_obj, 'active_quests', [])
+                     known_spells = getattr(char_obj, 'known_spells', [])
+                     spell_cooldowns = getattr(char_obj, 'spell_cooldowns', {})
+                     # Assuming model attributes are skills_data, abilities_data, spells_data, flags
+                     skills_data = getattr(char_obj, 'skills_data', [])
+                     abilities_data = getattr(char_obj, 'abilities_data', [])
+                     spells_data = getattr(char_obj, 'spells_data', [])
+                     flags = getattr(char_obj, 'flags', {})
+                     character_class_val = getattr(char_obj, 'character_class', 'Adventurer')
+                     selected_language = getattr(char_obj, 'selected_language', 'en')
+                     current_game_status = getattr(char_obj, 'current_game_status', None)
+                     current_party_id = getattr(char_obj, 'current_party_id', None)
+
 
                      # Ensure required fields for DB exist and have correct types before dumping
                      if not isinstance(inventory, list):
@@ -557,41 +607,52 @@ class CharacterManager:
                      if not isinstance(status_effects, list):
                          print(f"CharacterManager: Warning: Char {char_id} status_effects is not list. Saving as empty list.")
                          status_effects = []
-
-
-                     stats_json = json.dumps(stats)
-                     inv_json = json.dumps(inventory)
-                     curr_json = json.dumps(current_action) if current_action is not None else None
-                     queue_json = json.dumps(action_queue)
-                     state_json = json.dumps(state_variables)
-                     status_json = json.dumps(status_effects)
+                     # Ensure new list/dict types are correct
+                     if not isinstance(active_quests, list): active_quests = []
+                     if not isinstance(known_spells, list): known_spells = []
+                     if not isinstance(spell_cooldowns, dict): spell_cooldowns = {}
+                     if not isinstance(skills_data, (list,dict)): skills_data = [] # Or {} depending on expected structure
+                     if not isinstance(abilities_data, (list,dict)): abilities_data = []
+                     if not isinstance(spells_data, (list,dict)): spells_data = []
+                     if not isinstance(flags, dict): flags = {}
 
 
                      data_to_upsert.append((
                          char_id,
                          discord_user_id,
-                         char_name,
-                         guild_id_str, # Убедимся, что guild_id строка для DB
-                         location_id, # Может быть None
-                         stats_json,
-                         inv_json,
-                         curr_json,
-                         queue_json,
-                         party_id, # Может быть None
-                         state_json,
+                         json.dumps(char_name_i18n_dict), # Save name_i18n dict as JSON to 'name' column
+                         guild_id_str,
+                         location_id,
+                         json.dumps(stats),
+                         json.dumps(inventory),
+                         json.dumps(current_action) if current_action is not None else None,
+                         json.dumps(action_queue),
+                         party_id,
+                         json.dumps(state_variables),
                          hp,
                          max_health,
-                         int(is_alive), # boolean как integer
-                         status_json,
+                         int(is_alive),
+                         json.dumps(status_effects),
                          level,
                          experience,
                          unspent_xp,
-                         collected_actions_json,
+                         json.dumps(active_quests),
+                         json.dumps(known_spells),
+                         json.dumps(spell_cooldowns),
+                         json.dumps(skills_data), # skills_data_json
+                         json.dumps(abilities_data), # abilities_data_json
+                         json.dumps(spells_data), # spells_data_json
+                         json.dumps(flags), # flags_json
+                         character_class_val,
+                         selected_language,
+                         current_game_status,
+                         collected_actions_json, # Already JSON string or None
+                         current_party_id
                      ))
                      upserted_char_ids.add(char_id) # Track IDs that were prepared for upsert
 
                  except Exception as e:
-                     print(f"CharacterManager: Error preparing data for character {getattr(char, 'id', 'N/A')} ({getattr(char, 'name', 'N/A')}, guild {getattr(char, 'guild_id', 'N/A')}) for upsert: {e}")
+                     print(f"CharacterManager: Error preparing data for character {getattr(char_obj, 'id', 'N/A')} ({getattr(char_obj, 'name', 'N/A')}, guild {getattr(char_obj, 'guild_id', 'N/A')}) for upsert: {e}")
                      import traceback
                      print(traceback.format_exc())
                      # Этот персонаж не будет сохранен в этой итерации - он останется в _dirty_characters
@@ -646,10 +707,17 @@ class CharacterManager:
         rows = [] # Инициализируем список для строк
         try:
             # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
+            # Ensure all new columns are selected.
+            # 'name' column stores name_i18n. Other new columns: skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
             sql = '''
-            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, hp, max_health, is_alive, status_effects, race, mp, attack, defense, level, experience, unspent_xp, collected_actions_json
+            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory,
+                   current_action, action_queue, party_id, state_variables, hp, max_health,
+                   is_alive, status_effects, race, mp, attack, defense, level, experience, unspent_xp,
+                   collected_actions_json, selected_language, current_game_status, current_party_id,
+                   skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json,
+                   active_quests, known_spells, spell_cooldowns -- Assuming these are also in Character.to_dict() / DB
             FROM players WHERE guild_id = ?
-            ''' # Added new columns from players table
+            ''' # Ensure this matches all fields saved by save_character / save_state
             rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
             print(f"CharacterManager: Found {len(rows)} characters in DB for guild {guild_id_str}.")
 
@@ -701,9 +769,14 @@ class CharacterManager:
                      except (ValueError, TypeError):
                           print(f"CharacterManager: Warning: Invalid discord_user_id format for character {char_id} in guild {guild_id_str}: {discord_user_id_raw}. Skipping mapping.")
 
+                # --- Load and Parse JSON fields ---
+                # Original name column now stores name_i18n
+                data['name_i18n'] = json.loads(data.get('name') or '{}') if isinstance(data.get('name'), (str, bytes)) else {}
+                # The plain 'name' field in data for Character.from_dict can be derived or set to a default lang from name_i18n
+                default_lang_for_name = data.get('selected_language', 'en')
+                data['name'] = data['name_i18n'].get(default_lang_for_name, list(data['name_i18n'].values())[0] if data['name_i18n'] else char_id)
 
-                # Преобразуем JSON строки и Integer (для is_alive) обратно в Python объекты
-                # Handle potential errors during JSON parsing gracefully
+
                 data['stats'] = json.loads(data.get('stats') or '{}') if isinstance(data.get('stats'), (str, bytes)) else {}
                 data['inventory'] = json.loads(data.get('inventory') or '[]') if isinstance(data.get('inventory'), (str, bytes)) else []
                 current_action_data = data.get('current_action')
@@ -711,35 +784,52 @@ class CharacterManager:
                 data['action_queue'] = json.loads(data.get('action_queue') or '[]') if isinstance(data.get('action_queue'), (str, bytes)) else []
                 data['state_variables'] = json.loads(data.get('state_variables') or '{}') if isinstance(data.get('state_variables'), (str, bytes)) else {}
                 data['status_effects'] = json.loads(data.get('status_effects') or '[]') if isinstance(data.get('status_effects'), (str, bytes)) else []
-                # collected_actions_json is expected to be TEXT, store as is (string or None)
-                # Character.from_dict will handle parsing if it's a JSON string.
-                data['collected_actions_json'] = data.get('collected_actions_json')
+                data['collected_actions_json'] = data.get('collected_actions_json') # Already string or None
+
+                # New JSON fields (from DB columns ending in _json)
+                data['skills_data'] = json.loads(data.get('skills_data_json') or '[]') if isinstance(data.get('skills_data_json'), (str, bytes)) else []
+                data['abilities_data'] = json.loads(data.get('abilities_data_json') or '[]') if isinstance(data.get('abilities_data_json'), (str, bytes)) else []
+                data['spells_data'] = json.loads(data.get('spells_data_json') or '[]') if isinstance(data.get('spells_data_json'), (str, bytes)) else []
+                data['flags'] = json.loads(data.get('flags_json') or '{}') if isinstance(data.get('flags_json'), (str, bytes)) else {}
+                # Remove the original _json keys if Character.from_dict expects non-suffixed names
+                for k_json in ['skills_data_json', 'abilities_data_json', 'spells_data_json', 'flags_json']:
+                    if k_json in data: del data[k_json]
+
+                # Legacy JSON fields (if they were stored as JSON)
+                data['active_quests'] = json.loads(data.get('active_quests') or '[]') if isinstance(data.get('active_quests'), (str, bytes)) else []
+                data['known_spells'] = json.loads(data.get('known_spells') or '[]') if isinstance(data.get('known_spells'), (str, bytes)) else []
+                data['spell_cooldowns'] = json.loads(data.get('spell_cooldowns') or '{}') if isinstance(data.get('spell_cooldowns'), (str, bytes)) else {}
+                # 'skills' field was also a JSON dict in earlier versions, if it's still in DB, parse it.
+                # However, skills_data_json is the new primary field. This needs clarification if 'skills' is still used.
+                # For now, assume 'skills' is also JSON if present for backward compatibility or specific use.
+                data['skills'] = json.loads(data.get('skills') or '{}') if isinstance(data.get('skills'), (str,bytes)) else {}
 
 
                 # Convert is_alive from DB integer (0 or 1) to boolean
                 is_alive_db = data.get('is_alive')
-                data['is_alive'] = bool(is_alive_db) if is_alive_db is not None else True # Default to True if is_alive is None/missing
+                data['is_alive'] = bool(is_alive_db) if is_alive_db is not None else True
 
                 # Ensure health/max_health are numbers, default if missing or wrong type
                 data['hp'] = float(data.get('hp', 100.0)) if isinstance(data.get('hp'), (int, float)) else 100.0
                 data['max_health'] = float(data.get('max_health', 100.0)) if isinstance(data.get('max_health'), (int, float)) else 100.0
 
+                # Direct fields
+                data['character_class'] = data.get('character_class', 'Adventurer')
 
                 # Update data dict with validated/converted values
                 data['id'] = char_id
                 data['discord_user_id'] = discord_user_id_int
-                data['guild_id'] = loaded_guild_id # Use the string version loaded from DB
-                # Ensure list fields are actually lists
-                if not isinstance(data['inventory'], list): data['inventory'] = []
-                if not isinstance(data['action_queue'], list): data['action_queue'] = []
-                if not isinstance(data['status_effects'], list): data['status_effects'] = []
+                data['guild_id'] = loaded_guild_id
+                # Ensure list fields are actually lists after potential JSON parsing issues
+                for list_field in ['inventory', 'action_queue', 'status_effects', 'skills_data', 'abilities_data', 'spells_data', 'active_quests', 'known_spells']:
+                    if not isinstance(data.get(list_field), list): data[list_field] = []
                 # Ensure dict fields are actually dicts
-                if not isinstance(data['stats'], dict): data['stats'] = {}
-                if not isinstance(data['state_variables'], dict): data['state_variables'] = {}
+                for dict_field in ['name_i18n', 'stats', 'state_variables', 'flags', 'spell_cooldowns', 'skills']:
+                     if not isinstance(data.get(dict_field), dict): data[dict_field] = {}
 
-                # Create object ID (Party ID, Location ID) are strings or None
                 data['location_id'] = str(data['location_id']) if data.get('location_id') is not None else None
                 data['party_id'] = str(data['party_id']) if data.get('party_id') is not None else None
+                data['current_party_id'] = str(data.get('current_party_id')) if data.get('current_party_id') is not None else None
 
 
                 # Create object model
@@ -1484,59 +1574,68 @@ class CharacterManager:
         try:
             # Convert Character object to dictionary
             # The to_dict() method in Character model should be kept up-to-date
+            # This method should return Python dicts/lists for complex fields.
             char_data = character.to_dict()
 
             # Prepare data for SQL query, ensuring JSON serialization for complex types
             # The order of parameters must match the order of columns in the SQL query.
-            # The 'name' column in the DB stores the 'name_i18n' dict as JSON.
-            # 'собранные_действия_JSON' is assumed to be already a JSON string from the model.
+
+            # name_i18n from model (dict) to JSON string for 'name' DB column
+            name_i18n_json = json.dumps(char_data.get('name_i18n', {}))
+
+            # New JSON fields from model (Python dict/list) to JSON strings for DB
+            skills_data_json_str = json.dumps(char_data.get('skills_data', []))
+            abilities_data_json_str = json.dumps(char_data.get('abilities_data', []))
+            spells_data_json_str = json.dumps(char_data.get('spells_data', []))
+            flags_json_str = json.dumps(char_data.get('flags', {}))
 
             db_params = (
                 char_data.get('id'),
                 char_data.get('discord_user_id'),
-                json.dumps(char_data.get('name_i18n', {})), # 'name' column stores name_i18n
+                name_i18n_json, # 'name' column in DB stores name_i18n
                 char_data.get('guild_id'),
                 char_data.get('location_id'),
                 json.dumps(char_data.get('stats', {})),
                 json.dumps(char_data.get('inventory', [])),
                 json.dumps(char_data.get('current_action')) if char_data.get('current_action') is not None else None,
                 json.dumps(char_data.get('action_queue', [])),
-                char_data.get('party_id'),
+                char_data.get('party_id'), # Old party_id
                 json.dumps(char_data.get('state_variables', {})),
-                float(char_data.get('hp', 0.0)), # Ensure float
-                float(char_data.get('max_health', 0.0)), # Ensure float
-                int(char_data.get('is_alive', True)), # Boolean as integer
+                float(char_data.get('hp', 0.0)),
+                float(char_data.get('max_health', 0.0)),
+                int(char_data.get('is_alive', True)),
                 json.dumps(char_data.get('status_effects', [])),
-                int(char_data.get('level', 1)), # Ensure int
-                int(char_data.get('experience', 0)), # Ensure int
-                int(char_data.get('unspent_xp',0)), # Ensure int
-                json.dumps(char_data.get('active_quests', [])),
-                json.dumps(char_data.get('known_spells', [])),
-                json.dumps(char_data.get('spell_cooldowns', {})),
-                json.dumps(char_data.get('skills', {})),
-                json.dumps(char_data.get('known_abilities', [])),
-                json.dumps(char_data.get('ability_cooldowns', {})),
-                json.dumps(char_data.get('flags', [])),
-                char_data.get('char_class'),
+                int(char_data.get('level', 1)),
+                int(char_data.get('experience', 0)),
+                int(char_data.get('unspent_xp',0)),
+                json.dumps(char_data.get('active_quests', [])), # Assuming these are from to_dict
+                json.dumps(char_data.get('known_spells', [])),   # Assuming these are from to_dict
+                json.dumps(char_data.get('spell_cooldowns', {})),# Assuming these are from to_dict
+                skills_data_json_str,       # skills_data_json
+                abilities_data_json_str,    # abilities_data_json
+                spells_data_json_str,       # spells_data_json
+                flags_json_str,             # flags_json
+                char_data.get('character_class'),
                 char_data.get('selected_language'),
                 char_data.get('current_game_status'),
-                char_data.get('collected_actions_json'), # Already a JSON string
-                char_data.get('current_party_id')
+                char_data.get('collected_actions_json'),
+                char_data.get('current_party_id') # New party_id
             )
 
             # SQL for UPSERT (INSERT OR REPLACE)
             # Column names must match the 'players' table schema.
             # This list of columns should correspond to Character.to_dict() keys + DB structure.
+            # The 'skills' column in the original SQL was ambiguous, it should be skills_data_json etc.
             upsert_sql = '''
             INSERT OR REPLACE INTO players (
                 id, discord_user_id, name, guild_id, location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, experience, unspent_xp, active_quests, known_spells,
-                spell_cooldowns, skills, known_abilities, ability_cooldowns, flags,
-                char_class, selected_language, current_game_status, collected_actions_json, current_party_id
+                spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json,
+                character_class, selected_language, current_game_status, collected_actions_json, current_party_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''' # 30 columns, 30 placeholders
+            ''' # 30 columns, 30 placeholders. Matched with params above.
 
             # Execute the database operation
             await self._db_adapter.execute(upsert_sql, db_params)

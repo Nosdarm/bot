@@ -146,16 +146,48 @@ class ItemManager:
         #         print(f"ItemManager: Error loading global item templates from DB: {e}"); traceback.print_exc();
 
         # Example: Load from settings (assuming settings has a 'item_templates' dict)
+        # The settings data should ideally provide name_i18n and description_i18n as dictionaries.
         try:
             if self._settings and 'item_templates' in self._settings and isinstance(self._settings['item_templates'], dict):
-                self._item_templates = self._settings['item_templates']
+                # Process templates from settings to ensure they have derived 'name'
+                processed_templates = {}
+                default_lang = self._settings.get('default_language', 'en') # Get default lang from settings or fallback
+
+                for template_id, template_data_orig in self._settings['item_templates'].items():
+                    template_data = template_data_orig.copy() # Work on a copy
+
+                    # Ensure name_i18n and description_i18n are dicts
+                    if not isinstance(template_data.get('name_i18n'), dict):
+                        # If old 'name' field exists, convert it to name_i18n
+                        if 'name' in template_data and isinstance(template_data['name'], str):
+                            template_data['name_i18n'] = {default_lang: template_data['name']}
+                            print(f"ItemManager: Converted 'name' to 'name_i18n' for template {template_id}")
+                        else:
+                            template_data['name_i18n'] = {default_lang: template_id} # Fallback
+
+                    if not isinstance(template_data.get('description_i18n'), dict):
+                        if 'description' in template_data and isinstance(template_data['description'], str):
+                            template_data['description_i18n'] = {default_lang: template_data['description']}
+                        else:
+                            template_data['description_i18n'] = {default_lang: ""} # Fallback
+
+                    # Derive plain 'name' for easier access
+                    name_i18n_dict = template_data['name_i18n']
+                    template_data['name'] = name_i18n_dict.get(default_lang, list(name_i18n_dict.values())[0] if name_i18n_dict else template_id)
+
+                    processed_templates[template_id] = template_data
+
+                self._item_templates = processed_templates
                 loaded_count = len(self._item_templates)
-                print(f"ItemManager: Successfully loaded {loaded_count} item templates from settings.")
+                print(f"ItemManager: Successfully loaded and processed {loaded_count} item templates from settings.")
                 if loaded_count > 0:
-                    print("ItemManager: Example item templates loaded:")
+                    print("ItemManager: Example item templates loaded (displaying derived name):")
                     for i, (template_id, template_data) in enumerate(self._item_templates.items()):
                         if i < 3: # Print up to 3 examples
-                            print(f"  - ID: {template_id}, Name: {template_data.get('name', 'N/A')}, Type: {template_data.get('type', 'N/A')}")
+                            # Displaying the derived plain name and an example from name_i18n
+                            derived_name = template_data.get('name', 'N/A')
+                            example_i18n_name = template_data.get('name_i18n', {}).get(default_lang, 'N/A i18n')
+                            print(f"  - ID: {template_id}, Derived Name: {derived_name} (e.g., '{example_i18n_name}'), Type: {template_data.get('type', 'N/A')}")
                         else:
                             break
                     if loaded_count > 3:

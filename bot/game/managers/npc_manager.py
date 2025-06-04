@@ -214,11 +214,11 @@ class NpcManager:
         Создает нового NPC для определенной гильдии.
         If AI generation is used and successful, it saves the content for moderation
         and returns a dict with status 'pending_moderation' and 'request_id'.
-        Otherwise, it creates the NPC directly and returns the npc_id.
-        Returns None on failure.
+        Otherwise, it creates the NPC directly from an archetype/template and saves to 'npcs' table.
+        Returns NPC ID on success, or dict for moderation, or None on failure.
         """
         guild_id_str = str(guild_id)
-        archetype_id_to_load = npc_template_id # Assume npc_template_id is the archetype_id for loading
+        archetype_id_to_load = npc_template_id
         
         print(f"NpcManager: Creating NPC from template/archetype '{archetype_id_to_load}' at location {location_id} for guild {guild_id_str}...")
 
@@ -226,61 +226,30 @@ class NpcManager:
             print(f"NpcManager: No DB adapter available for guild {guild_id_str}.")
             return None
 
-        # Initialize base data from kwargs or defaults
-        npc_id = str(uuid.uuid4())
-        base_name = kwargs.get('name', f"NPC_{npc_id[:8]}")
-        base_stats = kwargs.get('stats', {})
-        base_inventory = kwargs.get('inventory', [])
-        base_archetype_name = kwargs.get('archetype', "commoner")
-        base_traits = kwargs.get('traits', [])
-        base_desires = kwargs.get('desires', [])
-        base_motives = kwargs.get('motives', [])
-        base_backstory = kwargs.get('backstory', "")
-
-        # Attempt to load and apply archetype data from CampaignLoader
-        campaign_loader: Optional["CampaignLoader"] = kwargs.get('campaign_loader')
-        archetype_data_loaded: Optional[Dict[str, Any]] = None
-        ai_generated_data: Optional[Dict[str, Any]] = None
+        npc_id = str(uuid.uuid4()) # Common ID for both paths initially
 
         # Determine if AI generation should be triggered
         trigger_ai_generation = False
         if npc_template_id.startswith("AI:"):
             trigger_ai_generation = True
-            print(f"NpcManager: AI generation triggered by keyword for '{npc_template_id}'.")
-        elif campaign_loader and hasattr(campaign_loader, 'get_npc_archetypes'):
-            try:
-                all_archetypes: List[Dict[str, Any]] = campaign_loader.get_npc_archetypes()
-                if isinstance(all_archetypes, list):
-                    for arch_data in all_archetypes:
-                        if isinstance(arch_data, dict) and arch_data.get('id') == archetype_id_to_load:
-                            archetype_data_loaded = arch_data
-                            print(f"NpcManager: Found archetype data for '{archetype_id_to_load}' in guild {guild_id_str}.")
-                            break
-                    if not archetype_data_loaded:
-                        print(f"NpcManager: Archetype '{archetype_id_to_load}' not found. Triggering AI generation.")
-                        trigger_ai_generation = True # Archetype not found, trigger AI
-                else:
-                    print(f"NpcManager: Warning: campaign_loader.get_npc_archetypes() did not return a list for guild {guild_id_str}. Considering AI generation.")
-                    trigger_ai_generation = True # Problem with campaign data, trigger AI
-            except Exception as e:
-                print(f"NpcManager: Error loading NPC archetypes via CampaignLoader for guild {guild_id_str}: {e}. Triggering AI generation.")
-                traceback.print_exc()
-                trigger_ai_generation = True # Error loading, trigger AI
         else:
-            # No campaign loader or no method to get archetypes, consider AI generation
-            print(f"NpcManager: No CampaignLoader or get_npc_archetypes method. Triggering AI generation for '{npc_template_id}'.")
-            trigger_ai_generation = True
+            campaign_loader: Optional["CampaignLoader"] = kwargs.get('campaign_loader')
+            if campaign_loader and hasattr(campaign_loader, 'get_npc_archetypes'):
+                try:
+                    all_archetypes: List[Dict[str, Any]] = campaign_loader.get_npc_archetypes()
+                    if not any(isinstance(arch, dict) and arch.get('id') == archetype_id_to_load for arch in all_archetypes):
+                        trigger_ai_generation = True
+                        print(f"NpcManager: Archetype '{archetype_id_to_load}' not found. Triggering AI generation.")
+                except Exception as e:
+                    print(f"NpcManager: Error loading NPC archetypes: {e}. Triggering AI generation.")
+                    trigger_ai_generation = True
+            else: # No campaign loader or method means we can't load archetype, so try AI
+                trigger_ai_generation = True
+                print(f"NpcManager: No CampaignLoader to verify archetype '{archetype_id_to_load}'. Triggering AI generation.")
 
-        # Layering: kwargs > archetype_data > generated/default
-        final_name_i18n = kwargs.get('name_i18n', archetype_data_loaded.get('name_i18n', {"en": base_name, "ru": base_name}) if archetype_data_loaded else {"en": base_name, "ru": base_name})
-        
-        # Stats: Start with RuleEngine, then layer archetype, then layer specific kwargs
 
         if trigger_ai_generation:
-            npc_id_concept = npc_template_id # Or derive a concept, e.g., npc_template_id.split(":")[-1]
-            if npc_template_id.startswith("AI:"):
-                npc_id_concept = npc_template_id.replace("AI:", "", 1) # Example: "AI:generate_guard" -> "generate_guard"
-
+            npc_id_concept = npc_template_id.replace("AI:", "", 1) if npc_template_id.startswith("AI:") else npc_template_id
             ai_generated_data = await self.generate_npc_details_from_ai(
                 guild_id=guild_id_str,
                 npc_id_concept=npc_id_concept,
@@ -1009,162 +978,63 @@ class NpcManager:
             print(f"NpcManager ERROR: Unhandled validation status '{overall_status}' for NPC '{npc_id_concept}'.")
             return None
 
-    # ИСПРАВЛЕНИЕ: save_state должен принимать guild_id
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
-        """Сохраняет активные/измененные NPC для определенной гильдии."""
+        """Сохраняет все измененные или удаленные NPC для определенной гильдии."""
         guild_id_str = str(guild_id)
-        print(f"NpcManager: Saving NPC state for guild {guild_id_str}...")
+        # print(f"NpcManager: Saving NPC state for guild {guild_id_str}...") # Can be noisy
 
         if self._db_adapter is None:
             print(f"NpcManager: Warning: Cannot save NPC state for guild {guild_id_str}, DB adapter missing.")
             return
 
-        # ИСПРАВЛЕНИЕ: Собираем dirty/deleted ID ИЗ per-guild кешей
-        dirty_npc_ids_for_guild_set = self._dirty_npcs.get(guild_id_str, set()).copy() # Рабочая копия Set
-        deleted_npc_ids_for_guild_set = self._deleted_npc_ids.get(guild_id_str, set()).copy() # Рабочая копия Set
+        dirty_npc_ids_for_guild = self._dirty_npcs.get(guild_id_str, set()).copy()
+        deleted_npc_ids_for_guild = self._deleted_npc_ids.get(guild_id_str, set()).copy()
 
-        if not dirty_npc_ids_for_guild_set and not deleted_npc_ids_for_guild_set:
-             # print(f"NpcManager: No dirty or deleted NPCs to save for guild {guild_id_str}.") # Too noisy
-             # ИСПРАВЛЕНИЕ: Если нечего сохранять/удалять, очищаем per-guild dirty/deleted сеты
-             self._dirty_npcs.pop(guild_id_str, None)
-             self._deleted_npc_ids.pop(guild_id_str, None)
-             return
+        if not dirty_npc_ids_for_guild and not deleted_npc_ids_for_guild:
+            return
 
-        print(f"NpcManager: Saving {len(dirty_npc_ids_for_guild_set)} dirty, {len(deleted_npc_ids_for_guild_set)} deleted NPCs for guild {guild_id_str}...")
+        print(f"NpcManager: Saving {len(dirty_npc_ids_for_guild)} dirty, {len(deleted_npc_ids_for_guild)} deleted NPCs for guild {guild_id_str}...")
 
-        # 4. Удаление NPC, помеченных для удаления для этой гильдии
-        if deleted_npc_ids_for_guild_set:
-            ids_to_delete = list(deleted_npc_ids_for_guild_set)
-            placeholders_del = ','.join(['?'] * len(ids_to_delete))
-            # Убеждаемся, что удаляем ТОЛЬКО для данного guild_id и по ID из списка
-            delete_sql = f"DELETE FROM npcs WHERE guild_id = ? AND id IN ({placeholders_del})"
+        # Handle deletions first
+        if deleted_npc_ids_for_guild:
+            ids_to_delete_list = list(deleted_npc_ids_for_guild)
+            placeholders = ','.join(['?'] * len(ids_to_delete_list))
+
+            # Attempt to delete from both tables, as we don't know the source table just from ID
+            # Or, if NPC objects are still in cache when marked deleted, check 'is_ai_generated' then.
+            # For simplicity now, try deleting from both if ID matches.
+            # This assumes IDs are unique across npcs and generated_npcs, or it's fine if one of the DELETEs affects 0 rows.
+            sql_delete_npcs = f"DELETE FROM npcs WHERE guild_id = ? AND id IN ({placeholders})"
+            sql_delete_generated_npcs = f"DELETE FROM generated_npcs WHERE guild_id = ? AND id IN ({placeholders})"
+
             try:
-                await self._db_adapter.execute(delete_sql, (guild_id_str, *tuple(ids_to_delete)))
-                print(f"NpcManager: Deleted {len(ids_to_delete)} NPCs from DB for guild {guild_id_str}.")
-                # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
-                self._deleted_npc_ids.pop(guild_id_str, None)
+                await self._db_adapter.execute(sql_delete_npcs, (guild_id_str, *ids_to_delete_list))
+                await self._db_adapter.execute(sql_delete_generated_npcs, (guild_id_str, *ids_to_delete_list))
+                print(f"NpcManager: Attempted deletion for {len(ids_to_delete_list)} IDs from 'npcs' and 'generated_npcs' tables for guild {guild_id_str}.")
+                self._deleted_npc_ids.pop(guild_id_str, None) # Clear after attempting deletion
             except Exception as e:
                 print(f"NpcManager: Error deleting NPCs for guild {guild_id_str}: {e}")
-                import traceback
-                print(traceback.format_exc())
-                # Do NOT clear _deleted_npc_ids[guild_id_str], try again next save
+                traceback.print_exc() # Keep IDs in _deleted_npc_ids to retry next time
 
-        # 5. Сохранение/обновление NPC для этой гильдии
-        # ИСПРАВЛЕНИЕ: Фильтруем dirty_instances на те, что все еще существуют в per-guild кеше
+        # Handle dirty NPCs
         guild_npcs_cache = self._npcs.get(guild_id_str, {})
-        npcs_to_save: List["NPC"] = [guild_npcs_cache[nid] for nid in list(dirty_npc_ids_for_guild_set) if nid in guild_npcs_cache]
-
-        if npcs_to_save:
-             print(f"NpcManager: Upserting {len(npcs_to_save)} NPCs for guild {guild_id_str}...")
-             upsert_sql = '''
-             INSERT OR REPLACE INTO npcs
-             (id, template_id, name, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype, traits, desires, motives, backstory)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             '''
-             data_to_upsert = []
-             upserted_npc_ids: Set[str] = set() # Keep track of successfully prepared IDs
-
-             for npc in npcs_to_save:
-                  try:
-                       # Убеждаемся, что у объекта NPC есть все нужные атрибуты
-                       npc_id = getattr(npc, 'id', None)
-                       npc_guild_id = getattr(npc, 'guild_id', None)
-
-                       if npc_id is None or str(npc_guild_id) != guild_id_str:
-                           print(f"NpcManager: Warning: Skipping upsert for NPC with invalid ID ('{npc_id}') or mismatched guild ('{npc_guild_id}') during save for guild {guild_id_str}. Expected guild {guild_id_str}.")
-                           continue # Skip this NPC if invalid or wrong guild
-
-                       template_id = getattr(npc, 'template_id', None)
-                       name_i18n = getattr(npc, 'name_i18n', {"en": "Unnamed NPC", "ru": "Безымянный NPC"})
-                       location_id = getattr(npc, 'location_id', None)
-                       stats = getattr(npc, 'stats', {})
-                       inventory = getattr(npc, 'inventory', [])
-                       current_action = getattr(npc, 'current_action', None)
-                       action_queue = getattr(npc, 'action_queue', [])
-                       party_id = getattr(npc, 'party_id', None)
-                       state_variables = getattr(npc, 'state_variables', {})
-                       health = getattr(npc, 'health', 50.0)
-                       max_health = getattr(npc, 'max_health', 50.0)
-                       is_alive = getattr(npc, 'is_alive', True)
-                       status_effects = getattr(npc, 'status_effects', [])
-                       is_temporary = getattr(npc, 'is_temporary', False)
-                       archetype = getattr(npc, 'archetype', "commoner")
-                       traits = getattr(npc, 'traits', [])
-                       desires = getattr(npc, 'desires', [])
-                       motives = getattr(npc, 'motives', [])
-                       backstory_i18n = getattr(npc, 'backstory_i18n', {"en": "", "ru": ""})
-                       role_i18n = getattr(npc, 'role_i18n', {"en": "", "ru": ""})
-                       personality_i18n = getattr(npc, 'personality_i18n', {"en": "", "ru": ""})
-                       motivation_i18n = getattr(npc, 'motivation_i18n', {"en": "", "ru": ""})
-                       dialogue_hints_i18n = getattr(npc, 'dialogue_hints_i18n', {"en": "", "ru": ""})
-                       visual_description_i18n = getattr(npc, 'visual_description_i18n', {"en": "", "ru": ""})
-
-                       # Ensure data types are suitable for JSON dumping
-                       if not isinstance(name_i18n, dict): name_i18n = {"en": str(name_i18n), "ru": str(name_i18n)} # Basic fallback if not dict
-                       if not isinstance(stats, dict): stats = {}
-                       if not isinstance(inventory, list): inventory = []
-                       if not isinstance(action_queue, list): action_queue = []
-                       if not isinstance(state_variables, dict): state_variables = {}
-                       if not isinstance(status_effects, list): status_effects = []
+        if dirty_npc_ids_for_guild:
+            for npc_id in list(dirty_npc_ids_for_guild): # Iterate copy as save_npc might modify the set
+                npc = guild_npcs_cache.get(npc_id)
+                if npc:
+                    # save_npc now determines the target table internally
+                    await self.save_npc(npc, guild_id_str)
+                else:
+                    # NPC was in dirty set but not in cache, means it was deleted and then un-dirtied.
+                    # Or some other logic error. For safety, remove from dirty set.
+                    self._dirty_npcs.get(guild_id_str, set()).discard(npc_id)
 
 
-                       stats_json = json.dumps(stats)
-                       inv_json = json.dumps(inventory) # Corrected indentation
-                       curr_json = json.dumps(current_action) if current_action is not None else None
-                       queue_json = json.dumps(action_queue)
-                       state_json = json.dumps(state_variables)
-                       status_json = json.dumps(status_effects)
-
-
-                       data_to_upsert.append((
-                           str(npc_id),
-                           str(template_id) if template_id is not None else None, # Ensure template_id is str or None
-                           json.dumps(name_i18n), # Save i18n name as JSON
-                           guild_id_str, # Ensure guild_id is string
-                           str(location_id) if location_id is not None else None, # Ensure location_id is str or None
-                           stats_json,
-                           inv_json,
-                           curr_json,
-                           queue_json,
-                           str(party_id) if party_id is not None else None, # Ensure party_id is str or None
-                           state_json,
-                           float(health),
-                           float(max_health),
-                           int(bool(is_alive)), # Save bool as integer (0 or 1)
-                           status_json,
-                           int(bool(is_temporary)), # Save bool as integer (0 or 1)
-                           getattr(npc, 'archetype', "commoner"),
-                           json.dumps(getattr(npc, 'traits', [])),
-                           json.dumps(desires),
-                           json.dumps(motives),
-                           json.dumps(backstory_i18n),
-                           json.dumps(role_i18n),
-                           json.dumps(personality_i18n),
-                           json.dumps(motivation_i18n),
-                           json.dumps(dialogue_hints_i18n),
-                           json.dumps(visual_description_i18n)
-                       ))
-                       upserted_npc_ids.add(str(npc_id)) # Track IDs prepared for upsert
-
-                  except Exception as e:
-                      print(f"NpcManager: Error preparing data for NPC {getattr(npc, 'id', 'N/A')} ('{getattr(npc, 'name', 'N/A')}', guild {getattr(npc, 'guild_id', 'N/A')}) for upsert: {e}")
-                      import traceback
-                      print(traceback.format_exc())
-                      # This NPC won't be saved in this batch but remains in _dirty_npcs
-
-             if data_to_upsert:
-                  if self._db_adapter is None:
-                       print(f"NpcManager: Warning: DB adapter is None during NPC upsert batch for guild {guild_id_str}.")
-                  else:
-                       await self._db_adapter.execute_many(upsert_sql, data_to_upsert)
-                       print(f"NpcManager: Successfully upserted {len(data_to_upsert)} NPCs for guild {guild_id_str}.")
-                       # ИСПРАВЛЕНИЕ: Очищаем dirty set для этой гильдии только для успешно сохраненных ID
-                       if guild_id_str in self._dirty_npcs:
-                            self._dirty_npcs[guild_id_str].difference_update(upserted_npc_ids)
-                            # Если после очистки set пуст, удаляем ключ гильдии
-                            if not self._dirty_npcs[guild_id_str]:
-                                 del self._dirty_npcs[guild_id_str]
-
+        # Clean up empty sets from dictionaries to save memory
+        if not self._dirty_npcs.get(guild_id_str):
+            self._dirty_npcs.pop(guild_id_str, None)
+        if not self._deleted_npc_ids.get(guild_id_str): # Should have been popped if successful
+            self._deleted_npc_ids.pop(guild_id_str, None)
 
         print(f"NpcManager: Save state complete for guild {guild_id_str}.")
 
@@ -1173,8 +1043,8 @@ class NpcManager:
         """Загружает NPC для определенной гильдии из базы данных в кеш."""
         guild_id_str = str(guild_id)
         
-        # Log NPC Archetype data availability from campaign_data
         campaign_data: Optional[Dict[str, Any]] = kwargs.get('campaign_data')
+        # ... (campaign data logging remains the same) ...
         if campaign_data and isinstance(campaign_data.get("npc_archetypes"), list):
             npc_archetypes_data = campaign_data["npc_archetypes"]
             loaded_archetype_count = len(npc_archetypes_data)
@@ -1182,7 +1052,7 @@ class NpcManager:
             if loaded_archetype_count > 0:
                 print("NpcManager (load_state): Example NPC archetypes received:")
                 for i, archetype_data in enumerate(npc_archetypes_data):
-                    if i < 3: # Print up to 3 examples
+                    if i < 3:
                         print(f"  - ID: {archetype_data.get('id', 'N/A')}, Name: {archetype_data.get('name', 'N/A')}, Archetype: {archetype_data.get('archetype', 'N/A')}")
                     else:
                         break
@@ -1211,13 +1081,21 @@ class NpcManager:
 
         rows = []
         try:
-            # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
-            sql = '''
-            SELECT id, template_id, name_i18n, guild_id, location_id, stats, inventory, current_action, action_queue, party_id, state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype, traits, desires, motives, backstory_i18n, role_i18n, personality_i18n, motivation_i18n, dialogue_hints_i18n, visual_description_i18n
+            # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id for 'npcs' table
+            # Ensure all columns as per migration v16 are fetched (name_i18n, description_i18n, backstory_i18n, persona_i18n)
+            sql_npcs = '''
+            SELECT id, template_id, name_i18n, description_i18n, backstory_i18n, persona_i18n,
+                   guild_id, location_id, stats, inventory, current_action, action_queue, party_id,
+                   state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype,
+                   traits, desires, motives
             FROM npcs WHERE guild_id = ?
-            '''
-            rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
-            print(f"NpcManager: Found {len(rows)} NPCs in DB for guild {guild_id_str}.")
+            ''' # 23 columns for 'npcs' table
+            rows = await self._db_adapter.fetchall(sql_npcs, (guild_id_str,))
+            print(f"NpcManager: Found {len(rows)} NPCs in 'npcs' table for guild {guild_id_str}.")
+
+            # TODO: Add loading logic for 'generated_npcs' table if NpcManager should handle them.
+            # This would involve a separate SQL query and potentially merging or differentiating these NPCs.
+            # For now, this method only loads from the 'npcs' table.
 
         except Exception as e:
             print(f"NpcManager: ❌ CRITICAL ERROR executing DB fetchall for NPCs for guild {guild_id_str}: {e}")
@@ -1239,95 +1117,61 @@ class NpcManager:
 
                 if npc_id_raw is None or loaded_guild_id_raw is None:
                      print(f"NpcManager: Warning: Skipping row with missing mandatory fields (ID, Guild ID) for guild {guild_id_str}. Row data: {data}. ")
-                     continue # Skip row missing critical data
+                     continue
 
                 npc_id = str(npc_id_raw)
                 loaded_guild_id = str(loaded_guild_id_raw)
 
-                # Verify guild ID match
                 if loaded_guild_id != guild_id_str:
                     print(f"NpcManager: Warning: Mismatch guild_id for NPC {npc_id}: Expected {guild_id_str}, got {loaded_guild_id}. Skipping.")
-                    continue # Skip row with wrong guild ID
+                    continue
 
-
-                # Parse JSON fields, handle None/malformed data gracefully
-                try:
-                    data['name_i18n'] = json.loads(data.get('name_i18n') or '{}') if isinstance(data.get('name_i18n'), (str, bytes)) else {"en": "Error NPC", "ru": "Ошибка NPC"}
-                except (json.JSONDecodeError, TypeError):
-                    print(f"NpcManager: Warning: Failed to parse name_i18n for NPC {npc_id} in guild {guild_id_str}. Setting to default. Data: {data.get('name_i18n')}")
-                    data['name_i18n'] = {"en": "Error NPC", "ru": "Ошибка NPC"}
-
-                try:
-                    data['stats'] = json.loads(data.get('stats') or '{}') if isinstance(data.get('stats'), (str, bytes)) else {}
-                except (json.JSONDecodeError, TypeError):
-                     print(f"NpcManager: Warning: Failed to parse stats for NPC {npc_id} in guild {guild_id_str}. Setting to {{}}. Data: {data.get('stats')}")
-                     data['stats'] = {}
-
-                try:
-                    data['inventory'] = json.loads(data.get('inventory') or '[]') if isinstance(data.get('inventory'), (str, bytes)) else []
-                except (json.JSONDecodeError, TypeError):
-                    print(f"NpcManager: Warning: Failed to parse inventory for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('inventory')}")
-                    data['inventory'] = []
-
-                try:
-                    current_action_data = data.get('current_action')
-                    data['current_action'] = json.loads(current_action_data) if isinstance(current_action_data, (str, bytes)) else None
-                except (json.JSONDecodeError, TypeError):
-                     print(f"NpcManager: Warning: Failed to parse current_action for NPC {npc_id} in guild {guild_id_str}. Setting to None. Data: {data.get('current_action')}")
-                     data['current_action'] = None
-
-                try:
-                    data['action_queue'] = json.loads(data.get('action_queue') or '[]') if isinstance(data.get('action_queue'), (str, bytes)) else []
-                except (json.JSONDecodeError, TypeError):
-                     print(f"NpcManager: Warning: Failed to parse action_queue for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('action_queue')}")
-                     data['action_queue'] = []
-
-                try:
-                    data['state_variables'] = json.loads(data.get('state_variables') or '{}') if isinstance(data.get('state_variables'), (str, bytes)) else {}
-                except (json.JSONDecodeError, TypeError):
-                     print(f"NpcManager: Warning: Failed to parse state_variables for NPC {npc_id} in guild {guild_id_str}. Setting to {{}}. Data: {data.get('state_variables')}")
-                     data['state_variables'] = {}
-
-                try:
-                    data['status_effects'] = json.loads(data.get('status_effects') or '[]') if isinstance(data.get('status_effects'), (str, bytes)) else []
-                except (json.JSONDecodeError, TypeError):
-                     print(f"NpcManager: Warning: Failed to parse status_effects for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('status_effects')}")
-                     data['status_effects'] = []
-
-                # Convert boolean/numeric types, handle potential None/malformed data
-                data['health'] = float(data.get('health', 50.0)) if data.get('health') is not None else 50.0
-                data['max_health'] = float(data.get('max_health', 50.0)) if data.get('max_health') is not None else 50.0
-                data['is_alive'] = bool(int(data.get('is_alive', 1))) if data.get('is_alive') is not None else True
-                data['is_temporary'] = bool(int(data.get('is_temporary', 0))) if data.get('is_temporary') is not None else False
-                
-                data['archetype'] = data.get('archetype', "commoner")
-                try:
-                    data['traits'] = json.loads(data.get('traits') or '[]') if isinstance(data.get('traits'), (str, bytes)) else []
-                except (json.JSONDecodeError, TypeError):
-                    print(f"NpcManager: Warning: Failed to parse traits for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('traits')}")
-                    data['traits'] = []
-                try:
-                    data['desires'] = json.loads(data.get('desires') or '[]') if isinstance(data.get('desires'), (str, bytes)) else []
-                except (json.JSONDecodeError, TypeError):
-                    print(f"NpcManager: Warning: Failed to parse desires for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('desires')}")
-                    data['desires'] = []
-                try:
-                    data['motives'] = json.loads(data.get('motives') or '[]') if isinstance(data.get('motives'), (str, bytes)) else []
-                except (json.JSONDecodeError, TypeError):
-                    print(f"NpcManager: Warning: Failed to parse motives for NPC {npc_id} in guild {guild_id_str}. Setting to []. Data: {data.get('motives')}")
-                    data['motives'] = []
-
-                i18n_fields_to_load = ['backstory_i18n', 'role_i18n', 'personality_i18n', 'motivation_i18n', 'dialogue_hints_i18n', 'visual_description_i18n']
-                for field in i18n_fields_to_load:
+                # --- Parse all fields from 'npcs' table row ---
+                # i18n fields (already named *_i18n in SELECT, should be JSON strings from DB)
+                for field_name in ['name_i18n', 'description_i18n', 'backstory_i18n', 'persona_i18n']:
                     try:
-                        data[field] = json.loads(data.get(field) or '{}') if isinstance(data.get(field), (str, bytes)) else {}
-                    except (json.JSONDecodeError, TypeError):
-                        print(f"NpcManager: Warning: Failed to parse {field} for NPC {npc_id} in guild {guild_id_str}. Setting to {{}}. Data: {data.get(field)}")
-                        data[field] = {}
+                        json_str = data.get(field_name)
+                        data[field_name] = json.loads(json_str or '{}') if isinstance(json_str, (str, bytes)) else (json_str if isinstance(json_str, dict) else {})
+                    except (json.JSONDecodeError, TypeError) as e:
+                        print(f"NpcManager: Warning: Failed to parse {field_name} for NPC {npc_id}. Data: '{data.get(field_name)}'. Error: {e}. Defaulting to empty dict.")
+                        data[field_name] = {}
+                
+                # Derive plain 'name' for model
+                selected_lang = data.get('selected_language', 'en') # Assuming NPC might have a lang or use guild default
+                data['name'] = data['name_i18n'].get(selected_lang, list(data['name_i18n'].values())[0] if data['name_i18n'] else npc_id)
 
+
+                # Standard JSON fields
+                for field_name, default_val_str, default_type in [
+                    ('stats', '{}', dict), ('inventory', '[]', list),
+                    ('action_queue', '[]', list), ('state_variables', '{}', dict),
+                    ('status_effects', '[]', list), ('traits', '[]', list),
+                    ('desires', '[]', list), ('motives', '[]', list)
+                ]:
+                    try:
+                        json_str = data.get(field_name)
+                        data[field_name] = json.loads(json_str or default_val_str) if isinstance(json_str, (str, bytes)) else (json_str if isinstance(json_str, default_type) else (default_type()))
+                    except (json.JSONDecodeError, TypeError) as e:
+                        print(f"NpcManager: Warning: Failed to parse {field_name} for NPC {npc_id}. Data: '{data.get(field_name)}'. Error: {e}. Defaulting.")
+                        data[field_name] = default_type()
+
+                # Current action can be None
+                try:
+                    current_action_json = data.get('current_action')
+                    data['current_action'] = json.loads(current_action_json) if isinstance(current_action_json, (str, bytes)) else (current_action_json if isinstance(current_action_json, dict) else None)
+                except (json.JSONDecodeError, TypeError) as e:
+                    print(f"NpcManager: Warning: Failed to parse current_action for NPC {npc_id}. Data: '{data.get('current_action')}'. Error: {e}. Defaulting to None.")
+                    data['current_action'] = None
+
+                # Numeric and boolean fields
+                data['health'] = float(data.get('health', 0.0))
+                data['max_health'] = float(data.get('max_health', 0.0))
+                data['is_alive'] = bool(data.get('is_alive', True)) # DB stores 0/1
+                data['is_temporary'] = bool(data.get('is_temporary', False)) # DB stores 0/1
+                data['archetype'] = data.get('archetype', "commoner")
 
                 # Ensure required object IDs are strings or None
-                data['id'] = npc_id
+                data['id'] = npc_id # Already str
                 data['guild_id'] = loaded_guild_id
                 data['template_id'] = str(data['template_id']) if data.get('template_id') is not None else None
                 data['location_id'] = str(data['location_id']) if data.get('location_id') is not None else None
@@ -1336,6 +1180,7 @@ class NpcManager:
 
                 # Create NPC object
                 npc = NPC.from_dict(data) # Requires NPC.from_dict method
+                npc.is_ai_generated = False # Mark as NOT AI-generated
 
                 # Add NPC object to the per-guild cache
                 guild_npcs_cache[npc.id] = npc
@@ -1353,9 +1198,124 @@ class NpcManager:
                 print(traceback.format_exc())
                 # Continue loop for other rows
 
-        print(f"NpcManager: Successfully loaded {loaded_count} NPCs into cache for guild {guild_id_str}.")
-        if loaded_count < len(rows):
-             print(f"NpcManager: Note: Failed to load {len(rows) - loaded_count} NPCs for guild {guild_id_str} due to errors.")
+        # --- Load from 'generated_npcs' table ---
+        rows_generated = []
+        try:
+            sql_generated_npcs = '''
+            SELECT id, guild_id, name_i18n, role_i18n, personality_i18n, motivation_i18n,
+                   backstory_i18n, dialogue_hints_i18n, stats_json, skills_json, abilities_json,
+                   spells_json, inventory_json, faction_affiliations_json, relationships_json,
+                   current_location_id, is_hostile, ai_prompt_context_json
+            FROM generated_npcs WHERE guild_id = ?
+            ''' # 18 columns
+            rows_generated = await self._db_adapter.fetchall(sql_generated_npcs, (guild_id_str,))
+            print(f"NpcManager: Found {len(rows_generated)} NPCs in 'generated_npcs' table for guild {guild_id_str}.")
+        except Exception as e:
+            print(f"NpcManager: ❌ CRITICAL ERROR executing DB fetchall for 'generated_npcs' table for guild {guild_id_str}: {e}")
+            traceback.print_exc()
+            # Continue even if this part fails, 'npcs' might have loaded.
+
+        loaded_generated_count = 0
+        selected_lang = "en" # Default language for deriving plain 'name'
+        # Attempt to get guild default language if available (e.g. from settings in kwargs)
+        # This part is conceptual as settings access might be structured differently.
+        if 'settings' in kwargs and isinstance(kwargs['settings'], dict):
+            selected_lang = kwargs['settings'].get('guilds', {}).get(guild_id_str, {}).get('default_language', selected_lang)
+
+
+        for row_gen in rows_generated:
+            data_gen_db = dict(row_gen) # Raw data from DB
+            model_data_gen = {} # Data to be passed to NPC.from_dict()
+            try:
+                npc_id_gen_raw = data_gen_db.get('id')
+                loaded_guild_id_gen_raw = data_gen_db.get('guild_id')
+
+                if npc_id_gen_raw is None or loaded_guild_id_gen_raw is None:
+                    print(f"NpcManager: Warning: Skipping generated_npcs row with missing ID or Guild ID. Data: {data_gen_db}")
+                    continue
+
+                npc_id_gen = str(npc_id_gen_raw)
+                if str(loaded_guild_id_gen_raw) != guild_id_str:
+                    print(f"NpcManager: Warning: Mismatch guild_id for generated_npc {npc_id_gen}. Skipping.")
+                    continue
+
+                if npc_id_gen in guild_npcs_cache: # Check against already loaded standard NPCs
+                    print(f"NpcManager: Warning: NPC ID {npc_id_gen} from 'generated_npcs' already loaded from 'npcs' table. Skipping duplicate from 'generated_npcs'.")
+                    continue
+
+                model_data_gen['id'] = npc_id_gen
+                model_data_gen['guild_id'] = guild_id_str
+
+                # Parse i18n fields
+                i18n_fields_from_db = ['name_i18n', 'role_i18n', 'personality_i18n', 'motivation_i18n', 'backstory_i18n', 'dialogue_hints_i18n']
+                # Description is not in generated_npcs, persona_i18n is also not.
+                # visual_description_i18n is also not in generated_npcs schema v20.
+                for field_name in i18n_fields_from_db:
+                    json_str = data_gen_db.get(field_name)
+                    model_data_gen[field_name] = json.loads(json_str or '{}') if isinstance(json_str, (str, bytes)) else (json_str if isinstance(json_str, dict) else {})
+
+                model_data_gen['name'] = model_data_gen['name_i18n'].get(selected_lang, list(model_data_gen['name_i18n'].values())[0] if model_data_gen['name_i18n'] else npc_id_gen)
+
+                # Parse JSON data fields
+                json_field_map = {
+                    'stats_json': 'stats_data', 'skills_json': 'skills_data', 'abilities_json': 'abilities_data',
+                    'spells_json': 'spells_data', 'inventory_json': 'inventory_data',
+                    'faction_affiliations_json': 'faction_affiliations_data',
+                    'relationships_json': 'relationships_data',
+                    'ai_prompt_context_json': 'ai_prompt_context_data'
+                }
+                for db_col, model_attr in json_field_map.items():
+                    default_val_str = '[]' if model_attr not in ['stats_data', 'relationships_data', 'ai_prompt_context_data'] else '{}'
+                    default_type = list if default_val_str == '[]' else dict
+                    json_str = data_gen_db.get(db_col)
+                    model_data_gen[model_attr] = json.loads(json_str or default_val_str) if isinstance(json_str, (str, bytes)) else (json_str if isinstance(json_str, default_type) else default_type())
+
+                # Map other fields from generated_npcs to NPC model fields
+                model_data_gen['location_id'] = data_gen_db.get('current_location_id')
+                model_data_gen['is_temporary'] = data_gen_db.get('is_temporary', True)
+                model_data_gen['template_id'] = data_gen_db.get('template_id', "generated_npc_default_template")
+                model_data_gen['archetype'] = data_gen_db.get('archetype', model_data_gen.get('role_i18n',{}).get(selected_lang, "generated"))
+                model_data_gen['is_hostile'] = bool(data_gen_db.get('is_hostile', False))
+
+                # Populate standard 'stats' and 'inventory' (simple list of IDs) from their '_data' counterparts for broader compatibility
+                model_data_gen['stats'] = model_data_gen.get('stats_data', {})
+                # For 'inventory' (List[str]), extract IDs if inventory_data is List[Dict]
+                inv_data_list = model_data_gen.get('inventory_data', [])
+                model_data_gen['inventory'] = [str(item.get("id", item.get("item_id"))) for item in inv_data_list if isinstance(item, dict) and (item.get("id") or item.get("item_id"))] if isinstance(inv_data_list, list) else []
+
+
+                # Fill in other NPC model fields with defaults if not provided by generated_npcs schema
+                model_data_gen.setdefault('description_i18n', model_data_gen.get('personality_i18n', {})) # Use personality if description is missing
+                model_data_gen.setdefault('persona_i18n', model_data_gen.get('personality_i18n', {}))
+                model_data_gen.setdefault('traits', [])
+                model_data_gen.setdefault('desires', [])
+                model_data_gen.setdefault('motives', []) # Motives from motivation_i18n if needed
+                model_data_gen.setdefault('health', float(model_data_gen['stats'].get('max_health', 50.0)))
+                model_data_gen.setdefault('max_health', float(model_data_gen['stats'].get('max_health', 50.0)))
+                model_data_gen.setdefault('is_alive', model_data_gen['health'] > 0)
+                model_data_gen.setdefault('status_effects', [])
+                model_data_gen.setdefault('action_queue', [])
+                model_data_gen.setdefault('state_variables', {})
+                model_data_gen.setdefault('faction_affiliations', model_data_gen.get('faction_affiliations_data',[]))
+                model_data_gen.setdefault('relationships', model_data_gen.get('relationships_data',{}))
+
+
+                npc_gen = NPC.from_dict(model_data_gen)
+                setattr(npc_gen, 'is_ai_generated', True) # Mark as generated
+
+                guild_npcs_cache[npc_gen.id] = npc_gen
+                if getattr(npc_gen, 'current_action', None) is not None or getattr(npc_gen, 'action_queue', []):
+                    guild_active_action_cache.add(npc_gen.id)
+                loaded_generated_count += 1
+
+            except Exception as e:
+                print(f"NpcManager: Error loading generated NPC {data_gen_db.get('id', 'N/A')} for guild {guild_id_str}: {e}")
+                traceback.print_exc()
+
+        total_loaded = loaded_count + loaded_generated_count
+        print(f"NpcManager: Successfully loaded {total_loaded} NPCs ({loaded_count} standard, {loaded_generated_count} generated) into cache for guild {guild_id_str}.")
+        if total_loaded < (len(rows) + len(rows_generated)): # Compare with sum of rows from both queries
+             print(f"NpcManager: Note: Failed to load some NPCs for guild {guild_id_str} due to errors.")
 
 
     # ИСПРАВЛЕНИЕ: rebuild_runtime_caches должен принимать guild_id
@@ -1549,53 +1509,92 @@ class NpcManager:
             return False
 
         try:
-            npc_data = npc.to_dict()
+            npc_data = npc.to_dict() # Get all data from the NPC model instance
 
-            # Prepare data for DB columns based on 'npcs' table schema
-            # Columns are listed in the save_state method's SQL query
+            # Helper functions for ensuring correct types for JSON serialization
+            def _ensure_dict(val, default_key="en"):
+                if isinstance(val, dict): return val
+                if val is None: return {} # Default to empty dict if None
+                return {default_key: str(val)} # Convert simple values to basic i18n
 
-            db_params = (
-                npc_data.get('id'), # id
-                npc_data.get('template_id'), # template_id
-                json.dumps(npc_data.get('name_i18n', {})), # name_i18n
-                guild_id_str, # guild_id
-                npc_data.get('location_id'), # location_id
-                json.dumps(npc_data.get('stats', {})),
-                json.dumps(npc_data.get('inventory', [])),
-                json.dumps(npc_data.get('current_action')), # Can be None
-                json.dumps(npc_data.get('action_queue', [])),
-                npc_data.get('party_id'),
-                json.dumps(npc_data.get('state_variables', {})),
-                float(npc_data.get('health', 0.0)),
-                float(npc_data.get('max_health', 0.0)),
-                int(bool(npc_data.get('is_alive', False))),
-                json.dumps(npc_data.get('status_effects', [])),
-                int(bool(npc_data.get('is_temporary', False))),
-                npc_data.get('archetype', "commoner"),
-                json.dumps(npc_data.get('traits', [])), # traits
-                json.dumps(npc_data.get('desires', [])), # desires
-                json.dumps(npc_data.get('motives', [])), # motives
-                json.dumps(npc_data.get('backstory_i18n', {})), # backstory_i18n
-                json.dumps(npc_data.get('role_i18n', {})), # role_i18n
-                json.dumps(npc_data.get('personality_i18n', {})), # personality_i18n
-                json.dumps(npc_data.get('motivation_i18n', {})), # motivation_i18n
-                json.dumps(npc_data.get('dialogue_hints_i18n', {})), # dialogue_hints_i18n
-                json.dumps(npc_data.get('visual_description_i18n', {})) # visual_description_i18n
-            )
+            def _ensure_list(val):
+                if isinstance(val, list): return val
+                if val is None: return [] # Default to empty list if None
+                return [val] # Wrap single non-list value in a list
 
-            upsert_sql = '''
-            INSERT OR REPLACE INTO npcs (
-                id, template_id, name_i18n, guild_id, location_id,
-                stats, inventory, current_action, action_queue, party_id,
-                state_variables, health, max_health, is_alive, status_effects,
-                is_temporary, archetype, traits, desires, motives, backstory_i18n,
-                role_i18n, personality_i18n, motivation_i18n, dialogue_hints_i18n, visual_description_i18n
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            '''
-            # 26 columns, 26 placeholders.
+            target_table: str
+            if getattr(npc, 'is_ai_generated', False): # Check the flag on the NPC object
+                target_table = 'generated_npcs'
+            else:
+                target_table = 'npcs'
+
+            if target_table == 'generated_npcs':
+                # Ensure all necessary fields for generated_npcs are present in npc_data or defaulted
+                db_params = (
+                    str(npc_id), # id
+                    guild_id_str, # guild_id
+                    json.dumps(_ensure_dict(npc_data.get('name_i18n', {}))), # name_i18n
+                    json.dumps(_ensure_dict(npc_data.get('role_i18n', {"en": "N/A"}))), # role_i18n
+                    json.dumps(_ensure_dict(npc_data.get('personality_i18n', {}))), # personality_i18n
+                    json.dumps(_ensure_dict(npc_data.get('motivation_i18n', {}))), # motivation_i18n
+                    json.dumps(_ensure_dict(npc_data.get('backstory_i18n', {}))), # backstory_i18n
+                    json.dumps(_ensure_dict(npc_data.get('dialogue_hints_i18n', {}))), # dialogue_hints_i18n
+                    json.dumps(_ensure_dict(npc_data.get('stats_data', npc_data.get('stats', {})), "strength")), # stats_json
+                    json.dumps(_ensure_list(npc_data.get('skills_data', []))), # skills_json
+                    json.dumps(_ensure_list(npc_data.get('abilities_data', []))), # abilities_json
+                    json.dumps(_ensure_list(npc_data.get('spells_data', []))), # spells_json
+                    json.dumps(_ensure_list(npc_data.get('inventory_data', npc_data.get('inventory',[])))), # inventory_json (fallback to simple inventory)
+                    json.dumps(_ensure_list(npc_data.get('faction_affiliations_data', npc_data.get('faction_affiliations', [])))), # faction_affiliations_json
+                    json.dumps(_ensure_dict(npc_data.get('relationships_data', npc_data.get('relationships', {})), "default_rel_key")), # relationships_json
+                    str(npc_data.get('location_id')) if npc_data.get('location_id') is not None else None, # current_location_id
+                    int(bool(npc_data.get('is_hostile', False))), # is_hostile
+                    json.dumps(_ensure_dict(npc_data.get('ai_prompt_context_data', {}), "prompt")) # ai_prompt_context_json
+                )
+                upsert_sql = """
+                INSERT OR REPLACE INTO generated_npcs (
+                    id, guild_id, name_i18n, role_i18n, personality_i18n, motivation_i18n,
+                    backstory_i18n, dialogue_hints_i18n, stats_json, skills_json, abilities_json,
+                    spells_json, inventory_json, faction_affiliations_json, relationships_json,
+                    current_location_id, is_hostile, ai_prompt_context_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """ # 18 placeholders
+            else: # target_table is 'npcs'
+                db_params = (
+                    str(npc_id), # id
+                    str(npc_data.get('template_id')) if npc_data.get('template_id') is not None else None, # template_id
+                    json.dumps(_ensure_dict(npc_data.get('name_i18n', {}))), # name_i18n
+                    json.dumps(_ensure_dict(npc_data.get('description_i18n', {}))), # description_i18n
+                    json.dumps(_ensure_dict(npc_data.get('backstory_i18n', {}))), # backstory_i18n
+                    json.dumps(_ensure_dict(npc_data.get('persona_i18n', {}))), # persona_i18n
+                    guild_id_str, # guild_id
+                    str(npc_data.get('location_id')) if npc_data.get('location_id') is not None else None, # location_id
+                    json.dumps(_ensure_dict(npc_data.get('stats', {}), "strength")), # stats (JSON)
+                    json.dumps(_ensure_list(npc_data.get('inventory', []))), # inventory (JSON, simple list of IDs)
+                    json.dumps(npc_data.get('current_action')) if npc_data.get('current_action') is not None else None, # current_action (JSON or NULL)
+                    json.dumps(_ensure_list(npc_data.get('action_queue', []))), # action_queue (JSON)
+                    str(npc_data.get('party_id')) if npc_data.get('party_id') is not None else None, # party_id
+                    json.dumps(_ensure_dict(npc_data.get('state_variables', {}), "default_state_key")), # state_variables (JSON)
+                    float(npc_data.get('health', 0.0)), # health
+                    float(npc_data.get('max_health', 0.0)), # max_health
+                    int(bool(npc_data.get('is_alive', False))), # is_alive
+                    json.dumps(_ensure_list(npc_data.get('status_effects', []))), # status_effects (JSON)
+                    int(bool(npc_data.get('is_temporary', False))), # is_temporary
+                    npc_data.get('archetype', "commoner"), # archetype
+                    json.dumps(_ensure_list(npc_data.get('traits', []))), # traits (JSON)
+                    json.dumps(_ensure_list(npc_data.get('desires', []))), # desires (JSON)
+                    json.dumps(_ensure_list(npc_data.get('motives', []))) # motives (JSON)
+                )
+                upsert_sql = """
+                INSERT OR REPLACE INTO npcs (
+                    id, template_id, name_i18n, description_i18n, backstory_i18n, persona_i18n,
+                    guild_id, location_id, stats, inventory, current_action, action_queue, party_id,
+                    state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype,
+                    traits, desires, motives
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """ # 23 placeholders
 
             await self._db_adapter.execute(upsert_sql, db_params)
-            print(f"NpcManager: Successfully saved NPC {npc_id} for guild {guild_id_str}.")
+            # print(f"NpcManager: Successfully saved NPC {npc_id} to table '{target_table}' for guild {guild_id_str}.") # Debug
 
             # If this NPC was marked as dirty, clean it from the dirty set for this guild
             if guild_id_str in self._dirty_npcs and npc_id in self._dirty_npcs[guild_id_str]:
@@ -1674,6 +1673,8 @@ class NpcManager:
 
         try:
             npc = NPC.from_dict(data_for_npc_object)
+            npc.is_ai_generated = False # Explicitly non-AI
+            npc.is_ai_generated = True # Explicitly AI-generated
 
             # Add to cache
             self._npcs.setdefault(guild_id_str, {})[npc.id] = npc
