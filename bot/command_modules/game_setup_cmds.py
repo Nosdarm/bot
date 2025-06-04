@@ -2,7 +2,8 @@
 
 import discord
 from discord import app_commands, Interaction
-from typing import Optional, TYPE_CHECKING, cast # Added cast
+from discord.app_commands import Choice as app_commands_Choice # Explicitly import Choice
+from typing import Optional, TYPE_CHECKING, cast
 import traceback
 
 # Corrected imports
@@ -172,3 +173,40 @@ async def cmd_start_new_character(interaction: Interaction, name: str, race: str
                  await interaction.followup.send("An unexpected error occurred. Please try again later.", ephemeral=True)
         else:
             await interaction.followup.send("An unexpected error occurred while starting your adventure. Please try again later.", ephemeral=True)
+
+
+@app_commands.command(name="set_bot_language", description="GM Command: Sets the default language for AI content generation and bot messages.")
+@app_commands.describe(language="Choose the default language (русский/english)")
+@app_commands.choices(language=[
+    app_commands_Choice(name="Русский", value="ru"),
+    app_commands_Choice(name="English", value="en")
+])
+async def cmd_set_bot_language(interaction: Interaction, language: str):
+    """GM Command: Sets the default language for AI content generation and bot messages."""
+    await interaction.response.defer(ephemeral=True)
+    bot = cast(RPGBot, interaction.client)
+
+    try:
+        if not bot.game_manager:
+            await interaction.followup.send("Error: Game Manager is not available.", ephemeral=True)
+            return
+
+        if not is_master_or_admin(interaction, bot.game_manager):
+            await interaction.followup.send("You are not authorized to use this command.", ephemeral=True)
+            return
+
+        # Assuming a method like this exists or will be created in GameManager
+        await bot.game_manager.set_default_bot_language(language, str(interaction.guild_id))
+
+        confirmation_message = ""
+        if language == "ru":
+            confirmation_message = "Основной язык бота установлен на русский."
+        else:  # Default to English
+            confirmation_message = "Default bot language set to English."
+
+        await interaction.followup.send(confirmation_message, ephemeral=True)
+
+    except Exception as e:
+        print(f"Error in /set_bot_language command: {e}")
+        traceback.print_exc()
+        await interaction.followup.send("An unexpected error occurred while setting the bot language.", ephemeral=True)

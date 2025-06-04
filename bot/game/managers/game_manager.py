@@ -2,6 +2,7 @@
 
 print("--- Начинается загрузка: game_manager.py")
 import asyncio
+import json # Added for RulesConfig
 import traceback
 # Импорт базовых типов
 from typing import Optional, Dict, Any, Callable, Awaitable, List, Set
@@ -80,6 +81,7 @@ if TYPE_CHECKING:
 SendToChannelCallback = Callable[..., Awaitable[Any]]
 SendCallbackFactory = Callable[[int], SendToChannelCallback]
 
+DEFAULT_RULES_CONFIG_ID = "main_rules_config"
 
 class GameManager:
     def __init__(
@@ -92,6 +94,7 @@ class GameManager:
         self._discord_client = discord_client
         self._settings = settings
         self._db_path = db_path
+        self._rules_config_cache: Optional[Dict[str, Any]] = None # Added for RulesConfig
 
         # Инициализация отложенных зависимостей
         self._db_adapter: Optional[SqliteAdapter] = None
@@ -158,6 +161,10 @@ class GameManager:
             await self.db_service.initialize_database() # This runs migrations via adapter
             self._db_adapter = self.db_service.adapter # Get the adapter instance if needed directly by other managers
             print("GameManager: DBService initialized, connected, and database schema updated.")
+
+            # Load or initialize RulesConfig
+            await self._load_or_initialize_rules_config()
+            print("GameManager: RulesConfig loaded/initialized.")
 
             # 2) Импортируем классы менеджеров и процессоров для их ИНСТАНЦИАЦИИ
             # ЭТИ ИМПОРТЫ НУЖНЫ ЗДЕСЬ ДЛЯ RUNTIME, т.к. мы создаем экземпляры!
@@ -646,8 +653,8 @@ class GameManager:
                 # Determine main bot language
                 # Assumes 'main_language_code' is in the global settings file (data/settings.json)
                 # and loaded into self._settings
-                main_bot_language = self._settings.get('main_language_code', 'ru') # Default to 'ru'
-                print(f"GameManager: Main bot language code: {main_bot_language}")
+                main_bot_language = self.get_default_bot_language() # Use new method
+                print(f"GameManager: Main bot language code from RulesConfig: {main_bot_language}")
 
                 print("GameManager: Instantiating MultilingualPromptGenerator...")
                 self.multilingual_prompt_generator = MultilingualPromptGenerator(
@@ -1046,5 +1053,113 @@ class GameManager:
 
         print(f"GameManager: Finished specific saving for {len(modified_entities)} entities.")
 
+    async def _load_or_initialize_rules_config(self) -> None:
+        """Loads the rules configuration from the database or initializes it if not found."""
+        if not self.db_service:
+            print("GameManager: CRITICAL - DBService not available for _load_or_initialize_rules_config.")
+            # Initialize with an empty cache, actual saving will fail later if DB is still down.
+            self._rules_config_cache = {}
+            return
+
+        try:
+            raw_config_entry = await self.db_service.get_entity('rules_config', DEFAULT_RULES_CONFIG_ID)
+            if raw_config_entry and 'config_data' in raw_config_entry:
+                try:
+                    self._rules_config_cache = json.loads(raw_config_entry['config_data'])
+                    print(f"GameManager: Successfully loaded rules_config '{DEFAULT_RULES_CONFIG_ID}'.")
+                except json.JSONDecodeError as e:
+                    print(f"GameManager: Error decoding JSON for rules_config '{DEFAULT_RULES_CONFIG_ID}': {e}. Initializing with empty config.")
+                    self._rules_config_cache = {} # Default to empty if parsing fails
+            else:
+                print(f"GameManager: No rules_config entry found for '{DEFAULT_RULES_CONFIG_ID}'. Initializing a new one.")
+                self._rules_config_cache = {} # Initialize with default structure if any, e.g. {'default_bot_language': 'en'}
+                # Create the entry in the database
+                # Ensure default_bot_language is set if it's a fresh config
+                if 'default_bot_language' not in self._rules_config_cache:
+                    self._rules_config_cache['default_bot_language'] = 'en' # Default to English
+
+                success = await self.db_service.create_entity(
+                    'rules_config',
+                    {'id': DEFAULT_RULES_CONFIG_ID, 'config_data': json.dumps(self._rules_config_cache)}
+                )
+                if success:
+                    print(f"GameManager: Successfully created new rules_config entry '{DEFAULT_RULES_CONFIG_ID}' with default language '{self._rules_config_cache['default_bot_language']}'.")
+                else:
+                    print(f"GameManager: FAILED to create new rules_config entry '{DEFAULT_RULES_CONFIG_ID}'. Cache will be used but not persisted.")
+
+        except Exception as e:
+            print(f"GameManager: CRITICAL error during _load_or_initialize_rules_config: {e}")
+            traceback.print_exc()
+            # Fallback to an empty cache to allow the bot to potentially continue with defaults
+            if self._rules_config_cache is None: # Only if it wasn't set due to an error before this point
+                self._rules_config_cache = {}
+
+
+    def get_default_bot_language(self) -> str:
+        """Gets the default bot language from the cached rules configuration."""
+        if self._rules_config_cache is None:
+            print("GameManager: Warning - RulesConfig cache is not populated. Defaulting bot language to 'en'.")
+            return "en" # Hardcoded default if cache is missing
+        return self._rules_config_cache.get('default_bot_language', 'en') # Default to 'en' if key is missing
+
+    async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
+        """
+        Sets the default bot language in the rules configuration and saves it to the database.
+        The guild_id parameter is currently ignored as rules_config is global.
+        """
+        # Parameter guild_id is unused for now as DEFAULT_RULES_CONFIG_ID is global.
+        # It's kept for potential future per-guild configurations.
+        if guild_id: # Just to acknowledge it exists for now
+            print(f"GameManager (set_default_bot_language): Received guild_id '{guild_id}', but rules_config is currently global.")
+
+        if self._rules_config_cache is None:
+            print("GameManager: Error - RulesConfig cache is not populated. Cannot set default bot language.")
+            # Optionally, try to load it now, though it should have been loaded during setup.
+            # await self._load_or_initialize_rules_config()
+            # if self._rules_config_cache is None: # If still None after trying to load
+            #     return False
+            return False
+
+
+        if not self.db_service:
+            print("GameManager: Error - DBService not available. Cannot save default bot language.")
+            return False
+
+        original_language = self._rules_config_cache.get('default_bot_language')
+        self._rules_config_cache['default_bot_language'] = language
+
+        try:
+            success = await self.db_service.update_entity(
+                'rules_config',
+                DEFAULT_RULES_CONFIG_ID,
+                {'config_data': json.dumps(self._rules_config_cache)}
+            )
+            if success:
+                print(f"GameManager: Default bot language successfully updated to '{language}' and saved.")
+                # Potentially update MultilingualPromptGenerator if it's already instantiated
+                if self.multilingual_prompt_generator:
+                    self.multilingual_prompt_generator.update_main_bot_language(language)
+                    print("GameManager: Updated main_bot_language in MultilingualPromptGenerator.")
+                return True
+            else:
+                print(f"GameManager: Failed to save default bot language update to database. Reverting cache.")
+                if original_language is not None:
+                    self._rules_config_cache['default_bot_language'] = original_language
+                else:
+                    # If there was no original language, it implies a fresh cache that failed to save.
+                    # Depending on desired behavior, could remove the key or leave the failed new value.
+                    # For safety, let's remove it if it was newly added and failed to save.
+                    if 'default_bot_language' in self._rules_config_cache and language == self._rules_config_cache['default_bot_language']:
+                         del self._rules_config_cache['default_bot_language'] # Only if it's still the one we set
+                return False
+        except Exception as e:
+            print(f"GameManager: Exception while saving default bot language: {e}. Reverting cache.")
+            traceback.print_exc()
+            if original_language is not None:
+                self._rules_config_cache['default_bot_language'] = original_language
+            else:
+                if 'default_bot_language' in self._rules_config_cache and language == self._rules_config_cache['default_bot_language']:
+                    del self._rules_config_cache['default_bot_language']
+            return False
 
 print("DEBUG: game_manager.py module loaded.")

@@ -202,5 +202,81 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
                     break
             self.assertTrue(found_log, "Expected log message for 'бой' state not found.")
 
+    @patch('bot.bot_core.parse_player_action')
+    @patch('bot.bot_core.OpenAIService')
+    @patch('bot.bot_core.GameManager')
+    async def test_on_message_nlu_language_fallback(self, MockGameManager, MockOpenAIService, mock_parse_player_action):
+        # --- Setup Mocks ---
+        mock_gm_instance = MockGameManager.return_value
+        mock_character_manager = AsyncMock()
+        mock_nlu_data_service = AsyncMock()
+        mock_gm_instance.character_manager = mock_character_manager
+        mock_gm_instance.nlu_data_service = mock_nlu_data_service
+
+        # Mock GameManager's get_default_bot_language
+        mock_gm_instance.get_default_bot_language = MagicMock(return_value="ru") # GM default is 'ru'
+
+        # Mock Character with selected_language = None
+        mock_char = MagicMock()
+        mock_char.id = "char_lang_fallback"
+        mock_char.name = "LangFallbacker"
+        mock_char.current_game_status = "исследование" # NLU processing state
+        mock_char.selected_language = None # Player has NOT set a language
+        mock_char.собранные_действия_JSON = None
+
+        mock_character_manager.get_character_by_discord_id.return_value = mock_char
+        # Mock save_character as it's called after NLU processing
+        mock_character_manager.save_character = AsyncMock()
+        mock_character_manager.mark_character_dirty = MagicMock()
+
+
+        mock_message = AsyncMock(spec=discord.Message)
+        mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user_lang_fallback")
+        mock_message.guild = AsyncMock(spec=discord.Guild, id="guild_lang_fallback")
+        mock_message.content = "какое-то действие"
+        mock_message.channel = AsyncMock(spec=discord.TextChannel)
+
+        intents = discord.Intents.default()
+        intents.message_content = True
+
+        bot = RPGBot(
+            game_manager=mock_gm_instance,
+            openai_service=MockOpenAIService(),
+            command_prefix="!",
+            intents=intents
+        )
+        bot.game_manager = mock_gm_instance
+
+        # --- Call on_message ---
+        mock_parse_player_action.return_value = ("intent_fallback", {"entity_fallback": "value_fallback"})
+        await bot.on_message(mock_message)
+
+        # --- Assertions ---
+        # Verify character was fetched
+        mock_character_manager.get_character_by_discord_id.assert_called_with(
+            discord_user_id="discord_user_lang_fallback", # Corrected key based on RPGBot.on_message
+            guild_id="guild_lang_fallback"
+        )
+
+        # Verify get_default_bot_language was called on GameManager
+        mock_gm_instance.get_default_bot_language.assert_called_once()
+
+        # Verify parse_player_action was called with the GM's default language ("ru")
+        mock_parse_player_action.assert_called_once_with(
+            text="какое-то действие",
+            language="ru", # Expected fallback language
+            guild_id="guild_lang_fallback",
+            game_terms_db=mock_nlu_data_service
+        )
+
+        # Verify character save was attempted
+        expected_actions = [{"intent": "intent_fallback", "entities": {"entity_fallback": "value_fallback"}, "original_text": "какое-то действие"}]
+        self.assertIsNotNone(mock_char.собранные_действия_JSON) # Corrected attribute name
+        self.assertEqual(json.loads(mock_char.собранные_действия_JSON), expected_actions) # Corrected attribute name
+
+        mock_character_manager.mark_character_dirty.assert_called_once_with("guild_lang_fallback", mock_char.id)
+        mock_character_manager.save_character.assert_called_once_with(mock_char, guild_id="guild_lang_fallback")
+
+
 if __name__ == '__main__':
     unittest.main()

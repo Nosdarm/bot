@@ -1057,6 +1057,120 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         if self.char_manager._status_manager:
             self.char_manager._status_manager.clean_up_for_character.assert_not_called()
 
+    async def test_create_character_sets_default_language(self):
+        guild_id = "test_guild_lang"
+        # Ensure discord_id is an int as expected by CharacterManager.create_character
+        discord_id = 123456
+        name = "LangCharacter"
+
+        # Ensure guild specific caches are initialized for this test
+        # setUp might not cover this dynamic guild_id, so ensure it here.
+        self.char_manager._characters[guild_id] = {}
+        self.char_manager._discord_to_char_map[guild_id] = {}
+        self.char_manager._dirty_characters[guild_id] = set()
+
+        # Mock _game_manager and its get_default_bot_language method
+        # Add _game_manager to the instance for this test
+        # In a real scenario, _game_manager would be injected or available via other means.
+        self.char_manager._game_manager = MagicMock()
+        self.char_manager._game_manager.get_default_bot_language = MagicMock(return_value="ru")
+
+        # Mock DB adapter's execute method as it's called by create_character
+        self.mock_db_adapter.execute = AsyncMock()
+
+        # Mock LocationManager to return a default location_id if that path is taken
+        if self.char_manager._location_manager:
+            self.char_manager._location_manager.get_default_location_id = AsyncMock(return_value=GUILD_DEFAULT_INITIAL_LOCATION_ID)
+
+        # Mock RuleEngine to return default stats if that path is taken
+        if self.char_manager._rule_engine:
+            # The actual method called for stats in create_character might be different,
+            # e.g., generate_initial_character_stats. Adjust if necessary.
+            # Based on CharacterManager.create_character, it seems to call generate_initial_character_stats
+            self.char_manager._rule_engine.generate_initial_character_stats = MagicMock(return_value=DEFAULT_BASE_STATS)
+
+        # Patch uuid.uuid4 to control the generated character ID
+        with patch('uuid.uuid4', return_value=uuid.UUID('abcdef12-1234-5678-1234-abcdef123456')):
+            new_char = await self.char_manager.create_character(
+                discord_id=discord_id, # Pass as int
+                name=name,
+                guild_id=guild_id
+            )
+
+        self.assertIsNotNone(new_char)
+        # Primary assertion: selected_language on the returned Character object
+        self.assertEqual(new_char.selected_language, "ru")
+
+        # Verify that get_default_bot_language was called on the mocked game_manager
+        self.char_manager._game_manager.get_default_bot_language.assert_called_once()
+
+        # Verify that the character was saved with the correct language by checking db_params
+        self.mock_db_adapter.execute.assert_called_once()
+        call_args = self.mock_db_adapter.execute.call_args[0]
+        sql_query = call_args[0] # The SQL query string
+        sql_params = call_args[1] # The tuple of parameters for the query
+
+        # Check if 'selected_language' column is in the query and the param matches.
+        # This relies on the known structure of the INSERT query in CharacterManager.create_character.
+        # The order is: id, discord_user_id, name, guild_id, location_id, stats, inventory,
+        # current_action, action_queue, party_id, state_variables,
+        # hp, max_health, is_alive, status_effects, level, experience, unspent_xp,
+        # selected_language, collected_actions_json
+        # So, selected_language is expected at index 18.
+        query_cols_segment = sql_query.lower().split("values")[0]
+        self.assertIn("selected_language", query_cols_segment)
+
+        try:
+            # Find the position of selected_language more dynamically if possible,
+            # but direct indexing is simpler if the order is stable.
+            # For now, assuming index 18 is correct based on recent CharacterManager updates.
+            self.assertEqual(sql_params[18], "ru")
+        except IndexError:
+            self.fail(f"SQL params tuple out of bounds. Length: {len(sql_params)}, expected at least 19 for selected_language.")
+
+    async def test_create_character_default_language_fallback_if_gm_unavailable(self):
+        guild_id = "test_guild_lang_fallback"
+        discord_id = 789012 # Ensure int
+        name = "FallbackLangCharacter"
+
+        self.char_manager._characters[guild_id] = {}
+        self.char_manager._discord_to_char_map[guild_id] = {}
+        self.char_manager._dirty_characters[guild_id] = set()
+
+        # Simulate GameManager not being available by removing the attribute
+        if hasattr(self.char_manager, '_game_manager'):
+            del self.char_manager._game_manager
+        # Alternatively, set to None: self.char_manager._game_manager = None
+        # Or mock it without the method: self.char_manager._game_manager = MagicMock(spec=[])
+
+        self.mock_db_adapter.execute = AsyncMock()
+        if self.char_manager._location_manager:
+            self.char_manager._location_manager.get_default_location_id = AsyncMock(return_value=GUILD_DEFAULT_INITIAL_LOCATION_ID)
+        if self.char_manager._rule_engine:
+            self.char_manager._rule_engine.generate_initial_character_stats = MagicMock(return_value=DEFAULT_BASE_STATS)
+
+        with patch('uuid.uuid4', return_value=uuid.UUID('abcdef12-1234-5678-1234-abcdef123457')):
+            new_char = await self.char_manager.create_character(
+                discord_id=discord_id, # Pass as int
+                name=name,
+                guild_id=guild_id
+            )
+
+        self.assertIsNotNone(new_char)
+        self.assertEqual(new_char.selected_language, "en") # Should fallback to 'en'
+
+        self.mock_db_adapter.execute.assert_called_once()
+        call_args = self.mock_db_adapter.execute.call_args[0]
+        sql_query = call_args[0]
+        sql_params = call_args[1]
+
+        query_cols_segment = sql_query.lower().split("values")[0]
+        self.assertIn("selected_language", query_cols_segment)
+        try:
+            self.assertEqual(sql_params[18], "en") # Expect 'en' as fallback
+        except IndexError:
+            self.fail(f"SQL params tuple out of bounds for fallback test. Length: {len(sql_params)}, expected at least 19.")
+
 
 if __name__ == '__main__':
     unittest.main()
