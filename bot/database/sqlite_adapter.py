@@ -22,7 +22,7 @@ class SqliteAdapter:
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
     # ОБНОВЛЕНО: Добавлена таблица generated_locations
-    LATEST_SCHEMA_VERSION = 21 # Incremented for new generated content tables
+    LATEST_SCHEMA_VERSION = 22 # Incremented for gold column in players table
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -1838,6 +1838,30 @@ class SqliteAdapter:
                 # Decide if this is critical enough to raise. For adding a nullable column, maybe not.
 
         print("SqliteAdapter: v20 to v21 migration (generated_factions, update generated_locations) complete.")
+
+    async def _migrate_v21_to_v22(self, cursor: Cursor) -> None:
+        """Миграция с Версии 21 на Версию 22 (добавление колонки gold в таблицу players)."""
+        print("SqliteAdapter: Running v21 to v22 migration (adding gold to players)...")
+        try:
+            # Проверка существования колонки перед добавлением
+            await cursor.execute("PRAGMA table_info(players);")
+            columns_info = await cursor.fetchall()
+            column_names = [row['name'] for row in columns_info if row and 'name' in row.keys()]
+
+            if 'gold' not in column_names:
+                await cursor.execute("ALTER TABLE players ADD COLUMN gold INTEGER DEFAULT 0;")
+                print("SqliteAdapter: Added 'gold' column to 'players' table with DEFAULT 0.")
+            else:
+                print("SqliteAdapter: Column 'gold' already exists in 'players' table.")
+        except aiosqlite.OperationalError as e:
+            # Дополнительная обработка ошибки, если PRAGMA по какой-то причине не сработала
+            if "duplicate column name" in str(e).lower():
+                print(f"SqliteAdapter: Column 'gold' already exists in 'players' table (caught by OperationalError), skipping.")
+            else:
+                print(f"SqliteAdapter: Error adding column 'gold' to 'players': {e}")
+                traceback.print_exc()
+                raise # Перевыбросить ошибку, если это не "duplicate column"
+        print("SqliteAdapter: v21 to v22 migration complete.")
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")

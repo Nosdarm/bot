@@ -182,36 +182,51 @@ async def cmd_start_new_character(interaction: Interaction, name: str, race: str
             await interaction.followup.send("An unexpected error occurred while starting your adventure. Please try again later.", ephemeral=True)
 
 
-@app_commands.command(name="set_bot_language", description="GM Command: Sets the default language for AI content generation and bot messages.")
-@app_commands.describe(language="Choose the default language (русский/english)")
+@app_commands.command(name="set_bot_language", description="GM: Установить язык бота по умолчанию / Set default bot language")
+@app_commands.describe(language="Язык (ru/en) / Language (ru/en)")
 @app_commands.choices(language=[
     app_commands_Choice(name="Русский", value="ru"),
     app_commands_Choice(name="English", value="en")
 ])
-async def cmd_set_bot_language(interaction: Interaction, language: str):
-    """GM Command: Sets the default language for AI content generation and bot messages."""
+async def cmd_set_bot_language(interaction: Interaction, language: app_commands.Choice[str]):
+    """GM Command: Sets the default bot language."""
     await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client)
+    bot = cast(RPGBot, interaction.client) # RPGBot is already imported for other commands
 
     try:
+        if not interaction.guild_id: # Explicit guild check
+            await interaction.followup.send("Эта команда должна быть использована на сервере.", ephemeral=True)
+            return
+
         if not bot.game_manager:
-            await interaction.followup.send("Error: Game Manager is not available.", ephemeral=True)
+            await interaction.followup.send("Ошибка: Менеджер игры не инициализирован.", ephemeral=True)
             return
 
-        if not is_master_or_admin(interaction, bot.game_manager):
-            await interaction.followup.send("You are not authorized to use this command.", ephemeral=True)
+        # GM Check using the existing is_master_or_admin function
+        # Ensure is_master_or_admin is async if it performs async operations (DB calls, etc.)
+        # Based on its current definition, it's synchronous. If it becomes async, add 'await'.
+        gm_check_result = is_master_or_admin(interaction, bot.game_manager)
+        if hasattr(gm_check_result, '__await__'): # Check if it's awaitable
+            is_gm = await gm_check_result
+        else:
+            is_gm = gm_check_result
+
+        if not is_gm:
+            await interaction.followup.send("Только Мастер Игры может использовать эту команду.", ephemeral=True)
             return
 
-        # Assuming a method like this exists or will be created in GameManager
-        await bot.game_manager.set_default_bot_language(language, str(interaction.guild_id))
+        chosen_lang = language.value # Get the string value from Choice
 
-        confirmation_message = ""
-        if language == "ru":
-            confirmation_message = "Основной язык бота установлен на русский."
-        else:  # Default to English
-            confirmation_message = "Default bot language set to English."
+        # Use GameManager to set the default language
+        # This assumes game_manager.set_default_bot_language handles DB storage (e.g., in rules_config)
+        # and potentially notifies other services or reloads settings if needed.
+        await bot.game_manager.set_default_bot_language(chosen_lang, str(interaction.guild_id))
 
-        await interaction.followup.send(confirmation_message, ephemeral=True)
+        feedback_messages = {
+            "ru": "Основной язык бота установлен на Русский.",
+            "en": "Default bot language set to English."
+        }
+        await interaction.followup.send(feedback_messages[chosen_lang], ephemeral=True)
 
     except Exception as e:
         print(f"Error in /set_bot_language command: {e}")

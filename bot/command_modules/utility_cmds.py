@@ -89,40 +89,54 @@ async def cmd_undo(interaction: Interaction):
     app_commands_Choice(name="Русский", value="ru"),
     app_commands_Choice(name="English", value="en")
 ])
-async def cmd_lang(interaction: Interaction, language: str):
+async def cmd_lang(interaction: Interaction, language: app_commands.Choice[str]):
     """Sets the player's preferred language for game messages."""
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True) # Defer first
+
+    if not interaction.guild_id:
+        await interaction.followup.send("Эта команда должна быть использована на сервере.", ephemeral=True)
+        return
+
     bot = cast(RPGBot, interaction.client)
+    if not hasattr(bot, 'game_manager') or not bot.game_manager or not bot.game_manager.character_manager:
+        await interaction.followup.send("Ошибка: Менеджер игры не инициализирован.", ephemeral=True)
+        return
+
+    game_manager = bot.game_manager
+    character_manager: 'CharacterManager' = game_manager.character_manager
+
+    chosen_lang = language.value # Extract string value from Choice object
 
     try:
-        if not bot.game_manager or not bot.game_manager.character_manager:
-            await interaction.followup.send("Error: Game systems (Character Manager) are not fully initialized.", ephemeral=True)
-            return
+        guild_id_str = str(interaction.guild_id) # Ensure guild_id is a string
+        player_discord_id = interaction.user.id
 
-        character_manager: 'CharacterManager' = bot.game_manager.character_manager
-        guild_id_str = str(interaction.guild_id)
-        discord_user_id_int = interaction.user.id
-
-        character: Optional[CharacterModel] = await character_manager.get_character_by_discord_id(
-            guild_id=guild_id_str,
-            discord_user_id=discord_user_id_int
+        player_char: Optional[CharacterModel] = await character_manager.get_character_by_discord_id(
+            discord_user_id=player_discord_id,
+            guild_id=guild_id_str
         )
 
-        if not character:
-            await interaction.followup.send("You need to create a character first! Use /start.", ephemeral=True)
+        if not player_char:
+            message_content = {
+                "ru": "Сначала вам нужно создать персонажа с помощью команды /start_new_character.",
+                "en": "You need to create a character first using the /start_new_character command."
+            }
+            # Send a generic message or try to pick based on chosen_lang
+            await interaction.followup.send(message_content.get(chosen_lang, message_content['en']), ephemeral=True)
             return
 
-        character.selected_language = language
-        character_manager.mark_character_dirty(guild_id_str, character.id)
-        await character_manager.save_character(character, guild_id=guild_id_str)
+        player_char.selected_language = chosen_lang
+        # save_character expects guild_id as a separate argument.
+        # mark_character_dirty is usually called before save_character or handled by it.
+        # Let's assume save_character handles marking dirty or it's called by a higher level persistence manager.
+        # For now, directly calling save_character with guild_id.
+        await character_manager.save_character(player_char, guild_id=guild_id_str)
 
-        confirmation_message = ""
-        if language == "ru":
-            confirmation_message = "Ваш язык изменен на русский."
-        else:  # Default to English
-            confirmation_message = "Your language has been changed to English."
-
-        await interaction.followup.send(confirmation_message, ephemeral=True)
+        feedback_messages = {
+            "ru": "Язык интерфейса изменен на Русский.",
+            "en": "Interface language changed to English."
+        }
+        await interaction.followup.send(feedback_messages[chosen_lang], ephemeral=True)
 
     except Exception as e:
         print(f"Error in /lang command: {e}")
