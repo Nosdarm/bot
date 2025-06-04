@@ -471,64 +471,64 @@ class LocationManager:
         """
         guild_id_str = str(guild_id)
         template_id_str = str(template_id) # Ensure template_id is a string
-           print(f"LocationManager: Creating instance for guild {guild_id_str} from template/concept '{template_id_str}'...")
+        print(f"LocationManager: Creating instance for guild {guild_id_str} from template/concept '{template_id_str}'...")
 
-         ai_generated_data: Optional[Dict[str, Any]] = None
-         campaign_template_data: Optional[Dict[str, Any]] = None
-         trigger_ai_generation = False
+        ai_generated_data: Optional[Dict[str, Any]] = None
+        campaign_template_data: Optional[Dict[str, Any]] = None
+        trigger_ai_generation = False
 
-         if template_id_str.startswith("AI:"):
-             trigger_ai_generation = True
-             print(f"LocationManager: AI generation triggered by keyword for location '{template_id_str}'.")
-         else:
-             guild_templates = self._location_templates.get(guild_id_str, {})
-             campaign_template_data = guild_templates.get(template_id_str)
-             if not campaign_template_data:
-                 print(f"LocationManager: Location template '{template_id_str}' not found. Triggering AI generation.")
-                 trigger_ai_generation = True
+        if template_id_str.startswith("AI:"):
+            trigger_ai_generation = True
+            print(f"LocationManager: AI generation triggered by keyword for location '{template_id_str}'.")
+        else:
+            guild_templates = self._location_templates.get(guild_id_str, {})
+            campaign_template_data = guild_templates.get(template_id_str)
+            if not campaign_template_data:
+                print(f"LocationManager: Location template '{template_id_str}' not found. Triggering AI generation.")
+                trigger_ai_generation = True
 
-         if trigger_ai_generation:
-             location_concept = template_id_str
-             if template_id_str.startswith("AI:"):
-                 location_concept = template_id_str.replace("AI:", "", 1)
+        if trigger_ai_generation:
+            location_concept = template_id_str
+            if template_id_str.startswith("AI:"):
+                location_concept = template_id_str.replace("AI:", "", 1)
 
-             ai_generated_data = await self.generate_location_details_from_ai(
-                 guild_id=guild_id_str,
-                 location_idea=location_concept
-             )
-             if ai_generated_data is None:
-                 print(f"LocationManager: AI generation failed for concept '{location_concept}'. Instance creation aborted.")
-                 return None # AI generation failed
+            ai_generated_data = await self.generate_location_details_from_ai(
+                guild_id=guild_id_str,
+                location_idea=location_concept
+            )
+            if ai_generated_data is None:
+                print(f"LocationManager: AI generation failed for concept '{location_concept}'. Instance creation aborted.")
+                return None # AI generation failed
 
-             # --- Moderation Step for AI Generated Location Data ---
-             user_id = kwargs.get('user_id')
-             if not user_id:
-                 print(f"LocationManager: CRITICAL - user_id not found in kwargs for AI location generation. Aborting moderation save.")
-                 return None
+            # --- Moderation Step for AI Generated Location Data ---
+            user_id = kwargs.get('user_id')
+            if not user_id:
+                print(f"LocationManager: CRITICAL - user_id not found in kwargs for AI location generation. Aborting moderation save.")
+                return None
 
-             request_id = str(uuid.uuid4())
-             content_type = 'location'
-             try:
-                 # ai_generated_data is already a dict from the validator
-                 data_json = json.dumps(ai_generated_data)
-                 if self._db_adapter:
-                     await self._db_adapter.save_pending_moderation_request(
-                         request_id, guild_id_str, str(user_id), content_type, data_json
-                     )
-                     print(f"LocationManager: AI-generated location data for '{location_concept}' saved for moderation. Request ID: {request_id}")
-                     return {"status": "pending_moderation", "request_id": request_id}
-                 else:
-                     print(f"LocationManager: ERROR - DB adapter not available. Cannot save location for moderation.")
-                     return None
-             except Exception as e_mod_save:
-                 print(f"LocationManager: ERROR saving AI location content for moderation: {e_mod_save}")
-                 traceback.print_exc()
-                 return None # Failed to save for moderation
+            request_id = str(uuid.uuid4())
+            content_type = 'location'
+            try:
+                # ai_generated_data is already a dict from the validator
+                data_json = json.dumps(ai_generated_data)
+                if self._db_adapter:
+                    await self._db_adapter.save_pending_moderation_request(
+                        request_id, guild_id_str, str(user_id), content_type, data_json
+                    )
+                    print(f"LocationManager: AI-generated location data for '{location_concept}' saved for moderation. Request ID: {request_id}")
+                    return {"status": "pending_moderation", "request_id": request_id}
+                else:
+                    print(f"LocationManager: ERROR - DB adapter not available. Cannot save location for moderation.")
+                    return None
+            except Exception as e_mod_save:
+                print(f"LocationManager: ERROR saving AI location content for moderation: {e_mod_save}")
+                traceback.print_exc()
+                return None # Failed to save for moderation
 
-         # --- This part below is now only for NON-AI generated locations (i.e., from campaign_template_data) ---
-         # --- Populate instance data ---
-         new_instance_id = str(uuid.uuid4())
-         instance_for_cache: Dict[str, Any] = {
+        # --- This part below is now only for NON-AI generated locations (i.e., from campaign_template_data) ---
+        # --- Populate instance data ---
+        new_instance_id = str(uuid.uuid4())
+        instance_for_cache: Dict[str, Any] = {
              'id': new_instance_id,
              'guild_id': guild_id_str,
              'is_active': True,
@@ -536,23 +536,23 @@ class LocationManager:
          }
 
          # Base data source: AI or Campaign Template
-         source_data = ai_generated_data if ai_generated_data else campaign_template_data
-         if not source_data:
+        source_data = ai_generated_data if ai_generated_data else campaign_template_data
+        if not source_data:
              # This should not happen if logic is correct (either template found, or AI was triggered and succeeded)
              print(f"LocationManager: CRITICAL Error - No source data (AI or template) for '{template_id_str}'. Aborting instance creation.")
              return None
 
-         instance_for_cache['template_id'] = source_data.get('template_id', source_data.get('id', template_id_str if not ai_generated_data else f"AI_gen_{new_instance_id[:8]}"))
+        instance_for_cache['template_id'] = source_data.get('template_id', source_data.get('id', template_id_str if not ai_generated_data else f"AI_gen_{new_instance_id[:8]}"))
 
          # Name: AI (name_i18n or name) > Template (name_i18n or name)
-         if ai_generated_data:
+        if ai_generated_data:
              instance_for_cache['name_i18n'] = ai_generated_data.get('name_i18n', {"en": ai_generated_data.get('name', f"AI Location {new_instance_id[:6]}")})
-         elif campaign_template_data:
+        elif campaign_template_data:
              instance_for_cache['name_i18n'] = campaign_template_data.get('name_i18n', {"en": campaign_template_data.get('name', template_id_str)})
 
          # Description: AI (description_i18n or description) > Template (description_i18n or description)
          # Note: AI validator for location might return 'description_template_i18n' or similar
-         if ai_generated_data:
+        if ai_generated_data:
              desc_key = 'description_i18n' # Default key
              if 'description_template_i18n' in ai_generated_data: desc_key = 'description_template_i18n'
              elif 'description' in ai_generated_data and 'description_i18n' not in ai_generated_data : desc_key = 'description'
@@ -561,7 +561,7 @@ class LocationManager:
                  instance_for_cache['description_i18n'] = ai_generated_data[desc_key]
              else: # plain string description
                  instance_for_cache['description_i18n'] = {"en": ai_generated_data.get(desc_key, "An AI generated location.")}
-         elif campaign_template_data:
+        elif campaign_template_data:
              desc_key = 'description_i18n'
              if 'description_template_i18n' in campaign_template_data: desc_key = 'description_template_i18n'
              elif 'description' in campaign_template_data and 'description_i18n' not in campaign_template_data : desc_key = 'description'
@@ -573,56 +573,56 @@ class LocationManager:
 
 
          # Exits: AI > Template
-         instance_for_cache['exits'] = source_data.get('exits', {})
-         if not isinstance(instance_for_cache['exits'], dict): # Ensure it's a dict
+        instance_for_cache['exits'] = source_data.get('exits', {})
+        if not isinstance(instance_for_cache['exits'], dict): # Ensure it's a dict
              print(f"LocationManager: Warning: Exits from source for '{template_id_str}' is not a dict. Using {{}}.")
              instance_for_cache['exits'] = {}
 
          # Initial State: AI > Template
          # AI data might have 'state_variables' or 'initial_state'
-         base_initial_state = source_data.get('initial_state', source_data.get('state_variables', {}))
-         if isinstance(base_initial_state, dict):
+        base_initial_state = source_data.get('initial_state', source_data.get('state_variables', {}))
+        if isinstance(base_initial_state, dict):
              instance_for_cache['state'].update(base_initial_state)
-         else:
+        else:
              print(f"LocationManager: Warning: Base initial state for '{template_id_str}' is not a dict. Using {{}}.")
 
 
          # Layer explicit overrides from method arguments
-         if initial_state is not None: # This is the 'initial_state' param of the method
-             if isinstance(initial_state, dict):
+        if initial_state is not None: # This is the 'initial_state' param of the method
+            if isinstance(initial_state, dict):
                  instance_for_cache['state'].update(initial_state)
-             else:
+            else:
                  print(f"LocationManager: Warning: Provided initial_state override is not a dict. Ignoring.")
 
          # Override name if 'instance_name' is provided
-         if instance_name is not None:
+        if instance_name is not None:
              # Assuming instance_name is a simple string, wrap it in default i18n structure
              instance_for_cache['name_i18n'] = {"en": instance_name}
 
          # Override description if 'instance_description' is provided
-         if instance_description is not None:
+        if instance_description is not None:
              instance_for_cache['description_i18n'] = {"en": instance_description}
 
          # Override exits if 'instance_exits' is provided
-         if instance_exits is not None:
+        if instance_exits is not None:
              if isinstance(instance_exits, dict):
                  instance_for_cache['exits'] = instance_exits
              else:
                  print(f"LocationManager: Warning: Provided instance_exits override is not a dict. Ignoring.")
 
          # Fallback for simple 'name' if 'name_i18n' is somehow still not set (shouldn't happen)
-         if 'name_i18n' not in instance_for_cache or not instance_for_cache['name_i18n']:
+        if 'name_i18n' not in instance_for_cache or not instance_for_cache['name_i18n']:
              instance_for_cache['name_i18n'] = {"en": new_instance_id}
 
 
-         self._location_instances.setdefault(guild_id_str, {})[new_instance_id] = instance_for_cache
-         self._dirty_instances.setdefault(guild_id_str, set()).add(new_instance_id)
+        self._location_instances.setdefault(guild_id_str, {})[new_instance_id] = instance_for_cache
+        self._dirty_instances.setdefault(guild_id_str, set()).add(new_instance_id)
 
          # Use a primary language (e.g. 'en') from name_i18n for logging, or the ID.
-         log_name = instance_for_cache['name_i18n'].get('en', new_instance_id)
-         print(f"LocationManager: Instance {new_instance_id} created from campaign template and added to cache, marked dirty. Name: '{log_name}'.")
+        log_name = instance_for_cache['name_i18n'].get('en', new_instance_id)
+        print(f"LocationManager: Instance {new_instance_id} created from campaign template and added to cache, marked dirty. Name: '{log_name}'.")
 
-         return instance_for_cache # Return instance data dict for non-AI path
+        return instance_for_cache # Return instance data dict for non-AI path
 
     def get_location_instance(self, guild_id: str, instance_id: str) -> Optional[Dict[str, Any]]:
          """Получить динамический инстанс локации по ID для данной гильдии."""
@@ -1052,8 +1052,8 @@ class LocationManager:
                 print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
                 traceback.print_exc()
         elif triggers:
-             # ... остальная логика elif ...
-             pass
+            # ... остальная логика elif ...
+            pass
 
     async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None:
          """Обработка игрового тика для локаций для определенной гильдии."""

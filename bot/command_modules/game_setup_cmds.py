@@ -7,8 +7,8 @@ from typing import Optional, TYPE_CHECKING, cast
 import traceback
 
 # Corrected imports
-from bot.bot_core import RPGBot
 if TYPE_CHECKING:
+    from bot.bot_core import RPGBot
     from bot.services.db_service import DBService # This is likely the SqliteAdapter or similar
     from bot.game.managers.game_manager import GameManager
     from bot.game.managers.character_manager import CharacterManager
@@ -59,6 +59,8 @@ def is_gm_channel(interaction: Interaction, game_manager: Optional['GameManager'
 @app_commands.command(name="start_game", description="GM Command: Starts a new game session in this channel.")
 async def cmd_start_game(interaction: Interaction):
     # Type hint for bot
+    # Import RPGBot here for the cast to work at runtime
+    from bot.bot_core import RPGBot
     bot = cast(RPGBot, interaction.client) # Used cast
     if not bot.game_manager:
         await interaction.response.send_message("Game Manager not available.", ephemeral=True)
@@ -81,6 +83,8 @@ async def cmd_join_game(interaction: Interaction):
 )
 async def cmd_start_new_character(interaction: Interaction, name: str, race: str):
     await interaction.response.defer(ephemeral=True)
+    # Import RPGBot here for the cast to work at runtime
+    from bot.bot_core import RPGBot
     bot = cast(RPGBot, interaction.client) # Used cast
 
     try:
@@ -121,8 +125,8 @@ async def cmd_start_new_character(interaction: Interaction, name: str, race: str
             discord_id=discord_user_id_int,
             name=name, # CharacterManager should handle i18n if needed, or take it as a dict
             guild_id=guild_id_str,
+            race=race, # Pass race to the manager
             # Pass other relevant initial parameters if CharacterManager.create_character supports them:
-            # race=race, # Assuming Character model and create_character handle race
             # initial_location_id="town_square", # Or let CharacterManager decide
             # level=1,
             # stats=default_stats, # Or let CharacterManager decide
@@ -146,7 +150,7 @@ async def cmd_start_new_character(interaction: Interaction, name: str, race: str
         # Fetch location name for the message using LocationManager if character has location_id
         location_name_display = "an unknown place"
         if new_char_model.location_id and bot.game_manager.location_manager:
-            location_instance = bot.game_manager.location_manager.get_location_instance(guild_id_str, new_char_model.location_id)
+            location_instance = await bot.game_manager.location_manager.get_location_instance(guild_id_str, new_char_model.location_id)
             if location_instance:
                 location_name_display = location_instance.get('name', location_name_display)
 
