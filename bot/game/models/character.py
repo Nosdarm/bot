@@ -11,6 +11,7 @@ from dataclasses import dataclass, field # Import dataclass and field
 class Character:
     id: str
     discord_user_id: int
+    name: str # Derived from name_i18n based on selected_language, populated by from_dict
     name_i18n: Dict[str, str] # e.g., {"en": "Name", "ru": "Имя"}
     guild_id: str
     
@@ -36,18 +37,24 @@ class Character:
     # Spell Management Fields
     known_spells: List[str] = field(default_factory=list) # List of spell_ids
     spell_cooldowns: Dict[str, float] = field(default_factory=dict) # spell_id -> cooldown_end_timestamp
-    skills: Dict[str, int] = field(default_factory=dict) # skill_name -> level, e.g., {"evocation": 5, "first_aid": 2}
 
-    # Ability Management Fields
-    known_abilities: List[str] = field(default_factory=list) # List of ability_ids
-    ability_cooldowns: Dict[str, float] = field(default_factory=dict) # ability_id -> cooldown_end_timestamp
-    flags: List[str] = field(default_factory=list) # List of flags, e.g., "darkvision", "immune_to_poison"
-    char_class: Optional[str] = None # Character class, e.g., "warrior", "mage"
+    # New data fields (replacing/enhancing old 'skills', 'flags')
+    skills_data: List[Dict[str, Any]] = field(default_factory=list) # e.g., [{"skill_id": "mining", "level": 5, "xp": 120}]
+    abilities_data: List[Dict[str, Any]] = field(default_factory=list) # e.g., [{"ability_id": "power_strike", "rank": 1}]
+    spells_data: List[Dict[str, Any]] = field(default_factory=list) # e.g., [{"spell_id": "fireball", "mastery": 75}]
+    character_class: Optional[str] = None # Character class, e.g., "warrior", "mage" - (already existed, just confirming)
+    flags: Dict[str, bool] = field(default_factory=dict) # More structured flags, e.g., {"is_poison_immune": True}
+
+    # Old fields that might be superseded or need review if they are still populated from DB in CharacterManager
+    skills: Dict[str, int] = field(default_factory=dict) # skill_name -> level, (Potentially redundant if skills_data is primary)
+    known_abilities: List[str] = field(default_factory=list) # List of ability_ids (Potentially redundant if abilities_data is primary)
+    # 'flags' above is now Dict[str, bool], old 'flags: List[str]' is replaced.
+    # 'char_class' is fine.
 
     # New fields for player status and preferences
     selected_language: Optional[str] = None # Player's preferred language
     current_game_status: Optional[str] = None # E.g., "active", "paused", "in_tutorial"
-    собранные_действия_JSON: Optional[str] = None # JSON string of collected actions
+    collected_actions_json: Optional[str] = None # JSON string of collected actions (DB column name)
     current_party_id: Optional[str] = None # ID of the party the player is currently in (fk to parties table)
 
     # Catch-all for any other fields that might come from data
@@ -82,80 +89,68 @@ class Character:
         """Creates a Character instance from a dictionary."""
         if 'guild_id' not in data:
             raise ValueError("Missing 'guild_id' key in data for Character.from_dict")
-        if 'id' not in data or 'discord_user_id' not in data or ('name' not in data and 'name_i18n' not in data):
-            raise ValueError("Missing core fields (id, discord_user_id, and name/name_i18n) for Character.from_dict")
+        if 'id' not in data or 'discord_user_id' not in data:
+            raise ValueError("Missing core fields (id, discord_user_id) for Character.from_dict")
 
-        data_copy = data.copy()
+        # Ensure name_i18n exists, derive name if not present directly
+        if 'name_i18n' not in data and 'name' in data: # Backwards compatibility if only 'name' is provided
+            data['name_i18n'] = {'en': data['name'], 'ru': data['name']} # Simple default
+        elif 'name_i18n' not in data:
+             raise ValueError("Missing 'name_i18n' (and 'name') for Character.from_dict")
 
-        # Handle backward compatibility for name
-        if "name" in data_copy and "name_i18n" not in data_copy:
-            data_copy["name_i18n"] = {"en": data_copy.pop("name")}
-        elif "name" in data_copy and "name_i18n" in data_copy: # if both exist, prefer _i18n
-            data_copy.pop("name")
+        if 'name' not in data: # If 'name' is not pre-derived by CharacterManager
+            selected_lang = data.get('selected_language', 'en')
+            name_i18n_dict = data.get('name_i18n', {})
+            data['name'] = name_i18n_dict.get(selected_lang, list(name_i18n_dict.values())[0] if name_i18n_dict else data.get('id'))
+
 
         # Populate known fields, providing defaults for new/optional ones if missing in data
         init_data = {
             'id': data.get('id'),
             'discord_user_id': data.get('discord_user_id'),
-            'name': data.get('name'),
+            'name': data.get('name'), # Derived name
+            'name_i18n': data.get('name_i18n'), # Source of truth for name
             'guild_id': data.get('guild_id'),
             'location_id': data.get('location_id'),
-            'stats': data.get('stats', {}), # Ensure stats is at least an empty dict
+            'stats': data.get('stats', {}),
             'inventory': data.get('inventory', []),
             'current_action': data.get('current_action'),
             'action_queue': data.get('action_queue', []),
             'party_id': data.get('party_id'),
             'state_variables': data.get('state_variables', {}),
-            'hp': float(data.get('hp', 100.0)), # Ensure float
-            'max_health': float(data.get('max_health', 100.0)), # Ensure float
-            'is_alive': bool(data.get('is_alive', True)), # Ensure bool
+            'hp': float(data.get('hp', 100.0)),
+            'max_health': float(data.get('max_health', 100.0)),
+            'is_alive': bool(data.get('is_alive', True)),
             'status_effects': data.get('status_effects', []),
-            'level': int(data.get('level', 1)), # Ensure int
-            'experience': int(data.get('experience', 0)), # Ensure int
-            'unspent_xp': int(data.get('unspent_xp', 0)), # Ensure int
+            'level': int(data.get('level', 1)),
+            'experience': int(data.get('experience', 0)),
+            'unspent_xp': int(data.get('unspent_xp', 0)),
             'active_quests': data.get('active_quests', []),
-
-            'id': data_copy.get('id'),
-            'discord_user_id': data_copy.get('discord_user_id'),
-            'name_i18n': data_copy.get('name_i18n'),
-            'guild_id': data_copy.get('guild_id'),
-            'location_id': data_copy.get('location_id'),
-            'stats': data_copy.get('stats', {}), # Ensure stats is at least an empty dict
-            'inventory': data_copy.get('inventory', []),
-            'current_action': data_copy.get('current_action'),
-            'action_queue': data_copy.get('action_queue', []),
-            'party_id': data_copy.get('party_id'),
-            'state_variables': data_copy.get('state_variables', {}),
-            'hp': float(data_copy.get('hp', 100.0)), # Ensure float
-            'max_health': float(data_copy.get('max_health', 100.0)), # Ensure float
-            'is_alive': bool(data_copy.get('is_alive', True)), # Ensure bool
-            'status_effects': data_copy.get('status_effects', []),
-            'level': int(data_copy.get('level', 1)), # Ensure int
-            'experience': int(data_copy.get('experience', 0)), # Ensure int
-            'active_quests': data_copy.get('active_quests', []),
             
-            # New spell-related fields with defaults for backward compatibility
-            'known_spells': data_copy.get('known_spells', []),
-            'spell_cooldowns': data_copy.get('spell_cooldowns', {}),
-            'skills': data_copy.get('skills', {}),
+            'known_spells': data.get('known_spells', []),
+            'spell_cooldowns': data.get('spell_cooldowns', {}),
 
-            # New ability-related fields
-            'known_abilities': data_copy.get('known_abilities', []),
-            'ability_cooldowns': data_copy.get('ability_cooldowns', {}),
-            'flags': data_copy.get('flags', []),
-            'char_class': data_copy.get('char_class'), # Defaults to None if missing, which is fine for Optional[str]
+            # Updated/New fields
+            'skills_data': data.get('skills_data', []), # Expecting list from manager
+            'abilities_data': data.get('abilities_data', []), # Expecting list from manager
+            'spells_data': data.get('spells_data', []), # Expecting list from manager
+            'character_class': data.get('character_class'),
+            'flags': data.get('flags', {}), # Expecting dict from manager (was List[str] before)
 
-            # New fields
-            'selected_language': data_copy.get('selected_language'),
-            'current_game_status': data_copy.get('current_game_status'),
-            'собранные_действия_JSON': data_copy.get('collected_actions_json'), # Kept old key for backward compatibility
-            'current_party_id': data_copy.get('current_party_id'),
+            # Old fields that might be populated by manager for backward compatibility from DB
+            'skills': data.get('skills', {}),
+            'known_abilities': data.get('known_abilities', []),
+
+            'selected_language': data.get('selected_language'),
+            'current_game_status': data.get('current_game_status'),
+            'collected_actions_json': data.get('collected_actions_json', data.get('собранные_действия_JSON')), # Handle old key
+            'current_party_id': data.get('current_party_id'),
         }
         
         # If stats from data doesn't have health/max_health, use the top-level ones
-        if 'hp' not in init_data['stats'] and 'hp' in data_copy : # hp might be in stats or top-level
+        if 'hp' not in init_data['stats'] and 'hp' in init_data :
              init_data['stats']['hp'] = init_data['hp']
-        if 'max_health' not in init_data['stats'] and 'max_health' in data_copy:
+        if 'max_health' not in init_data['stats'] and 'max_health' in init_data:
              init_data['stats']['max_health'] = init_data['max_health']
         return cls(**init_data)
 
@@ -172,9 +167,12 @@ class Character:
         self.stats['hp'] = self.hp
         self.stats['max_health'] = self.max_health
         
+        # Return name for convenience, though name_i18n is the source
+        # CharacterManager's save_character will primarily use name_i18n for the 'name' DB column.
         return {
             "id": self.id,
             "discord_user_id": self.discord_user_id,
+            "name": self.name,
             "name_i18n": self.name_i18n,
             "guild_id": self.guild_id,
             "location_id": self.location_id,
@@ -187,25 +185,28 @@ class Character:
             "hp": self.hp, # Redundant if always in stats, but good for direct access
             "max_health": self.max_health, # Redundant if always in stats
             "is_alive": self.is_alive,
-            "status_effects": self.status_effects, # Assuming status effects are dicts or serializable
+            "status_effects": self.status_effects,
             "level": self.level,
             "experience": self.experience,
             "unspent_xp": self.unspent_xp,
             "active_quests": self.active_quests,
             "known_spells": self.known_spells,
             "spell_cooldowns": self.spell_cooldowns,
-            "skills": self.skills,
             
-            # Ability-related fields
-            "known_abilities": self.known_abilities,
-            "ability_cooldowns": self.ability_cooldowns,
-            "flags": self.flags,
-            "char_class": self.char_class,
+            # Updated/New fields
+            "skills_data": self.skills_data,
+            "abilities_data": self.abilities_data,
+            "spells_data": self.spells_data,
+            "character_class": self.character_class, # Was char_class before, standardizing to character_class
+            "flags": self.flags, # Now Dict[str, bool]
 
-            # New fields
+            # Old fields that might still be part of the model for some reason (review if needed)
+            "skills": self.skills, # Potentially redundant
+            "known_abilities": self.known_abilities, # Potentially redundant
+
             "selected_language": self.selected_language,
             "current_game_status": self.current_game_status,
-            "собранные_действия_JSON": self.собранные_действия_JSON,
+            "collected_actions_json": self.collected_actions_json, # Using standardized key
             "current_party_id": self.current_party_id,
         }
 
