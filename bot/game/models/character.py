@@ -44,6 +44,7 @@ class Character:
     spells_data: List[Dict[str, Any]] = field(default_factory=list) # e.g., [{"spell_id": "fireball", "mastery": 75}]
     character_class: Optional[str] = None # Character class, e.g., "warrior", "mage" - (already existed, just confirming)
     flags: Dict[str, bool] = field(default_factory=dict) # More structured flags, e.g., {"is_poison_immune": True}
+    gold: int = 0
 
     # Old fields that might be superseded or need review if they are still populated from DB in CharacterManager
     skills: Dict[str, int] = field(default_factory=dict) # skill_name -> level, (Potentially redundant if skills_data is primary)
@@ -136,6 +137,7 @@ class Character:
             'spells_data': data.get('spells_data', []), # Expecting list from manager
             'character_class': data.get('character_class'),
             'flags': data.get('flags', {}), # Expecting dict from manager (was List[str] before)
+            'gold': int(data.get('gold', 0)),
 
             # Old fields that might be populated by manager for backward compatibility from DB
             'skills': data.get('skills', {}),
@@ -199,6 +201,7 @@ class Character:
             "spells_data": self.spells_data,
             "character_class": self.character_class, # Was char_class before, standardizing to character_class
             "flags": self.flags, # Now Dict[str, bool]
+            "gold": self.gold,
 
             # Old fields that might still be part of the model for some reason (review if needed)
             "skills": self.skills, # Potentially redundant
