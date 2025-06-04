@@ -496,27 +496,29 @@ class LocationManager:
         """
         guild_id_str = str(guild_id)
         template_id_str = str(template_id) # Ensure template_id is a string
-           print(f"LocationManager: Creating instance for guild {guild_id_str} from template/concept '{template_id_str}'...")
+        print(f"LocationManager: Creating instance for guild {guild_id_str} from template/concept '{template_id_str}'...")
 
-         ai_generated_data: Optional[Dict[str, Any]] = None
-         campaign_template_data: Optional[Dict[str, Any]] = None
-         trigger_ai_generation = False
+        source_data: Optional[Dict[str, Any]] = None
+        is_ai_auto_approved_flow = False
+        location_concept = template_id_str # Default concept is the template_id itself
 
-         if template_id_str.startswith("AI:"):
-             trigger_ai_generation = True
-             print(f"LocationManager: AI generation triggered by keyword for location '{template_id_str}'.")
-         else:
-             guild_templates = self._location_templates.get(guild_id_str, {})
-             campaign_template_data = guild_templates.get(template_id_str)
-             if not campaign_template_data:
-                 print(f"LocationManager: Location template '{template_id_str}' not found. Triggering AI generation.")
-                 trigger_ai_generation = True
+        # Determine if AI generation is needed
+        trigger_ai_generation = False
+        if template_id_str.startswith("AI:"):
+            trigger_ai_generation = True
+            location_concept = template_id_str.replace("AI:", "", 1)
+            print(f"LocationManager: AI generation explicitly triggered for location concept '{location_concept}'.")
+        else:
+            campaign_template_data = self._location_templates.get(guild_id_str, {}).get(template_id_str)
+            if not campaign_template_data:
+                print(f"LocationManager: Location template '{template_id_str}' not found. Triggering AI generation.")
+                trigger_ai_generation = True
+                location_concept = template_id_str # Use the original template_id as concept if template not found
+            else:
+                source_data = campaign_template_data
+                print(f"LocationManager: Using campaign template data for instance '{template_id_str}'.")
 
         if trigger_ai_generation:
-            location_concept = template_id_str
-            if template_id_str.startswith("AI:"):
-                location_concept = template_id_str.replace("AI:", "", 1)
-
             ai_response_data = await self.generate_location_details_from_ai(
                 guild_id=guild_id_str,
                 location_idea=location_concept
@@ -623,44 +625,33 @@ class LocationManager:
             else: # requires_moderation is false (auto-approved)
                 print(f"LocationManager: AI-generated location for '{location_concept}' is auto-approved.")
                 # Proceed with creating instance_for_cache using ai_generated_data
-                # This path will now use ai_generated_data as the source_data
-                pass # Fall through to the common instance creation logic using ai_generated_data
+                print(f"LocationManager: AI-generated location for '{location_concept}' is auto-approved.")
+                source_data = ai_generated_data
+                is_ai_auto_approved_flow = True
 
-         # --- Common instance creation logic (for non-AI path or auto-approved AI path) ---
-         new_instance_id = str(uuid.uuid4())
-         instance_for_cache: Dict[str, Any] = {
-             'id': new_instance_id,
-             'guild_id': guild_id_str,
-             'is_active': True,
-             'state': {}, # Default empty state
-         }
+        # If source_data is still None here, it means a campaign template was expected but not found,
+        # and AI generation was not triggered (e.g. template_id didn't start with "AI:").
+        # This case should have been caught if `trigger_ai_generation` became true when template not found.
+        # The initial logic for setting trigger_ai_generation already handles this:
+        # if not campaign_template_data: trigger_ai_generation = True
+        # So, if trigger_ai_generation was false, campaign_template_data must have existed.
+        # If trigger_ai_generation was true, either it returned early (moderation/error) or set source_data.
+        if source_data is None:
+            # This path should ideally not be reached if the logic above is correct.
+            # It implies that neither AI path (moderated or auto-approved) nor template path set source_data.
+            print(f"LocationManager: CRITICAL - No source_data determined for instance creation. Template ID: '{template_id_str}', Trigger AI: {trigger_ai_generation}. This indicates a flaw in control flow.")
+            return {"error": "Internal error: Could not determine data source for location.", "requires_moderation": True}
 
-         # Determine source_data: either campaign_template_data or (auto-approved) ai_generated_data
-         source_data: Optional[Dict[str, Any]] = None
-         is_ai_auto_approved_flow = False
+        # --- Common instance creation logic starts here ---
+        new_instance_id = str(uuid.uuid4())
+        instance_for_cache: Dict[str, Any] = {
+            'id': new_instance_id,
+            'guild_id': guild_id_str,
+            'is_active': True,
+            'state': {},
+        }
 
-         if trigger_ai_generation and not requires_moderation: # This implies ai_generated_data exists and is auto-approved
-             source_data = ai_generated_data
-             is_ai_auto_approved_flow = True
-             print(f"LocationManager: Using auto-approved AI data for instance {new_instance_id}.")
-         elif not trigger_ai_generation and campaign_template_data: # Non-AI path
-             source_data = campaign_template_data
-             print(f"LocationManager: Using campaign template data for instance {new_instance_id}.")
-         # Removed: else case for ai_generated_data that requires moderation, as it's handled and returned above.
-
-         if not source_data:
-             # This should only be hit if campaign_template_data was not found AND AI was not triggered,
-             # or if AI was triggered, required moderation, and that flow somehow didn't return.
-             # The AI path that requires moderation returns earlier.
-             # The AI path that is auto-approved sets source_data.
-             # The non-AI path sets source_data if campaign_template_data is found.
-             # If campaign_template_data is NOT found and AI is NOT triggered, then trigger_ai_generation becomes true.
-             # So this path should ideally not be reached if logic is correct.
-             print(f"LocationManager: CRITICAL Error - No source data for instance creation (template '{template_id_str}'). This indicates a logic flaw if AI generation was expected or template was missing.")
-             return {"error": "No source data available for location creation.", "requires_moderation": True}
-
-
-         # Populate instance_for_cache using source_data
+        # Populate instance_for_cache using source_data
          # Template ID: From source if available, else use original template_id_str or a generated one for AI
          instance_for_cache['template_id'] = source_data.get('template_id', source_data.get('id'))
          if not instance_for_cache['template_id']: # Fallback if 'id' also missing in source_data (unlikely for valid template/AI data)

@@ -109,8 +109,9 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
         # Game setup commands
         self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_new_character) # New /start command
         self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_bot_language) # Add new /set_bot_language command
-        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_master_channel)
-        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_system_channel)
+        # TODO: Verify and restore cmd_set_master_channel and cmd_set_system_channel if they exist in game_setup_cmds.py
+        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_master_channel)
+        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_system_channel)
         # TODO: Add other game_setup_cmds (set_gm, set_gm_channel, etc.)
 
         # Exploration commands
@@ -219,8 +220,9 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
             # Let's assume game_manager has a method like `get_character_status_for_nlu`
             
             # To interact with CharacterManager, we'd typically do:
-            char_model = await self.game_manager.character_manager.get_character_by_discord_id(
-                discord_user_id=message.author.id, # Changed user_id to discord_user_id
+            # L221: get_character_by_discord_id is synchronous, remove await.
+            char_model = self.game_manager.character_manager.get_character_by_discord_id(
+                discord_user_id=message.author.id,
                 guild_id=str(message.guild.id)
             )
 
@@ -413,18 +415,53 @@ async def cmd_gm_simulate(interaction: Interaction): # Changed ctx to interactio
         try:
             # Get the context from GameManager
             guild_id_str = str(interaction.guild_id)
-            if not guild_id_str: # Should not happen with guild commands, but good practice
+            if not guild_id_str:
                  await interaction.followup.send("**Мастер:** Не удалось определить ID сервера для симуляции.", ephemeral=True)
                  return
 
-            tick_context = game_mngr.get_world_simulation_context(guild_id_str)
-            
-            # Filter out None values from context as WSP might not expect them
-            # (or if get_world_simulation_context guarantees no Nones for required keys, this could be removed)
-            tick_context_filtered = {k: v for k, v in tick_context.items() if v is not None}
+            # Construct tick_context_filtered directly
+            tick_context_kwargs: Dict[str, Any] = {
+                'rule_engine': game_mngr.rule_engine,
+                'time_manager': game_mngr.time_manager,
+                'location_manager': game_mngr.location_manager,
+                'event_manager': game_mngr.event_manager,
+                'character_manager': game_mngr.character_manager,
+                'item_manager': game_mngr.item_manager,
+                'status_manager': game_mngr.status_manager,
+                'combat_manager': game_mngr.combat_manager,
+                'crafting_manager': game_mngr.crafting_manager,
+                'economy_manager': game_mngr.economy_manager,
+                'npc_manager': game_mngr.npc_manager,
+                'party_manager': game_mngr.party_manager,
+                'openai_service': game_mngr.openai_service,
+                'quest_manager': game_mngr.quest_manager,
+                'relationship_manager': game_mngr.relationship_manager,
+                'dialogue_manager': game_mngr.dialogue_manager,
+                'game_log_manager': game_mngr.game_log_manager,
+                'consequence_processor': game_mngr.consequence_processor,
+                'campaign_loader': game_mngr.campaign_loader,
+                'on_enter_action_executor': game_mngr._on_enter_action_executor,
+                'stage_description_generator': game_mngr._stage_description_generator,
+                'event_stage_processor': game_mngr._event_stage_processor,
+                'event_action_processor': game_mngr._event_action_processor,
+                'character_action_processor': game_mngr._character_action_processor,
+                'character_view_service': game_mngr._character_view_service,
+                'party_action_processor': game_mngr._party_action_processor,
+                'persistence_manager': game_mngr._persistence_manager,
+                'conflict_resolver': game_mngr.conflict_resolver,
+                'db_adapter': game_mngr._db_adapter,
+                'nlu_data_service': game_mngr.nlu_data_service,
+                'prompt_context_collector': game_mngr.prompt_context_collector,
+                'multilingual_prompt_generator': game_mngr.multilingual_prompt_generator,
+                'send_callback_factory': game_mngr._get_discord_send_callback,
+                'settings': game_mngr._settings,
+                'discord_client': game_mngr._discord_client,
+                'guild_id': guild_id_str
+            }
+            tick_context_filtered = {k: v for k, v in tick_context_kwargs.items() if v is not None}
 
             await game_mngr._world_simulation_processor.process_world_tick(
-                game_time_delta=game_mngr._tick_interval_seconds, # Using default interval
+                game_time_delta=game_mngr._tick_interval_seconds,
                 **tick_context_filtered
             )
             await interaction.followup.send("**Мастер:** Шаг симуляции мира завершен!")
