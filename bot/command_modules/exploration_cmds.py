@@ -6,7 +6,7 @@ import traceback # For error logging
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot # Already imported by previous step, ensure it's here
-    from bot.services.db_service import DBService
+    from bot.database.sqlite_adapter import SqliteAdapter # Corrected import
     from bot.game.managers.location_manager import LocationManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.models.character import Character as CharacterModel
@@ -65,24 +65,21 @@ async def _send_location_embed(
     # Exits - using location_manager
     if location_instance_id_str: # Only try to get exits if we have a valid current location instance ID
         # Ensure all required arguments are passed to get_connected_locations
-        # The error was: "Argument missing for parameter 'location_id'"
-        # This implies the 'location_id' (template ID) might be needed, not just instance_id.
-        # Let's assume location_data (instance data) contains 'template_id' or similar.
-        location_template_id = location_data.get('template_id') # Or whatever field stores the template/base location ID
+        # get_connected_locations expects instance_id.
+        # location_instance_id_str is the correct ID to pass.
+        # location_template_id = location_data.get('template_id') # Not needed for this call
 
-        if location_template_id:
-            connected_exits = location_manager.get_connected_locations(
-                guild_id=guild_id,
-                location_id=location_template_id, # This should be the base/template location ID
-                instance_id=location_instance_id_str # This is the current instance ID
-            )
-            if connected_exits and isinstance(connected_exits, dict) and len(connected_exits) > 0:
-                exit_display_parts = []
+        # if location_template_id: # This check becomes redundant if we only need instance_id
+        connected_exits = location_manager.get_connected_locations(
+            guild_id=guild_id,
+            instance_id=location_instance_id_str
+        )
+        if connected_exits and isinstance(connected_exits, dict) and len(connected_exits) > 0:
+            exit_display_parts = []
                 for exit_name_or_direction, target_loc_template_id in connected_exits.items():
-                    # get_connected_locations likely returns template IDs. We need to find an instance.
-                    # This logic might need adjustment based on how exits and instances are linked.
-                    # For now, let's assume we want to display the name of the target template.
-                    target_loc_template_data = location_manager.get_location_static(guild_id, target_loc_template_id) # Changed get_location_template_by_id to get_location_static
+                    # get_connected_locations returns template IDs as values based on its current implementation.
+                    # So, we still need to fetch the static data for the name.
+                    target_loc_template_data = location_manager.get_location_static(guild_id, target_loc_template_id)
                     if target_loc_template_data:
                         exit_display_parts.append(f"{exit_name_or_direction.capitalize()} to {target_loc_template_data.get('name', 'an unnamed area')}")
                     else:
@@ -94,8 +91,8 @@ async def _send_location_embed(
                     embed.add_field(name="Exits", value="None apparent.", inline=False)
             else:
                 embed.add_field(name="Exits", value="None apparent.", inline=False)
-        else: # location_template_id is missing from current location_data
-            embed.add_field(name="Exits", value="*Cannot determine exits: location template ID missing*", inline=False)
+        # else: # This else block for location_template_id check is no longer needed
+            # embed.add_field(name="Exits", value="*Cannot determine exits: location template ID missing*", inline=False)
     else: # location_instance_id_str is None
         embed.add_field(name="Exits", value="*Cannot determine exits: current location ID missing*", inline=False)
 
@@ -186,7 +183,7 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
            not bot.game_manager.location_manager or \
            not bot.game_manager.party_manager or \
            not bot.game_manager.npc_manager or \
-           not bot.game_manager.db_service: # Ensure managers used are checked
+           not bot.game_manager._db_adapter: # Check for _db_adapter
             await interaction.followup.send("Error: Core game systems are not fully initialized. Please notify an admin.", ephemeral=True)
             return
         
@@ -194,7 +191,7 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
         location_manager: 'LocationManager' = bot.game_manager.location_manager
         party_manager: 'PartyManager' = bot.game_manager.party_manager
         npc_manager: 'NpcManager' = bot.game_manager.npc_manager
-        db_service: 'DBService' = bot.game_manager.db_service
+        db_adapter: 'SqliteAdapter' = bot.game_manager._db_adapter # Use _db_adapter
 
         guild_id_str = str(interaction.guild_id)
         discord_user_id = interaction.user.id
@@ -283,9 +280,10 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
         if party and party.id: # party.id should be a string
             entity_to_move_id = party.id
             entity_type = "Party"
-            party_name = party.name or f"Party {party.id[:6]}"
-            log_identifier = f"Party {party_name} (ID: {party.id})"
-            display_name = party_name
+            # Fix for L285: Access party.name_i18n.get('en', party.id)
+            party_name_display = party.name_i18n.get('en', party.id if party.id else "Unknown Party")
+            log_identifier = f"Party {party_name_display} (ID: {party.id})"
+            display_name = party_name_display
         
         # TODO: Comment out missing GameManager attributes for now
         move_kwargs: Dict[str, Any] = {
@@ -330,18 +328,23 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
         
         try:
             log_message = f"{log_identifier} moved from {old_location_name} (Instance: {current_location_instance_id}) to {new_location_name} (Instance: {target_location_instance_id})."
-            await db_service.add_log_entry(
-                guild_id=guild_id_str,
-                event_type="ENTITY_MOVE", message=log_message,
-                player_id_column=character.id,
-                related_entities={
-                    "old_location_instance_id": current_location_instance_id,
-                    "new_location_instance_id": target_location_instance_id,
-                    "moved_entity_id": entity_to_move_id, "moved_entity_type": entity_type
-                },
-                context_data={"initiator_discord_user_id": discord_user_id},
-                channel_id=interaction.channel_id if interaction.channel else None
-            )
+            if bot.game_manager and bot.game_manager.game_log_manager:
+                await bot.game_manager.game_log_manager.log_event(
+                    guild_id=guild_id_str,
+                    event_type="ENTITY_MOVE",
+                    message=log_message,
+                    related_entities_json=json.dumps({ # Ensure related_entities are passed as JSON string
+                        "player_id": character.id,
+                        "old_location_instance_id": current_location_instance_id,
+                        "new_location_instance_id": target_location_instance_id,
+                        "moved_entity_id": entity_to_move_id,
+                        "moved_entity_type": entity_type,
+                        "initiator_discord_user_id": discord_user_id,
+                        "channel_id": interaction.channel_id if interaction.channel else None
+                    })
+                )
+            else:
+                print(f"Warning: GameLogManager not available. ENTITY_MOVE event for {log_identifier} not logged to DB.")
         except Exception as log_e:
             print(f"Error adding log entry for entity move: {log_e}")
             traceback.print_exc()

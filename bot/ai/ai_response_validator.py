@@ -574,7 +574,6 @@ class AIResponseValidator:
             return {"overall_status": "error", "entities": entities, "global_errors": global_errors}
 
         validator_func: Optional[ValidatorFuncType] = None
-        validator_func: Optional[Callable[..., Any]] = None # To satisfy type checker before assignment
         is_list = False # Flag to indicate if parsed_data should be a list of entities
 
         # Determine the correct block validator function based on expected_structure

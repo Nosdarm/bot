@@ -312,16 +312,19 @@ class CharacterManager:
         # Определяем начальную локацию (используем инжектированный location_manager, если он есть)
         resolved_initial_location_id = initial_location_id
         # Убедимся, что self._location_manager доступен
-        if resolved_initial_location_id is None and self._location_manager and hasattr(self._location_manager, 'get_default_location_id'):
-             try:
-                 # LocationManager.get_default_location_id(guild_id: str) -> Optional[str]
-                 resolved_initial_location_id = self._location_manager.get_default_location_id(guild_id=guild_id_str) # Передаем guild_id_str
-                 if resolved_initial_location_id:
-                      print(f"CharacterManager: Using default location ID: {resolved_initial_location_id} for guild {guild_id_str}")
-             except Exception as e:
-                 print(f"CharacterManager: Warning: Could not get default location ID for guild {guild_id_str}: {e}")
-                 import traceback
-                 print(traceback.format_exc())
+        if resolved_initial_location_id is None and self._location_manager is not None: # Explicit None check
+             if hasattr(self._location_manager, 'get_default_location_id'):
+                 try:
+                     # LocationManager.get_default_location_id(guild_id: str) -> Optional[str]
+                     resolved_initial_location_id = self._location_manager.get_default_location_id(guild_id=guild_id_str)
+                     if resolved_initial_location_id:
+                          print(f"CharacterManager: Using default location ID: {resolved_initial_location_id} for guild {guild_id_str}")
+                 except Exception as e:
+                     print(f"CharacterManager: Warning: Could not get default location ID for guild {guild_id_str}: {e}")
+                     import traceback
+                     print(traceback.format_exc())
+             else:
+                print(f"CharacterManager: Warning: LocationManager is present but missing 'get_default_location_id' method.")
 
 
         # Определяем начальные статы (можно использовать RuleEngine, если он передан)

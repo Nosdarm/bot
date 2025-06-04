@@ -1,9 +1,6 @@
 import discord
 # from discord import slash_command # Or commands.Cog - Replaced by app_commands
-from typing import Optional, TYPE_CHECKING, cast, Dict, Any # Added TYPE_CHECKING, cast, Dict, Any
-
-from bot.bot_core import RPGBot # Import RPGBot
-from bot.services.openai_service import OpenAIService # For cmd_talk OpenAIService
+from typing import Optional, TYPE_CHECKING # Added TYPE_CHECKING
 
 # --- Temporary global references ---
 # from bot.bot_core import global_game_manager # REMOVE THIS LINE
@@ -15,16 +12,10 @@ TEST_GUILD_IDS = [] # Copy from bot_core.py
 from discord import app_commands, Interaction # Make sure this is at the top level
 
 if TYPE_CHECKING:
-    # from bot.bot_core import RPGBot # Already imported above
+    from bot.bot_core import RPGBot
     from bot.services.db_service import DBService
     from bot.game.managers.game_manager import GameManager
-    from bot.game.managers.character_manager import CharacterManager # Added for new commands
-    from bot.game.models.character import Character as CharacterModel # For type hinting
-    from bot.game.models.npc import NPC as NPCModel # For type hinting
-    from bot.game.managers.party_manager import PartyManager # Added for new commands
     from bot.game.managers.combat_manager import CombatManager # Added for new cmd_fight
-    from bot.game.managers.dialogue_manager import DialogueManager
-    # DialogueSession import removed as it does not exist / not used by DialogueManager
 
 
 # Placeholder for /interact command
@@ -32,247 +23,196 @@ if TYPE_CHECKING:
 async def cmd_interact(interaction: Interaction, target: str, action_str: str, details: Optional[str] = None): # Renamed action to action_str to avoid conflict
     await interaction.response.defer(ephemeral=True)
 
-    # game_mngr = None
-    # if hasattr(interaction.client, 'game_manager'):
-    #     game_mngr_candidate = getattr(interaction.client, 'game_manager')
-    #     if TYPE_CHECKING: # Ensure type checker knows about GameManager methods if available
-    #          assert isinstance(game_mngr_candidate, GameManager)
-    #     game_mngr = game_mngr_candidate
+    game_mngr = None
+    if hasattr(interaction.client, 'game_manager'):
+        game_mngr_candidate = getattr(interaction.client, 'game_manager')
+        if TYPE_CHECKING: # Ensure type checker knows about GameManager methods if available
+             assert isinstance(game_mngr_candidate, GameManager)
+        game_mngr = game_mngr_candidate
 
-    # if game_mngr and hasattr(game_mngr, 'process_player_action'): # Check if method exists
-    #      # This command is still a placeholder and uses the old process_player_action structure
-    #      # It should be refactored to use DBService and specific game logic like other commands.
-    #      response_data = await game_mngr.process_player_action(
-    #          server_id=str(interaction.guild_id),
-    #          discord_user_id=interaction.user.id,
-    #          action_type="interact", # This action_type might need to be handled by process_player_action
-    #          action_data={"target": target, "action": action_str, "details": details}
-    #      )
-    #      await interaction.followup.send(response_data.get("message", "**Ошибка:** Неизвестный ответ от мастера."), ephemeral=True)
-    # elif game_mngr:
-    #     await interaction.followup.send("The '/interact' command is not fully implemented for the new system yet.", ephemeral=True)
-    # else:
-    #      await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна.", ephemeral=True)
-    await interaction.followup.send("The '/interact' command is currently under refactoring. Please try again later.", ephemeral=True)
-    bot = cast(RPGBot, interaction.client) # Correct type hint using cast
-
-    if not bot.game_manager:
-        await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна.", ephemeral=True)
-        return
-
-    # TODO: Implement/fix game_manager.process_player_action or replace with new logic.
-    # For now, commenting out the call as per subtask instructions.
-    # if hasattr(bot.game_manager, 'process_player_action'):
-    #     response_data = await bot.game_manager.process_player_action(
-    #         server_id=str(interaction.guild_id),
-    #         discord_user_id=interaction.user.id,
-    #         action_type="interact",
-    #         action_data={"target": target, "action": action_str, "details": details}
-    #     )
-    #     await interaction.followup.send(response_data.get("message", "**Ошибка:** Неизвестный ответ от мастера."), ephemeral=True)
-    # else:
-    await interaction.followup.send("The '/interact' command is being reworked to use the new action system. Please try again later.", ephemeral=True)
-
+    if game_mngr and hasattr(game_mngr, 'process_player_action'): # Check if method exists
+         # This command is still a placeholder and uses the old process_player_action structure
+         # It should be refactored to use DBService and specific game logic like other commands.
+         response_data = await game_mngr.process_player_action(
+             server_id=str(interaction.guild_id),
+             discord_user_id=interaction.user.id,
+             action_type="interact", # This action_type might need to be handled by process_player_action
+             action_data={"target": target, "action": action_str, "details": details}
+         )
+         await interaction.followup.send(response_data.get("message", "**Ошибка:** Неизвестный ответ от мастера."), ephemeral=True)
+    elif game_mngr:
+        await interaction.followup.send("The '/interact' command is not fully implemented for the new system yet.", ephemeral=True)
+    else:
+         await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна.", ephemeral=True)
 
 import random # For basic combat roll
 
 @app_commands.command(name="fight", description="Engage in combat with an NPC.")
 @app_commands.describe(target_npc_name="The name of the NPC you want to fight (optional).")
+# guild_ids=TEST_GUILD_IDS # Removed, ensure RPGBot handles it
 async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = None):
     """Initiates a basic combat round with an NPC."""
     await interaction.response.defer(ephemeral=False) # Combat is generally public
 
-    bot = cast(RPGBot, interaction.client) # Correct type hint using cast
-
     try:
-        if not bot.game_manager or \
-           not bot.game_manager.db_service or \
-           not bot.game_manager.combat_manager or \
-           not bot.game_manager.character_manager or \
-           not bot.game_manager.npc_manager:
-            await interaction.followup.send("Error: Core game services (DB, Combat, Character, NPC) are not fully initialized.", ephemeral=True)
+        if not hasattr(interaction.client, 'game_manager') or \
+           not hasattr(interaction.client.game_manager, 'db_service') or \
+           not hasattr(interaction.client.game_manager, 'combat_manager'): # Check for combat_manager
+            await interaction.followup.send("Error: Core game services (DB or Combat) are not fully initialized.", ephemeral=True)
             return
 
-        # Type assertions for Pylance/Mypy if needed, or rely on RPGBot type hint
-        db_service: 'DBService' = bot.game_manager.db_service
-        combat_manager: 'CombatManager' = bot.game_manager.combat_manager
-        character_manager: 'CharacterManager' = bot.game_manager.character_manager
-        npc_manager = bot.game_manager.npc_manager # No specific type hint needed if direct methods are used
-        game_mngr: 'GameManager' = bot.game_manager # Retain for clarity if used often
+        client_bot: 'RPGBot' = interaction.client
+        db_service: 'DBService' = client_bot.game_manager.db_service
+        combat_manager: 'CombatManager' = client_bot.game_manager.combat_manager # Get CombatManager
+        # game_manager for other calls if needed (though combat_manager should handle most combat logic)
+        game_mngr: 'GameManager' = client_bot.game_manager
 
 
         guild_id = str(interaction.guild_id)
         discord_user_id = interaction.user.id
+        channel_id = interaction.channel_id # For combat messages
 
-        if not interaction.channel:
-            await interaction.followup.send("Error: This command cannot be used in a context without a channel.", ephemeral=True)
-            return
-        channel_id = interaction.channel.id # For combat messages
-
-        # Use CharacterManager to get character model
-        player_char: Optional['CharacterModel'] = character_manager.get_character_by_discord_id(guild_id=guild_id, discord_user_id=discord_user_id) # Removed await
-        if not player_char:
+        player_data = await db_service.get_player_by_discord_id(discord_user_id=discord_user_id, guild_id=guild_id)
+        if not player_data:
             await interaction.followup.send("You need to create a character first! Use `/start`.", ephemeral=True)
             return
 
-        language = player_char.selected_language or "en" # For name display
+        player_id = player_data.get('id')
+        player_location_id = player_data.get('location_id')
+        player_name = player_data.get('name', 'You')
 
-        # player_id = player_char.id
-        # player_location_id = player_char.location_id
-        # player_name = player_char.name_i18n.get(language, player_char.name_i18n.get('en', 'You'))
-
-        if not player_char.id or not player_char.location_id: # Check essential attributes
-            await interaction.followup.send("Error: Could not retrieve your character's essential data (ID or location).", ephemeral=True)
+        if not player_id or not player_location_id:
+            await interaction.followup.send("Error: Could not retrieve your character or location data.", ephemeral=True)
             return
 
         # Check if player is already in an active combat in this guild
-        active_combat_for_player = combat_manager.get_combat_by_participant_id(guild_id, player_char.id)
+        active_combat_for_player = combat_manager.get_combat_by_participant_id(guild_id, player_id)
 
         if active_combat_for_player and active_combat_for_player.is_active:
             current_actor_id = active_combat_for_player.get_current_actor_id()
-            if current_actor_id == player_char.id:
+            if current_actor_id == player_id:
                 await interaction.followup.send(f"You are already in combat with {len(active_combat_for_player.participants) -1} opponent(s)! It's your turn. Use an action command (e.g., `/attack <target>`).", ephemeral=True)
             else:
+                # Try to get current actor's name
+                actor_name = "Someone"
                 actor_participant_obj = active_combat_for_player.get_participant_data(current_actor_id) if current_actor_id else None
-                if actor_participant_obj and game_mngr and game_mngr.npc_manager:
-                    if actor_participant_obj.entity_type == "NPC":
+                if actor_participant_obj and game_mngr: # Need GameManager to access other entity managers
+                    if actor_participant_obj.entity_type == "NPC" and game_mngr.npc_manager:
                         npc_actor = game_mngr.npc_manager.get_npc(guild_id, actor_participant_obj.entity_id)
-                        if npc_actor: actor_name = getattr(npc_actor, 'name_i18n', {}).get('en', 'Unknown NPC')
+                        if npc_actor: actor_name = npc_actor.name
                     # Could add Character type here if players can fight players
 
-                        if npc_actor: actor_name = npc_actor.name_i18n.get(language, npc_actor.name_i18n.get('en', 'Unknown NPC'))
-                    # Could add Character type here
                 await interaction.followup.send(f"You are already in combat! It's {actor_name}'s turn.", ephemeral=True)
             return
 
+        # If not in active combat, proceed to start a new one
         if not target_npc_name:
             await interaction.followup.send("Who do you want to fight? Please specify an NPC name.", ephemeral=True)
             return
 
-        # Use NPCManager to find NPC
-        target_npc: Optional[NPCModel] = None
-        # Assuming NPCManager has a method to get NPCs by location, or get all and filter
-        # For now, let's assume a simplified get_npcs_in_location from npc_manager or db_service
-        # If using npc_manager.get_npcs_in_location, it should return list of NPCModel
-        npcs_in_loc_models = npc_manager.get_npcs_in_location(guild_id=guild_id, location_id=player_char.location_id)
-
-        for npc_model_instance in npcs_in_loc_models:
-            npc_model_name = npc_model_instance.name_i18n.get(language, npc_model_instance.name_i18n.get('en', ''))
-            if npc_model_name.lower() == target_npc_name.lower():
-                target_npc = npc_model_instance
+        npcs_in_location = await db_service.get_npcs_in_location(location_id=player_location_id, guild_id=guild_id)
+        target_npc_data = None
+        for npc in npcs_in_location:
+            if npc.get('name', '').lower() == target_npc_name.lower():
+                target_npc_data = npc
                 break
 
-        if not target_npc:
+        if not target_npc_data:
             await interaction.followup.send(f"NPC '{target_npc_name}' not found here.", ephemeral=True)
             return
 
-        npc_id = target_npc.id
-        npc_name_display = target_npc.name_i18n.get(language, target_npc.name_i18n.get('en', 'The NPC'))
+        npc_id = target_npc_data.get('id')
+        npc_name = target_npc_data.get('name', 'The NPC')
 
-        if target_npc.health <= 0:
-            await interaction.followup.send(f"{npc_name_display} is already defeated or incapacitated.", ephemeral=False)
+        if getattr(target_npc_data, 'hp', target_npc_data.get('health', 0)) <= 0: # Check NPC health (NPC model uses .health or .hp if it's a dict from db)
+            await interaction.followup.send(f"{npc_name} is already defeated or incapacitated.", ephemeral=False)
             return
 
-        participant_ids_types = [(player_char.id, "Character"), (npc_id, "NPC")]
+        # Initiate combat via CombatManager
+        participant_ids_types = [(player_id, "Character"), (npc_id, "NPC")]
 
         # Context for start_combat, including managers it might need for fetching details
         start_combat_context = {
             "channel_id": channel_id,
-            "character_manager": character_manager, # Pass the manager
-            "npc_manager": npc_manager, # Pass the manager
-            "rule_engine": game_mngr.rule_engine,
-            "send_callback_factory": game_mngr._get_discord_send_callback
+            "character_manager": game_mngr.character_manager,
+            "npc_manager": game_mngr.npc_manager,
+            "rule_engine": game_mngr.rule_engine, # For initiative roll if it's moved there
+            "send_callback_factory": game_mngr._get_discord_send_callback # If start_combat sends messages
         }
 
         new_combat = await combat_manager.start_combat(
             guild_id=guild_id,
-            location_id=player_char.location_id, # Use location from char model
+            location_id=player_location_id,
             participant_ids_types=participant_ids_types,
             **start_combat_context
         )
 
         if new_combat:
+            # Announce combat start and who goes first
+            # Construct initiative message
             init_messages = []
             for p_obj in new_combat.participants:
+                p_name = "Unknown"
                 if p_obj.entity_type == "Character" and game_mngr.character_manager:
                     p_char = game_mngr.character_manager.get_character(guild_id, p_obj.entity_id)
-                    if p_char: p_name = getattr(p_char, 'name_i18n', {}).get('en', 'Unknown Character')
+                    if p_char: p_name = p_char.name
                 elif p_obj.entity_type == "NPC" and game_mngr.npc_manager:
                     p_npc = game_mngr.npc_manager.get_npc(guild_id, p_obj.entity_id)
-                    if p_npc: p_name = getattr(p_npc, 'name_i18n', {}).get('en', 'Unknown NPC')
-                init_messages.append(f"{p_name} (Initiative: {p_obj.initiative})") # This line uses p_name, ensure it's defined.
-                # It seems p_name should be defined within the if/elif block, or initialized before.
-                # For this change, I am only removing `p_name = "Unknown"`.
-                # The logic for p_name definition needs to be reviewed separately if it causes issues.
-                # However, the original instruction is just to remove the line.
-                # Let's assume p_name will be correctly assigned in the following conditional blocks.
-                # If not, it's an existing bug.
-
-                p_name_display = "Unknown" # This is the p_name_display that gets correctly populated below
-                # Fetch names using managers and models
-                if p_obj.entity_type == "Character":
-                    p_char_model = character_manager.get_character(guild_id, p_obj.entity_id) # Removed await
-                    if p_char_model: p_name_display = p_char_model.name_i18n.get(language, p_char_model.name_i18n.get('en', 'Unknown Character'))
-                elif p_obj.entity_type == "NPC":
-                    p_npc_model = npc_manager.get_npc(guild_id, p_obj.entity_id) # Assuming get_npc is not async
-                    if p_npc_model: p_name_display = p_npc_model.name_i18n.get(language, p_npc_model.name_i18n.get('en', 'Unknown NPC'))
-                init_messages.append(f"{p_name_display} (Initiative: {p_obj.initiative})")
+                    if p_npc: p_name = p_npc.name
+                init_messages.append(f"{p_name} (Initiative: {p_obj.initiative})")
 
             initiative_summary = ", ".join(init_messages)
+
             first_actor_id = new_combat.get_current_actor_id()
-            # first_actor_name_display = "Someone" # This line is removed
+            first_actor_name = "Someone"
             if first_actor_id:
                 fa_obj = new_combat.get_participant_data(first_actor_id)
                 if fa_obj:
-                    # The following block is removed
-                    # if fa_obj.entity_type == "Character" and game_mngr.character_manager:
-                    #     fa_char = game_mngr.character_manager.get_character(guild_id, fa_obj.entity_id)
-                    #     if fa_char: first_actor_name = getattr(fa_char, 'name_i18n', {}).get('en', 'Unknown Character')
-                    # elif fa_obj.entity_type == "NPC" and game_mngr.npc_manager:
-                    #     fa_npc = game_mngr.npc_manager.get_npc(guild_id, fa_obj.entity_id)
-                    #     if fa_npc: first_actor_name = getattr(fa_npc, 'name_i18n', {}).get('en', 'Unknown NPC')
-                    if fa_obj.entity_type == "Character":
-                        fa_char_model = character_manager.get_character(guild_id, fa_obj.entity_id) # Removed await
-                        if fa_char_model: first_actor_name_display = fa_char_model.name_i18n.get(language, fa_char_model.name_i18n.get('en', 'A Character'))
-                    elif fa_obj.entity_type == "NPC":
-                        fa_npc_model = npc_manager.get_npc(guild_id, fa_obj.entity_id) # Assuming get_npc is not async
-                        if fa_npc_model: first_actor_name_display = fa_npc_model.name_i18n.get(language, fa_npc_model.name_i18n.get('en', 'An NPC'))
+                    if fa_obj.entity_type == "Character" and game_mngr.character_manager:
+                        fa_char = game_mngr.character_manager.get_character(guild_id, fa_obj.entity_id)
+                        if fa_char: first_actor_name = fa_char.name
+                    elif fa_obj.entity_type == "NPC" and game_mngr.npc_manager:
+                        fa_npc = game_mngr.npc_manager.get_npc(guild_id, fa_obj.entity_id)
+                        if fa_npc: first_actor_name = fa_npc.name
 
             response_message = (
-                f"⚔️ Combat started with **{npc_name_display}**! ⚔️\n"
+                f"⚔️ Combat started with **{npc_name}**! ⚔️\n"
                 f"Initiative: {initiative_summary}\n"
-                f"It's **{first_actor_name_display}**'s turn. Use an action command (e.g., `/attack`)."
+                f"It's **{first_actor_name}**'s turn. Use an action command (e.g., `/attack`)."
             )
             await interaction.followup.send(response_message)
 
+            # Log combat start
             try:
-                # The following block is removed
-                # log_msg = f"Combat started. Participants: {[(p.entity_id, p.entity_type) for p in new_combat.participants]}. Turn order: {new_combat.turn_order}."
-                # await db_service.add_log_entry(
-                #     guild_id=guild_id, event_type="COMBAT_START", message=log_msg,
-                #     player_id_column=player_id, # If player initiated
-                #     related_entities={"combat_id": new_combat.id, "participants": [p.entity_id for p in new_combat.participants]},
-                #     context_data={"location_id": player_location_id, "channel_id": channel_id} # Use validated channel_id
-                # )
-                if db_service: # Ensure db_service is available
-                    log_msg = f"Combat started. Participants: {[(p.entity_id, p.entity_type) for p in new_combat.participants]}. Turn order: {new_combat.turn_order}."
-                    await db_service.add_log_entry(
-                        guild_id=guild_id, event_type="COMBAT_START", message=log_msg,
-                        player_id_column=player_char.id, # Use player_char.id
-                        related_entities={"combat_id": new_combat.id, "participants": [p.entity_id for p in new_combat.participants]},
-                        context_data={"location_id": player_char.location_id, "channel_id": channel_id}
-                    )
+                log_msg = f"Combat started. Participants: {[(p.entity_id, p.entity_type) for p in new_combat.participants]}. Turn order: {new_combat.turn_order}."
+                await db_service.add_log_entry(
+                    guild_id=guild_id, event_type="COMBAT_START", message=log_msg,
+                    player_id_column=player_id, # If player initiated
+                    related_entities={"combat_id": new_combat.id, "participants": [p.entity_id for p in new_combat.participants]},
+                    context_data={"location_id": player_location_id, "channel_id": channel_id}
+                )
             except Exception as log_e:
                 print(f"Error logging combat start: {log_e}")
+
         else:
-            await interaction.followup.send(f"Failed to start combat with {npc_name_display}. Please try again.", ephemeral=True)
+            await interaction.followup.send(f"Failed to start combat with {npc_name}. Please try again.", ephemeral=True)
 
     except Exception as e:
         print(f"Error in /fight command: {e}")
         traceback.print_exc()
         await interaction.followup.send("An unexpected error occurred while trying to start combat.", ephemeral=True)
 
+# Add other action commands here (/use, /talk, etc.)
+
 import traceback # For error logging
+# from discord import app_commands, Interaction # Already imported at the top
+from typing import Optional, TYPE_CHECKING # TYPE_CHECKING is fine here
+
+if TYPE_CHECKING:
+    from bot.bot_core import RPGBot # Keep these for type hints within functions
+    from bot.services.db_service import DBService
+    from bot.services.openai_service import OpenAIService
+
 
 @app_commands.command(name="talk", description="Talk to an NPC in your current location.")
 @app_commands.describe(
@@ -282,305 +222,124 @@ import traceback # For error logging
 async def cmd_talk(interaction: Interaction, npc_name: str, message: str):
     """Allows a player to talk to an NPC, using AI for responses and managing history."""
     await interaction.response.defer(ephemeral=False)
-    bot = cast(RPGBot, interaction.client) # Correct type hint using cast
 
     try:
-        if not bot.game_manager or \
-           not bot.game_manager.db_service or \
-           not bot.game_manager.character_manager or \
-           not bot.game_manager.npc_manager or \
-           not bot.game_manager.dialogue_manager: # Removed openai_service from this direct check, will check its availability later
-            await interaction.followup.send("Error: Core game services (DB, Character, NPC, Dialogue) are not fully initialized.", ephemeral=True)
+        # --- Setup and Checks ---
+        if not hasattr(interaction.client, 'game_manager') or \
+           not hasattr(interaction.client.game_manager, 'db_service') or \
+           not hasattr(interaction.client.game_manager, 'openai_service'): # Check for openai_service
+            await interaction.followup.send("Error: Core game services (DB or AI) are not fully initialized.", ephemeral=True)
             return
 
-        # Ensure openai_service is available if it's going to be used
-        if not bot.game_manager.openai_service:
-            await interaction.followup.send("Error: OpenAI service is not available within GameManager.", ephemeral=True)
-            return
+        client_bot: 'RPGBot' = interaction.client
+        db_service: 'DBService' = client_bot.game_manager.db_service
+        openai_service: 'OpenAIService' = client_bot.game_manager.openai_service # Get OpenAI service
 
-        openai_service: OpenAIService = bot.game_manager.openai_service # Now directly use the class
-
-        # Type assertions for Pylance/Mypy
-        db_service: 'DBService' = bot.game_manager.db_service
-        # openai_service is already defined above
-        character_manager: 'CharacterManager' = bot.game_manager.character_manager
-        npc_manager = bot.game_manager.npc_manager # Assuming direct use of methods, or add type hint 'NPCManager'
-        dialogue_manager: 'DialogueManager' = bot.game_manager.dialogue_manager
-
-
-        if not openai_service.is_available(): # Check specific availability of the service
-            await interaction.followup.send("The AI for dialogue is currently unavailable (key or model issue). Please try again later.", ephemeral=True)
+        if not openai_service.is_available():
+            await interaction.followup.send("The AI for dialogue is currently unavailable. Please try again later.", ephemeral=True)
+            # Optionally, could fall back to a simpler pre-defined dialogue system here.
             return
 
         guild_id = str(interaction.guild_id)
         discord_user_id = interaction.user.id
+        channel_id = interaction.channel_id if interaction.channel else 0 # Fallback if channel is None
 
-        if not interaction.channel:
-            await interaction.followup.send("Error: This command cannot be used in a context without a channel.", ephemeral=True)
-            return
-
-        if interaction.channel_id is None:
-            await interaction.followup.send("Error: This command cannot be used in a context without a channel ID.", ephemeral=True)
-            return
-        channel_id_int: int = interaction.channel_id
-
-
-        player_char: Optional['CharacterModel'] = character_manager.get_character_by_discord_id(guild_id=guild_id, discord_user_id=discord_user_id) # Removed await
-        if not player_char:
+        # --- Get Player Data ---
+        player_data = await db_service.get_player_by_discord_id(discord_user_id=discord_user_id, guild_id=guild_id)
+        if not player_data:
             await interaction.followup.send("You need to create a character first! Use `/start`.", ephemeral=True)
             return
 
-        language = player_char.selected_language or "en"
-        player_name_display = player_char.name_i18n.get(language, player_char.name_i18n.get('en', 'Adventurer'))
+        player_id = player_data.get('id')
+        player_name = player_data.get('name', 'Adventurer')
+        player_location_id = player_data.get('location_id')
 
-        if not player_char.id or not player_char.location_id:
-            await interaction.followup.send("Error: Could not retrieve your character's essential data (ID or location).", ephemeral=True)
+        if not player_id or not player_location_id:
+            await interaction.followup.send("Error: Could not retrieve your character or location data.", ephemeral=True)
             return
 
-        target_npc: Optional[NPCModel] = None
-        npcs_in_loc_models = npc_manager.get_npcs_in_location(guild_id=guild_id, location_id=player_char.location_id)
-        for npc_model_instance in npcs_in_loc_models:
-            npc_model_name = npc_model_instance.name_i18n.get(language, npc_model_instance.name_i18n.get('en', ''))
-            if npc_model_name.lower() == npc_name.lower():
-                target_npc = npc_model_instance
+        # --- Find NPC ---
+        npcs_in_location = await db_service.get_npcs_in_location(location_id=player_location_id, guild_id=guild_id)
+        target_npc_data = None
+        for npc in npcs_in_location:
+            if npc.get('name', '').lower() == npc_name.lower():
+                target_npc_data = npc
                 break
 
-        if not target_npc:
+        if not target_npc_data:
             await interaction.followup.send(f"You don't see anyone named '{npc_name}' here.", ephemeral=True)
             return
 
-        npc_id_str = target_npc.id
-        npc_name_display = target_npc.name_i18n.get(language, target_npc.name_i18n.get('en', 'Someone'))
-        npc_persona_str = target_npc.personality_i18n.get(language, target_npc.personality_i18n.get('en', 'A mysterious figure.'))
-        npc_description_str = target_npc.visual_description_i18n.get(language, target_npc.visual_description_i18n.get('en', 'An ordinary person.'))
+        npc_id = target_npc_data.get('id')
+        npc_actual_name = target_npc_data.get('name', 'Someone')
+        npc_persona = target_npc_data.get('persona', 'A mysterious figure.')
+        npc_description = target_npc_data.get('description')
 
-        # Replacing get_or_create_dialogue_session and add_dialogue_entry calls
-        # This is a placeholder fix. A proper solution requires redesigning cmd_talk interaction with DialogueManager.
-        # Using dialogue_manager.start_dialogue as a stand-in for get_or_create.
-        # This will likely fail if "default_talk_template" doesn't exist or params mismatch.
-        dialogue_id: Optional[str] = await dialogue_manager.start_dialogue(
-            guild_id=guild_id,
-            template_id="default_talk_template", # Placeholder template ID
-            participant1_id=player_char.id,
-            participant2_id=npc_id_str,
-            channel_id=channel_id_int,
-            # initial_state_data might be needed
+        if not npc_id:
+             await interaction.followup.send(f"Error: NPC '{npc_name}' has invalid data. Contact an admin.", ephemeral=True)
+             return
+
+
+        # --- Dialogue Session & AI Response ---
+        session_data = await db_service.get_or_create_dialogue_session(
+            player_id=player_id, npc_id=npc_id, guild_id=guild_id, channel_id=channel_id
         )
+        conversation_history = session_data.get('conversation_history', [])
 
-        if not dialogue_id:
-            await interaction.followup.send(f"Error: Could not start a new dialogue session with {npc_name_display}.", ephemeral=True)
-            return
-
-        # Fetch the newly created dialogue data.
-        # In a real scenario, start_dialogue might return the full session dict or it's part of an advance_dialogue flow.
-        session_data: Optional[Dict[str, Any]] = dialogue_manager.get_dialogue(guild_id, dialogue_id)
-        if not session_data:
-            await interaction.followup.send(f"Error: Failed to retrieve created dialogue session {dialogue_id}.", ephemeral=True)
-            return
-
-        # Placeholder for conversation history. Real history would be built up via advance_dialogue.
-        conversation_history = session_data.get('state_variables', {}).get('history', [])
-
-
+        # Player's current message is not yet in history for AI generation context
         ai_response_text = await openai_service.generate_npc_response(
-            npc_name=npc_name_display,
-            npc_persona=npc_persona_str,
-            npc_description=npc_description_str,
-            conversation_history=conversation_history,
-            player_message=message,
-            # language=language # Pass language if your OpenAI service supports it
+            npc_name=npc_actual_name,
+            npc_persona=npc_persona,
+            npc_description=npc_description,
+            conversation_history=conversation_history, # Pass existing history
+            player_message=message
         )
 
         if not ai_response_text:
-            await interaction.followup.send(f"{npc_name_display} seems lost in thought and doesn't respond. (AI response generation failed)", ephemeral=True)
-            # Consider ending or cleaning up the started dialogue if AI fails
-            await dialogue_manager.end_dialogue(guild_id, dialogue_id)
+            await interaction.followup.send(f"{npc_actual_name} seems lost in thought and doesn't respond. (AI response generation failed)", ephemeral=True)
             return
 
-        # The calls to add_dialogue_entry are removed.
-        # Proper history update should happen via dialogue_manager.advance_dialogue
-        # For now, this means history won't be saved for this turn in the same way.
-        # await dialogue_manager.add_dialogue_entry(session.id, {"speaker": player_name_display, "line": message}, guild_id)
-        # await dialogue_manager.add_dialogue_entry(session.id, {"speaker": npc_name_display, "line": ai_response_text}, guild_id)
+        # --- Update History and Respond ---
+        # Record player's message
+        player_log_success = await db_service.update_dialogue_history(session_data['id'], {"speaker": player_name, "line": message})
+        # Record NPC's response
+        npc_log_success = await db_service.update_dialogue_history(session_data['id'], {"speaker": npc_actual_name, "line": ai_response_text})
 
-        # To make this command functional, one would typically call advance_dialogue here:
-        # action_data_for_advance = {"type": "text_response", "text": message, "ai_response": ai_response_text}
-        # await dialogue_manager.advance_dialogue(guild_id, dialogue_id, player_char.id, action_data_for_advance)
-        # This would also handle history and state updates internally.
-        # For this fix, I'm just commenting out the problematic lines.
-
-        # Log entry via db_service (optional, if DialogueManager doesn't handle all logging)
-        if db_service:
+        if player_log_success and npc_log_success:
+            # Add log entry for the dialogue turn
             try:
-                log_message = f"{player_name_display} spoke with {npc_name_display}."
-                # ... (rest of logging code, ensure player_char.id is used)
+                log_message = f"{player_name} spoke with {npc_actual_name}."
+                log_related_entities = {"npc_id": npc_id, "dialogue_id": session_data['id']}
+                log_context_data = {"dialogue_id": session_data['id'], "entries_added": 2}
+
+                await db_service.add_log_entry(
+                    guild_id=guild_id,
+                    event_type="PLAYER_DIALOGUE_TURN",
+                    message=log_message,
+                    player_id_column=player_id,
+                    related_entities=log_related_entities,
+                    context_data=log_context_data,
+                    channel_id=interaction.channel_id if interaction.channel else None
+                )
+                print(f"Log entry added for dialogue turn: Player {player_id}, NPC {npc_id}, Dialogue {session_data['id']}")
             except Exception as log_e:
                 print(f"Error adding log entry for dialogue turn: {log_e}")
+                # Non-fatal to command execution
 
-        embed = discord.Embed(title=f"Talking with {npc_name_display}", color=discord.Color.blue())
-        embed.add_field(name=player_name_display, value=message, inline=False)
-        embed.add_field(name=npc_name_display, value=ai_response_text, inline=False)
-        embed.set_footer(text=f"Dialogue ID: {dialogue_id}") # Use dialogue_id
+        embed = discord.Embed(
+            title=f"Talking with {npc_actual_name}",
+            color=discord.Color.blue() # Or any other color
+        )
+        name_to_display = player_name or interaction.user.display_name
+        embed.add_field(name=name_to_display, value=message, inline=False)
+        embed.add_field(name=npc_actual_name, value=ai_response_text, inline=False)
+
+        # Optionally, add a footer or timestamp
+        embed.set_footer(text=f"Dialogue ID: {session_data['id']}")
+
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
         print(f"Error in /talk command: {e}")
         traceback.print_exc()
         await interaction.followup.send("An unexpected error occurred while trying to talk to the NPC.", ephemeral=True)
-
-
-@app_commands.command(name="end_turn", description="Завершить свой ход и ждать обработки действий.")
-async def cmd_end_turn(interaction: Interaction):
-    await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client) # Correct type hint using cast
-
-    try:
-        if not bot.game_manager or not bot.game_manager.character_manager:
-            await interaction.followup.send("Error: Core game services (Character Manager) are not fully initialized.", ephemeral=True)
-            return
-
-        character_manager: Optional['CharacterManager'] = bot.game_manager.character_manager # Type hint as Optional
-        if not character_manager: # Explicit check
-             await interaction.followup.send("Error: CharacterManager is not available.", ephemeral=True)
-             return
-
-        guild_id = str(interaction.guild_id)
-        discord_user_id = interaction.user.id
-
-        char_model: Optional['CharacterModel'] = character_manager.get_character_by_discord_id(guild_id=guild_id, discord_user_id=discord_user_id) # Removed await
-
-        if not char_model:
-            await interaction.followup.send("Не удалось найти вашего персонажа. Используйте `/start` для создания.", ephemeral=True)
-            return
-
-        if char_model.current_game_status == 'ожидание_обработку':
-            await interaction.followup.send("Вы уже завершили свой ход. Ожидайте обработки.", ephemeral=True)
-            return
-
-        char_model.current_game_status = 'ожидание_обработку'
-        # Removed: char_model.collected_actions_json = "[]"
-
-        character_manager.mark_character_dirty(guild_id, char_model.id)
-        await character_manager.save_character(char_model, guild_id=guild_id) # Assuming save_character is async
-
-        await interaction.followup.send("Ваш ход завершен. Действия будут обработаны.", ephemeral=True)
-
-    except Exception as e:
-        print(f"Error in /end_turn command: {e}")
-        traceback.print_exc()
-        await interaction.followup.send("Произошла ошибка при завершении хода.", ephemeral=True)
-
-@app_commands.command(name="end_party_turn", description="Завершить ход для вашей группы в текущей локации.")
-async def cmd_end_party_turn(interaction: Interaction):
-    await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client) # Correct type hint using cast
-    updated_member_names = []
-
-    try:
-        if not bot.game_manager or \
-           not bot.game_manager.character_manager or \
-           not bot.game_manager.party_manager:
-            await interaction.followup.send("Error: Core game services (Character, Party) are not fully initialized.", ephemeral=True)
-            return
-
-        game_mngr: 'GameManager' = bot.game_manager # For clarity
-        # Type hints as Optional and add explicit checks if necessary, or rely on the guard above.
-        character_manager: Optional['CharacterManager'] = game_mngr.character_manager
-        party_manager: Optional['PartyManager'] = game_mngr.party_manager
-
-        if not character_manager or not party_manager: # Explicit check after assignment
-            await interaction.followup.send("Error: CharacterManager or PartyManager is not available after initial check.", ephemeral=True)
-            return
-
-        guild_id = str(interaction.guild_id)
-        discord_user_id = interaction.user.id
-
-        # --- Get Sender's Character and Party ---
-        sender_char: Optional['CharacterModel'] = character_manager.get_character_by_discord_id(guild_id=guild_id, discord_user_id=discord_user_id) # Removed await
-        if not sender_char:
-            await interaction.followup.send("Не удалось найти вашего персонажа. Используйте `/start`.", ephemeral=True)
-            return
-
-        language = sender_char.selected_language or "en"
-
-        if not sender_char.party_id:
-            await interaction.followup.send("Вы не состоите в группе.", ephemeral=True)
-            return
-
-        # Assuming party_manager.get_party is not async, remove await if so. For now, keep await as per original.
-        # If PartyManager.get_party is not async, this will cause a TypeError.
-        # Based on typical manager patterns, it might be non-async if it's a cache lookup.
-        # For this subtask, I will assume it's not async if it's a simple cache lookup, otherwise keep await.
-        # Let's assume it's a cache lookup for now and remove await.
-        party = party_manager.get_party(party_id=sender_char.party_id, guild_id=guild_id)
-        if not party:
-            await interaction.followup.send(f"Не удалось найти вашу группу (ID: {sender_char.party_id}). Это может быть ошибка данных.", ephemeral=True)
-            return
-        
-        sender_char_location_id = sender_char.location_id
-        sender_name_display = sender_char.name_i18n.get(language, sender_char.name_i18n.get('en', 'Unknown Player'))
-        processed_members_count = 0
-
-        if sender_char.current_game_status != 'ожидание_обработку':
-            sender_char.current_game_status = 'ожидание_обработку'
-            # Note: собранные_действия_JSON for the sender should ideally be cleared by their own /end_turn.
-            # If /end_party_turn is the *only* way they end their turn, then actions should be cleared here.
-            # Assuming /end_turn is preferred for individual action clearing.
-            await character_manager.update_character(sender_char)
-            processed_members_count += 1
-            updated_member_names.append(getattr(sender_char, 'name_i18n', {}).get('en', 'Unknown Character'))
-            character_manager.mark_character_dirty(guild_id, sender_char.id)
-            await character_manager.save_character(sender_char, guild_id=guild_id)
-            updated_member_names.append(sender_name_display)
-
-        for member_char_id in party.player_ids_list:
-            if member_char_id == sender_char.id:
-                continue
-
-            member_char: Optional['CharacterModel'] = character_manager.get_character(guild_id=guild_id, character_id=member_char_id) # Removed await
-            
-            if member_char and member_char.location_id == sender_char_location_id:
-                if member_char.current_game_status != 'ожидание_обработку':
-                    member_char.current_game_status = 'ожидание_обработку'
-                    # As with sender, assume individual /end_turn handles action clearing.
-                    await character_manager.update_character(member_char)
-                    processed_members_count += 1
-                    updated_member_names.append(getattr(member_char, 'name_i18n', {}).get('en', 'Unknown Character'))
-                    character_manager.mark_character_dirty(guild_id, member_char.id)
-                    await character_manager.save_character(member_char, guild_id=guild_id)
-                    member_name_display = member_char.name_i18n.get(language, member_char.name_i18n.get('en', 'Another Player'))
-                    updated_member_names.append(member_name_display)
-            elif member_char:
-                pass
-            else:
-                print(f"Warning: Character not found for ID {member_char_id} in party {party.id} (guild {guild_id}).")
-
-        if updated_member_names:
-            await interaction.followup.send(f"Ход завершен для следующих членов вашей группы в локации '{sender_char_location_id}': {', '.join(updated_member_names)}. Ожидайте обработки.", ephemeral=False)
-        else:
-            await interaction.followup.send("Все члены вашей группы в текущей локации уже завершили свой ход. Ожидайте обработки.", ephemeral=True)
-
-        # PartyManager.check_and_process_party_turn is async
-        if party_manager: # ensure party_manager is not None (already checked but good practice)
-            if not sender_char_location_id: # Check if location_id is None
-                await interaction.followup.send("Ваш персонаж (отправитель) не имеет местоположения. Невозможно завершить ход группы.", ephemeral=True)
-                return
-
-            await party_manager.check_and_process_party_turn(
-                party_id=party.id,
-                location_id=sender_char_location_id, # Now checked for None
-                guild_id=guild_id,
-                game_manager=game_mngr
-            )
-
-    except Exception as e:
-        print(f"Error in /end_party_turn command: {e}")
-        traceback.print_exc()
-        error_message = "Произошла непредвиденная ошибка при завершении хода группы."
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.send_message(error_message, ephemeral=True)
-            except discord.errors.InteractionResponded: # If somehow it got responded to
-                 await interaction.followup.send(error_message, ephemeral=True)
-        else:
-            await interaction.followup.send(error_message, ephemeral=True)
