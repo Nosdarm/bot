@@ -4,8 +4,6 @@ from typing import TYPE_CHECKING, cast # Added cast
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot # Keep for type hinting client
-# Actual import for runtime use with cast
-from bot.bot_core import RPGBot
 
 
 TEST_GUILD_IDS = [] # Add your test server ID(s) - this can be populated from settings or RPGBot

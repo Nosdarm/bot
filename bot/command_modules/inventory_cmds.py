@@ -5,8 +5,8 @@ from typing import Optional, TYPE_CHECKING, cast, Dict, Any # Added cast, Dict, 
 import traceback # For error logging
 
 # Corrected imports
-from bot.bot_core import RPGBot
 if TYPE_CHECKING:
+    from bot.bot_core import RPGBot
     # from bot.services.db_service import DBService # No longer directly used by commands
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.item_manager import ItemManager

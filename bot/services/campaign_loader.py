@@ -162,4 +162,3 @@ if __name__ == '__main__':
     os.remove(dummy_file_path)
     os.remove(invalid_json_path)
     print("\nCleaned up dummy files.")
-

@@ -8,8 +8,8 @@ import traceback
 import json # Added for JSON operations
 
 # Corrected imports
-from bot.bot_core import RPGBot
 if TYPE_CHECKING:
+    from bot.bot_core import RPGBot
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.models.character import Character as CharacterModel
 
