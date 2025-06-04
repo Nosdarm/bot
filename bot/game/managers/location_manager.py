@@ -404,10 +404,11 @@ class LocationManager:
              'is_active': True,
          }
 
-        self._location_instances.setdefault(guild_id_str, {})[new_instance_id] = instance_for_cache
-        self._dirty_instances.setdefault(guild_id_str, set()).add(new_instance_id)
+         self._location_instances.setdefault(guild_id_str, {})[new_instance_id] = instance_for_cache
+         self._dirty_instances.setdefault(guild_id_str, set()).add(new_instance_id)
 
          print(f"LocationManager: Instance {new_instance_id} created and added to cache and marked dirty for guild {guild_id_str}. Template: {template_id}, Name: '{resolved_instance_name}'.")
+
 
          return instance_for_cache
 
@@ -666,6 +667,11 @@ class LocationManager:
         #      mgr = kwargs.get('party_manager', self._party_manager)
         #      update_location_method_name = 'update_party_location'
         #      manager_attr_name = '_party_manager'
+        # TODO: Add other entity types like 'Party'
+        # elif entity_type == 'Party':
+        #      mgr = kwargs.get('party_manager', self._party_manager)
+        #      update_location_method_name = 'update_party_location'
+        #      manager_attr_name = '_party_manager'
         else:
             print(f"LocationManager: Error: Movement not supported for entity type {entity_type} for guild {guild_id_str}.")
             send_cb_factory = kwargs.get('send_callback_factory', self._send_callback_factory)
@@ -714,6 +720,11 @@ class LocationManager:
             await self.handle_entity_departure(from_location_id, entity_id, entity_type, **departure_context)
 
         try:
+            await getattr(mgr, update_location_method_name)(
+                 entity_id,
+                 to_location_id,
+                 context=movement_context
+            )
             await getattr(mgr, update_location_method_name)(
                  entity_id,
                  to_location_id,
@@ -819,6 +830,7 @@ class LocationManager:
             print(f"LocationManager: Executing {len(triggers)} OnExit triggers for {entity_type} {entity_id} from location {location_id} (guild {guild_id_str}).")
             try:
                  # --- Начало блока try (отступ 4 пробела от if) ---
+                 # --- Начало блока try (отступ 4 пробела от if) ---
                  trigger_context = {
                      **kwargs,
                      'location_instance_id': location_id,
@@ -829,6 +841,11 @@ class LocationManager:
                  }
                  await engine.execute_triggers(triggers, context=trigger_context)
                  print(f"LocationManager: OnExit triggers executed for {entity_type} {entity_id}.")
+            # --- Конец блока try ---
+            except Exception as e: # <--- except должен быть на том же уровне отступа, что и try
+                 print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
+                 traceback.print_exc() # <--- print и traceback должны быть внутри except блока (отступ 4 пробела от except)
+        # --- Конец блока if ---
             # --- Конец блока try ---
             except Exception as e: # <--- except должен быть на том же уровне отступа, что и try
                  print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
@@ -867,6 +884,7 @@ class LocationManager:
 
                   if instance_id and is_active:
                        try: # <-- Corrected Indentation Start
+                       try: # <-- Corrected Indentation Start
                             template_id = instance_data.get('template_id')
                             template = self.get_location_static(guild_id_str, template_id)
 
@@ -881,7 +899,11 @@ class LocationManager:
                             )
 
                        except Exception as e: # <-- Corrected Indentation (aligned with try)
+
+                       except Exception as e: # <-- Corrected Indentation (aligned with try)
                            print(f"LocationManager: ❌ Error processing tick for location instance {instance_id} in guild {guild_id_str}: {e}")
+                           traceback.print_exc() # <-- Corrected Indentation (aligned with print above)
+
                            traceback.print_exc() # <-- Corrected Indentation (aligned with print above)
 
          elif rule_engine:
