@@ -152,6 +152,9 @@ class StatusManager:
     # Для простоты, пока сделаем, что get_status_effect - основной метод для получения по ID+guild_id.
     # get_status_effect_instance, если он нужен, должен работать по guild_id.
 
+    # TODO: Add a public method like get_statuses_on_target_by_type(self, guild_id: str, target_id: str, target_type: str, status_type_filter: str) -> List[StatusEffect]
+    # This would allow RuleEngine and other modules to query statuses by type without accessing _status_effects directly.
+    # It should iterate self._status_effects.get(guild_id, {}).values() and filter by target_id, target_type, and status_type_filter.
 
     # ИСПРАВЛЕНИЕ: add_status_effect_to_entity должен принимать guild_id и **kwargs.
     async def add_status_effect_to_entity(self,

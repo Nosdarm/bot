@@ -6,7 +6,6 @@ import discord
 import asyncio
 import traceback
 from typing import Optional, Dict, Any, List
-from typing import Optional, Dict, Any, List
 
 # Правильные импорты для slash commands и контекста
 from discord.ext import commands # Changed to commands.Bot
@@ -80,7 +79,7 @@ def load_settings_from_file(file_path: str) -> Dict[str, Any]:
 
 # --- Definition of the RPGBot class ---
 class RPGBot(commands.Bot): # Changed base class to commands.Bot
-    def __init__(self, game_manager: Optional[GameManager], openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
+    def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
         super().__init__(command_prefix=command_prefix, intents=intents)
         self.game_manager = game_manager
         self.debug_guild_ids = debug_guild_ids # Store it for later use in on_ready tree sync
@@ -100,23 +99,57 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
 
     async def setup_hook(self):
         print("RPGBot: Running setup_hook...")
-        # TODO: Review if global_openai_service is still needed by any command module directly
-        # If so, they need to be updated to use self.openai_service or self.game_manager.openai_service
-        global global_openai_service
-        global_openai_service = self.openai_service
+        # This approach assumes command functions are decorated with @slash_command
+        # and are available in the imported modules.
+        # discord.py V2 automatically discovers these in cogs or if added via self.add_application_command.
+        # For functions directly decorated, we need to add them to the CommandTree.
 
-        # TODO: Review global_game_manager usage in command modules.
-        # Commands should ideally get GameManager via ctx.bot.game_manager
-        global global_game_manager
-        global_game_manager = self.game_manager
+        # General commands
+        self.tree.add_command(bot.command_modules.general_cmds.cmd_ping)
 
-        self.add_application_commands_from_modules()
+        # Game setup commands
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_new_character) # New /start command
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_bot_language) # Add new /set_bot_language command
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_master_channel)
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_system_channel)
+        # TODO: Add other game_setup_cmds (set_gm, set_gm_channel, etc.)
+
+        # Exploration commands
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_look)
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_move)
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_check)
+
+        # Action commands
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_interact) # Placeholder, needs refactor
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_fight) # Refactored from cmd_attack
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_talk)
+
+        # Inventory commands
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_inventory)
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_pickup)
+
+        # Utility commands
+        self.tree.add_command(bot.command_modules.utility_cmds.cmd_undo)
+        self.tree.add_command(bot.command_modules.utility_cmds.cmd_lang) # Add the new /lang command
+
+        # Simulation Trigger Command
+        # cmd_gm_simulate is already an app_command.Command, so it should be added directly.
+        # Ensure cmd_gm_simulate is defined or imported correctly if it's not part of a cog.
+        # For now, assuming it's globally available as in the original file structure.
+        self.tree.add_command(cmd_gm_simulate) # Defined below in bot_core.py
+
+        # Add Cogs
+        await self.add_cog(MasterCommandsCog(self))
+        print("RPGBot: MasterCommandsCog added.")
+
+        # Potentially add other cogs here if they are converted
+        # e.g., await self.add_cog(GeneralCommandsCog(self))
+
+        print("RPGBot: setup_hook completed.")
+
 
     async def on_ready(self):
-        if self.user:
-            print(f'Logged in as {self.user.name} ({self.user.id})')
-        else:
-            print("Bot logged in, but self.user is None.") # Or handle as an error
+        print(f'Logged in as {self.user.name} ({self.user.id})')
         if self.game_manager:
             print("GameManager is initialized in RPGBot.")
 
@@ -146,9 +179,8 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
         # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_join_game) # Placeholder
         self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_new_character) # New /start command
         self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_bot_language) # Add new /set_bot_language command
-        # TODO: Verify and restore cmd_set_master_channel and cmd_set_system_channel if they exist in game_setup_cmds.py
-        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_master_channel)
-        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_system_channel)
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_master_channel)
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_system_channel)
         # TODO: Add other game_setup_cmds (set_gm, set_gm_channel, etc.)
 
         # Exploration commands
@@ -183,18 +215,10 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
     if _rpg_bot_instance_for_global_send:
         channel = _rpg_bot_instance_for_global_send.get_channel(channel_id)
         if channel:
-            # Check if the channel type is appropriate for sending messages
-            if isinstance(channel, (discord.TextChannel, discord.Thread, discord.DMChannel, discord.VoiceChannel)):
-                try:
-                    await channel.send(content, **kwargs)
-                except discord.errors.Forbidden:
-                    print(f"Error: Bot does not have permissions to send messages to channel {channel_id}.")
-                except discord.errors.HTTPException as e:
-                    print(f"Error: Failed to send message to channel {channel_id} due to HTTP exception: {e}")
-                except Exception as e:
-                    print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
-            else:
-                print(f"Warning: Channel {channel_id} is of type {type(channel).__name__}, which cannot send messages.")
+            try:
+                await channel.send(content, **kwargs)
+            except Exception as e:
+                print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
         else:
             print(f"Warning: Channel {channel_id} not found by global_send_message.")
     else:
@@ -225,29 +249,16 @@ async def cmd_gm_simulate(interaction: Interaction): # Changed ctx to interactio
     #     await interaction.response.send_message("**Мастер:** Только Истинный Мастер может управлять ходом времени!", ephemeral=True)
     #     return
 
-    # TODO: Update is_master_or_admin and is_gm_channel to accept interaction and use game_mngr
-    # from bot.command_modules.game_setup_cmds import is_master_or_admin
-    # For now, assume it's okay or True for testing this structural change
-    # if not is_master_or_admin(interaction, game_mngr): # Placeholder for updated check
-    #     await interaction.response.send_message("**Мастер:** Только Истинный Мастер может управлять ходом времени!", ephemeral=True)
-    #     return
-
     await interaction.response.defer(ephemeral=True) # Defer response
 
-    if not interaction.guild_id:
-        await interaction.followup.send("**Мастер:** Эту команду можно использовать только на сервере (в гильдии).", ephemeral=True)
-        return
-
     if game_mngr:
-        try:
-            await game_mngr.trigger_manual_simulation_tick(server_id=interaction.guild_id)
-            await interaction.followup.send("**Мастер:** Шаг симуляции мира (ручной) завершен!")
-        except Exception as e:
-            print(f"Error in cmd_gm_simulate calling trigger_manual_simulation_tick: {e}")
-            traceback.print_exc()
-            await interaction.followup.send(f"**Мастер:** Ошибка при выполнении ручного шага симуляции: {e}", ephemeral=True)
+        await game_mngr.run_simulation_tick(
+            server_id=interaction.guild_id, # Use interaction.guild_id
+            # send_message_callback is handled by GameManager's internal setup
+        )
+        await interaction.followup.send("**Мастер:** Шаг симуляции мира завершен!")
     else:
-        await interaction.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен или игра не начата. Используйте `/start_game`.", ephemeral=True)
+        await interaction.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен или игра не начата. Используйте `/start_game`.")
 
 
 # --- Main Bot Entry Point ---
@@ -328,10 +339,6 @@ async def start_bot():
     )
     rpg_bot.game_manager = game_manager # Now set the game_manager in RPGBot
 
-    # Update the global_game_manager reference now that it's fully initialized
-    # TODO: phase this out by updating command modules
-    global global_game_manager
-    global_game_manager = game_manager
     # Update the global_game_manager reference now that it's fully initialized
     # TODO: phase this out by updating command modules
     global global_game_manager

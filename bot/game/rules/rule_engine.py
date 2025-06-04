@@ -240,15 +240,39 @@ class RuleEngine:
             print(f"RuleEngine: Checking condition type '{ctype}' for entity '{entity_id}' ({entity_type}) with data: {data}")
 
             if ctype == 'has_item' and im:
-                if entity_id and entity_type: # Нужны ID и тип сущности
-                    met = await im.check_entity_has_item(
-                        entity_id, # Передаем ID
-                        entity_type, # Передаем тип
-                        item_template_id=data.get('item_template_id'),
-                        item_id=data.get('item_id'),
-                        quantity=data.get('quantity', 1),
-                        context=context # Передаем контекст дальше
-                    )
+                item_template_id_condition = data.get('item_template_id')
+                item_id_condition = data.get('item_id') # Instance ID
+                quantity_condition = data.get('quantity', 1)
+
+                if entity_id and entity_type and (item_template_id_condition or item_id_condition):
+                    # ItemManager does not have check_entity_has_item. We need to implement the logic here.
+                    # guild_id should be in context
+                    guild_id_from_context = context.get('guild_id')
+                    if guild_id_from_context:
+                        owned_items = im.get_items_by_owner(guild_id_from_context, entity_id)
+                        found_item_count = 0
+                        for item_instance_dict in owned_items:
+                            matches_template = (item_template_id_condition and
+                                                item_instance_dict.get('template_id') == item_template_id_condition)
+                            matches_instance_id = (item_id_condition and
+                                                   item_instance_dict.get('id') == item_id_condition)
+
+                            if item_id_condition: # If checking for a specific instance
+                                if matches_instance_id:
+                                    found_item_count += item_instance_dict.get('quantity', 0)
+                                    # If specific instance ID is checked, typically quantity check is against this one item.
+                                    # Break if this specific item is found, sum its quantity.
+                                    break
+                            elif matches_template: # If checking by template, sum quantities of all matching
+                                found_item_count += item_instance_dict.get('quantity', 0)
+
+                        if found_item_count >= quantity_condition:
+                            met = True
+                    else:
+                        print(f"RuleEngine: Warning: guild_id not in context for 'has_item' check.")
+                else:
+                    print(f"RuleEngine: Warning: Insufficient data for 'has_item' check (entity_id, entity_type, item_template_id/item_id).")
+
             elif ctype == 'in_location' and lm: # Ln 260 (approx - from previous screen)
                 loc_id_in_cond = data.get('location_id')
                 # Использование curr_loc = getattr(entity, 'location_id', None) в цикле может вызвать проблемы Pylance
@@ -265,8 +289,22 @@ class RuleEngine:
                 status_type = data.get('status_type')
                 if entity_id and entity_type and status_type:
                     # Предполагаем, что get_status_effects_on_entity_by_type принимает id, type, status_type и context
-                    statuses = sm.get_status_effects_on_entity_by_type(entity_id, entity_type, status_type, context=context) # Предполагаем синхронный метод
-                    met = bool(statuses) # Условие выполнено, если найдены статусы данного типа
+                    # StatusManager does not have get_status_effects_on_entity_by_type.
+                    # We need to iterate through all statuses for the entity in the guild.
+                    guild_id_from_context = context.get('guild_id')
+                    if guild_id_from_context:
+                        # Accessing protected member _status_effects as there's no public getter for all statuses of an entity by type.
+                        guild_statuses_cache = sm._status_effects.get(guild_id_from_context, {})
+                        for effect_instance in guild_statuses_cache.values():
+                            if (effect_instance.target_id == entity_id and
+                                effect_instance.target_type == entity_type and
+                                effect_instance.status_type == status_type):
+                                met = True
+                                break # Found at least one instance of the status type
+                    else:
+                        print(f"RuleEngine: Warning: guild_id not in context for 'has_status' check.")
+                else:
+                    print(f"RuleEngine: Warning: Insufficient data for 'has_status' check (entity_id, entity_type, status_type).")
             elif ctype == 'stat_check':
                 stat_name = data.get('stat')
                 threshold = data.get('threshold')
@@ -426,18 +464,24 @@ class RuleEngine:
         cman: Optional["CombatManager"] = context.get('combat_manager') # Renamed 'combat' to 'cman' to avoid confusion with Combat model
 
         # Получаем участников боя через CombatManager из контекста
-        if cman:
-            # Предполагаем, что get_living_participants принимает combat.id и context
-            living = await cman.get_living_participants(combat.id, context=context) # Предполагаем async метод
-            # Ищем первую живую цель, которая не является этим NPC
-            for p in living:
-                if p.entity_id != npc.id:
-                    print(f"RuleEngine: NPC {npc.id} choosing attack on {p.entity_id} in combat {combat.id}.")
-                    # Возвращаем словарь, описывающий действие
-                    return {'type': 'combat_attack', 'target_id': p.entity_id, 'target_type': p.entity_type, 'attack_type': 'basic_attack'} # Пример структуры действия
+        if cman: # cman is CombatManager instance from context
+            # CombatManager does not have get_living_participants.
+            # Combat object (passed as `combat`) has `combat.participants` (List[CombatParticipant])
+            # CombatParticipant has `hp` attribute.
+            living_participants_in_combat = [
+                p_obj for p_obj in combat.participants
+                if isinstance(p_obj, CombatParticipant) and p_obj.hp > 0
+            ]
 
-        # Если не найдена цель или нет менеджера, NPC может бездействовать
-        print(f"RuleEngine: NPC {npc.id} not choosing combat action (no targets or combat manager).")
+            # Ищем первую живую цель, которая не является этим NPC
+            for p_target_obj in living_participants_in_combat:
+                if p_target_obj.entity_id != npc.id: # npc is the one choosing action
+                    print(f"RuleEngine: NPC {npc.id} choosing attack on {p_target_obj.entity_id} (Type: {p_target_obj.entity_type}) in combat {combat.id}.")
+                    # Возвращаем словарь, описывающий действие
+                    return {'type': 'combat_attack', 'target_id': p_target_obj.entity_id, 'target_type': p_target_obj.entity_type, 'attack_type': 'basic_attack'}
+
+        # Если не найдена цель или нет CombatManager, NPC может бездействовать
+        print(f"RuleEngine: NPC {npc.id} not choosing combat action (no living targets or CombatManager not available).")
         return {'type': 'idle', 'total_duration': None} # Пример структуры действия "бездействие"
 
 
@@ -1696,6 +1740,178 @@ class RuleEngine:
         return final_damage
 
     # --- Stubs for Other Key Missing Mechanics ---
+
+    async def process_entity_death(self, entity: Any, killer: Optional[Any] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        # entity is the one that died (Character or NPC model)
+        # killer is Optional, could be another entity or environment
+        # context should contain managers like item_manager, location_manager, etc.
+
+        entity_name = getattr(entity, 'name_i18n', {}).get('en', getattr(entity, 'id', 'Unknown Entity'))
+        entity_id = getattr(entity, 'id', 'UnknownID')
+        entity_type = type(entity).__name__
+
+        print(f"RuleEngine: Processing death for {entity_type} {entity_name} (ID: {entity_id})...")
+
+        death_outcomes = {"message": f"{entity_name} has died."}
+
+        killer_name = "Unknown Killer"
+        killer_id = "N/A"
+        killer_type_name = "N/A"
+
+        if killer:
+            killer_name = getattr(killer, 'name_i18n', {}).get('en', getattr(killer, 'id', 'Unknown Killer'))
+            killer_id = getattr(killer, 'id', 'N/A')
+            killer_type_name = type(killer).__name__
+            death_outcomes["message"] += f" Slain by {killer_name}."
+
+        # TODO: Implement actual death mechanics:
+        # 1. Drop items (use item_manager from context to move items to location or killer)
+        # 2. Create corpse item/marker (use item_manager/location_manager)
+        # 3. Apply reputation changes (use relationship_manager from context)
+        # 4. Trigger 'on_death' events/scripts associated with this entity type or specific entity.
+        # 5. Determine XP rewards for killer if applicable.
+
+        # Log the death
+        game_log_mgr = context.get('game_log_manager') if context else None
+        guild_id = context.get('guild_id') if context else None
+
+        if game_log_mgr and guild_id:
+            log_msg = f"{entity_name} (ID: {entity_id}, Type: {entity_type}) has died."
+            if killer:
+                log_msg += f" Slain by {killer_name} (ID: {killer_id}, Type: {killer_type_name})."
+
+            related_entities_list = [{"id": str(entity_id), "type": entity_type}]
+            if killer:
+                related_entities_list.append({"id": str(killer_id), "type": killer_type_name})
+
+            channel_id_for_log = None
+            loc_mgr = context.get('location_manager') if context else None
+            char_loc_id = getattr(entity, 'location_id', None)
+            if loc_mgr and char_loc_id and guild_id:
+                # Ensure get_location_instance is called correctly
+                location_instance_data = loc_mgr.get_location_instance(guild_id=str(guild_id), instance_id=str(char_loc_id))
+                if location_instance_data:
+                     channel_id_for_log = location_instance_data.get('channel_id')
+
+            try:
+                # Ensure related_entities is passed as a JSON string if the method expects that.
+                # Based on previous usage in exploration_cmds, it seems to expect a JSON string.
+                # However, if game_log_manager.log_event can handle a list of dicts, that's cleaner.
+                # For now, assuming it can handle a list of dicts. If not, json.dumps(related_entities_list)
+                await game_log_mgr.log_event(
+                    guild_id=str(guild_id),
+                    event_type="entity_death",
+                    message=log_msg,
+                    related_entities=related_entities_list, # Passing as list of dicts
+                    channel_id=channel_id_for_log,
+                    metadata={"killer_details": getattr(killer, 'to_dict', lambda: str(killer))() if killer else None}
+                )
+            except Exception as log_e:
+                print(f"RuleEngine: Error logging entity death: {log_e}")
+                traceback.print_exc()
+
+        return death_outcomes
+
+    async def process_entity_death(self, entity: Any, killer: Optional[Any] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        # entity is the one that died (Character or NPC model)
+        # killer is Optional, could be another entity or environment
+        # context should contain managers like item_manager, location_manager, etc.
+
+        entity_name = getattr(entity, 'name_i18n', {}).get('en', getattr(entity, 'id', 'Unknown Entity'))
+        entity_id = getattr(entity, 'id', 'UnknownID')
+        entity_type = type(entity).__name__
+
+        print(f"RuleEngine: Processing death for {entity_type} {entity_name} (ID: {entity_id})...")
+
+        death_outcomes = {"message": f"{entity_name} has died."}
+
+        killer_name = "Unknown Killer"
+        killer_id = "N/A"
+        killer_type_name = "N/A"
+
+        if killer:
+            killer_name = getattr(killer, 'name_i18n', {}).get('en', getattr(killer, 'id', 'Unknown Killer'))
+            killer_id = getattr(killer, 'id', 'N/A')
+            killer_type_name = type(killer).__name__
+            death_outcomes["message"] += f" Slain by {killer_name}."
+
+        # TODO: Implement actual death mechanics:
+        # 1. Drop items (use item_manager from context to move items to location or killer)
+        # 2. Create corpse item/marker (use item_manager/location_manager)
+        # 3. Apply reputation changes (use relationship_manager from context)
+        # 4. Trigger 'on_death' events/scripts associated with this entity type or specific entity.
+        # 5. Determine XP rewards for killer if applicable.
+
+        # Log the death
+        game_log_mgr = context.get('game_log_manager') if context else None
+        guild_id = context.get('guild_id') if context else None
+
+        if game_log_mgr and guild_id:
+            log_msg = f"{entity_name} (ID: {entity_id}, Type: {entity_type}) has died."
+            if killer:
+                log_msg += f" Slain by {killer_name} (ID: {killer_id}, Type: {killer_type_name})."
+
+            related_entities_list = [{"id": str(entity_id), "type": entity_type}]
+            if killer:
+                related_entities_list.append({"id": str(killer_id), "type": killer_type_name})
+
+            channel_id_for_log = None
+            loc_mgr = context.get('location_manager') if context else None
+            char_loc_id = getattr(entity, 'location_id', None)
+            if loc_mgr and char_loc_id and guild_id:
+                # Ensure get_location_instance is called correctly
+                location_instance_data = loc_mgr.get_location_instance(guild_id=str(guild_id), instance_id=str(char_loc_id))
+                if location_instance_data:
+                     channel_id_for_log = location_instance_data.get('channel_id')
+
+            try:
+                # Ensure related_entities is passed as a JSON string if the method expects that.
+                # Based on previous usage in exploration_cmds, it seems to expect a JSON string.
+                # However, if game_log_manager.log_event can handle a list of dicts, that's cleaner.
+                # For now, assuming it can handle a list of dicts. If not, json.dumps(related_entities_list)
+                await game_log_mgr.log_event(
+                    guild_id=str(guild_id),
+                    event_type="entity_death",
+                    message=log_msg,
+                    related_entities=related_entities_list, # Passing as list of dicts
+                    channel_id=channel_id_for_log,
+                    metadata={"killer_details": getattr(killer, 'to_dict', lambda: str(killer))() if killer else None}
+                )
+            except Exception as log_e:
+                print(f"RuleEngine: Error logging entity death: {log_e}")
+                traceback.print_exc()
+
+        return death_outcomes
+
+    async def check_combat_end_conditions(self, combat: "Combat", context: Dict[str, Any]) -> bool:
+        """
+        Checks if the combat has met conditions to end (e.g., all members of one team defeated).
+        This is a placeholder and should be implemented with actual game logic.
+        """
+        # Basic placeholder: Check if one team has no living participants
+        if not combat or not combat.participants:
+            return True # No participants, combat ends
+
+        teams: Dict[str, List[CombatParticipant]] = {}
+        for p in combat.participants:
+            if isinstance(p, CombatParticipant) and p.hp > 0: # Consider only living participants
+                team_id = getattr(p, 'team_id', 'default_team') # Assuming CombatParticipant might have a team_id
+                if team_id not in teams:
+                    teams[team_id] = []
+                teams[team_id].append(p)
+
+        # If only one team (or zero teams with living members) remains, combat ends.
+        # This definition of "team" is loose; real logic would use factions or player vs NPC.
+        # For now, if all living participants are on the same conceptual "team" (or no one is left), it ends.
+        # A more robust check would compare distinct team_ids of living participants.
+
+        living_teams_with_members = [team_id for team_id, members in teams.items() if members]
+
+        if len(living_teams_with_members) <= 1:
+            print(f"RuleEngine: Combat {combat.id} end condition met. Teams remaining with living members: {len(living_teams_with_members)}")
+            return True
+
+        return False
 
     async def get_game_time(self, context: Optional[Dict[str, Any]] = None) -> float:
         """

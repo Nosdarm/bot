@@ -76,9 +76,27 @@ class NpcSearchCompletionHandler(BaseNpcActionHandler): # Inherit from base (opt
                        **kwargs
                   }
                   # determine_search_loot needs context including managers
-                  found_items_info: List[Dict[str, Any]] = await self._rule_engine.determine_search_loot(search_context) # Example: [{'item_template_id': 'gold_coin', 'quantity': 5, 'destination': 'inventory'}, {'item_template_id': 'rusty_sword', 'destination': 'location'}]
+                  # RuleEngine does not have determine_search_loot. Using placeholder.
+                  # TODO: Ensure RuleEngine.resolve_loot_generation is appropriate for NPC searching action or create a dedicated method.
+                  found_items_info: List[Dict[str, Any]] = [] # Placeholder, original call: await self._rule_engine.determine_search_loot(search_context)
+                  # Example of what a call to resolve_loot_generation might look like:
+                  # location_id = getattr(npc, 'location_id', None)
+                  # if location_id and hasattr(self._rule_engine, 'resolve_loot_generation'):
+                  #     # This assumes the location itself has a loot_table_id or one can be inferred
+                  #     # For simplicity, we are not fetching location_data here to get loot_table_id.
+                  #     # A more complete implementation would fetch location data.
+                  #     loot_table_id_to_use = callback_data.get('loot_table_id', f"search_{location_id}") # Example
+                  #     generated_loot_result = await self._rule_engine.resolve_loot_generation(
+                  #         guild_id=kwargs.get('guild_id'),
+                  #         loot_table_id=loot_table_id_to_use,
+                  #         looter_entity=npc,
+                  #         context=search_context
+                  #     )
+                  #     found_items_info = generated_loot_result.get('items', [])
+                  # else:
+                  #     print(f"NpcSearchCompletionHandler: Could not determine location_id or resolve_loot_generation method not available in RuleEngine.")
 
-                  if found_items_info:
+                  if found_items_info: # This will be false with current placeholder
                        print(f"NpcSearchCompletionHandler: NPC {npc.id} found items during search: {found_items_info}")
                        items_added_count = 0
                        for item_info in found_items_info:
