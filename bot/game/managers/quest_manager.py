@@ -2,7 +2,7 @@ import json
 import uuid
 import time
 import traceback # Keep for potential future use, though not explicitly used in current methods
-from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     from bot.database.sqlite_adapter import SqliteAdapter
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.services.openai_service import OpenAIService
     from bot.ai.ai_response_validator import AIResponseValidator # Added validator
-    from typing import Union # For updated return type
+    # from typing import Union # For updated return type # Already added above
 
     # The import for 'Quest' model is removed as per instruction 10, assuming dicts are used.
 

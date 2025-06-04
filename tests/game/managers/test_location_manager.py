@@ -275,9 +275,6 @@ class TestLocationManagerAICreation(unittest.IsolatedAsyncioTestCase):
             event_action_processor=self.mock_event_action_processor,
             on_enter_action_executor=self.mock_on_enter_action_executor,
             stage_description_generator=self.mock_stage_description_generator
-            # AI mocks (multilingual_prompt_generator, openai_service, ai_validator) are not passed
-            # to LocationManager constructor based on current understanding of its __init__.
-            # Tests requiring these will set them directly on the manager instance if needed.
         )
 
         # Initialize LocationManager's internal caches
@@ -516,44 +513,52 @@ class TestLocationManagerTriggerHandling(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_handle_entity_arrival_success(self):
-        context = {"entity_id": self.entity_id, "entity_type": "Character"}
+        context_with_guild = {"guild_id": self.guild_id, "entity_id": self.entity_id, "entity_type": "Character"} # Add guild_id to context
 
         await self.location_manager.handle_entity_arrival(
-            self.guild_id, self.entity_id, "Character", self.location_instance_id, context
+            location_id=self.location_instance_id,
+            entity_id=self.entity_id,
+            entity_type="Character",
+            **context_with_guild # Pass context as kwargs
         )
 
         self.mock_rule_engine.execute_triggers.assert_called_once_with(
             self.location_template_data["on_enter_triggers"],
-            guild_id=self.guild_id,
-            context=context # Ensure context is passed through
+            context=unittest.mock.ANY # Check that context is passed
         )
-        # Verify context was augmented
-        self.assertEqual(context["location_instance_id"], self.location_instance_id)
-        self.assertEqual(context["location_template_id"], self.template_id)
+        # Verify context was augmented by handle_entity_arrival
+        passed_context = self.mock_rule_engine.execute_triggers.call_args.kwargs['context']
+        self.assertEqual(passed_context["location_instance_id"], self.location_instance_id)
+        self.assertEqual(passed_context["location_template_id"], self.template_id)
+        self.assertEqual(passed_context["guild_id"], self.guild_id)
 
 
     async def test_handle_entity_departure_success(self):
-        context = {"entity_id": self.entity_id, "entity_type": "Party"}
+        context_with_guild = {"guild_id": self.guild_id, "entity_id": self.entity_id, "entity_type": "Party"} # Add guild_id to context
 
         await self.location_manager.handle_entity_departure(
-            self.guild_id, self.entity_id, "Party", self.location_instance_id, context
+            location_id=self.location_instance_id,
+            entity_id=self.entity_id,
+            entity_type="Party",
+            **context_with_guild # Pass context as kwargs
         )
 
         self.mock_rule_engine.execute_triggers.assert_called_once_with(
             self.location_template_data["on_exit_triggers"],
-            guild_id=self.guild_id,
-            context=context
+            context=unittest.mock.ANY
         )
-        self.assertEqual(context["location_instance_id"], self.location_instance_id)
-        self.assertEqual(context["location_template_id"], self.template_id)
+        passed_context = self.mock_rule_engine.execute_triggers.call_args.kwargs['context']
+        self.assertEqual(passed_context["location_instance_id"], self.location_instance_id)
+        self.assertEqual(passed_context["location_template_id"], self.template_id)
+        self.assertEqual(passed_context["guild_id"], self.guild_id)
 
     async def test_handle_entity_arrival_no_template(self):
         # Instance exists, but its template doesn't (data integrity issue or mid-load)
         self.location_manager._location_templates[self.guild_id] = {} # Clear templates
-        context = {"entity_id": self.entity_id}
+        context_with_guild = {"guild_id": self.guild_id, "entity_id": self.entity_id}
 
         await self.location_manager.handle_entity_arrival(
-            self.guild_id, self.entity_id, "Character", self.location_instance_id, context
+            location_id=self.location_instance_id, entity_id=self.entity_id, entity_type="Character", **context_with_guild
         )
         self.mock_rule_engine.execute_triggers.assert_not_called()
 
@@ -562,10 +567,10 @@ class TestLocationManagerTriggerHandling(unittest.IsolatedAsyncioTestCase):
         template_no_triggers = self.location_template_data.copy()
         del template_no_triggers["on_enter_triggers"] # Or set to [] or None
         self.location_manager._location_templates[self.guild_id][self.template_id] = template_no_triggers
-        context = {"entity_id": self.entity_id}
+        context_with_guild = {"guild_id": self.guild_id, "entity_id": self.entity_id}
 
         await self.location_manager.handle_entity_arrival(
-            self.guild_id, self.entity_id, "Character", self.location_instance_id, context
+            location_id=self.location_instance_id, entity_id=self.entity_id, entity_type="Character", **context_with_guild
         )
         self.mock_rule_engine.execute_triggers.assert_not_called() # Or called with empty list
 
@@ -573,10 +578,10 @@ class TestLocationManagerTriggerHandling(unittest.IsolatedAsyncioTestCase):
         template_no_triggers = self.location_template_data.copy()
         template_no_triggers["on_exit_triggers"] = [] # Empty list
         self.location_manager._location_templates[self.guild_id][self.template_id] = template_no_triggers
-        context = {"entity_id": self.entity_id}
+        context_with_guild = {"guild_id": self.guild_id, "entity_id": self.entity_id}
 
         await self.location_manager.handle_entity_departure(
-            self.guild_id, self.entity_id, "Character", self.location_instance_id, context
+            location_id=self.location_instance_id, entity_id=self.entity_id, entity_type="Character", **context_with_guild
         )
         # Depending on implementation, execute_triggers might be called with an empty list, or not at all.
         # If it's called with an empty list, the mock should reflect that.
@@ -584,9 +589,9 @@ class TestLocationManagerTriggerHandling(unittest.IsolatedAsyncioTestCase):
         self.mock_rule_engine.execute_triggers.assert_not_called()
 
     async def test_handle_entity_arrival_instance_not_found(self):
-        context = {"entity_id": self.entity_id}
+        context_with_guild = {"guild_id": self.guild_id, "entity_id": self.entity_id}
         await self.location_manager.handle_entity_arrival(
-            self.guild_id, self.entity_id, "Character", "non_existent_instance", context
+            location_id="non_existent_instance", entity_id=self.entity_id, entity_type="Character", **context_with_guild
         )
         self.mock_rule_engine.execute_triggers.assert_not_called()
 
@@ -632,10 +637,7 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
             event_stage_processor=self.mock_event_stage_processor,
             event_action_processor=self.mock_event_action_processor,
             on_enter_action_executor=self.mock_on_enter_action_executor,
-            stage_description_generator=self.mock_stage_description_generator,
-            multilingual_prompt_generator=self.mock_prompt_generator,
-            openai_service=self.mock_openai_service,
-            ai_validator=self.mock_ai_validator
+            stage_description_generator=self.mock_stage_description_generator
         )
 
         # Initialize caches for testing purposes, assuming they are dicts

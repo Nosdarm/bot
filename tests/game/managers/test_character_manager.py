@@ -127,9 +127,8 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
 
         # Setup: one character already exists with that name
         existing_char = Character(
-            id="char1", guild_id=guild_id, discord_id="discord1", name=name,
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id="char1", guild_id=guild_id, discord_user_id=12345, name=name, name_i18n={"en": name, "ru": name},
+            stats={}, inventory=[], location_id="loc1"
         )
         self.char_manager._characters[guild_id] = {existing_char.id: existing_char}
         self.char_manager._discord_to_char_map[guild_id] = {existing_char.discord_id: existing_char.id}
@@ -185,10 +184,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     async def test_get_character_exists(self):
         guild_id = "guild1"
         char_id = "char1"
+        char_name = "TestChar"
         expected_char = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[], location_id="loc1", hp=100, max_health=100 # Added hp/max_health for consistency if tests rely on it
         )
         self.char_manager._characters[guild_id] = {char_id: expected_char}
 
@@ -207,10 +206,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         guild_id_1 = "guild1"
         guild_id_2 = "guild2"
         char_id = "char1"
+        char_name = "TestChar"
         expected_char_guild1 = Character(
-            id=char_id, guild_id=guild_id_1, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id_1, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[], location_id="loc1", hp=100, max_health=100
         )
         # Char exists in guild1
         self.char_manager._characters[guild_id_1] = {char_id: expected_char_guild1}
@@ -231,15 +230,15 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_character_by_discord_id_exists(self):
         guild_id = "guild1"
-        discord_id = "discord1"
+        discord_id_int = 12345 # Use int for discord_user_id
         char_id = "char1"
+        char_name = "TestChar"
         expected_char = Character(
-            id=char_id, guild_id=guild_id, discord_id=discord_id, name="TestChar",
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=discord_id_int, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[], location_id="loc1", hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: expected_char}
-        self.char_manager._discord_to_char_map[guild_id] = {discord_id: char_id}
+        self.char_manager._discord_to_char_map[guild_id] = {str(discord_id_int): char_id} # Map uses str
 
         retrieved_char = await self.char_manager.get_character_by_discord_id(guild_id, discord_id)
         self.assertEqual(retrieved_char, expected_char)
@@ -277,19 +276,18 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         char_name = "TestChar"
         char_id = "char1"
         expected_char = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name=char_name,
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[], location_id="loc1", hp=100, max_health=100
         )
         # Multiple characters can exist, ensure we find the right one
+        other_char_name = "OtherChar"
         other_char = Character(
-            id="char2", guild_id=guild_id, discord_id="discord2", name="OtherChar",
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id="char2", guild_id=guild_id, discord_user_id=67890, name=other_char_name, name_i18n={"en": other_char_name, "ru": other_char_name},
+            stats={}, inventory=[], location_id="loc1", hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: expected_char, "char2": other_char}
         # _discord_to_char_map is not directly used by get_character_by_name but good to keep consistent
-        self.char_manager._discord_to_char_map[guild_id] = {"discord1": char_id, "discord2": "char2"}
+        self.char_manager._discord_to_char_map[guild_id] = {"12345": char_id, "67890": "char2"}
 
 
         retrieved_char = await self.char_manager.get_character_by_name(guild_id, char_name)
@@ -309,12 +307,11 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         char_name_lookup = "testchar"
         char_id = "char1"
         expected_char = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name=char_name_original,
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name_original, name_i18n={"en": char_name_original, "ru": char_name_original},
+            stats={}, inventory=[], location_id="loc1", hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: expected_char}
-        self.char_manager._discord_to_char_map[guild_id] = {"discord1": char_id}
+        self.char_manager._discord_to_char_map[guild_id] = {"12345": char_id}
 
 
         retrieved_char = await self.char_manager.get_character_by_name(guild_id, char_name_lookup)
@@ -330,10 +327,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         guild_id = "guild1"
         char_id = "char1"
         new_location_id = "new_loc_id"
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="old_loc_id", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            location_id="old_loc_id", stats={}, hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -373,10 +370,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         char_id = "char1"
         item_id = "item1"
         quantity = 2
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={}, inventory=[], # Empty inventory
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            inventory=[], stats={}, hp=100, max_health=100 # Empty inventory
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -394,11 +391,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         item_id = "item1"
         initial_quantity = 1
         additional_quantity = 2
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={},
-            inventory=[{'item_id': item_id, 'quantity': initial_quantity}],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[{'item_id': item_id, 'quantity': initial_quantity}], hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -426,10 +422,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         guild_id = "guild1"
         char_id = "char1"
         item_id = "item1"
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[], hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -458,11 +454,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         item_id = "item1"
         initial_quantity = 5
         quantity_to_remove = 2
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={},
-            inventory=[{'item_id': item_id, 'quantity': initial_quantity}],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[{'item_id': item_id, 'quantity': initial_quantity}], hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -480,11 +475,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         item_id = "item1"
         initial_quantity = 3
         quantity_to_remove = 3 # Remove all
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={},
-            inventory=[{'item_id': item_id, 'quantity': initial_quantity}, {'item_id': 'item2', 'quantity': 1}],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[{'item_id': item_id, 'quantity': initial_quantity}, {'item_id': 'item2', 'quantity': 1}], hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -501,11 +495,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         item_id = "item1"
         initial_quantity = 2
         quantity_to_remove = 5 # More than available
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={},
-            inventory=[{'item_id': item_id, 'quantity': initial_quantity}],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[{'item_id': item_id, 'quantity': initial_quantity}], hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -519,11 +512,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         guild_id = "guild1"
         char_id = "char1"
         item_id_to_remove = "non_existent_item"
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={},
-            inventory=[{'item_id': "item1", 'quantity': 1}], # Character has item1
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[{'item_id': "item1", 'quantity': 1}], hp=100, max_health=100 # Character has item1
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -549,11 +541,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         char_id = "char1"
         item_id = "item1"
         initial_quantity = 5
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=100, stats={},
-            inventory=[{'item_id': item_id, 'quantity': initial_quantity}],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, inventory=[{'item_id': item_id, 'quantity': initial_quantity}], hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -578,10 +569,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     async def test_update_health_deal_damage(self):
         guild_id = "guild1"
         char_id = "char1"
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=80, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            hp=80.0, max_health=100.0, stats={}, inventory=[], is_alive=True # Ensure float for hp/max_health
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -597,10 +588,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     async def test_update_health_heal_character(self):
         guild_id = "guild1"
         char_id = "char1"
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=50, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            hp=50.0, max_health=100.0, stats={}, inventory=[], is_alive=True
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -613,10 +604,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     async def test_update_health_heal_above_max(self):
         guild_id = "guild1"
         char_id = "char1"
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=90, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            hp=90.0, max_health=100.0, stats={}, inventory=[], is_alive=True
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -629,10 +620,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     async def test_update_health_deal_lethal_damage(self):
         guild_id = "guild1"
         char_id = "char1"
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=20, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            hp=20.0, max_health=100.0, stats={}, inventory=[], is_alive=True
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -670,10 +661,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     async def test_update_health_already_dead_character(self):
         guild_id = "guild1"
         char_id = "char1"
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=0, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=False, level=1, experience=0 # Already dead
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            hp=0.0, max_health=100.0, stats={}, inventory=[], is_alive=False # Already dead
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -694,10 +685,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     async def test_handle_character_death_success(self):
         guild_id = "guild1"
         char_id = "char1"
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id="discord1", name="TestChar",
-            max_health=100, current_health=0, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0 # Still marked alive
+            id=char_id, guild_id=guild_id, discord_user_id=12345, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            hp=0.0, max_health=100.0, stats={}, inventory=[], is_alive=True # Still marked alive
         )
         self.char_manager._characters[guild_id] = {char_id: character}
         self.char_manager._dirty_characters[guild_id] = set()
@@ -768,8 +759,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         guild_id = "guild1"
         char1_id = "char1"
         char2_id = "char2"
-        char1 = Character(id=char1_id, guild_id=guild_id, discord_id="d1", name="Char1", max_health=100, current_health=100, stats={"str":10}, inventory=[{"item_id":"potion","quantity":1}], location_id="loc1", effects=["poisoned"], is_alive=True, level=1, experience=10)
-        char2 = Character(id=char2_id, guild_id=guild_id, discord_id="d2", name="Char2", max_health=120, current_health=50, stats={"dex":12}, inventory=[], location_id="loc2", effects=[], is_alive=False, level=2, experience=150)
+        char1_name = "Char1"
+        char2_name = "Char2"
+        char1 = Character(id=char1_id, guild_id=guild_id, discord_user_id=1, name=char1_name, name_i18n={"en": char1_name, "ru": char1_name}, max_health=100.0, hp=100.0, stats={"str":10}, inventory=[{"item_id":"potion","quantity":1}], location_id="loc1", status_effects=["poisoned"], is_alive=True, level=1, experience=10)
+        char2 = Character(id=char2_id, guild_id=guild_id, discord_user_id=2, name=char2_name, name_i18n={"en": char2_name, "ru": char_name}, max_health=120.0, hp=50.0, stats={"dex":12}, inventory=[], location_id="loc2", status_effects=[], is_alive=False, level=2, experience=150)
 
         self.char_manager._characters[guild_id] = {char1_id: char1, char2_id: char2}
         self.char_manager._dirty_characters[guild_id] = {char1_id, char2_id}
@@ -782,13 +775,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.assertIn("REPLACE INTO characters", args[0]) # Assuming REPLACE INTO for updates
 
         # Construct expected data for execute_many based on char1 and char2
+        # Note: The exact order and content of db_params in save_character needs to be matched
         expected_data = [
-            (char1.id, char1.guild_id, char1.discord_id, char1.name, char1.max_health, char1.current_health,
-             '{"str": 10}', '[{"item_id": "potion", "quantity": 1}]', char1.location_id, '["poisoned"]',
-             char1.is_alive, char1.level, char1.experience),
-            (char2.id, char2.guild_id, char2.discord_id, char2.name, char2.max_health, char2.current_health,
-             '{"dex": 12}', '[]', char2.location_id, '[]',
-             char2.is_alive, char2.level, char2.experience)
+            tuple(self.char_manager._character_to_db_params(char1).values()),
+            tuple(self.char_manager._character_to_db_params(char2).values())
         ]
         # Order of data might vary, so check contents
         self.assertCountEqual(args[1], expected_data)
@@ -819,7 +809,8 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     async def test_save_state_dirty_and_deleted_characters(self):
         guild_id = "guild1"
         char1_id = "char1"
-        char1 = Character(id=char1_id, guild_id=guild_id, discord_id="d1", name="Char1", max_health=100, current_health=100, stats={}, inventory=[], location_id="loc1", effects=[], is_alive=True, level=1, experience=0)
+        char1_name = "Char1"
+        char1 = Character(id=char1_id, guild_id=guild_id, discord_user_id=1, name=char1_name, name_i18n={"en": char1_name, "ru": char1_name}, stats={}, hp=100, max_health=100)
         deleted_id1 = "del_char1"
 
         self.char_manager._characters[guild_id] = {char1_id: char1}
@@ -963,14 +954,14 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     async def test_remove_character_success(self):
         guild_id = "guild1"
         char_id = "char1"
-        discord_id = "discord1"
+        discord_id_int = 12345
+        char_name = "TestChar"
         character = Character(
-            id=char_id, guild_id=guild_id, discord_id=discord_id, name="TestChar",
-            max_health=100, current_health=100, stats={}, inventory=[],
-            location_id="loc1", effects=[], is_alive=True, level=1, experience=0
+            id=char_id, guild_id=guild_id, discord_user_id=discord_id_int, name=char_name, name_i18n={"en": char_name, "ru": char_name},
+            stats={}, hp=100, max_health=100
         )
         self.char_manager._characters[guild_id] = {char_id: character}
-        self.char_manager._discord_to_char_map[guild_id] = {discord_id: char_id}
+        self.char_manager._discord_to_char_map[guild_id] = {str(discord_id_int): char_id}
         self.char_manager._dirty_characters[guild_id] = set() # Ensure it's not marked dirty by removal itself
         self.char_manager._deleted_characters_ids[guild_id] = set()
 
@@ -1027,11 +1018,12 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         # and adds to deleted list.
         guild_id = "guild1"
         char_id = "char1"
-        discord_id = "discord1"
-        character = Character(id=char_id, guild_id=guild_id, discord_id=discord_id, name="TestChar", max_health=100, current_health=100, stats={}, inventory=[], location_id="loc1", effects=[], is_alive=True, level=1, experience=0)
+        discord_id_int = 12345
+        char_name = "TestChar"
+        character = Character(id=char_id, guild_id=guild_id, discord_user_id=discord_id_int, name=char_name, name_i18n={"en": char_name, "ru": char_name}, stats={}, hp=100, max_health=100)
 
         self.char_manager._characters[guild_id] = {char_id: character}
-        self.char_manager._discord_to_char_map[guild_id] = {discord_id: char_id}
+        self.char_manager._discord_to_char_map[guild_id] = {str(discord_id_int): char_id}
         self.char_manager._dirty_characters[guild_id] = {char_id} # Mark as dirty
         self.char_manager._deleted_characters_ids[guild_id] = set()
 
