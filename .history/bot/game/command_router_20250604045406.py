@@ -152,7 +152,7 @@ class CommandRouter:
 
         party_action_processor: Optional["PartyActionProcessor"] = None, # Still needed for context
         event_action_processor: Optional["EventActionProcessor"] = None,
-        event_stage_processor: Optional["EventStageProcessor"] = None,
+        event_stage_processor: Optional["EventStage_processor"] = None, # Typo corrected? Or expected? Assuming expected.
         quest_manager: Optional["QuestManager"] = None, # Added QuestManager
         dialogue_manager: Optional["DialogueManager"] = None, # Added DialogueManager
         # Add other optional managers/processors needed for context
@@ -195,7 +195,7 @@ class CommandRouter:
         self._economy_manager = economy_manager
         self._party_action_processor = party_action_processor
         self._event_action_processor = event_action_processor
-        self._event_stage_processor = event_stage_processor
+        self._event_stage_processor = event_stage_processor # Typo corrected?
         self._quest_manager = quest_manager # Added QuestManager (duplicate assignment but harmless)
         self._dialogue_manager = dialogue_manager # Added DialogueManager
         self._game_log_manager = game_log_manager # Added GameLogManager
