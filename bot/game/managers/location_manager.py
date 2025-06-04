@@ -1320,5 +1320,33 @@ class LocationManager:
          if guild_id_str in self._location_instances and instance_id_str in self._location_instances[guild_id_str]:
               self._dirty_instances.setdefault(guild_id_str, set()).add(instance_id_str)
 
+    def find_active_instance_by_template_id(self, guild_id: str, template_id: str) -> Optional[Dict[str, Any]]:
+        """Finds the first active location instance for a given template ID in a guild."""
+        guild_id_str = str(guild_id)
+        template_id_str = str(template_id)
+        guild_instances = self._location_instances.get(guild_id_str, {})
+        for instance_data in guild_instances.values():
+            # Ensure instance_data is a dict before using .get()
+            if isinstance(instance_data, dict):
+                if instance_data.get('template_id') == template_id_str and instance_data.get('is_active', True):
+                    return instance_data
+            # If instance_data is not a dict (e.g., it's a Location object directly in cache)
+            elif hasattr(instance_data, 'template_id') and hasattr(instance_data, 'is_active') and hasattr(instance_data, 'id'):
+                if getattr(instance_data, 'template_id') == template_id_str and getattr(instance_data, 'is_active', True):
+                    # If it's an object, return its dict representation if consistent with other methods
+                    if hasattr(instance_data, 'to_dict') and callable(getattr(instance_data, 'to_dict')):
+                        return instance_data.to_dict()
+                    else: # Fallback if no to_dict, try to construct one (less ideal)
+                        return {
+                            'id': getattr(instance_data, 'id'),
+                            'template_id': getattr(instance_data, 'template_id'),
+                            'name': getattr(instance_data, 'name', ''), # Assuming name attribute exists
+                            'description': getattr(instance_data, 'description', ''), # Assuming description attribute
+                            'exits': getattr(instance_data, 'exits', {}), # Assuming exits attribute
+                            'state': getattr(instance_data, 'state', {}), # Assuming state attribute
+                            'is_active': getattr(instance_data, 'is_active', True)
+                            # Add other relevant fields as needed to match dict structure
+                        }
+        return None
 
 # --- Конец класса LocationManager ---
