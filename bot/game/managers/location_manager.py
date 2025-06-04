@@ -411,6 +411,8 @@ class LocationManager:
     # --- Dynamic Instance Management ---
     async def create_location_instance(self, guild_id: str, template_id: str, initial_state: Optional[Dict[str, Any]] = None, instance_name: Optional[str] = None, instance_description: Optional[str] = None, instance_exits: Optional[Dict[str, str]] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
          """Создает динамический инстанс локации из шаблона для определенной гильдии."""
+         ai_response_data = None
+         source_data = None
          guild_id_str = str(guild_id)
          print(f"LocationManager: Creating instance for guild {guild_id_str} from template {template_id} in memory...")
 

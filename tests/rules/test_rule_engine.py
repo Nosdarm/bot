@@ -64,7 +64,7 @@ class TestRuleEngine(unittest.IsolatedAsyncioTestCase):
         engine = RuleEngine(rules_data=rules)
 
         # Mock character
-        mock_character = Character(id="char1", discord_user_id=123, name_i18n={"en": "Tester"}, guild_id="test_guild")
+        mock_character = Character(id="char1", discord_user_id=123, name="Tester", name_i18n={"en": "Tester"}, guild_id="test_guild")
         mock_character.stats = {"intelligence": 14} # +2 modifier
         mock_character.skills = {"investigation": 3} # Skill value 3
 
@@ -113,10 +113,10 @@ class TestRuleEngine(unittest.IsolatedAsyncioTestCase):
             }
         }
         engine = RuleEngine(rules_data=rules)
-        mock_attacker = Character(id="attacker", discord_user_id=124, name_i18n={"en": "Attacker"}, guild_id="test_guild")
+        mock_attacker = Character(id="attacker", discord_user_id=124, name="Attacker", name_i18n={"en": "Attacker"}, guild_id="test_guild")
         mock_attacker.stats = {"strength": 10} # +0 modifier for simplicity
 
-        mock_defender = Character(id="defender", discord_user_id=125, name_i18n={"en": "Defender"}, guild_id="test_guild")
+        mock_defender = Character(id="defender", discord_user_id=125, name="Defender", name_i18n={"en": "Defender"}, guild_id="test_guild")
         mock_defender.stats = {} # Stats not directly used by defender in this specific test path
 
         # Mock dice roll for base damage
@@ -163,7 +163,7 @@ class TestRuleEngine(unittest.IsolatedAsyncioTestCase):
         # Mock CharacterManager for the mark_character_dirty call
         engine._character_manager = MagicMock()
 
-        char = Character(id="char1", discord_user_id=126, name_i18n={"en": "LvlUpTester"}, guild_id="test_guild")
+        char = Character(id="char1", discord_user_id=126, name="LvlUpTester", name_i18n={"en": "LvlUpTester"}, guild_id="test_guild")
         char.level = 1
         char.experience = 0
 
