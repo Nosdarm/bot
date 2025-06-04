@@ -5,6 +5,7 @@ import json
 import discord
 import asyncio
 import traceback
+import logging
 from typing import Optional, Dict, Any, List, cast
 from typing import Optional, Dict, Any, List
 from discord.abc import Messageable # Added for global_send_message
