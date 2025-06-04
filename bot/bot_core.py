@@ -36,6 +36,7 @@ import bot.command_modules.exploration_cmds
 import bot.command_modules.action_cmds
 import bot.command_modules.inventory_cmds
 import bot.command_modules.utility_cmds
+from bot.command_modules.master_cmds import MasterCommandsCog
 # Импортируйте другие command_modules здесь
 
 
@@ -93,7 +94,58 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
         # global_openai_service and global_game_manager are removed as per refactoring.
         # Command modules should access these via interaction.client (RPGBot instance).
 
-        self.add_application_commands_from_modules()
+        # self.add_application_commands_from_modules() # This will be handled by setup_hook
+
+    async def setup_hook(self):
+        print("RPGBot: Running setup_hook...")
+        # This approach assumes command functions are decorated with @slash_command
+        # and are available in the imported modules.
+        # discord.py V2 automatically discovers these in cogs or if added via self.add_application_command.
+        # For functions directly decorated, we need to add them to the CommandTree.
+
+        # General commands
+        self.tree.add_command(bot.command_modules.general_cmds.cmd_ping)
+
+        # Game setup commands
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_new_character) # New /start command
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_bot_language) # Add new /set_bot_language command
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_master_channel)
+        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_system_channel)
+        # TODO: Add other game_setup_cmds (set_gm, set_gm_channel, etc.)
+
+        # Exploration commands
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_look)
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_move)
+        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_check)
+
+        # Action commands
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_interact) # Placeholder, needs refactor
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_fight) # Refactored from cmd_attack
+        self.tree.add_command(bot.command_modules.action_cmds.cmd_talk)
+
+        # Inventory commands
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_inventory)
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_pickup)
+
+        # Utility commands
+        self.tree.add_command(bot.command_modules.utility_cmds.cmd_undo)
+        self.tree.add_command(bot.command_modules.utility_cmds.cmd_lang) # Add the new /lang command
+
+        # Simulation Trigger Command
+        # cmd_gm_simulate is already an app_command.Command, so it should be added directly.
+        # Ensure cmd_gm_simulate is defined or imported correctly if it's not part of a cog.
+        # For now, assuming it's globally available as in the original file structure.
+        self.tree.add_command(cmd_gm_simulate) # Defined below in bot_core.py
+
+        # Add Cogs
+        await self.add_cog(MasterCommandsCog(self))
+        print("RPGBot: MasterCommandsCog added.")
+
+        # Potentially add other cogs here if they are converted
+        # e.g., await self.add_cog(GeneralCommandsCog(self))
+
+        print("RPGBot: setup_hook completed.")
+
 
     async def on_ready(self):
         if self.user:
@@ -297,45 +349,7 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
         # The current structure already calls self.process_commands for prefixed messages.
         # Non-prefixed messages are now flowing through the NLU logic.
 
-    def add_application_commands_from_modules(self):
-        # This approach assumes command functions are decorated with @slash_command
-        # and are available in the imported modules.
-        # discord.py V2 automatically discovers these in cogs or if added via self.add_application_command.
-        # For functions directly decorated, we need to add them to the CommandTree.
-
-        # General commands
-        self.tree.add_command(bot.command_modules.general_cmds.cmd_ping)
-
-        # Game setup commands
-        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_game) # Placeholder
-        # self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_join_game) # Placeholder
-        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_start_new_character) # New /start command
-        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_bot_language) # Add new /set_bot_language command
-        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_master_channel)
-        self.tree.add_command(bot.command_modules.game_setup_cmds.cmd_set_system_channel)
-        # TODO: Add other game_setup_cmds (set_gm, set_gm_channel, etc.)
-
-        # Exploration commands
-        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_look)
-        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_move)
-        self.tree.add_command(bot.command_modules.exploration_cmds.cmd_check)
-
-        # Action commands
-        self.tree.add_command(bot.command_modules.action_cmds.cmd_interact) # Placeholder, needs refactor
-        self.tree.add_command(bot.command_modules.action_cmds.cmd_fight) # Refactored from cmd_attack
-        self.tree.add_command(bot.command_modules.action_cmds.cmd_talk)
-
-        # Inventory commands
-        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_inventory)
-        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_pickup)
-
-        # Utility commands
-        self.tree.add_command(bot.command_modules.utility_cmds.cmd_undo)
-        self.tree.add_command(bot.command_modules.utility_cmds.cmd_lang) # Add the new /lang command
-
-        # Simulation Trigger Command
-        # cmd_gm_simulate is already an app_command.Command, so it should be added directly.
-        self.tree.add_command(cmd_gm_simulate) # Defined below
+    # add_application_commands_from_modules method removed as its logic is moved to setup_hook.
 
 # --- Global Helper for sending messages (e.g., from GameManager) ---
 # This needs access to the bot instance.
