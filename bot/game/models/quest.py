@@ -23,23 +23,36 @@ class Quest(BaseModel):
                  consequences_summary_i18n: Optional[Dict[str, str]] = None,
                  # For backward compatibility
                  name: Optional[str] = None,
-                 description: Optional[str] = None):
+                 description: Optional[str] = None,
+                 # New fields for generated_quests mapping and type distinction
+                 title_i18n: Optional[Dict[str, str]] = None, # Alias for name_i18n from generated_quests
+                 stages_json_str: Optional[str] = None, # Raw JSON strings for deferred parsing
+                 rewards_json_str: Optional[str] = None,
+                 prerequisites_json_str: Optional[str] = None,
+                 consequences_json_str: Optional[str] = None,
+                 ai_prompt_context_json_str: Optional[str] = None,
+                 is_ai_generated: bool = False
+                 ):
         super().__init__(id)
 
+        # Handle name_i18n (priority: name_i18n, title_i18n, name, default)
         if name_i18n is not None:
             self.name_i18n = name_i18n
-        elif name is not None:
+        elif title_i18n is not None: # específico para generated_quests
+            self.name_i18n = title_i18n
+        elif name is not None: # compatibilidad hacia atrás
             self.name_i18n = {"en": name}
         else:
             self.name_i18n = {"en": "Unnamed Quest"}
 
+        # Handle description_i18n (priority: description_i18n, description, default)
         if description_i18n is not None:
             self.description_i18n = description_i18n
-        elif description is not None:
+        elif description is not None: # compatibilidad hacia atrás
             self.description_i18n = {"en": description}
         else:
             self.description_i18n = {"en": ""}
-            
+
         self.status = status
         self.influence_level = influence_level
         self.prerequisites = prerequisites if prerequisites is not None else []
@@ -93,7 +106,29 @@ class Quest(BaseModel):
         
         self.rewards = rewards if rewards is not None else {}
         self.npc_involvement = npc_involvement if npc_involvement is not None else {}
-        # self.guild_id = guild_id # Already set
+        self.is_ai_generated = is_ai_generated # Store the flag
+
+        # Store raw JSON strings if provided, to be parsed by manager or on demand
+        # This allows Quest model to be a data container without direct json.loads dependency here.
+        self.stages_json_str = stages_json_str
+        self.rewards_json_str = rewards_json_str
+        self.prerequisites_json_str = prerequisites_json_str
+        self.consequences_json_str = consequences_json_str
+        self.ai_prompt_context_json_str = ai_prompt_context_json_str
+
+        # Add a 'consequences' field for generated quests, distinct from 'connections'
+        self.consequences: Dict[str, Any] = {} # Parsed from consequences_json_str by manager if needed
+
+
+    @property
+    def name(self) -> str:
+        """Provides a plain text name for the quest, derived from name_i18n."""
+        # Assuming a default language preference can be accessed, e.g., from settings or a global context.
+        # For simplicity, using 'en' or the first available language.
+        default_lang = "en" # This could be configurable
+        if self.name_i18n:
+            return self.name_i18n.get(default_lang, next(iter(self.name_i18n.values()), str(self.id)))
+        return str(self.id) # Fallback to ID if name_i18n is empty or not set
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes the Quest object to a dictionary."""
@@ -103,14 +138,22 @@ class Quest(BaseModel):
             "description_i18n": self.description_i18n,
             "status": self.status,
             "influence_level": self.influence_level,
-            "prerequisites": self.prerequisites,
-            "connections": self.connections,
+            "prerequisites": self.prerequisites, # This is List[str] for standard quests
+            "connections": self.connections,    # This is Dict for standard quests
             "stages": self.stages, # Assumes stages are already in i18n format internally
             "rewards": self.rewards,
             "npc_involvement": self.npc_involvement,
             "quest_giver_details_i18n": self.quest_giver_details_i18n,
             "consequences_summary_i18n": self.consequences_summary_i18n,
             "guild_id": self.guild_id,
+            "is_ai_generated": self.is_ai_generated,
+            # Include raw JSON strings if they need to be persisted and were the source
+            "stages_json_str": self.stages_json_str,
+            "rewards_json_str": self.rewards_json_str,
+            "prerequisites_json_str": self.prerequisites_json_str, # For generated quests
+            "consequences_json_str": self.consequences_json_str, # For generated quests
+            "ai_prompt_context_json_str": self.ai_prompt_context_json_str,
+            "consequences": self.consequences, # Parsed consequences for generated quests
         })
         return data
 
@@ -124,41 +167,83 @@ class Quest(BaseModel):
         data_copy = data.copy() # Work with a copy to pass to cls
 
         # Handle backward compatibility for name and description at top level
-        if "name" in data_copy and "name_i18n" not in data_copy:
-            data_copy["name_i18n"] = {"en": data_copy.pop("name")}
-        if "description" in data_copy and "description_i18n" not in data_copy:
-            data_copy["description_i18n"] = {"en": data_copy.pop("description")}
+        # also consider title_i18n from generated_quests
+        name_i18n_val = data_copy.get("name_i18n")
+        if name_i18n_val is None:
+            title_i18n_val = data_copy.get("title_i18n") # from generated_quests
+            if title_i18n_val is not None:
+                name_i18n_val = title_i18n_val
+            elif "name" in data_copy: # old plain name
+                name_i18n_val = {"en": data_copy.pop("name")}
+
+        description_i18n_val = data_copy.get("description_i18n")
+        if description_i18n_val is None and "description" in data_copy:
+            description_i18n_val = {"en": data_copy.pop("description")}
+
 
         # For stages, the __init__ method will handle the internal i18n conversion.
         # We just pass the stages data as is from the input dictionary.
         # If stages in `data_copy` contain old 'title' or 'description', __init__ will convert them.
         
         # Remove old fields if new ones are present to avoid passing both to __init__
-        if "name" in data_copy and "name_i18n" in data_copy: data_copy.pop("name")
-        if "description" in data_copy and "description_i18n" in data_copy: data_copy.pop("description")
+        if "name" in data_copy and name_i18n_val is not None: data_copy.pop("name", None)
+        if "title_i18n" in data_copy: data_copy.pop("title_i18n", None)
+        if "description" in data_copy and description_i18n_val is not None: data_copy.pop("description", None)
 
-        return cls(
+        # Extract raw JSON strings if present
+        stages_json_str = data_copy.pop("stages_json_str", data_copy.pop("stages_json", None))
+        rewards_json_str = data_copy.pop("rewards_json_str", data_copy.pop("rewards_json", None))
+        prerequisites_json_str = data_copy.pop("prerequisites_json_str", data_copy.pop("prerequisites_json", None))
+        consequences_json_str = data_copy.pop("consequences_json_str", data_copy.pop("consequences_json", None))
+        ai_prompt_context_json_str = data_copy.pop("ai_prompt_context_json_str", data_copy.pop("ai_prompt_context_json", None))
+
+        # If stages/rewards etc. are passed as already parsed dicts/lists (e.g. from campaign data)
+        # and not as _json_str, they will be used by __init__.
+        # If they are passed as _json_str, __init__ will store them, and manager can parse them later.
+        # For clarity, ensure that if `stages` is a string, it's treated as `stages_json_str`.
+        if isinstance(data_copy.get("stages"), str):
+            stages_json_str = data_copy.pop("stages")
+        if isinstance(data_copy.get("rewards"), str):
+            rewards_json_str = data_copy.pop("rewards")
+        if isinstance(data_copy.get("prerequisites"), str): # prerequisites can be List[str] or JSON string
+            prerequisites_json_str = data_copy.pop("prerequisites")
+        if isinstance(data_copy.get("consequences"), str):
+            consequences_json_str = data_copy.pop("consequences")
+
+
+        quest_obj = cls(
             id=quest_id,
-            name_i18n=data_copy.get("name_i18n"), # Use .get in case it's still missing after pop
-            description_i18n=data_copy.get("description_i18n"),
+            name_i18n=name_i18n_val,
+            description_i18n=description_i18n_val,
             status=data_copy.get("status", "available"),
             influence_level=data_copy.get("influence_level", "local"),
-            prerequisites=data_copy.get("prerequisites", []),
+            prerequisites=data_copy.get("prerequisites") if not prerequisites_json_str else None, # Prefer parsed
             connections=data_copy.get("connections", {}),
-            stages=data_copy.get("stages", {}), # Pass as is, __init__ handles i18n
-            rewards=data_copy.get("rewards", {}),
+            stages=data_copy.get("stages") if not stages_json_str else None, # Prefer parsed
+            rewards=data_copy.get("rewards") if not rewards_json_str else None, # Prefer parsed
             npc_involvement=data_copy.get("npc_involvement", {}),
             guild_id=data_copy.get("guild_id", ""),
-            # New fields
             quest_giver_details_i18n=data_copy.get("quest_giver_details_i18n", {"en": "", "ru": ""}) or {"en": "", "ru": ""},
-            consequences_summary_i18n=data_copy.get("consequences_summary_i18n", {"en": "", "ru": ""}) or {"en": "", "ru": ""}
+            consequences_summary_i18n=data_copy.get("consequences_summary_i18n", {"en": "", "ru": ""}) or {"en": "", "ru": ""},
+            is_ai_generated=data_copy.get("is_ai_generated", False),
+            # Pass raw JSON strings
+            stages_json_str=stages_json_str,
+            rewards_json_str=rewards_json_str,
+            prerequisites_json_str=prerequisites_json_str,
+            consequences_json_str=consequences_json_str,
+            ai_prompt_context_json_str=ai_prompt_context_json_str
         )
 
+        # If consequences were passed as a parsed dict (not json string)
+        if "consequences" in data_copy and not consequences_json_str and isinstance(data_copy["consequences"], dict):
+            quest_obj.consequences = data_copy["consequences"]
+
+        return quest_obj
+
 # Example usage (optional, for testing)
-if __name__ == '__main__':
-    # Create a sample quest
-    quest_data = {
-        "name": "The Lost Artifact", # Old format for backward compatibility test
+# if __name__ == '__main__':
+    # Create a sample quest (OLD __main__ REMOVED as per typical model file structure)
+    # ... (old __main__ content would be here if kept) ...
         "description": "An ancient artifact has been lost, and it's up to you to find it.", # Old format
         "guild_id": "guild_123",
         "stages": {
