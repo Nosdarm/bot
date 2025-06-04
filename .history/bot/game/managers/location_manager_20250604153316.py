@@ -667,14 +667,12 @@ class LocationManager:
          # --- Common instance creation logic (for non-AI path or auto-approved AI path) ---
          new_instance_id = str(uuid.uuid4())
          instance_for_cache: Dict[str, Any] = {
->>>>>>> caf0bbe89675c59b1f28d0bac5e5686c918b1659
              'id': new_instance_id,
              'guild_id': guild_id_str,
              'is_active': True,
              'state': {}, # Default empty state
          }
 
-<<<<<<< HEAD
          # Base data source: AI or Campaign Template
         source_data = ai_generated_data if ai_generated_data else campaign_template_data
         if not source_data:
@@ -753,7 +751,6 @@ class LocationManager:
          # Fallback for simple 'name' if 'name_i18n' is somehow still not set (shouldn't happen)
         if 'name_i18n' not in instance_for_cache or not instance_for_cache['name_i18n']:
              instance_for_cache['name_i18n'] = {"en": new_instance_id}
-=======
          # Determine source_data: either campaign_template_data or (auto-approved) ai_generated_data
          source_data: Optional[Dict[str, Any]] = None
          is_ai_auto_approved_flow = False
@@ -831,19 +828,16 @@ class LocationManager:
              instance_for_cache['exits'] = instance_exits
          elif instance_exits is not None:
              print(f"LocationManager: Warning: Provided instance_exits override is not a dict. Ignoring.")
->>>>>>> caf0bbe89675c59b1f28d0bac5e5686c918b1659
 
 
         self._location_instances.setdefault(guild_id_str, {})[new_instance_id] = instance_for_cache
         self._dirty_instances.setdefault(guild_id_str, set()).add(new_instance_id)
 
-<<<<<<< HEAD
          # Use a primary language (e.g. 'en') from name_i18n for logging, or the ID.
         log_name = instance_for_cache['name_i18n'].get('en', new_instance_id)
         print(f"LocationManager: Instance {new_instance_id} created from campaign template and added to cache, marked dirty. Name: '{log_name}'.")
 
         return instance_for_cache # Return instance data dict for non-AI path
-=======
          log_name_dict = instance_for_cache['name_i18n']
          log_name = log_name_dict.get('en', new_instance_id) if isinstance(log_name_dict, dict) else new_instance_id
 
@@ -912,7 +906,6 @@ class LocationManager:
              print(f"LocationManager: Instance {new_instance_id} ('{log_name}') created from campaign template, added to cache, marked dirty.")
 
          return instance_for_cache
->>>>>>> caf0bbe89675c59b1f28d0bac5e5686c918b1659
 
     def get_location_instance(self, guild_id: str, instance_id: str) -> Optional[Dict[str, Any]]:
          """Получить динамический инстанс локации по ID для данной гильдии."""
@@ -1601,9 +1594,7 @@ class LocationManager:
             # self._dirty_instances.get(guild_id_str, set()).discard(new_instance_id) # save_location handles this
             return None
 
-<<<<<<< HEAD
 # --- Конец класса LocationManager ---
-=======
         # --- NPC Handling ---
         if 'npcs' in location_data and isinstance(location_data['npcs'], list):
             if self._npc_manager:
@@ -1683,4 +1674,3 @@ class LocationManager:
         return instance_for_cache # Return the location instance_for_cache, regardless of NPC issues for now
 
 # --- Конец класса LocationManager ---
->>>>>>> caf0bbe89675c59b1f28d0bac5e5686c918b1659

@@ -1,9 +1,9 @@
 # bot/command_modules/exploration_cmds.py
 import discord
+import json
 from discord import app_commands, Interaction # Use Interaction for type hinting
 from typing import Optional, TYPE_CHECKING, Dict, Any, List, cast # Keep TYPE_CHECKING for RPGBot and DBService, add cast
 import traceback # For error logging
-import json # Added for json.dumps
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot # Already imported by previous step, ensure it's here
@@ -77,19 +77,19 @@ async def _send_location_embed(
         )
         if connected_exits and isinstance(connected_exits, dict) and len(connected_exits) > 0:
             exit_display_parts = []
-            for exit_name_or_direction, target_loc_template_id in connected_exits.items(): # Corrected indentation
-                # get_connected_locations returns template IDs as values based on its current implementation.
-                # So, we still need to fetch the static data for the name.
-                target_loc_template_data = location_manager.get_location_static(guild_id, target_loc_template_id)
-                if target_loc_template_data:
-                    exit_display_parts.append(f"{exit_name_or_direction.capitalize()} to {target_loc_template_data.get('name', 'an unnamed area')}")
-                else:
-                    exit_display_parts.append(f"{exit_name_or_direction.capitalize()} (leads to an unknown area - Template ID: {target_loc_template_id[:6]})")
+                for exit_name_or_direction, target_loc_template_id in connected_exits.items():
+                    # get_connected_locations returns template IDs as values based on its current implementation.
+                    # So, we still need to fetch the static data for the name.
+                    target_loc_template_data = location_manager.get_location_static(guild_id, target_loc_template_id)
+                    if target_loc_template_data:
+                        exit_display_parts.append(f"{exit_name_or_direction.capitalize()} to {target_loc_template_data.get('name', 'an unnamed area')}")
+                    else:
+                        exit_display_parts.append(f"{exit_name_or_direction.capitalize()} (leads to an unknown area - Template ID: {target_loc_template_id[:6]})")
 
-            if exit_display_parts: # Corrected indentation
-                embed.add_field(name="Exits", value="\n".join(exit_display_parts), inline=False)
-            else:
-                embed.add_field(name="Exits", value="None apparent.", inline=False)
+                if exit_display_parts:
+                    embed.add_field(name="Exits", value="\n".join(exit_display_parts), inline=False)
+                else:
+                    embed.add_field(name="Exits", value="None apparent.", inline=False)
             else:
                 embed.add_field(name="Exits", value="None apparent.", inline=False)
         # else: # This else block for location_template_id check is no longer needed
@@ -131,12 +131,8 @@ async def cmd_look(interaction: Interaction):
             return
 
         character_manager: 'CharacterManager' = bot.game_manager.character_manager
-        location_manager: Optional['LocationManager'] = bot.game_manager.location_manager # Make Optional for check
+        location_manager: 'LocationManager' = bot.game_manager.location_manager
         npc_manager: 'NpcManager' = bot.game_manager.npc_manager
-
-        if not location_manager:
-            await interaction.followup.send("Error: Location manager is not available.", ephemeral=True)
-            return
 
         guild_id_str = str(interaction.guild_id)
         discord_user_id = interaction.user.id
@@ -193,14 +189,10 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
             return
         
         character_manager: 'CharacterManager' = bot.game_manager.character_manager
-        location_manager: Optional['LocationManager'] = bot.game_manager.location_manager # Make Optional for check
+        location_manager: 'LocationManager' = bot.game_manager.location_manager
         party_manager: 'PartyManager' = bot.game_manager.party_manager
         npc_manager: 'NpcManager' = bot.game_manager.npc_manager
         db_adapter: 'SqliteAdapter' = bot.game_manager._db_adapter # Use _db_adapter
-
-        if not location_manager:
-            await interaction.followup.send("Error: Location manager is not available.", ephemeral=True)
-            return
 
         guild_id_str = str(interaction.guild_id)
         discord_user_id = interaction.user.id
@@ -289,14 +281,14 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
         if party and party.id: # party.id should be a string
             entity_to_move_id = party.id
             entity_type = "Party"
-            language = character.selected_language if character and character.selected_language else "en"
-            party_name_display = party.name_i18n.get(language, party.id if party.id else "Unknown Party")
+            # Fix for L285: Access party.name_i18n.get('en', party.id)
+            party_name_display = party.name_i18n.get('en', party.id if party.id else "Unknown Party")
             log_identifier = f"Party {party_name_display} (ID: {party.id})"
             display_name = party_name_display
         
         # TODO: Comment out missing GameManager attributes for now
         move_kwargs: Dict[str, Any] = {
-            # 'guild_id': guild_id_str, # guild_id is passed directly to move_entity
+            'guild_id': guild_id_str,
             'channel_id': interaction.channel_id,
             # 'send_callback_factory': bot.game_manager.send_callback_factory, # TODO: Fix in GameManager
             'character_manager': character_manager,
@@ -315,14 +307,13 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
         
         old_location_name = current_location_instance_data.get('name', 'Unknown Starting Location')
 
-        # Call move_entity with guild_id and other necessary parameters
         move_successful = await location_manager.move_entity(
-            guild_id=guild_id_str,
+            guild_id=guild_id_str, 
             entity_id=entity_to_move_id,
             entity_type=entity_type,
-            from_location_id=current_location_instance_id,
-            to_location_id=target_location_instance_id,
-            context=move_kwargs # Pass the constructed context dict as 'context'
+            from_location_id=current_location_instance_id, # from instance ID
+            to_location_id=target_location_instance_id,     # to instance ID
+            **move_kwargs
         )
 
         if not move_successful:
@@ -397,16 +388,16 @@ async def cmd_check(interaction: Interaction, skill_name: str, complexity: str =
     get_bot_instance_func = None
 
     try:
-        from bot.bot_core import get_bot_instance # global_game_manager is not needed
-        game_mngr = bot.game_manager # Use the already available game_mngr from RPGBot instance
-        get_bot_instance_func = get_bot_instance # For consistency if used elsewhere
-        if game_mngr: # Check if game_mngr (GameManager instance) is available
-            global_game_manager_imported_successfully = True # Consider this path successful if game_mngr exists
+        from bot.bot_core import global_game_manager as ggm, get_bot_instance as gbi
+        global_game_manager_instance = ggm
+        get_bot_instance_func = gbi
+        if global_game_manager_instance:
+            global_game_manager_imported_successfully = True
     except ImportError:
-        pass # Keep pass for the case where bot_core itself has issues, though unlikely here
+        pass
 
-    if global_game_manager_imported_successfully and game_mngr: # Check game_mngr
-        response_data = await game_mngr.process_player_action(
+    if global_game_manager_imported_successfully and global_game_manager_instance:
+        response_data = await global_game_manager_instance.process_player_action(
             server_id=str(interaction.guild_id), # Ensure guild_id is string
             discord_user_id=interaction.user.id,
             action_type="skill_check",
