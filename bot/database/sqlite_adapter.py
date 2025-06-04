@@ -7,11 +7,15 @@ print(f"DEBUG: Loading sqlite_adapter.py from: {__file__}")
 import sqlite3 # Keep for sqlite3.OperationalError
 import traceback
 import json # Needed for json.loads/dumps
-from typing import Optional, List, Tuple, Any, Union, Dict # Add Dict
+from typing import Optional, List, Tuple, Any, Union, Dict
 
 import aiosqlite
 # Типы для аннотаций
 from aiosqlite import Connection, Cursor, Row
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session as SQLAlchemySession
+from .models import Base # Assuming models.py is in the same directory
 
 
 class SqliteAdapter:
@@ -20,13 +24,14 @@ class SqliteAdapter:
     Автоматически коммитит успешные операции изменения данных и откатывает при ошибке
     в методах execute, execute_insert, execute_many.
     """
-    # Определяем последнюю версию схемы, которую знает этот адаптер
-    # ОБНОВЛЕНО: Добавлена таблица generated_locations
-    LATEST_SCHEMA_VERSION = 22 # Incremented for gold column in players table
+    # LATEST_SCHEMA_VERSION = 22 # Removed: Schema versioning now handled by Alembic
 
     def __init__(self, db_path: str):
         self._db_path = db_path
         self._conn: Optional[Connection] = None
+        self._engine = create_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self._SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self._engine)
+        self.db: Optional[SQLAlchemySession] = None
         print(f"SqliteAdapter initialized for database: {self._db_path}")
 
     async def connect(self) -> None:
@@ -36,28 +41,50 @@ class SqliteAdapter:
             try:
                 # IMPORTANT: Use check_same_thread=False for aiosqlite in a multi-threaded/async environment
                 # This is crucial for concurrent access in an async application.
+                # For SQLAlchemy, the engine handles the connection pool.
+                # We still need aiosqlite for raw execution if needed and for migrations.
                 self._conn = await aiosqlite.connect(self._db_path, check_same_thread=False)
                 self._conn.row_factory = aiosqlite.Row # Allows accessing columns by name
                 # Recommended for concurrency and performance
                 await self._conn.execute('PRAGMA journal_mode=WAL')
                 await self._conn.execute('PRAGMA foreign_keys=ON') # Ensure foreign key constraints are enforced
 
-                print("SqliteAdapter: Database connected successfully.")
+                # Base.metadata.create_all(bind=self._engine) # Removed: Alembic handles table creation.
+
+                self.db = self._SessionLocal()
+                print("SqliteAdapter: Database connected successfully. SQLAlchemy session created.")
+
             except Exception as e:
                 print(f"SqliteAdapter: ❌ Error connecting to database: {e}")
                 traceback.print_exc()
-                self._conn = None
+                if self.db:
+                    self.db.close()
+                    self.db = None
+                if self._conn:
+                    await self._conn.close()
+                    self._conn = None
                 raise
 
     async def close(self) -> None:
         """Закрывает соединение с базой данных."""
+        if self.db:
+            print("SqliteAdapter: Closing SQLAlchemy session...")
+            try:
+                self.db.close()
+                print("SqliteAdapter: SQLAlchemy session closed.")
+            except Exception as e:
+                print(f"SqliteAdapter: ❌ Error closing SQLAlchemy session: {e}")
+                traceback.print_exc()
+            finally:
+                self.db = None
+
         if self._conn:
-            print("SqliteAdapter: Closing database connection...")
+            print("SqliteAdapter: Closing aiosqlite connection...")
             try:
                 await self._conn.close()
-                print("SqliteAdapter: Database connection closed.")
+                print("SqliteAdapter: aiosqlite connection closed.")
             except Exception as e:
-                print(f"SqliteAdapter: ❌ Error closing database connection: {e}")
+                print(f"SqliteAdapter: ❌ Error closing aiosqlite connection: {e}")
                 traceback.print_exc()
             finally:
                 self._conn = None
@@ -210,57 +237,42 @@ class SqliteAdapter:
     # --- Метод инициализации базы данных ---
     async def initialize_database(self) -> None:
         """
-        Применяет все необходимые миграции для обновления схемы БД до последней версии.
+        Ensures the database is connected. Schema management is now handled by Alembic.
+        The old migration logic (_migrate_vX_to_vY methods) and PRAGMA user_version
+        are no longer used by this method.
         """
-        print("SqliteAdapter: Initializing database schema...")
+        print("SqliteAdapter: Initializing database connection for application use.")
         if not self._conn:
-            raise ConnectionError("Database connection is not established.")
+            # This typically would have been called by game_manager or similar entry point.
+            # If connect() hasn't run, this ensures we have a connection.
+            # However, connect() should ideally be the main entry for connection setup.
+            await self.connect()
 
-        try:
-            # Миграции должны выполняться в одной транзакции
-            async with self._conn.cursor() as cursor:
-                current_version = await self.get_current_schema_version(cursor)
-                print(f"SqliteAdapter: Current database schema version: {current_version}")
+        # The old migration loop has been removed.
+        # current_version = await self.get_current_schema_version(cursor)
+        # print(f"SqliteAdapter: Current database schema version (PRAGMA user_version): {current_version}")
+        # print(f"SqliteAdapter: Alembic is now responsible for schema migrations.")
+        # print(f"SqliteAdapter: Run 'alembic upgrade head' to apply migrations.")
 
-                if current_version < self.LATEST_SCHEMA_VERSION:
-                     print(f"SqliteAdapter: Migrating from version {current_version} to {self.LATEST_SCHEMA_VERSION}...")
-                     for version in range(current_version + 1, self.LATEST_SCHEMA_VERSION + 1):
-                         print(f"SqliteAdapter: Running migration to version {version}...")
-                         migrate_method_name = f'_migrate_v{version-1}_to_v{version}'
-                         migrate_method = getattr(self, migrate_method_name, None)
-                         if migrate_method:
-                             # Pass the cursor to the migration method
-                             await migrate_method(cursor)
-                             # Set the new schema version after successful migration steps
-                             await self.set_schema_version(cursor, version)
-                             print(f"SqliteAdapter: Successfully migrated to version {version}.")
-                         else:
-                             print(f"SqliteAdapter: ❌ No migration method found: {migrate_method_name}.")
-                             raise NotImplementedError(f"Migration method {migrate_method_name} not implemented.")
-                else:
-                    print("SqliteAdapter: Database schema is up to date.")
+        # Base.metadata.create_all(bind=self._engine) # Removed: Alembic handles this.
 
-            # Commit the entire migration transaction after successful execution of all steps
-            await self._conn.commit()
-            print("SqliteAdapter: Database schema initialization/migration finished.")
+        # The old loop:
+        # if current_version < self.LATEST_SCHEMA_VERSION:
+        # ...
+        # else:
+        #    print("SqliteAdapter: Database schema (PRAGMA user_version) was up to date or higher.")
 
-        except Exception as e:
-            print(f"SqliteAdapter: ❌ CRITICAL ERROR during database schema initialization or migration: {e}")
-            traceback.print_exc()
-            try:
-                if self._conn:
-                    # Rollback the transaction in case of any error during migration
-                    await self._conn.rollback()
-                    print("SqliteAdapter: Transaction rolled back due to migration error.")
-            except Exception as rb_e:
-                print(f"SqliteAdapter: Error during rollback after schema init/migration error: {rb_e}")
-            # Re-raise the exception so GameManager knows setup failed
-            raise
+        # No commit needed here as we are not changing schema with PRAGMA user_version anymore.
+        print("SqliteAdapter: Database initialization checks complete. Schema is managed by Alembic.")
 
+    # --- Old migration methods are kept below for reference or potential future data migrations, ---
+    # --- but are no longer called by initialize_database.                                       ---
 
-    # --- Методы миграции схемы ---
-    # Этот метод должен содержать ВСЕ CREATE TABLE IF NOT EXISTS statements
-    async def _migrate_v0_to_v1(self, cursor: Cursor) -> None:
+    # async def get_current_schema_version(self, cursor: Cursor) -> int: ... (kept for now)
+    # async def set_schema_version(self, cursor: Cursor, version: int) -> None: ... (kept for now)
+
+    # --- Методы миграции схемы (OLD - NO LONGER CALLED BY initialize_database) ---
+    async def _migrate_v0_to_v1(self, cursor: Cursor) -> None: # Example: Keep for reference
         """Миграция с Версии 0 (пустая БД) на Версию 1 (начальная схема)."""
         print("SqliteAdapter: Running v0 to v1 migration (creating initial tables)...")
 
@@ -1862,6 +1874,40 @@ class SqliteAdapter:
                 traceback.print_exc()
                 raise # Перевыбросить ошибку, если это не "duplicate column"
         print("SqliteAdapter: v21 to v22 migration complete.")
+
+    # --- New ORM methods ---
+    def get_db(self) -> Optional[SQLAlchemySession]:
+        """Returns the current SQLAlchemy session."""
+        return self.db
+
+    def add_object(self, obj: Any) -> None:
+        """Adds an object to the session and commits."""
+        if not self.db:
+            raise ConnectionError("SQLAlchemy session is not available.")
+        try:
+            self.db.add(obj)
+            self.db.commit()
+            self.db.refresh(obj) # Refresh to get ID if auto-generated
+        except Exception as e:
+            print(f"SqliteAdapter: ❌ Error adding object: {e}")
+            if self.db:
+                self.db.rollback()
+            traceback.print_exc()
+            raise
+
+    def delete_object(self, obj: Any) -> None:
+        """Deletes an object from the session and commits."""
+        if not self.db:
+            raise ConnectionError("SQLAlchemy session is not available.")
+        try:
+            self.db.delete(obj)
+            self.db.commit()
+        except Exception as e:
+            print(f"SqliteAdapter: ❌ Error deleting object: {e}")
+            if self.db:
+                self.db.rollback()
+            traceback.print_exc()
+            raise
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")
