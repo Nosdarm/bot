@@ -22,28 +22,11 @@ if TYPE_CHECKING:
 @app_commands.command(name="interact", description="Взаимодействовать с чем-то или кем-то.")
 async def cmd_interact(interaction: Interaction, target: str, action_str: str, details: Optional[str] = None): # Renamed action to action_str to avoid conflict
     await interaction.response.defer(ephemeral=True)
-
-    game_mngr = None
-    if hasattr(interaction.client, 'game_manager'):
-        game_mngr_candidate = getattr(interaction.client, 'game_manager')
-        if TYPE_CHECKING: # Ensure type checker knows about GameManager methods if available
-             assert isinstance(game_mngr_candidate, GameManager)
-        game_mngr = game_mngr_candidate
-
-    if game_mngr and hasattr(game_mngr, 'process_player_action'): # Check if method exists
-         # This command is still a placeholder and uses the old process_player_action structure
-         # It should be refactored to use DBService and specific game logic like other commands.
-         response_data = await game_mngr.process_player_action(
-             server_id=str(interaction.guild_id),
-             discord_user_id=interaction.user.id,
-             action_type="interact", # This action_type might need to be handled by process_player_action
-             action_data={"target": target, "action": action_str, "details": details}
-         )
-         await interaction.followup.send(response_data.get("message", "**Ошибка:** Неизвестный ответ от мастера."), ephemeral=True)
-    elif game_mngr:
-        await interaction.followup.send("The '/interact' command is not fully implemented for the new system yet.", ephemeral=True)
-    else:
-         await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна.", ephemeral=True)
+    # New logic: Inform user that the command is under rework.
+    await interaction.followup.send(
+        "Команда `/interact` в настоящее время находится в стадии переработки и временно недоступна. Пожалуйста, следите за обновлениями!",
+        ephemeral=True
+    )
 
 import random # For basic combat roll
 
@@ -55,17 +38,29 @@ async def cmd_fight(interaction: Interaction, target_npc_name: Optional[str] = N
     await interaction.response.defer(ephemeral=False) # Combat is generally public
 
     try:
-        if not hasattr(interaction.client, 'game_manager') or \
-           not hasattr(interaction.client.game_manager, 'db_service') or \
-           not hasattr(interaction.client.game_manager, 'combat_manager'): # Check for combat_manager
-            await interaction.followup.send("Error: Core game services (DB or Combat) are not fully initialized.", ephemeral=True)
+        if not hasattr(interaction.client, 'game_manager') or not interaction.client.game_manager:
+            await interaction.followup.send("Error: GameManager is not available.", ephemeral=True)
+            return
+        game_mngr_instance = interaction.client.game_manager
+        if not hasattr(game_mngr_instance, 'db_service') or not game_mngr_instance.db_service:
+            await interaction.followup.send("Error: DBService is not available.", ephemeral=True)
+            return
+        if not hasattr(game_mngr_instance, 'combat_manager') or not game_mngr_instance.combat_manager:
+            await interaction.followup.send("Error: CombatManager is not available.", ephemeral=True)
+            return
+        # Also check for npc_manager and character_manager as they are used for fetching names
+        if not hasattr(game_mngr_instance, 'npc_manager') or not game_mngr_instance.npc_manager:
+            await interaction.followup.send("Error: NpcManager is not available.", ephemeral=True)
+            return
+        if not hasattr(game_mngr_instance, 'character_manager') or not game_mngr_instance.character_manager:
+            await interaction.followup.send("Error: CharacterManager is not available.", ephemeral=True)
             return
 
         client_bot: 'RPGBot' = interaction.client
-        db_service: 'DBService' = client_bot.game_manager.db_service
-        combat_manager: 'CombatManager' = client_bot.game_manager.combat_manager # Get CombatManager
+        db_service: 'DBService' = game_mngr_instance.db_service
+        combat_manager: Optional['CombatManager'] = game_mngr_instance.combat_manager
         # game_manager for other calls if needed (though combat_manager should handle most combat logic)
-        game_mngr: 'GameManager' = client_bot.game_manager
+        game_mngr: 'GameManager' = game_mngr_instance
 
 
         guild_id = str(interaction.guild_id)
@@ -225,16 +220,28 @@ async def cmd_talk(interaction: Interaction, npc_name: str, message: str):
 
     try:
         # --- Setup and Checks ---
-        if not hasattr(interaction.client, 'game_manager') or \
-           not hasattr(interaction.client.game_manager, 'db_service') or \
-           not hasattr(interaction.client.game_manager, 'openai_service'): # Check for openai_service
-            await interaction.followup.send("Error: Core game services (DB or AI) are not fully initialized.", ephemeral=True)
+        if not hasattr(interaction.client, 'game_manager') or not interaction.client.game_manager:
+            await interaction.followup.send("Error: GameManager is not available.", ephemeral=True)
+            return
+        game_mngr_instance = interaction.client.game_manager
+        if not hasattr(game_mngr_instance, 'db_service') or not game_mngr_instance.db_service:
+            await interaction.followup.send("Error: DBService is not available.", ephemeral=True)
+            return
+        if not hasattr(game_mngr_instance, 'openai_service') or not game_mngr_instance.openai_service:
+            await interaction.followup.send("Error: OpenAIService is not available.", ephemeral=True)
+            return
+        # Also check for npc_manager as it's used for fetching NPC data
+        if not hasattr(game_mngr_instance, 'npc_manager') or not game_mngr_instance.npc_manager:
+            await interaction.followup.send("Error: NpcManager is not available.", ephemeral=True)
             return
 
         client_bot: 'RPGBot' = interaction.client
-        db_service: 'DBService' = client_bot.game_manager.db_service
-        openai_service: 'OpenAIService' = client_bot.game_manager.openai_service # Get OpenAI service
+        db_service: 'DBService' = game_mngr_instance.db_service
+        openai_service: Optional['OpenAIService'] = game_mngr_instance.openai_service
 
+        if not openai_service:
+            await interaction.followup.send("Error: OpenAIService is not configured or available.", ephemeral=True)
+            return
         if not openai_service.is_available():
             await interaction.followup.send("The AI for dialogue is currently unavailable. Please try again later.", ephemeral=True)
             # Optionally, could fall back to a simpler pre-defined dialogue system here.
