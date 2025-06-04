@@ -89,6 +89,56 @@ class TestGameSetupCmds(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"Welcome, {char_name} the {char_race}", args[0])
         self.assertEqual(kwargs.get('ephemeral'), False)
 
+    @patch('bot.command_modules.game_setup_cmds.is_master_or_admin', return_value=True)
+    async def test_cmd_set_bot_language_updates_gm_config(self, mock_is_master_or_admin):
+        # Mock Interaction
+        interaction_mock = AsyncMock()
+        interaction_mock.response = AsyncMock()
+        interaction_mock.followup = AsyncMock()
+        interaction_mock.client = MagicMock() # RPGBot mock
+        interaction_mock.guild_id = "test_guild_789"
+
+        # Mock GameManager
+        mock_game_manager = MagicMock() # GameManager mock
+        mock_game_manager.set_default_bot_language = AsyncMock()
+        interaction_mock.client.game_manager = mock_game_manager
+
+        # Execute the command
+        await bot.command_modules.game_setup_cmds.cmd_set_bot_language(interaction_mock, language="ru")
+
+        # Assertions
+        mock_is_master_or_admin.assert_called_once_with(interaction_mock, mock_game_manager)
+        mock_game_manager.set_default_bot_language.assert_called_once_with(
+            "ru", str(interaction_mock.guild_id)
+        )
+        interaction_mock.response.defer.assert_called_once_with(ephemeral=True)
+        interaction_mock.followup.send.assert_called_once_with(
+            "Основной язык бота установлен на русский.", ephemeral=True
+        )
+
+    @patch('bot.command_modules.game_setup_cmds.is_master_or_admin', return_value=False)
+    async def test_cmd_set_bot_language_unauthorized(self, mock_is_master_or_admin):
+        # Mock Interaction
+        interaction_mock = AsyncMock()
+        interaction_mock.response = AsyncMock()
+        interaction_mock.followup = AsyncMock()
+        interaction_mock.client = MagicMock() # RPGBot mock
+        interaction_mock.guild_id = "test_guild_789"
+
+        # Mock GameManager
+        mock_game_manager = MagicMock() # GameManager mock
+        interaction_mock.client.game_manager = mock_game_manager
+
+        # Execute the command
+        await bot.command_modules.game_setup_cmds.cmd_set_bot_language(interaction_mock, language="ru")
+
+        # Assertions
+        mock_is_master_or_admin.assert_called_once_with(interaction_mock, mock_game_manager)
+        mock_game_manager.set_default_bot_language.assert_not_called()
+        interaction_mock.response.defer.assert_called_once_with(ephemeral=True)
+        interaction_mock.followup.send.assert_called_once_with(
+            "You are not authorized to use this command.", ephemeral=True
+        )
 
 if __name__ == '__main__':
     unittest.main()

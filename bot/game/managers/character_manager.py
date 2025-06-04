@@ -339,6 +339,24 @@ class CharacterManager:
                 traceback.print_exc()
 
 
+        # Determine default player language
+        default_player_language = "en" # Fallback default
+        if hasattr(self, '_game_manager') and self._game_manager is not None: # Check if GameManager is available
+            if hasattr(self._game_manager, 'get_default_bot_language') and callable(getattr(self._game_manager, 'get_default_bot_language')):
+                try:
+                    # Assuming get_default_bot_language is synchronous as per previous subtask
+                    default_player_language = self._game_manager.get_default_bot_language()
+                except Exception as lang_e:
+                    print(f"CharacterManager: Error calling get_default_bot_language: {lang_e}. Defaulting to 'en'.")
+                    default_player_language = "en"
+            else:
+                print("CharacterManager: Warning: GameManager instance does not have a callable 'get_default_bot_language' method. Defaulting player language to 'en'.")
+        else:
+            # This case can be common if GameManager is not passed or setup fully.
+            # print("CharacterManager: Note: GameManager instance not available in CharacterManager. Defaulting player language to 'en'.") # Can be noisy
+            pass
+
+
         # Подготавливаем данные для вставки в DB и создания модели
         data: Dict[str, Any] = {
             'id': new_id, # UUID как TEXT
@@ -359,6 +377,7 @@ class CharacterManager:
             'level': level,
             'experience': experience,
             'unspent_xp': unspent_xp,
+            'selected_language': default_player_language, # Add this
             'collected_actions_json': None # Default for new character
             # ... другие поля из модели Character ...
         }
@@ -368,9 +387,10 @@ class CharacterManager:
         INSERT INTO players (
             id, discord_user_id, name, guild_id, location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
-            hp, max_health, is_alive, status_effects, level, experience, unspent_xp, collected_actions_json
+            hp, max_health, is_alive, status_effects, level, experience, unspent_xp,
+            selected_language, collected_actions_json
             -- , ... другие колонки ...
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Убедитесь, что порядок параметров соответствует колонкам в SQL
         db_params = (
@@ -392,7 +412,8 @@ class CharacterManager:
             data['level'],
             data['experience'],
             data['unspent_xp'],
-            data['collected_actions_json'] # Add this value
+            data['selected_language'], # Add this value
+            data['collected_actions_json']
             # ... другие параметры ...
         )
 

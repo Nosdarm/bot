@@ -4,6 +4,7 @@ import os
 import json
 import discord
 import asyncio
+import logging # Ensure logging is imported
 import traceback
 import logging
 from typing import Optional, Dict, Any, List, cast
@@ -187,7 +188,16 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
                 if char_model.current_game_status not in busy_statuses:
                     logging.info(f"NLU: Processing message for User {message.author.id} (CharID: {char_model.id}, Guild: {message.guild.id}): \"{message.content}\"")
                     
-                    language = char_model.selected_language if char_model.selected_language else "en"
+                    if char_model.selected_language:
+                        language = char_model.selected_language
+                    elif self.game_manager and hasattr(self.game_manager, 'get_default_bot_language') and callable(getattr(self.game_manager, 'get_default_bot_language')):
+                        try:
+                            language = self.game_manager.get_default_bot_language()
+                        except Exception as lang_e:
+                            logging.error(f"NLU: Error calling get_default_bot_language: {lang_e}. Defaulting to 'en'.")
+                            language = "en"
+                    else:
+                        language = "en" # Fallback if GameManager or method is somehow unavailable
                     logging.info(f"NLU: Detected language for User {message.author.id}: {language}")
 
                     nlu_service = self.game_manager.nlu_data_service
