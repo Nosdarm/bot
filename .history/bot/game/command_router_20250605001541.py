@@ -154,6 +154,7 @@ class CommandRouter:
         party_action_processor: Optional["PartyActionProcessor"] = None, # Still needed for context
         event_action_processor: Optional["EventActionProcessor"] = None,
         event_stage_processor: Optional["EventStageProcessor"] = None,
+        event_stage_processor: Optional["EventStageProcessor"] = None, # Corrected typo from EventStage_processor
         quest_manager: Optional["QuestManager"] = None, # Added QuestManager
         dialogue_manager: Optional["DialogueManager"] = None, # Added DialogueManager
         # Add other optional managers/processors needed for context

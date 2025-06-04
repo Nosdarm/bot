@@ -1463,17 +1463,14 @@ class CharacterManager:
                          else:
                              print(f"CharacterManager: NPC killer type specified, but no NPC manager found to fetch NPC {killer_id_from_context}")
 
-                 try:
-                     death_report = await self._rule_engine.process_entity_death(
-                         entity=char,
-                         killer=killer_entity, # This can be None if killer not found
-                         context=base_cleanup_kwargs # base_cleanup_kwargs already contains guild_id
-                     )
-                     death_message_from_engine = death_report.get('message', f"{getattr(char, 'name', char.id)} meets a grim end.")
-                     print(f"CharacterManager: Death of {char.id} processed by RuleEngine. Message: {death_message_from_engine}")
-                 except Exception as e:
-                     print(f"CharacterManager: Error processing entity death for char {char.id} in guild {guild_id_str}: {e}")
-                     traceback.print_exc()
+
+                 death_report = await self._rule_engine.process_entity_death(
+                     entity=char,
+                     killer=killer_entity, # This can be None if killer not found
+                     context=base_cleanup_kwargs # base_cleanup_kwargs already contains guild_id
+                 )
+                 death_message_from_engine = death_report.get('message', f"{getattr(char, 'name', char.id)} meets a grim end.")
+                 print(f"CharacterManager: Death of {char.id} processed by RuleEngine. Message: {death_message_from_engine}")
              else:
                  print(f"CharacterManager: RuleEngine not available for character {char.id} death processing. Basic death applied.")
 
@@ -1482,7 +1479,7 @@ class CharacterManager:
              # Assuming they are part of the general cleanup process after RuleEngine interaction.
              print(f"CharacterManager: Death cleanup initiated for character {character_id} in guild {guild_id_str}.")
              print(f"CharacterManager: Death cleanup process completed for character {character_id} in guild {guild_id_str}.")
-         except Exception as e:
+        except Exception as e:
             print(f"CharacterManager: Error during death cleanup for character {character_id} in guild {guild_id_str}: {e}")
             import traceback
             print(traceback.format_exc())

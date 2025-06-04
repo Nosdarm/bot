@@ -46,12 +46,13 @@ if TYPE_CHECKING:
     from bot.game.managers.item_manager import ItemManager
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.game_log_manager import GameLogManager
-    from bot.game.managers.npc_manager import NPCManager
-    from bot.game.managers.game_manager import GameManager
 
 
 # --- Imports needed at Runtime ---
 # For CharacterManager, you usually need direct import of the Character model and utilities.
+
+
+print("DEBUG: character_manager.py module loaded.")
 
 
 class CharacterManager:
@@ -98,8 +99,6 @@ class CharacterManager:
         dialogue_manager: Optional["DialogueManager"] = None,
         relationship_manager: Optional["RelationshipManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
-        npc_manager: Optional["NPCManager"] = None, # Add this
-        game_manager: Optional["GameManager"] = None  # Add this
     ):
         print("Initializing CharacterManager...")
         self._db_adapter = db_adapter
@@ -113,8 +112,6 @@ class CharacterManager:
         self._dialogue_manager = dialogue_manager
         self._relationship_manager = relationship_manager
         self._game_log_manager = game_log_manager
-        self._npc_manager = npc_manager # Add this
-        self._game_manager = game_manager # Add this
 
         # Internal caches
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
@@ -1412,81 +1409,69 @@ class CharacterManager:
          # Assuming cleanup methods accept entity_id (character_id), context (Dict[str, Any]), and potentially other kwargs.
          # Let's pass character_id and the gathered context dict as **context_kwargs
          # Example: clean_up_for_character(character_id: str, context: Dict[str, Any]) -> None
-
-         try:
-             if self._status_manager and hasattr(self._status_manager, 'clean_up_for_character'):
+        try:
+            if self._status_manager and hasattr(self._status_manager, 'clean_up_for_character'):
                   await self._status_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass the context dict
-             if self._combat_manager and hasattr(self._combat_manager, 'clean_up_for_entity'): # Updated method name
+            if self._combat_manager and hasattr(self._combat_manager, 'clean_up_for_entity'): # Updated method name
                   # remove_participant_from_combat might need entity_type
                   await self._combat_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
-             if self._party_manager and hasattr(self._party_manager, 'clean_up_for_entity'): # Updated method name
+            if self._party_manager and hasattr(self._party_manager, 'clean_up_for_entity'): # Updated method name
                   await self._party_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
-             if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_entity'): # Updated method name
+            if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_entity'): # Updated method name
                   await self._dialogue_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
 
              # Drop items (if location_id is available on character)
              # Changed to use clean_up_for_character as it handles dropping inventory
-             if self._item_manager and hasattr(self._item_manager, 'clean_up_for_character') and getattr(char, 'location_id', None) is not None:
+            if self._item_manager and hasattr(self._item_manager, 'clean_up_for_character') and getattr(char, 'location_id', None) is not None:
                   await self._item_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass context dict
 
              # Trigger death logic in RuleEngine
-             if self._rule_engine:
-                 killer_entity = None
-                 # Ensure context (base_cleanup_kwargs) has guild_id, it's already there
-                 guild_id_for_fetch = base_cleanup_kwargs.get('guild_id', char.guild_id)
-                 if not guild_id_for_fetch: # Should always be present
-                     print(f"CharacterManager: CRITICAL - guild_id missing for death processing of {char.id}")
+            if self._rule_engine:
+                killer_entity = None
+                # Ensure context (base_cleanup_kwargs) has guild_id, it's already there
+                guild_id_for_fetch = base_cleanup_kwargs.get('guild_id', char.guild_id)
+                if not guild_id_for_fetch: # Should always be present
+                    print(f"CharacterManager: CRITICAL - guild_id missing for death processing of {char.id}")
 
-                 # killer_id and killer_type are passed in **kwargs which are part of base_cleanup_kwargs
-                 killer_id_from_context = base_cleanup_kwargs.get('killer_id')
-                 killer_type_from_context = base_cleanup_kwargs.get('killer_type')
+                # killer_id and killer_type are passed in **kwargs which are part of base_cleanup_kwargs
+                killer_id_from_context = base_cleanup_kwargs.get('killer_id')
+                killer_type_from_context = base_cleanup_kwargs.get('killer_type')
 
-                 if killer_id_from_context and killer_type_from_context and guild_id_for_fetch:
-                     # Assuming self._character_manager_ref refers to self for CharacterManager
-                     # This part might need adjustment if _character_manager_ref is not standard.
-                     # For now, let's assume self can get character if needed.
-                     # And CharacterManager needs _npc_manager to fetch NPC killers.
-                     if killer_type_from_context == "Character":
-                         # The context might already contain a CharacterManager instance (e.g. from GameManager)
-                         cm_in_context = base_cleanup_kwargs.get('character_manager')
-                         if cm_in_context and hasattr(cm_in_context, 'get_character'):
-                             killer_entity = await cm_in_context.get_character(guild_id_for_fetch, killer_id_from_context)
-                         else: # Fallback to self.get_character, as self is CharacterManager
-                             killer_entity = await self.get_character(guild_id_for_fetch, killer_id_from_context)
-                     elif killer_type_from_context == "NPC":
-                         # Check if _npc_manager is available and has the method
-                         npc_manager_in_context = base_cleanup_kwargs.get('npc_manager') # Prefer NPC manager from context
-                         if npc_manager_in_context and hasattr(npc_manager_in_context, 'get_npc'):
-                             killer_entity = await npc_manager_in_context.get_npc(guild_id_for_fetch, killer_id_from_context)
-                         elif self._npc_manager and hasattr(self._npc_manager, 'get_npc'): # Fallback to self._npc_manager
-                             killer_entity = await self._npc_manager.get_npc(guild_id_for_fetch, killer_id_from_context)
-                         else:
-                             print(f"CharacterManager: NPC killer type specified, but no NPC manager found to fetch NPC {killer_id_from_context}")
+                if killer_id_from_context and killer_type_from_context and guild_id_for_fetch:
+                    # Assuming self._character_manager_ref refers to self for CharacterManager
+                    # This part might need adjustment if _character_manager_ref is not standard.
+                    # For now, let's assume self can get character if needed.
+                    # And CharacterManager needs _npc_manager to fetch NPC killers.
+                    if killer_type_from_context == "Character": # INDENT: 20 spaces
+                        # killer_entity = await self.get_character(guild_id_for_fetch, killer_id_from_context) # Using self
+                        # The context might already contain a CharacterManager instance (e.g. from GameManager)
+                        cm_in_context = base_cleanup_kwargs.get('character_manager') # INDENT: 24 spaces
+                        if cm_in_context and hasattr(cm_in_context, 'get_character'): # INDENT: 24 spaces
+                            killer_entity = await cm_in_context.get_character(guild_id_for_fetch, killer_id_from_context) # INDENT: 28 spaces
+                        elif self._character_manager_ref and hasattr(self._character_manager_ref, 'get_character'): # INDENT: 24 spaces
+                            killer_entity = await self._character_manager_ref.get_character(guild_id_for_fetch, killer_id_from_context) # INDENT: 28 spaces
+                        else: # Fallback to self directly if no other option # INDENT: 24 spaces
+                            killer_entity = self.get_character(guild_id_for_fetch, killer_id_from_context) # INDENT: 28 spaces
+                    elif killer_type_from_context == "NPC" and self._npc_manager and hasattr(self._npc_manager, 'get_npc'): # INDENT: 20 spaces
+                        killer_entity = await self._npc_manager.get_npc(guild_id_for_fetch, killer_id_from_context) # INDENT: 24 spaces
 
-                 try:
-                     death_report = await self._rule_engine.process_entity_death(
-                         entity=char,
-                         killer=killer_entity, # This can be None if killer not found
-                         context=base_cleanup_kwargs # base_cleanup_kwargs already contains guild_id
-                     )
-                     death_message_from_engine = death_report.get('message', f"{getattr(char, 'name', char.id)} meets a grim end.")
-                     print(f"CharacterManager: Death of {char.id} processed by RuleEngine. Message: {death_message_from_engine}")
-                 except Exception as e:
-                     print(f"CharacterManager: Error processing entity death for char {char.id} in guild {guild_id_str}: {e}")
-                     traceback.print_exc()
-             else:
-                 print(f"CharacterManager: RuleEngine not available for character {char.id} death processing. Basic death applied.")
-
-             # These print statements seem to be part of the 'try' block, not 'except' or 'finally'
-             # Their indentation should align with the 'if self._rule_engine:' block or the 'try' block itself.
-             # Assuming they are part of the general cleanup process after RuleEngine interaction.
-             print(f"CharacterManager: Death cleanup initiated for character {character_id} in guild {guild_id_str}.")
-             print(f"CharacterManager: Death cleanup process completed for character {character_id} in guild {guild_id_str}.")
-         except Exception as e:
-            print(f"CharacterManager: Error during death cleanup for character {character_id} in guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # Log error, continue
+                death_report = await self._rule_engine.process_entity_death(
+                    entity=char,
+                    killer=killer_entity,
+                    context=base_cleanup_kwargs # base_cleanup_kwargs already contains guild_id
+                )
+                death_message_from_engine = death_report.get('message', f"{char.name_i18n.get('en', char.id)} meets a grim end.")
+                print(f"CharacterManager: Death of {char.id} processed by RuleEngine. Message: {death_message_from_engine}")
+            else:
+                print(f"CharacterManager: RuleEngine not available for character {char.id} death processing. Basic death applied.")
+            # Corrected lines:
+            print(f"CharacterManager: Death cleanup initiated for character {character_id} in guild {guild_id_str}.") # 12 spaces
+            print(f"CharacterManager: Death cleanup process completed for character {character_id} in guild {guild_id_str}.") # 12 spaces
+        except Exception as e: # 8 spaces
+            print(f"CharacterManager: Error during death cleanup for character {character_id} in guild {guild_id_str}: {e}") # 12 spaces
+            import traceback # 12 spaces
+            print(traceback.format_exc()) # 12 spaces
+            # Log error, continue # 12 spaces
 
 
     # --- Методы для управления активностью/занятостью ---
@@ -1714,3 +1699,6 @@ class CharacterManager:
 
 
 # --- Конец класса CharacterManager ---
+
+
+print("DEBUG: character_manager.py module loaded.")
