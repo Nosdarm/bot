@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     # Add other managers/services that might be in context kwargs (e.g., from CommandRouter/WSP)
     from bot.game.managers.location_manager import LocationManager
     # from bot.game.managers.event_manager import EventManager
-    from bot.game.managers.game_log_manager import GameLogManager # Assuming path
+    from bot.managers.game_log_manager import GameLogManager # Assuming path
 
 
 # Type aliases for callbacks (defined outside TYPE_CHECKING if used in __init__ signature)
@@ -1118,7 +1118,7 @@ class DialogueManager:
     # async def cancel_dialogue(self, guild_id: str, dialogue_id: str, **kwargs: Any) -> None: ...
 
 
-    async def process_player_dialogue_message(
+     async def process_player_dialogue_message(
         self, character: Any, message_text: str, channel_id: int, guild_id: str, **kwargs: Any # Added kwargs for context
     ):
         """

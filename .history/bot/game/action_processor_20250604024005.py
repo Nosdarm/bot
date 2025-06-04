@@ -13,7 +13,7 @@ from bot.game.managers.character_manager import CharacterManager # Used to updat
 from bot.game.managers.location_manager import LocationManager # Used to find locations/exits
 from bot.game.managers.event_manager import EventManager
 # Assume imports for GameLogManager and ConflictResolver exist if needed
-from bot.game.managers.game_log_manager import GameLogManager # Assuming path
+from bot.managers.game_log_manager import GameLogManager # Assuming path
 from bot.game.conflict_resolver import ConflictResolver # Assuming path
 
 
