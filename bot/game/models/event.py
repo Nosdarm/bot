@@ -60,12 +60,21 @@ class EventStage(BaseModel): # Represents a stage within an event
 
 
 class Event(BaseModel): # Represents an active event in the world
-    def __init__(self, id: Optional[str] = None, template_id: str = "unknown_event", 
+    def __init__(self, id: Optional[str] = None, template_id: str = "unknown_event",
+                 guild_id: Optional[str] = None, # Added guild_id
                  name_i18n: Optional[Dict[str, str]] = None,
                  location_id: str = "unknown", channel_id: Optional[int] = None, **kwargs):
         super().__init__(id=id)
         self.template_id = template_id
-        
+
+        if guild_id is None and 'guild_id' in kwargs: # Handle if passed in kwargs
+            guild_id = kwargs.pop('guild_id')
+        if guild_id is None:
+            # This is a critical piece of information. Raise error or log if missing.
+            # For now, let's raise an error during construction if not provided.
+            raise ValueError("guild_id is required to create an Event instance.")
+        self.guild_id: str = str(guild_id)
+
         if name_i18n is not None:
             self.name_i18n = name_i18n
         elif 'name' in kwargs:
@@ -77,7 +86,7 @@ class Event(BaseModel): # Represents an active event in the world
                  self.name_i18n = {"en": name_arg}
             else:
                  self.name_i18n = {"en": "Unnamed Event"}
-                 
+
         self.location_id = location_id
         self.channel_id: Optional[int] = channel_id # Discord channel where event updates are posted
 
@@ -92,6 +101,7 @@ class Event(BaseModel): # Represents an active event in the world
         data = super().to_dict()
         data.update({
             'template_id': self.template_id,
+            'guild_id': self.guild_id, # Added guild_id
             'name_i18n': self.name_i18n,
             'location_id': self.location_id,
             'channel_id': self.channel_id,
@@ -107,10 +117,17 @@ class Event(BaseModel): # Represents an active event in the world
         data_copy = data.copy()
         if "name" in data_copy and "name_i18n" not in data_copy:
             data_copy["name_i18n"] = {"en": data_copy.pop("name")}
-        
-        instance = cls(**data_copy)
+
+        # Ensure guild_id is present
+        guild_id_val = data_copy.get('guild_id')
+        if guild_id_val is None:
+            raise ValueError("guild_id is missing in event data for from_dict.")
+        # No need to pop guild_id from data_copy if it's also a direct __init__ arg
+        # data_copy['guild_id'] = str(guild_id_val) # Ensure string type, handled by __init__
+
+        instance = cls(**data_copy) # guild_id will be passed via data_copy
         # stages_data is explicitly set as it might not be in kwargs if data_copy was manipulated
-        instance.stages_data = data_copy.get('stages_data', {}) 
+        instance.stages_data = data_copy.get('stages_data', {})
         return instance
 
     def get_current_stage(self) -> Optional[EventStage]:

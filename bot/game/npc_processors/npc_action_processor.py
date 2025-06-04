@@ -332,11 +332,11 @@ class NpcActionProcessor:
                    action_data['callback_data']['target_location_id'] = target_location_id
 
               # Расчет длительности перемещения (нужен rule_engine) - Только если валидация успешна
-              # RuleEngine.calculate_npc_action_duration
-              if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_npc_action_duration'):
+              # Use RuleEngine.calculate_action_duration
+              if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_action_duration'):
                   try:
                        # RuleEngine может рассчитать длительность на основе типа действия, NPC, контекста (включая location_manager).
-                       calculated_duration = await rule_engine.calculate_npc_action_duration(action_type, npc=npc, action_context=action_data, **rule_context_kwargs) # Pass context
+                       calculated_duration = await rule_engine.calculate_action_duration(action_type=action_type, npc=npc, action_context=action_data, **rule_context_kwargs)
                   except Exception as e:
                        print(f"NpcActionProcessor: Error calculating move duration for NPC {npc_id}: {e}")
                        traceback.print_exc()
@@ -372,10 +372,10 @@ class NpcActionProcessor:
 
 
               # Расчет длительности атаки (нужен rule_engine, статы NPC, тип атаки) - Только если валидация успешна
-              # RuleEngine.calculate_npc_action_duration
-              if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_npc_action_duration'):
+              # Use RuleEngine.calculate_action_duration
+              if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_action_duration'):
                   try:
-                       calculated_duration = await rule_engine.calculate_npc_action_duration(action_type, npc=npc, action_context=action_data, **rule_context_kwargs) # Pass context
+                       calculated_duration = await rule_engine.calculate_action_duration(action_type=action_type, npc=npc, action_context=action_data, **rule_context_kwargs)
                   except Exception as e:
                        print(f"NpcActionProcessor: Error calculating attack duration for NPC {npc_id}: {e}")
                        traceback.print_exc()
@@ -405,10 +405,10 @@ class NpcActionProcessor:
 
 
              # Расчет длительности отдыха (нужен rule_engine) - Только если валидация успешна
-             # RuleEngine.calculate_npc_action_duration
-             if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_npc_action_duration'):
+             # Use RuleEngine.calculate_action_duration
+             if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_action_duration'):
                   try:
-                       calculated_duration = await rule_engine.calculate_npc_action_duration(action_type, npc=npc, action_context=action_data, **rule_context_kwargs) # Pass context
+                       calculated_duration = await rule_engine.calculate_action_duration(action_type=action_type, npc=npc, action_context=action_data, **rule_context_kwargs)
                   except Exception as e:
                        print(f"NpcActionProcessor: Error calculating rest duration for NPC {npc_id}: {e}")
                        traceback.print_exc()
@@ -468,10 +468,10 @@ class NpcActionProcessor:
 
 
               # Расчет длительности диалога (может быть 0 или короткая задержка) - Только если валидация успешна
-              # RuleEngine.calculate_npc_action_duration
-              if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_npc_action_duration'):
+              # Use RuleEngine.calculate_action_duration
+              if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_action_duration'):
                   try:
-                       calculated_duration = await rule_engine.calculate_npc_action_duration(action_type, npc=npc, action_context=action_data, **rule_context_kwargs) # Pass context
+                       calculated_duration = await rule_engine.calculate_action_duration(action_type=action_type, npc=npc, action_context=action_data, **rule_context_kwargs)
                   except Exception as e:
                        print(f"NpcActionProcessor: Error calculating dialogue duration for NPC {npc_id}: {e}")
                        traceback.print_exc()
@@ -494,10 +494,10 @@ class NpcActionProcessor:
 
 
              # Расчет длительности поиска (нужен rule_engine) - Только если валидация успешна
-             # RuleEngine.calculate_npc_action_duration
-             if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_npc_action_duration'):
+             # Use RuleEngine.calculate_action_duration
+             if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_action_duration'):
                   try:
-                       calculated_duration = await rule_engine.calculate_npc_action_duration(action_type, npc=npc, action_context=action_data, **rule_context_kwargs) # Pass context
+                       calculated_duration = await rule_engine.calculate_action_duration(action_type=action_type, npc=npc, action_context=action_data, **rule_context_kwargs)
                   except Exception as e:
                        print(f"NpcActionProcessor: Error calculating search duration for NPC {npc_id}: {e}")
                        traceback.print_exc()
@@ -549,10 +549,10 @@ class NpcActionProcessor:
 
 
              # Расчет длительности крафта (нужен rule_engine) - Только если валидация успешна
-             # RuleEngine.calculate_npc_action_duration
-             if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_npc_action_duration'):
+             # Use RuleEngine.calculate_action_duration
+             if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_action_duration'):
                   try:
-                       calculated_duration = await rule_engine.calculate_npc_action_duration(action_type, npc=npc, action_context=action_data, **rule_context_kwargs) # Pass context
+                       calculated_duration = await rule_engine.calculate_action_duration(action_type=action_type, npc=npc, action_context=action_data, **rule_context_kwargs)
                   except Exception as e:
                        print(f"NpcActionProcessor: Error calculating craft duration for NPC {npc_id}: {e}")
                        traceback.print_exc()
@@ -621,46 +621,13 @@ class NpcActionProcessor:
 
 
              # Проверка 3: Возможность использования предмета на цели (RuleEngine)
-             # Требует RuleEngine, ItemManager, CharacterManager, NpcManager (для получения объекта цели)
-             if is_validation_successful: # Выполняем только если предыдущие проверки прошли
-                  if rule_engine and hasattr(rule_engine, 'can_use_item'):
-                       try:
-                            # Получаем объект предмета (опционально) и объект цели
-                            item_obj = item_manager.get_item(item_id) if item_manager and hasattr(item_manager, 'get_item') else None # type: Optional["Any"] # Item object type
-                            # ИСПРАВЛЕНИЕ: Используем оператор объединения типов | вместо or
-                            target_obj = None # type: Optional["Character" | "NPC"] # Target object type - Use pipe |
+             # RuleEngine.can_use_item does not exist. We will remove this explicit check.
+             # RuleEngine.resolve_item_use will determine if the use is possible.
+             # TODO: Implement more detailed pre-checks for item usability if needed before calling RuleEngine.resolve_item_use.
+             # For now, basic checks for item_id and target (if applicable) remain.
+             # The actual "can use" logic will be part of resolve_item_use's success/failure.
 
-                            if target_type == 'Character' and character_manager and hasattr(character_manager, 'get_character'): target_obj = character_manager.get_character(target_id)
-                            elif target_type == 'NPC' and npc_manager_kw and hasattr(npc_manager_kw, 'get_npc'): target_obj = npc_manager_kw.get_npc(target_id)
-                            # TODO: Get Object if target_type == 'Object' (requires ObjectManager?)
-
-                            if item_obj and target_obj: # Check if item and target objects were successfully retrieved
-                                 # can_use_item needs user (npc), item object, target object, context
-                                 can_use = await rule_engine.can_use_item(npc, item_obj, target_obj, context=rule_context_kwargs) # Pass all managers in context
-                                 if not can_use:
-                                      print(f"NpcActionProcessor: Error starting NPC use_item action: RuleEngine validation failed for NPC {npc_id}, item {item_id}, target {target_id}.")
-                                      await self._notify_gm(f"❌ NPC {npc_id}: Ошибка старта use_item: нельзя использовать предмет {item_id} на {target_id}.")
-                                      is_validation_successful = False
-                            # What if item doesn't require a target? The validation above assumes target is always required.
-                            # If item doesn't require target, target_id/type might be None, and can_use_item check should handle it.
-                            # else: print("RuleEngine.can_use_item check was not performed due to missing item or target object.")
-
-
-                       except Exception as e:
-                            print(f"NpcActionProcessor: Error during RuleEngine.can_use_item check for NPC {npc_id}: {e}")
-                            traceback.print_exc()
-                            await self._notify_gm(f"❌ NPC {npc_id}: Ошибка проверки возможности использования предмета {item_id} на {target_id}.")
-                            is_validation_successful = False
-
-                  else:
-                       print(f"NpcActionProcessor: Warning: RuleEngine or can_use_item method not available for use_item validation for NPC {npc_id}.")
-                       # Decide policy: if RuleEngine is mandatory for this validation, fail. If optional, log warning and proceed.
-                       # Assume mandatory for now.
-                       await self._notify_gm(f"❌ NPC {npc_id}: Ошибка старта use_item: система правил недоступна для валидации.")
-                       is_validation_successful = False
-
-
-             # Если валидация успешна, сохраняем данные для завершения use_item в callback_data
+             # Если валидация успешна (based on previous checks), сохраняем данные для завершения use_item в callback_data
              if is_validation_successful:
                   if 'callback_data' not in action_data or not isinstance(action_data['callback_data'], dict):
                       action_data['callback_data'] = {}
@@ -672,10 +639,10 @@ class NpcActionProcessor:
 
 
              # Расчет длительности использования предмета (обычно мгновенная или короткая) - Только если валидация успешна
-             # RuleEngine.calculate_npc_action_duration
-             if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_npc_action_duration'):
+             # Use RuleEngine.calculate_action_duration
+             if is_validation_successful and rule_engine and hasattr(rule_engine, 'calculate_action_duration'):
                   try:
-                       calculated_duration = await rule_engine.calculate_npc_action_duration(action_type, npc=npc, action_context=action_data, **rule_context_kwargs) # Pass context
+                       calculated_duration = await rule_engine.calculate_action_duration(action_type=action_type, npc=npc, action_context=action_data, **rule_context_kwargs)
                   except Exception as e:
                        print(f"NpcActionProcessor: Error calculating use_item duration for NPC {npc_id}: {e}")
                        traceback.print_exc()
@@ -848,12 +815,12 @@ class NpcActionProcessor:
         # Важно рассчитать длительность ПЕРЕД добавлением в очередь, чтобы она сохранилась.
         # Используем ту же логику, что и в _execute_start_action_logic для расчета, но без полной валидации.
         calculated_duration = action_data.get('total_duration', 0.0) # Default to value in data, if any
-        # RuleEngine.calculate_npc_action_duration
-        if rule_engine and hasattr(rule_engine, 'calculate_npc_action_duration'): # Use the same duration calculation method as for starting
+        # Use RuleEngine.calculate_action_duration
+        if rule_engine and hasattr(rule_engine, 'calculate_action_duration'): # Use the same duration calculation method as for starting
              try:
                   # Pass context including location_manager for move duration calculation if needed
                   # Pass all kwargs along so RuleEngine can use other managers.
-                  calculated_duration = await rule_engine.calculate_npc_action_duration(action_type, npc=npc, action_context=action_data, **rule_context_kwargs) # Pass context
+                  calculated_duration = await rule_engine.calculate_action_duration(action_type=action_type, npc=npc, action_context=action_data, **rule_context_kwargs)
              except Exception as e:
                   print(f"NpcActionProcessor: Error calculating duration for NPC action type '{action_type}' for {npc_id} in queue: {e}")
                   traceback.print_exc()
