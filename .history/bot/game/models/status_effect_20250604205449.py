@@ -72,41 +72,41 @@ class StatusEffect:
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "StatusEffect":
         """Создает объект StatusEffect из словаря (например, при десериализации из БД)."""
-        status_id = data.get('id') 
-        if status_id is None: raise ValueError("StatusEffect data missing 'id'")
-        
-        status_type = data.get('status_type')
-        if status_type is None: raise ValueError(f"StatusEffect data for id '{status_id}' missing 'status_type'")
+        # Используем .get() с значениями по умолчанию для устойчивости к неполным данным.
 
-        target_id = data.get('target_id')
-        target_type = data.get('target_type')
+        # Обязательные поля (должны быть в словаре данных)
+        status_id = data['id'] # Пробрасываем ошибку, если ID нет - критично
+        status_type = data['status_type'] # Пробрасываем ошибку, если типа нет
+        target_id = data['target_id'] # Пробрасываем ошибку, если цели нет
+        target_type = data['target_type'] # Пробрасываем ошибку, если типа цели нет
 
-        # Apply defaults and print warnings if essential fields are missing
-        if target_id is None:
-            print(f"WARNING: StatusEffect.from_dict: 'target_id' was missing for status_id '{status_id}'. Defaulting to 'unknown_target_for_{status_id}'. Data: {data}")
-            target_id = f"unknown_target_for_{status_id}" 
-        if target_type is None:
-            print(f"WARNING: StatusEffect.from_dict: 'target_type' was missing for status_id '{status_id}'. Defaulting to 'Unknown'. Data: {data}")
-            target_type = "Unknown"
 
-        duration_raw = data.get('duration')
-        duration = float(duration_raw) if duration_raw is not None else None
+        # Опциональные поля с значениями по умолчанию
+        duration_raw = data.get('duration') # Может быть None или число
+        duration = float(duration_raw) if duration_raw is not None else None # Преобразуем в float
 
-        applied_at_raw = data.get('applied_at')
-        applied_at = float(applied_at_raw) if applied_at_raw is not None else None
+        applied_at_raw = data.get('applied_at') # Может быть None или число
+        applied_at = float(applied_at_raw) if applied_at_raw is not None else None # Преобразуем в float
 
-        source_id = data.get('source_id') 
-        state_variables = data.get('state_variables', {}) or {} 
+        source_id = data.get('source_id') # None по умолчанию
+        state_variables = data.get('state_variables', {}) or {} # Убедимся, что это словарь
+
+        # TODO: Обработайте другие поля, если добавили, используя .get()
+        # is_active = bool(data.get('is_active', True)) # По умолчанию активен
+        # applied_by_type = data.get('applied_by_type')
 
         return StatusEffect(
-            id=str(status_id), # Ensure ID is string
-            status_type=str(status_type),
-            target_id=str(target_id),
-            target_type=str(target_type),
+            id=status_id,
+            status_type=status_type,
+            target_id=target_id,
+            target_type=target_type,
             duration=duration,
             applied_at=applied_at,
-            source_id=str(source_id) if source_id is not None else None,
+            source_id=source_id,
             state_variables=state_variables,
+            # TODO: Передайте другие поля в конструктор
+            # is_active=is_active,
+            # applied_by_type=applied_by_type,
         )
 
 # Конец класса StatusEffect

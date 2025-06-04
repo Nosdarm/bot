@@ -41,7 +41,6 @@ class Party(Base):
     __tablename__ = 'parties'
 
     id = Column(String, primary_key=True)
-    name_i18n = Column(JSON, nullable=True)
     player_ids = Column(JSON, nullable=True)
     current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
     turn_status = Column(String, nullable=True)

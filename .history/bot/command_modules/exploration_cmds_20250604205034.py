@@ -78,6 +78,7 @@ async def _send_location_embed(
         )
         if connected_exits and isinstance(connected_exits, dict) and len(connected_exits) > 0:
             exit_display_parts = []
+            for exit_name_or_direction, target_loc_template_id in connected_exits.items(): # Corrected indentation
             for exit_name_or_direction, target_loc_template_id in connected_exits.items():
                 # get_connected_locations returns template IDs as values based on its current implementation.
                 # So, we still need to fetch the static data for the name.
@@ -91,7 +92,17 @@ async def _send_location_embed(
                 embed.add_field(name="Exits", value="\n".join(exit_display_parts), inline=False)
             else:
                 embed.add_field(name="Exits", value="None apparent.", inline=False)
+            if exit_display_parts:
+                embed.add_field(name="Exits", value="\n".join(exit_display_parts), inline=False)
+            else:
+                embed.add_field(name="Exits", value="None apparent.", inline=False)
         else: # This else corresponds to 'if connected_exits and ...'
+            embed.add_field(name="Exits", value="None apparent.", inline=False)
+            if exit_display_parts:
+                embed.add_field(name="Exits", value="\n".join(exit_display_parts), inline=False)
+            else:
+                embed.add_field(name="Exits", value="None apparent.", inline=False)
+        else:
             embed.add_field(name="Exits", value="None apparent.", inline=False)
         # else: # This else block for location_template_id check is no longer needed
             # embed.add_field(name="Exits", value="*Cannot determine exits: location template ID missing*", inline=False)
@@ -385,24 +396,132 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
 @app_commands.command(name="check", description="Выполнить проверку навыка.")
 async def cmd_check(interaction: Interaction, skill_name: str, complexity: str = "medium", target_description: Optional[str] = None):
     await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client) # Added bot definition
-    # All other logic removed as per simplification plan
+    # Removed bot = cast(RPGBot, interaction.client) as it's no longer needed for this simplified version.
+    # Removed if not bot.game_manager: check as it's no longer relevant.
 
-    # Ensure bot.game_manager exists before trying to use it, even if not directly used in this simplified version.
-    # This is more of a good practice / guard for future uncommenting, though not strictly needed for the message below.
-    if not hasattr(interaction.client, 'game_manager') or not bot.game_manager:
-        # Send a generic message if game_manager is not available, as the command is 'unavailable' anyway
-        await interaction.followup.send(
-            "The '/check' command is currently undergoing improvements and is temporarily unavailable. Game systems might also be initializing.",
-            ephemeral=True
-        )
+    if not hasattr(interaction.client, 'game_manager'):
+        await interaction.followup.send("**Ошибка Мастера:** Игровая система (GameManager) не найдена на клиенте.", ephemeral=True)
         return
 
-    # Main simplified response
+    if not bot.game_manager: # Check if game_manager itself is None on RPGBot instance
+        await interaction.followup.send("**Ошибка Мастера:** Игровая система (GameManager) не инициализирована.", ephemeral=True)
+        return
+
+    try:
+        from bot.bot_core import get_bot_instance # global_game_manager is not needed
+        game_mngr = bot.game_manager # Use the already available game_mngr from RPGBot instance
+        get_bot_instance_func = get_bot_instance # For consistency if used elsewhere
+        if game_mngr: # Check if game_mngr (GameManager instance) is available
+            global_game_manager_imported_successfully = True # Consider this path successful if game_mngr exists
+    except ImportError:
+        pass # Keep pass for the case where bot_core itself has issues, though unlikely here
+
+    if global_game_manager_imported_successfully and game_mngr: # Check game_mngr
+        response_data = await game_mngr.process_player_action(
+            server_id=str(interaction.guild_id), # Ensure guild_id is string
+    game_mngr_instance = bot.game_manager
+        
+    if hasattr(game_mngr_instance, 'process_player_action'):
+        response_data = await game_mngr_instance.process_player_action(
+            server_id=str(interaction.guild_id),
+            discord_user_id=interaction.user.id,
+            action_type="skill_check",
+            action_data={
+                "skill_name": skill_name,
+                "complexity": complexity,
+                "target_description": target_description or f"совершить действие, требующее навыка {skill_name}"
+            }
+            # ctx_channel_id is not a parameter of process_player_action
+        )
+        
+        target_channel_id_any = response_data.get("target_channel_id", interaction.channel_id)
+        target_channel_id: Optional[int] = None
+        if isinstance(target_channel_id_any, (str, int)):
+            try:
+                target_channel_id = int(target_channel_id_any)
+            except ValueError:
+                print(f"Warning: target_channel_id '{target_channel_id_any}' is not a valid integer. Defaulting to interaction channel.")
+                if interaction.channel: target_channel_id = interaction.channel.id
+        elif interaction.channel: # if target_channel_id_any was None or other type
+             target_channel_id = interaction.channel.id
+
+
+        bot_instance_for_channel = bot # Use the RPGBot instance directly
+        
+        target_channel: Optional[discord.abc.Messageable] = None # Use Messageable for broader type compatibility
+        if bot_instance_for_channel and target_channel_id:
+            # Ensure target_channel_id is an int if get_channel expects an int
+            try:
+                # get_channel can return various types, ensure it's Messageable
+                fetched_channel = bot_instance_for_channel.get_channel(int(target_channel_id))
+                if isinstance(fetched_channel, discord.abc.Messageable):
+                    target_channel = fetched_channel
+                else:
+                    print(f"Warning: Fetched channel {target_channel_id} is not Messageable. Type: {type(fetched_channel)}. Falling back to interaction.channel.")
+                    if interaction.channel and isinstance(interaction.channel, discord.abc.Messageable):
+                        target_channel = interaction.channel
+                    else: # If interaction.channel is also not messageable (e.g. thread without send perms)
+                        target_channel = None
+
+
+            except ValueError: # Should be caught by earlier int conversion, but as safeguard
+                print(f"Warning: target_channel_id '{target_channel_id}' is not a valid integer. Falling back to interaction.channel.")
+                if interaction.channel and isinstance(interaction.channel, discord.abc.Messageable): # Check type for interaction.channel
+                    target_channel = interaction.channel
+                else:
+                    target_channel = None
+
+        else: # Fallback to interaction.channel if bot_instance or target_channel_id is problematic
+            if interaction.channel and isinstance(interaction.channel, discord.abc.Messageable): # Check type for interaction.channel
+                target_channel = interaction.channel
+            else:
+                target_channel = None
+
+
+        message_to_send = response_data.get("message", "Произошла ошибка при выполнении проверки.")
+
+        # Check if interaction.channel itself is Messageable
+        interaction_channel_is_messageable = isinstance(interaction.channel, discord.abc.Messageable)
+
+
+        # Check if target_channel is valid and different from interaction.channel
+        if target_channel and target_channel.id != (interaction.channel.id if interaction.channel else None) :
+            try:
+                await target_channel.send(message_to_send)
+                # Always send a followup to the interaction itself if the main message went to a different channel
+                await interaction.followup.send(f"You attempt a {skill_name} check... (Response sent to designated channel).", ephemeral=True)
+            except discord.errors.Forbidden:
+                 await interaction.followup.send(f"I don't have permissions to send messages to channel {target_channel.mention}.", ephemeral=True)
+            except Exception as send_e:
+                 print(f"Error sending to target_channel {target_channel.id}: {send_e}")
+                 await interaction.followup.send("Failed to send response to the target channel due to an error.", ephemeral=True)
+
+        else: # Send to the interaction's channel (as followup)
+            if interaction_channel_is_messageable: # Check if interaction.channel can even send messages
+                await interaction.followup.send(message_to_send, ephemeral=True)
+            else:
+                print(f"Error: interaction.channel is not sendable and target_channel was not suitable. Message: {message_to_send}")
+                # As a last resort, try to send to followup if the interaction itself is the problem, though this is unlikely if defer worked.
+                await interaction.followup.send("Error: Could not send message to the channel.", ephemeral=True)
+    else:
+        # This 'else' corresponds to 'if global_game_manager_imported_successfully and global_game_manager_instance:'
+        await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна или не инициализирована должным образом для команды /check.", ephemeral=True)
+    # New logic: Inform user that the command is under rework.
     await interaction.followup.send(
         "The '/check' command is currently undergoing improvements and is temporarily unavailable. Please try again later.",
         ephemeral=True
     )
+            else: # If interaction.channel is not messageable (e.g. None, or a non-text channel type somehow)
+                print(f"Error: interaction.channel is not Messageable. Cannot send skill check result. Message: {message_to_send}")
+                # Fallback, try to send to followup, though it might also fail if interaction context is broken
+                try:
+                    await interaction.followup.send("Error: Could not send message to the current channel context.", ephemeral=True)
+                except Exception as final_send_e:
+                    print(f"CRITICAL: Failed to send any response for /check command: {final_send_e}")
+
+    else: # Corresponds to if hasattr(game_mngr_instance, 'process_player_action'):
+        await interaction.followup.send("The '/check' command's underlying action processing is currently unavailable.", ephemeral=True)
+        return
 
 # Note: The _generate_location_details_embed function was not directly mentioned for changes
 # in the prompt other than how it's called. Assuming its internal logic is fine for now,
