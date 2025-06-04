@@ -710,16 +710,10 @@ class LocationManager:
              mgr = kwargs.get('item_manager', self._item_manager)
              update_location_method_name = 'update_item_location'
              manager_attr_name = '_item_manager'
-        # TODO: Add other entity types like 'Party'
-        # elif entity_type == 'Party':
-        #      mgr = kwargs.get('party_manager', self._party_manager)
-        #      update_location_method_name = 'update_party_location'
-        #      manager_attr_name = '_party_manager'
-        # TODO: Add other entity types like 'Party'
-        # elif entity_type == 'Party':
-        #      mgr = kwargs.get('party_manager', self._party_manager)
-        #      update_location_method_name = 'update_party_location'
-        #      manager_attr_name = '_party_manager'
+        elif entity_type == 'Party':
+            mgr = kwargs.get('party_manager', self._party_manager)
+            update_location_method_name = 'update_party_location'
+            manager_attr_name = '_party_manager'
         else:
             print(f"LocationManager: Error: Movement not supported for entity type {entity_type} for guild {guild_id_str}.")
             send_cb_factory = kwargs.get('send_callback_factory', self._send_callback_factory)

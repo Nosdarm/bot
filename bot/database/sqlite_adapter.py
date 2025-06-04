@@ -22,7 +22,7 @@ class SqliteAdapter:
     """
     # Определяем последнюю версию схемы, которую знает этот адаптер
     # ОБНОВЛЕНО: Добавлена таблица generated_locations
-    LATEST_SCHEMA_VERSION = 22 # Incremented for gold column in players table
+    LATEST_SCHEMA_VERSION = 23 # Incremented for parties.current_location_id FK
 
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -1862,6 +1862,76 @@ class SqliteAdapter:
                 traceback.print_exc()
                 raise # Перевыбросить ошибку, если это не "duplicate column"
         print("SqliteAdapter: v21 to v22 migration complete.")
+
+    async def _migrate_v22_to_v23(self, cursor: Cursor) -> None:
+        """Миграция с Версии 22 на Версию 23 (добавление FK для parties.current_location_id)."""
+        print("SqliteAdapter: Running v22 to v23 migration (add FK for parties.current_location_id)...")
+
+        original_fk_status_query = await cursor.execute("PRAGMA foreign_keys;")
+        original_fk_enabled_row = await original_fk_status_query.fetchone()
+        fk_actually_enabled = original_fk_enabled_row[0] == 1 if original_fk_enabled_row else False
+
+        try:
+            if fk_actually_enabled:
+                await cursor.execute("PRAGMA foreign_keys=OFF;")
+                print("SqliteAdapter: (migrate_v22_to_v23) Temporarily disabled foreign keys for table rebuild.")
+
+            old_parties_columns = await self._get_table_columns(cursor, "parties")
+
+            # Ensure all expected columns from previous migrations are part of old_parties_columns
+            # Columns from v0-v1: id, guild_id, name, leader_id, (member_ids -> player_ids in v11), state_variables, current_action
+            # Columns from v11: current_location_id, turn_status
+            # So, expected columns are: id, guild_id, name, leader_id, player_ids, state_variables, current_action, current_location_id, turn_status
+
+            # Define the new schema for the parties table
+            # Using `name TEXT NULL` as it's assumed to store JSON for name_i18n based on PartyManager.
+            new_parties_schema = """
+            CREATE TABLE parties_new (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                name TEXT NULL,
+                leader_id TEXT NULL,
+                player_ids TEXT DEFAULT '[]',
+                current_location_id TEXT NULL REFERENCES locations(id), -- ADDED FOREIGN KEY
+                turn_status TEXT NULL,
+                state_variables TEXT DEFAULT '{}',
+                current_action TEXT NULL
+            );
+            """
+
+            # Recreate the table using the helper
+            # Need to ensure old_parties_columns only contains columns that also exist in parties_new
+            # The helper _recreate_table_with_new_schema uses the provided old_parties_columns for SELECT and INSERT.
+            # If parties_new has fewer columns than parties_old, this will fail.
+            # If parties_new has more (new, nullable/defaulted) columns, it's fine.
+            # In this case, the column structure is the same, just adding a constraint.
+
+            # Let's define the columns that will be copied explicitly to match the new schema.
+            # This avoids issues if old_parties_columns had extra columns not in new_parties_schema.
+            columns_to_copy = [
+                "id", "guild_id", "name", "leader_id", "player_ids",
+                "current_location_id", "turn_status", "state_variables", "current_action"
+            ]
+            # Filter old_parties_columns to only include those that exist in our target new schema
+            filtered_old_columns = [col for col in old_parties_columns if col in columns_to_copy]
+
+
+            await self._recreate_table_with_new_schema(cursor, "parties", new_parties_schema, filtered_old_columns)
+
+            # Add an index for the new foreign key
+            await cursor.execute("CREATE INDEX IF NOT EXISTS idx_parties_current_location_id ON parties (current_location_id);")
+            print("SqliteAdapter: Added index idx_parties_current_location_id ON parties (current_location_id).")
+
+        except Exception as e:
+            print(f"SqliteAdapter: Error during v22 to v23 migration: {e}")
+            traceback.print_exc()
+            raise
+        finally:
+            if fk_actually_enabled:
+                await cursor.execute("PRAGMA foreign_keys=ON;")
+                print("SqliteAdapter: (migrate_v22_to_v23) Re-enabled foreign keys.")
+
+        print("SqliteAdapter: v22 to v23 migration complete.")
 
 # --- Конец класса SqliteAdapter ---
 print(f"DEBUG: Finished loading sqlite_adapter.py from: {__file__}")

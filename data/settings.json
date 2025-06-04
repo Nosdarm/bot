@@ -87,6 +87,46 @@
         "properties": { "stackable": true }
     }
   },
+  "status_templates": {
+    "poisoned_weak": {
+      "name_i18n": {
+        "en": "Weakly Poisoned",
+        "ru": "Слабо отравлен"
+      },
+      "description_i18n": {
+        "en": "Taking minor poison damage over time.",
+        "ru": "Получает небольшой урон ядом с течением времени."
+      },
+      "icon": "🤢",
+      "category": "debuff",
+      "duration_type": "fixed",
+      "default_duration_seconds": 180,
+      "effects_per_tick": [
+        {"type": "damage", "amount": "1d2", "damage_type": "poison"}
+      ],
+      "on_apply_effects": [],
+      "on_remove_effects": [],
+      "stacking_rules": {"max_stacks": 1, "stack_behavior": "refresh_duration"}
+    },
+    "blessed_might": {
+      "name_i18n": {
+        "en": "Blessed Might",
+        "ru": "Благословенная мощь"
+      },
+      "description_i18n": {
+        "en": "Strength is increased by a divine blessing.",
+        "ru": "Сила увеличена божественным благословением."
+      },
+      "icon": "✨",
+      "category": "buff",
+      "duration_type": "fixed",
+      "default_duration_seconds": 600,
+      "on_apply_effects": [
+        {"type": "stat_modifier", "stat": "strength", "modifier_type": "flat", "amount": 2}
+      ],
+      "stacking_rules": {"max_stacks": 1, "stack_behavior": "refresh_duration"}
+    }
+  },
   "game_rules": {
     "general_settings": {
       "max_character_level": 20,

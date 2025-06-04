@@ -13,6 +13,8 @@ from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHE
 from bot.game.models.status_effect import StatusEffect
 # Импорт адаптера БД
 from bot.database.sqlite_adapter import SqliteAdapter
+# Импорт утилиты для i18n
+from bot.utils.i18n_utils import get_i18n_text
 
 if TYPE_CHECKING:
     # Импорты менеджеров, которые нужны StatusManager для получения данных или вызова их методов
@@ -99,9 +101,33 @@ class StatusManager:
         print("StatusManager: Loading status templates...")
         self._status_templates = {}
         try:
-            if self._settings and 'status_templates' in self._settings:
-                self._status_templates = self._settings.get('status_templates', {})
-            print(f"StatusManager: Loaded {len(self._status_templates)} status templates.")
+            raw_templates = self._settings.get('status_templates', {})
+            processed_templates = {}
+            for template_id, template_data in raw_templates.items():
+                if not isinstance(template_data, dict):
+                    print(f"StatusManager: Warning: Template data for '{template_id}' is not a dictionary. Skipping.")
+                    continue
+
+                # Process name_i18n
+                if not isinstance(template_data.get('name_i18n'), dict):
+                    if 'name' in template_data and isinstance(template_data['name'], str):
+                        template_data['name_i18n'] = {"en": template_data['name']}
+                    else:
+                        template_data['name_i18n'] = {"en": template_id}
+                    template_data.pop('name', None) # Remove old name field
+
+                # Process description_i18n
+                if not isinstance(template_data.get('description_i18n'), dict):
+                    if 'description' in template_data and isinstance(template_data['description'], str):
+                        template_data['description_i18n'] = {"en": template_data['description']}
+                    else:
+                        template_data['description_i18n'] = {"en": "No description."}
+                    template_data.pop('description', None) # Remove old description field
+
+                processed_templates[template_id] = template_data
+
+            self._status_templates = processed_templates
+            print(f"StatusManager: Loaded and processed {len(self._status_templates)} status templates.")
         except Exception as e:
             print(f"StatusManager: Error loading status templates: {e}")
             traceback.print_exc()
@@ -113,15 +139,18 @@ class StatusManager:
     # ИСПРАВЛЕНИЕ: get_status_name должен принимать status_instance или status_type
     # И, возможно, template_id, если имя берется оттуда.
     # В CharacterViewService вызывается get_status_display_name с status_instance=status_instance
-    def get_status_display_name(self, status_instance: StatusEffect) -> str:
+    def get_status_display_name(self, status_instance: StatusEffect, lang: str = "en", default_lang: str = "en") -> str:
          """Получить отображаемое имя статус-эффекта по его объекту."""
          if not isinstance(status_instance, StatusEffect):
               return "Неизвестный статус"
-         # Ищем шаблон по status_type в объекте экземпляра
-         tpl = self.get_status_template(status_instance.status_type)
-         name = getattr(tpl, 'name', status_instance.status_type) if tpl else status_instance.status_type
 
-         desc_parts = [name]
+         tpl = self.get_status_template(status_instance.status_type)
+
+         display_name = status_instance.status_type # Fallback to type
+         if tpl:
+             display_name = get_i18n_text(tpl, "name", lang, default_lang)
+
+         desc_parts = [display_name]
          if status_instance.duration is not None:
              # TODO: Форматирование длительности (например, минуты/секунды)
              desc_parts.append(f"({status_instance.duration:.1f} ост.)") # Осталось длительности
@@ -129,6 +158,17 @@ class StatusManager:
          # TODO: Добавить отображение стаков, если есть (status_instance.stacks)
 
          return " ".join(desc_parts)
+
+    def get_status_display_description(self, status_instance: StatusEffect, lang: str = "en", default_lang: str = "en") -> str:
+        """Получить локализованное описание статус-эффекта."""
+        if not isinstance(status_instance, StatusEffect):
+            return "Описание недоступно."
+
+        tpl = self.get_status_template(status_instance.status_type)
+        if tpl:
+            return get_i18n_text(tpl, "description", lang, default_lang)
+
+        return "Описание недоступно."
 
 
     # ИСПРАВЛЕНИЕ: get_status_effect должен принимать guild_id.
