@@ -36,6 +36,7 @@ import bot.command_modules.exploration_cmds
 import bot.command_modules.action_cmds
 import bot.command_modules.inventory_cmds
 import bot.command_modules.utility_cmds
+import bot.command_modules.party_cmds # Added party_cmds import
 # Импортируйте другие command_modules здесь
 
 
@@ -211,13 +212,13 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
                             
                             # Action accumulation logic
                             actions_list = []
-                            if char_model.собранные_действия_JSON:
+                            if char_model.collected_actions_json:
                                 try:
-                                    actions_list = json.loads(char_model.собранные_действия_JSON)
+                                    actions_list = json.loads(char_model.collected_actions_json)
                                     if not isinstance(actions_list, list): # Ensure it's a list
                                         actions_list = [actions_list] # Convert to list if it was a single dict
                                 except json.JSONDecodeError:
-                                    logging.warning(f"NLU: Could not parse existing собранные_действия_JSON for char {char_model.id}. Initializing new list.")
+                                    logging.warning(f"NLU: Could not parse existing collected_actions_json for char {char_model.id}. Initializing new list.")
                                     actions_list = []
                             
                             actions_list.append(action_data)
@@ -225,7 +226,7 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
                             
                             logging.debug(f"NLU: Appending action for User {message.author.id}. New actions JSON: {updated_actions_json}")
                             
-                            char_model.собранные_действия_JSON = updated_actions_json
+                            char_model.collected_actions_json = updated_actions_json
                             
                             # Mark character as dirty before saving
                             self.game_manager.character_manager.mark_character_dirty(str(message.guild.id), char_model.id)
@@ -328,10 +329,15 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
         # Inventory commands
         self.tree.add_command(bot.command_modules.inventory_cmds.cmd_inventory)
         self.tree.add_command(bot.command_modules.inventory_cmds.cmd_pickup)
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_equip) # Added equip
+        self.tree.add_command(bot.command_modules.inventory_cmds.cmd_unequip) # Added unequip
 
         # Utility commands
         self.tree.add_command(bot.command_modules.utility_cmds.cmd_undo)
         self.tree.add_command(bot.command_modules.utility_cmds.cmd_lang) # Add the new /lang command
+
+        # Party commands
+        self.tree.add_command(bot.command_modules.party_cmds.party_group) # Added party command group
 
         # Simulation Trigger Command
         # cmd_gm_simulate is already an app_command.Command, so it should be added directly.

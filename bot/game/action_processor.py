@@ -76,14 +76,30 @@ class ActionProcessor:
             # Correct indentation for return
             return {"success": False, "message": "**Мастер:** У вас еще нет персонажа в этой игре. Используйте `/join_game`.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
+        # Ensure guild_id is consistently string
+        guild_id_str_process = str(game_state.server_id)
+
         current_location_id = getattr(character, 'current_location_id', None)
         # Assuming get_location is async
-        location = await loc_manager.get_location(current_location_id, guild_id=str(game_state.server_id)) if current_location_id else None # Added guild_id cast to str
+        location = await loc_manager.get_location(current_location_id, guild_id=guild_id_str_process) if current_location_id else None
         if not location:
             # Correct indentation for return
             return {"success": False, "message": "**Мастер:** Ваш персонаж в неизвестной локации. Обратитесь к администратору.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
         output_channel_id = loc_manager.get_location_channel(game_state, location.id) or ctx_channel_id
+
+        # Log start of action processing
+        if game_log_manager and character:
+            char_name_log = getattr(character, 'name_i18n', {}).get(character.selected_language, getattr(character, 'name', character.id))
+            loc_name_log = getattr(location, 'name_i18n', {}).get(character.selected_language, getattr(location, 'name', location.id))
+            await game_log_manager.log_event(
+                guild_id=guild_id_str_process,
+                event_type="player_action_start",
+                message=f"Processing action '{action_type}' for {char_name_log} in {loc_name_log}.",
+                related_entities=[{"id": str(character.id), "type": "character"}, {"id": str(location.id), "type": "location"}],
+                channel_id=ctx_channel_id,
+                metadata={"action_type": action_type, "action_data": action_data}
+            )
 
 
         # --- Check for actions targeting an event first (Logic might be in EventManager's process method) ---
@@ -324,162 +340,268 @@ class ActionProcessor:
                                 conflict_resolver: Optional[ConflictResolver] = None,
                                 game_log_manager: Optional[GameLogManager] = None
                                 ) -> Dict[str, Any]:
+        guild_id_str = str(game_state.server_id)
+        all_individual_results = []
+        overall_state_changed_for_party = False
+
+        if game_log_manager:
+            await game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="party_actions_start",
+                message=f"Starting processing for party actions. Characters involved: {len(party_actions_data)}.",
+                channel_id=ctx_channel_id_fallback, # This channel is a fallback, actual actions might use location channels
+                metadata={"num_characters_with_actions": len(party_actions_data)}
+            )
 
         # Use the passed conflict_resolver or the instance attribute
         current_conflict_resolver = conflict_resolver if conflict_resolver else self._conflict_resolver
 
         if current_conflict_resolver:
-            print(f"ActionProcessor: Using ConflictResolver for party actions.")
+            print(f"ActionProcessor: Using ConflictResolver for party actions in guild {guild_id_str}.")
             parsed_actions_map: Dict[str, List[Dict[str, Any]]] = {}
-
-            # Correct indentation for the for loop inside the if block
             for char_id_loop, collected_actions_json_loop in party_actions_data:
-                # Use await for async get_character if it is async, otherwise remove await.
-                # Assuming get_character is synchronous based on how it was called without await previously.
-                # Assuming character ID is the instance ID, not Discord ID here.
-                character_obj: Optional[CharacterModel] = char_manager.get_character(guild_id=str(game_state.server_id), character_id=char_id_loop)
+                character_obj: Optional[CharacterModel] = char_manager.get_character(guild_id=guild_id_str, character_id=char_id_loop)
                 if not character_obj:
-                    print(f"ActionProcessor: Character {char_id_loop} not found during conflict analysis. Skipping.")
-                    parsed_actions_map[char_id_loop] = [] # Ensure key exists even if char not found or no actions
-                    continue # Correct use of continue
-
+                    print(f"ActionProcessor: Character {char_id_loop} not found during conflict analysis prep. Skipping.")
+                    parsed_actions_map[char_id_loop] = []
+                    continue
                 if not collected_actions_json_loop or collected_actions_json_loop.strip() == "[]":
                     parsed_actions_map[char_id_loop] = []
-                    continue # Correct use of continue
-
+                    continue
                 try:
                     actions_list = json.loads(collected_actions_json_loop)
-                    if isinstance(actions_list, list):
-                        parsed_actions_map[char_id_loop] = actions_list
-                    else:
-                         print(f"ActionProcessor: Malformed actions data for character {char_id_loop}: Not a list.")
-                         parsed_actions_map[char_id_loop] = [] # Add empty list for malformed data
+                    parsed_actions_map[char_id_loop] = actions_list if isinstance(actions_list, list) else []
                 except json.JSONDecodeError:
                     print(f"ActionProcessor: Invalid JSON for character {char_id_loop}. Skipping actions.")
-                    parsed_actions_map[char_id_loop] = [] # Add empty list for invalid JSON
-                except Exception as e:
-                     print(f"ActionProcessor: Unexpected error parsing actions for character {char_id_loop}: {e}")
-                     traceback.print_exc()
-                     parsed_actions_map[char_id_loop] = [] # Add empty list for error
+                    parsed_actions_map[char_id_loop] = []
 
-            print(f"ActionProcessor: Calling ConflictResolver.analyze_actions_for_conflicts with map for players: {list(parsed_actions_map.keys())}")
-            # Assuming analyze_actions_for_conflicts is synchronous
-            identified_conflicts = current_conflict_resolver.analyze_actions_for_conflicts(player_actions_map=parsed_actions_map)
+            conflict_resolution_bundle = await current_conflict_resolver.analyze_actions_for_conflicts(
+                player_actions_map=parsed_actions_map,
+                guild_id=guild_id_str
+                # context can be passed here if analyze_actions_for_conflicts uses it
+            )
 
-            # Correct indentation for the if block
-            if identified_conflicts:
-                print(f"ActionProcessor: Identified {len(identified_conflicts)} conflicts.")
-                # ... (rest of conflict handling logic - this block was mostly commented out) ...
-                # Placeholder return for when conflicts are identified
-                if game_log_manager: # Check if game_log_manager is not None
+            if conflict_resolution_bundle.get("requires_manual_resolution"):
+                print(f"ActionProcessor: Conflicts require manual resolution for guild {guild_id_str}. Actions deferred.")
+                # Log pending conflicts if GameLogManager is available
+                if game_log_manager:
+                    for conflict_detail in conflict_resolution_bundle.get("pending_conflict_details", []):
+                        await game_log_manager.log_event(
+                            guild_id=guild_id_str,
+                            event_type="conflict_manual_pending",
+                            message=f"Conflict ID {conflict_detail.get('conflict_id')} requires manual GM resolution.",
+                            related_entities=conflict_detail.get("involved_entities", []),
+                            metadata=conflict_detail
+                        )
+                return {
+                    "success": True, # The process_party_actions itself succeeded in deferring
+                    "message": "Actions involve conflicts that require GM intervention.",
+                    "identified_conflicts": conflict_resolution_bundle.get("pending_conflict_details", []),
+                    "individual_action_results": [], # No actions executed yet
+                    "overall_state_changed": False
+                }
+
+            actions_to_execute_ordered = conflict_resolution_bundle.get("actions_to_execute", [])
+            # Log auto-resolution outcomes if any
+            if game_log_manager:
+                 for auto_outcome in conflict_resolution_bundle.get("auto_resolution_outcomes", []):
+                        await game_log_manager.log_event(
+                            guild_id=guild_id_str,
+                            event_type="conflict_auto_resolved",
+                            message=f"Conflict ID {auto_outcome.get('conflict_id')} auto-resolved. Outcome: {auto_outcome.get('outcome',{}).get('description')}",
+                            related_entities=auto_outcome.get("involved_entities", []),
+                            metadata=auto_outcome
+                        )
+
+            print(f"ActionProcessor: Executing {len(actions_to_execute_ordered)} actions after conflict resolution for guild {guild_id_str}.")
+            # This list `actions_to_execute_ordered` now contains dicts like:
+            # {"character_id": str, "action_data": Dict}
+            # where action_data is {"intent": ..., "entities": ..., "original_text": ...}
+
+            for action_to_execute in actions_to_execute_ordered:
+                char_id_exec = action_to_execute["character_id"]
+                action_data_exec = action_to_execute["action_data"] # This is the NLU output
+                original_text_log = action_data_exec.get("original_text", "N/A")
+                action_intent_log = action_data_exec.get("intent", "N/A")
+
+                character_obj_exec: Optional[CharacterModel] = char_manager.get_character(guild_id=guild_id_str, character_id=char_id_exec)
+                if not character_obj_exec:
+                    msg = f"Character {char_id_exec} not found for execution of action '{action_intent_log}' ('{original_text_log}')."
+                    if game_log_manager:
+                        await game_log_manager.log_event(guild_id=guild_id_str, event_type="party_action_error", message=msg, related_entities=[{"id": char_id_exec, "type": "character"}], metadata={"action_data": action_data_exec})
+                    all_individual_results.append({"character_id": char_id_exec, "action_original_text": original_text_log, "success": False, "message": "Character not found for execution.", "state_changed": False})
+                    continue
+
+                char_location_instance_exec: Optional[Dict[str,Any]] = loc_manager.get_location_instance(guild_id=guild_id_str, instance_id=getattr(character_obj_exec, 'location_id', None))
+                ctx_channel_id_for_action_exec = ctx_channel_id_fallback
+                if char_location_instance_exec and char_location_instance_exec.get("channel_id"):
+                    try: ctx_channel_id_for_action_exec = int(char_location_instance_exec["channel_id"])
+                    except ValueError: pass
+
+                if game_log_manager:
+                    char_name_log_exec = getattr(character_obj_exec, 'name_i18n', {}).get(character_obj_exec.selected_language, getattr(character_obj_exec, 'name', char_id_exec))
                     await game_log_manager.log_event(
-                        guild_id=str(game_state.server_id), # Use game_state.server_id
-                        event_type="conflict_identification",
-                        message=f"{len(identified_conflicts)} conflicts identified for party.",
-                        related_entities=[{"id": p_id, "type": "character"} for p_id in parsed_actions_map.keys()],
+                        guild_id=guild_id_str,
+                        event_type="party_action_item_start",
+                        message=f"Executing action '{action_intent_log}' for {char_name_log_exec} (Original: '{original_text_log}') via conflict resolver.",
+                        related_entities=[{"id": char_id_exec, "type": "character"}],
+                        channel_id=ctx_channel_id_for_action_exec,
+                        metadata={"action_data": action_data_exec}
                     )
-                # Correct indentation for return inside the if block
-                return {"success": True, "message": f"Conflict analysis initiated. {len(identified_conflicts)} potential conflicts found.", "identified_conflicts": identified_conflicts, "individual_action_results": [], "overall_state_changed": False}
-            else: # No conflicts
-                print("ActionProcessor: No conflicts identified.")
-                # ... (logic for no conflicts - this block was also commented out) ...
-                # Placeholder return for when no conflicts are identified
-                # Correct indentation for return inside the else block
-                return {"success": True, "message": "No conflicts identified. Actions not processed further in this path yet.", "individual_action_results": [], "overall_state_changed": False}
 
-        # Fallback: Original behavior if no conflict_resolver is provided or set
-        # Correct indentation for the else block matching the initial if current_conflict_resolver:
-        else: # No conflict resolver
-            print(f"ActionProcessor: Starting process_party_actions (individual processing) for {len(party_actions_data)} characters.")
-            all_individual_results = []
-            overall_state_changed_for_party = False
+                single_action_result = await self.process(
+                    game_state=game_state, char_manager=char_manager, loc_manager=loc_manager,
+                    event_manager=event_manager, rule_engine=rule_engine, openai_service=openai_service,
+                    ctx_channel_id=ctx_channel_id_for_action_exec, discord_user_id=getattr(character_obj_exec, 'discord_user_id', None),
+                    action_type=action_intent_log, action_data=action_data_exec.get("entities", {}),
+                    game_log_manager=game_log_manager
+                )
 
-            # Correct indentation for the for loop inside the else block
+                if game_log_manager:
+                     await game_log_manager.log_event(
+                        guild_id=guild_id_str,
+                        event_type="party_action_item_result",
+                        message=f"Action '{action_intent_log}' for {char_name_log_exec} result: Success={single_action_result.get('success')}, StateChanged={single_action_result.get('state_changed')}. Message: {single_action_result.get('message')}",
+                        related_entities=[{"id": char_id_exec, "type": "character"}],
+                        channel_id=single_action_result.get('target_channel_id', ctx_channel_id_for_action_exec),
+                        metadata={"action_result": single_action_result, "original_action_data": action_data_exec}
+                    )
+
+                all_individual_results.append({"character_id": char_id_exec, "action_original_text": original_text_log, **single_action_result})
+                if single_action_result.get("state_changed", False):
+                    overall_state_changed_for_party = True
+                    # Persist changes immediately after this action if state changed
+                    print(f"ActionProcessor: State changed after action by {char_id_exec}. Persisting relevant manager states for guild {guild_id_str}.")
+                    if char_manager: await char_manager.save_state(guild_id=guild_id_str)
+                    if loc_manager: await loc_manager.save_state(guild_id=guild_id_str)
+                    # Add other relevant managers that might have been affected and need immediate persistence
+                    # For example, if ItemManager or NpcManager were passed in and used by self.process:
+                    # if item_manager: await item_manager.save_state(guild_id=guild_id_str)
+                    # if npc_manager: await npc_manager.save_state(guild_id=guild_id_str)
+                    # PartyManager state likely changes at a higher level (e.g. turn status) or if party structure changes.
+
+            # Fall through to the common return structure
+
+        else: # No conflict resolver, process actions sequentially as before
+            if game_log_manager:
+                await game_log_manager.log_event(guild_id=guild_id_str, event_type="party_actions_no_conflict_resolver", message="No conflict resolver available. Processing actions sequentially.", metadata={"num_characters": len(party_actions_data)})
+            print(f"ActionProcessor: No ConflictResolver. Processing party actions individually for {len(party_actions_data)} characters in guild {guild_id_str}.")
             for char_id_loop_ind, collected_actions_json_loop_ind in party_actions_data:
-                # Use await for async get_character if it is async
-                # Assuming get_character is synchronous based on how it was called without await previously.
-                character_obj_ind: Optional[CharacterModel] = char_manager.get_character(guild_id=str(game_state.server_id), character_id=char_id_loop_ind) # Assuming character ID is instance ID
+                character_obj_ind: Optional[CharacterModel] = char_manager.get_character(guild_id=guild_id_str, character_id=char_id_loop_ind)
 
-                # Correct indentation for the if block
                 if not character_obj_ind:
-                    print(f"ActionProcessor: Character {char_id_loop_ind} not found. Skipping.")
+                    msg = f"Character {char_id_loop_ind} not found. Skipping actions."
+                    if game_log_manager:
+                        await game_log_manager.log_event(guild_id=guild_id_str, event_type="party_action_error", message=msg, related_entities=[{"id": char_id_loop_ind, "type": "character"}])
+                    print(f"ActionProcessor: {msg}")
                     all_individual_results.append({"character_id": char_id_loop_ind, "success": False, "message": "Character not found.", "state_changed": False})
-                    continue # Correct use of continue
+                    continue
 
-                # Correct indentation for the if block
+                char_name_log_ind = getattr(character_obj_ind, 'name_i18n', {}).get(character_obj_ind.selected_language, getattr(character_obj_ind, 'name', char_id_loop_ind))
+
                 if not collected_actions_json_loop_ind or collected_actions_json_loop_ind.strip() == "[]":
-                    # Correct indentation for lines inside the if block
-                    language_ind = character_obj_ind.selected_language or "en"
-                    char_name_ind = character_obj_ind.name_i18n.get(language_ind, char_id_loop_ind)
-                    print(f"ActionProcessor: No actions for {char_name_ind}. Skipping.")
+                    msg = f"No actions submitted for {char_name_log_ind} ({char_id_loop_ind}). Skipping."
+                    # This is normal, maybe don't log to game_log_manager unless verbose mode
+                    print(f"ActionProcessor: {msg}")
                     all_individual_results.append({"character_id": char_id_loop_ind, "success": True, "message": "No actions submitted.", "state_changed": False})
-                    continue # Correct use of continue
-
-                # Correct indentation for the try block
+                    continue
                 try:
                     actions_list_ind = json.loads(collected_actions_json_loop_ind)
-                    # Correct indentation for the if block
                     if not isinstance(actions_list_ind, list):
+                        msg = f"Malformed actions data (not a list) for {char_name_log_ind} ({char_id_loop_ind})."
+                        if game_log_manager:
+                            await game_log_manager.log_event(guild_id=guild_id_str, event_type="party_action_error", message=msg, related_entities=[{"id": char_id_loop_ind, "type": "character"}], metadata={"raw_actions": collected_actions_json_loop_ind})
                         all_individual_results.append({"character_id": char_id_loop_ind, "success": False, "message": "Malformed actions data (not a list).", "state_changed": False})
-                        continue # Correct use of continue
+                        continue
 
-                    # Correct indentation for the for loop
-                    for action_item_ind in actions_list_ind: # Corrected variable name
-                        # Correct indentation for the if block
+                    for action_item_ind in actions_list_ind:
                         if not isinstance(action_item_ind, dict):
-                            print(f"ActionProcessor: Skipping malformed action item for char {char_id_loop_ind}: {action_item_ind}")
-                            continue # Correct use of continue
-                        # Correct indentation for lines inside the for loop
+                            msg = f"Skipping malformed action item for {char_name_log_ind} ({char_id_loop_ind}): {action_item_ind}"
+                            if game_log_manager:
+                                 await game_log_manager.log_event(guild_id=guild_id_str, event_type="party_action_error", message=msg, related_entities=[{"id": char_id_loop_ind, "type": "character"}], metadata={"action_item": action_item_ind})
+                            print(f"ActionProcessor: {msg}")
+                            continue
                         action_type_ind = action_item_ind.get("intent")
                         action_data_ind = action_item_ind.get("entities", {})
                         original_text_ind = action_item_ind.get("original_text", "N/A")
 
-                        # Correct indentation for the if block
                         if not action_type_ind:
+                            msg = f"Action intent missing for {char_name_log_ind} ({char_id_loop_ind}). Original: '{original_text_ind}'"
+                            if game_log_manager:
+                                 await game_log_manager.log_event(guild_id=guild_id_str, event_type="party_action_error", message=msg, related_entities=[{"id": char_id_loop_ind, "type": "character"}], metadata={"action_item": action_item_ind})
                             all_individual_results.append({"character_id": char_id_loop_ind, "action_original_text": original_text_ind, "success": False, "message": "Action intent missing.", "state_changed": False})
-                            continue # Correct use of continue
+                            continue
 
-                        # TODO: Fix loc_manager.get_location - it expects template_id and optional guild_id
-                        # This should use character_obj_ind.location_id (instance_id)
-                        # Assuming get_location_instance is sync and returns Dict[str,Any] or None
-                        char_location_instance_ind: Optional[Dict[str,Any]] = loc_manager.get_location_instance(guild_id=str(game_state.server_id), instance_id=getattr(character_obj_ind, 'current_location_id', None))
-
+                        char_location_instance_ind: Optional[Dict[str,Any]] = loc_manager.get_location_instance(guild_id=guild_id_str, instance_id=getattr(character_obj_ind, 'location_id', None))
                         ctx_channel_id_for_action_ind = ctx_channel_id_fallback
                         if char_location_instance_ind and char_location_instance_ind.get("channel_id"):
-                            try:
-                                ctx_channel_id_for_action_ind = int(char_location_instance_ind["channel_id"])
-                            except ValueError:
-                                print(f"Warning: Could not convert location channel_id '{char_location_instance_ind['channel_id']}' to int for action processing.")
-                                pass # Keep fallback channel if conversion fails
+                            try: ctx_channel_id_for_action_ind = int(char_location_instance_ind["channel_id"])
+                            except ValueError: pass
 
-                        # Correct indentation for the await call
+                        if game_log_manager:
+                            await game_log_manager.log_event(
+                                guild_id=guild_id_str,
+                                event_type="party_action_item_start",
+                                message=f"Executing action '{action_type_ind}' for {char_name_log_ind} (Original: '{original_text_ind}') sequentially.",
+                                related_entities=[{"id": char_id_loop_ind, "type": "character"}],
+                                channel_id=ctx_channel_id_for_action_ind,
+                                metadata={"action_item": action_item_ind}
+                            )
+
                         single_action_result = await self.process(
                             game_state=game_state, char_manager=char_manager, loc_manager=loc_manager,
                             event_manager=event_manager, rule_engine=rule_engine, openai_service=openai_service,
-                            ctx_channel_id=ctx_channel_id_for_action_ind, discord_user_id=getattr(character_obj_ind, 'discord_user_id', None), # Ensure discord_user_id is passed, handle potential None
+                            ctx_channel_id=ctx_channel_id_for_action_ind, discord_user_id=getattr(character_obj_ind, 'discord_user_id', None),
                             action_type=action_type_ind, action_data=action_data_ind, game_log_manager=game_log_manager
                         )
-                        # TODO: game_state.game_manager does not exist. save_game_state_after_action needs to be called differently if needed.
-                        # if bot.game_manager: # Assuming bot instance is available here, or pass it.
-                        #     await bot.game_manager.save_game_state_after_action(str(game_state.server_id))
 
-                        # Correct indentation for append
+                        if game_log_manager:
+                            await game_log_manager.log_event(
+                                guild_id=guild_id_str,
+                                event_type="party_action_item_result",
+                                message=f"Action '{action_type_ind}' for {char_name_log_ind} result: Success={single_action_result.get('success')}, StateChanged={single_action_result.get('state_changed')}. Message: {single_action_result.get('message')}",
+                                related_entities=[{"id": char_id_loop_ind, "type": "character"}],
+                                channel_id=single_action_result.get('target_channel_id', ctx_channel_id_for_action_ind),
+                                metadata={"action_result": single_action_result, "original_action_item": action_item_ind}
+                            )
+
                         all_individual_results.append({"character_id": char_id_loop_ind, "action_original_text": original_text_ind, **single_action_result})
-                        # Correct indentation for the if block
                         if single_action_result.get("state_changed", False):
                             overall_state_changed_for_party = True
-                # Correct indentation for except blocks
+                            # Persist changes immediately after this action if state changed
+                            print(f"ActionProcessor: State changed after action by {char_id_loop_ind}. Persisting relevant manager states for guild {guild_id_str}.")
+                            if char_manager: await char_manager.save_state(guild_id=guild_id_str)
+                            if loc_manager: await loc_manager.save_state(guild_id=guild_id_str)
+                            # Add other relevant managers that might have been affected and need immediate persistence
+                            # For example, if ItemManager or NpcManager were passed in and used by self.process:
+                            # if item_manager: await item_manager.save_state(guild_id=guild_id_str)
+                            # if npc_manager: await npc_manager.save_state(guild_id=guild_id_str)
+                            # PartyManager state likely changes at a higher level (e.g. turn status) or if party structure changes.
                 except json.JSONDecodeError:
-                    print(f"ActionProcessor: Invalid actions JSON for character {char_id_loop_ind}. Skipping actions.")
+                    msg = f"Invalid actions JSON for {char_name_log_ind} ({char_id_loop_ind}). Skipping actions. Error: {e}"
+                    if game_log_manager:
+                        await game_log_manager.log_event(guild_id=guild_id_str, event_type="party_action_error", message=msg, related_entities=[{"id": char_id_loop_ind, "type": "character"}], metadata={"raw_actions": collected_actions_json_loop_ind, "error": str(e)})
+                    print(f"ActionProcessor: {msg}")
                     all_individual_results.append({"character_id": char_id_loop_ind, "success": False, "message": "Invalid actions JSON.", "state_changed": False})
                 except Exception as e_inner:
-                    print(f"ActionProcessor: Unexpected error processing actions for character {char_id_loop_ind}.")
+                    msg = f"Unexpected error processing actions for {char_name_log_ind} ({char_id_loop_ind}): {e_inner}"
+                    if game_log_manager:
+                        await game_log_manager.log_event(guild_id=guild_id_str, event_type="party_action_unexpected_error", message=msg, related_entities=[{"id": char_id_loop_ind, "type": "character"}], metadata={"error": str(e_inner), "trace": traceback.format_exc()})
+                    print(f"ActionProcessor: {msg}")
                     traceback.print_exc()
                     all_individual_results.append({"character_id": char_id_loop_ind, "success": False, "message": f"Unexpected error: {e_inner}", "state_changed": False})
 
-            # Correct indentation for the final return
-            return {
-                "success": True,
-                "individual_action_results": all_individual_results,
-                "overall_state_changed": overall_state_changed_for_party
-            }
+        if game_log_manager:
+            await game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="party_actions_end",
+                message=f"Finished processing party actions. Overall state changed: {overall_state_changed_for_party}. Results count: {len(all_individual_results)}.",
+                channel_id=ctx_channel_id_fallback,
+                metadata={"overall_state_changed": overall_state_changed_for_party, "num_results": len(all_individual_results)}
+            )
+        # This return is now common for both paths (with or without conflict resolver, if no manual resolution)
+        return {
+            "success": True, # Indicates the batch processing itself completed. Individual actions have their own success.
+            "individual_action_results": all_individual_results,
+            "overall_state_changed": overall_state_changed_for_party # Renamed from "overall_state_changed_for_party"
+        }

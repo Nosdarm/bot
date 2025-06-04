@@ -75,10 +75,12 @@ class RuleEngine:
                  combat_manager: Optional["CombatManager"] = None,
                  dialogue_manager: Optional["DialogueManager"] = None,
                  time_manager: Optional["TimeManager"] = None, # Added TimeManager
-                 rules_data: Optional[Dict[str, Any]] = None # Added rules_data
+                 rules_data: Optional[Dict[str, Any]] = None, # Added rules_data
+                 game_log_manager: Optional["GameLogManager"] = None # Added GameLogManager
                  ):
         print("Initializing RuleEngine...")
         self._settings = settings or {}
+        self._game_log_manager = game_log_manager # Store GameLogManager
         
         # Store manager instances
         self._character_manager = character_manager
@@ -640,6 +642,22 @@ class RuleEngine:
         Raises:
             ValueError: If the roll_string is invalid.
         """
+        original_roll_string = roll_string # Keep original for return
+
+        # Attempt to get guild_id from context for logging, if available
+        guild_id_for_log = "UNKNOWN_GUILD"
+        if context and isinstance(context, dict) and 'guild_id' in context:
+            guild_id_for_log = str(context['guild_id'])
+
+        if self._game_log_manager:
+            # Using await here as log_event is async
+            await self._game_log_manager.log_event(
+                guild_id=guild_id_for_log, # May be "UNKNOWN_GUILD" if not in context
+                event_type="dice_roll_start",
+                message=f"Attempting to resolve dice roll: '{original_roll_string}'.",
+                metadata={"roll_string": original_roll_string}
+            )
+
         # This method is now async, but random.randint is synchronous.
         # For a truly async dice roller (e.g., using an external service or for complex simulation),
         # this would involve `await` calls. For now, it's async for API consistency.
@@ -647,7 +665,6 @@ class RuleEngine:
         # Using the parsing logic from the existing method, which is more complete
         # than the external dice_roller.py's current simple NdX+M.
         
-        original_roll_string = roll_string # Keep original for return
         roll_string = roll_string.lower().strip().replace(" ", "") # Normalize
 
         # Regex to parse dice notation:
@@ -706,14 +723,24 @@ class RuleEngine:
         
         total = sum(rolls) + modifier
 
-        return {
-            'roll_string': original_roll_string, # Return the original, non-normalized string
+        result_payload = {
+            'roll_string': original_roll_string,
             'num_dice': num_dice,
             'dice_sides': calculated_dice_sides,
             'rolls': rolls,
             'modifier': modifier,
             'total': total,
         }
+
+        if self._game_log_manager:
+            await self._game_log_manager.log_event(
+                guild_id=guild_id_for_log,
+                event_type="dice_roll_result",
+                message=f"Dice roll '{original_roll_string}' resolved. Total: {total}. Rolls: {rolls}, Mod: {modifier}.",
+                metadata=result_payload # Log the full result
+            )
+
+        return result_payload
 
     async def resolve_steal_attempt(self, stealer_char: Character, target_entity: Any, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -2083,6 +2110,28 @@ class RuleEngine:
         if context is None:
             context = {}
 
+        guild_id_for_log = context.get('guild_id', "UNKNOWN_GUILD")
+        # Ensure guild_id_for_log is a string for the logger
+        if not isinstance(guild_id_for_log, str): guild_id_for_log = str(guild_id_for_log)
+
+
+        if self._game_log_manager:
+            await self._game_log_manager.log_event(
+                guild_id=guild_id_for_log,
+                event_type="resolve_check_start",
+                message=f"Starting resolve_check. Type: '{check_type}', Actor: {entity_doing_check_type} ID {entity_doing_check_id}, Target: {target_entity_type} ID {target_entity_id}, DC: {difficulty_dc}.",
+                related_entities=[
+                    {"id": entity_doing_check_id, "type": entity_doing_check_type},
+                    {"id": str(target_entity_id), "type": str(target_entity_type)} if target_entity_id else None
+                ],
+                metadata={
+                    "check_type": check_type,
+                    "actor_id": entity_doing_check_id, "actor_type": entity_doing_check_type,
+                    "target_id": target_entity_id, "target_type": target_entity_type,
+                    "initial_dc": difficulty_dc, "context_keys": list(context.keys())
+                }
+            )
+
         # Initialize DetailedCheckResult with defaults/placeholders
         # Most of these will be populated as the method progresses.
         result = DetailedCheckResult(
@@ -2231,7 +2280,33 @@ class RuleEngine:
             f"Target DC: {actual_dc}. Outcome: {result.outcome.name}{' (Critical)' if result.is_critical else ''}."
         )
         
-        print(f"RuleEngine.resolve_check: {result.description}")
+        if self._game_log_manager:
+            # Log the final result
+            log_message = f"Resolve_check completed for Type: '{check_type}', Actor: {entity_doing_check_id}. Outcome: {result.outcome.name}."
+            if result.is_critical:
+                log_message += " (Critical)"
+
+            # Convert DetailedCheckResult to dict for logging metadata
+            # Using vars() for Pydantic models might not be ideal, prefer .model_dump() or .dict()
+            try:
+                result_dict_for_log = result.model_dump() if hasattr(result, 'model_dump') else vars(result)
+            except Exception: # Fallback if neither works (e.g. if not a Pydantic model or simple class)
+                result_dict_for_log = {"description": result.description, "is_success": result.is_success}
+
+
+            await self._game_log_manager.log_event(
+                guild_id=guild_id_for_log,
+                event_type="resolve_check_end",
+                message=log_message,
+                related_entities=[
+                    {"id": entity_doing_check_id, "type": entity_doing_check_type},
+                    {"id": str(target_entity_id), "type": str(target_entity_type)} if target_entity_id else None
+                ],
+                metadata={"detailed_check_result": result_dict_for_log, "final_description": result.description}
+            )
+        else:
+            print(f"RuleEngine.resolve_check: {result.description}") # Fallback to print if no logger
+
         return result
 
     # --- Stubs for Other Key Missing Mechanics ---

@@ -162,13 +162,10 @@ class GameManager:
             self._db_adapter = self.db_service.adapter # Get the adapter instance if needed directly by other managers
             print("GameManager: DBService initialized, connected, and database schema updated.")
 
-            # Load or initialize RulesConfig
-            await self._load_or_initialize_rules_config()
-            print("GameManager: RulesConfig loaded/initialized.")
-
             # 2) Импортируем классы менеджеров и процессоров для их ИНСТАНЦИАЦИИ
             # ЭТИ ИМПОРТЫ НУЖНЫ ЗДЕСЬ ДЛЯ RUNTIME, т.к. мы создаем экземпляры!
             from bot.game.rules.rule_engine import RuleEngine
+            from bot.ai.rules_schema import GameRules # For validation
             from bot.game.managers.time_manager import TimeManager
             from bot.game.managers.location_manager import LocationManager
             from bot.game.managers.event_manager import EventManager
@@ -459,12 +456,25 @@ class GameManager:
             # For NotificationService, using a placeholder string or a mock object for now.
             # In a real scenario, a NotificationService instance would be passed.
             mock_notification_service = "PlaceholderNotificationService" # Or an actual mock instance
+
+            # Load or initialize RulesConfig (this now happens before RuleEngine and ConflictResolver instantiation)
+            await self._load_or_initialize_rules_config() # This will populate self._rules_config_cache
+            print("GameManager: RulesConfig loaded/initialized.")
+
+            self.rule_engine = RuleEngine(
+                settings=self._settings.get('rule_settings', {}),
+                rules_data=self._rules_config_cache # Pass DB-loaded/validated rules
+            )
+            print("GameManager: RuleEngine instantiated with DB-loaded rules.")
+
             self.conflict_resolver = ConflictResolver(
                 rule_engine=self.rule_engine,
-                rules_config_data=EXAMPLE_RULES_CONFIG, # Using example data for now
-                notification_service=mock_notification_service
+                rules_config_data=self._rules_config_cache, # Use DB-loaded rules
+                notification_service=mock_notification_service,
+                db_adapter=self._db_adapter, # Pass the adapter
+                game_log_manager=self.game_log_manager # Pass GameLogManager
             )
-            print("GameManager: ConflictResolver instantiated.")
+            print("GameManager: ConflictResolver instantiated with DB-loaded rules.")
 
             # --- Создание экземпляра PartyCommandHandler ---
             # PartyCommandHandler ожидает character_manager, party_manager, party_action_processor, settings (обязательные), npc_manager (опциональный)
@@ -1054,45 +1064,78 @@ class GameManager:
         print(f"GameManager: Finished specific saving for {len(modified_entities)} entities.")
 
     async def _load_or_initialize_rules_config(self) -> None:
-        """Loads the rules configuration from the database or initializes it if not found."""
+        """Loads the rules configuration from the database or initializes it from file defaults if not found."""
         if not self.db_service:
             print("GameManager: CRITICAL - DBService not available for _load_or_initialize_rules_config.")
-            # Initialize with an empty cache, actual saving will fail later if DB is still down.
-            self._rules_config_cache = {}
+            self._rules_config_cache = self._settings.get('game_rules', {}) # Fallback to file settings
+            print("GameManager: Using file-based settings for game_rules due to DBService unavailability.")
             return
 
+        loaded_from_db = False
         try:
             raw_config_entry = await self.db_service.get_entity('rules_config', DEFAULT_RULES_CONFIG_ID)
             if raw_config_entry and 'config_data' in raw_config_entry:
                 try:
-                    self._rules_config_cache = json.loads(raw_config_entry['config_data'])
-                    print(f"GameManager: Successfully loaded rules_config '{DEFAULT_RULES_CONFIG_ID}'.")
+                    parsed_db_rules = json.loads(raw_config_entry['config_data'])
+                    # Validate against Pydantic model GameRules
+                    GameRules.parse_obj(parsed_db_rules) # This will raise ValidationError if non-compliant
+                    self._rules_config_cache = parsed_db_rules
+                    loaded_from_db = True
+                    print(f"GameManager: Successfully loaded and validated rules_config '{DEFAULT_RULES_CONFIG_ID}' from DB.")
                 except json.JSONDecodeError as e:
-                    print(f"GameManager: Error decoding JSON for rules_config '{DEFAULT_RULES_CONFIG_ID}': {e}. Initializing with empty config.")
-                    self._rules_config_cache = {} # Default to empty if parsing fails
+                    print(f"GameManager: Error decoding JSON for rules_config '{DEFAULT_RULES_CONFIG_ID}' from DB: {e}. Falling back to file defaults.")
+                except Exception as pydantic_e: # Catch Pydantic validation error
+                    print(f"GameManager: Error validating DB rules_config '{DEFAULT_RULES_CONFIG_ID}' against GameRules schema: {pydantic_e}. Falling back to file defaults.")
             else:
-                print(f"GameManager: No rules_config entry found for '{DEFAULT_RULES_CONFIG_ID}'. Initializing a new one.")
-                self._rules_config_cache = {} # Initialize with default structure if any, e.g. {'default_bot_language': 'en'}
-                # Create the entry in the database
-                # Ensure default_bot_language is set if it's a fresh config
-                if 'default_bot_language' not in self._rules_config_cache:
-                    self._rules_config_cache['default_bot_language'] = 'en' # Default to English
-
-                success = await self.db_service.create_entity(
-                    'rules_config',
-                    {'id': DEFAULT_RULES_CONFIG_ID, 'config_data': json.dumps(self._rules_config_cache)}
-                )
-                if success:
-                    print(f"GameManager: Successfully created new rules_config entry '{DEFAULT_RULES_CONFIG_ID}' with default language '{self._rules_config_cache['default_bot_language']}'.")
-                else:
-                    print(f"GameManager: FAILED to create new rules_config entry '{DEFAULT_RULES_CONFIG_ID}'. Cache will be used but not persisted.")
+                print(f"GameManager: No rules_config entry found for '{DEFAULT_RULES_CONFIG_ID}' in DB.")
 
         except Exception as e:
-            print(f"GameManager: CRITICAL error during _load_or_initialize_rules_config: {e}")
+            print(f"GameManager: Error loading rules_config from DB: {e}. Falling back to file defaults.")
             traceback.print_exc()
-            # Fallback to an empty cache to allow the bot to potentially continue with defaults
+
+        if not loaded_from_db:
+            print(f"GameManager: Using file-based 'game_rules' as fallback or initial seed for DB.")
+            file_default_rules = self._settings.get('game_rules', {})
+            if not file_default_rules:
+                print("GameManager: Warning: No 'game_rules' found in settings.json. Initializing with minimal default.")
+                self._rules_config_cache = {'default_bot_language': 'en'} # Minimal default
+            else:
+                # Validate file default rules too before using/seeding
+                try:
+                    GameRules.parse_obj(file_default_rules)
+                    self._rules_config_cache = file_default_rules
+                    print("GameManager: Successfully validated file-based 'game_rules'.")
+                except Exception as pydantic_e:
+                    print(f"GameManager: Error validating file-based 'game_rules' against GameRules schema: {pydantic_e}. Using minimal default.")
+                    self._rules_config_cache = {'default_bot_language': 'en'}
+
+            # Seed the database with these file-based (and validated) or minimal default rules
+            if self.db_service: # Ensure db_service is still considered available
+                try:
+                    # Ensure default_bot_language is present if cache is minimal
+                    if 'default_bot_language' not in self._rules_config_cache:
+                         self._rules_config_cache['default_bot_language'] = 'en'
+
+                    await self.db_service.create_or_update_entity( # Use create_or_update
+                        'rules_config',
+                        DEFAULT_RULES_CONFIG_ID,
+                        {'config_data': json.dumps(self._rules_config_cache)}
+                    )
+                    print(f"GameManager: Seeded/Updated rules_config '{DEFAULT_RULES_CONFIG_ID}' in DB with loaded/default rules.")
+                except Exception as db_seed_e:
+                    print(f"GameManager: FAILED to seed/update rules_config '{DEFAULT_RULES_CONFIG_ID}' in DB: {db_seed_e}. Cache will be used but might not persist if it was default.")
+
+        if self._rules_config_cache is None: # Final fallback if all else failed
+            print("GameManager: CRITICAL FALLBACK - rules_config_cache is still None. Initializing to minimal default.")
             if self._rules_config_cache is None: # Only if it wasn't set due to an error before this point
                 self._rules_config_cache = {}
+
+            # Update self.settings['game_rules'] to ensure consistency if other parts still read from it
+            # and to ensure RuleEngine gets it if not passed directly via rules_data.
+            # However, direct passing to RuleEngine constructor is cleaner.
+            if self._rules_config_cache:
+                 self._settings['game_rules'] = self._rules_config_cache
+                 print("GameManager: self.settings['game_rules'] updated from DB loaded rules_config.")
 
 
     def get_default_bot_language(self) -> str:

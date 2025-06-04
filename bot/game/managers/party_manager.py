@@ -990,7 +990,7 @@ class PartyManager:
             # Each action will be a dict including character_id, original_input_text, and the action_data itself.
             all_submitted_actions: List[Dict[str, Any]] = []
             for member_char in ready_members_in_location:
-                actions_json_str = member_char.собранные_действия_JSON
+                actions_json_str = member_char.collected_actions_json
                 member_actions_this_turn: List[Dict[str, Any]] = []
                 if actions_json_str:
                     try:
@@ -998,7 +998,7 @@ class PartyManager:
                         if not isinstance(member_actions_this_turn, list):
                             member_actions_this_turn = []
                     except json.JSONDecodeError:
-                        print(f"PartyManager: Could not parse actions_json for char {member_char.id}: {actions_json_str}")
+                        print(f"PartyManager: Could not parse collected_actions_json for char {member_char.id}: {actions_json_str}")
                         member_actions_this_turn = []
 
                 for i, action_data in enumerate(member_actions_this_turn):
@@ -1121,7 +1121,7 @@ class PartyManager:
                 member_char_updated = await self._character_manager.get_character(guild_id, member_char_original_state.id)
                 if member_char_updated:
                     member_char_updated.current_game_status = 'исследование'
-                    member_char_updated.собранные_действия_JSON = '[]'
+                    member_char_updated.collected_actions_json = '[]'
                     # Save the character after updating status and clearing actions
                     await self._character_manager.save_character(member_char_updated, guild_id)
                 else:
