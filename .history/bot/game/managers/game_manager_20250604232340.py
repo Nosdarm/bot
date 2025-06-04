@@ -19,14 +19,12 @@ from discord import Client # Direct import if Client is instantiated or directly
 # Адаптер для работы с SQLite - Прямой импорт нужен, т.к. он инстанциируется здесь
 from bot.database.sqlite_adapter import SqliteAdapter
 from bot.services.db_service import DBService # Ensure DBService is imported for runtime
-from bot.ai.rules_schema import GameRules # For validation
 
 
 if TYPE_CHECKING:
     # --- Импорты для Type Checking ---
     # Discord types used in method signatures
     from discord import Message # Used in handle_discord_message
-    from bot.game.models.character import Character # Added for type hint
 
     # Менеджеры
     from bot.game.managers.character_manager import CharacterManager
@@ -56,6 +54,7 @@ if TYPE_CHECKING:
     from bot.game.command_handlers.party_handler import PartyCommandHandler # <--- ТИПИЗАЦИЯ PartyCommandHandler
     # Роутер команд
     from bot.game.command_router import CommandRouter
+    from bot.game.managers.game_manager import GameManager # Add this line
     
     # Новые менеджеры и сервисы для TYPE_CHECKING
     from bot.game.managers.ability_manager import AbilityManager # Added for type hint
@@ -74,6 +73,8 @@ if TYPE_CHECKING:
 
 
     # Типы Callable для Type Checking, если они используются в аннотациях (SendCallbackFactory используется напрямую в __init__)
+    # SendToChannelCallback = Callable[..., Awaitable[Any]]
+    # SendCallbackFactory = Callable[[int], SendToChannelCallback]
 
 
 # Фабрика колбэков отправки сообщений: принимает произвольные аргументы (content, embed, files и т.д.)
@@ -166,6 +167,7 @@ class GameManager:
             # 2) Импортируем классы менеджеров и процессоров для их ИНСТАНЦИАЦИИ
             # ЭТИ ИМПОРТЫ НУЖНЫ ЗДЕСЬ ДЛЯ RUNTIME, т.к. мы создаем экземпляры!
             from bot.game.rules.rule_engine import RuleEngine
+            from bot.ai.rules_schema import GameRules # For validation
             from bot.game.managers.time_manager import TimeManager
             from bot.game.managers.location_manager import LocationManager
             from bot.game.managers.event_manager import EventManager
@@ -208,8 +210,11 @@ class GameManager:
             
             # Conflict Resolver and its data
             from bot.game.conflict_resolver import ConflictResolver
+            from bot.game.models.rules_config_definition import EXAMPLE_RULES_CONFIG
             from bot.ai.prompt_context_collector import PromptContextCollector
             from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
+    # from bot.services.db_service import DBService # This can be removed from TYPE_CHECKING if imported above
+    from bot.game.models.character import Character # Player model does not exist, using Character
 
 # Ensure no duplicate or misplaced DBService import within methods or other blocks
 
@@ -1171,33 +1176,6 @@ class GameManager:
                  self._settings['game_rules'] = self._rules_config_cache
                  print("GameManager: self.settings['game_rules'] updated from DB loaded rules_config.")
 
-    async def get_player_by_discord_id(self, discord_id: int, guild_id: str) -> Optional[Character]:
-        """
-        Retrieves a player character object by their Discord ID and guild ID.
-        """
-        if not self.character_manager:
-            print(f"GameManager: CharacterManager not available. Cannot get player by Discord ID {discord_id}.")
-            return None
-        
-        # CharacterManager.get_character_by_discord_id is synchronous
-        # and expects discord_id as int.
-        try:
-            player_obj_from_cm = self.character_manager.get_character_by_discord_id(discord_id, guild_id)
-
-            if player_obj_from_cm:
-                # Ensuring the returned object is of type Character or None, as per type hint.
-                # This assumes CharacterManager's method adheres to this, or downstream handles it.
-                if not isinstance(player_obj_from_cm, Character) and player_obj_from_cm is not None:
-                    print(f"GameManager: Warning - CharacterManager.get_character_by_discord_id returned type {type(player_obj_from_cm)} instead of Character or None for discord_id {discord_id}.")
-                    # Depending on strictness, could return None or raise an error.
-                    # For now, returning the object as is, trusting it might be compatible or handled.
-                return player_obj_from_cm
-            else:
-                return None # Character not found
-        except Exception as e:
-            print(f"GameManager: Error calling get_character_by_discord_id for discord_id {discord_id}: {e}")
-            traceback.print_exc()
-            return None
 
     def get_default_bot_language(self) -> str:
         """Gets the default bot language from the cached rules configuration."""
@@ -1243,41 +1221,6 @@ class GameManager:
             return default_cooldown
 
         return float(cooldown)
-
-    def get_game_channel_ids(self, guild_id: str) -> List[int]:
-        """
-        Returns a list of channel IDs where NLU parsing is active for the given guild.
-        This is based on location channel mappings provided by LocationManager.
-        """
-        if not self.location_manager:
-            print(f"GameManager: LocationManager not available. Cannot get game channel IDs for guild {guild_id}.")
-            return []
-
-        guild_id_str = str(guild_id)
-        
-        try:
-            # Ensure LocationManager has the new method before calling
-            if hasattr(self.location_manager, 'get_active_channel_ids_for_guild'):
-                channel_ids = self.location_manager.get_active_channel_ids_for_guild(guild_id_str)
-                if not isinstance(channel_ids, list):
-                    print(f"GameManager: Warning - get_active_channel_ids_for_guild for guild {guild_id_str} did not return a list. Got {type(channel_ids)}. Returning empty list.")
-                    return []
-                # Further check if all elements are integers, though type hint implies this.
-                # This is more defensive programming.
-                valid_channel_ids = []
-                for cid in channel_ids:
-                    if isinstance(cid, int):
-                        valid_channel_ids.append(cid)
-                    else:
-                        print(f"GameManager: Warning - LocationManager returned a non-integer channel ID '{cid}' for guild {guild_id_str}. Skipping.")
-                return valid_channel_ids
-            else:
-                print(f"GameManager: LocationManager is missing the 'get_active_channel_ids_for_guild' method. Cannot get game channel IDs for guild {guild_id_str}.")
-                return []
-        except Exception as e:
-            print(f"GameManager: Error calling get_active_channel_ids_for_guild for guild {guild_id_str}: {e}")
-            traceback.print_exc() # It's good to have traceback for unexpected errors
-            return []
 
     async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
         """
@@ -1418,3 +1361,210 @@ class GameManager:
             print(f"GameManager: ❌ Error during manual simulation tick for server_id {server_id}: {e}")
             traceback.print_exc()
             # Optionally, notify GM of failure.
+
+    async def get_player_by_discord_id(self, discord_id: int, guild_id: str) -> Optional[Character]: # Changed Player to Character
+        """
+        Retrieves a player object by their Discord ID and Guild ID.
+        This method might interact with CharacterManager or directly with DBService.
+        """
+        if not self.db_service:
+            print(f"GameManager: DBService not available. Cannot fetch player {discord_id} in guild {guild_id}.")
+            return None
+        
+        # Assuming db_service.get_player_by_discord_id returns data that can be used
+        # to reconstruct a Player object or is directly a Player object/compatible dict.
+        # For now, let's assume it returns a dict that matches Player attributes.
+        # Corrected method name and discord_id type based on DBService.get_player_by_discord_id
+        player_data_from_db = await self.db_service.get_player_by_discord_id(discord_user_id=discord_id, guild_id=guild_id)
+        
+        if player_data_from_db:
+            # If Player class has a from_dict class method:
+            # return Player.from_dict(player_data_from_db)
+            # Or if player_data_from_db is already a Player object (e.g. from CharacterManager)
+            # return player_data_from_db
+            # For now, assuming player_data_from_db is a dict that can be wrapped or used directly.
+            # This part depends on the actual Player model and DBService implementation.
+            # Let's assume CharacterManager has a more direct method for this that returns a Player-like object
+            if self.character_manager:
+                # This method needs to exist in CharacterManager and return a Player-like object
+                # or the Player model instance itself.
+                # CharacterManager's get_character_by_discord_id might take discord_id as str or int.
+                # The original call used str(discord_id). Let's assume CM handles string conversion if needed.
+                player_obj_from_cm = await self.character_manager.get_character_by_discord_id(str(discord_id), guild_id)
+                if player_obj_from_cm:
+                    # Ensure the object returned by character_manager conforms to what on_message expects
+                    # (e.g., attributes like id, current_game_status, selected_language, collected_actions_json)
+                    return player_obj_from_cm # Assuming it's the Player object or a compatible dict/model
+            
+            # Fallback if character_manager didn't provide a result.
+            # We have player_data_from_db. If this dict is Player-compatible, we could return it.
+            # The subtask mentions "Player object (or a dict that can be easily used like one)".
+            # This implies player_data_from_db might be usable if it has the necessary fields.
+            # For example, if Player is a TypedDict, and player_data_from_db matches.
+            # However, CharacterManager should be the primary source for Player *objects*.
+            # If CharacterManager.get_character_by_discord_id returns None, but db_service found data,
+            # it implies the character exists in DB but isn't loaded in CharacterManager's cache,
+            # or CharacterManager couldn't construct the object.
+            # For now, prioritizing CM's output. If CM fails, we assume the player isn't "fully" available
+            # as a game object, even if raw data exists.
+            # Thus, if player_obj_from_cm is None, we'll proceed to the final return None.
+            # If the intent is to use raw DB data if CM fails, that logic would go here.
+            # e.g. if not player_obj_from_cm and player_data_from_db:
+            #      print(f"GameManager: Player data found for {discord_id} in DB, but CharacterManager did not return an object. Using raw DB data.")
+            #      return player_data_from_db # This assumes player_data_from_db is a Player-compatible dict
+
+            # Current logic: if character_manager.get_character_by_discord_id exists and works, it's preferred.
+            # If it doesn't return a player (e.g. player not in CM cache or doesn't meet criteria),
+            # then this method effectively returns None, even if player_data_from_db was found.
+            # This seems reasonable if CharacterManager is the source of truth for active game Player objects.
+            # The print statement below would indicate if data was in DB but not returned by CM.
+            if not player_obj_from_cm: # player_obj_from_cm was not found/returned by CharacterManager
+                 print(f"GameManager: Player data for {discord_id} in guild {guild_id} was found in DB (player_data_from_db is not None), but CharacterManager did not return a player object. This might mean the player is not fully loaded or recognized by CharacterManager.")
+
+        # This print executes if player_data_from_db was None OR if player_obj_from_cm was None
+        print(f"GameManager: Player {discord_id} not found or not retrievable as a full player object in guild {guild_id}.")
+        return None
+
+    def get_game_channel_ids(self, guild_id: str) -> List[int]:
+        """
+        Returns a list of channel IDs where NLU parsing is active for the given guild.
+        This could be based on location channel mappings.
+        """
+        if not self.location_manager:
+            print(f"GameManager: LocationManager not available. Cannot get game channel IDs for guild {guild_id}.")
+            return []
+
+        guild_id_str = str(guild_id)
+        game_channel_ids: Set[int] = set()
+
+        # Accessing _location_instances directly is not ideal from outside LocationManager.
+        # It would be better if LocationManager provided a method like get_all_active_location_instances(guild_id)
+        # For now, we'll use the direct access as per the thought process.
+        # This assumes _location_instances structure is {guild_id: {instance_id: data}}
+        
+        # Check if location_manager has the _location_instances attribute and if the guild exists in it
+        if hasattr(self.location_manager, '_location_instances') and \
+           guild_id_str in self.location_manager._location_instances:
+            
+            guild_location_instances = self.location_manager._location_instances[guild_id_str]
+            
+            for instance_id in guild_location_instances.keys():
+                # get_location_channel expects instance_id, not the full data dict
+                channel_id = self.location_manager.get_location_channel(guild_id_str, instance_id)
+                if channel_id is not None:
+                    game_channel_ids.add(channel_id)
+        else:
+            print(f"GameManager: No location instances found for guild {guild_id_str} in LocationManager, or _location_instances not accessible.")
+            
+        if not game_channel_ids:
+            print(f"GameManager: No game channels with mapped locations found for guild {guild_id_str}.")
+            # Fallback: Maybe there's a global game channel setting if no locations are mapped?
+            # For now, returning empty list if no locations have channels.
+            
+        return list(game_channel_ids)
+
+    async def process_solo_player_turn(self, player_id: str, guild_id: str, report_channel_id: int):
+        """Processes actions for a solo player who has ended their turn."""
+        if not self.db_service or not self.character_manager or not self._character_action_processor:
+            print("GameManager: Critical services (DB, CharacterManager, or CharacterActionProcessor) not available for solo turn processing.")
+            # Optionally send a message to report_channel_id about the system error
+            send_callback = self._get_discord_send_callback(report_channel_id)
+            await send_callback("Мастер: Системная ошибка при обработке хода. Администратор уведомлен.")
+            return
+
+        player = await self.character_manager.get_character(guild_id, player_id) # Using get_character which expects guild_id first
+        if not player:
+            print(f"GameManager: Player {player_id} not found in guild {guild_id} for solo turn processing.")
+            return
+
+        actions_json_str = player.collected_actions_json
+        send_callback = self._get_discord_send_callback(report_channel_id)
+
+        if actions_json_str:
+            try:
+                # The process_single_player_actions method will be added to CharacterActionProcessor
+                # It needs the player object (or at least player_id and discord_user_id), actions string, guild_id, self (GameManager), and report_channel_id
+                action_summary = await self._character_action_processor.process_single_player_actions(
+                    player=player, # Pass the Character object
+                    actions_json_str=actions_json_str,
+                    guild_id=guild_id,
+                    game_manager=self, # Pass self as GameManager
+                    report_channel_id=report_channel_id
+                )
+                
+                # Clear actions and update status
+                await self.db_service.update_player_field(player_id, 'collected_actions_json', None, guild_id)
+                await self.db_service.update_player_field(player_id, 'current_game_status', 'исследование', guild_id)
+                if self.character_manager: # Update cache
+                    player.collected_actions_json = None
+                    player.current_game_status = 'исследование'
+                    self.character_manager.mark_character_dirty(guild_id, player_id)
+
+
+                # Send report from action_summary (if any)
+                if action_summary and action_summary.get("messages"):
+                    report_message = "\n".join(action_summary["messages"])
+                    await send_callback(f"**Отчет о ваших действиях:**\n{report_message}")
+                else:
+                    await send_callback("Ваши действия обработаны. Подробного отчета нет.")
+
+            except Exception as e:
+                print(f"GameManager: Error processing solo player {player_id} actions: {e}")
+                traceback.print_exc()
+                await send_callback("Мастер: Произошла ошибка при обработке ваших действий.")
+                # Optionally reset status to исследование even on error
+                await self.db_service.update_player_field(player_id, 'current_game_status', 'исследование', guild_id)
+                if self.character_manager: player.current_game_status = 'исследование'; self.character_manager.mark_character_dirty(guild_id, player_id)
+
+        else:
+            # No actions, just reset status
+            await self.db_service.update_player_field(player_id, 'current_game_status', 'исследование', guild_id)
+            if self.character_manager: player.current_game_status = 'исследование'; self.character_manager.mark_character_dirty(guild_id, player_id)
+            await send_callback("Вы не указали никаких действий. Ваш ход завершен.")
+
+    async def check_and_trigger_party_turn(self, party_id: str, location_id: str, guild_id: str, report_channel_id: int):
+        """Checks if all party members are ready and triggers party turn processing."""
+        if not self.db_service or not self.party_manager or not self.character_manager:
+            print("GameManager: Critical services (DB, PartyManager, or CharacterManager) not available for party turn processing.")
+            send_callback = self._get_discord_send_callback(report_channel_id)
+            await send_callback("Мастер: Системная ошибка при обработке хода группы. Администратор уведомлен.")
+            return
+
+        party_members = await self.party_manager.get_party_members_objects(party_id, guild_id)
+        if not party_members:
+            print(f"GameManager: No members found for party {party_id} in guild {guild_id}.")
+            # This case should ideally be handled by PartyManager or the command itself.
+            return
+
+        ready_members = []
+        waiting_for_members = []
+
+        for member in party_members:
+            # Ensure member object has current_game_status attribute
+            if hasattr(member, 'current_game_status') and member.current_game_status == 'ожидание_обработку':
+                ready_members.append(member)
+            else:
+                waiting_for_members.append(getattr(member, 'name', member.id)) # Use name or ID
+
+        send_callback = self._get_discord_send_callback(report_channel_id)
+
+        if not waiting_for_members: # All members are ready
+            print(f"GameManager: All members of party {party_id} are ready. Triggering party turn processing.")
+            # PartyManager's method should handle the actual processing and reporting.
+            # It needs access to GameManager (self) to get other managers/processors.
+            if hasattr(self.party_manager, 'check_and_process_party_turn'):
+                 await self.party_manager.check_and_process_party_turn(
+                     party_id=party_id,
+                     location_id=location_id, # Added location_id
+                     guild_id=guild_id,
+                     game_manager=self, # Pass self as GameManager
+                     report_channel_id=report_channel_id # Pass report_channel_id
+                 )
+            else:
+                print(f"GameManager: PartyManager is missing 'check_and_process_party_turn' method.")
+                await send_callback("Мастер: (Системная ошибка: обработчик хода группы не найден).")
+
+        else:
+            await send_callback(f"Ход группы еще не может быть обработан. Ожидаем завершения хода от: {', '.join(waiting_for_members)}.")
+
+print("DEBUG: game_manager.py module loaded.")
