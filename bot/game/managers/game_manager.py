@@ -202,6 +202,8 @@ class GameManager:
             from bot.game.services.campaign_loader import CampaignLoader
             from bot.game.services.consequence_processor import ConsequenceProcessor
             from bot.services.nlu_data_service import NLUDataService # Import for instantiation
+            from bot.game.managers.ability_manager import AbilityManager
+            from bot.game.managers.spell_manager import SpellManager
             
             # Conflict Resolver and its data
             from bot.game.conflict_resolver import ConflictResolver
@@ -287,6 +289,24 @@ class GameManager:
                 character_manager=self.character_manager, npc_manager=self.npc_manager
                 # PartyManager может нуждаться в других менеджерах (Combat?) - проверить его __init__
             )
+
+            self.ability_manager = AbilityManager(
+                db_adapter=self._db_adapter,
+                settings=self._settings.get('ability_settings', {}),
+                character_manager=self.character_manager,
+                rule_engine=self.rule_engine,
+                status_manager=self.status_manager
+            )
+            print("GameManager: AbilityManager instantiated.")
+
+            self.spell_manager = SpellManager(
+                db_adapter=self._db_adapter,
+                settings=self._settings.get('spell_settings', {}),
+                character_manager=self.character_manager,
+                rule_engine=self.rule_engine,
+                status_manager=self.status_manager
+            )
+            print("GameManager: SpellManager instantiated.")
 
             # Внедряем зависимости в CharacterManager (те, которые были circular dependencies при создании)
             if self.character_manager:
@@ -536,6 +556,8 @@ class GameManager:
                 quest_manager=self.quest_manager,
                 relationship_manager=self.relationship_manager,
                 game_log_manager=self.game_log_manager,
+                ability_manager=self.ability_manager,
+                spell_manager=self.spell_manager,
                 # Add multilingual_prompt_generator here
                 multilingual_prompt_generator=self.multilingual_prompt_generator
             )
@@ -614,6 +636,8 @@ class GameManager:
                     'db_adapter': self._db_adapter, # Still passing adapter directly if some old components need it
                     'db_service': self.db_service,   # Pass DBService as well
                     'nlu_data_service': self.nlu_data_service, # Pass NLUDataService
+                    'ability_manager': self.ability_manager,
+                    'spell_manager': self.spell_manager,
                     'prompt_context_collector': self.prompt_context_collector,
                     'multilingual_prompt_generator': self.multilingual_prompt_generator,
                     'send_callback_factory': self._get_discord_send_callback,
@@ -874,6 +898,8 @@ class GameManager:
                 'quest_manager': self.quest_manager,
                 'relationship_manager': self.relationship_manager,
                 'game_log_manager': self.game_log_manager,
+                'ability_manager': self.ability_manager,
+                'spell_manager': self.spell_manager,
                 'conflict_resolver': self.conflict_resolver,
                 'prompt_context_collector': self.prompt_context_collector,
                 'multilingual_prompt_generator': self.multilingual_prompt_generator,
@@ -928,6 +954,8 @@ class GameManager:
                     'quest_manager': self.quest_manager,
                     'relationship_manager': self.relationship_manager,
                     'game_log_manager': self.game_log_manager,
+                    'ability_manager': self.ability_manager,
+                    'spell_manager': self.spell_manager,
                     'conflict_resolver': self.conflict_resolver, # For save context
                     'prompt_context_collector': self.prompt_context_collector,
                     'multilingual_prompt_generator': self.multilingual_prompt_generator,

@@ -103,7 +103,7 @@ async def cmd_start_new_character(interaction: Interaction, name: str, race: str
         discord_user_id_int = interaction.user.id
 
         # 1. Check for Existing Character using CharacterManager
-        existing_char_model: Optional[CharacterModel] = await character_manager.get_character_by_discord_id(
+        existing_char_model: Optional[CharacterModel] = character_manager.get_character_by_discord_id(
             guild_id=guild_id_str,
             discord_user_id=discord_user_id_int
         )
@@ -149,10 +149,13 @@ async def cmd_start_new_character(interaction: Interaction, name: str, race: str
         # 3. Success Message
         # Fetch location name for the message using LocationManager if character has location_id
         location_name_display = "an unknown place"
-        if new_char_model.location_id and bot.game_manager.location_manager:
-            location_instance = await bot.game_manager.location_manager.get_location_instance(guild_id_str, new_char_model.location_id)
-            if location_instance:
-                location_name_display = location_instance.get('name', location_name_display)
+        if new_char_model.location_id: # Check if character has a location
+            if bot.game_manager.location_manager: # Check if location_manager exists
+                location_instance = bot.game_manager.location_manager.get_location_instance(guild_id_str, new_char_model.location_id)
+                if location_instance:
+                    location_name_display = location_instance.get('name', location_name_display)
+            else:
+                print(f"Warning: LocationManager not available in cmd_start_new_character for guild {guild_id_str}")
 
         language = new_char_model.selected_language or "en"
         char_name_display = new_char_model.name_i18n.get(language, new_char_model.name_i18n.get('en', name))
