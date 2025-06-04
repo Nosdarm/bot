@@ -1222,10 +1222,15 @@ class EventManager:
             print(f"EventManager: Error: Event object is missing an 'id'. Cannot save.")
             return False
 
-        # Ensure the event's internal guild_id (if exists) matches the provided guild_id
-        event_guild_id = getattr(event, 'guild_id', guild_id_str)
-        if str(event_guild_id) != guild_id_str:
-            print(f"EventManager: Error: Event {event_id} guild_id ({event_guild_id}) does not match provided guild_id ({guild_id_str}).")
+        # Ensure the event's internal guild_id matches the provided guild_id parameter
+        # event.guild_id is now mandatory in the Event model
+        if not hasattr(event, 'guild_id') or event.guild_id is None:
+            # This case should ideally not happen if Event object is correctly initialized
+            print(f"EventManager: CRITICAL Error: Event object {event_id} is missing 'guild_id' attribute during save for guild context {guild_id_str}.")
+            return False # Cannot proceed without event's own guild_id for verification
+
+        if event.guild_id != guild_id_str:
+            print(f"EventManager: Error: Event {event_id} actual guild_id ({event.guild_id}) does not match provided saving context guild_id ({guild_id_str}). Aborting save.")
             return False
 
         try:
@@ -1314,6 +1319,68 @@ class EventManager:
             print(traceback.format_exc())
             return False
 
+    async def process_player_action_within_event(
+        self,
+        event_id: str,
+        player_id: str, # Typically character_id
+        action_type: str,
+        action_data: Dict[str, Any],
+        guild_id: str, # Added guild_id for context
+        **kwargs: Any
+    ) -> Dict[str, Any]:
+        # TODO: CRITICAL - This is a stub. Full implementation needed.
+        # This method should:
+        # 1. Get the event object using event_id and guild_id.
+        # 2. Get the player character object.
+        # 3. Determine the current stage of the event.
+        # 4. Check if the action_type is valid for the current stage's available actions/interactions.
+        # 5. If valid, process the action:
+        #    - Update event state_variables.
+        #    - Check for stage transition conditions using RuleEngine.
+        #    - If transition, call self._event_stage_processor.advance_stage(...).
+        #    - Generate narrative response (possibly using AI via StageDescriptionGenerator or OpenAIService).
+        # 6. Return a dictionary: {"success": bool, "message": str, "target_channel_id": int, "state_changed": bool, ...}
+
+        event = self.get_event(guild_id, event_id)
+        event_name = getattr(event, 'name', event_id) if event else event_id
+
+        char_mgr: Optional["CharacterManager"] = kwargs.get('character_manager') # Type hint for clarity
+        player_name = player_id # Default to ID
+        if char_mgr: # No need for isinstance if we rely on duck typing or trust context
+            try:
+                # Assuming get_character might be async or sync; if it's always async, add await
+                # For a stub, direct attribute access or a simpler call is fine.
+                # This part depends on CharacterManager's interface.
+                # Let's assume get_character is async for robust example.
+                player = await char_mgr.get_character(guild_id=guild_id, character_id=player_id)
+                if player:
+                    # Assuming name_i18n is a dict like {"en": "Name", "ru": "Имя"}
+                    player_name_i18n = getattr(player, 'name_i18n', {})
+                    player_name = player_name_i18n.get('en', player_id) if isinstance(player_name_i18n, dict) else player_id
+            except Exception as e:
+                print(f"EventManager: Error fetching character {player_id} for event action: {e}")
+                # player_name remains player_id
+
+        message = (
+            f"**Мастер (Событие: {event_name})**: Действие '{action_type}' от {player_name} отмечено. "
+            f"Взаимодействие с событиями в разработке. Детали: {json.dumps(action_data)}" # Dump dict for clarity
+        )
+        print(f"EVENT_TODO: EventManager.process_player_action_within_event called for event {event_id}, player {player_id}, action {action_type}. Needs full implementation.")
+
+        target_channel_id = None
+        if event:
+            target_channel_id = getattr(event, 'channel_id', None)
+
+        if target_channel_id is None: # Fallback if event has no channel or event is None
+            target_channel_id = kwargs.get('ctx_channel_id')
+
+
+        return {
+            "success": True,
+            "message": message,
+            "target_channel_id": target_channel_id,
+            "state_changed": False
+        }
 
 # --- Конец класса EventManager ---
 

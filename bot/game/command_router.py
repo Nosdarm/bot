@@ -19,7 +19,7 @@ from discord import Message # Used in route method signature, handle_* signature
 import discord # Direct import
 
 # TOP-LEVEL IMPORTS
-from bot.services.campaign_loader import CampaignLoader
+# from bot.services.campaign_loader import CampaignLoader # Moved to TYPE_CHECKING
 from bot.game.managers.relationship_manager import RelationshipManager
 from bot.game.managers.quest_manager import QuestManager
 
@@ -65,19 +65,18 @@ if TYPE_CHECKING:
     from bot.game.managers.party_manager import PartyManager
     from bot.services.openai_service import OpenAIService
     from bot.game.managers.persistence_manager import PersistenceManager
+    from bot.game.managers.game_manager import GameManager # Added for GameManager type hint
 
     from bot.game.managers.quest_manager import QuestManager # Added for QuestManager
     from bot.game.managers.dialogue_manager import DialogueManager # Added for DialogueManager
     from bot.game.managers.game_log_manager import GameLogManager
 
-    from bot.services.campaign_loader import CampaignLoader
+    from bot.services.campaign_loader import CampaignLoader # Moved here
     from bot.game.managers.relationship_manager import RelationshipManager
-    from bot.game.managers.quest_manager import QuestManager
+    # from bot.game.managers.quest_manager import QuestManager # Duplicate
     from bot.game.conflict_resolver import ConflictResolver # For type hinting
     from bot.ai.ai_response_validator import AIResponseValidator # For handle_edit_content
     
-
-
     # Добавляем другие менеджеры, которые могут быть в context kwargs
 
 
@@ -152,7 +151,7 @@ class CommandRouter:
 
         party_action_processor: Optional["PartyActionProcessor"] = None, # Still needed for context
         event_action_processor: Optional["EventActionProcessor"] = None,
-        event_stage_processor: Optional["EventStage_processor"] = None, # Typo corrected? Or expected? Assuming expected.
+        event_stage_processor: Optional["EventStageProcessor"] = None, # Corrected typo from EventStage_processor
         quest_manager: Optional["QuestManager"] = None, # Added QuestManager
         dialogue_manager: Optional["DialogueManager"] = None, # Added DialogueManager
         # Add other optional managers/processors needed for context
@@ -163,6 +162,7 @@ class CommandRouter:
         relationship_manager: Optional["RelationshipManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
         conflict_resolver: Optional["ConflictResolver"] = None, # Added ConflictResolver
+        game_manager: Optional["GameManager"] = None, # Added GameManager
 
     ):
         print("Initializing CommandRouter...")
@@ -195,10 +195,11 @@ class CommandRouter:
         self._economy_manager = economy_manager
         self._party_action_processor = party_action_processor
         self._event_action_processor = event_action_processor
-        self._event_stage_processor = event_stage_processor # Typo corrected?
+        self._event_stage_processor = event_stage_processor
         self._quest_manager = quest_manager # Added QuestManager (duplicate assignment but harmless)
         self._dialogue_manager = dialogue_manager # Added DialogueManager
         self._game_log_manager = game_log_manager # Added GameLogManager
+        self._game_manager = game_manager # Store GameManager
 
         self._command_prefix: str = self._settings.get('command_prefix', '/')
         if not isinstance(self._command_prefix, str) or not self._command_prefix:
@@ -332,7 +333,8 @@ class CommandRouter:
             target_command = args[0].lower()
             handler = self.__class__._command_handlers.get(target_command)
             if handler:
-                docstring = (handler.__doc__ or "Нет описания.").format(prefix=self._command_prefix)
+                message_template = handler.__doc__
+                docstring = message_template.format(prefix=self._command_prefix) if message_template else f"Нет описания для команды {target_command}."
                 await send_callback(docstring)
             elif target_command == "party" and self._party_command_handler:
                 # Redirect help request for 'party' to the party handler
@@ -370,7 +372,8 @@ class CommandRouter:
             return
 
         if not args:
-            doc_string = self.handle_character.__doc__.format(prefix=self._command_prefix)
+            message_template = self.handle_character.__doc__
+            doc_string = message_template.format(prefix=self._command_prefix) if message_template else f"Используйте `{self._command_prefix}character <create|delete> ...`" # Fallback
             await send_callback(f"Please specify a character action. Usage:\n{doc_string}")
             return
 
@@ -762,7 +765,8 @@ class CommandRouter:
             return
 
         if not args:
-            doc = self.handle_quest.__doc__.format(prefix=self._command_prefix)
+            message_template = self.handle_quest.__doc__
+            doc = message_template.format(prefix=self._command_prefix) if message_template else f"Используйте `{self._command_prefix}quest <action> ...`" # Fallback
             await send_callback(f"Please specify a quest action. Usage:\n{doc}")
             return
 
@@ -923,7 +927,8 @@ class CommandRouter:
             return
 
         if not args:
-            doc = self.handle_npc.__doc__.format(prefix=self._command_prefix)
+            message_template = self.handle_npc.__doc__
+            doc = message_template.format(prefix=self._command_prefix) if message_template else f"Используйте `{self._command_prefix}npc <action> ...`" # Fallback
             await send_callback(f"Please specify an NPC action. Usage:\n{doc}")
             return
 
@@ -1033,7 +1038,8 @@ class CommandRouter:
                 await send_callback(f"An unexpected error occurred while trying to talk to {npc_name}.")
 
         else:
-            doc = self.handle_npc.__doc__.format(prefix=self._command_prefix)
+            message_template = self.handle_npc.__doc__
+            doc = message_template.format(prefix=self._command_prefix) if message_template else "Default help for NPC command." # Fallback
             await send_callback(f"Unknown action for NPC: '{subcommand}'. Usage:\n{doc}")
 
 
@@ -1581,7 +1587,8 @@ class CommandRouter:
             return
 
         if not args:
-            doc_string = self.handle_gm.__doc__.format(prefix=self._command_prefix)
+            message_template = self.handle_gm.__doc__
+            doc_string = message_template.format(prefix=self._command_prefix) if message_template else "GM command help."
             await send_callback(f"Usage: {self._command_prefix}gm <subcommand> [arguments]\nAvailable subcommands:\n"
                                 f"- `save_state` - Manually triggers a save of the current guild's game state.\n"
                                 f"- `create_npc <template_id> [location_id] [name] [is_temporary (true/false)]` - Creates an NPC.\n"
@@ -1591,7 +1598,8 @@ class CommandRouter:
                                 f"- `ai_create_quest <idea|AI:template_id> [char_id]` - Asks AI to create a quest.\n"
                                 f"- `ai_create_location <idea|AI:template_id>` - Asks AI to create a location.\n"
                                 # Add other GM commands here as they are implemented
-                               )
+                                # The doc_string itself is part of the message, so no direct format on it after this block
+                               f"\nFull usage: {doc_string}") # Append the formatted docstring
             return
 
         subcommand = args[0].lower()
@@ -1685,7 +1693,8 @@ class CommandRouter:
                 display_name = getattr(new_npc, 'name', template_id) if new_npc else template_id
                 await send_callback(f"✅ NPC '{display_name}' (ID: `{npc_id}`) created successfully at location `{getattr(new_npc, 'location_id', 'N/A')}`.")
             else: # None or unexpected result
-                await send_callback(f"❌ Failed to create NPC from template '{template_id}'. It might not exist, failed AI generation/validation, or an unexpected error occurred.")
+                 message_text_template = "❌ Failed to create NPC from template '{}'. It might not exist, failed AI generation/validation, or an unexpected error occurred."
+                 await send_callback(message_text_template.format(template_id) if message_text_template else f"Failed to create NPC from template {template_id}.") # Safe format
 
         elif subcommand == "ai_create_quest":
             if not guild_id:
@@ -1770,16 +1779,23 @@ class CommandRouter:
                             await send_callback(f"Note: Your (GM) character has been temporarily marked as 'Awaiting Moderation'.")
                 elif 'id' in quest_info : # Quest started directly (non-AI path from template or pre-approved)
                     # Assuming quest_info dict has name_i18n
-                    quest_name = quest_info.get('name_i18n',{}).get('en', quest_info['id'])
+                    quest_name_i18n = quest_info.get('name_i18n', {})
+                    quest_name = quest_name_i18n.get('en', quest_info.get('id','Unknown Quest')) if isinstance(quest_name_i18n, dict) else quest_info.get('id','Unknown Quest')
                     await send_callback(f"✅ Quest '{quest_name}' started directly for character '{final_triggering_char_id}'.")
                 else: # Unexpected dict format
-                     await send_callback(f"❌ Failed to start or generate quest '{quest_idea_or_template_id}'. An unexpected result format was received.")
+                     # Safe message formatting
+                     message_text_template = "❌ Failed to start or generate quest '{}'. An unexpected result format was received."
+                     await send_callback(message_text_template.format(quest_idea_or_template_id) if message_text_template else f"Failed to process quest {quest_idea_or_template_id}.")
                      print(f"CommandRouter: Unexpected start_quest result for {quest_idea_or_template_id}: {quest_info}")
 
             elif quest_info is False: # Specific failure logic from QuestManager
-                 await send_callback(f"❌ Failed to start or generate quest '{quest_idea_or_template_id}'. It might not exist or character doesn't meet requirements.")
+                 # Safe message formatting
+                 message_text_template = "❌ Failed to start or generate quest '{}'. It might not exist or character doesn't meet requirements."
+                 await send_callback(message_text_template.format(quest_idea_or_template_id) if message_text_template else f"Failed to process quest {quest_idea_or_template_id}.")
             else: # None or other unexpected
-                 await send_callback(f"❌ Failed to start or generate quest '{quest_idea_or_template_id}'. It might have failed AI generation, validation, or an unexpected error occurred.")
+                 # Safe message formatting
+                 message_text_template = "❌ Failed to start or generate quest '{}'. It might have failed AI generation, validation, or an unexpected error occurred."
+                 await send_callback(message_text_template.format(quest_idea_or_template_id) if message_text_template else f"Failed to process quest {quest_idea_or_template_id}.")
                  print(f"CommandRouter: Unhandled start_quest result for {quest_idea_or_template_id}: {quest_info}")
 
 
@@ -1836,16 +1852,24 @@ class CommandRouter:
                             await send_callback(f"Note: Your (GM) character has been temporarily marked as 'Awaiting Moderation'.")
                 elif 'id' in location_info: # Location instance created directly (non-AI or pre-approved)
                     # Assuming location_info dict has name_i18n
-                    loc_name = location_info.get('name_i18n',{}).get('en', location_info['id'])
-                    await send_callback(f"✅ Location '{loc_name}' (ID: {location_info['id']}) created successfully.")
+                    loc_name_i18n = location_info.get('name_i18n', {})
+                    loc_name = loc_name_i18n.get('en', location_info.get('id', 'Unknown Location')) if isinstance(loc_name_i18n, dict) else location_info.get('id', 'Unknown Location')
+                    loc_id_val = location_info.get('id', 'N/A')
+                    await send_callback(f"✅ Location '{loc_name}' (ID: {loc_id_val}) created successfully.")
                 else: # Unexpected dict format
-                     await send_callback(f"❌ Failed to create or generate location '{location_idea_or_template_id}'. An unexpected result format was received.")
+                     # Safe message formatting
+                     message_text_template = "❌ Failed to create or generate location '{}'. An unexpected result format was received."
+                     await send_callback(message_text_template.format(location_idea_or_template_id) if message_text_template else f"Failed to process location {location_idea_or_template_id}.")
                      print(f"CommandRouter: Unexpected create_location_instance result for {location_idea_or_template_id}: {location_info}")
 
             elif location_info is False: # Specific failure logic from LocationManager
-                 await send_callback(f"❌ Failed to create or generate location '{location_idea_or_template_id}'. It might not exist or generation failed.")
+                # Safe message formatting
+                message_text_template = "❌ Failed to create or generate location '{}'. It might not exist or generation failed."
+                await send_callback(message_text_template.format(location_idea_or_template_id) if message_text_template else f"Failed to process location {location_idea_or_template_id}.")
             else: # None or other unexpected
-                 await send_callback(f"❌ Failed to create or generate location '{location_idea_or_template_id}'. It might have failed AI generation, validation, or an unexpected error occurred.")
+                 # Safe message formatting
+                 message_text_template = "❌ Failed to create or generate location '{}'. It might have failed AI generation, validation, or an unexpected error occurred."
+                 await send_callback(message_text_template.format(location_idea_or_template_id) if message_text_template else f"Failed to process location {location_idea_or_template_id}.")
                  print(f"CommandRouter: Unhandled create_location_instance result for {location_idea_or_template_id}: {location_info}")
 
 
@@ -2006,10 +2030,20 @@ class CommandRouter:
         # The conflict_resolver is already part of self from __init__
         conflict_resolver_instance = self._conflict_resolver
 
-
-        if not all([char_manager, loc_manager, event_manager, rule_engine]): # openai_service and conflict_resolver are optional dependencies for the *processor*
-            await send_callback("Error: One or more required managers (Character, Location, Event, RuleEngine) are not available.")
+        # Ensure all required managers are not None before calling process_party_actions
+        if not char_manager:
+            await send_callback("Error: CharacterManager is unavailable for processing party actions.")
             return
+        if not loc_manager:
+            await send_callback("Error: LocationManager is unavailable for processing party actions.")
+            return
+        if not event_manager: # event_manager is mandatory for process_party_actions
+            await send_callback("Error: EventManager is unavailable for processing party actions.")
+            return
+        if not rule_engine:
+            await send_callback("Error: RuleEngine is unavailable for processing party actions.")
+            return
+        # openai_service, conflict_resolver, game_log_manager are optional for process_party_actions itself
 
         # Import ActionProcessor here or at top of file if preferred
         # from bot.game.action_processor import ActionProcessor # Moved to top-level
@@ -2047,9 +2081,11 @@ class CommandRouter:
                 game_log_manager=game_log_manager # Pass game_log_manager
             )
 
-            response_message = f"Party actions submitted for party '{party_id_arg}'. Result:\n"
-            response_message += f"Success: {result.get('success')}\n"
-            response_message += f"Message: {result.get('message', 'N/A')}\n"
+            # Safely format the response message
+            success_val = result.get('success', False)
+            message_val = result.get('message', 'N/A')
+            response_message = f"Party actions submitted for party '{party_id_arg}'. Result:\nSuccess: {success_val}\nMessage: {message_val}\n"
+
             if 'identified_conflicts' in result:
                 response_message += f"Identified Conflicts: {len(result['identified_conflicts'])}\n"
                 # Format conflicts nicely
@@ -2159,17 +2195,20 @@ class CommandRouter:
         persistence_manager: Optional["PersistenceManager"] = context.get('persistence_manager')
         if not persistence_manager:
              print("CommandRouter: ERROR - PersistenceManager not in context for _notify_master_of_pending_content.")
-             return # Cannot proceed without persistence
+             return
 
-        # Assuming PersistenceManager provides a way to access the DB adapter
-        if not hasattr(persistence_manager, 'get_db_adapter') or not persistence_manager.get_db_adapter():
+        # Changed to access _db_adapter directly after checking persistence_manager
+        db_adapter = persistence_manager._db_adapter if hasattr(persistence_manager, '_db_adapter') else None
+        if not db_adapter:
             print("CommandRouter: ERROR - DB adapter not available via PersistenceManager for Master notification.")
             return
 
-        db_adapter = persistence_manager.get_db_adapter() # Assuming PM provides DB adapter
+        master_channel_id_str_template = self._settings.get('guild_specific_settings', {}).get(guild_id, {}).get('master_notification_channel_id')
+        master_channel_id_str = master_channel_id_str_template if master_channel_id_str_template else self._settings.get('default_master_notification_channel_id')
 
-        master_channel_id_str = self._settings.get('guild_specific_settings', {}).get(guild_id, {}).get('master_notification_channel_id')
-        if not master_channel_id_str:
+        if not master_channel_id_str: # Ensure it's not None before int()
+            print(f"CommandRouter: WARNING - Master notification channel ID not configured for guild {guild_id} or globally.")
+            return
             master_channel_id_str = self._settings.get('default_master_notification_channel_id')
 
         if not master_channel_id_str:
@@ -2250,16 +2289,14 @@ class CommandRouter:
         if not persistence_manager:
              print("CommandRouter:_activate_approved_content ERROR - PersistenceManager not in context.")
              await send_to_master_channel(f"Error: PersistenceManager unavailable during content activation for {request_id}.")
-             return False # Cannot proceed without persistence
+             return False
 
-        if not hasattr(persistence_manager, 'get_db_adapter') or not persistence_manager.get_db_adapter():
+        db_adapter = persistence_manager._db_adapter if hasattr(persistence_manager, '_db_adapter') else None
+        if not db_adapter:
             print("CommandRouter:_activate_approved_content ERROR - DB adapter not available.")
             await send_to_master_channel(f"Error: DB adapter unavailable during content activation for {request_id}.")
             return False
 
-        db_adapter = persistence_manager.get_db_adapter()
-
-        # Assuming get_pending_moderation_request is async
         moderation_request = await db_adapter.get_pending_moderation_request(request_id)
         if not moderation_request:
             print(f"CommandRouter:_activate_approved_content ERROR - Request {request_id} not found in DB for activation.")
@@ -2297,49 +2334,55 @@ class CommandRouter:
 
         try:
             if content_type == 'npc':
-                if npc_manager:
-                    # Assuming create_npc_from_moderated_data is async
+                if not npc_manager:
+                    await send_to_master_channel("Error: NpcManager not available for NPC activation.")
+                    activation_successful = False
+                else:
                     entity_id_or_data = await npc_manager.create_npc_from_moderated_data(guild_id, approved_data, context)
-                    if entity_id_or_data: # Should return the created NPC ID (string)
-                        # Assuming get_npc is sync
+                    if entity_id_or_data and isinstance(entity_id_or_data, str):
                         npc_obj = npc_manager.get_npc(guild_id, entity_id_or_data)
-                        entity_info_for_user_notification = f"NPC '{getattr(npc_obj, 'name', entity_id_or_data)}' (ID: {entity_id_or_data})"
-                        activation_successful = True # Mark successful if ID is returned
-                else: await send_to_master_channel("Error: NpcManager not available for NPC activation.")
+                        npc_name = getattr(npc_obj, 'name', entity_id_or_data) if npc_obj else entity_id_or_data
+                        entity_info_for_user_notification = f"NPC '{npc_name}' (ID: {entity_id_or_data})"
+                        activation_successful = True
+                    else: activation_successful = False
 
             elif content_type == 'quest':
-                if quest_manager and character_manager:
-                    # Assuming get_character_by_discord_id is sync
+                if not quest_manager or not character_manager:
+                    await send_to_master_channel("Error: QuestManager or CharacterManager not available for Quest activation.")
+                    activation_successful = False
+                else:
                     player_char = character_manager.get_character_by_discord_id(guild_id, int(original_user_id))
                     if not player_char:
                         await send_to_master_channel(f"Error: Original user {original_user_id} does not have an active character in guild {guild_id} to assign the quest to. Quest {request_id} cannot be activated.")
-                        # Optionally update moderation request status to 'activation_failed'
-                        await db_adapter.update_pending_moderation_request(request_id, 'activation_failed_no_char', context.get('author_id', 'System')) # Assuming author_id is GM's ID
-                        return False
+                        await db_adapter.update_pending_moderation_request(request_id, 'activation_failed_no_char', context.get('author_id', 'System'))
+                        return False # Explicitly return False as this is a hard stop for this path
 
-                    # Pass the resolved character_id to start_quest_from_moderated_data
-                    # Assuming start_quest_from_moderated_data is async and returns a dict
                     entity_id_or_data = await quest_manager.start_quest_from_moderated_data(guild_id, player_char.id, approved_data, context)
                     if entity_id_or_data and isinstance(entity_id_or_data, dict) and 'id' in entity_id_or_data:
-                         # Assuming the dict has name_i18n
-                         quest_name = entity_id_or_data.get('name_i18n',{}).get('en', entity_id_or_data.get('id'))
-                         entity_info_for_user_notification = f"Quest '{quest_name}' (ID: {entity_id_or_data.get('id')}) for character {player_char.name}"
-                         activation_successful = True # Mark successful if dict with ID is returned
-                else: await send_to_master_channel("Error: QuestManager or CharacterManager not available for Quest activation.")
+                         quest_name_i18n = entity_id_or_data.get('name_i18n', {})
+                         quest_name = quest_name_i18n.get('en', entity_id_or_data.get('id','Unknown Quest')) if isinstance(quest_name_i18n, dict) else entity_id_or_data.get('id','Unknown Quest')
+                         char_name = getattr(player_char, 'name', original_user_id)
+                         entity_info_for_user_notification = f"Quest '{quest_name}' (ID: {entity_id_or_data.get('id')}) for character {char_name}"
+                         activation_successful = True
+                    else: activation_successful = False
 
             elif content_type == 'location':
-                if location_manager:
-                    # create_location_instance_from_moderated_data takes user_id (Discord ID) for the generated_locations table
-                    # Assuming create_location_instance_from_moderated_data is async and returns a dict
+                if not location_manager:
+                    await send_to_master_channel("Error: LocationManager not available for Location activation.")
+                    activation_successful = False
+                else:
                     entity_id_or_data = await location_manager.create_location_instance_from_moderated_data(guild_id, approved_data, original_user_id, context)
                     if entity_id_or_data and isinstance(entity_id_or_data, dict) and 'id' in entity_id_or_data:
-                        # Assuming the dict has name_i18n
-                        loc_name = entity_id_or_data.get('name_i18n',{}).get('en', entity_id_or_data.get('id'))
-                        entity_info_for_user_notification = f"Location '{loc_name}' (ID: {entity_id_or_data.get('id')})"
-                        activation_successful = True # Mark successful if dict with ID is returned
-                else: await send_to_master_channel("Error: LocationManager not available for Location activation.")
-
-            # Add other content types here (e.g., item_template, encounter, etc.)
+                        loc_name_i18n = entity_id_or_data.get('name_i18n',{})
+                        loc_name = loc_name_i18n.get('en', entity_id_or_data.get('id', 'Unknown Location')) if isinstance(loc_name_i18n, dict) else entity_id_or_data.get('id', 'Unknown Location')
+                        loc_id_val = entity_id_or_data.get('id', 'N/A')
+                        entity_info_for_user_notification = f"Location '{loc_name}' (ID: {loc_id_val})"
+                        activation_successful = True
+                    else: activation_successful = False
+            # Add other content types here
+            else: # Unknown content type
+                await send_to_master_channel(f"Error: Unknown content type '{content_type}' for request {request_id}. Cannot activate.")
+                activation_successful = False
 
         except Exception as e_activate:
             print(f"CommandRouter:_activate_approved_content ERROR activating content for request {request_id}: {e_activate}")
@@ -2352,32 +2395,22 @@ class CommandRouter:
         if activation_successful:
             print(f"CommandRouter: Content from request {request_id} (Type: {content_type}) successfully activated.")
 
-            # Remove 'awaiting_moderation' status from the user's character
-            if character_manager and status_manager:
-                # Assuming get_character_by_discord_id is sync
+            if not character_manager: # Check before use
+                print("CommandRouter: WARNING - CharacterManager not available for status removal.")
+            elif not status_manager: # Check before use
+                print("CommandRouter: WARNING - StatusManager not available for status removal.")
+            else:
+                # Both managers are available, proceed with status removal
                 player_char_to_update = character_manager.get_character_by_discord_id(guild_id, int(original_user_id))
                 if player_char_to_update:
-                    # Assuming remove_status_effects_by_type is async
                     removed_count = await status_manager.remove_status_effects_by_type(
                         player_char_to_update.id, 'Character', 'awaiting_moderation', guild_id, context
                     )
                     print(f"CommandRouter: Removed {removed_count} 'awaiting_moderation' statuses from character {player_char_to_update.id} (User: {original_user_id}).")
-                    # Notify user of approval and status removal (placeholder)
                     print(f"PLACEHOLDER: Notify user {original_user_id} that content '{entity_info_for_user_notification}' was approved and 'awaiting_moderation' status removed.")
-                    # Example actual notification (would require user object or DM channel):
-                    # try:
-                    #     # Assuming self._client is available (e.g. passed in __init__ or context)
-                    #     user_discord_obj = await self._client.fetch_user(int(original_user_id))
-                    #     if user_discord_obj:
-                    #         await user_discord_obj.send(f"🎉 Your content submission '{entity_info_for_user_notification}' (Request ID: {request_id}) has been approved and is now active! Your 'Awaiting Moderation' status has been lifted.")
-                    # except Exception as e_notify:
-                    #     print(f"CommandRouter: Failed to send DM notification to user {original_user_id}: {e_notify}")
                 else:
                     print(f"CommandRouter: WARNING - Could not find character for user {original_user_id} in guild {guild_id} to remove 'awaiting_moderation' status.")
-            else:
-                print("CommandRouter: WARNING - CharacterManager or StatusManager not available for status removal.")
 
-            # Delete the moderation request after successful activation
             # Assuming delete_pending_moderation_request is async
             await db_adapter.delete_pending_moderation_request(request_id)
             print(f"CommandRouter: Moderation request {request_id} deleted after successful activation.")
@@ -2422,15 +2455,13 @@ class CommandRouter:
             print("CommandRouter: ERROR - PersistenceManager not in context for handle_approve_content.")
             return
 
-        if not hasattr(persistence_manager, 'get_db_adapter') or not persistence_manager.get_db_adapter():
+        db_adapter = persistence_manager._db_adapter if hasattr(persistence_manager, '_db_adapter') else None
+        if not db_adapter:
             await send_callback("Error: Database service is unavailable.")
             print("CommandRouter: ERROR - DB adapter not available for handle_approve_content.")
             return
-        db_adapter = persistence_manager.get_db_adapter()
-
 
         try:
-            # Assuming get_pending_moderation_request is async
             moderation_request = await db_adapter.get_pending_moderation_request(request_id)
 
             if not moderation_request:
@@ -2508,15 +2539,13 @@ class CommandRouter:
             print("CommandRouter: ERROR - PersistenceManager not in context for handle_reject_content.")
             return
 
-        if not hasattr(persistence_manager, 'get_db_adapter') or not persistence_manager.get_db_adapter():
+        db_adapter = persistence_manager._db_adapter if hasattr(persistence_manager, '_db_adapter') else None
+        if not db_adapter:
             await send_callback("Error: Database service is unavailable.")
             print("CommandRouter: ERROR - DB adapter not available for handle_reject_content.")
             return
-        db_adapter = persistence_manager.get_db_adapter()
-
 
         try:
-            # Assuming get_pending_moderation_request is async
             moderation_request = await db_adapter.get_pending_moderation_request(request_id)
 
             if not moderation_request:
@@ -2615,13 +2644,13 @@ class CommandRouter:
             print("CommandRouter: ERROR - PersistenceManager not in context for handle_edit_content.")
             return
 
-        if not hasattr(persistence_manager, 'get_db_adapter') or not persistence_manager.get_db_adapter():
+        db_adapter = persistence_manager._db_adapter if hasattr(persistence_manager, '_db_adapter') else None
+        if not db_adapter:
             await send_callback("Error: Database service is unavailable.")
             print("CommandRouter: ERROR - DB adapter not available for handle_edit_content.")
             return
-        db_adapter = persistence_manager.get_db_adapter()
 
-        if not ai_validator:
+        if not ai_validator: # ai_validator is already checked for None above
             await send_callback("Error: AIResponseValidator service is unavailable. Cannot validate edits.")
             print("CommandRouter: ERROR - AIResponseValidator not in context for handle_edit_content.")
             return

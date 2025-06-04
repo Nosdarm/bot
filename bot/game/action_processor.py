@@ -99,16 +99,32 @@ class ActionProcessor:
              # TODO: CRITICAL - The method 'process_player_action_within_event' is missing from EventManager.
              # This functionality is essential for routing player actions to active events.
              # It needs to be implemented in EventManager or the event handling logic here needs a redesign.
-             # For now, actions will not be processed by events if this block remains commented.
-             # event_response = await event_manager.process_player_action_within_event(
-             #     event_id=relevant_event_id, player_id=character.id, action_type=action_type,
-             #     action_data=action_data, character_manager=char_manager, loc_manager=loc_manager,
-             #     rule_engine=rule_engine, openai_service=openai_service, ctx_channel_id=ctx_channel_id
-             # )
-             # if 'target_channel_id' not in event_response: event_response['target_channel_id'] = output_channel_id
-             # if 'state_changed' not in event_response: event_response['state_changed'] = False
-             # return event_response
-             print(f"ActionProcessor: TODO - EventManager.process_player_action_within_event call is commented out as method does not exist.")
+             event_response = await event_manager.process_player_action_within_event(
+                 event_id=relevant_event_id,
+                 player_id=character.id,
+                 action_type=action_type,
+                 action_data=action_data,
+                 guild_id=str(game_state.server_id), # Added guild_id
+                 # Pass other managers and context variables as kwargs
+                 character_manager=char_manager,
+                 loc_manager=loc_manager,
+                 rule_engine=rule_engine,
+                 openai_service=openai_service,
+                 event_manager=event_manager, # Can be passed if needed by the method
+                 game_log_manager=game_log_manager, # Pass game_log_manager
+                 ctx_channel_id=ctx_channel_id # For fallback channel ID
+             )
+             # Ensure the response from the event processing has the necessary keys.
+             if 'target_channel_id' not in event_response or event_response['target_channel_id'] is None:
+                 event_response['target_channel_id'] = output_channel_id # Fallback to location channel
+             if 'state_changed' not in event_response:
+                 event_response['state_changed'] = False # Default if not specified
+
+             # If the event processing was successful and it handled the action, return its response.
+             # The event processing method should indicate if it fully handled the action.
+             # For now, we assume if an event is relevant, it handles the action.
+             return event_response
+             # print(f"ActionProcessor: TODO - EventManager.process_player_action_within_event call is commented out as method does not exist.") # Remove this line
 
 
         # --- Regular World Interaction ---

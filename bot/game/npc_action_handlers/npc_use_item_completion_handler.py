@@ -89,7 +89,55 @@ class NpcUseItemCompletionHandler(BaseNpcActionHandler): # Inherit from base (op
                   if item_obj and target_obj and hasattr(self._rule_engine, 'calculate_item_use_effect'):
                        # calculate_item_use_effect needs user, item, target, context
                        # Pass all necessary managers in kwargs for RuleEngine
-                       effect_result = await self._rule_engine.calculate_item_use_effect(npc, item_obj, target_obj, context=kwargs) # Pass NPC (user), item, target, context
+                       # RuleEngine.resolve_item_use returns a Dict.
+                       # Signature: resolve_item_use(self, character: Character, item_instance_data: Dict[str, Any], target_entity: Optional[Any], context: Dict[str, Any]) -> Dict[str, Any]
+                       # NPC is passed as 'character' argument.
+                       # item_obj here is item_instance_data.
+
+                       # Ensure guild_id is in context for resolve_item_use if it needs it internally
+                       context_for_resolve = {**kwargs, 'guild_id': getattr(npc, 'guild_id', kwargs.get('guild_id'))}
+
+                       effect_result_dict = await self._rule_engine.resolve_item_use(
+                           character=npc, # Pass NPC as the 'character'
+                           item_instance_data=item_obj,
+                           target_entity=target_obj,
+                           context=context_for_resolve
+                       )
+
+                       # Process effect_result_dict (which includes success, message, consumed, effects)
+                       if effect_result_dict.get("success"):
+                            print(f"NpcUseItemCompletionHandler: NPC {npc.id} used item {item_id} ({item_obj.get('template_id', 'N/A')}) on {target_type} {target_id}. Effect: {effect_result_dict.get('message')}")
+                            # TODO: Apply effects from effect_result_dict.get('effects') if any.
+                            # This would involve StatusManager, CharacterManager/NpcManager for stat changes etc.
+                            # Example:
+                            # for effect_detail in effect_result_dict.get('effects', []):
+                            #    if effect_detail.get('type') == 'heal' and self._status_manager:
+                            #        # apply healing via status manager or directly modifying target_obj.hp
+                            #        pass
+                            #    elif effect_detail.get('type') == 'status' and self._status_manager:
+                            #        # await self._status_manager.add_status_effect_to_entity(...)
+                            #        pass
+
+                            item_consumed = effect_result_dict.get('consumed', True)
+                            if item_consumed:
+                                success_remove = await self._npc_manager.remove_item_from_inventory(npc.id, item_id, **kwargs)
+                                if success_remove:
+                                    await _notify_gm(f"✨ NPC {npc.id}: Использовал предмет {item_obj.get('template_id', item_id)} на {target_id} (потреблен). {effect_result_dict.get('message', '')}")
+                                else:
+                                    await _notify_gm(f"❌ NPC {npc.id}: Использовал предмет {item_obj.get('template_id', item_id)}, но не удалось удалить из инвентаря. {effect_result_dict.get('message', '')}")
+                            else:
+                                await _notify_gm(f"💡 NPC {npc.id}: Использовал предмет {item_obj.get('template_id', item_id)} (не потреблен) на {target_id}. {effect_result_dict.get('message', '')}")
+                       else: # resolve_item_use returned success: False
+                            await _notify_gm(f"⚠️ NPC {npc.id}: Не удалось использовать предмет {item_obj.get('template_id', item_id)}. {effect_result_dict.get('message', '')}")
+
+                  elif not item_obj: # This check was already present
+                       print(f"NpcUseItemCompletionHandler: Error completing use_item action: Item object {item_id} not found for NPC {npc.id}.")
+                       await _notify_gm(f"❌ NPC {npc.id}: Ошибка при завершении use_item: Предмет {item_id} не найден.")
+                  # Removed the specific check for target_obj here as resolve_item_use might handle targetless items.
+                  # The original 'else' for RuleEngine method not available is covered if hasattr fails.
+
+             except Exception as e:
+                  print(f"NpcUseItemCompletionHandler: Error during NPC use_item action completion for {npc.id}: {e}")
 
                        # Apply the effect result (e.g., change stats, apply status, spawn item)
                        # This often involves calling other managers (StatusManager, CharacterManager/NpcManager for stats, ItemManager for spawning/dropping)
@@ -136,12 +184,55 @@ class NpcUseItemCompletionHandler(BaseNpcActionHandler): # Inherit from base (op
                   elif not item_obj:
                        print(f"NpcUseItemCompletionHandler: Error completing use_item action: Item object {item_id} not found for NPC {npc.id}.")
                        await _notify_gm(f"❌ NPC {npc.id}: Ошибка при завершении use_item: Предмет {item_id} не найден.")
-                  elif not target_obj:
-                       print(f"NpcUseItemCompletionHandler: Error completing use_item action: Target object {target_type} ID {target_id} not found for NPC {npc.id}.")
-                       await _notify_gm(f"❌ NPC {npc.id}: Ошибка при завершении use_item: Цель {target_id} не найдена.")
-                  else: # Should not happen if item_obj and target_obj are checked above
-                       print(f"NpcUseItemCompletionHandler: Warning: Cannot complete use_item action for NPC {npc.id}. RuleEngine or calculate_item_use_effect method not available.")
-                       await _notify_gm(f"⚠️ NPC {npc.id}: Действие use_item завершено, но обработчик эффектов недоступен.")
+                  # Call resolve_item_use even if target_obj is None, as some items might not need a target
+                  # or RuleEngine.resolve_item_use can handle a None target_entity.
+                  if item_obj and hasattr(self._rule_engine, 'resolve_item_use'):
+                       # RuleEngine.resolve_item_use returns a Dict.
+                       # Signature: resolve_item_use(self, character: Character, item_instance_data: Dict[str, Any], target_entity: Optional[Any], context: Dict[str, Any]) -> Dict[str, Any]
+                       # NPC is passed as 'character' argument.
+                       # item_obj here is item_instance_data.
+
+                       # Ensure guild_id is in context for resolve_item_use if it needs it internally
+                       context_for_resolve = {**kwargs, 'guild_id': getattr(npc, 'guild_id', kwargs.get('guild_id'))}
+
+                       effect_result_dict = await self._rule_engine.resolve_item_use(
+                           character=npc, # Pass NPC as the 'character'
+                           item_instance_data=item_obj,
+                           target_entity=target_obj,
+                           context=context_for_resolve
+                       )
+
+                       # Process effect_result_dict (which includes success, message, consumed, effects)
+                       if effect_result_dict.get("success"):
+                            print(f"NpcUseItemCompletionHandler: NPC {npc.id} used item {item_id} ({item_obj.get('template_id', 'N/A')}) on {target_type} {target_id}. Effect: {effect_result_dict.get('message')}")
+                            # TODO: Apply effects from effect_result_dict.get('effects') if any.
+                            # This would involve StatusManager, CharacterManager/NpcManager for stat changes etc.
+                            # Example:
+                            # for effect_detail in effect_result_dict.get('effects', []):
+                            #    if effect_detail.get('type') == 'heal' and self._status_manager:
+                            #        # apply healing via status manager or directly modifying target_obj.hp
+                            #        pass
+                            #    elif effect_detail.get('type') == 'status' and self._status_manager:
+                            #        # await self._status_manager.add_status_effect_to_entity(...)
+                            #        pass
+
+                            item_consumed = effect_result_dict.get('consumed', True)
+                            if item_consumed:
+                                success_remove = await self._npc_manager.remove_item_from_inventory(npc.id, item_id, **kwargs)
+                                if success_remove:
+                                    await _notify_gm(f"✨ NPC {npc.id}: Использовал предмет {item_obj.get('template_id', item_id)} на {target_id} (потреблен). {effect_result_dict.get('message', '')}")
+                                else:
+                                    await _notify_gm(f"❌ NPC {npc.id}: Использовал предмет {item_obj.get('template_id', item_id)}, но не удалось удалить из инвентаря. {effect_result_dict.get('message', '')}")
+                            else:
+                                await _notify_gm(f"💡 NPC {npc.id}: Использовал предмет {item_obj.get('template_id', item_id)} (не потреблен) на {target_id}. {effect_result_dict.get('message', '')}")
+                       else: # resolve_item_use returned success: False
+                            await _notify_gm(f"⚠️ NPC {npc.id}: Не удалось использовать предмет {item_obj.get('template_id', item_id)}. {effect_result_dict.get('message', '')}")
+
+                  elif not item_obj: # This check was already present
+                       print(f"NpcUseItemCompletionHandler: Error completing use_item action: Item object {item_id} not found for NPC {npc.id}.")
+                       await _notify_gm(f"❌ NPC {npc.id}: Ошибка при завершении use_item: Предмет {item_id} не найден.")
+                  # Removed the specific check for target_obj here as resolve_item_use might handle targetless items.
+                  # The original 'else' for RuleEngine method not available is covered if hasattr fails.
 
              except Exception as e:
                   print(f"NpcUseItemCompletionHandler: Error during NPC use_item action completion for {npc.id}: {e}")
