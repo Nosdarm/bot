@@ -240,7 +240,7 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.char_manager._characters[guild_id] = {char_id: expected_char}
         self.char_manager._discord_to_char_map[guild_id] = {str(discord_id_int): char_id} # Map uses str
 
-        retrieved_char = await self.char_manager.get_character_by_discord_id(guild_id, str(discord_id_int))
+        retrieved_char = await self.char_manager.get_character_by_discord_id(guild_id, discord_id)
         self.assertEqual(retrieved_char, expected_char)
 
     async def test_get_character_by_discord_id_non_existent(self):
@@ -762,7 +762,7 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         char1_name = "Char1"
         char2_name = "Char2"
         char1 = Character(id=char1_id, guild_id=guild_id, discord_user_id=1, name=char1_name, name_i18n={"en": char1_name, "ru": char1_name}, max_health=100.0, hp=100.0, stats={"str":10}, inventory=[{"item_id":"potion","quantity":1}], location_id="loc1", status_effects=["poisoned"], is_alive=True, level=1, experience=10)
-        char2 = Character(id=char2_id, guild_id=guild_id, discord_user_id=2, name=char2_name, name_i18n={"en": char2_name, "ru": char2_name}, max_health=120.0, hp=50.0, stats={"dex":12}, inventory=[], location_id="loc2", status_effects=[], is_alive=False, level=2, experience=150)
+        char2 = Character(id=char2_id, guild_id=guild_id, discord_user_id=2, name=char2_name, name_i18n={"en": char2_name, "ru": char_name}, max_health=120.0, hp=50.0, stats={"dex":12}, inventory=[], location_id="loc2", status_effects=[], is_alive=False, level=2, experience=150)
 
         self.char_manager._characters[guild_id] = {char1_id: char1, char2_id: char2}
         self.char_manager._dirty_characters[guild_id] = {char1_id, char2_id}
@@ -976,7 +976,6 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         await self.char_manager.remove_character(guild_id, char_id)
 
         self.assertNotIn(char_id, self.char_manager._characters.get(guild_id, {}))
-        discord_id = str(discord_id_int) # Add this line
         self.assertNotIn(discord_id, self.char_manager._discord_to_char_map.get(guild_id, {}))
         self.assertIn(char_id, self.char_manager._deleted_characters_ids[guild_id])
         # Ensure char is removed from dirty set if it was there (though remove_character itself shouldn't add it)
@@ -1031,7 +1030,6 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         await self.char_manager.remove_character(guild_id, char_id)
 
         self.assertNotIn(char_id, self.char_manager._characters.get(guild_id, {}))
-        discord_id = str(discord_id_int) # Add this line
         self.assertNotIn(discord_id, self.char_manager._discord_to_char_map.get(guild_id, {}))
         self.assertIn(char_id, self.char_manager._deleted_characters_ids[guild_id])
         self.assertNotIn(char_id, self.char_manager._dirty_characters.get(guild_id, set())) # Cleared from dirty
