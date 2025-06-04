@@ -1205,4 +1205,84 @@ class GameManager:
                     del self._rules_config_cache['default_bot_language']
             return False
 
+    async def trigger_manual_simulation_tick(self, server_id: int) -> None:
+        """
+        Manually triggers a single world simulation tick for a given server_id.
+        This is typically invoked by a GM command.
+        The server_id is currently not directly used by process_world_tick if it operates globally
+        or on all configured guilds, but it's passed for context and future per-guild processing.
+        """
+        print(f"GameManager: Manual simulation tick triggered for server_id: {server_id}.")
+
+        if not self._world_simulation_processor:
+            print("GameManager: Warning - WorldSimulationProcessor not available. Cannot trigger manual tick.")
+            # Optionally, send a message back to the GM if a callback mechanism exists here.
+            return
+
+        if not self.time_manager:
+            print("GameManager: Warning - TimeManager not available. Cannot determine game_time_delta for manual tick.")
+            # Consider if a default small delta can be used or if this is critical.
+            # For now, let's proceed with 0.0, implying an "instant" action.
+            game_time_delta = 0.0
+        else:
+            # For a manual tick, we might want a very small delta or zero,
+            # representing an out-of-band action rather than normal time progression.
+            # Or, it could be configured to advance time by a small, fixed amount.
+            # Let's use 0.0 for now, indicating an "instantaneous" GM-forced tick.
+            game_time_delta = 0.0
+            # Alternative: self.time_manager.get_tick_duration() or a specific GM tick duration from settings.
+            print(f"GameManager: Using game_time_delta: {game_time_delta} for manual tick.")
+
+        try:
+            tick_context_kwargs: Dict[str, Any] = {
+                'rule_engine': self.rule_engine, 'time_manager': self.time_manager,
+                'location_manager': self.location_manager, 'event_manager': self.event_manager,
+                'character_manager': self.character_manager, 'item_manager': self.item_manager,
+                'status_manager': self.status_manager, 'combat_manager': self.combat_manager,
+                'crafting_manager': self.crafting_manager, 'economy_manager': self.economy_manager,
+                'npc_manager': self.npc_manager, 'party_manager': self.party_manager,
+                'openai_service': self.openai_service,
+                'quest_manager': self.quest_manager,
+                'relationship_manager': self.relationship_manager,
+                'dialogue_manager': self.dialogue_manager,
+                'game_log_manager': self.game_log_manager,
+                'consequence_processor': self.consequence_processor,
+                'campaign_loader': self.campaign_loader,
+                'on_enter_action_executor': self._on_enter_action_executor,
+                'stage_description_generator': self._stage_description_generator,
+                'event_stage_processor': self._event_stage_processor,
+                'event_action_processor': self._event_action_processor,
+                'character_action_processor': self._character_action_processor,
+                'character_view_service': self._character_view_service,
+                'party_action_processor': self._party_action_processor,
+                'persistence_manager': self._persistence_manager,
+                'conflict_resolver': self.conflict_resolver,
+                'db_adapter': self._db_adapter,
+                'nlu_data_service': self.nlu_data_service,
+                'prompt_context_collector': self.prompt_context_collector,
+                'multilingual_prompt_generator': self.multilingual_prompt_generator,
+                'send_callback_factory': self._get_discord_send_callback,
+                'settings': self._settings,
+                'discord_client': self._discord_client,
+                # 'current_guild_id': server_id, # Pass server_id if WSP needs it for targeted processing
+            }
+            # It's generally safer for process_world_tick to handle None values for optional components
+            # rather than filtering them here, unless explicitly stated by its contract.
+
+            print(f"GameManager: Executing manual process_world_tick for server_id: {server_id}...")
+            await self._world_simulation_processor.process_world_tick(
+                game_time_delta=game_time_delta, # Using 0.0 for manual, "instant" tick
+                **tick_context_kwargs
+            )
+            print(f"GameManager: Manual simulation tick completed for server_id: {server_id}.")
+
+            # Optionally, trigger a save for the specific guild if the tick might have changed critical state.
+            # await self.save_game_state_after_action(str(server_id))
+
+        except Exception as e:
+            print(f"GameManager: ❌ Error during manual simulation tick for server_id {server_id}: {e}")
+            traceback.print_exc()
+            # Optionally, notify GM of failure.
+
+
 print("DEBUG: game_manager.py module loaded.")

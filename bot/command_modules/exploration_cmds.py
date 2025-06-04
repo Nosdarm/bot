@@ -76,23 +76,21 @@ async def _send_location_embed(
         )
         if connected_exits and isinstance(connected_exits, dict) and len(connected_exits) > 0:
             exit_display_parts = []
-                for exit_name_or_direction, target_loc_template_id in connected_exits.items():
-                    # get_connected_locations returns template IDs as values based on its current implementation.
-                    # So, we still need to fetch the static data for the name.
-                    target_loc_template_data = location_manager.get_location_static(guild_id, target_loc_template_id)
-                    if target_loc_template_data:
-                        exit_display_parts.append(f"{exit_name_or_direction.capitalize()} to {target_loc_template_data.get('name', 'an unnamed area')}")
-                    else:
-                        exit_display_parts.append(f"{exit_name_or_direction.capitalize()} (leads to an unknown area - Template ID: {target_loc_template_id[:6]})")
-
-                if exit_display_parts:
-                    embed.add_field(name="Exits", value="\n".join(exit_display_parts), inline=False)
+            for exit_name_or_direction, target_loc_template_id in connected_exits.items():
+                # get_connected_locations returns template IDs as values based on its current implementation.
+                # So, we still need to fetch the static data for the name.
+                target_loc_template_data = location_manager.get_location_static(guild_id, target_loc_template_id)
+                if target_loc_template_data:
+                    exit_display_parts.append(f"{exit_name_or_direction.capitalize()} to {target_loc_template_data.get('name', 'an unnamed area')}")
                 else:
-                    embed.add_field(name="Exits", value="None apparent.", inline=False)
+                    exit_display_parts.append(f"{exit_name_or_direction.capitalize()} (leads to an unknown area - Template ID: {target_loc_template_id[:6]})")
+
+            if exit_display_parts:
+                embed.add_field(name="Exits", value="\n".join(exit_display_parts), inline=False)
             else:
                 embed.add_field(name="Exits", value="None apparent.", inline=False)
-        # else: # This else block for location_template_id check is no longer needed
-            # embed.add_field(name="Exits", value="*Cannot determine exits: location template ID missing*", inline=False)
+        else: # This else corresponds to 'if connected_exits and ...'
+            embed.add_field(name="Exits", value="None apparent.", inline=False)
     else: # location_instance_id_str is None
         embed.add_field(name="Exits", value="*Cannot determine exits: current location ID missing*", inline=False)
 
@@ -136,7 +134,7 @@ async def cmd_look(interaction: Interaction):
         guild_id_str = str(interaction.guild_id)
         discord_user_id = interaction.user.id
 
-        character: Optional[CharacterModel] = character_manager.get_character_by_discord_id( # Removed await
+        character: Optional[CharacterModel] = character_manager.get_character_by_discord_id(
             guild_id=guild_id_str,
             discord_user_id=discord_user_id
         )
@@ -226,11 +224,10 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
         # We need to find a target *template* whose name matches.
         # Then find an *instance* of that template in the guild.
 
-        # Get valid exits from current location's *template*
+        # Get valid exits from current location's *instance*
         valid_exit_template_ids: Dict[str, str] = location_manager.get_connected_locations(
             guild_id=guild_id_str,
-            location_id=current_location_template_id, # Current template ID
-            instance_id=current_location_instance_id # Current instance ID (may or may not be used by get_connected_locations)
+            instance_id=current_location_instance_id
         )
 
         target_exit_template_id: Optional[str] = None
@@ -249,28 +246,23 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
             await interaction.followup.send(f"You can't directly move to '{target_location_name.strip()}' from '{current_location_instance_data.get('name', 'here')}'. Check the exits.", ephemeral=True)
             return
 
-        # Now find an instance of this target template ID in the guild.
-        # Replaced get_active_instance_for_template with inline logic
-        target_location_instance_id = None
-        # Accessing protected member _location_instances as a workaround for missing manager method
-        all_instances = location_manager._location_instances.get(guild_id_str, {}).values()
-        for inst_data in all_instances:
-            if inst_data.get('template_id') == target_exit_template_id and inst_data.get('is_active', True):
-                target_location_instance_id = inst_data.get('id')
-                break
+        # Now find an instance of this target template ID in the guild using the new manager method.
+        target_location_instance_data = location_manager.find_active_instance_by_template_id(guild_id_str, target_exit_template_id)
 
-        if not target_location_instance_id:
-            target_template_for_name = location_manager.get_location_static(guild_id_str, target_exit_template_id) # Changed get_location_template_by_id to get_location_static
+        if not target_location_instance_data:
+            # Try to get template name for a slightly better error message
+            target_template_for_name = location_manager.get_location_static(guild_id_str, target_exit_template_id)
             target_name_for_error = target_template_for_name.get('name', 'the target location') if target_template_for_name else 'the target location'
             await interaction.followup.send(f"Found a path to {target_name_for_error}, but there's no active instance of it in this world right now.", ephemeral=True)
             return
 
-        found_target_location_instance_data = location_manager.get_location_instance(guild_id_str, target_location_instance_id)
-        if not found_target_location_instance_data: # Should not happen if logic is correct
-             await interaction.followup.send(f"Error: Target location instance (ID: {target_location_instance_id}) data is missing after finding path.", ephemeral=True)
-             return
+        target_location_instance_id = target_location_instance_data.get('id')
+        # found_target_location_instance_data is now target_location_instance_data, so no need for another get_location_instance call
+        # if not target_location_instance_id: # This check is implicitly covered by "if not target_location_instance_data"
+        #      await interaction.followup.send(f"Error: Target location instance data found, but it's missing an ID. Contact an admin.", ephemeral=True)
+        #      return
 
-        party = await party_manager.get_party_by_member_id(guild_id_str, character.id) # Added await
+        party = await party_manager.get_party_by_member_id(guild_id_str, character.id)
         
         entity_to_move_id: str = character.id
         entity_type: str = "Character"
@@ -316,12 +308,14 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
         )
 
         if not move_successful:
-            await interaction.followup.send(f"Movement of {display_name} to '{found_target_location_instance_data.get('name', target_location_name.strip())}' failed. You remain in '{old_location_name}'.", ephemeral=True)
+            await interaction.followup.send(f"Movement of {display_name} to '{target_location_instance_data.get('name', target_location_name.strip())}' failed. You remain in '{old_location_name}'.", ephemeral=True)
             return
             
-        new_location_data_after_move = location_manager.get_location_instance(guild_id_str, target_location_instance_id)
-        if not new_location_data_after_move: 
-            await interaction.followup.send("Moved, but couldn't ascertain new location details. This is odd!", ephemeral=True)
+        # new_location_data_after_move is target_location_instance_data if the move was to this exact instance.
+        # However, move_entity might create a new instance or modify it, so re-fetching is safer.
+        new_location_data_after_move = location_manager.get_location_instance(guild_id_str, target_location_instance_id) if target_location_instance_id else None
+        if not new_location_data_after_move:
+            await interaction.followup.send("Moved, but couldn't ascertain new location details for the destination. This is odd!", ephemeral=True)
             return
             
         new_location_name = new_location_data_after_move.get('name', 'an unnamed place')
@@ -376,74 +370,14 @@ async def cmd_move(interaction: Interaction, target_location_name: str):
 @app_commands.command(name="check", description="Выполнить проверку навыка.")
 async def cmd_check(interaction: Interaction, skill_name: str, complexity: str = "medium", target_description: Optional[str] = None):
     await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client) # Used cast
+    # Removed bot = cast(RPGBot, interaction.client) as it's no longer needed for this simplified version.
+    # Removed if not bot.game_manager: check as it's no longer relevant.
 
-    if not bot.game_manager:
-        await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна.", ephemeral=True)
-        return
-
-    global_game_manager_imported_successfully = False
-    global_game_manager_instance = None
-    get_bot_instance_func = None
-
-    try:
-        from bot.bot_core import global_game_manager as ggm, get_bot_instance as gbi
-        global_game_manager_instance = ggm
-        get_bot_instance_func = gbi
-        if global_game_manager_instance:
-            global_game_manager_imported_successfully = True
-    except ImportError:
-        pass
-
-    if global_game_manager_imported_successfully and global_game_manager_instance:
-        response_data = await global_game_manager_instance.process_player_action(
-            server_id=str(interaction.guild_id), # Ensure guild_id is string
-            discord_user_id=interaction.user.id,
-            action_type="skill_check",
-            action_data={
-                "skill_name": skill_name,
-                "complexity": complexity,
-                "target_description": target_description or f"совершить действие, требующее навыка {skill_name}"
-            },
-            ctx_channel_id=interaction.channel_id
-        )
-        target_channel_id = response_data.get("target_channel_id", interaction.channel_id)
-        
-        # Ensure bot_instance_for_channel is correctly fetched if get_bot_instance_func is available
-        bot_instance_for_channel = None
-        if get_bot_instance_func:
-            bot_instance_for_channel = get_bot_instance_func()
-        
-        target_channel = None
-        if bot_instance_for_channel and target_channel_id:
-            # Ensure target_channel_id is an int if get_channel expects an int
-            try:
-                target_channel = bot_instance_for_channel.get_channel(int(target_channel_id))
-            except ValueError:
-                print(f"Warning: target_channel_id '{target_channel_id}' is not a valid integer. Falling back to interaction.channel.")
-                target_channel = interaction.channel 
-        else: # Fallback to interaction.channel if bot_instance or target_channel_id is problematic
-            target_channel = interaction.channel
-
-        message_to_send = response_data.get("message", "Произошла ошибка при выполнении проверки.")
-
-        # Ensure interaction.channel is not None before trying to access its attributes or methods
-        interaction_channel_exists_and_sendable = interaction.channel and hasattr(interaction.channel, 'send')
-
-        if target_channel and hasattr(target_channel, 'send') and target_channel.id != (interaction.channel.id if interaction.channel else None) :
-            await target_channel.send(message_to_send)
-             # Always send a followup to the interaction itself if the main message went to a different channel
-            await interaction.followup.send(f"You attempt a {skill_name} check... (Response sent to designated channel).", ephemeral=True)
-        else: # Send to the interaction's channel (as followup) or handle error if interaction.channel is not sendable
-            if interaction_channel_exists_and_sendable:
-                await interaction.followup.send(message_to_send, ephemeral=True)
-            else:
-                print(f"Error: interaction.channel is not sendable and target_channel was not suitable. Message: {message_to_send}")
-                # As a last resort, try to send to followup if the interaction itself is the problem, though this is unlikely if defer worked.
-                await interaction.followup.send("Error: Could not send message to the channel.", ephemeral=True)
-    else:
-        # This 'else' corresponds to 'if global_game_manager_imported_successfully and global_game_manager_instance:'
-        await interaction.followup.send("**Ошибка Мастера:** Игровая система недоступна или не инициализирована должным образом для команды /check.", ephemeral=True)
+    # New logic: Inform user that the command is under rework.
+    await interaction.followup.send(
+        "The '/check' command is currently undergoing improvements and is temporarily unavailable. Please try again later.",
+        ephemeral=True
+    )
 
 # Note: The _generate_location_details_embed function was not directly mentioned for changes
 # in the prompt other than how it's called. Assuming its internal logic is fine for now,

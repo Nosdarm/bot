@@ -80,10 +80,8 @@ def load_settings_from_file(file_path: str) -> Dict[str, Any]:
 
 # --- Definition of the RPGBot class ---
 class RPGBot(commands.Bot): # Changed base class to commands.Bot
-    def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
-    def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
+    def __init__(self, game_manager: Optional[GameManager], openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
         super().__init__(command_prefix=command_prefix, intents=intents)
-        self.game_manager = game_manager
         self.game_manager = game_manager
         self.debug_guild_ids = debug_guild_ids # Store it for later use in on_ready tree sync
         self.openai_service = openai_service # Though game_manager might also hold a reference to it
@@ -115,7 +113,10 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
         self.add_application_commands_from_modules()
 
     async def on_ready(self):
-        print(f'Logged in as {self.user.name} ({self.user.id})')
+        if self.user:
+            print(f'Logged in as {self.user.name} ({self.user.id})')
+        else:
+            print("Bot logged in, but self.user is None.") # Or handle as an error
         if self.game_manager:
             print("GameManager is initialized in RPGBot.")
 
@@ -182,15 +183,18 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
     if _rpg_bot_instance_for_global_send:
         channel = _rpg_bot_instance_for_global_send.get_channel(channel_id)
         if channel:
-            try:
-                await channel.send(content, **kwargs)
-            except Exception as e:
-                print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
-        else:
-            try:
-                await channel.send(content, **kwargs)
-            except Exception as e:
-                print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
+            # Check if the channel type is appropriate for sending messages
+            if isinstance(channel, (discord.TextChannel, discord.Thread, discord.DMChannel, discord.VoiceChannel)):
+                try:
+                    await channel.send(content, **kwargs)
+                except discord.errors.Forbidden:
+                    print(f"Error: Bot does not have permissions to send messages to channel {channel_id}.")
+                except discord.errors.HTTPException as e:
+                    print(f"Error: Failed to send message to channel {channel_id} due to HTTP exception: {e}")
+                except Exception as e:
+                    print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
+            else:
+                print(f"Warning: Channel {channel_id} is of type {type(channel).__name__}, which cannot send messages.")
         else:
             print(f"Warning: Channel {channel_id} not found by global_send_message.")
     else:
@@ -230,14 +234,20 @@ async def cmd_gm_simulate(interaction: Interaction): # Changed ctx to interactio
 
     await interaction.response.defer(ephemeral=True) # Defer response
 
+    if not interaction.guild_id:
+        await interaction.followup.send("**Мастер:** Эту команду можно использовать только на сервере (в гильдии).", ephemeral=True)
+        return
+
     if game_mngr:
-        await game_mngr.run_simulation_tick(
-            server_id=interaction.guild_id, # Use interaction.guild_id
-            # send_message_callback is handled by GameManager's internal setup
-        )
-        await interaction.followup.send("**Мастер:** Шаг симуляции мира завершен!")
+        try:
+            await game_mngr.trigger_manual_simulation_tick(server_id=interaction.guild_id)
+            await interaction.followup.send("**Мастер:** Шаг симуляции мира (ручной) завершен!")
+        except Exception as e:
+            print(f"Error in cmd_gm_simulate calling trigger_manual_simulation_tick: {e}")
+            traceback.print_exc()
+            await interaction.followup.send(f"**Мастер:** Ошибка при выполнении ручного шага симуляции: {e}", ephemeral=True)
     else:
-        await interaction.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен или игра не начата. Используйте `/start_game`.")
+        await interaction.followup.send("**Мастер:** Не удалось запустить симуляцию, менеджер игры недоступен или игра не начата. Используйте `/start_game`.", ephemeral=True)
 
 
 # --- Main Bot Entry Point ---
