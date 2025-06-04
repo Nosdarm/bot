@@ -81,9 +81,7 @@ def load_settings_from_file(file_path: str) -> Dict[str, Any]:
 # --- Definition of the RPGBot class ---
 class RPGBot(commands.Bot): # Changed base class to commands.Bot
     def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
-    def __init__(self, game_manager: GameManager, openai_service: OpenAIService, command_prefix: str, intents: Intents, debug_guild_ids: Optional[List[int]] = None): # debug_guilds not a param for commands.Bot
         super().__init__(command_prefix=command_prefix, intents=intents)
-        self.game_manager = game_manager
         self.game_manager = game_manager
         self.debug_guild_ids = debug_guild_ids # Store it for later use in on_ready tree sync
         self.openai_service = openai_service # Though game_manager might also hold a reference to it
@@ -186,11 +184,7 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
                 await channel.send(content, **kwargs)
             except Exception as e:
                 print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
-        else:
-            try:
-                await channel.send(content, **kwargs)
-            except Exception as e:
-                print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
+        # This else should be aligned with 'if channel:'
         else:
             print(f"Warning: Channel {channel_id} not found by global_send_message.")
     else:
@@ -242,7 +236,7 @@ async def cmd_gm_simulate(interaction: Interaction): # Changed ctx to interactio
 
 # --- Main Bot Entry Point ---
 async def start_bot():
-    global _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS # Allow modification
+    global _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS, global_game_manager # Allow modification, declare global_game_manager here
 
     print("--- RPG Bot Core: Starting ---")
     load_dotenv()
@@ -320,12 +314,7 @@ async def start_bot():
 
     # Update the global_game_manager reference now that it's fully initialized
     # TODO: phase this out by updating command modules
-    global global_game_manager
-    global_game_manager = game_manager
-    # Update the global_game_manager reference now that it's fully initialized
-    # TODO: phase this out by updating command modules
-    global global_game_manager
-    global_game_manager = game_manager
+    global_game_manager = game_manager # Assignment is fine, declaration was at the top of the function
 
     print("GameManager instantiated. Running setup...")
     try:

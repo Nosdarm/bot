@@ -741,7 +741,7 @@ class CharacterManager:
 
         for row in rows:
             # Убеждаемся, что row - это dict-подобный объект
-            data = dict(row)
+            data = {key: row[key] for key in row.keys()} # Correctly convert aiosqlite.Row to dict
             try:
                 # Проверяем наличие обязательных полей
                 char_id_raw = data.get('id')

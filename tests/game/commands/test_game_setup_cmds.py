@@ -32,6 +32,7 @@ class TestGameSetupCmds(unittest.IsolatedAsyncioTestCase):
         created_player_data = {
             "id": "test_player_id_1",
             "discord_user_id": 12345,
+            "name": "TestChar", # Added name field
             "name_i18n": {"en": "TestChar"},
             "guild_id": "test_guild_1",
             "location_id": "town_square",

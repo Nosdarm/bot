@@ -19,7 +19,7 @@ from discord import Message # Used in route method signature, handle_* signature
 import discord # Direct import
 
 # TOP-LEVEL IMPORTS
-from bot.services.campaign_loader import CampaignLoader
+from bot.services.campaign_loader import CampaignLoaderService # Changed to CampaignLoaderService
 from bot.game.managers.relationship_manager import RelationshipManager
 from bot.game.managers.quest_manager import QuestManager
 
@@ -70,7 +70,7 @@ if TYPE_CHECKING:
     from bot.game.managers.dialogue_manager import DialogueManager # Added for DialogueManager
     from bot.game.managers.game_log_manager import GameLogManager
 
-    from bot.services.campaign_loader import CampaignLoader
+    from bot.services.campaign_loader import CampaignLoaderService # Changed to CampaignLoaderService
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.quest_manager import QuestManager
     from bot.game.conflict_resolver import ConflictResolver # For type hinting
@@ -159,7 +159,7 @@ class CommandRouter:
         # Add View Services needed for context (even if handled by specific handlers)
         # party_view_service: Optional["PartyViewService"] = None, # Needed for PartyCommandHandler if it gets it from context
         # location_view_service: Optional["LocationViewService"] = None, # Needed for handle_look potentially
-        campaign_loader: Optional["CampaignLoader"] = None,
+        campaign_loader: Optional["CampaignLoaderService"] = None, # Changed to CampaignLoaderService
         relationship_manager: Optional["RelationshipManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
         conflict_resolver: Optional["ConflictResolver"] = None, # Added ConflictResolver
