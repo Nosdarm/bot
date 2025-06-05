@@ -14,6 +14,7 @@ from bot.database.sqlite_adapter import SqliteAdapter
 from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 
+from bot.game.models.character import Character
 
 if TYPE_CHECKING:
     from discord import Message
