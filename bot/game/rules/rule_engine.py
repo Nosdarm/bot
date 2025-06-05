@@ -8,7 +8,7 @@ import traceback  # Для вывода трассировки ошибок
 import asyncio  # Если методы RuleEngine будут асинхронными
 
 # Импорт базовых типов и TYPE_CHECKING
-from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union # Added Union
+from typing import Optional, Dict, Any, List, Set, Tuple, Callable, Awaitable, TYPE_CHECKING, Union # Added Union
 
 from bot.game.models.check_models import CheckOutcome, DetailedCheckResult
 from bot.game.models.status_effect import StatusEffect # Added for parsing status effects
