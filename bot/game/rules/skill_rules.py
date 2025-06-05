@@ -9,11 +9,6 @@ from bot.game.models.character import Character # Example
 from bot.game.managers.character_manager import CharacterManager # Example
 
 
-# Helper function (can remain here or be moved)
-# Note: RuleEngine already has a get_base_dc helper, might be better to call it from there.
-# If this skill_rules function calls it, it needs to import it.
-from bot.game.rules.rule_engine import get_base_dc as get_rule_engine_base_dc
-
 
 # --- Specific logic for skill checks ---
 # Called BY RuleEngine.perform_check
