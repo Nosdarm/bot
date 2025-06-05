@@ -59,11 +59,32 @@ def run_migrations_offline() -> None:
 
 # Moved to module level to be accessible by run_async_upgrade and CLI path
 def do_run_migrations(connection):
-    print("Alembic env.py: do_run_migrations called.")
-    context.configure(connection=connection, target_metadata=target_metadata)
-    with context.begin_transaction():
-        context.run_migrations()
-    print("Alembic env.py: do_run_migrations finished.")
+    # This function is called from run_async_upgrade via run_sync.
+    # The `context` here is the module-level proxy.
+    # We need to configure it for this specific programmatic run.
+    print(f"Alembic env.py: do_run_migrations called for programmatic upgrade with connection: {connection}")
+
+    # Use the imported alembic.context proxy directly
+    # This call to configure() is intended to "establish" the proxy for this thread/context of execution.
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata, # Make sure target_metadata is defined in the scope or globally
+        render_as_batch=True # Important for SQLite support with some types of migrations
+    )
+
+    print("Alembic env.py: Context configured for do_run_migrations.")
+
+    try:
+        with context.begin_transaction():
+            print("Alembic env.py: Transaction begun for migrations.")
+            context.run_migrations()
+            print("Alembic env.py: context.run_migrations() called within transaction.")
+        print("Alembic env.py: Transaction committed, migrations should be done.")
+    except Exception as e:
+        print(f"Alembic env.py: ERROR during migration execution in do_run_migrations: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 async def run_async_upgrade(db_url: str):
     """
