@@ -19,10 +19,11 @@ if TYPE_CHECKING:
     # Импорт класса Character для аннотаций типов
     from .models.character import Character
     from .managers.game_log_manager import GameLogManager
+    from ..services.notification_service import NotificationService # Import for type hinting
 
-# Placeholder for actual RuleEngine and NotificationService classes
+# Placeholder for actual RuleEngine classes
 # from ..core.rule_engine import RuleEngine # Assuming RuleEngine might be in a core module
-# from ..services.notification_service import NotificationService # Assuming a notification service
+from ..services.notification_service import NotificationService # Actual import
 
 
 class ConflictResolver:
@@ -32,7 +33,7 @@ class ConflictResolver:
     """
 
     # Аннотация для db_adapter теперь ссылается на импортированный (в TYPE_CHECKING) класс
-    def __init__(self, rule_engine: Any, rules_config_data: Dict[str, Any], notification_service: Any, db_adapter: 'SqliteAdapter', game_log_manager: Optional['GameLogManager'] = None):
+    def __init__(self, rule_engine: Any, rules_config_data: Dict[str, Any], notification_service: NotificationService, db_adapter: 'SqliteAdapter', game_log_manager: Optional['GameLogManager'] = None):
         """
         Инициализирует ConflictResolver.
 
@@ -76,8 +77,7 @@ class ConflictResolver:
             }
         """
         if self.game_log_manager:
-            # Create a summary of actions for logging without exposing too much data if sensitive
-            action_summary_for_log = {pid: [a.get("intent", "unknown_intent") for a in actions] for pid, actions in player_actions_map.items()}
+            action_summary_for_log = {pid: [a.get("intent_type", a.get("intent", "unknown_intent")) for a in actions] for pid, actions in player_actions_map.items()}
             await self.game_log_manager.log_event(
                 guild_id=guild_id,
                 event_type="conflict_analysis_start",
@@ -92,108 +92,178 @@ class ConflictResolver:
         auto_resolution_outcomes: List[Dict[str, Any]] = []
         requires_manual_resolution_flag = False
 
-        # Create a flat list of all submitted actions with their character_id context
         all_submitted_actions_with_context: List[Dict[str, Any]] = []
         for player_id, actions in player_actions_map.items():
-            for action_data in actions: # action_data is the NLU output dict
+            for action_data in actions:
                 all_submitted_actions_with_context.append({
                     "character_id": player_id,
-                    "action_data": action_data # This is the dict like {"intent": ..., "entities": ..., "original_text": ...}
+                    "action_data": action_data
                 })
 
-        # Keep track of actions that are part of a conflict to avoid adding them as non-conflicting
-        actions_involved_in_any_conflict: Set[uuid.UUID] = set() # Assuming actions could have a unique ID if needed for complex tracking
-
-        # Example: Simple check for two players moving to the same space (target_space needs to be extracted from entities)
-        # This conflict detection logic is highly simplified and needs to be more robust.
-        # It should also handle various action types and their specific entities.
-
-        # For this example, let's assume "MOVE" intent has an entity like {"type": "location_name", "value": "target_X"}
-        # or {"type": "location", "id": "loc_id_Y", "name": "target_Y"}
-
-        # Simplified conflict detection:
-        # A more robust system would iterate through all_submitted_actions_with_context,
-        # group them by potential conflict points (e.g., same target location for MOVE, same target NPC for ATTACK)
-        # then process these groups.
-
-        # For now, let's assume a basic conflict type: "competing_for_resource_X"
-        # This is a placeholder for actual conflict detection logic.
-        # The current example for "simultaneous_move_to_limited_space" is too specific and hard to adapt here easily
-        # without knowing the exact structure of "action.get('target_space')" which is not standard in the NLU output.
-
-        # --- Placeholder for more sophisticated conflict detection loop ---
-        # This loop should identify sets of conflicting_actions from all_submitted_actions_with_context
-        # For each set:
-        #   mark actions in conflicting_actions as part of a conflict (add to actions_involved_in_any_conflict)
-        #   construct current_conflict_details
-        #   if manual_resolution_required:
-        #       prepared = await self.prepare_for_manual_resolution(current_conflict_details)
-        #       pending_manual_conflicts.append(prepared)
-        #       if prepared.get("status") == "awaiting_manual_resolution": requires_manual_resolution_flag = True
-        #   else:
-        #       resolved_auto = await self.resolve_conflict_automatically(current_conflict_details, context=context)
-        #       auto_resolution_outcomes.append(resolved_auto)
-        #       if resolved_auto.get("status") == "resolved_automatically":
-        #           winner_id = resolved_auto.get("outcome", {}).get("winner_id")
-        #           # Find the original action of the winner and add it to actions_to_execute
-        #           for original_action_ctx in conflicting_actions: # `conflicting_actions` would be the list of action contexts involved
-        #               if original_action_ctx["character_id"] == winner_id:
-        #                   actions_to_execute.append(original_action_ctx)
-        #                   break
-        # --- End of placeholder conflict detection loop ---
-
-
-        # Add all actions NOT involved in any conflict to actions_to_execute
-        # This assumes actions_involved_in_any_conflict is populated correctly.
-        # --- End of placeholder conflict detection loop ---
-
-        # Ensure each action has a unique ID for tracking
         for action_ctx in all_submitted_actions_with_context:
-            if 'action_id' not in action_ctx['action_data']: # Assuming action_data is the NLU output
+            if 'action_id' not in action_ctx['action_data']:
                  action_ctx['action_data']['action_id'] = f"action_{uuid.uuid4().hex[:8]}"
 
-        processed_action_ids: Set[str] = set() # Stores action_data['action_id']
+        processed_action_ids: Set[str] = set()
 
-        # 1. Detect 'Contested Unique Item Pickup'
-        pickup_attempts: Dict[str, List[Dict[str, Any]]] = {}
+        # --- Conflict Detection Logics ---
+
+        # 1. Detect 'CONTESTED_ITEM_PICKUP'
+        # Valid intent types for picking up items
+        pickup_intent_types = {'PICKUP_ITEM', 'TAKE_ITEM', 'pickup'}
+
+        pickup_attempts: Dict[str, List[Dict[str, Any]]] = {} # item_id -> list of action_contexts
         for action_ctx in all_submitted_actions_with_context:
             action_data = action_ctx['action_data']
-            if action_data.get('intent_type') == 'pickup':
-                # Assuming entities list is present and contains item details
+            # Use .get("intent", action_data.get("intent_type")) to check both keys
+            current_intent = action_data.get("intent", action_data.get("intent_type"))
+
+            if current_intent in pickup_intent_types:
                 entities = action_data.get('entities', [])
                 if entities and isinstance(entities, list) and len(entities) > 0:
-                    item_entity = entities[0] # Assuming the first entity is the item
-                    item_id = item_entity.get('id')
-                    is_unique = item_entity.get('is_unique', False) # Need this flag from NLU/ItemData
+                    # Assuming the first relevant entity is the item.
+                    # NLU should ideally tag entities with roles or more specific types.
+                    item_entity = next((e for e in entities if e.get("type") in ["item", "item_name", "item_id"]), None)
+                    if not item_entity: item_entity = entities[0] # Fallback to first if no typed entity
+
+                    item_id = item_entity.get('id') # Prefer specific item instance ID
+                    # TODO: Add logic to check if item_id refers to a unique item template if instance ID isn't available
+                    # This might require ItemManager lookup: `await self.item_manager.is_item_template_unique(item_template_id)`
+                    # For now, assume 'is_unique' flag comes from NLU or item_id implies uniqueness if present.
+                    is_unique = item_entity.get('is_unique', True if item_id else False) # Assume unique if specific ID is targeted
 
                     if item_id and is_unique:
                         pickup_attempts.setdefault(item_id, []).append(action_ctx)
 
         for item_id, contenders in pickup_attempts.items():
             if len(contenders) > 1:
-                # This is a contested unique item pickup conflict
-                conflict_type_id = "contested_item_pickup"
-                conflict_rule = self.rules_config.get("conflict_definitions", {}).get(conflict_type_id)
+                conflict_type_id = "CONTESTED_ITEM_PICKUP" # Standardized name
+                conflict_rule_definitions = self.rules_config.get("conflict_definitions", {})
+                conflict_rule = conflict_rule_definitions.get(conflict_type_id)
+
                 if not conflict_rule:
-                    print(f"Warning: No rule definition found for conflict type '{conflict_type_id}'. Skipping.")
+                    desc_missing_rule = f"Rule missing for {conflict_type_id}"
+                    print(f"Warning: {desc_missing_rule} for item {item_id}. Skipping.")
                     if self.game_log_manager:
-                        await self.game_log_manager.log_event(guild_id=guild_id, event_type="conflict_rule_missing", message=f"Rule missing for {conflict_type_id}", metadata={"item_id": item_id})
+                        await self.game_log_manager.log_event(guild_id=guild_id, event_type="conflict_rule_missing", message=desc_missing_rule, metadata={"item_id": item_id, "conflict_type": conflict_type_id})
                     continue
 
                 involved_action_ids = [c['action_data']['action_id'] for c in contenders]
                 processed_action_ids.update(involved_action_ids)
 
                 current_conflict_details = {
-                    "conflict_id": f"pickup_{item_id}_{uuid.uuid4().hex[:4]}",
+                    "conflict_id": f"pickup_{item_id}_{uuid.uuid4().hex[:6]}",
                     "type": conflict_type_id,
                     "guild_id": guild_id,
-                    "involved_actions": contenders, # List of full action_ctx dicts
-                    "involved_entities": [{"id": c["character_id"], "type": "player"} for c in contenders] + [{"id": item_id, "type": "item"}],
-                    "details": {"item_id": item_id, "description": conflict_rule.get("description")}
+                    "involved_actions": contenders,
+                    "involved_entities": [{"id": c["character_id"], "type": "Character"} for c in contenders] + [{"id": item_id, "type": "Item"}],
+                    "details": {"item_id": item_id, "description": conflict_rule.get("description", "Multiple players are trying to pick up the same unique item.")}
                 }
 
                 if self.game_log_manager:
                     await self.game_log_manager.log_event(guild_id=guild_id,event_type="conflict_detected",message=f"Conflict: {conflict_type_id} for item {item_id}",metadata=current_conflict_details)
+
+                if conflict_rule.get("type") == "manual":
+                    prepared = await self.prepare_for_manual_resolution(current_conflict_details)
+                    pending_manual_conflicts.append(prepared) # `prepared` is the dict returned by prepare_for_manual_resolution
+                    if prepared.get("status") == "awaiting_manual_resolution":
+                        requires_manual_resolution_flag = True
+                else: # Automatic
+                    resolved_auto = await self.resolve_conflict_automatically(current_conflict_details, context=context)
+                    auto_resolution_outcomes.append(resolved_auto)
+                    if resolved_auto.get("status") == "resolved_automatically":
+                        # Outcome should specify winning_action_id or winner_id (player_id)
+                        winning_action_id = resolved_auto.get("outcome", {}).get("winning_action_id")
+                        winner_player_id = resolved_auto.get("outcome", {}).get("winner_id")
+
+                        if winning_action_id:
+                            winner_action_ctx = next((ac for ac in contenders if ac['action_data']['action_id'] == winning_action_id), None)
+                            if winner_action_ctx: actions_to_execute.append(winner_action_ctx)
+                        elif winner_player_id: # Fallback if only winner_id is provided
+                            winner_action_ctx = next((ac for ac in contenders if ac["character_id"] == winner_player_id), None)
+                            if winner_action_ctx: actions_to_execute.append(winner_action_ctx)
+
+
+        # 2. Detect 'OPPOSED_STEALTH_VS_PERCEPTION'
+        stealth_intent_types = {'STEALTH', 'HIDE', 'SNEAK'}
+        perception_intent_types = {'SEARCH', 'PERCEIVE', 'DETECT', 'LOOK_AROUND'} # LOOK_AROUND might be too generic
+
+        stealth_actions = []
+        search_perception_actions = []
+
+        for action_ctx in all_submitted_actions_with_context:
+            action_id = action_ctx['action_data'].get('action_id')
+            if action_id in processed_action_ids: continue
+
+            current_intent = action_ctx['action_data'].get("intent", action_ctx['action_data'].get("intent_type"))
+            skill_id = action_ctx['action_data'].get('skill_id') # e.g., "stealth", "perception"
+
+            if current_intent in stealth_intent_types or (current_intent == 'USE_SKILL' and skill_id == 'stealth'):
+                stealth_actions.append(action_ctx)
+            elif current_intent in perception_intent_types or (current_intent == 'USE_SKILL' and skill_id == 'perception'):
+                search_perception_actions.append(action_ctx)
+
+        for stealth_action_ctx in stealth_actions:
+            stealth_action_id = stealth_action_ctx['action_data']['action_id']
+            if stealth_action_id in processed_action_ids: continue
+
+            stealth_player_id = stealth_action_ctx['character_id']
+            # Assume location_id and party_id are injected into action_ctx by a preliminary processor if relevant
+            stealth_location_id = stealth_action_ctx.get('location_id', stealth_action_ctx['action_data'].get('location_id'))
+            stealth_party_id = stealth_action_ctx.get('party_id', stealth_action_ctx['action_data'].get('party_id'))
+
+            opposers = []
+            for sp_action_ctx in search_perception_actions:
+                sp_action_id = sp_action_ctx['action_data']['action_id']
+                if sp_action_id in processed_action_ids: continue
+                if sp_action_ctx['character_id'] == stealth_player_id: continue # Cannot oppose self
+
+                sp_location_id = sp_action_ctx.get('location_id', sp_action_ctx['action_data'].get('location_id'))
+                sp_party_id = sp_action_ctx.get('party_id', sp_action_ctx['action_data'].get('party_id'))
+
+                in_proximity = (stealth_location_id and sp_location_id == stealth_location_id) or \
+                               (stealth_party_id and sp_party_id == stealth_party_id)
+
+                if in_proximity: opposers.append(sp_action_ctx)
+
+            if opposers:
+                conflict_type_id = "OPPOSED_STEALTH_VS_PERCEPTION" # Standardized name
+                conflict_rule_definitions = self.rules_config.get("conflict_definitions", {})
+                conflict_rule = conflict_rule_definitions.get(conflict_type_id)
+
+                if not conflict_rule:
+                    desc_missing_rule = f"Rule missing for {conflict_type_id}"
+                    print(f"Warning: {desc_missing_rule} for stealth action {stealth_action_id}. Skipping.")
+                    if self.game_log_manager:
+                        await self.game_log_manager.log_event(guild_id=guild_id, event_type="conflict_rule_missing", message=desc_missing_rule, metadata={"stealth_action_id": stealth_action_id, "conflict_type": conflict_type_id})
+                    continue
+
+                involved_actions_for_conflict = [stealth_action_ctx] + opposers
+                current_involved_action_ids = [a['action_data']['action_id'] for a in involved_actions_for_conflict]
+                if any(aid in processed_action_ids for aid in current_involved_action_ids):
+                    print(f"ConflictResolver: Skipping {conflict_type_id} for {stealth_action_id} as one/more actions already processed.")
+                    continue
+                processed_action_ids.update(current_involved_action_ids)
+
+                involved_entities_list = [{"id": stealth_player_id, "type": "Character", "role": "stealth"}]
+                for op_ctx in opposers:
+                    involved_entities_list.append({"id": op_ctx["character_id"], "type": "Character", "role": "searcher"})
+
+                current_conflict_details = {
+                    "conflict_id": f"stealth_{stealth_player_id}_{uuid.uuid4().hex[:6]}",
+                    "type": conflict_type_id,
+                    "guild_id": guild_id,
+                    "involved_actions": involved_actions_for_conflict,
+                    "involved_entities": involved_entities_list,
+                    "details": {
+                        "location_id": stealth_location_id,
+                        "party_id": stealth_party_id,
+                        "description": conflict_rule.get("description", "A character is attempting stealth while others are searching.")
+                    }
+                }
+
+                if self.game_log_manager:
+                    await self.game_log_manager.log_event(guild_id=guild_id,event_type="conflict_detected",message=f"Conflict: {conflict_type_id} for stealth by {stealth_player_id}",metadata=current_conflict_details)
 
                 if conflict_rule.get("type") == "manual":
                     prepared = await self.prepare_for_manual_resolution(current_conflict_details)
@@ -204,132 +274,18 @@ class ConflictResolver:
                     resolved_auto = await self.resolve_conflict_automatically(current_conflict_details, context=context)
                     auto_resolution_outcomes.append(resolved_auto)
                     if resolved_auto.get("status") == "resolved_automatically":
-                        winner_action_id = resolved_auto.get("outcome", {}).get("winning_action_id")
-                        # (RuleEngine needs to specify which action_id wins, not just player_id)
-                        # For now, assume winner_id is player_id, and we take their first action for this item.
-                        winner_player_id = resolved_auto.get("outcome", {}).get("winner_id")
-                        if winner_player_id:
-                            for contender_action_ctx in contenders:
-                                if contender_action_ctx["character_id"] == winner_player_id:
-                                    actions_to_execute.append(contender_action_ctx)
-                                    break
-
-        # 2. Detect 'Opposed Stealth vs. Search/Perception'
-        stealth_actions = []
-        search_perception_actions = []
-
-        for action_ctx in all_submitted_actions_with_context:
-            action_id = action_ctx['action_data'].get('action_id')
-            if action_id in processed_action_ids:
-                continue # Already part of another conflict
-
-            action_type = action_ctx['action_data'].get('action_type', action_ctx['action_data'].get('intent_type')) # NLU might use 'action_type' or 'intent_type'
-            skill_id = action_ctx['action_data'].get('skill_id')
-
-            if (action_type == 'skill_usage' and skill_id == 'stealth') or \
-               (action_ctx['action_data'].get('intent_type') == 'stealth'): # If stealth is an intent
-                stealth_actions.append(action_ctx)
-            elif (action_type == 'skill_usage' and skill_id == 'perception') or \
-                 (action_ctx['action_data'].get('intent_type') == 'search'):
-                search_perception_actions.append(action_ctx)
-
-        for stealth_action_ctx in stealth_actions:
-            stealth_action_id = stealth_action_ctx['action_data'].get('action_id')
-            if stealth_action_id in processed_action_ids:
-                continue
-
-            stealth_player_id = stealth_action_ctx['character_id']
-            # Location/party context for stealth action should be part of action_ctx from PartyActionProcessor
-            stealth_location_id = stealth_action_ctx.get('location_id', stealth_action_ctx['action_data'].get('location_id'))
-            stealth_party_id = stealth_action_ctx.get('party_id', stealth_action_ctx['action_data'].get('party_id'))
-
-            opposers = []
-            for sp_action_ctx in search_perception_actions:
-                sp_action_id = sp_action_ctx['action_data'].get('action_id')
-                if sp_action_id in processed_action_ids: # Already processed this search/perception
-                    continue
-
-                sp_player_id = sp_action_ctx['character_id']
-                if sp_player_id == stealth_player_id: # Cannot oppose self
-                    continue
-
-                sp_location_id = sp_action_ctx.get('location_id', sp_action_ctx['action_data'].get('location_id'))
-                sp_party_id = sp_action_ctx.get('party_id', sp_action_ctx['action_data'].get('party_id'))
-
-                # Proximity check: same location OR same party (adjust as needed)
-                in_proximity = False
-                if stealth_location_id and sp_location_id == stealth_location_id:
-                    in_proximity = True
-                elif stealth_party_id and sp_party_id == stealth_party_id: # If in same party, assume proximity for these actions
-                    in_proximity = True
-
-                if in_proximity:
-                    opposers.append(sp_action_ctx)
-
-            if opposers:
-                conflict_type_id = "opposed_stealth_vs_perception"
-                conflict_rule = self.rules_config.get("conflict_definitions", {}).get(conflict_type_id)
-                if not conflict_rule:
-                    print(f"Warning: No rule definition found for conflict type '{conflict_type_id}'. Skipping.")
-                    if self.game_log_manager:
-                        await self.game_log_manager.log_event(guild_id=guild_id, event_type="conflict_rule_missing", message=f"Rule missing for {conflict_type_id}", metadata={"stealth_action": stealth_action_id})
-                    continue
-
-                involved_actions_for_conflict = [stealth_action_ctx] + opposers
-                current_involved_action_ids = [a['action_data']['action_id'] for a in involved_actions_for_conflict]
-
-                # Check if any of these actions were already processed by a higher priority conflict (e.g. item pickup)
-                if any(aid in processed_action_ids for aid in current_involved_action_ids):
-                    print(f"ConflictResolver: Skipping stealth conflict for {stealth_action_id} as one/more actions already processed.")
-                    continue
-
-                processed_action_ids.update(current_involved_action_ids)
-
-                involved_entities_list = [{"id": stealth_player_id, "type": "player", "role": "stealth"}]
-                for op_ctx in opposers:
-                    involved_entities_list.append({"id": op_ctx["character_id"], "type": "player", "role": "searcher"})
-
-                current_conflict_details = {
-                    "conflict_id": f"stealth_{stealth_player_id}_{uuid.uuid4().hex[:4]}",
-                    "type": conflict_type_id,
-                    "guild_id": guild_id,
-                    "involved_actions": involved_actions_for_conflict,
-                    "involved_entities": involved_entities_list,
-                    "details": {
-                        "location_id": stealth_location_id,
-                        "party_id": stealth_party_id,
-                        "description": conflict_rule.get("description")
-                    }
-                }
-
-                if self.game_log_manager:
-                    await self.game_log_manager.log_event(guild_id=guild_id,event_type="conflict_detected",message=f"Conflict: {conflict_type_id} for stealth by {stealth_player_id}",metadata=current_conflict_details)
-
-                if conflict_rule.get("type") == "manual": # Unlikely for stealth but possible
-                    prepared = await self.prepare_for_manual_resolution(current_conflict_details)
-                    pending_manual_conflicts.append(prepared)
-                    if prepared.get("status") == "awaiting_manual_resolution":
-                        requires_manual_resolution_flag = True
-                else: # Automatic (most common for stealth)
-                    resolved_auto = await self.resolve_conflict_automatically(current_conflict_details, context=context)
-                    auto_resolution_outcomes.append(resolved_auto)
-                    if resolved_auto.get("status") == "resolved_automatically":
-                        # RuleEngine outcome should specify which actions proceed.
-                        # E.g., if stealth wins, only stealth action. If perception wins, maybe perception action or neither.
-                        # This part needs clear contract with RuleEngine's resolution output.
-                        # For now, assume 'winning_action_ids' is a list in outcome.
                         winning_action_ids = resolved_auto.get("outcome", {}).get("winning_action_ids", [])
-                        if not winning_action_ids and resolved_auto.get("outcome", {}).get("winner_id"): # Fallback to winner's first action if only winner_id specified
-                            winner_player_id = resolved_auto.get("outcome", {}).get("winner_id")
-                            for act_ctx in involved_actions_for_conflict:
-                                if act_ctx["character_id"] == winner_player_id:
-                                    winning_action_ids = [act_ctx['action_data']['action_id']]
-                                    break
+                        if not winning_action_ids and resolved_auto.get("outcome", {}).get("winner_id"):
+                             # If RuleEngine provides winner_id, try to map it to one of the involved actions
+                             winner_player_id_from_outcome = resolved_auto.get("outcome", {}).get("winner_id")
+                             winner_action_ctx = next((ac for ac in involved_actions_for_conflict if ac["character_id"] == winner_player_id_from_outcome), None)
+                             if winner_action_ctx : winning_action_ids = [winner_action_ctx['action_data']['action_id']]
 
                         for act_ctx in involved_actions_for_conflict:
                             if act_ctx['action_data']['action_id'] in winning_action_ids:
                                 actions_to_execute.append(act_ctx)
 
+        # --- End of Conflict Detection Logics ---
 
         # Add all actions NOT involved in any conflict to actions_to_execute
         for action_ctx in all_submitted_actions_with_context:
@@ -666,18 +622,29 @@ class ConflictResolver:
 
 
         if self.notification_service:
-             print(f"Simulating async notification service call for conflict {conflict_id}...")
+             # Ensure guild_id is a string, as validated earlier in the method
+             # The method already checks for `if not guild_id:` and returns if it's missing.
+             # So, guild_id here is expected to be a valid, non-None value.
+             print(f"Attempting to send master alert via NotificationService for conflict {conflict_id} in guild {str(guild_id)}...")
              try:
                  await self.notification_service.send_master_alert(
                     conflict_id=conflict_id,
-                    guild_id=guild_id,
+                    guild_id=str(guild_id), # Ensure guild_id is passed as string
                     message=formatted_message,
-                    conflict_details=conflict
+                    conflict_details=conflict # Pass the whole conflict dict as details
                  )
-                 print(f"Notification sent for conflict {conflict_id}.")
+                 # Log success (NotificationService itself logs details)
+                 print(f"Master alert initiated for conflict {conflict_id} via NotificationService.")
+                 if self.game_log_manager:
+                    await self.game_log_manager.log_event(guild_id=guild_id_log, event_type="conflict_manual_notification_sent", message=f"GM Notification sent for conflict {conflict_id}.", metadata={"conflict_id": conflict_id})
+
              except Exception as e:
-                 print(f"❌ Error sending notification for conflict {conflict_id}: {e}")
+                 # Log specific error from notification sending
+                 error_msg_notification = f"Error sending GM notification for conflict {conflict_id} via NotificationService: {e}"
+                 print(f"❌ {error_msg_notification}")
                  traceback.print_exc()
+                 if self.game_log_manager:
+                    await self.game_log_manager.log_event(guild_id=guild_id_log, event_type="conflict_manual_notification_error", message=error_msg_notification, metadata={"conflict_id": conflict_id, "error": str(e)})
 
         if self.game_log_manager:
             await self.game_log_manager.log_event(
