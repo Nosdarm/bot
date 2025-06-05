@@ -6,3 +6,4 @@ SQLAlchemy
 alembic
 psycopg2-binary
 asyncpg
+pydantic
