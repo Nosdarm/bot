@@ -1,5 +1,5 @@
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field # Added field import
 from typing import Optional, List, Dict, Any
 
 class CheckOutcome(Enum):
