@@ -1,238 +1,166 @@
-# bot/command_modules/game_setup_cmds.py
+from discord import Interaction, app_commands, TextChannel, Member, Role, Guild
+from discord.ext import commands
+from typing import Optional, TYPE_CHECKING
+import logging # For logging
 
-import discord
-from discord import app_commands, Interaction
-from discord.app_commands import Choice as app_commands_Choice # Explicitly import Choice
-from typing import Optional, TYPE_CHECKING, cast
-import traceback
-
-# Corrected imports
 if TYPE_CHECKING:
-    from bot.bot_core import RPGBot
-    from bot.services.db_service import DBService # This is likely the SqliteAdapter or similar
+    from bot.bot_core import RPGBot # For type hinting self.bot
     from bot.game.managers.game_manager import GameManager
-    from bot.game.managers.character_manager import CharacterManager
-    from bot.game.models.character import Character as CharacterModel
 
+# Helper functions - will become methods or static methods in the Cog
+# These functions are used by commands in this Cog.
 
-# Helper functions used by bot_core.py
-def is_master_or_admin(interaction: Interaction, game_manager: Optional['GameManager']) -> bool:
-    # TODO: Implement actual logic for checking GM/admin roles based on game_manager settings or Discord roles.
-    # For now, this is a placeholder.
-    if not game_manager:
-        print("DEBUG: is_master_or_admin called but GameManager is None. Denying.")
-        return False # Cannot verify without game_manager
+async def is_master_or_admin_check(interaction: Interaction) -> bool:
+    """Checks if the user is a bot admin or has the 'Master' role in the guild."""
+    # Access bot instance from interaction.client
+    bot_instance = interaction.client
+    if not hasattr(bot_instance, 'game_manager') or not bot_instance.game_manager:
+        logging.warning("is_master_or_admin_check: GameManager not found on bot instance.")
+        return False # Or raise an error
 
-    # Example: Check if user has a specific role ID stored in game_manager settings for this guild
-    # guild_settings = game_manager.get_guild_settings(str(interaction.guild_id))
-    # admin_role_id = guild_settings.get('admin_role_id')
-    # if admin_role_id and interaction.user.get_role(admin_role_id):
-    #     return True
-    # Fallback to checking Discord permissions if no specific role is set
-    if isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator:
-        print(f"DEBUG: is_master_or_admin: User {interaction.user.id} is a Discord admin in guild {interaction.guild_id}.")
-        return True
+    game_mngr = bot_instance.game_manager
 
-    print(f"DEBUG: is_master_or_admin called for {interaction.user.id}. Placeholder logic used, returning True if admin, else False.")
-    # This placeholder might need to be more restrictive depending on actual requirements.
-    # For safety, let's default to False if no other condition met.
-    return False # Default to False if not a Discord admin and no other GM logic implemented
-
-
-def is_gm_channel(interaction: Interaction, game_manager: Optional['GameManager']) -> bool:
-    # TODO: Implement actual logic for checking if the channel is a designated GM channel.
-    if not game_manager:
-        print("DEBUG: is_gm_channel called but GameManager is None. Denying.")
+    # Ensure settings are loaded in GameManager
+    if not game_mngr._settings: # Accessing protected member, consider a getter in GM
+        logging.warning("is_master_or_admin_check: Settings not loaded in GameManager.")
         return False
 
-    # Example: Check if channel ID is in a list of GM channels stored in game_manager settings for this guild
-    # guild_settings = game_manager.get_guild_settings(str(interaction.guild_id))
-    # gm_channel_ids = guild_settings.get('gm_channel_ids', [])
-    # if interaction.channel_id in gm_channel_ids:
-    #     return True
+    bot_admin_ids = [str(id_val) for id_val in game_mngr._settings.get('bot_admins', [])]
+    if str(interaction.user.id) in bot_admin_ids:
+        return True
 
-    print(f"DEBUG: is_gm_channel called for channel {interaction.channel_id}. Placeholder returning True.")
-    return True # Placeholder, assume any channel is fine for now. Should be more restrictive.
+    if not interaction.guild: # Should not happen for guild commands but good check
+        return False
 
+    master_role_id = game_mngr.get_master_role_id(str(interaction.guild_id))
+    if master_role_id and isinstance(interaction.user, Member):
+        master_role = interaction.guild.get_role(int(master_role_id))
+        if master_role and master_role in interaction.user.roles:
+            return True
+    return False
 
-# Example command (remains placeholder as per original structure)
-@app_commands.command(name="start_game", description="GM Command: Starts a new game session in this channel.")
-async def cmd_start_game(interaction: Interaction):
-    # Type hint for bot
-    # Import RPGBot here for the cast to work at runtime
-    from bot.bot_core import RPGBot
-    bot = cast(RPGBot, interaction.client) # Used cast
-    if not bot.game_manager:
-        await interaction.response.send_message("Game Manager not available.", ephemeral=True)
-        return
-    # Example of using the helper, though start_game might have its own logic
-    if not is_master_or_admin(interaction, bot.game_manager):
-        await interaction.response.send_message("You are not authorized to start the game.", ephemeral=True)
-        return
-    await interaction.response.send_message("Placeholder for starting a new game.", ephemeral=True)
+async def is_gm_channel_check(interaction: Interaction) -> bool:
+    """Checks if the command is used in the designated GM channel for the guild."""
+    bot_instance = interaction.client
+    if not hasattr(bot_instance, 'game_manager') or not bot_instance.game_manager:
+        logging.warning("is_gm_channel_check: GameManager not found on bot instance.")
+        return False
 
-@app_commands.command(name="join_game", description="Join the current game session.")
-async def cmd_join_game(interaction: Interaction):
-    await interaction.response.send_message("Placeholder for joining game.", ephemeral=True)
+    game_mngr = bot_instance.game_manager
+    if not interaction.guild_id:
+        return False
+
+    gm_channel_id = game_mngr.get_gm_channel_id(str(interaction.guild_id))
+    return gm_channel_id == interaction.channel_id
 
 
-@app_commands.command(name="start", description="Create your character and begin your adventure!")
-@app_commands.describe(
-    name="Your character's name.",
-    race="Your character's race (e.g., Human, Elf, Dwarf)."
-)
-async def cmd_start_new_character(interaction: Interaction, name: str, race: str):
-    await interaction.response.defer(ephemeral=True)
-    # Import RPGBot here for the cast to work at runtime
-    from bot.bot_core import RPGBot
-    bot = cast(RPGBot, interaction.client) # Used cast
+class GameSetupCog(commands.Cog, name="Game Setup"):
+    def __init__(self, bot: "RPGBot"):
+        self.bot = bot
 
-    try:
-        if not bot.game_manager or \
-           not bot.game_manager.character_manager: # Check for character_manager
-            await interaction.followup.send("Error: The game systems (Game Manager or Character Manager) are not fully initialized.", ephemeral=True)
+    async def is_master_or_admin(self, interaction: Interaction) -> bool:
+        return await is_master_or_admin_check(interaction)
+
+    async def is_gm_channel(self, interaction: Interaction) -> bool:
+        return await is_gm_channel_check(interaction)
+
+    @app_commands.command(name="start_new_character", description="Начать игру новым персонажем в текущем канале Discord.")
+    @app_commands.describe(
+        character_name="Имя вашего нового персонажа.",
+        player_language="Язык, на котором вы будете играть (например, 'ru' или 'en')."
+    )
+    async def cmd_start_new_character(self, interaction: Interaction, character_name: str, player_language: Optional[str] = None):
+        if not interaction.guild:
+            await interaction.response.send_message("Эту команду можно использовать только на сервере.", ephemeral=True)
             return
 
-        # Assuming db_service is on game_manager, or character_manager handles DB interactions.
-        # If CharacterManager abstracts DB calls, direct db_service might not be needed here.
-        # For now, let's assume CharacterManager handles its own persistence.
-        character_manager: 'CharacterManager' = bot.game_manager.character_manager
-        # db_service is potentially character_manager._db_adapter or similar, not directly used here.
+        await interaction.response.defer(ephemeral=True)
 
-        guild_id_str = str(interaction.guild_id)
-        discord_user_id_int = interaction.user.id
-
-        # 1. Check for Existing Character using CharacterManager
-        existing_char_model: Optional[CharacterModel] = character_manager.get_character_by_discord_id(
-            guild_id=guild_id_str,
-            discord_user_id=discord_user_id_int
-        )
-        if existing_char_model:
-            language = existing_char_model.selected_language or "en"
-            char_name = existing_char_model.name_i18n.get(language, existing_char_model.name_i18n.get('en', 'Adventurer'))
-            await interaction.followup.send(f"Welcome back, {char_name}! You already have a character in this world. Use `/look` to see your surroundings.", ephemeral=True)
+        game_mngr: "GameManager" = self.bot.game_manager
+        if not game_mngr:
+            await interaction.followup.send("Менеджер игры не инициализирован.", ephemeral=True)
             return
 
-        # 2. Create New Character using CharacterManager
-        # Default values can be handled by CharacterManager.create_character or passed explicitly
-        # For example, initial_location_id might be determined by CharacterManager.
+        try:
+            effective_language = player_language or game_mngr.get_default_bot_language()
+            success, message = await game_mngr.start_new_character_session(
+                guild_id=str(interaction.guild_id),
+                discord_user_id=interaction.user.id,
+                discord_user_name=interaction.user.name,
+                channel_id=interaction.channel_id,
+                character_name=character_name,
+                selected_language=effective_language
+            )
 
-        # The old code used db_service.create_player. Now we use character_manager.create_character.
-        # create_character in CharacterManager needs discord_id, name, guild_id, and optionally other fields.
-        # It should handle setting defaults like initial_location_id, stats, hp, etc.
-
-        new_char_model: Optional[CharacterModel] = await character_manager.create_character(
-            discord_id=discord_user_id_int,
-            name=name, # CharacterManager should handle i18n if needed, or take it as a dict
-            guild_id=guild_id_str,
-            race=race, # Pass race to the manager
-            # Pass other relevant initial parameters if CharacterManager.create_character supports them:
-            # initial_location_id="town_square", # Or let CharacterManager decide
-            # level=1,
-            # stats=default_stats, # Or let CharacterManager decide
-            # current_game_status='исследование' # Or let CharacterManager decide
-        )
-
-        if not new_char_model:
-            await interaction.followup.send("There was an error creating your character. Please try again or contact an admin.", ephemeral=True)
-            return
-
-        # The call to db_adapter.update_game_status was here.
-        # As `update_game_status` method was not found on SqliteAdapter, it's commented out.
-        # TODO: Investigate if game status needs to be updated here and how (e.g., via GameManager or a dedicated service).
-        # if bot.game_manager.db_service: # Assuming db_service is the adapter
-        #    # game_state_status = "some_status" # Determine what status this should be
-        #    # await bot.game_manager.db_service.update_game_status(guild_id=guild_id_str, status=game_state_status)
-        #    pass
-
-
-        # 3. Success Message
-        # Fetch location name for the message using LocationManager if character has location_id
-        location_name_display = "an unknown place"
-        if new_char_model.location_id: # Check if character has a location
-            if bot.game_manager.location_manager: # Check if location_manager exists
-                location_instance = bot.game_manager.location_manager.get_location_instance(guild_id_str, new_char_model.location_id)
-                if location_instance:
-                    location_name_display = location_instance.get('name', location_name_display)
+            if success:
+                await interaction.followup.send(f"{message}", ephemeral=True)
             else:
-                print(f"Warning: LocationManager not available in cmd_start_new_character for guild {guild_id_str}")
+                await interaction.followup.send(f"Не удалось начать игру: {message}", ephemeral=True)
 
-        language = new_char_model.selected_language or "en"
-        char_name_display = new_char_model.name_i18n.get(language, new_char_model.name_i18n.get('en', name))
-        # Assuming race is an attribute on new_char_model, or was passed to create_character and stored.
-        # For now, use the input `race` parameter for the message.
-        char_race_display = race
+        except Exception as e:
+            logging.error(f"Error in cmd_start_new_character: {e}", exc_info=True)
+            await interaction.followup.send(f"Произошла ошибка при создании персонажа: {e}", ephemeral=True)
 
-        # Assuming new_char_model.level is available and defaults to 1
-        char_level_display = new_char_model.level if hasattr(new_char_model, 'level') else 1
+    @app_commands.command(name="set_bot_language", description="Установить язык бота для этой гильдии (только для Мастера).")
+    @app_commands.describe(language_code="Код языка (например, 'ru', 'en').")
+    async def cmd_set_bot_language(self, interaction: Interaction, language_code: str):
+        if not await self.is_master_or_admin(interaction):
+            await interaction.response.send_message("Только Мастер или администратор может менять язык бота.", ephemeral=True)
+            return
 
-        response_message = (
-            f"Welcome, {char_name_display} the {char_race_display} (Level {char_level_display})! "
-            f"Your adventure begins in {location_name_display}.\n"
-            f"Use `/look` to see your surroundings."
-        )
-        await interaction.followup.send(response_message, ephemeral=False)
+        game_mngr: "GameManager" = self.bot.game_manager
+        if not game_mngr:
+            await interaction.response.send_message("Менеджер игры не инициализирован.", ephemeral=True)
+            return
 
-    except Exception as e:
-        print(f"Error in /start command: {e}")
-        traceback.print_exc()
-        # Ensure followup is used if initial response was deferred and no other followup sent.
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.send_message("An unexpected error occurred. Please try again later.", ephemeral=True)
-            except discord.errors.InteractionResponded:
-                 await interaction.followup.send("An unexpected error occurred. Please try again later.", ephemeral=True)
+        success = await game_mngr.set_default_bot_language(language_code, str(interaction.guild_id))
+        if success:
+            await interaction.response.send_message(f"Язык бота для этой гильдии установлен на '{language_code}'.", ephemeral=True)
         else:
-            await interaction.followup.send("An unexpected error occurred while starting your adventure. Please try again later.", ephemeral=True)
+            await interaction.response.send_message(f"Не удалось установить язык бота. Проверьте логи.", ephemeral=True)
 
-
-@app_commands.command(name="set_bot_language", description="GM: Установить язык бота по умолчанию / Set default bot language")
-@app_commands.describe(language="Язык (ru/en) / Language (ru/en)")
-@app_commands.choices(language=[
-    app_commands_Choice(name="Русский", value="ru"),
-    app_commands_Choice(name="English", value="en")
-])
-async def cmd_set_bot_language(interaction: Interaction, language: app_commands.Choice[str]):
-    """GM Command: Sets the default bot language."""
-    await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client) # RPGBot is already imported for other commands
-
-    try:
-        if not interaction.guild_id: # Explicit guild check
-            await interaction.followup.send("Эта команда должна быть использована на сервере.", ephemeral=True)
+    @app_commands.command(name="set_master_channel", description="Установить этот канал как канал Мастера (только для Мастера).")
+    async def cmd_set_master_channel(self, interaction: Interaction):
+        if not await self.is_master_or_admin(interaction):
+            await interaction.response.send_message("Только Мастер может назначить этот канал.", ephemeral=True)
+            return
+        if not interaction.guild_id or not interaction.channel_id:
+            await interaction.response.send_message("Эта команда должна быть использована в канале сервера.", ephemeral=True)
             return
 
-        if not bot.game_manager:
-            await interaction.followup.send("Ошибка: Менеджер игры не инициализирован.", ephemeral=True)
+        game_mngr: "GameManager" = self.bot.game_manager
+        if not game_mngr:
+            await interaction.response.send_message("Менеджер игры не инициализирован.", ephemeral=True)
             return
 
-        # GM Check using the existing is_master_or_admin function
-        # Ensure is_master_or_admin is async if it performs async operations (DB calls, etc.)
-        # Based on its current definition, it's synchronous. If it becomes async, add 'await'.
-        gm_check_result = is_master_or_admin(interaction, bot.game_manager)
-        if hasattr(gm_check_result, '__await__'): # Check if it's awaitable
-            is_gm = await gm_check_result
+        if game_mngr.db_service:
+            await game_mngr.db_service.set_guild_setting(str(interaction.guild_id), 'master_notification_channel_id', str(interaction.channel_id))
+            await interaction.response.send_message(f"Канал <#{interaction.channel_id}> назначен как канал Мастера для этой гильдии.", ephemeral=True)
         else:
-            is_gm = gm_check_result
+            await interaction.response.send_message("Не удалось сохранить настройку канала Мастера (DB service unavailable).", ephemeral=True)
 
-        if not is_gm:
-            await interaction.followup.send("Только Мастер Игры может использовать эту команду.", ephemeral=True)
+
+    @app_commands.command(name="set_system_channel", description="Установить этот канал как системный канал (только для Мастера).")
+    async def cmd_set_system_channel(self, interaction: Interaction):
+        if not await self.is_master_or_admin(interaction):
+            await interaction.response.send_message("Только Мастер может назначить этот канал.", ephemeral=True)
+            return
+        if not interaction.guild_id or not interaction.channel_id:
+            await interaction.response.send_message("Эта команда должна быть использована в канале сервера.", ephemeral=True)
             return
 
-        chosen_lang = language.value # Get the string value from Choice
+        game_mngr: "GameManager" = self.bot.game_manager
+        if not game_mngr:
+            await interaction.response.send_message("Менеджер игры не инициализирован.", ephemeral=True)
+            return
 
-        # Use GameManager to set the default language
-        # This assumes game_manager.set_default_bot_language handles DB storage (e.g., in rules_config)
-        # and potentially notifies other services or reloads settings if needed.
-        await bot.game_manager.set_default_bot_language(chosen_lang, str(interaction.guild_id))
+        if game_mngr.db_service:
+            await game_mngr.db_service.set_guild_setting(str(interaction.guild_id), 'system_notification_channel_id', str(interaction.channel_id))
+            await interaction.response.send_message(f"Канал <#{interaction.channel_id}> назначен как системный для этой гильдии.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Не удалось сохранить настройку системного канала (DB service unavailable).", ephemeral=True)
 
-        feedback_messages = {
-            "ru": "Основной язык бота установлен на Русский.",
-            "en": "Default bot language set to English."
-        }
-        await interaction.followup.send(feedback_messages[chosen_lang], ephemeral=True)
 
-    except Exception as e:
-        print(f"Error in /set_bot_language command: {e}")
-        traceback.print_exc()
-        await interaction.followup.send("An unexpected error occurred while setting the bot language.", ephemeral=True)
+async def setup(bot: commands.Bot):
+    await bot.add_cog(GameSetupCog(bot)) # type: ignore
+    print("GameSetupCog loaded.")

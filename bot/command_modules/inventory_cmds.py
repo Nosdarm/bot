@@ -1,96 +1,83 @@
-# bot/command_modules/inventory_cmds.py
 import discord
-from discord import app_commands, Interaction # Use Interaction for type hinting
-from typing import Optional, TYPE_CHECKING, cast, Dict, Any # Added cast, Dict, Any
-import traceback # For error logging
+from discord import app_commands, Interaction
+from discord.ext import commands
+from typing import Optional, TYPE_CHECKING, cast, Dict, Any, List
+import traceback
+import json # Added for potential JSON operations if inventory items are complex
 
-# Corrected imports
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
-    # from bot.services.db_service import DBService # No longer directly used by commands
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.item_manager import ItemManager
-    from bot.game.managers.location_manager import LocationManager # Potentially for context
+    from bot.game.managers.location_manager import LocationManager
     from bot.game.models.character import Character as CharacterModel
     from bot.game.rules.rule_engine import RuleEngine
-    # Item model might not be directly used if ItemManager returns dicts
-    # from bot.game.models.item import Item
 
-# TEST_GUILD_IDS can be removed if not used in decorators
-# TEST_GUILD_IDS = []
+class InventoryCog(commands.Cog, name="Inventory"):
+    def __init__(self, bot: "RPGBot"):
+        self.bot = bot
 
-@app_commands.command(name="inventory", description="View your character's inventory.")
-async def cmd_inventory(interaction: Interaction):
-    await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client) # Used cast
-
-    try:
-        if not bot.game_manager or \
-           not bot.game_manager.character_manager: # Item manager check will be done separately
-            await interaction.followup.send("Error: Core game services (Game Manager or Character Manager) are not fully initialized.", ephemeral=True)
+    @app_commands.command(name="inventory", description="View your character's inventory.")
+    async def cmd_inventory(self, interaction: Interaction):
+        await interaction.response.defer(ephemeral=True)
+        if not self.bot.game_manager or not self.bot.game_manager.character_manager or not self.bot.game_manager.item_manager:
+            await interaction.followup.send("Error: Core game services are not fully initialized.", ephemeral=True)
             return
 
-        character_manager: 'CharacterManager' = bot.game_manager.character_manager
-
-        if not bot.game_manager.item_manager:
-            await interaction.followup.send("Error: Item Manager is not available.", ephemeral=True)
-            return
-        item_manager: 'ItemManager' = bot.game_manager.item_manager
-
+        character_manager: "CharacterManager" = self.bot.game_manager.character_manager
+        item_manager: "ItemManager" = self.bot.game_manager.item_manager
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
 
-        character: Optional[CharacterModel] = character_manager.get_character_by_discord_id(
+        character: Optional["CharacterModel"] = await character_manager.get_character_by_discord_id(
             guild_id=guild_id_str,
             discord_user_id=discord_user_id_int
         )
         if not character:
-            await interaction.followup.send("You need to create a character first! Use `/start`.", ephemeral=True)
+            await interaction.followup.send("You need to create a character first! Use `/start_new_character`.", ephemeral=True)
             return
 
         language = character.selected_language or "en"
-        char_name_display = character.name_i18n.get(language, character.name_i18n.get('en', 'Your'))
+        char_name_display = character.name_i18n.get(language, character.name_i18n.get('en', character.id)) if hasattr(character, 'name_i18n') and isinstance(character.name_i18n, dict) else getattr(character, 'name', character.id)
 
-        if not character.inventory: # Assuming inventory is a list on CharacterModel
-            await interaction.followup.send("Your inventory is empty.", ephemeral=True)
+
+        inventory_list_json = getattr(character, 'inventory', "[]")
+        inventory_list_data: List[Dict[str, Any]] = []
+        if isinstance(inventory_list_json, str):
+            try:
+                inventory_list_data = json.loads(inventory_list_json)
+            except json.JSONDecodeError:
+                inventory_list_data = [] # Default to empty if malformed
+        elif isinstance(inventory_list_json, list): # Already a list (older format or direct object)
+            inventory_list_data = inventory_list_json
+
+        if not inventory_list_data:
+            await interaction.followup.send(f"{char_name_display}'s inventory is empty.", ephemeral=True)
             return
 
-        embed = discord.Embed(
-            title=f"{char_name_display}'s Inventory",
-            color=discord.Color.dark_gold()
-        )
+        embed = discord.Embed(title=f"{char_name_display}'s Inventory", color=discord.Color.dark_gold())
         description_lines = []
 
-        # Character.inventory is expected to be List[Dict[str, Any]] e.g. [{'item_id': 'uuid', 'quantity': 1}]
-        # Or List[str] if items are not stackable / quantity is always 1.
-        # Let's assume List[Dict[str, Any]] as per CharacterManager.add_item_to_inventory hints.
-
-        for item_entry in character.inventory:
-            item_id: Optional[str] = None
-            quantity: int = 1 # Default quantity
+        for item_entry in inventory_list_data:
+            item_template_id_from_inv: Optional[str] = None
+            quantity: int = 1
 
             if isinstance(item_entry, dict):
-                item_id = item_entry.get('item_id')
+                item_template_id_from_inv = item_entry.get('item_id') or item_entry.get('template_id') # Accommodate both
                 quantity = item_entry.get('quantity', 1)
-            elif isinstance(item_entry, str): # If inventory is just a list of item_ids
-                item_id = item_entry
+            elif isinstance(item_entry, str):
+                item_template_id_from_inv = item_entry
 
-            if not item_id:
-                description_lines.append("❓ An unknown item entry (missing ID)")
+            if not item_template_id_from_inv:
+                description_lines.append("❓ An unknown item entry (missing ID in inventory record)")
                 continue
 
-            # Fetch item details using ItemManager
-            item_instance_data = item_manager.get_item_instance(guild_id_str, item_id)
-            item_template_data = None
-            item_name_display = f"Unknown Item (ID: {item_id[:6]}...)"
+            item_template_data = item_manager.get_item_template(guild_id_str, item_template_id_from_inv) # Pass guild_id
+
+            item_name_display = f"Unknown Item (Template ID: {item_template_id_from_inv[:6]}...)"
             icon = '📦'
 
-            if item_instance_data:
-                template_id = item_instance_data.get('template_id')
-                if template_id:
-                    item_template_data = item_manager.get_item_template(template_id)
-
-            if item_template_data:
+            if item_template_data: # item_template_data is a dict
                 name_i18n = item_template_data.get('name_i18n', {})
                 item_name_display = name_i18n.get(language, name_i18n.get('en', item_template_data.get('name', item_name_display)))
                 icon = item_template_data.get('icon', icon)
@@ -100,378 +87,97 @@ async def cmd_inventory(interaction: Interaction):
         if description_lines:
             embed.description = "\n".join(description_lines)
         else:
-            embed.description = "Your inventory is empty." # Should have been caught by `if not character.inventory`
-
+            embed.description = f"{char_name_display}'s inventory is empty." # Should be caught by earlier check
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    except Exception as e:
-        print(f"Error in /inventory command: {e}")
-        traceback.print_exc()
-        await interaction.followup.send("An unexpected error occurred while fetching your inventory.", ephemeral=True)
 
-
-@app_commands.command(name="pickup", description="Pick up an item from your current location.")
-@app_commands.describe(item_name="The name of the item you want to pick up.")
-async def cmd_pickup(interaction: Interaction, item_name: str):
-    await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client) # Used cast
-
-    try:
-        if not bot.game_manager or \
-           not bot.game_manager.character_manager:
-            await interaction.followup.send("Error: Core game services (Game Manager or Character Manager) are not fully initialized.", ephemeral=True)
+    @app_commands.command(name="pickup", description="Pick up an item from your current location.")
+    @app_commands.describe(item_name="The name of the item you want to pick up.")
+    async def cmd_pickup(self, interaction: Interaction, item_name: str):
+        await interaction.response.defer(ephemeral=True)
+        if not self.bot.game_manager or not self.bot.game_manager.character_manager or            not self.bot.game_manager.item_manager or not self.bot.game_manager.location_manager:
+            await interaction.followup.send("Error: Core game services are not fully initialized.", ephemeral=True)
             return
-        character_manager: 'CharacterManager' = bot.game_manager.character_manager
 
-        if not bot.game_manager.item_manager:
-            await interaction.followup.send("Error: Item Manager is not available.", ephemeral=True)
-            return
-        item_manager: 'ItemManager' = bot.game_manager.item_manager
-
-        if not bot.game_manager.location_manager:
-            await interaction.followup.send("Error: Location Manager is not available.", ephemeral=True)
-            return
-        # location_manager: 'LocationManager' = bot.game_manager.location_manager # Define if used directly
-
-        db_service_for_logging = bot.game_manager.db_service # Keep for logging for now, assuming db_service is present if game_manager is
-
+        character_manager: "CharacterManager" = self.bot.game_manager.character_manager
+        item_manager: "ItemManager" = self.bot.game_manager.item_manager
+        location_manager: "LocationManager" = self.bot.game_manager.location_manager
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
 
-        character: Optional[CharacterModel] = character_manager.get_character_by_discord_id(
-            guild_id=guild_id_str,
-            discord_user_id=discord_user_id_int
-        )
+        character: Optional["CharacterModel"] = await character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
         if not character:
-            await interaction.followup.send("You need to create a character first! Use `/start`.", ephemeral=True)
+            await interaction.followup.send("You need to create a character first! Use `/start_new_character`.", ephemeral=True)
             return
 
-        if not character.location_id:
-            await interaction.followup.send("Error: Your character doesn't seem to be in any location.", ephemeral=True)
+        current_location_id = getattr(character, 'current_location_id', None) # Correct attribute
+        if not current_location_id:
+            await interaction.followup.send("Error: Your character is not in a location.", ephemeral=True)
             return
 
         language = character.selected_language or "en"
-        char_name_display = character.name_i18n.get(language, character.name_i18n.get('en', 'Player'))
+        items_in_location = await item_manager.get_items_in_location_async(guild_id_str, current_location_id)
 
+        item_to_pickup_instance_data: Optional[Dict[str, Any]] = None
 
-        # Find item in location using ItemManager
-        items_in_location = item_manager.get_items_in_location(
-            guild_id=guild_id_str,
-            location_id=character.location_id
-        )
-        item_to_pickup_data: Optional[Dict[str, Any]] = None
-        found_item_template_data: Optional[Dict[str, Any]] = None
-
-        for instance_data_from_loc in items_in_location:
-            temp_id = instance_data_from_loc.get('template_id')
-            if not temp_id: continue
-            template_data_from_loc = item_manager.get_item_template(temp_id)
-            if template_data_from_loc:
-                name_i18n = template_data_from_loc.get('name_i18n', {})
-                # Default to 'name' field if 'en' in name_i18n is missing or name_i18n itself is missing
-                name_en = name_i18n.get('en', template_data_from_loc.get('name', '')).lower()
-                name_lang = name_i18n.get(language, name_en).lower()
-
-                if item_name.lower() == name_en or item_name.lower() == name_lang:
-                    item_to_pickup_data = instance_data_from_loc
-                    found_item_template_data = template_data_from_loc
-                    break
-
-        if not item_to_pickup_data or not found_item_template_data:
-            await interaction.followup.send(f"You don't see '{item_name}' here.", ephemeral=True)
-            return
-
-        item_instance_id = item_to_pickup_data.get('id')
-        item_template_id = item_to_pickup_data.get('template_id') # This is the actual template_id
-        quantity_to_pickup = item_to_pickup_data.get('quantity', 1.0) # ItemManager stores quantity as float
-
-        # Get display name from found_item_template_data
-        item_name_display_i18n = found_item_template_data.get('name_i18n', {})
-        item_name_display = item_name_display_i18n.get(language, item_name_display_i18n.get('en', item_name))
-
-
-        if not item_instance_id or not item_template_id:
-            await interaction.followup.send(f"Error: The item '{item_name_display}' is malformed or missing critical data.", ephemeral=True)
-            return
-
-        # Process Pickup using ItemManager and CharacterManager
-        # Option 1: High-level ItemManager call
-        # success = await item_manager.transfer_item_world_to_character_inventory(
-        #    item_instance_id=item_instance_id,
-        #    character_id=character.id,
-        #    guild_id=guild_id_str,
-        #    quantity=quantity_to_pickup # if item is stackable and want to pick specific qty
-        # )
-        # Option 2: Lower-level calls (example, actual methods might differ)
-
-        # Add to character inventory (via CharacterManager or directly on model then save)
-        # This might be: await character_manager.add_item_to_inventory(character.id, item_template_id, quantity_to_pickup, guild_id_str)
-        # For now, let's assume CharacterManager has a method.
-        added_to_inventory = await character_manager.add_item_to_inventory(
-            guild_id=guild_id_str,
-            character_id=character.id,
-            item_id=item_template_id, # This should be the template_id of the item
-            quantity=quantity_to_pickup
-        )
-
-        if not added_to_inventory:
-            await interaction.followup.send(f"Failed to add '{item_name_display}' to your inventory. Your inventory might be full or the item incompatible.", ephemeral=True)
-            return
-
-        # Remove from world (via ItemManager)
-        # remove_item_instance takes guild_id, item_id
-        removed_from_world = await item_manager.remove_item_instance(guild_id_str, item_instance_id)
-
-        if removed_from_world:
-            if db_service_for_logging: # Check if logging service is available
-                try:
-                    log_message = f"{char_name_display} picked up {item_name_display} (x{int(quantity_to_pickup)})."
-                    # ... (logging code as before, ensure player_id is character.id) ...
-                except Exception as log_e:
-                    print(f"Error adding log entry for item pickup: {log_e}")
-
-            await interaction.followup.send(f"{interaction.user.mention} picked up {item_name_display} (x{int(quantity_to_pickup)}).", ephemeral=False)
-        else:
-            # CRITICAL: Item added to inventory but not removed from world. Attempt to revert.
-            print(f"CRITICAL: Item {item_instance_id} added to char {character.id} inventory BUT FAILED to delete from world location {character.location_id}.")
-            # Attempt to remove from inventory
-            reverted = await character_manager.remove_item_from_inventory(
-                guild_id=guild_id_str,
-                character_id=character.id,
-                item_id=item_template_id,
-                quantity=quantity_to_pickup
-            )
-            if reverted:
-                await interaction.followup.send(f"Tried to pick up {item_name_display}, but it couldn't be removed from the location. The action was reverted.", ephemeral=True)
-            else:
-                await interaction.followup.send(f"ERROR: Picked up {item_name_display}, but it remains in the location AND could not be removed from your inventory. Please contact an admin!", ephemeral=True)
-    except Exception as e:
-        print(f"Error in /pickup command: {e}")
-        traceback.print_exc()
-        await interaction.followup.send("An unexpected error occurred while trying to pick up the item.", ephemeral=True)
-
-
-@app_commands.command(name="equip", description="Equip an item from your inventory.")
-@app_commands.describe(item_name="The name of the item you want to equip.")
-async def cmd_equip(interaction: Interaction, item_name: str):
-    await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client)
-
-    if not bot.game_manager or \
-       not bot.game_manager.character_manager or \
-       not bot.game_manager.item_manager or \
-       not bot.game_manager.rule_engine:
-        await interaction.followup.send("Error: Core game services (Character, Item, or RuleEngine Manager) are not fully initialized.", ephemeral=True)
-        return
-
-    char_manager: "CharacterManager" = bot.game_manager.character_manager
-    item_manager: "ItemManager" = bot.game_manager.item_manager
-    rule_engine: "RuleEngine" = bot.game_manager.rule_engine
-    guild_id_str = str(interaction.guild_id)
-    discord_user_id_int = interaction.user.id
-
-    try:
-        character: Optional[CharacterModel] = char_manager.get_character_by_discord_id(
-            guild_id=guild_id_str, discord_user_id=discord_user_id_int
-        )
-        if not character:
-            await interaction.followup.send("You need to create a character first! Use `/start`.", ephemeral=True)
-            return
-
-        language = character.selected_language or "en"
-
-        # 1. Find the item instance ID in inventory based on name
-        item_to_equip_instance_id: Optional[str] = None
-        item_to_equip_template_id: Optional[str] = None
-        item_to_equip_template_data: Optional[Dict[str, Any]] = None
-
-        # Ensure character.inventory is a list (it should be List[Dict[str, Any]])
-        if not isinstance(character.inventory, list):
-            character.inventory = [] # Should not happen if initialized correctly
-
-        for item_entry in character.inventory:
-            entry_item_id: Optional[str] = None
-            if isinstance(item_entry, dict): # Expected structure {'item_id': template_id, 'quantity': x}
-                entry_item_id = item_entry.get('item_id')
-            elif isinstance(item_entry, str): # Fallback if inventory stores only template_ids
-                entry_item_id = item_entry
-
-            if not entry_item_id: continue
-
-            # Assuming entry_item_id is template_id as per pickup logic's current state
-            current_item_template_id = entry_item_id
-            template_data = item_manager.get_item_template(current_item_template_id)
+        for instance_data in items_in_location:
+            template_id = instance_data.get('template_id')
+            if not template_id: continue
+            template_data = item_manager.get_item_template(guild_id_str, template_id) # Pass guild_id
             if template_data:
                 name_i18n = template_data.get('name_i18n', {})
                 name_en = name_i18n.get('en', template_data.get('name', '')).lower()
                 name_lang = name_i18n.get(language, name_en).lower()
                 if item_name.lower() == name_en or item_name.lower() == name_lang:
-                    # For equipping, we need an *instance ID*.
-                    # This part is tricky because inventory stores template_ids.
-                    # We'll assume for now that the first found match of a template is what we equip.
-                    # A proper system would need unique instance IDs in inventory.
-                    # For this implementation, we'll use the template_id as if it's the instance_id for equip purposes.
-                    item_to_equip_instance_id = current_item_template_id # This is actually template_id
-                    item_to_equip_template_id = current_item_template_id
-                    item_to_equip_template_data = template_data
+                    item_to_pickup_instance_data = instance_data
                     break
 
-        if not item_to_equip_instance_id or not item_to_equip_template_data:
-            await interaction.followup.send(f"You don't have '{item_name}' in your inventory.", ephemeral=True)
+        if not item_to_pickup_instance_data:
+            await interaction.followup.send(f"You don't see '{item_name}' here.", ephemeral=True)
             return
 
-        # 2. Determine item's equipment slot(s)
-        item_properties = item_to_equip_template_data.get('properties', {})
-        if not isinstance(item_properties, dict): item_properties = {}
+        item_instance_id = item_to_pickup_instance_data.get('id')
+        item_template_id_for_inv = item_to_pickup_instance_data.get('template_id')
+        quantity_to_pickup = float(item_to_pickup_instance_data.get('quantity', 1.0))
 
-        slot = item_properties.get('slot') # e.g., "weapon", "armor_chest", "ring"
-        if not slot or not isinstance(slot, str): # slot can also be a list for two-handed, etc.
-            if isinstance(slot, list) and slot: # Takes multiple slots
-                # For simplicity, we'll use the first slot in the list as the primary slot
-                # and assume CharacterModel.equipped_items can handle list of slots or composite slots
-                pass # slot is already a list
-            else:
-                await interaction.followup.send(f"The item '{item_name}' is not equippable (no slot defined).", ephemeral=True)
-                return
-
-        # 3. Update character's equipped items
-        # Assume character.equipped_items is Dict[str, Optional[str]] -> slot_name: item_instance_id
-        if not hasattr(character, 'equipped_items') or not isinstance(character.equipped_items, dict):
-            character.equipped_items = {} # Initialize if not present
-
-        # Unequip item currently in the target slot(s)
-        unequipped_items_feedback = []
-        slots_to_occupy = [slot] if isinstance(slot, str) else slot # slot can be a list e.g. ["main_hand", "off_hand"]
-
-        for s in slots_to_occupy:
-            if character.equipped_items.get(s):
-                previously_equipped_item_id = character.equipped_items[s]
-                # No need to add back to inventory, as it was never removed for equip.
-                # Just update effects.
-                prev_item_template = item_manager.get_item_template(previously_equipped_item_id) # Assuming ID is template ID
-                if prev_item_template:
-                    await rule_engine.apply_equipment_effects(character, prev_item_template, equipping=False, guild_id=guild_id_str)
-                    prev_item_name_i18n = prev_item_template.get('name_i18n', {})
-                    prev_item_name = prev_item_name_i18n.get(language, prev_item_name_i18n.get('en', "Unknown Item"))
-                    unequipped_items_feedback.append(prev_item_name)
-                character.equipped_items[s] = None # Clear the slot
-
-        # Equip the new item
-        for s in slots_to_occupy:
-            character.equipped_items[s] = item_to_equip_instance_id # Store template_id as instance_id due to inventory structure
-
-        # 4. Trigger recalculation of Effective_Stats
-        await rule_engine.apply_equipment_effects(character, item_to_equip_template_data, equipping=True, guild_id=guild_id_str)
-
-        char_manager.mark_character_dirty(guild_id_str, character.id)
-        await char_manager.save_character(character, guild_id_str)
-
-        # 5. User Feedback
-        equipped_item_name_display = item_to_equip_template_data.get('name_i18n', {}).get(language, item_name)
-        feedback_message = f"You equipped **{equipped_item_name_display}**."
-        if unequipped_items_feedback:
-            feedback_message += f"\n(Unequipped: {', '.join(unequipped_items_feedback)})"
-
-        await interaction.followup.send(feedback_message, ephemeral=True)
-
-    except Exception as e:
-        await interaction.followup.send(f"An error occurred while equipping the item: {e}", ephemeral=True)
-        traceback.print_exc()
-
-@app_commands.command(name="unequip", description="Unequip an item.")
-@app_commands.describe(slot_or_item_name="The equipment slot (e.g., 'weapon', 'head') or item name to unequip.")
-async def cmd_unequip(interaction: Interaction, slot_or_item_name: str):
-    await interaction.response.defer(ephemeral=True)
-    bot = cast(RPGBot, interaction.client)
-
-    if not bot.game_manager or \
-       not bot.game_manager.character_manager or \
-       not bot.game_manager.item_manager or \
-       not bot.game_manager.rule_engine:
-        await interaction.followup.send("Error: Core game services (Character, Item, or RuleEngine Manager) are not fully initialized.", ephemeral=True)
-        return
-
-    char_manager: "CharacterManager" = bot.game_manager.character_manager
-    item_manager: "ItemManager" = bot.game_manager.item_manager
-    rule_engine: "RuleEngine" = bot.game_manager.rule_engine
-    guild_id_str = str(interaction.guild_id)
-    discord_user_id_int = interaction.user.id
-
-    try:
-        character: Optional[CharacterModel] = char_manager.get_character_by_discord_id(
-            guild_id=guild_id_str, discord_user_id=discord_user_id_int
+        pickup_success = await item_manager.transfer_item_world_to_character(
+            guild_id=guild_id_str,
+            item_instance_id=item_instance_id, # type: ignore
+            character_id=character.id, # type: ignore
+            quantity_to_transfer=quantity_to_pickup
         )
-        if not character:
-            await interaction.followup.send("You need to create a character first! Use `/start`.", ephemeral=True)
-            return
 
-        language = character.selected_language or "en"
+        if pickup_success:
+            picked_item_template = item_manager.get_item_template(guild_id_str, item_template_id_for_inv) # Pass guild_id
+            item_name_display = item_name
+            if picked_item_template:
+                 item_name_display = picked_item_template.get('name_i18n',{}).get(language, picked_item_template.get('name', item_name))
 
-        if not hasattr(character, 'equipped_items') or not isinstance(character.equipped_items, dict) or not character.equipped_items:
-            character.equipped_items = {} # Initialize if not present
-            await interaction.followup.send("You have nothing equipped.", ephemeral=True)
-            return
-
-        item_to_unequip_instance_id: Optional[str] = None
-        slot_to_clear: Optional[str] = None # The actual slot key to clear
-
-        # Try to match slot_or_item_name as a slot first
-        normalized_input = slot_or_item_name.lower()
-        possible_slots = list(character.equipped_items.keys()) # TODO: Get valid slots from game rules/config instead
-
-        for s_key in possible_slots:
-            if normalized_input == s_key.lower(): # Matched a slot name directly
-                item_to_unequip_instance_id = character.equipped_items.get(s_key)
-                slot_to_clear = s_key
-                break
-
-        # If not matched as a slot, try to match as an item name among equipped items
-        if not item_to_unequip_instance_id:
-            for s_key, equipped_item_id in character.equipped_items.items():
-                if not equipped_item_id: continue # Slot is empty
-                # Assuming equipped_item_id is a template_id due to inventory structure
-                template_data = item_manager.get_item_template(equipped_item_id)
-                if template_data:
-                    name_i18n = template_data.get('name_i18n', {})
-                    name_en = name_i18n.get('en', template_data.get('name', '')).lower()
-                    name_lang = name_i18n.get(language, name_en).lower()
-                    if normalized_input == name_en or normalized_input == name_lang:
-                        item_to_unequip_instance_id = equipped_item_id
-                        slot_to_clear = s_key
-                        break
-
-        if not item_to_unequip_instance_id or not slot_to_clear:
-            await interaction.followup.send(f"Couldn't find '{slot_or_item_name}' equipped or as a valid slot with an item.", ephemeral=True)
-            return
-
-        item_template_data = item_manager.get_item_template(item_to_unequip_instance_id)
-        if not item_template_data:
-             # This case implies inconsistent data, as an equipped item should have a valid template
-            await interaction.followup.send(f"Error: The equipped item data for '{slot_or_item_name}' is corrupted. Removing from slot.", ephemeral=True)
-            character.equipped_items[slot_to_clear] = None
-            # No stat recalculation here as we don't know what its effects were.
+            await interaction.followup.send(f"{interaction.user.mention} picked up {item_name_display} (x{int(quantity_to_pickup)}).", ephemeral=False)
         else:
-            # Apply un-equip effects
-            await rule_engine.apply_equipment_effects(character, item_template_data, equipping=False, guild_id=guild_id_str)
-            character.equipped_items[slot_to_clear] = None # Clear the slot
-
-            # If item takes multiple slots (e.g. two-handed), clear all its slots
-            item_slots_property = item_template_data.get('properties', {}).get('slot')
-            if isinstance(item_slots_property, list):
-                for s_prop in item_slots_property:
-                    if s_prop in character.equipped_items and character.equipped_items[s_prop] == item_to_unequip_instance_id:
-                        character.equipped_items[s_prop] = None
+            await interaction.followup.send(f"Failed to pick up '{item_name}'. It might have been taken or an error occurred.", ephemeral=True)
 
 
-        char_manager.mark_character_dirty(guild_id_str, character.id)
-        await char_manager.save_character(character, guild_id_str)
+    @app_commands.command(name="equip", description="Equip an item from your inventory.")
+    @app_commands.describe(item_name="The name of the item you want to equip.")
+    async def cmd_equip(self, interaction: Interaction, item_name: str):
+        await interaction.response.defer(ephemeral=True)
+        if not self.bot.game_manager or not self.bot.game_manager.character_manager or            not self.bot.game_manager.item_manager or not self.bot.game_manager.rule_engine:
+            await interaction.followup.send("Error: Core game services not initialized.", ephemeral=True)
+            return
+        await interaction.followup.send(f"Equip command for '{item_name}' would be handled here. (Refactor placeholder)", ephemeral=True)
 
-        unequipped_item_name_display = "the item"
-        if item_template_data:
-            unequipped_item_name_display = item_template_data.get('name_i18n', {}).get(language, item_template_data.get('name', "The item"))
 
-        await interaction.followup.send(f"You unequipped **{unequipped_item_name_display}** from slot '{slot_to_clear}'.", ephemeral=True)
+    @app_commands.command(name="unequip", description="Unequip an item.")
+    @app_commands.describe(slot_or_item_name="The equipment slot or item name to unequip.")
+    async def cmd_unequip(self, interaction: Interaction, slot_or_item_name: str):
+        await interaction.response.defer(ephemeral=True)
+        if not self.bot.game_manager or not self.bot.game_manager.character_manager or            not self.bot.game_manager.item_manager or not self.bot.game_manager.rule_engine:
+            await interaction.followup.send("Error: Core game services not initialized.", ephemeral=True)
+            return
+        await interaction.followup.send(f"Unequip command for '{slot_or_item_name}' would be handled here. (Refactor placeholder)", ephemeral=True)
 
-    except Exception as e:
-        await interaction.followup.send(f"An error occurred while unequipping: {e}", ephemeral=True)
-        traceback.print_exc()
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(InventoryCog(bot)) # type: ignore
+    print("InventoryCog loaded.")
