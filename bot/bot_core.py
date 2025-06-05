@@ -56,7 +56,8 @@ class RPGBot(commands.Bot):
         global global_game_manager
         global_game_manager = self.game_manager
 
-        self.initial_cog_setup_task = self.loop.create_task(self.load_all_cogs())
+    async def setup_hook(self):
+        await self.load_all_cogs()
 
     async def load_all_cogs(self):
         await self.wait_until_ready()
