@@ -57,54 +57,48 @@ def run_migrations_offline() -> None:
     with context.begin_transaction():
         context.run_migrations()
 
-# Moved to module level to be accessible by run_async_upgrade and CLI path
-def do_run_migrations(connection):
-    # This function is called from run_async_upgrade via run_sync.
-    # The `context` here is the module-level proxy.
-    # We need to configure it for this specific programmatic run.
-    print(f"Alembic env.py: do_run_migrations called for programmatic upgrade with connection: {connection}")
+def run_migrations_online() -> None:
+    """Run migrations in 'online' mode.
 
-    # Use the imported alembic.context proxy directly
-    # This call to configure() is intended to "establish" the proxy for this thread/context of execution.
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata, # Make sure target_metadata is defined in the scope or globally
-        render_as_batch=True # Important for SQLite support with some types of migrations
+    In this scenario we need to create an Engine
+    and associate a connection with the context.
+
+    """
+    # The 'config' object is accessible here if it's loaded by Alembic CLI
+    # This typically comes from context.config if Alembic CLI is running env.py
+    alembic_config = context.config # Use the config from Alembic's context
+
+    # Interpret the config file for Python logging.
+    if alembic_config.config_file_name is not None:
+        fileConfig(alembic_config.config_file_name)
+
+    # Attempt to get the sqlalchemy.url from the Alembic config
+    db_url = alembic_config.get_main_option("sqlalchemy.url")
+    if not db_url:
+        raise ValueError("sqlalchemy.url is not set in alembic.ini for online CLI mode.")
+
+    # Create an engine. For async, we'd use create_async_engine,
+    # but Alembic's online migration typically uses a synchronous engine
+    # for the connection it passes to context.configure.
+    # However, if your models and operations are async, you might need
+    # to handle this differently, possibly using run_sync as before,
+    # but the main point is to configure context for online mode.
+    # For simplicity and common Alembic patterns, using a sync engine here:
+    connectable = engine_from_config(
+        alembic_config.get_section(alembic_config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
     )
 
-    print("Alembic env.py: Context configured for do_run_migrations.")
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=True # For SQLite
+        )
 
-    try:
         with context.begin_transaction():
-            print("Alembic env.py: Transaction begun for migrations.")
             context.run_migrations()
-            print("Alembic env.py: context.run_migrations() called within transaction.")
-        print("Alembic env.py: Transaction committed, migrations should be done.")
-    except Exception as e:
-        print(f"Alembic env.py: ERROR during migration execution in do_run_migrations: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
-
-async def run_async_upgrade(db_url: str):
-    """
-    New function to run migrations programmatically with a given database URL.
-    This will be called by the GameManager.
-    """
-    print(f"Alembic env.py: run_async_upgrade called with db_url: {db_url}")
-    if not db_url:
-        raise ValueError("Database URL cannot be empty for run_async_upgrade.")
-        
-    engine = create_async_engine(db_url, poolclass=pool.NullPool)
-    
-    print(f"Alembic env.py: Async engine created for {db_url}")
-    async with engine.connect() as connection:
-        print("Alembic env.py: Async connection established for run_async_upgrade.")
-        await connection.run_sync(do_run_migrations)
-        print("Alembic env.py: do_run_migrations completed via run_sync.")
-    
-    await engine.dispose()
-    print("Alembic env.py: Async engine disposed.")
 
 # This is the section for CLI execution or direct script run
 if __name__ == '__main__': # Guard to prevent execution when imported, though Alembic CLI might still execute it.
@@ -119,45 +113,7 @@ if __name__ == '__main__': # Guard to prevent execution when imported, though Al
         run_migrations_offline()
         print("Alembic env.py: Offline migrations (CLI) completed.")
     else:
+        # This 'else' block is executed for 'alembic upgrade head' (online mode)
         print("Alembic env.py: Running migrations in online mode (CLI context)...")
-        config = context.config # Added local config
-        # Interpret the config file for Python logging.
-        # This line sets up loggers basically.
-        if config.config_file_name is not None:
-            fileConfig(config.config_file_name)
-
-        cli_db_url = config.get_main_option("sqlalchemy.url") # Get URL from alembic.ini for CLI
-        
-        if not cli_db_url:
-            # Fallback to environment variable if not in alembic.ini, or raise error
-            # For this setup, we expect it in alembic.ini or set by GameManager for programmatic calls.
-            # GameManager now sets it via alembic_cfg.set_main_option for its Config object,
-            # but for CLI, alembic loads alembic.ini directly.
-            cli_db_url_from_context = context.config.get_main_option("sqlalchemy.url")
-            if not cli_db_url_from_context:
-                raise ValueError("sqlalchemy.url is not set in alembic.ini (or context) for CLI online mode.")
-            cli_db_url = cli_db_url_from_context
-
-        print(f"Alembic env.py: Using DB URL for CLI online mode: {cli_db_url}")
-        
-        try:
-            # Ensure we are in a situation where it's safe to call asyncio.run
-            # This means we are likely being run as a script by Alembic CLI
-            asyncio.run(run_async_upgrade(cli_db_url))
-            print("Alembic env.py: Online migrations (CLI) completed via asyncio.run(run_async_upgrade).")
-        except RuntimeError as e:
-            if "cannot be called from a running event loop" in str(e):
-                print("Alembic env.py: ERROR - Attempted to call asyncio.run from within an existing event loop (CLI context).")
-                print("This might indicate env.py is being imported and run by an async process that isn't correctly awaiting run_async_upgrade directly, or an issue with Alembic's CLI runner.")
-                # Potentially, if an outer loop exists, one might try to schedule run_async_upgrade differently,
-                # but for CLI, asyncio.run should be the entry point to async code.
-                raise
-            else:
-                # Re-raise other RuntimeErrors
-                print(f"Alembic env.py: A RuntimeError occurred: {e}")
-                raise
-        except Exception as e:
-            print(f"Alembic env.py: An unexpected error occurred during CLI online migrations: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+        run_migrations_online() # Call the new/standard online migration function
+        print("Alembic env.py: Online migrations (CLI) completed.")
