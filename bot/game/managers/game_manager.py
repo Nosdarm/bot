@@ -149,7 +149,7 @@ class GameManager:
 
         data = None
         try:
-            data = await self.db_service.get_entity_by_id('rules_config', DEFAULT_RULES_CONFIG_ID)
+            data = await self.db_service.get_entity(table_name='rules_config', entity_id=DEFAULT_RULES_CONFIG_ID, id_field='id')
         except Exception as e:
             print(f"GameManager: Error fetching rules_config from DB: {e}")
             # Proceed to default initialization as if data was None
@@ -191,16 +191,47 @@ class GameManager:
             self._rules_config_cache = default_rules
             print("GameManager: Default rules created and cached.")
 
+            rules_entity_data = {
+                'id': DEFAULT_RULES_CONFIG_ID,
+                'config_data': json.dumps(self._rules_config_cache)
+            }
+
             try:
-                await self.db_service.save_entity(
-                    'rules_config',
-                    DEFAULT_RULES_CONFIG_ID,
-                    {'config_data': json.dumps(self._rules_config_cache)},
-                    is_new=True # Assuming this might be the first time, save_entity should handle if it's not new
+                existing_config = await self.db_service.get_entity(
+                    table_name='rules_config',
+                    entity_id=DEFAULT_RULES_CONFIG_ID,
+                    id_field='id'
                 )
-                print(f"GameManager: Successfully saved default rules to DB with ID {DEFAULT_RULES_CONFIG_ID}.")
+
+                if existing_config is not None:
+                    print(f"GameManager: Attempting to update existing default rules in DB (ID: {DEFAULT_RULES_CONFIG_ID}).")
+                    success = await self.db_service.update_entity(
+                        table_name='rules_config',
+                        entity_id=DEFAULT_RULES_CONFIG_ID,
+                        data={'config_data': json.dumps(self._rules_config_cache)}, # Only update config_data
+                        id_field='id'
+                    )
+                    if success:
+                        print(f"GameManager: Successfully updated default rules in DB.")
+                    else:
+                        print(f"GameManager: Failed to update default rules in DB.")
+                else:
+                    print(f"GameManager: Attempting to create new default rules in DB (ID: {DEFAULT_RULES_CONFIG_ID}).")
+                    # Ensure 'id' is part of the data for create_entity if your DB adapter expects it directly
+                    # For SqliteAdapter, id_field='id' means it will look for data['id'] if PK is not autoincrement
+                    # or handle autoincrement if data['id'] is not provided and PK is autoincrement.
+                    # Since 'id' is explicitly DEFAULT_RULES_CONFIG_ID, we must provide it.
+                    new_id = await self.db_service.create_entity(
+                        table_name='rules_config',
+                        data=rules_entity_data, # includes 'id' and 'config_data'
+                        id_field='id' # Specify the ID field for clarity, though adapter might infer
+                    )
+                    if new_id is not None: # create_entity usually returns the ID of the new row
+                        print(f"GameManager: Successfully created default rules in DB with ID {new_id}.")
+                    else:
+                        print(f"GameManager: Failed to create default rules in DB.")
             except Exception as e:
-                print(f"GameManager: Error saving default rules to DB: {e}")
+                print(f"GameManager: Error during upsert of default rules to DB: {e}")
 
         # Final check to ensure cache is not None, even if all else failed.
         if self._rules_config_cache is None:
