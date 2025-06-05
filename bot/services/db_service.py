@@ -1,18 +1,19 @@
 # bot/services/db_service.py
 import json
 from typing import Optional, List, Dict, Any
-import aiosqlite # Required for aiosqlite.Row type hint
+# import aiosqlite # No longer required for aiosqlite.Row type hint
 
-from bot.database.sqlite_adapter import SqliteAdapter
+from bot.database.postgres_adapter import PostgresAdapter
 
 class DBService:
     """
-    Service layer for database operations, abstracting the SqliteAdapter.
-    Handles data conversion (e.g., Row to dict, JSON string to dict).
+    Service layer for database operations, abstracting the PostgresAdapter.
+    Handles data conversion (e.g., JSON string to dict) where necessary.
+    PostgresAdapter methods fetchone/fetchall now return dicts directly.
     """
 
-    def __init__(self, db_path: str):
-        self.adapter = SqliteAdapter(db_path)
+    def __init__(self):
+        self.adapter = PostgresAdapter()
 
     async def connect(self) -> None:
         """Connects to the database."""
@@ -26,24 +27,18 @@ class DBService:
         """Initializes the database schema by running migrations."""
         await self.adapter.initialize_database()
 
-    def _row_to_dict(self, row: Optional[aiosqlite.Row]) -> Optional[Dict[str, Any]]:
-        """Converts an aiosqlite.Row to a dictionary."""
-        if row is None:
-            return None
-        return dict(row)
-
-    def _rows_to_dicts(self, rows: List[aiosqlite.Row]) -> List[Dict[str, Any]]:
-        """Converts a list of aiosqlite.Row to a list of dictionaries."""
-        return [dict(row) for row in rows]
+    # _row_to_dict and _rows_to_dicts are no longer needed as PostgresAdapter
+    # methods fetchone() and fetchall() return dicts directly.
 
     # --- Player/Character Management ---
 
     async def get_player_by_discord_id(self, discord_user_id: int, guild_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves a player by their Discord User ID and Guild ID."""
         # Assuming target schema has 'players' table similar to 'characters'
-        sql = "SELECT * FROM players WHERE discord_user_id = ? AND guild_id = ?"
-        row = await self.adapter.fetchone(sql, (discord_user_id, guild_id))
-        player = self._row_to_dict(row)
+        # PostgresAdapter uses $1, $2 placeholders. Adapter handles this.
+        sql = "SELECT * FROM players WHERE discord_user_id = $1 AND guild_id = $2"
+        player = await self.adapter.fetchone(sql, (discord_user_id, guild_id))
+        # player = self._row_to_dict(row) # No longer needed
         if player and player.get('stats') and isinstance(player['stats'], str):
             player['stats'] = json.loads(player['stats'])
         # Add other JSON deserializations if needed (e.g., inventory if it were a JSON column)
@@ -64,36 +59,42 @@ class DBService:
         if not player_id:
             player_id = f"{guild_id}-{discord_user_id}" # Example composite ID, consider UUIDs for production
 
+        # PostgresAdapter uses $1, $2 placeholders.
         sql = """
             INSERT INTO players (id, discord_user_id, name, race, guild_id, location_id, hp, mp, attack, defense, stats, experience, level, unspent_xp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            RETURNING id;
+        """ # Added RETURNING id
         params = (
             player_id, discord_user_id, name, race, guild_id, location_id,
             hp, mp, attack, defense, json.dumps(stats) if stats else '{}',
             experience, level, unspent_xp
         )
-        # Assuming execute_insert returns the last inserted rowid, which might not be the text player_id.
-        # For text PKs, execute is fine, then fetch.
-        await self.adapter.execute(sql, params)
-        return await self.get_player_data(player_id)
+        # Use execute_insert if you expect a return value like the ID.
+        # If player_id is already known and set, execute is fine.
+        # Given RETURNING id, execute_insert is appropriate.
+        inserted_id = await self.adapter.execute_insert(sql, params)
+        if inserted_id: # Check if ID was returned
+            return await self.get_player_data(player_id) # Fetch using original player_id
+        return None # Or handle error if insert failed to return ID as expected
 
 
     async def update_player_location(self, player_id: str, new_location_id: str) -> None:
         """Updates the location_id for a given player."""
-        sql = "UPDATE players SET location_id = ? WHERE id = ?"
+        sql = "UPDATE players SET location_id = $1 WHERE id = $2"
         await self.adapter.execute(sql, (new_location_id, player_id))
 
     async def get_player_inventory(self, player_id: str) -> List[Dict[str, Any]]:
         """Retrieves a player's inventory from the 'inventory' table."""
+        # PostgresAdapter uses $1, $2 placeholders.
         sql = """
             SELECT inv.item_template_id, inv.amount, it.name, it.description, it.type as item_type, it.properties
             FROM inventory inv
             JOIN item_templates it ON inv.item_template_id = it.id
-            WHERE inv.player_id = ?
+            WHERE inv.player_id = $1
         """
-        rows = await self.adapter.fetchall(sql, (player_id,))
-        inventory_items = self._rows_to_dicts(rows)
+        inventory_items = await self.adapter.fetchall(sql, (player_id,))
+        # inventory_items = self._rows_to_dicts(rows) # No longer needed
         for item in inventory_items:
             if item.get('properties') and isinstance(item['properties'], str):
                 item['properties'] = json.loads(item['properties'])
@@ -107,40 +108,42 @@ class DBService:
         import uuid
         inventory_id = str(uuid.uuid4())
 
-
-        sql_select = "SELECT amount, inventory_id FROM inventory WHERE player_id = ? AND item_template_id = ?"
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql_select = "SELECT amount, inventory_id FROM inventory WHERE player_id = $1 AND item_template_id = $2"
         row = await self.adapter.fetchone(sql_select, (player_id, item_template_id))
 
         if row:
             new_amount = row['amount'] + amount
             existing_inventory_id = row['inventory_id']
-            sql_update = "UPDATE inventory SET amount = ? WHERE inventory_id = ?"
+            sql_update = "UPDATE inventory SET amount = $1 WHERE inventory_id = $2"
             await self.adapter.execute(sql_update, (new_amount, existing_inventory_id))
         else:
-            sql_insert = "INSERT INTO inventory (inventory_id, player_id, item_template_id, amount) VALUES (?, ?, ?, ?)"
+            sql_insert = "INSERT INTO inventory (inventory_id, player_id, item_template_id, amount) VALUES ($1, $2, $3, $4)"
             await self.adapter.execute(sql_insert, (inventory_id, player_id, item_template_id, amount))
 
     async def remove_item_from_inventory(self, player_id: str, item_template_id: str, amount: int) -> None:
         """Removes an item from a player's inventory or reduces its amount."""
-        sql_select = "SELECT amount, inventory_id FROM inventory WHERE player_id = ? AND item_template_id = ?"
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql_select = "SELECT amount, inventory_id FROM inventory WHERE player_id = $1 AND item_template_id = $2"
         row = await self.adapter.fetchone(sql_select, (player_id, item_template_id))
 
         if row:
             current_amount = row['amount']
             existing_inventory_id = row['inventory_id']
             if current_amount <= amount:
-                sql_delete = "DELETE FROM inventory WHERE inventory_id = ?"
+                sql_delete = "DELETE FROM inventory WHERE inventory_id = $1"
                 await self.adapter.execute(sql_delete, (existing_inventory_id,))
             else:
                 new_amount = current_amount - amount
-                sql_update = "UPDATE inventory SET amount = ? WHERE inventory_id = ?"
+                sql_update = "UPDATE inventory SET amount = $1 WHERE inventory_id = $2"
                 await self.adapter.execute(sql_update, (new_amount, existing_inventory_id))
 
     async def get_player_data(self, player_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves generic player data by their internal player ID."""
-        sql = "SELECT * FROM players WHERE id = ?"
-        row = await self.adapter.fetchone(sql, (player_id,))
-        player = self._row_to_dict(row)
+        # PostgresAdapter uses $1 placeholder.
+        sql = "SELECT * FROM players WHERE id = $1"
+        player = await self.adapter.fetchone(sql, (player_id,))
+        # player = self._row_to_dict(row) # No longer needed
         if player:
             if player.get('stats') and isinstance(player['stats'], str):
                 player['stats'] = json.loads(player['stats'])
@@ -158,19 +161,24 @@ class DBService:
     ) -> Optional[Dict[str, Any]]:
         """Creates a new item definition in 'item_templates'."""
         properties_data = {'effects': effects} if effects else {}
+        # PostgresAdapter uses $1, $2 placeholders.
         sql = """
             INSERT INTO item_templates (id, name, description, type, properties)
-            VALUES (?, ?, ?, ?, ?)
-        """
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id;
+        """ # Added RETURNING id
         params = (item_id, name, description, item_type, json.dumps(properties_data))
-        await self.adapter.execute(sql, params)
-        return await self.get_item_definition(item_id) # Renamed from get_item_template
+        inserted_id = await self.adapter.execute_insert(sql, params)
+        if inserted_id:
+            return await self.get_item_definition(item_id) # Fetch using original item_id
+        return None
 
     async def get_item_definition(self, item_id: str) -> Optional[Dict[str, Any]]: # Renamed from get_item_template
         """Retrieves an item definition by its ID from 'item_templates'."""
-        sql = "SELECT * FROM item_templates WHERE id = ?"
-        row = await self.adapter.fetchone(sql, (item_id,))
-        item_def = self._row_to_dict(row)
+        # PostgresAdapter uses $1 placeholder.
+        sql = "SELECT * FROM item_templates WHERE id = $1"
+        item_def = await self.adapter.fetchone(sql, (item_id,))
+        # item_def = self._row_to_dict(row) # No longer needed
         if item_def and item_def.get('properties') and isinstance(item_def['properties'], str):
             item_def['properties'] = json.loads(item_def['properties'])
         return item_def
@@ -178,8 +186,8 @@ class DBService:
     async def get_all_item_definitions(self) -> List[Dict[str, Any]]: # Renamed from get_all_item_templates
         """Retrieves all item definitions from 'item_templates'."""
         sql = "SELECT * FROM item_templates"
-        rows = await self.adapter.fetchall(sql)
-        item_defs = self._rows_to_dicts(rows)
+        item_defs = await self.adapter.fetchall(sql)
+        # item_defs = self._rows_to_dicts(rows) # No longer needed
         for item_def in item_defs:
             if item_def.get('properties') and isinstance(item_def['properties'], str):
                 item_def['properties'] = json.loads(item_def['properties'])
@@ -192,28 +200,33 @@ class DBService:
         exits: Optional[Dict[str, str]] = None, template_id: str = "default"
     ) -> Optional[Dict[str, Any]]:
         """Creates a new location instance."""
+        # PostgresAdapter uses $1, $2 placeholders.
         sql = """
             INSERT INTO locations (id, template_id, name, description, guild_id, exits, state_variables, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id;
+        """ # Added RETURNING id
         params = (
             loc_id, template_id, name, description, guild_id,
             json.dumps(exits) if exits else '{}',
             '{}', 1
         )
-        await self.adapter.execute(sql, params)
-        return await self.get_location(loc_id, guild_id)
+        inserted_id = await self.adapter.execute_insert(sql, params)
+        if inserted_id:
+            return await self.get_location(loc_id, guild_id) # Fetch using original loc_id
+        return None
 
     async def get_location(self, location_id: str, guild_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Retrieves a location by its ID."""
-        sql = "SELECT * FROM locations WHERE id = ?"
-        params = (location_id,)
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql = "SELECT * FROM locations WHERE id = $1"
+        params_list = [location_id]
         if guild_id:
-            sql += " AND guild_id = ?"
-            params = (location_id, guild_id)
+            sql += " AND guild_id = $2"
+            params_list.append(guild_id)
 
-        row = await self.adapter.fetchone(sql, params)
-        location = self._row_to_dict(row)
+        location = await self.adapter.fetchone(sql, tuple(params_list))
+        # location = self._row_to_dict(row) # No longer needed
         if location:
             if location.get('exits') and isinstance(location['exits'], str):
                 location['exits'] = json.loads(location['exits'])
@@ -223,9 +236,10 @@ class DBService:
 
     async def get_all_locations(self, guild_id: str) -> List[Dict[str, Any]]:
         """Retrieves all locations for a given guild."""
-        sql = "SELECT * FROM locations WHERE guild_id = ?"
-        rows = await self.adapter.fetchall(sql, (guild_id,))
-        locations = self._rows_to_dicts(rows)
+        # PostgresAdapter uses $1 placeholder.
+        sql = "SELECT * FROM locations WHERE guild_id = $1"
+        locations = await self.adapter.fetchall(sql, (guild_id,))
+        # locations = self._rows_to_dicts(rows) # No longer needed
         for loc in locations:
             if loc.get('exits') and isinstance(loc['exits'], str):
                 loc['exits'] = json.loads(loc['exits'])
@@ -249,29 +263,33 @@ class DBService:
 
         final_description = description if description else persona
 
+        # PostgresAdapter uses $1, $2, etc. placeholders.
         sql = """
             INSERT INTO npcs (id, template_id, name, description, guild_id, location_id, health, max_health, stats, archetype, is_alive)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        # Note: 'attack' column is not directly in npcs table in existing schema, it's part of stats.
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            RETURNING id;
+        """ # Added RETURNING id
         params = (
             npc_id, template_id, name, final_description, guild_id, location_id,
             hp, hp, # current health and max health
             json.dumps(npc_stats), archetype, 1 # is_alive = True
         )
-        await self.adapter.execute(sql, params)
-        return await self.get_npc(npc_id, guild_id)
+        inserted_id = await self.adapter.execute_insert(sql, params)
+        if inserted_id:
+            return await self.get_npc(npc_id, guild_id) # Fetch using original npc_id
+        return None
 
     async def get_npc(self, npc_id: str, guild_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Retrieves an NPC by its ID."""
-        sql = "SELECT * FROM npcs WHERE id = ?"
-        params = (npc_id,)
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql = "SELECT * FROM npcs WHERE id = $1"
+        params_list = [npc_id]
         if guild_id:
-            sql += " AND guild_id = ?"
-            params = (npc_id, guild_id)
+            sql += " AND guild_id = $2"
+            params_list.append(guild_id)
 
-        row = await self.adapter.fetchone(sql, params)
-        npc = self._row_to_dict(row)
+        npc = await self.adapter.fetchone(sql, tuple(params_list))
+        # npc = self._row_to_dict(row) # No longer needed
         if npc:
             if npc.get('stats') and isinstance(npc['stats'], str):
                 npc['stats'] = json.loads(npc['stats'])
@@ -283,9 +301,10 @@ class DBService:
 
     async def get_npcs_in_location(self, location_id: str, guild_id: str) -> List[Dict[str, Any]]:
         """Retrieves all NPCs in a specific location within a guild."""
-        sql = "SELECT * FROM npcs WHERE location_id = ? AND guild_id = ?"
-        rows = await self.adapter.fetchall(sql, (location_id, guild_id))
-        npcs_list = self._rows_to_dicts(rows)
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql = "SELECT * FROM npcs WHERE location_id = $1 AND guild_id = $2"
+        npcs_list = await self.adapter.fetchall(sql, (location_id, guild_id))
+        # npcs_list = self._rows_to_dicts(rows) # No longer needed
         for npc_data in npcs_list:
             if npc_data.get('stats') and isinstance(npc_data['stats'], str):
                 npc_data['stats'] = json.loads(npc_data['stats'])
@@ -309,10 +328,14 @@ class DBService:
         # The schema for game_logs has player_id as a direct column.
         # The prompt had `player_id: Optional[str] = None`
         # Let's use player_id_column as the parameter that maps to the player_id column in the table.
+        # PostgresAdapter uses $1, $2 placeholders. For timestamp, use NOW() or equivalent.
         sql = """
             INSERT INTO game_logs (log_id, timestamp, guild_id, channel_id, player_id, event_type, message, related_entities, context_data)
-            VALUES (?, strftime('%s','now'), ?, ?, ?, ?, ?, ?, ?)
+            VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8)
         """
+        # Note: strftime('%s','now') is SQLite specific. NOW() is standard SQL for current timestamp.
+        # asyncpg will handle Python datetime objects correctly if passed for timestamp fields.
+        # For simplicity, letting the DB handle timestamp with NOW().
         params = (
             log_id, guild_id, channel_id, player_id_column, event_type, message,
             json.dumps(related_entities) if related_entities else '{}',
@@ -329,9 +352,10 @@ class DBService:
         # This needs to be added via a migration if not already present.
         # Migration v3 for game_logs in SqliteAdapter does NOT include player_id.
         # This method will likely fail or return None until schema is updated.
-        sql = "SELECT * FROM game_logs WHERE guild_id = ? AND player_id = ? ORDER BY timestamp DESC LIMIT 1"
-        row = await self.adapter.fetchone(sql, (guild_id, player_id))
-        log_entry = self._row_to_dict(row)
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql = "SELECT * FROM game_logs WHERE guild_id = $1 AND player_id = $2 ORDER BY timestamp DESC LIMIT 1"
+        log_entry = await self.adapter.fetchone(sql, (guild_id, player_id))
+        # log_entry = self._row_to_dict(row) # No longer needed
         if log_entry:
             if log_entry.get('related_entities') and isinstance(log_entry['related_entities'], str):
                 log_entry['related_entities'] = json.loads(log_entry['related_entities'])
@@ -372,13 +396,13 @@ class DBService:
                    it.name, it.description, it.type as item_type, it.properties
             FROM items i
             JOIN item_templates it ON i.template_id = it.id
-            WHERE i.location_id = ? AND i.guild_id = ?
+            WHERE i.location_id = $1 AND i.guild_id = $2
         """
         # Add more specific conditions if needed, e.g., AND i.owner_id IS NULL
         # This implies items with a location_id are "on the ground".
 
-        rows = await self.adapter.fetchall(sql, (location_id, guild_id))
-        items_in_location = self._rows_to_dicts(rows)
+        items_in_location = await self.adapter.fetchall(sql, (location_id, guild_id))
+        # items_in_location = self._rows_to_dicts(rows) # No longer needed
 
         for item in items_in_location:
             if item.get('properties') and isinstance(item['properties'], str):
@@ -394,17 +418,19 @@ class DBService:
         though item_instance_id should be globally unique (e.g., UUID).
         """
         # The `items` table PK is `id`.
-        sql_check = "SELECT id FROM items WHERE id = ? AND guild_id = ?"
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql_check = "SELECT id FROM items WHERE id = $1 AND guild_id = $2"
         row = await self.adapter.fetchone(sql_check, (item_instance_id, guild_id))
         if not row:
             print(f"DBService: Item instance {item_instance_id} not found in guild {guild_id} for deletion.")
             return False
 
-        sql_delete = "DELETE FROM items WHERE id = ?"
+        sql_delete = "DELETE FROM items WHERE id = $1" # Use $1 for placeholder
         try:
+            # Pass parameters as a tuple
             await self.adapter.execute(sql_delete, (item_instance_id,))
             # Check if deletion was successful (optional, execute would raise error on failure)
-            # For example, by checking cursor.rowcount if the adapter exposed it easily.
+            # For example, by checking status string from adapter.execute if it provides row count like "DELETE 1"
             # For now, assume success if no exception.
             print(f"DBService: Deleted item instance {item_instance_id} from guild {guild_id}.")
             return True
@@ -419,15 +445,17 @@ class DBService:
         # Ensure HP doesn't go below 0 or above max_health if that logic is here
         # For now, just setting it. Max health check might be in game logic.
         # Also, ensure NPC belongs to the guild for safety.
-        sql_check = "SELECT id FROM npcs WHERE id = ? AND guild_id = ?"
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql_check = "SELECT id FROM npcs WHERE id = $1 AND guild_id = $2"
         row = await self.adapter.fetchone(sql_check, (npc_id, guild_id))
         if not row:
             print(f"DBService: NPC {npc_id} not found in guild {guild_id} for HP update.")
             return False
 
-        sql = "UPDATE npcs SET health = ? WHERE id = ? AND guild_id = ?"
+        sql = "UPDATE npcs SET health = $1 WHERE id = $2 AND guild_id = $3"
         try:
             await self.adapter.execute(sql, (max(0, new_hp), npc_id, guild_id)) # Prevent negative HP in DB
+            # Check status from execute if it indicates rows affected, e.g., "UPDATE 1"
             print(f"DBService: Updated NPC {npc_id} HP to {new_hp} in guild {guild_id}.")
             return True
         except Exception as e:
@@ -438,15 +466,17 @@ class DBService:
         """Updates the current HP of a player."""
         # Ensure HP doesn't go below 0 or above max_hp if that logic is here
         # players table has 'hp' column from migration v4
-        sql_check = "SELECT id FROM players WHERE id = ? AND guild_id = ?"
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql_check = "SELECT id FROM players WHERE id = $1 AND guild_id = $2"
         row = await self.adapter.fetchone(sql_check, (player_id, guild_id))
         if not row:
             print(f"DBService: Player {player_id} not found in guild {guild_id} for HP update.")
             return False
 
-        sql = "UPDATE players SET hp = ? WHERE id = ? AND guild_id = ?"
+        sql = "UPDATE players SET hp = $1 WHERE id = $2 AND guild_id = $3"
         try:
             await self.adapter.execute(sql, (max(0, new_hp), player_id, guild_id)) # Prevent negative HP
+            # Check status from execute if it indicates rows affected
             print(f"DBService: Updated Player {player_id} HP to {new_hp} in guild {guild_id}.")
             return True
         except Exception as e:
@@ -471,17 +501,17 @@ class DBService:
         sql_find = """
             SELECT id, conversation_history, state_variables, current_stage_id, template_id, is_active
             FROM dialogues
-            WHERE participants = ? AND guild_id = ? AND is_active = 1
+            WHERE participants = $1 AND guild_id = $2 AND is_active = TRUE
             ORDER BY last_activity_game_time DESC LIMIT 1
-        """
+        """ # Changed is_active = 1 to is_active = TRUE for PostgreSQL boolean type
         # Or, if a session is strictly 1 player + 1 NPC and you want to ensure only one active:
         # WHERE ( (participants LIKE '%' || ? || '%') AND (participants LIKE '%' || ? || '%') ) ...
         # But storing sorted JSON list is cleaner for exact match.
 
-        row = await self.adapter.fetchone(sql_find, (participants_json, guild_id))
+        session = await self.adapter.fetchone(sql_find, (participants_json, guild_id))
+        # session = self._row_to_dict(row) # No longer needed
 
-        if row:
-            session = self._row_to_dict(row)
+        if session: # row is now session (already a dict)
             if session.get('conversation_history') and isinstance(session['conversation_history'], str):
                 session['conversation_history'] = json.loads(session['conversation_history'])
             else:
@@ -508,18 +538,20 @@ class DBService:
                 conversation_history, state_variables, is_active,
                 last_activity_game_time, current_stage_id, template_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id;
+        """ # Added RETURNING id, changed placeholders, is_active = TRUE
         # template_id and current_stage_id might come from NPC's default dialogue or be None initially
         initial_history = []
         initial_state_vars = {}
 
         params = (
             dialogue_id, guild_id, participants_json, channel_id,
-            json.dumps(initial_history), json.dumps(initial_state_vars), 1, # is_active = True
+            json.dumps(initial_history), json.dumps(initial_state_vars), True, # is_active = True (boolean)
             current_time, None, None # current_stage_id, template_id (can be set later)
         )
-        await self.adapter.execute(sql_create, params)
+        # Use execute_insert if RETURNING id is important, otherwise execute is fine
+        await self.adapter.execute_insert(sql_create, params) # Assuming we want the ID for some reason, or just use execute
 
         return {
             "id": dialogue_id,
@@ -539,16 +571,17 @@ class DBService:
         Appends a new entry to the conversation_history of a dialogue session.
         Also updates last_activity_game_time.
         """
-        sql_get_history = "SELECT conversation_history FROM dialogues WHERE id = ?"
-        row = await self.adapter.fetchone(sql_get_history, (dialogue_id,))
+        # PostgresAdapter uses $1 placeholder.
+        sql_get_history = "SELECT conversation_history FROM dialogues WHERE id = $1"
+        dialogue_data = await self.adapter.fetchone(sql_get_history, (dialogue_id,))
 
-        if not row:
+        if not dialogue_data:
             print(f"DBService: Dialogue session {dialogue_id} not found for history update.")
             return False
 
-        current_history_json = row['conversation_history']
+        current_history_json = dialogue_data['conversation_history']
         try:
-            current_history = json.loads(current_history_json) if current_history_json else []
+            current_history = json.loads(current_history_json) if current_history_json and isinstance(current_history_json, str) else (current_history_json if isinstance(current_history_json, list) else [])
         except json.JSONDecodeError:
             current_history = [] # Start fresh if JSON is corrupted
 
@@ -558,11 +591,16 @@ class DBService:
         current_history.append(new_history_entry)
 
         import time # Using real time for simplicity
-        current_time = time.time()
+        current_time = time.time() # Consider using database's NOW() for consistency
 
-        sql_update = "UPDATE dialogues SET conversation_history = ?, last_activity_game_time = ? WHERE id = ?"
+        # PostgresAdapter uses $1, $2, $3 placeholders.
+        sql_update = "UPDATE dialogues SET conversation_history = $1, last_activity_game_time = $2 WHERE id = $3"
         try:
+            # For PostgreSQL, last_activity_game_time should ideally be a timestamp column.
+            # If current_time is float (epoch), ensure DB column type is compatible (e.g., numeric or timestamp correctly handled by asyncpg).
+            # Using NOW() in the query itself might be better: last_activity_game_time = NOW()
             await self.adapter.execute(sql_update, (json.dumps(current_history), current_time, dialogue_id))
+            # Check status from execute if it indicates rows affected
             print(f"DBService: Updated dialogue history for session {dialogue_id}.")
             return True
         except Exception as e:
@@ -576,11 +614,13 @@ class DBService:
         Useful for operations like undo where the history is manipulated externally.
         """
         import time # Using real time for simplicity
-        current_time = time.time()
+        current_time = time.time() # Or NOW()
 
-        sql_update = "UPDATE dialogues SET conversation_history = ?, last_activity_game_time = ? WHERE id = ?"
+        # PostgresAdapter uses $1, $2, $3 placeholders.
+        sql_update = "UPDATE dialogues SET conversation_history = $1, last_activity_game_time = $2 WHERE id = $3"
         try:
             await self.adapter.execute(sql_update, (json.dumps(full_history), current_time, dialogue_id))
+            # Check status from execute
             print(f"DBService: Set (overwrote) dialogue history for session {dialogue_id}.")
             return True
         except Exception as e:
@@ -594,15 +634,16 @@ class DBService:
         Fetches the most recent log entry for a player that has not been undone.
         The player_id here refers to the 'player_id' column in 'game_logs' table.
         """
+        # PostgresAdapter uses $1, $2 placeholders.
         sql = """
             SELECT log_id, event_type, context_data, related_entities, message, timestamp
             FROM game_logs
-            WHERE player_id = ? AND guild_id = ? AND is_undone = 0
+            WHERE player_id = $1 AND guild_id = $2 AND is_undone = FALSE
             ORDER BY timestamp DESC
             LIMIT 1
-        """
-        row = await self.adapter.fetchone(sql, (player_id, guild_id))
-        log_entry = self._row_to_dict(row)
+        """ # Changed is_undone = 0 to is_undone = FALSE for PostgreSQL boolean
+        log_entry = await self.adapter.fetchone(sql, (player_id, guild_id))
+        # log_entry = self._row_to_dict(row) # No longer needed
         if log_entry:
             if log_entry.get('context_data') and isinstance(log_entry['context_data'], str):
                 log_entry['context_data'] = json.loads(log_entry['context_data'])
@@ -612,15 +653,17 @@ class DBService:
 
     async def mark_log_as_undone(self, log_id: str, guild_id: str) -> bool:
         """Marks a specific log entry as undone."""
-        sql_check = "SELECT log_id FROM game_logs WHERE log_id = ? AND guild_id = ?"
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql_check = "SELECT log_id FROM game_logs WHERE log_id = $1 AND guild_id = $2"
         row = await self.adapter.fetchone(sql_check, (log_id, guild_id))
         if not row:
             print(f"DBService: Log entry {log_id} not found in guild {guild_id} to mark as undone.")
             return False
 
-        sql = "UPDATE game_logs SET is_undone = 1 WHERE log_id = ? AND guild_id = ?"
+        sql = "UPDATE game_logs SET is_undone = TRUE WHERE log_id = $1 AND guild_id = $2" # is_undone = TRUE
         try:
             await self.adapter.execute(sql, (log_id, guild_id))
+            # Check status from execute
             print(f"DBService: Marked log entry {log_id} as undone for guild {guild_id}.")
             return True
         except Exception as e:
@@ -645,21 +688,29 @@ class DBService:
         import uuid
         item_instance_id = str(uuid.uuid4())
 
+        # PostgresAdapter uses $1, $2, etc. placeholders.
         sql = """
             INSERT INTO items (id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        # is_temporary defaults to 0 (False) as per schema if not specified
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id;
+        """ # Added RETURNING id
+        # is_temporary defaults to FALSE (0 for SQLite) as per schema if not specified
         params = (
             item_instance_id, template_id, guild_id, owner_id, owner_type,
             location_id, quantity,
             json.dumps(state_variables) if state_variables else '{}',
-            0 # Default is_temporary to False
+            False # Default is_temporary to False (boolean for PostgreSQL)
         )
         try:
-            await self.adapter.execute(sql, params)
-            print(f"DBService: Created item instance {item_instance_id} (template: {template_id}) for guild {guild_id}.")
-            return item_instance_id
+            # Use execute_insert as we have RETURNING id
+            inserted_id = await self.adapter.execute_insert(sql, params)
+            if inserted_id == item_instance_id: # Check if returned ID matches generated one
+                print(f"DBService: Created item instance {item_instance_id} (template: {template_id}) for guild {guild_id}.")
+                return item_instance_id
+            else:
+                # This case should ideally not happen if DB is consistent
+                print(f"DBService: Created item instance for template {template_id}, but ID mismatch: expected {item_instance_id}, got {inserted_id}.")
+                return inserted_id # Return the actual ID from DB
         except Exception as e:
             print(f"DBService: Error creating item instance for template {template_id}: {e}")
             return None
@@ -687,12 +738,19 @@ class DBService:
                 processed_data[key] = value
         
         columns = ', '.join(processed_data.keys())
-        placeholders = ', '.join(['?'] * len(processed_data))
+        placeholders = ', '.join([f'${i+1}' for i in range(len(processed_data))]) # $1, $2, ...
         sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+        if id_field in data: # If primary key is part of data, add RETURNING clause for it
+            sql += f" RETURNING {id_field}"
         
         try:
-            await self.adapter.execute(sql, tuple(processed_data.values()))
-            return data.get(id_field)
+            # If RETURNING is used, execute_insert is better
+            if id_field in data and " RETURNING " in sql:
+                returned_val = await self.adapter.execute_insert(sql, tuple(processed_data.values()))
+                return returned_val # This will be the ID
+            else: # If no RETURNING or not expecting a specific ID back from this call
+                await self.adapter.execute(sql, tuple(processed_data.values()))
+                return data.get(id_field) # Return pre-generated or provided ID
         except Exception as e:
             # TODO: Log the error appropriately
             print(f"Error creating entity in {table_name}: {e}")
@@ -704,15 +762,17 @@ class DBService:
         Handles JSON deserialization for string values that are valid JSON.
         """
         import json
-        sql = f"SELECT * FROM {table_name} WHERE {id_field} = ?"
-        params = (entity_id,)
-
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql = f"SELECT * FROM {table_name} WHERE {id_field} = $1"
+        params_list = [entity_id]
+        param_idx = 2
         if guild_id:
-            sql += " AND guild_id = ?"
-            params += (guild_id,)
+            sql += f" AND guild_id = ${param_idx}"
+            params_list.append(guild_id)
+            param_idx +=1
 
-        row = await self.adapter.fetchone(sql, params)
-        entity = self._row_to_dict(row)
+        entity = await self.adapter.fetchone(sql, tuple(params_list))
+        # entity = self._row_to_dict(row) # No longer needed
 
         if entity:
             for key, value in entity.items():
@@ -739,43 +799,56 @@ class DBService:
             return False # Nothing to update
 
         processed_data = {}
+        param_idx = 1
+        set_clauses = []
+        params_list = []
+
         for key, value in data.items():
             if isinstance(value, (dict, list)):
-                processed_data[key] = json.dumps(value)
+                set_clauses.append(f"{key} = ${param_idx}::jsonb") # Use ::jsonb for PostgreSQL
+                params_list.append(json.dumps(value))
             else:
-                processed_data[key] = value
+                set_clauses.append(f"{key} = ${param_idx}")
+                params_list.append(value)
+            param_idx += 1
         
-        set_clause = ', '.join([f"{key} = ?" for key in processed_data.keys()])
-        sql = f"UPDATE {table_name} SET {set_clause} WHERE {id_field} = ?"
-        
-        params = list(processed_data.values())
-        params.append(entity_id)
+        set_clause_str = ', '.join(set_clauses)
+        sql = f"UPDATE {table_name} SET {set_clause_str} WHERE {id_field} = ${param_idx}"
+        params_list.append(entity_id)
+        param_idx +=1
 
         if guild_id:
-            sql += " AND guild_id = ?"
-            params.append(guild_id)
+            sql += f" AND guild_id = ${param_idx}"
+            params_list.append(guild_id)
+            param_idx +=1
 
         try:
-            # Assuming execute returns a cursor or similar object that has rowcount
-            # or the adapter's execute method itself might indicate success/failure (e.g., by rowcount or exception)
-            # For aiosqlite, execute doesn't directly return rowcount for SELECT, but for UPDATE/DELETE it can be obtained from cursor.
-            # The current adapter.execute() doesn't expose the cursor directly.
-            # Let's assume the adapter's execute method handles commit/rollback and raises an error on failure.
-            # If it returns rowcount, we can use it. If not, success is implied if no exception.
-            # For now, let's rely on the fact that an error would be raised if the update fails.
-            # To be more robust, one might need to modify the adapter or perform a check.
-            # For this implementation, we'll assume success if no exception is raised.
-            # A more direct way to check if an update occurred would be to get the cursor.rowcount.
-            # self.adapter.execute() would need to return the cursor or its rowcount.
-            # Let's modify the thought process: if execute() doesn't raise an error, we assume it's "successful"
-            # in that the command ran. Whether it updated rows depends on the WHERE clause.
-            # A common pattern is for execute to return the number of rows affected.
-            # If self.adapter.execute does not return rowcount, this function can't directly tell if a row was updated.
-            # It can only tell if the SQL command executed without error.
-            # Let's assume for now that if execute() completes, it's a success.
-            # The prompt says: "Assume success if execute completes without error."
-            await self.adapter.execute(sql, tuple(params))
-            return True
+            result_status = await self.adapter.execute(sql, tuple(params_list))
+            # PostgresAdapter.execute returns a status string like "UPDATE 1"
+            # We can check this status to see if any row was actually updated.
+            # For generic update, let's assume "UPDATE" is in the status if successful,
+            # and the number of rows affected is non-zero.
+            # For simplicity, we'll check if "UPDATE" is in the status.
+            # A more precise check would parse the number of affected rows.
+            if isinstance(result_status, str) and "UPDATE" in result_status.upper():
+                # Check if the count is non-zero, e.g., "UPDATE 1" vs "UPDATE 0"
+                parts = result_status.upper().split()
+                if len(parts) > 1 and parts[0] == "UPDATE":
+                    try:
+                        if int(parts[1]) > 0:
+                            return True # Rows were updated
+                        else:
+                            # Command succeeded but no rows matched the WHERE clause
+                            # This might or might not be considered a "successful update"
+                            # depending on expectations. For now, let's say True if command ran.
+                            return True # Or False, if strict "something changed" is needed
+                    except ValueError: # If the part after UPDATE is not a number
+                        return True # Fallback: command ran
+                return True # Fallback: command ran
+            # If result_status is not as expected, or indicates 0 rows updated,
+            # it means the command ran but didn't change anything or the status format is different.
+            # Consider it True if no exception, as per original logic for aiosqlite.
+            return True # Assuming success if execute completes without error
         except Exception as e:
             # TODO: Log the error appropriately
             print(f"Error updating entity {entity_id} in {table_name}: {e}")
@@ -786,18 +859,32 @@ class DBService:
         Deletes an entity by its ID from the specified table.
         Returns True on success, False otherwise.
         """
-        sql = f"DELETE FROM {table_name} WHERE {id_field} = ?"
-        params = [entity_id]
+        # PostgresAdapter uses $1, $2 placeholders.
+        sql = f"DELETE FROM {table_name} WHERE {id_field} = $1"
+        params_list = [entity_id]
+        param_idx = 2
 
         if guild_id:
-            sql += " AND guild_id = ?"
-            params.append(guild_id)
+            sql += f" AND guild_id = ${param_idx}"
+            params_list.append(guild_id)
+            param_idx +=1
 
         try:
-            # Similar to update_entity, success is assumed if execute completes without error.
-            # A more robust check might involve checking affected row count if the adapter provided it.
-            await self.adapter.execute(sql, tuple(params))
-            return True
+            result_status = await self.adapter.execute(sql, tuple(params_list))
+            # Check status from execute if it indicates rows affected, e.g., "DELETE 1"
+            if isinstance(result_status, str) and "DELETE" in result_status.upper():
+                parts = result_status.upper().split()
+                if len(parts) > 1 and parts[0] == "DELETE":
+                    try:
+                        if int(parts[1]) > 0:
+                            return True # Rows were deleted
+                        else:
+                             # Command succeeded but no rows matched
+                            return True # Or False if strict "something deleted" is needed
+                    except ValueError:
+                        return True # Fallback: command ran
+                return True # Fallback: command ran
+            return True # Assuming success if execute completes without error
         except Exception as e:
             # TODO: Log the error appropriately
             print(f"Error deleting entity {entity_id} from {table_name}: {e}")
