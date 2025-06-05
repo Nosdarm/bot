@@ -93,8 +93,7 @@ def run_migrations_online() -> None:
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=True # For SQLite
+            target_metadata=target_metadata
         )
 
         with context.begin_transaction():
