@@ -2352,33 +2352,19 @@ class RuleEngine:
                 }
             )
 
-        # Initialize DetailedCheckResult with defaults/placeholders
-        # Most of these will be populated as the method progresses.
+        # Initialize DetailedCheckResult using the new structure
         result = DetailedCheckResult(
             check_type=check_type,
             entity_doing_check_id=entity_doing_check_id,
             target_entity_id=target_entity_id,
-            difficulty_dc=difficulty_dc,
-            roll_formula="1d20", # Default, will be updated by check_config
-            rolls=[],
-            modifier_applied=0,
-            modifier_details={},
-            total_roll_value=0,
-            target_value=difficulty_dc, # Initial target value is the provided DC
-            outcome=CheckOutcome.FAILURE,
-            is_success=False,
-            is_critical=False,
-            description="Check resolution has not started."
+            difficulty_dc=difficulty_dc # Will be updated if not provided but resolved internally
         )
 
         guild_id = context.get('guild_id') if context else None
         if not guild_id:
             result.description = "Error: guild_id missing from context for resolve_check."
-            # print(result.description) # For server logs
-            return result # Cannot proceed without guild_id for data fetching
+            return result
 
-        # 1. Get Check Configuration from self.rules_data
-        # Ensure self.rules_data is loaded, e.g., in __init__ or a load_state method
         if not self._rules_data or 'checks' not in self._rules_data:
             result.description = "Error: RuleEngine rules_data not loaded or 'checks' key missing."
             return result
@@ -2388,331 +2374,251 @@ class RuleEngine:
             result.description = f"Error: No configuration found for check_type '{check_type}'."
             return result
 
-        result.roll_formula = check_config.get('roll_formula', '1d20') # Update from config
-
-        # 2. Fetch Actor Data
-        actor = None
-        if self._character_manager and entity_doing_check_type == "Character":
-            actor = await self._character_manager.get_character(guild_id, entity_doing_check_id)
-        elif self._npc_manager and entity_doing_check_type == "NPC":
-            actor = await self._npc_manager.get_npc(guild_id, entity_doing_check_id)
-        
-        if not actor:
-            result.description = f"Error: Actor {entity_doing_check_type} ID {entity_doing_check_id} not found."
-            return result
-
-        # 3. Calculate Modifier based on actor's stats/skills and check_config
-        calculated_modifier = 0
-        # modifier_details_dict: Dict[str, Any] = {"base": 0} # Old structure
-        modifier_details_list: List[Dict[str, Any]] = []
-        
-        primary_stat = check_config.get('primary_stat') # e.g., "dexterity"
-        if primary_stat and hasattr(actor, 'stats') and isinstance(actor.stats, dict):
-            stat_value = actor.stats.get(primary_stat, 10)
-            stat_mod = self._calculate_attribute_modifier(stat_value)
-            if stat_mod != 0: # Only add if it has an effect
-                calculated_modifier += stat_mod
-                modifier_details_list.append({"value": stat_mod, "source": f"stat:{primary_stat}"})
-
-        relevant_skill = check_config.get('relevant_skill') # e.g., "stealth"
-        if relevant_skill and hasattr(actor, 'skills') and isinstance(actor.skills, dict):
-            skill_value = actor.skills.get(relevant_skill, 0)
-            if skill_value != 0: # Only add if it has an effect
-                calculated_modifier += skill_value
-                modifier_details_list.append({"value": skill_value, "source": f"skill:{relevant_skill}"})
-        
-        # result.modifier_applied will be set after all modifiers are calculated
-        result.modifier_details = modifier_details_list # Store the base list
-
-        # 3.5. Add modifiers from status effects
-        # This section will now append to modifier_details_list and update calculated_modifier
-        if self._status_manager and hasattr(actor, 'status_effects'):
-            active_status_effect_objects: List[StatusEffect] = []
-            if entity_doing_check_type == "Character":
-                # Character.status_effects is List[Dict[str, Any]]
-                for status_data_dict in getattr(actor, 'status_effects', []):
-                    if isinstance(status_data_dict, dict) and status_data_dict.get('id'):
-                        # Attempt to get the full StatusEffect object if just dicts are stored
-                        # This assumes character might store full dicts or just IDs.
-                        # For now, let's assume it's full dicts that can be parsed by StatusEffect.from_dict
-                        # However, a more robust way is if Character stores StatusEffect objects or RuleEngine uses StatusManager
-                        # to fetch full objects if Character only stores IDs.
-                        # Based on Character model, it's List[Dict[str, Any]], so we should parse them.
-                        # print(f"DEBUG RuleEngine: status_data_dict for char {actor.id}: {status_data_dict}") # DEBUG PRINT
-                        try:
-                            # Make a copy to prevent modification by reference issues, if any.
-                            status_data_copy = status_data_dict.copy() # Corrected: use status_data_dict
-                            status_obj = StatusEffect.from_dict(status_data_copy) 
-                            active_status_effect_objects.append(status_obj)
-                        except KeyError as e_key: # More specific exception
-                            print(f"RuleEngine: KeyError parsing status_data_dict for Character {actor.id}: '{e_key}'. Data: {status_data_copy}") 
-                            raise # Re-raise to see it in test output clearly
-                        except ValueError as e_val: # Changed variable name for clarity
-                            print(f"RuleEngine: ValueError parsing status_data_dict for Character {actor.id}: '{e_val}'. Data: {status_data_copy}")
-                            continue
-                    elif isinstance(status_data_dict, StatusEffect): # If it's already an object
-                        active_status_effect_objects.append(status_data_dict)
-
-            elif entity_doing_check_type == "NPC":
-                # NPC.status_effects is List[str] (IDs)
-                for status_id in getattr(actor, 'status_effects', []):
-                    if isinstance(status_id, str):
-                        status_obj = self._status_manager.get_status_effect(guild_id, status_id)
-                        if status_obj:
-                            active_status_effect_objects.append(status_obj)
-            
-            for status_effect in active_status_effect_objects:
-                template = await self._status_manager.get_status_template(status_effect.status_type)
-                if not template:
-                    continue
-
-                # How to determine if this status applies to *this* check_type?
-                # Option 1: Template has 'modifies_check_types' or 'modifies_check_categories'
-                # Option 2: Template has 'modifies_stat' or 'modifies_skill' that match the current check's primary_stat/skill
-                # Option 3: state_variables on status_effect instance has overrides.
-
-                status_modifier_value = 0
-                mod_source_key = f"status_{status_effect.status_type}" # Default key for modifier_details
-
-                # Check state_variables first for specific modifier values
-                sv_mod_stat = status_effect.state_variables.get('modifies_stat')
-                sv_mod_skill = status_effect.state_variables.get('modifies_skill')
-                sv_mod_check_type = status_effect.state_variables.get('modifies_check_type') # Specific check_type
-                sv_mod_value = status_effect.state_variables.get('modifier_amount') # Standardized key for amount
-
-                template_mod_stat = template.get('modifies_stat')
-                template_mod_skill = template.get('modifies_skill')
-                template_mod_check_type = template.get('modifies_check_type') # Can be a string or list
-                template_mod_value = template.get('modifier_value')
-                
-                # Determine the value: state_variables override template
-                actual_modifier_value = sv_mod_value if sv_mod_value is not None else template_mod_value
-                if actual_modifier_value is None: # Skip if no value defined
-                    continue
-
-                # Check applicability:
-                # 1. Direct check_type match (most specific)
-                applies = False
-                if sv_mod_check_type == check_type or template_mod_check_type == check_type:
-                    applies = True
-                elif isinstance(template_mod_check_type, list) and check_type in template_mod_check_type:
-                    applies = True
-                
-                # 2. Stat match (if check uses a primary_stat)
-                if not applies and primary_stat:
-                    if sv_mod_stat == primary_stat or template_mod_stat == primary_stat:
-                        applies = True
-                
-                # 3. Skill match (if check uses a relevant_skill)
-                if not applies and relevant_skill:
-                    if sv_mod_skill == relevant_skill or template_mod_skill == relevant_skill:
-                        applies = True
-                
-                # 4. Generic "all_checks" or similar category (conceptual)
-                # if not applies and (template.get('modifies_category') == "all_skill_checks" and "skill" in check_type): # Example
-                #     applies = True
-
-                if applies:
-                    try:
-                        status_modifier_value = int(actual_modifier_value)
-                        if status_modifier_value != 0:
-                            calculated_modifier += status_modifier_value
-                            modifier_details_list.append({
-                                "value": status_modifier_value,
-                                "source": f"status:{status_effect.status_type}",
-                                "effect_id": status_effect.id,
-                                "effect_name": template.get('name_i18n',{}).get('en', status_effect.status_type)
-                            })
-                    except (ValueError, TypeError):
-                        print(f"RuleEngine: Warning: Invalid modifier_value '{actual_modifier_value}' for status {status_effect.status_type}.")
-            
-            # calculated_modifier is updated, result.modifier_details is already list reference
-
-        # 3.6. Add modifiers from item effects (equipped items)
-        if self._item_manager and hasattr(actor, 'id'): # Ensure actor has an ID for fetching items
-            # Assumption: For now, any item in inventory that provides a bonus is considered "active".
-            # A proper equipment system would be needed for more granular control.
-            owned_items = await self._item_manager.get_items_by_owner(guild_id, actor.id)
-            
-            for item_instance in owned_items:
-                item_template = await self._item_manager.get_item_template(item_instance.template_id)
-                if not item_template or not isinstance(item_template.get('properties'), dict):
-                    continue
-
-                item_properties = item_template['properties']
-                
-                # Similar logic to status effects for determining applicability and value
-                item_mod_stat = item_properties.get('modifies_stat')
-                item_mod_skill = item_properties.get('modifies_skill')
-                item_mod_check_type = item_properties.get('modifies_check_type') # Specific check_type
-                item_mod_value = item_properties.get('modifier_value') # Standardized key for amount
-                
-                if item_mod_value is None: # Skip if no value defined for modification
-                    continue
-
-                item_applies = False
-                # 1. Direct check_type match
-                if item_mod_check_type == check_type:
-                    item_applies = True
-                elif isinstance(item_mod_check_type, list) and check_type in item_mod_check_type:
-                    item_applies = True
-                
-                # 2. Stat match
-                if not item_applies and primary_stat and item_mod_stat == primary_stat:
-                    item_applies = True
-                
-                # 3. Skill match
-                if not item_applies and relevant_skill and item_mod_skill == relevant_skill:
-                    item_applies = True
-                
-                if item_applies:
-                    try:
-                        item_modifier_value = int(item_mod_value)
-                        if item_modifier_value != 0:
-                            calculated_modifier += item_modifier_value
-                            item_name_for_log = item_template.get('name_i18n',{}).get('en', item_instance.template_id)
-                            modifier_details_list.append({
-                                "value": item_modifier_value,
-                                "source": f"item:{item_name_for_log}",
-                                "item_id": item_instance.id,
-                                "template_id": item_instance.template_id
-                            })
-                    except (ValueError, TypeError):
-                        print(f"RuleEngine: Warning: Invalid modifier_value '{item_mod_value}' for item {item_instance.template_id}.")
-            
-            # calculated_modifier is updated, result.modifier_details is already list reference
-
-        # 3.7. Add modifiers from context (situational modifiers)
-        # Example: context = {"situational_modifiers": [{"value": 2, "source": "High Ground"}, {"value": -1, "source": "Raining"}]}
-        contextual_modifiers_list = context.get('situational_modifiers', [])
-        if isinstance(contextual_modifiers_list, list):
-            for mod_info in contextual_modifiers_list:
-                if isinstance(mod_info, dict):
-                    try:
-                        value = int(mod_info.get('value', 0))
-                        source = str(mod_info.get('source', 'UnknownContextualModifier'))
-                        if value != 0:
-                            calculated_modifier += value
-                            modifier_details_list.append({"value": value, "source": f"context:{source}"})
-                    except (ValueError, TypeError):
-                        print(f"RuleEngine: Warning: Invalid contextual modifier format or value. Modifier info: {mod_info}")
-        
-        # All modifiers have been accumulated in calculated_modifier and modifier_details_list.
-        # Now, set the final values on the result object.
-        result.modifier_applied = calculated_modifier
-        # result.modifier_details is already up-to-date as it's a reference to modifier_details_list
-
-        # 4. Perform Dice Roll
-        try:
-            # Use the roll_formula from check_config
-            roll_result_data = await self.resolve_dice_roll(result.roll_formula, context)
-            result.rolls = roll_result_data.get('rolls', [])
-            base_roll_value = roll_result_data.get('total', 0) # This total already includes modifiers from dice string itself
-        except ValueError as e:
-            result.description = f"Error during dice roll for '{result.roll_formula}': {e}"
-            return result
-        
-        result.total_roll_value = base_roll_value + calculated_modifier # Add character/skill mods to dice string's total
-
-        # 5. Determine Target Value (DC)
-        actual_dc = difficulty_dc # Use provided DC if any
-        
-        if actual_dc is None: # If no explicit DC, try to get from check_config or target
-            if target_entity_id and target_entity_type:
-                target_entity = None
-                if self._character_manager and target_entity_type == "Character":
-                    target_entity = await self._character_manager.get_character(guild_id, target_entity_id)
-                elif self._npc_manager and target_entity_type == "NPC":
-                    target_entity = await self._npc_manager.get_npc(guild_id, target_entity_id)
-
-                if target_entity:
-                    # Example: DC could be a specific stat of the target
-                    dc_stat_name = check_config.get('target_dc_stat') # e.g., "passive_perception" or "armor_class"
-                    if dc_stat_name and hasattr(target_entity, 'stats') and isinstance(target_entity.stats, dict):
-                        actual_dc = target_entity.stats.get(dc_stat_name, check_config.get('default_dc', 15))
-                    else:
-                        actual_dc = check_config.get('default_dc', 15) # Fallback DC from config
-                else: # Target not found, use default DC
-                    actual_dc = check_config.get('default_dc', 15)
-            else: # No target and no explicit DC, use default from config
-                actual_dc = check_config.get('default_dc', 15)
-        
-        result.target_value = actual_dc
-        if result.difficulty_dc is None: result.difficulty_dc = actual_dc # Store the DC used if not explicit
-
-        # 6. Determine Outcome
-        result.is_success = result.total_roll_value >= actual_dc
-        
-        # Critical success/failure logic
-        main_check_rules = self._rules_data.get("check_rules", {})
-        crit_success_config = check_config.get("critical_success", main_check_rules.get("critical_success", {}))
-        crit_failure_config = check_config.get("critical_failure", main_check_rules.get("critical_failure", {}))
-
-        # Determine the actual d20 roll value if applicable (e.g. if roll_formula is "1d20" or similar)
-        # This assumes the first roll in result.rolls corresponds to the primary d20 if it's a d20-based check.
-        # A more robust way would be to inspect roll_result_data for a 'natural_d20_roll' or similar key if resolve_dice_roll provided it.
-        d20_roll_for_crit_check = 0
-        if result.rolls and (result.roll_formula.startswith("1d20") or "d20" in result.roll_formula): # Basic check if d20 was involved
-            # This assumes the "main" d20 roll is the first one if multiple dice (e.g. advantage/disadvantage not yet handled here)
-             # or if the roll_string was complex like "1d20+1d4". For simple "1d20", result.rolls[0] is fine.
-            d20_roll_for_crit_check = result.rolls[0]
-
-        crit_success_roll_val = crit_success_config.get("natural_roll", 20)
-        crit_failure_roll_val = crit_failure_config.get("natural_roll", 1)
-
-        is_natural_crit_success = (d20_roll_for_crit_check == crit_success_roll_val)
-        is_natural_crit_failure = (d20_roll_for_crit_check == crit_failure_roll_val)
-
-        if is_natural_crit_success:
-            result.is_critical = True
-            result.outcome = CheckOutcome.CRITICAL_SUCCESS # Roll quality
-            if crit_success_config.get("auto_succeeds", True):
-                result.is_success = True 
-            # If not auto_succeeds, result.is_success (already calculated from total vs DC) stands.
-        elif is_natural_crit_failure:
-            result.is_critical = True
-            result.outcome = CheckOutcome.CRITICAL_FAILURE # Roll quality
-            if crit_failure_config.get("auto_fails", True):
-                result.is_success = False
-            # If not auto_fails, result.is_success (already calculated) stands.
-        else: # Not a natural critical roll
-            result.is_critical = False
-            result.outcome = CheckOutcome.SUCCESS if result.is_success else CheckOutcome.FAILURE
-
-        # 7. Populate Description
-        result.description = (
-            f"{check_type.replace('_', ' ').capitalize()} by {getattr(actor, 'name', entity_doing_check_id)}: "
-            f"Roll ({result.roll_formula}): {result.rolls} + Mod: {result.modifier_applied} = Total: {result.total_roll_value}. "
-            f"Target DC: {actual_dc}. Outcome: {result.outcome.name}{' (Critical)' if result.is_critical else ''}."
+        # --- Actor's Roll ---
+        actor_roll_config = check_config.get("actor_roll_details", check_config) # Fallback to main for simple checks
+        (
+            result.actor_total_roll_value,
+            result.actor_rolls,
+            result.actor_modifier_applied,
+            result.actor_modifier_details,
+            result.actor_crit_status,
+            result.actor_roll_formula # Store the actual formula used
+        ) = await self._resolve_single_entity_check_roll(
+            entity_doing_check_id, entity_doing_check_type, actor_roll_config, guild_id, context
         )
         
+        if not result.actor_modifier_details or (len(result.actor_modifier_details) == 1 and result.actor_modifier_details[0]['source'] == 'entity_not_found'):
+            result.description = f"Error: Actor {entity_doing_check_type} ID {entity_doing_check_id} not found or failed to roll."
+            result.outcome = CheckOutcome.FAILURE
+            return result
+
+        # --- Resolution Method ---
+        resolution_method = check_config.get("resolution_method", "DC").upper()
+
+        if resolution_method == "OPPOSED_ROLL":
+            if not target_entity_id or not target_entity_type:
+                result.description = "Error: Opposed roll selected, but target_entity_id or target_entity_type missing."
+                result.outcome = CheckOutcome.FAILURE # Actor fails if target is invalid for opposed
+                return result
+
+            target_roll_config = check_config.get("target_roll_details")
+            if not target_roll_config:
+                result.description = f"Error: Opposed roll for '{check_type}', but 'target_roll_details' missing in check_config."
+                result.outcome = CheckOutcome.FAILURE
+                return result
+            
+            (
+                result.target_total_roll_value,
+                result.target_rolls,
+                result.target_modifier_applied,
+                result.target_modifier_details,
+                result.target_crit_status,
+                result.target_roll_formula
+            ) = await self._resolve_single_entity_check_roll(
+                target_entity_id, target_entity_type, target_roll_config, guild_id, context
+            )
+
+            if not result.target_modifier_details or (len(result.target_modifier_details) == 1 and result.target_modifier_details[0]['source'] == 'entity_not_found'):
+                 result.description = f"Error: Target {target_entity_type} ID {target_entity_id} for opposed roll not found or failed to roll. Actor wins by default."
+                 result.is_success = True # Actor considered successful if target is invalid for opposed roll
+                 result.outcome = CheckOutcome.ACTOR_WINS_OPPOSED
+                 # Actor's crit status determines if the overall check is critical
+                 result.is_critical = bool(result.actor_crit_status == "critical_success" or result.actor_crit_status == "critical_failure")
+                 # No target_value (DC) in this case
+            else:
+                # Compare actor vs target
+                if result.actor_total_roll_value > result.target_total_roll_value:
+                    result.is_success = True
+                    result.outcome = CheckOutcome.ACTOR_WINS_OPPOSED
+                elif result.actor_total_roll_value < result.target_total_roll_value:
+                    result.is_success = False
+                    result.outcome = CheckOutcome.TARGET_WINS_OPPOSED
+                else: # Tie
+                    result.is_success = False # Or based on tie-breaking rule, default actor fails on tie
+                    result.outcome = CheckOutcome.TIE_OPPOSED
+                    # Tie-breaking logic from rules_config can be applied here by ConflictResolver or higher level.
+                
+                # Overall critical status for opposed checks:
+                # Can be true if either actor OR target had a critical roll that influences the outcome.
+                # For simplicity, let's say if actor's roll was critical, it's a critical outcome.
+                # Game-specific rules might differ (e.g. only actor's crit matters, or target's crit negates actor's).
+                result.is_critical = bool(result.actor_crit_status or result.target_crit_status) # If either had a crit
+
+        elif resolution_method == "DC":
+            actual_dc = difficulty_dc
+            if actual_dc is None: # Try to get from check_config or target's passive stat
+                if target_entity_id and target_entity_type:
+                    target_entity_obj = None
+                    if self._character_manager and target_entity_type == "Character":
+                        target_entity_obj = await self._character_manager.get_character(guild_id, target_entity_id)
+                    elif self._npc_manager and target_entity_type == "NPC":
+                        target_entity_obj = await self._npc_manager.get_npc(guild_id, target_entity_id)
+
+                    if target_entity_obj:
+                        dc_stat_name = check_config.get('target_dc_stat')
+                        if dc_stat_name and hasattr(target_entity_obj, 'stats') and isinstance(target_entity_obj.stats, dict):
+                            actual_dc = target_entity_obj.stats.get(dc_stat_name, check_config.get('default_dc', 15))
+                        else: actual_dc = check_config.get('default_dc', 15)
+                    else: actual_dc = check_config.get('default_dc', 15)
+                else: actual_dc = check_config.get('default_dc', 15)
+            
+            result.difficulty_dc = actual_dc # Store the DC that was used
+
+            # Standard DC check outcome based on actor's roll
+            if result.actor_crit_status == "critical_success":
+                result.is_success = check_config.get("critical_success", {}).get("auto_succeeds", True)
+                result.outcome = CheckOutcome.CRITICAL_SUCCESS
+                result.is_critical = True
+            elif result.actor_crit_status == "critical_failure":
+                result.is_success = not check_config.get("critical_failure", {}).get("auto_fails", True) # Success is false if auto_fails is true
+                result.outcome = CheckOutcome.CRITICAL_FAILURE
+                result.is_critical = True
+            else:
+                result.is_success = result.actor_total_roll_value >= actual_dc
+                result.outcome = CheckOutcome.SUCCESS if result.is_success else CheckOutcome.FAILURE
+                result.is_critical = False
+        else:
+            result.description = f"Error: Unknown resolution_method '{resolution_method}' in check_config for '{check_type}'."
+            result.outcome = CheckOutcome.FAILURE # Default to failure for unknown methods
+            return result
+
+        # Populate final description
+        actor_name = getattr(result, 'entity_doing_check_id', 'Unknown Actor') # Should be populated from actor object if found
+        # Fetch actor object again to get name for description, or pass actor object through
+        actor_obj_for_name = None
+        if entity_doing_check_type == "Character" and self._character_manager: actor_obj_for_name = await self._character_manager.get_character(guild_id, entity_doing_check_id)
+        elif entity_doing_check_type == "NPC" and self._npc_manager: actor_obj_for_name = await self._npc_manager.get_npc(guild_id, entity_doing_check_id)
+        if actor_obj_for_name: actor_name = getattr(actor_obj_for_name, 'name', entity_doing_check_id)
+        
+        description_parts = [f"{check_type.replace('_', ' ').capitalize()} by {actor_name}:"]
+        description_parts.append(f"Actor Roll ({result.actor_roll_formula}): {result.actor_rolls} + Mod: {result.actor_modifier_applied} = Total: {result.actor_total_roll_value}.")
+        if result.actor_crit_status: description_parts.append(f"Actor Crit: {result.actor_crit_status}.")
+
+        if resolution_method == "OPPOSED_ROLL":
+            target_name = target_entity_id
+            target_obj_for_name = None
+            if target_entity_type == "Character" and self._character_manager: target_obj_for_name = await self._character_manager.get_character(guild_id, target_entity_id)
+            elif target_entity_type == "NPC" and self._npc_manager: target_obj_for_name = await self._npc_manager.get_npc(guild_id, target_entity_id)
+            if target_obj_for_name: target_name = getattr(target_obj_for_name, 'name', target_entity_id)
+
+            description_parts.append(f"VS Target ({target_name}) Roll ({result.target_roll_formula}): {result.target_rolls} + Mod: {result.target_modifier_applied} = Total: {result.target_total_roll_value}.")
+            if result.target_crit_status: description_parts.append(f"Target Crit: {result.target_crit_status}.")
+        else: # DC Check
+            description_parts.append(f"Target DC: {result.difficulty_dc}.")
+        
+        description_parts.append(f"Outcome: {result.outcome.name}{' (Overall Critical)' if result.is_critical and resolution_method == 'DC' else ''}.") # is_critical for DC check is actor's crit
+        result.description = " ".join(description_parts)
+
         if self._game_log_manager:
-            # Log the final result
             log_message = f"Resolve_check completed for Type: '{check_type}', Actor: {entity_doing_check_id}. Outcome: {result.outcome.name}."
-            if result.is_critical:
-                log_message += " (Critical)"
+            if result.is_critical : log_message += " (Critical involved)"
 
-            # Convert DetailedCheckResult to dict for logging metadata
-            # Using vars() for Pydantic models might not be ideal, prefer .model_dump() or .dict()
-            try:
-                result_dict_for_log = result.model_dump() if hasattr(result, 'model_dump') else vars(result)
-            except Exception: # Fallback if neither works (e.g. if not a Pydantic model or simple class)
-                result_dict_for_log = {"description": result.description, "is_success": result.is_success}
-
+            try: result_dict_for_log = result.model_dump() if hasattr(result, 'model_dump') else vars(result)
+            except Exception: result_dict_for_log = {"description": result.description, "is_success": result.is_success}
 
             await self._game_log_manager.log_event(
-                guild_id=guild_id_for_log,
-                event_type="resolve_check_end",
-                message=log_message,
+                guild_id=guild_id_for_log, event_type="resolve_check_end", message=log_message,
                 related_entities=[
                     {"id": entity_doing_check_id, "type": entity_doing_check_type},
                     {"id": str(target_entity_id), "type": str(target_entity_type)} if target_entity_id else None
                 ],
-                metadata={"detailed_check_result": result_dict_for_log, "final_description": result.description}
+                metadata={"detailed_check_result": result_dict_for_log}
             )
         else:
-            print(f"RuleEngine.resolve_check: {result.description}") # Fallback to print if no logger
+            print(f"RuleEngine.resolve_check: {result.description}")
 
         return result
+
+    async def _resolve_single_entity_check_roll(
+        self,
+        entity_id: str,
+        entity_type: str,
+        roll_config: Dict[str, Any], # Contains primary_stat, relevant_skill, base_roll_formula
+        guild_id: str,
+        context: Dict[str, Any]
+    ) -> Tuple[int, List[int], int, List[Dict[str, Any]], Optional[str], str]: # total_value, rolls, modifier, mod_details, crit_status, roll_formula_used
+        """
+        Helper to perform a roll for a single entity (actor or target).
+        Fetches entity, calculates modifiers, rolls dice, determines critical status.
+        """
+        entity_obj: Optional[Union[Character, NPC]] = None
+        if entity_type == "Character" and self._character_manager:
+            entity_obj = await self._character_manager.get_character(guild_id, entity_id)
+        elif entity_type == "NPC" and self._npc_manager:
+            entity_obj = await self._npc_manager.get_npc(guild_id, entity_id)
+
+        if not entity_obj:
+            # Return default failure values if entity not found
+            return 0, [], 0, [{"value": 0, "source": "entity_not_found"}], None, roll_config.get('roll_formula', '1d20')
+
+        calculated_modifier = 0
+        modifier_details_list: List[Dict[str, Any]] = []
+
+        # Stat modifier
+        primary_stat = roll_config.get('primary_stat')
+        if primary_stat and hasattr(entity_obj, 'stats') and isinstance(entity_obj.stats, dict):
+            stat_value = entity_obj.stats.get(primary_stat, 10)
+            stat_mod = self._calculate_attribute_modifier(stat_value)
+            if stat_mod != 0:
+                calculated_modifier += stat_mod
+                modifier_details_list.append({"value": stat_mod, "source": f"stat:{primary_stat}"})
+
+        # Skill modifier
+        relevant_skill = roll_config.get('relevant_skill')
+        if relevant_skill and hasattr(entity_obj, 'skills') and isinstance(entity_obj.skills, dict):
+            skill_value = entity_obj.skills.get(relevant_skill, 0)
+            if skill_value != 0:
+                calculated_modifier += skill_value
+                modifier_details_list.append({"value": skill_value, "source": f"skill:{relevant_skill}"})
+
+        # Status effect modifiers (simplified, adapt full logic from main resolve_check if needed)
+        if self._status_manager and hasattr(entity_obj, 'status_effects'):
+            # This is a simplified version. The main resolve_check has more detailed status effect parsing.
+            # For this helper, it might be acceptable if roll_config can specify direct status modifiers
+            # or if a more generic approach is taken.
+            # For now, let's assume roll_config might have a 'status_modifiers_for_check_type' list or similar.
+            pass # Placeholder for status effect logic
+
+        # Item effect modifiers (simplified)
+        # Placeholder for item effect logic
+
+        # Contextual modifiers (from context passed to this helper, if any specific to this entity's roll)
+        # These would typically be part of the broader 'context' passed to resolve_check,
+        # and then filtered/applied here if roll_config specifies.
+
+        roll_formula_to_use = roll_config.get('roll_formula', '1d20')
+
+        base_roll_value = 0
+        rolls_list: List[int] = []
+        try:
+            roll_result_data = await self.resolve_dice_roll(roll_formula_to_use, context)
+            rolls_list = roll_result_data.get('rolls', [])
+            base_roll_value = roll_result_data.get('total', 0)
+        except ValueError: # Should not happen if resolve_dice_roll is robust
+            rolls_list = [1] # Default roll
+            base_roll_value = 1
+
+        total_roll_value = base_roll_value + calculated_modifier
+
+        # Critical status for this specific roll
+        crit_status: Optional[str] = None
+        d20_roll_for_crit_check = 0
+        if rolls_list and (roll_formula_to_use.startswith("1d20") or "d20" in roll_formula_to_use):
+             d20_roll_for_crit_check = rolls_list[0]
+
+        main_check_rules = self._rules_data.get("check_rules", {})
+        # Use crit config from the entity's roll_config if present, else main rules
+        crit_success_config = roll_config.get("critical_success", main_check_rules.get("critical_success", {}))
+        crit_failure_config = roll_config.get("critical_failure", main_check_rules.get("critical_failure", {}))
+
+        crit_success_roll_val = crit_success_config.get("natural_roll", 20)
+        crit_failure_roll_val = crit_failure_config.get("natural_roll", 1)
+
+        if d20_roll_for_crit_check == crit_success_roll_val:
+            crit_status = "critical_success"
+        elif d20_roll_for_crit_check == crit_failure_roll_val:
+            crit_status = "critical_failure"
+
+        return total_roll_value, rolls_list, calculated_modifier, modifier_details_list, crit_status, roll_formula_to_use
 
     # --- Stubs for Other Key Missing Mechanics ---

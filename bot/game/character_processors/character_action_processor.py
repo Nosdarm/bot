@@ -32,6 +32,8 @@ from bot.game.managers.game_log_manager import GameLogManager
 # Импорт процессоров
 from bot.game.event_processors.event_stage_processor import EventStageProcessor
 from bot.game.event_processors.event_action_processor import EventActionProcessor
+from bot.game.managers.event_manager import EventManager # For handle_explore_action
+from bot.services.openai_service import OpenAIService # For descriptions
 
 
 # Define send callback type
@@ -54,6 +56,8 @@ class CharacterActionProcessor:
                  event_stage_processor: Optional[EventStageProcessor] = None,
                  event_action_processor: Optional[EventActionProcessor] = None,
                  game_log_manager: Optional[GameLogManager] = None,
+                 openai_service: Optional[OpenAIService] = None, # Added
+                 event_manager: Optional[EventManager] = None,   # Added
                 ):
         print("Initializing CharacterActionProcessor...")
         self._character_manager = character_manager
@@ -69,6 +73,8 @@ class CharacterActionProcessor:
         self._npc_manager = npc_manager
         self._event_stage_processor = event_stage_processor
         self._event_action_processor = event_action_processor
+        self._openai_service = openai_service # Added
+        self._event_manager = event_manager   # Added
 
         # For tracking active actions per character per guild
         # Structure: Dict[guild_id_str, Dict[character_id_str, Set[action_type_str]]]
@@ -965,5 +971,184 @@ class CharacterActionProcessor:
             "individual_action_results": individual_action_results,
             "final_modified_entities_this_turn": all_modified_entities_in_turn
         }
+
+    # --- New Action Handlers for TurnProcessingService ---
+
+    async def handle_move_action(self, character: Character, destination_entity: Dict[str, Any], guild_id: str, context_channel_id: Optional[int] = None) -> Dict[str, Any]:
+        """Handles character movement action."""
+        if not self._location_manager or not self._character_manager:
+            return {"success": False, "message": "Location or Character system unavailable.", "state_changed": False}
+
+        destination_name_or_id = destination_entity.get('value', destination_entity.get('id'))
+        if not destination_name_or_id:
+            return {"success": False, "message": "Invalid destination specified for move.", "state_changed": False}
+
+        current_location_id = str(character.location_id) if character.location_id else None
+        if not current_location_id:
+             return {"success": False, "message": "Your character is not in a valid location to move from.", "state_changed": False}
+
+        # Check for valid exit / portal
+        # This assumes get_exit_target can handle names or IDs.
+        # It might return a location_id string or a more complex portal object.
+        target_location_data = self._location_manager.get_exit_target(guild_id, current_location_id, destination_name_or_id)
+
+        target_location_id: Optional[str] = None
+        exit_used_name: str = destination_name_or_id # Default to what was provided
+
+        if isinstance(target_location_data, str): # Direct location_id returned
+            target_location_id = target_location_data
+        elif isinstance(target_location_data, dict) and target_location_data.get('target_location_id'): # Portal object
+            target_location_id = target_location_data.get('target_location_id')
+            exit_used_name = target_location_data.get('name', destination_name_or_id)
+
+
+        if not target_location_id:
+            return {"success": False, "message": f"You can't find a way to '{destination_name_or_id}' from here.", "state_changed": False}
+
+        target_location_details = self._location_manager.get_location_static(guild_id, target_location_id)
+        if not target_location_details:
+             return {"success": False, "message": f"The path to '{exit_used_name}' leads to an unknown place.", "state_changed": False}
+
+        # Update character's location
+        await self._character_manager.update_character_location(character.id, target_location_id, guild_id)
+
+        new_location_name = target_location_details.get('name', target_location_id)
+
+        # TODO: Optional OpenAI description generation
+        # For now, static message:
+        message = f"You move towards '{exit_used_name}' and arrive at {new_location_name}."
+
+        return {"success": True, "message": message, "state_changed": True, "new_location_id": target_location_id}
+
+    async def handle_skill_use_action(self, character: Character, skill_id_or_name: str, target_entity_data: Optional[Dict[str, Any]], action_params: Dict[str, Any], guild_id: str, context_channel_id: Optional[int] = None) -> Dict[str, Any]:
+        """Handles non-combat skill use."""
+        if not self._rule_engine:
+            return {"success": False, "message": "Rule engine unavailable for skill check.", "state_changed": False}
+
+        skill_name = skill_id_or_name # Assume NLU provides the canonical skill name/ID
+
+        # Determine DC
+        difficulty_class = action_params.get('difficulty_dc', 12) # Default DC if not from target
+        target_id = None
+        target_type = None
+
+        if target_entity_data:
+            target_id = target_entity_data.get('id')
+            target_type = target_entity_data.get('type') # e.g., "Item", "Door"
+            # TODO: Fetch target entity properties to get DC if applicable
+            # e.g., if target_type == "Lock": dc = target_properties.get('lock_dc', 15)
+            # This requires managers for items, world objects etc. For now, use default/action_param DC.
+            pass
+
+        # Perform skill check
+        # resolve_skill_check(character, skill_name, difficulty_class, situational_modifier, associated_stat, **kwargs)
+        success, total_roll, d20_roll, crit_status = await self._rule_engine.resolve_skill_check(
+            character, skill_name, difficulty_class
+        )
+
+        message = f"You attempt to use {skill_name}."
+        message += f" (Roll: {d20_roll}, Total: {total_roll} vs DC {difficulty_class}) -> {'Success' if success else 'Failure'}"
+        if crit_status: message += f" ({crit_status.replace('_', ' ').title()})"
+
+        state_changed = False
+        # TODO: Implement actual effects of skill use (e.g., unlocking a door, gathering resources)
+        # This might involve calling other managers and setting state_changed = True.
+        # For now, most non-combat skill uses might just result in information or a temporary state.
+        # Example: if success and skill_name == "disarm_trap": state_changed = True; (call location_manager to update trap state)
+
+        return {"success": success, "message": message, "state_changed": state_changed, "roll_details": {"total": total_roll, "d20": d20_roll, "crit_status": crit_status}}
+
+    async def handle_pickup_item_action(self, character: Character, item_entity_data: Dict[str, Any], guild_id: str, context_channel_id: Optional[int] = None) -> Dict[str, Any]:
+        """Handles picking up an item."""
+        if not self._item_manager or not self._character_manager:
+            return {"success": False, "message": "Item or Character system unavailable.", "state_changed": False}
+
+        item_id_to_pickup = item_entity_data.get('id')
+        if not item_id_to_pickup:
+            return {"success": False, "message": "No specific item identified to pick up.", "state_changed": False}
+
+        character_location_id = str(character.location_id) if character.location_id else None
+        if not character_location_id:
+            return {"success": False, "message": "Your character is not in a valid location to pick up items.", "state_changed": False}
+
+        # Check if item exists at the location
+        item_instance = self._item_manager.get_item_from_location(item_id_to_pickup, character_location_id, guild_id)
+
+        if not item_instance:
+            return {"success": False, "message": f"You couldn't find '{item_entity_data.get('value', item_id_to_pickup)}' here.", "state_changed": False}
+
+        # TODO: Check item properties like 'is_pickupable', weight, etc.
+        # For now, assume any item found can be picked up.
+
+        # Move item to inventory
+        move_success = await self._item_manager.move_item_to_character_inventory(item_id_to_pickup, character.id, guild_id)
+
+        if move_success:
+            item_name = getattr(item_instance, 'name', item_id_to_pickup) # Use item_instance.name if available
+            # If Item model doesn't have .name, ItemManager.get_item_template(item_instance.template_id).name
+            return {"success": True, "message": f"You picked up {item_name}.", "state_changed": True}
+        else:
+            return {"success": False, "message": f"You failed to pick up '{item_entity_data.get('value', item_id_to_pickup)}'.", "state_changed": False}
+
+    async def handle_explore_action(self, character: Character, guild_id: str, action_params: Dict[str, Any], context_channel_id: Optional[int] = None) -> Dict[str, Any]:
+        """Handles looking around or exploring the current location."""
+        if not self._location_manager or not self._character_manager or not self._item_manager or not self._event_manager:
+             return {"success": False, "message": "One or more game systems (location, character, item, event) are unavailable.", "state_changed": False}
+
+        char_loc_id = str(character.location_id) if character.location_id else None
+        if not char_loc_id:
+            return {"success": True, "message": "You are floating in the void. There is nothing to see.", "state_changed": False}
+
+        location = self._location_manager.get_location_instance(guild_id, char_loc_id) # Assuming this returns the full Location object or rich dict
+        if not location:
+            return {"success": True, "message": "You find yourself in an indescribable non-place.", "state_changed": False}
+
+        loc_name = getattr(location, 'name', location.id)
+        loc_desc = getattr(location, 'description', "It's a place.")
+
+        # TODO: Use OpenAI for richer descriptions if available and configured
+        # if self._openai_service and self._settings.get('use_ai_for_explore_descriptions'):
+        #    try:
+        #        # Construct prompt for OpenAI
+        #        # message = await self._openai_service.generate_text(prompt, max_tokens=150)
+        #        pass
+        #    except Exception as e:
+        #        print(f"Error generating AI explore description: {e}")
+        #        # Fallback to static description
+
+        description_parts = [f"You are at {loc_name}. {loc_desc}"]
+
+        # Other characters
+        # Exclude self from list
+        other_chars = [c.name for c in self._character_manager.get_characters_in_location(guild_id, char_loc_id) if c.id != character.id]
+        if other_chars:
+            description_parts.append(f"Nearby, you see: {', '.join(other_chars)}.")
+
+        # NPCs
+        if self._npc_manager: # Check if NPCManager is available
+            npcs = [npc.name for npc in self._npc_manager.get_npcs_in_location(guild_id, char_loc_id)]
+            if npcs:
+                description_parts.append(f"Also here: {', '.join(npcs)}.")
+
+        # Items
+        items = [item.name for item in self._item_manager.get_items_in_location(char_loc_id, guild_id) if getattr(item, 'is_visible', True)] # Assuming Item model has name and is_visible
+        if items:
+            description_parts.append(f"You notice: {', '.join(items)}.")
+
+        # Active events (briefly)
+        active_events = self._event_manager.get_active_events_in_location(char_loc_id, guild_id)
+        if active_events:
+            event_names = [getattr(ev, 'name', ev.id) for ev in active_events]
+            description_parts.append(f"Something seems to be happening: {', '.join(event_names)}.")
+
+        # Exits
+        exits = self._location_manager.get_location_exits_details(guild_id, char_loc_id) # Returns List[Dict] e.g. [{'name': 'north door', 'target_location_name': 'Treasury'}]
+        if exits:
+            exit_descs = [f"{ex.get('name', 'a passage')} (to {ex.get('target_location_name', 'somewhere')})" for ex in exits]
+            description_parts.append(f"Paths lead: {', '.join(exit_descs)}.")
+        else:
+            description_parts.append("There are no obvious exits.")
+
+        return {"success": True, "message": "\n".join(description_parts), "state_changed": False}
 
 # Конец класса CharacterActionProcessor

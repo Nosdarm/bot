@@ -225,6 +225,10 @@ class Character:
             "current_party_id": self.current_party_id,
         }
 
+    def clear_collected_actions(self) -> None:
+        """Clears the collected_actions_json attribute."""
+        self.collected_actions_json = None
+
     # TODO: Other methods for character logic, e.g.,
     # def take_damage(self, amount: float): ...
     # def heal(self, amount: float): ...
