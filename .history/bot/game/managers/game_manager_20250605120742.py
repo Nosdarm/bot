@@ -6,9 +6,8 @@ import json
 import traceback
 import os
 import io
-# from alembic.config import Config # No longer needed
-# from alembic import command      # No longer needed
-from bot.alembic.env import run_async_upgrade # New import
+from alembic.config import Config
+from alembic import command
 from typing import Optional, Dict, Any, Callable, Awaitable, List, Set
 from typing import TYPE_CHECKING
 
@@ -250,19 +249,30 @@ class GameManager:
         await self.db_service.connect()
 
         try:
-            print("GameManager: Running async Alembic upgrade...")
-            # Ensure os.path.abspath is used for self._db_path to get a full path for the URL
+            print("GameManager: Running Alembic migrations...")
+            # Assuming game_manager.py is in bot/game/managers/
+            # Project root is three levels up from the directory of game_manager.py
+            current_file_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file_dir)))
+            alembic_ini_path = os.path.join(project_root, 'alembic.ini')
+            
+            print(f"GameManager: Using alembic.ini path: {alembic_ini_path}")
+            
+            alembic_cfg = Config(alembic_ini_path)
+            
+            # Ensure Alembic uses the same database URL as the application
+            # Use os.path.abspath to ensure the path is absolute for the SQLite URL
             db_url = f"sqlite+aiosqlite:///{os.path.abspath(self._db_path)}"
-            print(f"GameManager: Database URL for Alembic: {db_url}")
-            
-            await run_async_upgrade(db_url) # Call the new async function from bot.alembic.env
-            
-            print("GameManager: Async Alembic upgrade completed successfully.")
+            alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+            print(f"GameManager: Setting Alembic sqlalchemy.url to: {db_url}")
+
+            command.upgrade(alembic_cfg, "head")
+            print("GameManager: Alembic migrations completed successfully.")
         except Exception as e:
-            print(f"GameManager: ❌ ERROR running async Alembic upgrade: {e}")
-            sio = io.StringIO() # Renamed from io_tb to sio as per example
-            traceback.print_exc(file=sio)
-            print(sio.getvalue())
+            print(f"GameManager: ❌ ERROR running Alembic migrations: {e}")
+            io_tb = io.StringIO()
+            traceback.print_exc(file=io_tb)
+            print(io_tb.getvalue())
             # Depending on policy, you might want to re-raise e or handle it
             # For now, log and continue, but this is a critical failure point.
 
