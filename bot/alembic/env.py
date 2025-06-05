@@ -7,12 +7,12 @@ from alembic import context
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
-config = context.config
+# config = context.config # Removed global config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# if config.config_file_name is not None: # Moved to relevant sections
+#     fileConfig(config.config_file_name) # Moved to relevant sections
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -34,6 +34,7 @@ import asyncio # Already present but good to confirm for async operations
 
 
 def run_migrations_offline() -> None:
+    config = context.config # Added local config
     """Run migrations in 'offline' mode.
 
     This configures the context with just a URL
@@ -98,6 +99,12 @@ if __name__ == '__main__': # Guard to prevent execution when imported, though Al
         print("Alembic env.py: Offline migrations (CLI) completed.")
     else:
         print("Alembic env.py: Running migrations in online mode (CLI context)...")
+        config = context.config # Added local config
+        # Interpret the config file for Python logging.
+        # This line sets up loggers basically.
+        if config.config_file_name is not None:
+            fileConfig(config.config_file_name)
+
         cli_db_url = config.get_main_option("sqlalchemy.url") # Get URL from alembic.ini for CLI
         
         if not cli_db_url:
