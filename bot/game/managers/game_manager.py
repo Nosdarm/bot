@@ -124,6 +124,90 @@ class GameManager:
         print("GameManager initialized.\n")
 
     # --- Private Helper Methods for Setup ---
+    async def _load_or_initialize_rules_config(self):
+        print("GameManager: Loading or initializing rules configuration...")
+        if not self.db_service:
+            print("GameManager: Error - DBService not available for loading rules config.")
+            # Fallback to default rules if DB service is not up yet (should ideally not happen if called after DB init)
+            self._rules_config_cache = {
+                "default_bot_language": "en", "game_world_name": "Default World (DB Error)",
+                "story_elements": {"plot_points": [], "themes": ["adventure"]},
+                "character_rules": {"max_level": 100, "base_stats": {"health": 100, "mana": 50}},
+                "skill_rules": {"max_skill_level": 10, "skills_list": ["mining", "herbalism"]},
+                "item_rules": {"max_inventory_size": 20},
+                "combat_rules": {"turn_time_limit_seconds": 30},
+                "economy_rules": {"starting_gold": 100},
+                "npc_rules": {"max_npcs_per_location": 10},
+                "quest_rules": {"max_active_quests": 5},
+                "event_rules": {"global_event_chance": 0.05},
+                "world_rules": {"time_scale_factor": 1.0},
+                "action_rules": {"cooldowns": {"attack": 5.0, "explore": 10.0}},
+                "party_rules": {"max_size": 4}
+            }
+            print("GameManager: Used fallback default rules due to DBService unavailability at time of call.")
+            return
+
+        data = None
+        try:
+            data = await self.db_service.get_entity_by_id('rules_config', DEFAULT_RULES_CONFIG_ID)
+        except Exception as e:
+            print(f"GameManager: Error fetching rules_config from DB: {e}")
+            # Proceed to default initialization as if data was None
+
+        if data and 'config_data' in data:
+            try:
+                self._rules_config_cache = json.loads(data['config_data'])
+                print(f"GameManager: Successfully loaded rules from DB for ID {DEFAULT_RULES_CONFIG_ID}.")
+                # Ensure essential keys are present, migrate if necessary (future enhancement)
+                if "default_bot_language" not in self._rules_config_cache: # Basic check
+                    print("GameManager: Warning - loaded rules lack 'default_bot_language'. Consider migration or re-init.")
+                    # Potentially force re-init or merge with defaults here
+            except json.JSONDecodeError as e:
+                print(f"GameManager: Error decoding JSON from rules_config DB: {e}. Proceeding with default rules.")
+                data = None # Force default initialization
+            except Exception as e: # Catch other potential errors during loading/parsing
+                print(f"GameManager: Unexpected error loading/parsing rules_config: {e}. Proceeding with default rules.")
+                data = None # Force default initialization
+
+
+        if not data or 'config_data' not in data or self._rules_config_cache is None: # condition implies cache wasn't set or forced to None
+            print(f"GameManager: No valid rules found in DB for ID {DEFAULT_RULES_CONFIG_ID} or error during load. Creating default rules...")
+            default_rules = {
+                "default_bot_language": "en",
+                "game_world_name": "Default World",
+                "story_elements": {"plot_points": [], "themes": ["adventure"]},
+                "character_rules": {"max_level": 100, "base_stats": {"health": 100, "mana": 50}},
+                "skill_rules": {"max_skill_level": 10, "skills_list": ["mining", "herbalism"]},
+                "item_rules": {"max_inventory_size": 20},
+                "combat_rules": {"turn_time_limit_seconds": 30},
+                "economy_rules": {"starting_gold": 100},
+                "npc_rules": {"max_npcs_per_location": 10},
+                "quest_rules": {"max_active_quests": 5},
+                "event_rules": {"global_event_chance": 0.05},
+                "world_rules": {"time_scale_factor": 1.0},
+                "action_rules": {"cooldowns": {"attack": 5.0, "explore": 10.0}},
+                "party_rules": {"max_size": 4}
+            }
+            self._rules_config_cache = default_rules
+            print("GameManager: Default rules created and cached.")
+
+            try:
+                await self.db_service.save_entity(
+                    'rules_config',
+                    DEFAULT_RULES_CONFIG_ID,
+                    {'config_data': json.dumps(self._rules_config_cache)},
+                    is_new=True # Assuming this might be the first time, save_entity should handle if it's not new
+                )
+                print(f"GameManager: Successfully saved default rules to DB with ID {DEFAULT_RULES_CONFIG_ID}.")
+            except Exception as e:
+                print(f"GameManager: Error saving default rules to DB: {e}")
+
+        # Final check to ensure cache is not None, even if all else failed.
+        if self._rules_config_cache is None:
+            print("GameManager: CRITICAL - Rules cache is still None after load/init. Using emergency fallback.")
+            self._rules_config_cache = { "default_bot_language": "en", "emergency_mode": True }
+
+
     async def _initialize_database(self):
         print("GameManager: Initializing database service...")
         self.db_service = DBService(db_path=self._db_path)
