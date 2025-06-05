@@ -1,8 +1,8 @@
-"""initial_sqlalchemy_models_autogen
+"""initial_schema_corrected
 
-Revision ID: d7dbd3ac06e8
-Revises:
-Create Date: 2025-06-04 17:48:26.027188
+Revision ID: fd740b26ce51
+Revises: 
+Create Date: 2025-06-05 11:42:43.657428
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'd7dbd3ac06e8'
+revision: str = 'fd740b26ce51'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -115,6 +115,7 @@ def upgrade() -> None:
     )
     op.create_table('parties',
     sa.Column('id', sa.String(), nullable=False),
+    sa.Column('name_i18n', sa.JSON(), nullable=True),
     sa.Column('player_ids', sa.JSON(), nullable=True),
     sa.Column('current_location_id', sa.String(), nullable=True),
     sa.Column('turn_status', sa.String(), nullable=True),
