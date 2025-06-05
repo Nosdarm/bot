@@ -6,9 +6,9 @@ import json
 import traceback
 import os
 import io
-# from alembic.config import Config # No longer needed
-# from alembic import command      # No longer needed
-from bot.alembic.env import run_async_upgrade # New import
+from alembic.config import Config
+from alembic import command
+# from bot.alembic.env import run_async_upgrade # Removed
 from typing import Optional, Dict, Any, Callable, Awaitable, List, Set
 from typing import TYPE_CHECKING
 
@@ -250,27 +250,44 @@ class GameManager:
         await self.db_service.connect()
 
         try:
-            print("GameManager: Running async Alembic upgrade...")
+            print("GameManager: Preparing Alembic configuration for programmatic upgrade...")
+            alembic_cfg = Config()
+            # Assuming alembic.ini is in the root of the project, and this script is in a subfolder.
+            # Adjust "bot/alembic" if script_location is different relative to project root
+            # where alembic.ini is expected or where alembic commands are typically run from.
+            # For many projects, alembic.ini is in the root, and script_location points to the alembic scripts directory.
+            # If alembic.ini is *inside* 'bot/alembic', then config_file_name should be set.
+            # Let's assume script_location is 'bot/alembic' and alembic.ini is not explicitly loaded here,
+            # relying on defaults or that script_location implies enough.
+            # A common practice is to have alembic.ini in the repo root.
+            # If so, script_location should point to the directory with env.py
+            alembic_cfg.set_main_option("script_location", "bot/alembic") # Path to the alembic environment directory
+
             # Ensure os.path.abspath is used for self._db_path to get a full path for the URL
             db_url = f"sqlite+aiosqlite:///{os.path.abspath(self._db_path)}"
-            print(f"GameManager: Database URL for Alembic: {db_url}")
+            alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+
+            print(f"GameManager: Running alembic.command.upgrade('head') for URL: {db_url} using script location: bot/alembic")
             
-            await run_async_upgrade(db_url) # Call the new async function from bot.alembic.env
+            # Run synchronous Alembic command in a separate thread
+            await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
             
-            print("GameManager: Async Alembic upgrade completed successfully.")
+            print("GameManager: Alembic upgrade via command.upgrade completed successfully.")
         except Exception as e:
-            print(f"GameManager: ❌ ERROR running async Alembic upgrade: {e}")
-            sio = io.StringIO() # Renamed from io_tb to sio as per example
+            print(f"GameManager: ❌ ERROR running alembic.command.upgrade: {e}")
+            sio = io.StringIO() # Ensure io is imported
             traceback.print_exc(file=sio)
             print(sio.getvalue())
-            # Depending on policy, you might want to re-raise e or handle it
-            # For now, log and continue, but this is a critical failure point.
+            # Consider re-raising or specific error handling
 
         # This might be redundant if alembic handles all table creation,
         # or could be for other non-schema initializations.
-        await self.db_service.initialize_database() 
+        # Ensure initialize_database is still called if it does more than schema creation.
+        # If it's purely for schema (which Alembic now handles), it might be removable.
+        # For now, keeping it to be safe, assuming it might do other setup.
+        await self.db_service.initialize_database()
         self._db_adapter = self.db_service.adapter
-        print("GameManager: DBService initialized.")
+        print("GameManager: DBService initialized post-Alembic.")
 
     async def _initialize_core_managers_and_services(self):
         print("GameManager: Initializing core managers and services...")
