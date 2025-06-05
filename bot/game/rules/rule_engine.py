@@ -451,6 +451,38 @@ class RuleEngine:
             # Fallback to default if formula is malformed or causes error
             return (attribute_value - 10) // 2
 
+    def get_base_dc(self, relevant_stat_value: int, difficulty_modifier: Optional[str] = None) -> int:
+        """
+        Calculates a base Difficulty Class (DC) for a check, considering a relevant stat
+        and an optional difficulty modifier string (e.g., "easy", "hard").
+        """
+        check_rules = self._rules_data.get("check_rules", {})
+        base_dc_config = check_rules.get("base_dc_calculation", {})
+        difficulty_modifiers_config = check_rules.get("difficulty_modifiers", {})
+
+        base_dc_value = base_dc_config.get("base_value", 10)
+        stat_contribution_formula = base_dc_config.get("stat_contribution_formula", "(relevant_stat_value - 10) // 2")
+
+        stat_contribution = 0
+        try:
+            # Evaluate the formula with relevant_stat_value in its scope
+            # Ensure 'relevant_stat_value' is the only variable available.
+            stat_contribution = eval(stat_contribution_formula, {"__builtins__": {}}, {"relevant_stat_value": relevant_stat_value})
+        except Exception as e:
+            print(f"RuleEngine: Error evaluating stat_contribution_formula '{stat_contribution_formula}': {e}. Using default calculation.")
+            # Fallback to default calculation
+            stat_contribution = (relevant_stat_value - 10) // 2
+
+        difficulty_mod_value = 0
+        if difficulty_modifier:
+            difficulty_mod_value = difficulty_modifiers_config.get(difficulty_modifier.lower(), 0)
+
+        final_dc = base_dc_value + stat_contribution + difficulty_mod_value
+
+        print(f"RuleEngine.get_base_dc: relevant_stat={relevant_stat_value}, difficulty_mod_key='{difficulty_modifier}', base_val={base_dc_value}, stat_contrib={stat_contribution} (from formula: '{stat_contribution_formula}'), diff_mod_val={difficulty_mod_value} -> Final DC={final_dc}")
+
+        return int(final_dc)
+
     async def choose_combat_action_for_npc(
         self,
         npc: "NPC", # Используем строковый литерал!
