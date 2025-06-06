@@ -177,7 +177,7 @@ class LocationManager:
         try:
             # Added descriptions_i18n to SELECT
             sql_instances = '''
-            SELECT id, template_id, name, description, descriptions_i18n, exits, state_variables, is_active, guild_id
+            SELECT id, template_id, name_i18n, descriptions_i18n, exits, state_variables, is_active, guild_id, static_name, static_connections
             FROM locations WHERE guild_id = $1
             ''' # Changed
             rows_instances = await db_service.adapter.fetchall(sql_instances, (guild_id_str,)) # Changed
@@ -196,22 +196,21 @@ class LocationManager:
                            instance_id = str(instance_id_raw)
                            template_id = str(row['template_id']) if row['template_id'] is not None else None
 
-                           # name and description from DB are treated as potential i18n JSON strings
-                           # or plain text for the default language. Location model handles this.
-                           raw_name_from_db = row['name']
-                           raw_description_from_db = row['description'] # This is for description_template_i18n
+                           # name_i18n and descriptions_i18n are now directly selected
+                           name_i18n_json = row['name_i18n']
+                           descriptions_i18n_json = row['descriptions_i18n']
 
-                           # Load instance-specific descriptions_i18n
-                           descriptions_i18n_json = row.get('descriptions_i18n')
+                           instance_name_i18n_dict = {}
+                           if isinstance(name_i18n_json, str):
+                               try: instance_name_i18n_dict = json.loads(name_i18n_json)
+                               except json.JSONDecodeError: instance_name_i18n_dict = {"en": name_i18n_json} # Fallback
+                           elif isinstance(name_i18n_json, dict): instance_name_i18n_dict = name_i18n_json
+
                            instance_descriptions_i18n_dict = {}
                            if isinstance(descriptions_i18n_json, str):
-                               try:
-                                   instance_descriptions_i18n_dict = json.loads(descriptions_i18n_json)
-                               except json.JSONDecodeError:
-                                   print(f"LocationManager: Warning: Invalid JSON in descriptions_i18n for instance {instance_id}. Treating as plain text for 'en'.")
-                                   instance_descriptions_i18n_dict = {"en": descriptions_i18n_json}
-                           elif isinstance(descriptions_i18n_json, dict): # Already a dict (e.g. if mock returns dict)
-                                instance_descriptions_i18n_dict = descriptions_i18n_json
+                               try: instance_descriptions_i18n_dict = json.loads(descriptions_i18n_json)
+                               except json.JSONDecodeError: instance_descriptions_i18n_dict = {"en": descriptions_i18n_json} # Fallback
+                           elif isinstance(descriptions_i18n_json, dict): instance_descriptions_i18n_dict = descriptions_i18n_json
 
                            instance_exits_json = row['exits']
                            instance_state_json_raw = row['state_variables']
@@ -228,15 +227,14 @@ class LocationManager:
                                print(f"LocationManager: Warning: Exits data for instance ID {instance_id} not a dict ({type(instance_exits)}) for guild {guild_id_str}. Resetting.")
 
                            # Prepare data for Location.from_dict or direct cache
-                           # The Location model's from_dict will handle creating name_i18n from raw_name_from_db
-                           # and description_template_i18n from raw_description_from_db.
+                           # The Location model's from_dict will handle creating name_i18n
+                           # and descriptions_i18n directly from these dicts.
                            instance_data_for_model: Dict[str, Any] = {
                                'id': instance_id,
                                'guild_id': guild_id_str,
                                'template_id': template_id,
-                               'name': raw_name_from_db, # Pass raw name, model converts to name_i18n
-                               'description_template': raw_description_from_db, # Pass raw template desc
-                               'descriptions_i18n': instance_descriptions_i18n_dict, # Parsed instance-specific descriptions
+                               'name_i18n': instance_name_i18n_dict, # Pass parsed i18n dict
+                               'descriptions_i18n': instance_descriptions_i18n_dict, # Pass parsed i18n dict
                                'exits': instance_exits,
                                'state': instance_state_data, # Renamed from 'state_variables' to 'state' for model
                                'is_active': bool(is_active),
@@ -323,17 +321,16 @@ class LocationManager:
 
             if instances_to_upsert_list:
                  print(f"LocationManager: Upserting {len(instances_to_upsert_list)} instances for guild {guild_id_str}...")
-                 # Added descriptions_i18n to SQL
+                  # Use name_i18n and descriptions_i18n in SQL
                  upsert_sql = '''
                  INSERT INTO locations (
-                     id, guild_id, template_id, name, description, descriptions_i18n,
+                      id, guild_id, template_id, name_i18n, descriptions_i18n,
                      exits, state_variables, is_active
-                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  ON CONFLICT (id) DO UPDATE SET
                     guild_id = EXCLUDED.guild_id,
                     template_id = EXCLUDED.template_id,
-                    name = EXCLUDED.name,
-                    description = EXCLUDED.description,
+                     name_i18n = EXCLUDED.name_i18n,
                     descriptions_i18n = EXCLUDED.descriptions_i18n,
                     exits = EXCLUDED.exits,
                     state_variables = EXCLUDED.state_variables,
@@ -355,12 +352,8 @@ class LocationManager:
 
                           template_id = instance_data_dict.get('template_id')
 
-                          # name_i18n from model/cache should be used for 'name' column (as JSON string)
-                          # description_template_i18n for 'description' column (as JSON string)
-                          name_i18n_dict = instance_data_dict.get('name_i18n', {"en": instance_id})
-                          desc_template_i18n_dict = instance_data_dict.get('description_template_i18n', {"en": ""})
-
-                          # This is the new instance-specific descriptions_i18n
+                           # Directly use name_i18n and descriptions_i18n from the instance data dict
+                           name_i18n_dict = instance_data_dict.get('name_i18n', {})
                           instance_descriptions_i18n_dict = instance_data_dict.get('descriptions_i18n', {})
 
                           instance_exits = instance_data_dict.get('exits', {})
@@ -383,13 +376,12 @@ class LocationManager:
                               str(instance_id), # id
                               guild_id_str,     # guild_id
                               str(template_id) if template_id is not None else None, # template_id
-                              json.dumps(name_i18n_dict),               # name (stores name_i18n JSON)
-                              json.dumps(desc_template_i18n_dict),      # description (stores template_description_i18n JSON)
-                              json.dumps(instance_descriptions_i18n_dict), # descriptions_i18n (stores instance specific i18n JSON)
+                               json.dumps(name_i18n_dict),               # name_i18n
+                               json.dumps(instance_descriptions_i18n_dict), # descriptions_i18n
                               json.dumps(instance_exits),               # exits
                               json.dumps(state_variables),              # state_variables
-                              bool(is_active),                          # is_active (boolean)
-                          ));
+                               bool(is_active)                           # is_active (boolean)
+                           )); # 8 parameters
                           upserted_instance_ids.add(str(instance_id))
 
                       except Exception as e:
