@@ -5,13 +5,14 @@ from typing import Dict, List, Any
 from bot.nlu.nlu_data_types import NLUEntity
 # Assuming SqliteAdapter or a similar DB interface will be passed
 # from bot.database.sqlite_adapter import SqliteAdapter # Example import
+from bot.services.db_service import DBService
 
 class NLUDataService:
-    def __init__(self, db_adapter: Any): # Replace 'Any' with actual SqliteAdapter type
-        self.db_adapter = db_adapter
-        if not self.db_adapter:
+    def __init__(self, db_service: DBService): # Changed from db_adapter: Any
+        self.db_service = db_service # Changed from self.db_adapter
+        if not self.db_service: # Changed from self.db_adapter
             # Potentially log a warning or raise an error if db_adapter is crucial
-            print("Warning: NLUDataService initialized without a database adapter.")
+            print("Warning: NLUDataService initialized without a database service.") # Changed message
 
     async def get_game_entities(self, guild_id: str, language: str) -> Dict[str, List[NLUEntity]]:
         """
@@ -27,8 +28,8 @@ class NLUDataService:
                                          (e.g., "location", "npc", "item") and values are lists
                                          of NLUEntity objects.
         """
-        if not self.db_adapter:
-            print("Error: NLUDataService cannot fetch entities without a database adapter.")
+        if not self.db_service: # Changed from self.db_adapter
+            print("Error: NLUDataService cannot fetch entities without a database service.") # Changed message
             return {}
 
         # Placeholder implementation:
@@ -58,7 +59,7 @@ class NLUDataService:
         # Adjust if your schema links locations to guilds through another table (e.g., `game_sessions`).
         sql_locations = "SELECT id, name_i18n FROM locations WHERE guild_id = ?;"
         try:
-            locations_data = await self.db_adapter.fetchall(sql_locations, (guild_id,))
+            locations_data = await self.db_service.fetchall(sql_locations, (guild_id,)) # Changed from self.db_adapter
             for loc_row in locations_data:
                 try:
                     names = json.loads(loc_row['name_i18n']) if isinstance(loc_row['name_i18n'], str) else loc_row['name_i18n']
@@ -77,7 +78,7 @@ class NLUDataService:
         # Also consider `generated_npcs` if they are separate and relevant for NLU matching.
         # If so, you might UNION ALL results from both tables.
         try:
-            npcs_data = await self.db_adapter.fetchall(sql_npcs, (guild_id,))
+            npcs_data = await self.db_service.fetchall(sql_npcs, (guild_id,)) # Changed from self.db_adapter
             for npc_row in npcs_data:
                 try:
                     names = json.loads(npc_row['name_i18n']) if isinstance(npc_row['name_i18n'], str) else npc_row['name_i18n']
@@ -93,7 +94,7 @@ class NLUDataService:
         # Assuming item templates are global.
         sql_items = "SELECT id, name_i18n FROM item_templates;"
         try:
-            items_data = await self.db_adapter.fetchall(sql_items, ())
+            items_data = await self.db_service.fetchall(sql_items, ()) # Changed from self.db_adapter
             for item_row in items_data:
                 try:
                     names = json.loads(item_row['name_i18n']) if isinstance(item_row['name_i18n'], str) else item_row['name_i18n']
@@ -109,7 +110,7 @@ class NLUDataService:
         # Assuming skills are global.
         sql_skills = "SELECT id, name_i18n FROM skills;"
         try:
-            skills_data = await self.db_adapter.fetchall(sql_skills, ())
+            skills_data = await self.db_service.fetchall(sql_skills, ()) # Changed from self.db_adapter
             for skill_row in skills_data:
                 try:
                     names = json.loads(skill_row['name_i18n']) if isinstance(skill_row['name_i18n'], str) else skill_row['name_i18n']
