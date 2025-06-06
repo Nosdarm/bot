@@ -11,6 +11,7 @@ from alembic import command
 # from bot.alembic.env import run_async_upgrade # Removed
 from typing import Optional, Dict, Any, Callable, Awaitable, List, Set, TYPE_CHECKING
 
+from asyncpg import exceptions as asyncpg_exceptions # For specific DB error types
 from bot.database.postgres_adapter import SQLALCHEMY_DATABASE_URL as PG_URL_FOR_ALEMBIC
 
 import discord
@@ -461,10 +462,28 @@ class GameManager:
             await self._start_background_tasks()
             print("GameManager: Setup complete.")
         except Exception as e:
-            print(f"GameManager: ❌ CRITICAL ERROR during setup: {e}")
+            # Check if the error is a database connection error
+            is_db_connection_error = isinstance(e, (ConnectionRefusedError, asyncpg_exceptions.CannotConnectNowError))
+            if hasattr(e, '__cause__') and isinstance(e.__cause__, (ConnectionRefusedError, asyncpg_exceptions.CannotConnectNowError)):
+                is_db_connection_error = True
+
+            if is_db_connection_error:
+                print("\n" + "="*80)
+                print("GameManager: ❌ CRITICAL: Failed to establish database connection.")
+                print("The bot cannot start without a valid database connection.")
+                print("Please check the database server status and the `DATABASE_URL` environment variable.")
+                print(f"Specific error details: {e}")
+                print("="*80 + "\n")
+            else:
+                print(f"GameManager: ❌ CRITICAL ERROR during setup: {e}")
+
             traceback.print_exc()
-            try: await self.shutdown()
-            except Exception as shutdown_e: print(f"GameManager: ❌ Error during shutdown from setup failure: {shutdown_e}")
+            try:
+                print("GameManager: Attempting graceful shutdown due to setup failure...")
+                await self.shutdown()
+            except Exception as shutdown_e:
+                print(f"GameManager: ❌ Error during shutdown from setup failure: {shutdown_e}")
+                traceback.print_exc() # Also print traceback for shutdown error
 
     async def handle_discord_message(self, message: "Message") -> None:
         if message.author.bot:
