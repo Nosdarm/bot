@@ -1129,7 +1129,6 @@ class NpcManager:
 
         except Exception as e:
             print(f"NpcManager: ❌ CRITICAL ERROR executing DB fetchall for NPCs for guild {guild_id_str}: {e}")
-            import traceback
             print(traceback.format_exc())
             raise # Пробрасываем критическую ошибку
 

@@ -165,7 +165,7 @@ class GameManager:
 
         if data and 'config_data' in data:
             try:
-                self._rules_config_cache = json.loads(data['config_data'])
+                self._rules_config_cache = data['config_data']
                 print(f"GameManager: Successfully loaded rules from DB for ID {DEFAULT_RULES_CONFIG_ID}.")
                 # Ensure essential keys are present, migrate if necessary (future enhancement)
                 if "default_bot_language" not in self._rules_config_cache: # Basic check
