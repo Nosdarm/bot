@@ -300,7 +300,7 @@ class StatusManager:
                      json.dumps(eff.state_variables),
                      eff.guild_id
                  )
-                 await self._db_service.execute(sql, params) # Changed from _db_adapter
+                 await self._db_service.adapter.execute(sql, params) # Changed from _db_adapter
                  print(f"StatusManager: Status {eff.id} (type: {eff.status_type}) added and directly saved to DB for target {eff.target_id} in guild {guild_id_str}.")
             else:
                  print(f"StatusManager: No DB service. Simulating save for status {eff.id} for guild {guild_id_str}.") # Changed message
@@ -352,7 +352,7 @@ class StatusManager:
             if self._db_service: # Changed from _db_adapter
                 # ИСПРАВЛЕНИЕ: Добавляем фильтр по guild_id в SQL DELETE
                 sql = 'DELETE FROM statuses WHERE id = ? AND guild_id = ?'
-                await self._db_service.execute(sql, (status_effect_id_str, guild_id_str)) # Changed from _db_adapter
+                await self._db_service.adapter.execute(sql, (status_effect_id_str, guild_id_str)) # Changed from _db_adapter
                 # execute уже коммитит
                 print(f"StatusManager: Status {status_effect_id_str} deleted from DB for guild {guild_id_str}.")
             else:
@@ -542,7 +542,7 @@ class StatusManager:
                 # Параметры: сначала ID'ы, затем guild_id
                 params_del = tuple(ids_to_delete) + (guild_id_str,)
 
-                await self._db_service.execute(sql_del, params_del) # Changed from _db_adapter
+                await self._db_service.adapter.execute(sql_del, params_del) # Changed from _db_adapter
                 # execute уже коммитит
                 print(f"StatusManager: Deleted {len(ids_to_delete)} statuses from DB for guild {guild_id_str}.")
                 # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
@@ -590,7 +590,7 @@ class StatusManager:
                     upserted_status_ids.add(eff.id)
 
                 if data_to_upsert:
-                     await self._db_service.execute_many(sql_upsert, data_to_upsert) # Changed from _db_adapter
+                     await self._db_service.adapter.execute_many(sql_upsert, data_to_upsert) # Changed from _db_adapter
                      print(f"StatusManager: Successfully upserted {len(data_to_upsert)} statuses for guild {guild_id_str}.")
                      if guild_id_str in self._dirty_status_effects: # Check if key exists before difference_update
                         self._dirty_status_effects[guild_id_str].difference_update(upserted_status_ids)
@@ -829,7 +829,7 @@ class StatusManager:
             '''
             # 9 columns, 9 placeholders.
 
-            await self._db_service.execute(upsert_sql, db_params) # Changed from _db_adapter
+            await self._db_service.adapter.execute(upsert_sql, db_params) # Changed from _db_adapter
             print(f"StatusManager: Successfully saved status effect {db_id} for guild {guild_id_str}.")
 
             # If this status effect was marked as dirty, clean it from the dirty set for this guild
