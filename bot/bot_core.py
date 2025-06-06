@@ -100,8 +100,17 @@ class RPGBot(commands.Bot):
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
-        if message.content.startswith(self.command_prefix):
-            return
+
+        # Check if the message starts with the command prefix
+        resolved_prefixes = await self.get_prefix(message)
+        if resolved_prefixes:
+            # Ensure resolved_prefixes is suitable for startswith (str or tuple of str)
+            if isinstance(resolved_prefixes, str):
+                if message.content.startswith(resolved_prefixes):
+                    return  # It's a command, return early
+            elif isinstance(resolved_prefixes, list): # Or tuple, though get_prefix typically returns list for multiple
+                if message.content.startswith(tuple(p for p in resolved_prefixes if isinstance(p, str))):
+                    return  # It's a command, return early
 
         if not self.game_manager:
             print("RPGBot: GameManager not available.")
@@ -176,10 +185,13 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
     if _rpg_bot_instance_for_global_send:
         channel = _rpg_bot_instance_for_global_send.get_channel(channel_id)
         if channel:
-            try:
-                await channel.send(content, **kwargs)
-            except Exception as e:
-                print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
+            if isinstance(channel, discord.abc.Messageable):
+                try:
+                    await channel.send(content, **kwargs)
+                except Exception as e:
+                    print(f"Error sending message via global_send_message to channel {channel_id}: {e}")
+            else:
+                print(f"Warning: Channel {channel_id} is not Messageable (type: {type(channel)}). Cannot send message.")
         else:
             print(f"Warning: Channel {channel_id} not found by global_send_message.")
     else:
@@ -199,9 +211,6 @@ async def start_bot():
     TOKEN = os.getenv('DISCORD_TOKEN') or settings.get('discord_token')
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY') or settings.get('openai_api_key')
     COMMAND_PREFIX = os.getenv('COMMAND_PREFIX') or settings.get('discord_command_prefix', '!')
-    DATABASE_PATH = os.getenv('DATABASE_PATH') or settings.get('database_path', 'game_state.db')
-    print(f"CRITICAL_DEBUG: Bot is using database at absolute path: {os.path.abspath(DATABASE_PATH)}")
-
 
     test_guild_ids_str = os.getenv('TEST_GUILD_IDS')
     if test_guild_ids_str:
@@ -242,8 +251,7 @@ async def start_bot():
 
     game_manager = GameManager(
         discord_client=rpg_bot,
-        settings=settings,
-        db_path=DATABASE_PATH
+        settings=settings
     )
     rpg_bot.game_manager = game_manager
     global_game_manager = game_manager
