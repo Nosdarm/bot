@@ -865,6 +865,34 @@ class GameManager:
             print(f"GameManager: ❌ Error during manual simulation tick for server_id {server_id}: {e}")
             traceback.print_exc()
 
+    async def start_new_character_session(self, user_id: int, guild_id: str, character_name: str) -> Optional["Character"]:
+        """
+        Initiates a new character for a user in a guild.
+        This might involve just creating the character or setting up an initial session state.
+        For now, it primarily delegates to CharacterManager.create_character.
+        """
+        if not self.character_manager:
+            print("GameManager: CharacterManager not available. Cannot start new character session.")
+            return None
+
+        print(f"GameManager: Starting new character session for user {user_id} in guild {guild_id} with name {character_name}")
+        try:
+            # import traceback # Already imported at the top of the file
+            character = await self.character_manager.create_character(
+                discord_id=user_id,
+                name=character_name,
+                guild_id=guild_id
+                # Other parameters like initial_location_id, stats, etc.,
+                # are handled by CharacterManager.create_character using its defaults or settings.
+            )
+            if character:
+                print(f"GameManager: Successfully created character {character.id} for user {user_id}.")
+            else:
+                print(f"GameManager: Failed to create character for user {user_id}.")
+            return character
+        except Exception as e:
+            print(f"GameManager: Error in start_new_character_session for user {user_id}: {e}")
+            traceback.print_exc()
+            return None
+
 print(f"DEBUG: Finished loading game_manager.py from: {__file__}")
-
-
