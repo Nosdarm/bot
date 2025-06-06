@@ -6,14 +6,14 @@ import time
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.services.db_service import DBService # Changed
 
 class GameLogManager:
     required_args_for_load: List[str] = ["guild_id"]
     required_args_for_save: List[str] = ["guild_id"]
 
-    def __init__(self, db_adapter: Optional[SqliteAdapter] = None, settings: Optional[Dict[str, Any]] = None):
-        self._db_adapter = db_adapter
+    def __init__(self, db_service: Optional[DBService] = None, settings: Optional[Dict[str, Any]] = None): # Changed
+        self._db_service = db_service # Changed
         self._settings = settings if settings is not None else {}
         print("GameLogManager initialized.")
 
@@ -26,12 +26,12 @@ class GameLogManager:
         channel_id: Optional[int] = None,
         **kwargs: Any # For additional context/data
     ) -> None:
-        if not self._db_adapter:
-            print(f"GameLogManager: DB adapter not available. Log for guild {guild_id} (type: {event_type}): {message}")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"GameLogManager: DB service or adapter not available. Log for guild {guild_id} (type: {event_type}): {message}")
             return
 
         log_id = str(uuid.uuid4())
-        timestamp = time.time()
+        # timestamp = time.time() # Removed, NOW() will be used in SQL
         guild_id_str = str(guild_id)
         event_type_str = str(event_type)
         message_str = str(message)
@@ -42,12 +42,12 @@ class GameLogManager:
         sql = """
             INSERT INTO game_logs 
             (log_id, timestamp, guild_id, channel_id, event_type, message, related_entities, context_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        params = (log_id, timestamp, guild_id_str, channel_id_int, event_type_str, message_str, related_entities_json, context_data_json)
+            VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7)
+        """ # Changed placeholders and added NOW()
+        params = (log_id, guild_id_str, channel_id_int, event_type_str, message_str, related_entities_json, context_data_json) # Removed timestamp
 
         try:
-            await self._db_adapter.execute(sql, params)
+            await self._db_service.adapter.execute(sql, params) # Changed
             # print(f"GameLogManager: Logged event {log_id} for guild {guild_id_str}.") # Can be too verbose
         except Exception as e:
             print(f"GameLogManager: Failed to log event to DB for guild {guild_id_str}. Type: {event_type_str}, Error: {e}")
@@ -61,24 +61,35 @@ class GameLogManager:
         offset: int = 0,
         event_type_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        if not self._db_adapter:
-            print(f"GameLogManager: DB adapter not available. Cannot fetch logs for guild {guild_id}.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"GameLogManager: DB service or adapter not available. Cannot fetch logs for guild {guild_id}.")
             return []
         
         guild_id_str = str(guild_id)
-        base_sql = "SELECT log_id, timestamp, guild_id, channel_id, event_type, message, related_entities, context_data FROM game_logs WHERE guild_id = ?"
         params: List[Any] = [guild_id_str]
+        param_idx = 1
+
+        sql_parts = ["SELECT log_id, timestamp, guild_id, channel_id, event_type, message, related_entities, context_data FROM game_logs WHERE guild_id = $1"]
 
         if event_type_filter:
-            base_sql += " AND event_type = ?"
+            param_idx += 1
+            sql_parts.append(f"AND event_type = ${param_idx}")
             params.append(str(event_type_filter))
         
-        base_sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-        params.extend([int(limit), int(offset)])
+        param_idx += 1
+        sql_parts.append(f"ORDER BY timestamp DESC LIMIT ${param_idx}")
+        params.append(int(limit))
+
+        param_idx += 1
+        sql_parts.append(f"OFFSET ${param_idx}")
+        params.append(int(offset))
+
+        final_sql = " ".join(sql_parts)
 
         try:
-            rows = await self._db_adapter.fetchall(base_sql, tuple(params))
-            return [dict(row) for row in rows] # Convert Row objects to dicts
+            rows = await self._db_service.adapter.fetchall(final_sql, tuple(params)) # Changed
+            # PostgresAdapter.fetchall returns List[Dict], so direct return is fine.
+            return rows
         except Exception as e:
             print(f"GameLogManager: Failed to fetch logs from DB for guild {guild_id_str}. Error: {e}")
             return []

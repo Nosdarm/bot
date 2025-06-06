@@ -13,7 +13,7 @@ from builtins import dict, set, list, str, int, bool, float
 
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.services.db_service import DBService # Changed
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.npc_manager import NpcManager
@@ -40,7 +40,7 @@ class CombatManager:
 
     def __init__(
         self,
-        db_adapter: Optional["SqliteAdapter"] = None,
+        db_service: Optional["DBService"] = None, # Changed
         settings: Optional[Dict[str, Any]] = None,
         rule_engine: Optional["RuleEngine"] = None,
         character_manager: Optional["CharacterManager"] = None,
@@ -51,7 +51,7 @@ class CombatManager:
         location_manager: Optional["LocationManager"] = None,
     ):
         print("Initializing CombatManager (with updated start_combat)...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings
         self._rule_engine = rule_engine
         self._character_manager = character_manager
@@ -120,8 +120,8 @@ class CombatManager:
         location_id_str = str(location_id) if location_id is not None else None
         print(f"CombatManager: Starting new combat in location {location_id_str} for guild {guild_id_str} with participants: {participant_ids_types}...")
 
-        if self._db_adapter is None:
-            print(f"CombatManager: No DB adapter. Cannot start combat.")
+        if self._db_service is None: # Changed
+            print(f"CombatManager: No DB service. Cannot start combat.")
             return None
         if not self._character_manager or not self._npc_manager or not self._rule_engine:
             print(f"CombatManager: ERROR - CharacterManager, NpcManager, or RuleEngine not initialized. Cannot fetch participant details.")
@@ -371,7 +371,7 @@ class CombatManager:
         # ... (load_state needs to be updated to use CombatParticipant.from_dict for participants list) ...
         guild_id_str = str(guild_id)
         print(f"CombatManager: Loading active combats for guild {guild_id_str} from DB...")
-        if self._db_adapter is None: return
+        if self._db_service is None or self._db_service.adapter is None: return # Changed
 
         self._active_combats[guild_id_str] = {}
         self._dirty_combats.pop(guild_id_str, None)
@@ -383,9 +383,9 @@ class CombatManager:
             SELECT id, guild_id, location_id, is_active, participants,
                    current_round, combat_log, state_variables, channel_id, event_id,
                    turn_order, current_turn_index
-            FROM combats WHERE guild_id = ? AND is_active = 1
-            ''' # Removed round_timer from select as it's less relevant with turns
-            rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
+            FROM combats WHERE guild_id = $1 AND is_active = TRUE
+            ''' # Removed round_timer, changed placeholder and is_active condition
+            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed
         except Exception as e:
             print(f"CombatManager: CRITICAL DB error loading combats for guild {guild_id_str}: {e}")
             traceback.print_exc()
@@ -436,7 +436,7 @@ class CombatManager:
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         # ... (save_state needs to serialize Combat.participants (List[CombatParticipant]) to List[Dict] before JSON dump)...
         guild_id_str = str(guild_id)
-        if self._db_adapter is None: return
+        if self._db_service is None or self._db_service.adapter is None: return # Changed
 
         dirty_ids = self._dirty_combats.get(guild_id_str, set()).copy()
         deleted_ids = self._deleted_combats_ids.get(guild_id_str, set()).copy()
@@ -473,7 +473,7 @@ class CombatManager:
             # Ensure all fields for DB are present
             data_tuple = (
                 combat_dict['id'], combat_dict['guild_id'], combat_dict.get('location_id'),
-                int(combat_dict['is_active']), json.dumps(combat_dict['participants']),
+                combat_dict['is_active'], json.dumps(combat_dict['participants']), # Boolean is_active
                 0.0, # round_timer - kept for schema compatibility, not actively used by new model
                 combat_dict['current_round'], json.dumps(combat_dict['combat_log']),
                 json.dumps(combat_dict['state_variables']), combat_dict.get('channel_id'),
@@ -485,22 +485,39 @@ class CombatManager:
             processed_dirty_ids.add(combat_id)
 
         if deleted_ids:
-            placeholders = ','.join(['?'] * len(deleted_ids))
-            delete_sql = f"DELETE FROM combats WHERE guild_id = ? AND id IN ({placeholders})"
-            try:
-                await self._db_adapter.execute(delete_sql, (guild_id_str, *tuple(deleted_ids)))
+            if deleted_ids: # Ensure there are IDs to delete
+                placeholders = ', '.join([f'${i+2}' for i in range(len(deleted_ids))]) # $2, $3, ...
+                delete_sql = f"DELETE FROM combats WHERE guild_id = $1 AND id IN ({placeholders})"
+                try:
+                    await self._db_service.adapter.execute(delete_sql, (guild_id_str, *tuple(deleted_ids))) # Changed
+                    self._deleted_combats_ids.pop(guild_id_str, None)
+                except Exception as e: print(f"CM Error deleting combats: {e}")
+            else: # If deleted_ids was an empty set for this guild initially
                 self._deleted_combats_ids.pop(guild_id_str, None)
-            except Exception as e: print(f"CM Error deleting combats: {e}")
+
 
         if combats_to_upsert_data:
             upsert_sql = '''
-            INSERT OR REPLACE INTO combats
+            INSERT INTO combats
             (id, guild_id, location_id, is_active, participants, round_timer, current_round,
             combat_log, state_variables, channel_id, event_id, turn_order, current_turn_index)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            '''
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (id) DO UPDATE SET
+                guild_id = EXCLUDED.guild_id,
+                location_id = EXCLUDED.location_id,
+                is_active = EXCLUDED.is_active,
+                participants = EXCLUDED.participants,
+                round_timer = EXCLUDED.round_timer,
+                current_round = EXCLUDED.current_round,
+                combat_log = EXCLUDED.combat_log,
+                state_variables = EXCLUDED.state_variables,
+                channel_id = EXCLUDED.channel_id,
+                event_id = EXCLUDED.event_id,
+                turn_order = EXCLUDED.turn_order,
+                current_turn_index = EXCLUDED.current_turn_index
+            ''' # PostgreSQL UPSERT
             try:
-                await self._db_adapter.execute_many(upsert_sql, combats_to_upsert_data)
+                await self._db_service.adapter.execute_many(upsert_sql, combats_to_upsert_data) # Changed
                 if guild_id_str in self._dirty_combats:
                     self._dirty_combats[guild_id_str].difference_update(processed_dirty_ids)
                     if not self._dirty_combats[guild_id_str]: del self._dirty_combats[guild_id_str]

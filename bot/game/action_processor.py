@@ -47,6 +47,8 @@ class ActionProcessor:
         """
 
         # --- Initial Checks (Same) ---
+        if not char_manager:
+            return {"success": False, "message": "**Мастер:** Менеджер персонажей недоступен.", "target_channel_id": ctx_channel_id, "state_changed": False}
         character = char_manager.get_character_by_discord_id(discord_user_id)
         if not character:
             return {"success": False, "message": "**Мастер:** У вас еще нет персонажа в этой игре. Используйте `/join_game`.", "target_channel_id": ctx_channel_id, "state_changed": False}
@@ -54,11 +56,13 @@ class ActionProcessor:
         # Ensure guild_id is consistently string
         guild_id_str_process = str(game_state.server_id)
 
+        if not loc_manager:
+            return {"success": False, "message": "**Мастер:** Менеджер локаций недоступен.", "target_channel_id": ctx_channel_id, "state_changed": False}
         current_location_id = getattr(character, 'current_location_id', None)
         # Assuming get_location is async
         location = await loc_manager.get_location(current_location_id, guild_id=guild_id_str_process) if current_location_id else None
-        location = loc_manager.get_location(character.current_location_id)
-        if not location:
+        # location = loc_manager.get_location(character.current_location_id) # This line seems redundant or incorrect after the await
+        if not location: # location could be None if current_location_id was None or get_location returned None
             return {"success": False, "message": "**Мастер:** Ваш персонаж в неизвестной локации. Обратитесь к администратору.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
         output_channel_id = loc_manager.get_location_channel(game_state, location.id) or ctx_channel_id
@@ -69,13 +73,17 @@ class ActionProcessor:
         # If relevant, it passes ALL handling to EventManager.process_player_action_within_event.
         # EventManager must return a compatible dict structure.
 
-        active_events = event_manager.get_active_events_in_location(location.id)
-        relevant_event_id = None
-        is_potentially_event_interactive = action_type in ["interact", "attack", "use_skill", "skill_check", "move", "use_item"]
-        if is_potentially_event_interactive and active_events:
-             relevant_event_id = active_events[0].id
+        if not event_manager:
+            active_events = []
+            relevant_event_id = None
+        else:
+            active_events = event_manager.get_active_events_in_location(location.id)
+            relevant_event_id = None
+            is_potentially_event_interactive = action_type in ["interact", "attack", "use_skill", "skill_check", "move", "use_item"]
+            if is_potentially_event_interactive and active_events:
+                 relevant_event_id = active_events[0].id
 
-        if relevant_event_id:
+        if relevant_event_id and event_manager: # Ensure event_manager is not None here
              print(f"Action {action_type} for {character.name} routed to event {relevant_event_id}.")
              # Pass all needed components to EventManager method
              # This signature must match what EventManager.process_player_action_within_event expects!
@@ -123,6 +131,8 @@ class ActionProcessor:
         # --- Handle Specific Action Types ---
 
         if action_type == "look":
+            if not openai_service:
+                return {"success": False, "message": "**Мастер:** Сервис AI недоступен для генерации описания.", "target_channel_id": output_channel_id, "state_changed": False}
             system_prompt = "Ты - Мастер текстовой RPG в мире темного фэнтези. Описывай локации атмосферно и мрачно."
             user_prompt = (
                 f"Опиши локацию для персонажа '{character.name}' в мрачном фэнтези. "
@@ -183,7 +193,10 @@ class ActionProcessor:
                 # Mention any visible details about the path or destination from this approach
                 f"Опиши краткое путешествие и прибытие в '{target_location.name}'. Будь атмосферным и мрачным. В конце явно укажи, что персонаж теперь находится в '{target_location.name}'." # Make AI clearly state new location
             )
-            description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=250)
+            if not openai_service:
+                description = f"Вы прибыли в {target_location.name}." # Fallback
+            else:
+                description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=250)
 
             # Determine where to send the description (usually the destination location's mapped channel)
             destination_channel_id = loc_manager.get_location_channel(game_state, target_location.id)
@@ -215,6 +228,8 @@ class ActionProcessor:
              # Get base DC from rules or helper (RuleEngine.get_base_dc might be better location for helper)
              base_dc = skill_rules.get_base_dc(complexity)
 
+             if not rule_engine:
+                return {"success": False, "message": "**Мастер:** Движок правил недоступен для проверки навыка.", "target_channel_id": ctx_channel_id, "state_changed": False}
              # Perform the skill check using the RuleEngine
              # RuleEngine needs Character data -> Pass the character object OR its ID
              # The current RuleEngine.perform_check expects char_id and fetches data internally.
@@ -238,7 +253,10 @@ class ActionProcessor:
                  f"Механический результат проверки:\n{json.dumps(check_result, ensure_ascii=False)}\n"
                  f"Опиши, КАК это выглядело и ощущалось в мире. Учитывай результат (Успех/Провал/Крит) и контекст. Будь мрачным и детализированным."
              )
-             description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=300)
+             if not openai_service:
+                description = "Результат проверки навыка получен." # Fallback
+             else:
+                description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=300)
 
              mech_summary = check_result.get("description", "Проверка выполнена.")
              state_changed = check_result.get("is_critical_failure", False) # Crit fail might change state

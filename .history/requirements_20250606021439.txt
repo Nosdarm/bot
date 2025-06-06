@@ -1,0 +1,8 @@
+alembic
+aiosqlite
+discord.py
+openai
+pydantic
+python-dotenv
+pytest
+sqlalchemy

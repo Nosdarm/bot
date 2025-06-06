@@ -4,6 +4,9 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
+    from bot.game.managers.game_manager import GameManager
+    from bot.game.character_processors.character_action_processor import CharacterActionProcessor
+    from bot.game.party_processors.party_action_processor import PartyActionProcessor
 
 class ActionModuleCog(commands.Cog, name="Action Commands Module"):
     def __init__(self, bot: "RPGBot"):
@@ -13,18 +16,28 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
     @app_commands.describe(target_id="ID объекта или NPC для взаимодействия.", action_type="Тип взаимодействия (если необходимо).")
     async def cmd_interact(self, interaction: Interaction, target_id: str, action_type: Optional[str] = None):
         await interaction.response.defer(ephemeral=False)
-        game_mngr = self.bot.game_manager
-        if not game_mngr or not game_mngr.character_action_processor or not game_mngr.character_manager:
-            await interaction.followup.send("Система взаимодействия временно недоступна.", ephemeral=True)
+
+        game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
+        if not game_mngr:
+            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        player_char = await game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        if not char_action_proc:
+            await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
+            return
+
+        if not game_mngr.character_manager: # Dependent manager check
+            await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
+            return
+
+        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
         action_data = {"target_id": target_id, "interaction_type": action_type}
-        result = await game_mngr.character_action_processor.process_action(
+        result = await char_action_proc.process_action(
             character_id=player_char.id,
             action_type="interact",
             action_data=action_data,
@@ -43,20 +56,31 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
     @app_commands.describe(target_id="ID цели для атаки.")
     async def cmd_fight(self, interaction: Interaction, target_id: str):
         await interaction.response.defer(ephemeral=False)
-        game_mngr = self.bot.game_manager
-        if not game_mngr or not game_mngr.character_action_processor or not game_mngr.character_manager or \
-           not game_mngr.npc_manager or not game_mngr.combat_manager or not game_mngr.rule_engine or \
-           not game_mngr.location_manager:
-            await interaction.followup.send("Боевая система временно недоступна.", ephemeral=True)
+
+        game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
+        if not game_mngr:
+            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        player_char = await game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        if not char_action_proc:
+            await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
+            return
+
+        # Check for other essential managers for this command
+        if not game_mngr.character_manager or not game_mngr.npc_manager or \
+           not game_mngr.combat_manager or not game_mngr.rule_engine or \
+           not game_mngr.location_manager:
+            await interaction.followup.send("Один или несколько необходимых игровых модулей не доступны.", ephemeral=True)
+            return
+
+        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
         action_data = {"target_id": target_id}
-        result = await game_mngr.character_action_processor.process_action(
+        result = await char_action_proc.process_action(
             character_id=player_char.id,
             action_type="initiate_combat",
             action_data=action_data,
@@ -74,19 +98,30 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
     @app_commands.describe(npc_id="ID NPC, с которым вы хотите поговорить.", message_text="Ваше первое сообщение (необязательно).")
     async def cmd_talk(self, interaction: Interaction, npc_id: str, message_text: Optional[str] = None):
         await interaction.response.defer(ephemeral=False)
-        game_mngr = self.bot.game_manager
-        if not game_mngr or not game_mngr.character_action_processor or not game_mngr.character_manager or \
-           not game_mngr.npc_manager or not game_mngr.dialogue_manager or not game_mngr.location_manager:
-            await interaction.followup.send("Система диалогов временно недоступна.", ephemeral=True)
+
+        game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
+        if not game_mngr:
+            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        player_char = await game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        if not char_action_proc:
+            await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
+            return
+
+        # Check for other essential managers for this command
+        if not game_mngr.character_manager or not game_mngr.npc_manager or \
+           not game_mngr.dialogue_manager or not game_mngr.location_manager:
+            await interaction.followup.send("Один или несколько необходимых игровых модулей не доступны.", ephemeral=True)
+            return
+
+        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
         action_data = {"npc_id": npc_id, "initial_message": message_text}
-        result = await game_mngr.character_action_processor.process_action(
+        result = await char_action_proc.process_action(
             character_id=player_char.id,
             action_type="talk",
             action_data=action_data,
@@ -102,18 +137,28 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
     @app_commands.command(name="end_turn", description="Завершить свой ход (в бою или пошаговом режиме).")
     async def cmd_end_turn(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
-        game_mngr = self.bot.game_manager
-        if not game_mngr or not game_mngr.character_action_processor or not game_mngr.character_manager or \
-           not game_mngr.combat_manager: # party_manager might be optional depending on turn structure
-            await interaction.followup.send("Система ходов временно недоступна.", ephemeral=True)
+
+        game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
+        if not game_mngr:
+            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        player_char = await game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        if not char_action_proc:
+            await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
+            return
+
+        # Check for other essential managers
+        if not game_mngr.character_manager or not game_mngr.combat_manager:
+            await interaction.followup.send("Один или несколько необходимых игровых модулей не доступны.", ephemeral=True)
+            return
+
+        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
-        result = await game_mngr.character_action_processor.process_action(
+        result = await char_action_proc.process_action(
             character_id=player_char.id,
             action_type="end_turn",
             action_data={},
@@ -144,12 +189,18 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
              return
 
         await interaction.response.defer(ephemeral=True)
-        game_mngr = self.bot.game_manager
-        if not game_mngr or not game_mngr.party_action_processor:
-            await interaction.followup.send("Система управления партиями недоступна.", ephemeral=True)
+
+        game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
+        if not game_mngr:
+            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        result = await game_mngr.party_action_processor.gm_force_end_party_turn(
+        party_action_proc: Optional["PartyActionProcessor"] = game_mngr.party_action_processor # type: ignore
+        if not party_action_proc:
+            await interaction.followup.send("Обработчик действий партии не доступен.", ephemeral=True)
+            return
+
+        result = await party_action_proc.gm_force_end_party_turn(
             guild_id=str(interaction.guild_id),
             context={'game_manager': game_mngr, 'send_to_command_channel': interaction.followup.send}
         )
