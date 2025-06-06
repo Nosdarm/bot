@@ -134,7 +134,7 @@ class TimeManager:
             # TODO: Убедитесь, что SQL запрос соответствует ВСЕМ полям Timer модели, включая guild_id
             sql = '''
                 INSERT INTO timers (id, type, ends_at, callback_data, is_active, guild_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 -- TODO: Добавить другие колонки в SQL
             '''
             params = (
@@ -189,7 +189,7 @@ class TimeManager:
             # --- Удаляем из БД ---
             if self._db_service: # Changed from _db_adapter
                 # ИСПРАВЛЕНИЕ: Добавляем фильтр по guild_id в SQL DELETE
-                sql = 'DELETE FROM timers WHERE id = ? AND guild_id = ?'
+                sql = 'DELETE FROM timers WHERE id = $1 AND guild_id = $2'
                 await self._db_service.execute(sql, (timer_id_str, guild_id_str)) # Changed from _db_adapter
                 # execute уже коммитит
                 print(f"TimeManager: Timer {timer_id_str} deleted from DB for guild {guild_id_str}.")
@@ -398,7 +398,7 @@ class TimeManager:
 
             # --- Сохранение активных таймеров для этой гильдии (в таблице timers) ---
             # Удаляем ВСЕ таймеры для этой гильдии из БД перед вставкой
-            await self._db_service.adapter.execute("DELETE FROM timers WHERE guild_id = ?", (guild_id_str,))
+            await self._db_service.adapter.execute("DELETE FROM timers WHERE guild_id = $1", (guild_id_str,))
             # execute уже коммитит (для этой одной операции)
 
             # Вставляем все активные таймеры ИЗ КЕША, которые принадлежат этой гильдии
@@ -410,7 +410,7 @@ class TimeManager:
             if timers_to_save:
                 sql = '''
                     INSERT INTO timers (id, type, ends_at, callback_data, is_active, guild_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     -- TODO: Добавить другие колонки в SQL
                 '''
                 data_to_save = []
@@ -475,7 +475,7 @@ class TimeManager:
         try:
             # --- Загрузка текущего игрового времени для этой гильгии ---
             # Предполагаем, что время хранится per-guild в global_state с ключом 'game_time_<guild_id>'
-            sql_time = '''SELECT value FROM global_state WHERE key = ?'''
+            sql_time = '''SELECT value FROM global_state WHERE key = $1'''
             key = f'game_time_{guild_id_str}'
             row_time = await self._db_service.adapter.fetchone(sql_time, (key,)) # Changed from _db_adapter
             if row_time and row_time['value']:
