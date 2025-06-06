@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.database.postgres_adapter import PostgresAdapter
     # Add other necessary imports for type hinting if SkillManager interacts with them
     # e.g., from bot.game.managers.character_manager import CharacterManager
 
 class SkillManager:
-    def __init__(self, db_adapter: Optional[SqliteAdapter] = None, settings: Optional[Dict[str, Any]] = None, **kwargs: Any):
+    def __init__(self, db_adapter: Optional[PostgresAdapter] = None, settings: Optional[Dict[str, Any]] = None, **kwargs: Any):
         self._db_adapter = db_adapter
         self._settings = settings if settings is not None else {}
         # Initialize any necessary attributes, e.g., skill templates cache
