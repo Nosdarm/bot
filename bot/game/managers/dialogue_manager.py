@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHE
 # from bot.game.models.dialogue_template import DialogueTemplate # If template model exists
 
 # Адаптер БД (прямой импорт нужен для __init__)
-from bot.database.sqlite_adapter import SqliteAdapter
+from bot.services.db_service import DBService # Changed
 
 # Import built-in types for isinstance checks
 from builtins import dict, set, list, str, int, bool, float # Added relevant builtins
@@ -86,7 +86,7 @@ class DialogueManager:
 
     def __init__(
         self,
-        db_adapter: Optional["SqliteAdapter"] = None,
+        db_service: Optional["DBService"] = None, # Changed
         settings: Optional[Dict[str, Any]] = None,
         character_manager: Optional["CharacterManager"] = None, # Use string literal!
         npc_manager: Optional["NpcManager"] = None, # Use string literal!
@@ -100,7 +100,7 @@ class DialogueManager:
 
     ):
         print("Initializing DialogueManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings
 
         # Инжектированные зависимости
@@ -244,8 +244,8 @@ class DialogueManager:
         p2_id_str = str(participant2_id)
         print(f"DialogueManager: Starting dialogue {tpl_id_str} between {p1_id_str} and {p2_id_str} for guild {guild_id_str}.")
 
-        if self._db_adapter is None:
-            print(f"DialogueManager: No DB adapter available for guild {guild_id_str}. Cannot start dialogue that requires persistence.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"DialogueManager: No DB service or adapter available for guild {guild_id_str}. Cannot start dialogue that requires persistence.")
             # Should starting dialogue require persistence? Maybe temporary dialogues don't.
             # For now, assume active dialogues should be persistent.
             return None
@@ -664,8 +664,8 @@ class DialogueManager:
         guild_id_str = str(guild_id)
         print(f"DialogueManager: Loading state for guild {guild_id_str} (dialogues + templates)...")
 
-        if self._db_adapter is None:
-            print(f"DialogueManager: Warning: No DB adapter. Skipping dialogue/template load for guild {guild_id_str}. It will work with empty caches.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"DialogueManager: Warning: No DB service or adapter. Skipping dialogue/template load for guild {guild_id_str}. It will work with empty caches.")
             # TODO: In non-DB mode, load placeholder data (e.g. from files/defaults)
             self._active_dialogues.pop(guild_id_str, None)
             self._active_dialogues[guild_id_str] = {} # Ensure empty cache exists for this guild
@@ -698,10 +698,10 @@ class DialogueManager:
             SELECT id, template_id, guild_id, participants, channel_id,
                    current_stage_id, state_variables, last_activity_game_time, event_id,
                    is_active -- Assuming is_active column exists
-            FROM dialogues WHERE guild_id = ? AND is_active = 1
-            '''
+            FROM dialogues WHERE guild_id = $1 AND is_active = TRUE
+            ''' # Changed placeholder and is_active condition
             # Assuming fetchall is async
-            rows = await self._db_adapter.fetchall(sql, (guild_id_str,)) # Filter by guild_id and active
+            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed to db_service
             print(f"DialogueManager: Found {len(rows)} active dialogues in DB for guild {guild_id_str}.")
 
         except Exception as e:
@@ -816,8 +816,8 @@ class DialogueManager:
         guild_id_str = str(guild_id)
         print(f"DialogueManager: Saving dialogues for guild {guild_id_str}...")
 
-        if self._db_adapter is None:
-            print(f"DialogueManager: Warning: Cannot save dialogues for guild {guild_id_str}, DB adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"DialogueManager: Warning: Cannot save dialogues for guild {guild_id_str}, DB service or adapter missing.")
             return
 
         # ИСПРАВЛЕНИЕ: Соберите dirty/deleted ID ИЗ per-guild кешей
@@ -857,23 +857,24 @@ class DialogueManager:
             # 1. Удаление диалогов, помеченных для удаления для этой гильдии
             if deleted_dialogue_ids_for_guild_set:
                  ids_to_delete = list(deleted_dialogue_ids_for_guild_set)
-                 # SQLite allows placeholders like (?, ?, ...). Max is usually 999. Handle larger lists if needed.
-                 # For typical dialogue counts, this should be fine.
-                 placeholders_del = ','.join(['?'] * len(ids_to_delete))
-                 # Ensure deleting only for this guild and these IDs
-                 # Assuming 'id' is the PK and 'guild_id' is a column
-                 delete_sql = f"DELETE FROM dialogues WHERE guild_id = ? AND id IN ({placeholders_del})"
-                 try:
-                     # Assuming execute is async
-                     await self._db_adapter.execute(sql=delete_sql, params=(guild_id_str, *tuple(ids_to_delete))) # Use keyword args if adapter supports it (params=...)
-                     print(f"DialogueManager: Deleted {len(ids_to_delete)} dialogues from DB for guild {guild_id_str}.")
-                     # ИСПРАВЛЕНИЕ: Очищаем per-guild deleted set after successful deletion
-                     self._deleted_dialogue_ids.pop(guild_id_str, None) # Clear the guild's deleted set
-                 except Exception as e:
-                     print(f"DialogueManager: Error deleting dialogues for guild {guild_id_str}: {e}")
-                     # import traceback # traceback should be imported at the top
-                     print(traceback.format_exc())
-                     # Do NOT clear deleted set on error - they remain marked for deletion for next save attempt.
+                 if ids_to_delete: # Check if there are IDs to delete
+                     placeholders_del = ','.join([f'${i+2}' for i in range(len(ids_to_delete))]) # $2, $3, ...
+                     # Ensure deleting only for this guild and these IDs
+                     # Assuming 'id' is the PK and 'guild_id' is a column
+                     delete_sql = f"DELETE FROM dialogues WHERE guild_id = $1 AND id IN ({placeholders_del})" # Changed placeholders
+                     try:
+                         # Assuming execute is async
+                         await self._db_service.adapter.execute(sql=delete_sql, params=(guild_id_str, *tuple(ids_to_delete))) # Changed
+                         print(f"DialogueManager: Deleted {len(ids_to_delete)} dialogues from DB for guild {guild_id_str}.")
+                         # ИСПРАВЛЕНИЕ: Очищаем per-guild deleted set after successful deletion
+                         self._deleted_dialogue_ids.pop(guild_id_str, None) # Clear the guild's deleted set
+                     except Exception as e:
+                         print(f"DialogueManager: Error deleting dialogues for guild {guild_id_str}: {e}")
+                         # import traceback # traceback should be imported at the top
+                         print(traceback.format_exc())
+                         # Do NOT clear deleted set on error - they remain marked for deletion for next save attempt.
+            else: # If the set was empty for this guild
+                self._deleted_dialogue_ids.pop(guild_id_str, None)
 
 
             # 2. Обновить или вставить измененные диалоги для этого guild_id
@@ -881,10 +882,45 @@ class DialogueManager:
                  print(f"DialogueManager: Upserting {len(dialogues_to_save)} active dialogues for guild {guild_id_str}...")
                  # Use correct column names based on expected schema
                  upsert_sql = '''
-                 INSERT OR REPLACE INTO dialogues
+                 INSERT INTO dialogues
                  (id, template_id, guild_id, participants, channel_id, current_stage_id, state_variables, last_activity_game_time, event_id, is_active)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 '''
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 ON CONFLICT (id) DO UPDATE SET
+                    template_id = EXCLUDED.template_id,
+                    guild_id = EXCLUDED.guild_id,
+                    participants = EXCLUDED.participants,
+                    channel_id = EXCLUDED.channel_id,
+                    current_stage_id = EXCLUDED.current_stage_id,
+                    state_variables = EXCLUDED.state_variables,
+                    last_activity_game_time = EXCLUDED.last_activity_game_time,
+                    event_id = EXCLUDED.event_id,
+                    is_active = EXCLUDED.is_active
+                 ''' # PostgreSQL UPSERT
+                 data_to_upsert_params = []
+                 upserted_dialogue_ids_on_success: Set[str] = set() # Track IDs successfully prepared for upsert
+            else: # If the set was empty for this guild
+                self._deleted_dialogue_ids.pop(guild_id_str, None)
+
+
+            # 2. Обновить или вставить измененные диалоги для этого guild_id
+            if dialogues_to_save:
+                 print(f"DialogueManager: Upserting {len(dialogues_to_save)} active dialogues for guild {guild_id_str}...")
+                 # Use correct column names based on expected schema
+                 upsert_sql = '''
+                 INSERT INTO dialogues
+                 (id, template_id, guild_id, participants, channel_id, current_stage_id, state_variables, last_activity_game_time, event_id, is_active)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 ON CONFLICT (id) DO UPDATE SET
+                    template_id = EXCLUDED.template_id,
+                    guild_id = EXCLUDED.guild_id,
+                    participants = EXCLUDED.participants,
+                    channel_id = EXCLUDED.channel_id,
+                    current_stage_id = EXCLUDED.current_stage_id,
+                    state_variables = EXCLUDED.state_variables,
+                    last_activity_game_time = EXCLUDED.last_activity_game_time,
+                    event_id = EXCLUDED.event_id,
+                    is_active = EXCLUDED.is_active
+                 ''' # PostgreSQL UPSERT
                  data_to_upsert_params = []
                  upserted_dialogue_ids_on_success: Set[str] = set() # Track IDs successfully prepared for upsert
 
@@ -928,10 +964,9 @@ class DialogueManager:
                                state_variables_json,
                                float(last_activity_game_time) if last_activity_game_time is not None else None, # Ensure float or None
                                str(event_id) if event_id is not None else None, # Ensure str or None
-                               int(bool(is_active)), # Save boolean as integer (1 or 0)
+                               is_active, # Pass boolean directly
                            ))
                            upserted_dialogue_ids_on_success.add(str(dialogue_id)) # Track ID that was prepared
-
 
                       except Exception as e:
                            print(f"DialogueManager: Error preparing data for dialogue {d.get('id', 'N/A')} (guild {d.get('guild_id', 'N/A')}) for upsert: {e}. Data: {d}")
@@ -941,11 +976,11 @@ class DialogueManager:
 
 
                  if data_to_upsert_params: # Only execute if there is data to upsert
-                      if self._db_adapter is None:
-                           print(f"DialogueManager: Warning: DB adapter is None during dialogue upsert batch for guild {guild_id_str}.")
+                      if self._db_service is None or self._db_service.adapter is None: # Changed
+                           print(f"DialogueManager: Warning: DB service or adapter is None during dialogue upsert batch for guild {guild_id_str}.")
                       else:
                            # Assuming execute_many is async
-                           await self._db_adapter.execute_many(sql=upsert_sql, data=data_to_upsert_params) # Use keyword args
+                           await self._db_service.adapter.execute_many(sql=upsert_sql, data=data_to_upsert_params) # Changed
                            print(f"DialogueManager: Successfully upserted {len(data_to_upsert_params)} active dialogues for guild {guild_id_str}.")
 
                            # Only clear dirty flags for dialogues that were successfully processed and upserted

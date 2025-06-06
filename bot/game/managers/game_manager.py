@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import discord
 from discord import Client
 
-from bot.database.sqlite_adapter import SqliteAdapter
+# from bot.database.sqlite_adapter import SqliteAdapter # Removed
 from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 
@@ -71,16 +71,16 @@ class GameManager:
     def __init__(
         self,
         discord_client: Client,
-        settings: Dict[str, Any],
-        db_path: str
+        settings: Dict[str, Any]
+        # db_path: str, # Removed
     ):
         print("Initializing GameManager…")
         self._discord_client = discord_client
         self._settings = settings
-        self._db_path = db_path
+        # self._db_path = db_path # Removed
         self._rules_config_cache: Optional[Dict[str, Any]] = None
 
-        self._db_adapter: Optional[SqliteAdapter] = None
+        self.db_service: Optional[DBService] = None # Changed from _db_adapter
         self._persistence_manager: Optional["PersistenceManager"] = None
         self._world_simulation_processor: Optional["WorldSimulationProcessor"] = None
         self._command_router: Optional["CommandRouter"] = None
@@ -246,7 +246,7 @@ class GameManager:
 
     async def _initialize_database(self):
         print("GameManager: Initializing database service...")
-        self.db_service = DBService(db_path=self._db_path)
+        self.db_service = DBService() # Removed db_path
         await self.db_service.connect()
 
         try:
@@ -264,7 +264,7 @@ class GameManager:
             alembic_cfg.set_main_option("script_location", "bot/alembic") # Path to the alembic environment directory
 
             # Ensure os.path.abspath is used for self._db_path to get a full path for the URL
-            db_url = f"sqlite+aiosqlite:///{os.path.abspath(self._db_path)}"
+            db_url = "postgresql+asyncpg://postgres:test123@localhost:5433/kvelin_bot" # Changed
             alembic_cfg.set_main_option("sqlalchemy.url", db_url)
 
             print(f"GameManager: Running alembic.command.upgrade('head') for URL: {db_url} using script location: bot/alembic")
@@ -286,7 +286,7 @@ class GameManager:
         # If it's purely for schema (which Alembic now handles), it might be removable.
         # For now, keeping it to be safe, assuming it might do other setup.
         await self.db_service.initialize_database()
-        self._db_adapter = self.db_service.adapter
+        # self._db_adapter = self.db_service.adapter # Removed, GameManager holds db_service instance
         print("GameManager: DBService initialized post-Alembic.")
 
     async def _initialize_core_managers_and_services(self):
@@ -302,8 +302,8 @@ class GameManager:
         await self._load_or_initialize_rules_config()
         self.rule_engine = RuleEngine(settings=self._settings.get('rule_settings', {}), rules_data=self._rules_config_cache)
 
-        self.time_manager = TimeManager(db_adapter=self._db_adapter, settings=self._settings.get('time_settings', {}))
-        self.location_manager = LocationManager(db_adapter=self._db_adapter, settings=self._settings.get('location_settings', {}))
+        self.time_manager = TimeManager(db_service=self.db_service, settings=self._settings.get('time_settings', {})) # Changed
+        self.location_manager = LocationManager(db_service=self.db_service, settings=self._settings.get('location_settings', {})) # Changed
 
         try:
             oset = self._settings.get('openai_settings', {})
@@ -313,8 +313,8 @@ class GameManager:
             if not self.openai_service.is_available(): self.openai_service = None
         except Exception as e: self.openai_service = None; print(f"GameManager: Warn: Failed OpenAIService init ({e})")
 
-        self.event_manager = EventManager(db_adapter=self._db_adapter, settings=self._settings.get('event_settings', {}), openai_service=self.openai_service)
-        self.character_manager = CharacterManager(db_adapter=self._db_adapter, settings=self._settings.get('character_settings', {}), location_manager=self.location_manager, rule_engine=self.rule_engine)
+        self.event_manager = EventManager(db_service=self.db_service, settings=self._settings.get('event_settings', {}), openai_service=self.openai_service) # Changed
+        self.character_manager = CharacterManager(db_service=self.db_service, settings=self._settings.get('character_settings', {}), location_manager=self.location_manager, rule_engine=self.rule_engine) # Changed
         print("GameManager: Core managers and OpenAI service initialized.")
 
     async def _initialize_dependent_managers(self):
@@ -337,25 +337,25 @@ class GameManager:
         from bot.services.nlu_data_service import NLUDataService
         from bot.game.managers.lore_manager import LoreManager
 
-        self.item_manager = ItemManager(db_adapter=self._db_adapter, settings=self._settings.get('item_settings', {}), location_manager=self.location_manager, rule_engine=self.rule_engine)
-        self.status_manager = StatusManager(db_adapter=self._db_adapter, settings=self._settings.get('status_settings', {}), rule_engine=self.rule_engine, time_manager=self.time_manager)
-        self.combat_manager = CombatManager(db_adapter=self._db_adapter, settings=self._settings.get('combat_settings', {}), rule_engine=self.rule_engine, character_manager=self.character_manager, status_manager=self.status_manager, item_manager=self.item_manager)
-        self.crafting_manager = CraftingManager(db_adapter=self._db_adapter, settings=self._settings.get('crafting_settings', {}), item_manager=self.item_manager, character_manager=self.character_manager, time_manager=self.time_manager, rule_engine=self.rule_engine)
-        self.economy_manager = EconomyManager(db_adapter=self._db_adapter, settings=self._settings.get('economy_settings', {}), item_manager=self.item_manager, location_manager=self.location_manager, character_manager=self.character_manager, rule_engine=self.rule_engine, time_manager=self.time_manager)
-        self.npc_manager = NpcManager(db_adapter=self._db_adapter, settings=self._settings.get('npc_settings', {}), item_manager=self.item_manager, rule_engine=self.rule_engine, combat_manager=self.combat_manager, status_manager=self.status_manager, openai_service=self.openai_service)
-        self.party_manager = PartyManager(db_adapter=self._db_adapter, settings=self._settings.get('party_settings', {}), character_manager=self.character_manager, npc_manager=self.npc_manager)
-        self.ability_manager = AbilityManager(db_adapter=self._db_adapter, settings=self._settings.get('ability_settings', {}), character_manager=self.character_manager, rule_engine=self.rule_engine, status_manager=self.status_manager)
-        self.spell_manager = SpellManager(db_adapter=self._db_adapter, settings=self._settings.get('spell_settings', {}), character_manager=self.character_manager, rule_engine=self.rule_engine, status_manager=self.status_manager)
-        self.game_log_manager = GameLogManager(db_adapter=self._db_adapter, settings=self._settings.get('game_log_settings'))
-        self.relationship_manager = RelationshipManager(db_adapter=self._db_adapter, settings=self._settings.get('relationship_settings'))
+        self.item_manager = ItemManager(db_service=self.db_service, settings=self._settings.get('item_settings', {}), location_manager=self.location_manager, rule_engine=self.rule_engine) # Changed
+        self.status_manager = StatusManager(db_service=self.db_service, settings=self._settings.get('status_settings', {}), rule_engine=self.rule_engine, time_manager=self.time_manager) # Changed
+        self.combat_manager = CombatManager(db_service=self.db_service, settings=self._settings.get('combat_settings', {}), rule_engine=self.rule_engine, character_manager=self.character_manager, status_manager=self.status_manager, item_manager=self.item_manager) # Changed
+        self.crafting_manager = CraftingManager(db_service=self.db_service, settings=self._settings.get('crafting_settings', {}), item_manager=self.item_manager, character_manager=self.character_manager, time_manager=self.time_manager, rule_engine=self.rule_engine) # Changed
+        self.economy_manager = EconomyManager(db_service=self.db_service, settings=self._settings.get('economy_settings', {}), item_manager=self.item_manager, location_manager=self.location_manager, character_manager=self.character_manager, rule_engine=self.rule_engine, time_manager=self.time_manager) # Changed
+        self.npc_manager = NpcManager(db_service=self.db_service, settings=self._settings.get('npc_settings', {}), item_manager=self.item_manager, rule_engine=self.rule_engine, combat_manager=self.combat_manager, status_manager=self.status_manager, openai_service=self.openai_service) # Changed
+        self.party_manager = PartyManager(db_service=self.db_service, settings=self._settings.get('party_settings', {}), character_manager=self.character_manager, npc_manager=self.npc_manager) # Changed
+        self.ability_manager = AbilityManager(db_service=self.db_service, settings=self._settings.get('ability_settings', {}), character_manager=self.character_manager, rule_engine=self.rule_engine, status_manager=self.status_manager) # Changed
+        self.spell_manager = SpellManager(db_service=self.db_service, settings=self._settings.get('spell_settings', {}), character_manager=self.character_manager, rule_engine=self.rule_engine, status_manager=self.status_manager) # Changed
+        self.game_log_manager = GameLogManager(db_service=self.db_service, settings=self._settings.get('game_log_settings')) # Changed
+        self.relationship_manager = RelationshipManager(db_service=self.db_service, settings=self._settings.get('relationship_settings')) # Changed
         self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service)
-        self.dialogue_manager = DialogueManager(db_adapter=self._db_adapter, settings=self._settings.get('dialogue_settings', {}), character_manager=self.character_manager, npc_manager=self.npc_manager, rule_engine=self.rule_engine, time_manager=self.time_manager, openai_service=self.openai_service, relationship_manager=self.relationship_manager)
+        self.dialogue_manager = DialogueManager(db_service=self.db_service, settings=self._settings.get('dialogue_settings', {}), character_manager=self.character_manager, npc_manager=self.npc_manager, rule_engine=self.rule_engine, time_manager=self.time_manager, openai_service=self.openai_service, relationship_manager=self.relationship_manager) # Changed
         self.consequence_processor = ConsequenceProcessor(quest_manager=None, character_manager=self.character_manager, npc_manager=self.npc_manager, item_manager=self.item_manager, location_manager=self.location_manager, event_manager=self.event_manager, status_manager=self.status_manager, rule_engine=self.rule_engine, economy_manager=self.economy_manager, relationship_manager=self.relationship_manager, game_log_manager=self.game_log_manager)
-        self.quest_manager = QuestManager(db_adapter=self._db_adapter, settings=self._settings.get('quest_settings', {}), consequence_processor=self.consequence_processor, character_manager=self.character_manager, game_log_manager=self.game_log_manager, openai_service=self.openai_service)
+        self.quest_manager = QuestManager(db_service=self.db_service, settings=self._settings.get('quest_settings', {}), consequence_processor=self.consequence_processor, character_manager=self.character_manager, game_log_manager=self.game_log_manager, openai_service=self.openai_service) # Changed
         if self.consequence_processor: self.consequence_processor._quest_manager = self.quest_manager
-        if self._db_adapter: self.nlu_data_service = NLUDataService(db_adapter=self._db_adapter)
+        if self.db_service: self.nlu_data_service = NLUDataService(db_service=self.db_service) # Changed
         else: self.nlu_data_service = None
-        self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_adapter=self._db_adapter)
+        self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_service=self.db_service) # Changed
 
         if self.character_manager:
             self.character_manager._status_manager = self.status_manager
@@ -394,13 +394,13 @@ class GameManager:
         self._party_action_processor = PartyActionProcessor(party_manager=self.party_manager, send_callback_factory=self._get_discord_send_callback, rule_engine=self.rule_engine, location_manager=self.location_manager, character_manager=self.character_manager, npc_manager=self.npc_manager, time_manager=self.time_manager, combat_manager=self.combat_manager, event_stage_processor=self._event_stage_processor)
         if self.party_manager is None: self._party_action_processor = None
 
-        self.conflict_resolver = ConflictResolver(rule_engine=self.rule_engine, rules_config_data=self._rules_config_cache, notification_service="PlaceholderNotificationService", db_adapter=self._db_adapter, game_log_manager=self.game_log_manager)
+        self.conflict_resolver = ConflictResolver(rule_engine=self.rule_engine, rules_config_data=self._rules_config_cache, notification_service="PlaceholderNotificationService", db_service=self.db_service, game_log_manager=self.game_log_manager) # Changed
         if self.character_manager and self.party_manager and self._party_action_processor:
             self._party_command_handler = PartyCommandHandler(character_manager=self.character_manager, party_manager=self.party_manager, party_action_processor=self._party_action_processor, settings=self._settings, npc_manager=self.npc_manager)
         else: self._party_command_handler = None
 
-        if self._db_adapter:
-            self._persistence_manager = PersistenceManager(db_adapter=self._db_adapter, event_manager=self.event_manager, character_manager=self.character_manager, location_manager=self.location_manager, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, crafting_manager=self.crafting_manager, economy_manager=self.economy_manager, party_manager=self.party_manager)
+        if self.db_service: # Changed
+            self._persistence_manager = PersistenceManager(db_service=self.db_service, event_manager=self.event_manager, character_manager=self.character_manager, location_manager=self.location_manager, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, crafting_manager=self.crafting_manager, economy_manager=self.economy_manager, party_manager=self.party_manager) # Changed
         else: self._persistence_manager = None
 
         self._world_simulation_processor = WorldSimulationProcessor(event_manager=self.event_manager, character_manager=self.character_manager, location_manager=self.location_manager, rule_engine=self.rule_engine, openai_service=self.openai_service, event_stage_processor=self._event_stage_processor, event_action_processor=self._event_action_processor, persistence_manager=self._persistence_manager, settings=self._settings, send_callback_factory=self._get_discord_send_callback, character_action_processor=self._character_action_processor, party_action_processor=self._party_action_processor, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, crafting_manager=self.crafting_manager, economy_manager=self.economy_manager, dialogue_manager=self.dialogue_manager, quest_manager=self.quest_manager, relationship_manager=self.relationship_manager, game_log_manager=self.game_log_manager, multilingual_prompt_generator=self.multilingual_prompt_generator)
@@ -419,7 +419,7 @@ class GameManager:
             else: await self.campaign_loader.load_and_populate_items()
 
         if self._persistence_manager:
-            load_context_kwargs = {k: getattr(self, k, None) for k in ['rule_engine', 'time_manager', 'location_manager', 'event_manager', 'character_manager', 'item_manager', 'status_manager', 'combat_manager', 'crafting_manager', 'economy_manager', 'npc_manager', 'party_manager', 'openai_service', 'quest_manager', 'relationship_manager', 'dialogue_manager', 'game_log_manager', 'lore_manager', 'campaign_loader', 'consequence_processor', '_on_enter_action_executor', '_stage_description_generator', '_event_stage_processor', '_event_action_processor', '_character_action_processor', '_character_view_service', '_party_action_processor', '_persistence_manager', '_world_simulation_processor', 'conflict_resolver', '_db_adapter', 'db_service', 'nlu_data_service', 'ability_manager', 'spell_manager', 'prompt_context_collector', 'multilingual_prompt_generator']}
+            load_context_kwargs = {k: getattr(self, k, None) for k in ['rule_engine', 'time_manager', 'location_manager', 'event_manager', 'character_manager', 'item_manager', 'status_manager', 'combat_manager', 'crafting_manager', 'economy_manager', 'npc_manager', 'party_manager', 'openai_service', 'quest_manager', 'relationship_manager', 'dialogue_manager', 'game_log_manager', 'lore_manager', 'campaign_loader', 'consequence_processor', '_on_enter_action_executor', '_stage_description_generator', '_event_stage_processor', '_event_action_processor', '_character_action_processor', '_character_view_service', '_party_action_processor', '_persistence_manager', '_world_simulation_processor', 'conflict_resolver', 'db_service', 'nlu_data_service', 'ability_manager', 'spell_manager', 'prompt_context_collector', 'multilingual_prompt_generator']} # Removed _db_adapter
             load_context_kwargs.update({'send_callback_factory': self._get_discord_send_callback, 'settings': self._settings, 'discord_client': self._discord_client})
             await self._persistence_manager.load_game_state(guild_ids=self._active_guild_ids, **load_context_kwargs)
         print("GameManager: Initial data and game state loaded.")
@@ -549,7 +549,7 @@ class GameManager:
                             'party_action_processor': self._party_action_processor,
                             'persistence_manager': self._persistence_manager,
                             'conflict_resolver': self.conflict_resolver,
-                            'db_adapter': self._db_adapter,
+                            'db_service': self.db_service, # Changed
                             'nlu_data_service': self.nlu_data_service,
                             'prompt_context_collector': self.prompt_context_collector,
                             'multilingual_prompt_generator': self.multilingual_prompt_generator,
@@ -594,7 +594,7 @@ class GameManager:
                 'conflict_resolver': self.conflict_resolver,
                 'prompt_context_collector': self.prompt_context_collector,
                 'multilingual_prompt_generator': self.multilingual_prompt_generator,
-                'db_adapter': self._db_adapter,
+                'db_service': self.db_service, # Changed
                 'send_callback_factory': self._get_discord_send_callback,
                 'settings': self._settings,
                 'discord_client': self._discord_client,
@@ -648,31 +648,31 @@ class GameManager:
                     'conflict_resolver': self.conflict_resolver,
                     'prompt_context_collector': self.prompt_context_collector,
                     'multilingual_prompt_generator': self.multilingual_prompt_generator,
-                    'db_adapter': self._db_adapter,
+                    'db_service': self.db_service, # Changed
                     'send_callback_factory': self._get_discord_send_callback,
                     'settings': self._settings,
                     'discord_client': self._discord_client,
                 }
-                if self._db_adapter:
+                if self.db_service: # Changed
                     await self._persistence_manager.save_game_state(
                         guild_ids=active_guild_ids,
                         **save_context_kwargs
                     )
                     print("GameManager: Game state saved on shutdown.")
                 else:
-                     print("GameManager: Warning: Skipping state save on shutdown, DB adapter is None.")
+                     print("GameManager: Warning: Skipping state save on shutdown, DB service is None.") # Changed
 
             except Exception as e:
                 print(f"GameManager: ❌ Error saving game state on shutdown: {e}")
                 traceback.print_exc()
 
 
-        if self._db_adapter:
+        if self.db_service: # Changed
             try:
-                await self._db_adapter.close()
+                await self.db_service.close() # Changed
                 print("GameManager: Database connection closed.")
             except Exception as e:
-                print(f"GameManager: ❌ Error closing database adapter: {e}")
+                print(f"GameManager: ❌ Error closing database service: {e}") # Changed
                 traceback.print_exc()
 
         print("GameManager: Shutdown complete.")
@@ -850,7 +850,7 @@ class GameManager:
                 'party_action_processor': self._party_action_processor,
                 'persistence_manager': self._persistence_manager,
                 'conflict_resolver': self.conflict_resolver,
-                'db_adapter': self._db_adapter,
+                'db_service': self.db_service, # Changed
                 'nlu_data_service': self.nlu_data_service,
                 'prompt_context_collector': self.prompt_context_collector,
                 'multilingual_prompt_generator': self.multilingual_prompt_generator,

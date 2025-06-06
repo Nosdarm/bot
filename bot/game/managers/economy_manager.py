@@ -10,7 +10,7 @@ import asyncio
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awaitable, Union # Added Union
 
 # Адаптер БД
-from bot.database.sqlite_adapter import SqliteAdapter
+from bot.services.db_service import DBService # Changed
 
 # Import built-in types for isinstance checks
 from builtins import dict, set, list, str, int, bool, float # Added relevant builtins
@@ -61,7 +61,7 @@ class EconomyManager:
     def __init__(
         self,
         # Используем строковые литералы для всех инжектированных зависимостей
-        db_adapter: Optional["SqliteAdapter"] = None,
+        db_service: Optional["DBService"] = None, # Changed
         settings: Optional[Dict[str, Any]] = None,
 
         item_manager: Optional["ItemManager"] = None, # Use string literal!
@@ -74,7 +74,7 @@ class EconomyManager:
         # Example: combat_manager: Optional["CombatManager"] = None,
     ):
         print("Initializing EconomyManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings
 
         # Инжектированные зависимости
