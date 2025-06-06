@@ -84,45 +84,45 @@ class ActionProcessor:
                  relevant_event_id = active_events[0].id
 
         if relevant_event_id and event_manager: # Ensure event_manager is not None here
-             print(f"Action {action_type} for {character.name} routed to event {relevant_event_id}.")
-             # Pass all needed components to EventManager method
-             # This signature must match what EventManager.process_player_action_within_event expects!
-             character_name_i18n = getattr(character, 'name_i18n', {})
-             character_name = character_name_i18n.get('en', 'Unknown Character')
-             print(f"Action {action_type} for {character_name} routed to event {relevant_event_id}.")
+            print(f"Action {action_type} for {character.name} routed to event {relevant_event_id}.")
+            # Pass all needed components to EventManager method
+            # This signature must match what EventManager.process_player_action_within_event expects!
+            character_name_i18n = getattr(character, 'name_i18n', {})
+            character_name = character_name_i18n.get('en', 'Unknown Character')
+            print(f"Action {action_type} for {character_name} routed to event {relevant_event_id}.")
 
-             # TODO: CRITICAL - The method 'process_player_action_within_event' is missing from EventManager.
-             # This functionality is essential for routing player actions to active events.
-             # It needs to be implemented in EventManager or the event handling logic here needs a redesign.
-             event_response = await event_manager.process_player_action_within_event(
-                 event_id=relevant_event_id,
-                 player_id=character.id,
-                 action_type=action_type,
-                 action_data=action_data,
-                 guild_id=str(game_state.server_id), # Added guild_id
-                 # Pass other managers and context variables as kwargs
-                 character_manager=char_manager,
-                 loc_manager=loc_manager,
-                 rule_engine=rule_engine,
-                 openai_service=openai_service,
-                 ctx_channel_id=ctx_channel_id, # Still needed for event manager to potentially return this as fallback
-                 # Pass other managers needed by EventManager here (e.g., NpcManager)
-                 # npc_manager = npc_manager,
-                 # combat_manager = combat_manager,
-             )
-             # EventManager must return a dict: {"success":bool, "message":str, "target_channel_id":int, "state_changed":bool, ...}
-             # ActionProcessor just returns whatever EventManager returned.
-             # Ensure the response from the event processing has the necessary keys.
-             if 'target_channel_id' not in event_response or event_response['target_channel_id'] is None:
-                 event_response['target_channel_id'] = output_channel_id # Fallback to location channel
-             if 'state_changed' not in event_response:
-                 event_response['state_changed'] = False # Default if not specified
+            # TODO: CRITICAL - The method 'process_player_action_within_event' is missing from EventManager.
+            # This functionality is essential for routing player actions to active events.
+            # It needs to be implemented in EventManager or the event handling logic here needs a redesign.
+            event_response = await event_manager.process_player_action_within_event(
+                event_id=relevant_event_id,
+                player_id=character.id,
+                action_type=action_type,
+                action_data=action_data,
+                guild_id=str(game_state.server_id), # Added guild_id
+                # Pass other managers and context variables as kwargs
+                character_manager=char_manager,
+                loc_manager=loc_manager,
+                rule_engine=rule_engine,
+                openai_service=openai_service,
+                ctx_channel_id=ctx_channel_id, # Still needed for event manager to potentially return this as fallback
+                # Pass other managers needed by EventManager here (e.g., NpcManager)
+                # npc_manager = npc_manager,
+                # combat_manager = combat_manager,
+            )
+            # EventManager must return a dict: {"success":bool, "message":str, "target_channel_id":int, "state_changed":bool, ...}
+            # ActionProcessor just returns whatever EventManager returned.
+            # Ensure the response from the event processing has the necessary keys.
+            if 'target_channel_id' not in event_response or event_response['target_channel_id'] is None:
+                event_response['target_channel_id'] = output_channel_id # Fallback to location channel
+            if 'state_changed' not in event_response:
+                event_response['state_changed'] = False # Default if not specified
 
-             # If the event processing was successful and it handled the action, return its response.
-             # The event processing method should indicate if it fully handled the action.
-             # For now, we assume if an event is relevant, it handles the action.
-             return event_response
-             # print(f"ActionProcessor: TODO - EventManager.process_player_action_within_event call is commented out as method does not exist.") # Remove this line
+            # If the event processing was successful and it handled the action, return its response.
+            # The event processing method should indicate if it fully handled the action.
+            # For now, we assume if an event is relevant, it handles the action.
+            return event_response
+            # print(f"ActionProcessor: TODO - EventManager.process_player_action_within_event call is commented out as method does not exist.") # Remove this line
 
 
         # --- Process as Regular World Interaction if not Event Action ---
@@ -208,61 +208,61 @@ class ActionProcessor:
             return {"success": True, "message": f"**Мастер:** {description}", "target_channel_id": final_output_channel_id, "state_changed": True}
 
         elif action_type == "skill_check":
-             skill_name = action_data.get("skill_name")
-             complexity = action_data.get("complexity", "medium")
-             base_modifiers = action_data.get("modifiers", {})
-             target_description = action_data.get("target_description", "чего-то")
-             env_modifiers = {}
-             status_modifiers = {}
-             final_modifiers = {**env_modifiers, **status_modifiers, **base_modifiers}
+            skill_name = action_data.get("skill_name")
+            complexity = action_data.get("complexity", "medium")
+            base_modifiers = action_data.get("modifiers", {})
+            target_description = action_data.get("target_description", "чего-то")
+            env_modifiers = {}
+            status_modifiers = {}
+            final_modifiers = {**env_modifiers, **status_modifiers, **base_modifiers}
 
-             if not skill_name:
-                  return {"success": False, "message": "**Мастер:** Укажите название навыка для проверки.", "target_channel_id": ctx_channel_id, "state_changed": False}
+            if not skill_name:
+                return {"success": False, "message": "**Мастер:** Укажите название навыка для проверки.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-             # Basic skill existence check using CharacterManager (better than checking raw dict)
-             # Need method char_manager.character_has_skill(character.id, skill_name)
-             # For now, directly check the character object's skills dict
-             if skill_name not in character.skills:
-                 return {"success": False, "message": f"**Мастер:** Ваш персонаж не владеет навыком '{skill_name}'.", "target_channel_id": ctx_channel_id, "state_changed": False}
+            # Basic skill existence check using CharacterManager (better than checking raw dict)
+            # Need method char_manager.character_has_skill(character.id, skill_name)
+            # For now, directly check the character object's skills dict
+            if skill_name not in character.skills:
+                return {"success": False, "message": f"**Мастер:** Ваш персонаж не владеет навыком '{skill_name}'.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-             # Get base DC from rules or helper (RuleEngine.get_base_dc might be better location for helper)
-             base_dc = skill_rules.get_base_dc(complexity)
+            # Get base DC from rules or helper (RuleEngine.get_base_dc might be better location for helper)
+            base_dc = skill_rules.get_base_dc(complexity)
 
-             if not rule_engine:
+            if not rule_engine:
                 return {"success": False, "message": "**Мастер:** Движок правил недоступен для проверки навыка.", "target_channel_id": ctx_channel_id, "state_changed": False}
-             # Perform the skill check using the RuleEngine
-             # RuleEngine needs Character data -> Pass the character object OR its ID
-             # The current RuleEngine.perform_check expects char_id and fetches data internally.
-             check_result = rule_engine.perform_check(
-                 character_id=character.id, # Pass character ID
-                 check_type="skill",
-                 skill_name=skill_name,
-                 base_dc=base_dc,
-                 modifiers=final_modifiers
-             )
+            # Perform the skill check using the RuleEngine
+            # RuleEngine needs Character data -> Pass the character object OR its ID
+            # The current RuleEngine.perform_check expects char_id and fetches data internally.
+            check_result = rule_engine.perform_check(
+                character_id=character.id, # Pass character ID
+                check_type="skill",
+                skill_name=skill_name,
+                base_dc=base_dc,
+                modifiers=final_modifiers
+            )
 
-             if not check_result:
-                  return {"success": False, "message": f"**Мастер:** Произошла ошибка при выполнении проверки навыка '{skill_name}'.", "target_channel_id": ctx_channel_id, "state_changed": False}
+            if not check_result:
+                return {"success": False, "message": f"**Мастер:** Произошла ошибка при выполнении проверки навыка '{skill_name}'.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-             # Use AI to describe the outcome
-             system_prompt = "Ты - Мастер текстовой RPG в мире темного фэнтези. Описывай действия и их результаты детализированно и атмосферно."
+            # Use AI to describe the outcome
+            system_prompt = "Ты - Мастер текстовой RPG в мире темного фэнтези. Описывай действия и их результаты детализированно и атмосферно."
              user_prompt = (
                  f"Персонаж '{character.name}' (Навыки: {list(character.skills.keys())}, Статы: {list(character.stats.keys())}) "
                  f"попытался совершить действие, связанное с навыком '{skill_name}', целью было {target_description}. "
                  f"Ситуация: локация '{location.name}', атмосферное описание: {location.description_template[:150]}..."
-                 f"Механический результат проверки:\n{json.dumps(check_result, ensure_ascii=False)}\n"
-                 f"Опиши, КАК это выглядело и ощущалось в мире. Учитывай результат (Успех/Провал/Крит) и контекст. Будь мрачным и детализированным."
-             )
-             if not openai_service:
+                f"Механический результат проверки:\n{json.dumps(check_result, ensure_ascii=False)}\n"
+                f"Опиши, КАК это выглядело и ощущалось в мире. Учитывай результат (Успех/Провал/Крит) и контекст. Будь мрачным и детализированным."
+            )
+            if not openai_service:
                 description = "Результат проверки навыка получен." # Fallback
-             else:
+            else:
                 description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=300)
 
-             mech_summary = check_result.get("description", "Проверка выполнена.")
-             state_changed = check_result.get("is_critical_failure", False) # Crit fail might change state
+            mech_summary = check_result.get("description", "Проверка выполнена.")
+            state_changed = check_result.get("is_critical_failure", False) # Crit fail might change state
 
 
-             return {"success": True, "message": f"_{mech_summary}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed}
+            return {"success": True, "message": f"_{mech_summary}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed}
 
 
         # --- Add Handlers for other core Action Types (placeholder) ---

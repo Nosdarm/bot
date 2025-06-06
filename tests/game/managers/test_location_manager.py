@@ -805,8 +805,55 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
 
 # This ensures if the file is run directly, tests from both classes are executed.
 # However, typically you'd run tests with `python -m unittest discover` or similar.
-if __name__ == '__main__':
-    unittest.main()
+
+# Orphaned tests will be moved into this new class
+class TestLocationManagerContinued(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Minimal setup, adapt if these tests need more mocks from TestLocationManager's setUp
+        self.mock_db_adapter = AsyncMock()
+        self.mock_settings = MagicMock()
+        self.mock_rule_engine = AsyncMock()
+        self.mock_event_manager = AsyncMock()
+        self.mock_character_manager = AsyncMock()
+        self.mock_npc_manager = AsyncMock()
+        self.mock_item_manager = AsyncMock()
+        self.mock_combat_manager = AsyncMock()
+        self.mock_status_manager = AsyncMock()
+        self.mock_party_manager = AsyncMock()
+        self.mock_time_manager = AsyncMock()
+        self.mock_send_callback_factory = MagicMock()
+        self.mock_event_stage_processor = AsyncMock()
+        self.mock_event_action_processor = AsyncMock()
+        self.mock_on_enter_action_executor = AsyncMock()
+        self.mock_stage_description_generator = AsyncMock()
+
+        self.guild_id = "test_guild_continued" # Use a distinct guild_id or reuse if appropriate
+
+        self.location_manager = LocationManager(
+            db_adapter=self.mock_db_adapter,
+            settings=self.mock_settings,
+            rule_engine=self.mock_rule_engine,
+            event_manager=self.mock_event_manager,
+            character_manager=self.mock_character_manager,
+            npc_manager=self.mock_npc_manager,
+            item_manager=self.mock_item_manager,
+            combat_manager=self.mock_combat_manager,
+            status_manager=self.mock_status_manager,
+            party_manager=self.mock_party_manager,
+            time_manager=self.mock_time_manager,
+            send_callback_factory=self.mock_send_callback_factory,
+            event_stage_processor=self.mock_event_stage_processor,
+            event_action_processor=self.mock_event_action_processor,
+            on_enter_action_executor=self.mock_on_enter_action_executor,
+            stage_description_generator=self.mock_stage_description_generator
+        )
+        # Initialize caches for this test class instance
+        self.location_manager._location_templates = {}
+        self.location_manager._location_instances = {}
+        self.location_manager._dirty_instances = {}
+        self.location_manager._deleted_instances = {}
+        self.location_manager._dirty_templates = {}
+
 
     async def test_init_manager(self):
         self.assertEqual(self.location_manager._db_adapter, self.mock_db_adapter)
@@ -1499,3 +1546,6 @@ if __name__ == '__main__':
 
         self.assertNotIn(guild_id, self.location_manager._location_instances)
         self.assertNotIn(guild_id, self.location_manager._dirty_instances)
+
+if __name__ == '__main__':
+    unittest.main()

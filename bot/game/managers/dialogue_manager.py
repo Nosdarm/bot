@@ -898,9 +898,6 @@ class DialogueManager:
                  ''' # PostgreSQL UPSERT
                  data_to_upsert_params = []
                  upserted_dialogue_ids_on_success: Set[str] = set() # Track IDs successfully prepared for upsert
-            else: # If the set was empty for this guild
-                self._deleted_dialogue_ids.pop(guild_id_str, None)
-
 
             # 2. Обновить или вставить измененные диалоги для этого guild_id
             if dialogues_to_save:
