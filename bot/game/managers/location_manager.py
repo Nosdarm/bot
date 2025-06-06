@@ -852,7 +852,7 @@ class LocationManager:
         triggers = tpl.get('on_enter_triggers')
 
         engine: Optional["RuleEngine"] = kwargs.get('rule_engine')
-        if engine is None: engine = self._rule_engine
+        if engine is None: engine = self._rule_engine:
 
         if isinstance(triggers, list) and engine and hasattr(engine, 'execute_triggers'):
             print(f"LocationManager: Executing {len(triggers)} OnEnter triggers for {entity_type} {entity_id} in location {location_id} (guild {guild_id_str}).")
