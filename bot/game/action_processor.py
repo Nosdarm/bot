@@ -60,7 +60,6 @@ class ActionProcessor:
         current_location_id = getattr(character, 'current_location_id', None)
         # Assuming get_location is async
         location = await loc_manager.get_location(current_location_id, guild_id=guild_id_str_process) if current_location_id else None
-        # location = loc_manager.get_location(character.current_location_id)  # This line seems redundant or incorrect after the await
         if not location:  # location could be None if current_location_id was None or get_location returned None
             return {"success": False, "message": "**Мастер:** Ваш персонаж в неизвестной локации. Обратитесь к администратору.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
