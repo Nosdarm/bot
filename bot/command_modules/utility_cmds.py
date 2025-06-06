@@ -8,8 +8,9 @@ import json
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
+    from bot.game.managers.game_manager import GameManager # Added
     from bot.game.managers.character_manager import CharacterManager
-    from bot.game.models.character import Character as CharacterModel
+    from bot.game.models.character import Character # Changed from CharacterModel
 
 class UtilityCog(commands.Cog, name="Utility"):
     def __init__(self, bot: "RPGBot"):
@@ -18,14 +19,22 @@ class UtilityCog(commands.Cog, name="Utility"):
     @app_commands.command(name="undo", description="Reverts your last collected (but not yet processed) game action.")
     async def cmd_undo(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
-        if not self.bot.game_manager or not self.bot.game_manager.character_manager:
-            await interaction.followup.send("Error: Game systems not initialized.", ephemeral=True); return
 
-        character_manager: "CharacterManager" = self.bot.game_manager.character_manager
+        bot_instance = self.bot # type: RPGBot
+        if not hasattr(bot_instance, 'game_manager') or bot_instance.game_manager is None:
+            await interaction.followup.send("GameManager is not available.", ephemeral=True)
+            return
+        game_mngr: "GameManager" = bot_instance.game_manager
+
+        if not game_mngr.character_manager:
+            await interaction.followup.send("CharacterManager is not available.", ephemeral=True)
+            return
+        character_manager: "CharacterManager" = game_mngr.character_manager
+
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
         try:
-            character: Optional["CharacterModel"] = await character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
+            character: Optional["Character"] = character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
             if not character:
                 await interaction.followup.send("Create a character first with `/start_new_character`.", ephemeral=True); return
 
@@ -67,14 +76,22 @@ class UtilityCog(commands.Cog, name="Utility"):
         await interaction.response.defer(ephemeral=True)
         if not interaction.guild_id:
             await interaction.followup.send("Use on a server.", ephemeral=True); return
-        if not self.bot.game_manager or not self.bot.game_manager.character_manager:
-            await interaction.followup.send("Error: Game systems not initialized.", ephemeral=True); return
 
-        character_manager: "CharacterManager" = self.bot.game_manager.character_manager
+        bot_instance = self.bot # type: RPGBot
+        if not hasattr(bot_instance, 'game_manager') or bot_instance.game_manager is None:
+            await interaction.followup.send("GameManager is not available.", ephemeral=True)
+            return
+        game_mngr: "GameManager" = bot_instance.game_manager
+
+        if not game_mngr.character_manager:
+            await interaction.followup.send("CharacterManager is not available.", ephemeral=True)
+            return
+        character_manager: "CharacterManager" = game_mngr.character_manager
+
         chosen_lang = language.value
         try:
             guild_id_str = str(interaction.guild_id)
-            player_char: Optional["CharacterModel"] = await character_manager.get_character_by_discord_id(guild_id_str, interaction.user.id)
+            player_char: Optional["Character"] = character_manager.get_character_by_discord_id(guild_id_str, interaction.user.id)
             if not player_char:
                 await interaction.followup.send({"ru": "Создайте персонажа: /start_new_character.", "en": "Create character: /start_new_character."}.get(chosen_lang, "Create character first."), ephemeral=True); return
 

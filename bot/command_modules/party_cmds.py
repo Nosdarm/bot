@@ -4,34 +4,44 @@ from discord import app_commands, Interaction
 from discord.ext import commands
 from typing import Optional, TYPE_CHECKING, cast
 
+# Direct import for isinstance check in setup
+from bot.bot_core import RPGBot
+
 if TYPE_CHECKING:
-    from bot.bot_core import RPGBot
+    # from bot.bot_core import RPGBot # Now imported directly above
     from bot.game.managers.game_manager import GameManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.party_manager import PartyManager
     from bot.game.managers.location_manager import LocationManager
-    from bot.game.models.character import Character as CharacterModel
-    from bot.game.models.party import Party as PartyModel
+    from bot.game.models.character import Character # Use Character directly
+    from bot.game.models.party import Party # Use Party directly
 
 class PartyCog(commands.Cog, name="Party Commands"):
     party_group = app_commands.Group(name="party", description="Manage player parties.")
 
-    def __init__(self, bot: "RPGBot"):
+    def __init__(self, bot: "RPGBot"): # init already expects RPGBot
         self.bot = bot
 
     @party_group.command(name="create", description="Create a new party, making you the leader.")
     async def cmd_party_create(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
-        if not self.bot.game_manager or not self.bot.game_manager.character_manager or not self.bot.game_manager.party_manager:
+        # Assuming self.bot is already RPGBot due to __init__ and setup check
+        bot_instance: RPGBot = self.bot
+        if not hasattr(bot_instance, 'game_manager') or bot_instance.game_manager is None:
             await interaction.followup.send("Error: Core game services are not fully initialized.", ephemeral=True)
             return
 
-        char_manager: "CharacterManager" = self.bot.game_manager.character_manager
-        party_manager: "PartyManager" = self.bot.game_manager.party_manager
+        game_mngr: "GameManager" = bot_instance.game_manager
+        if not game_mngr.character_manager or not game_mngr.party_manager:
+            await interaction.followup.send("Error: Character or Party services are not fully initialized.", ephemeral=True)
+            return
+
+        char_manager: "CharacterManager" = game_mngr.character_manager
+        party_manager: "PartyManager" = game_mngr.party_manager
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
         try:
-            player_char: Optional["CharacterModel"] = await char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
+            player_char: Optional["Character"] = char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int) # Use Character
             if not player_char or not player_char.id:
                 await interaction.followup.send("You need a character. Use `/start_new_character`.", ephemeral=True); return
 
@@ -65,14 +75,21 @@ class PartyCog(commands.Cog, name="Party Commands"):
     @party_group.command(name="disband", description="Disband your current party (leader only).")
     async def cmd_party_disband(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
-        if not self.bot.game_manager or not self.bot.game_manager.character_manager or not self.bot.game_manager.party_manager:
+        # Assuming self.bot is already RPGBot
+        bot_instance: RPGBot = self.bot
+        if not hasattr(bot_instance, 'game_manager') or bot_instance.game_manager is None:
             await interaction.followup.send("Error: Core game services not initialized.", ephemeral=True); return
-        char_manager: "CharacterManager" = self.bot.game_manager.character_manager
-        party_manager: "PartyManager" = self.bot.game_manager.party_manager
+
+        game_mngr: "GameManager" = bot_instance.game_manager
+        if not game_mngr.character_manager or not game_mngr.party_manager:
+            await interaction.followup.send("Error: Character or Party services are not fully initialized.", ephemeral=True); return
+
+        char_manager: "CharacterManager" = game_mngr.character_manager
+        party_manager: "PartyManager" = game_mngr.party_manager
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
         try:
-            player_char: Optional["CharacterModel"] = await char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
+            player_char: Optional["CharacterModel"] = char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
             if not player_char or not player_char.id:
                 await interaction.followup.send("You need a character.", ephemeral=True); return
 
@@ -80,7 +97,7 @@ class PartyCog(commands.Cog, name="Party Commands"):
             if not current_party_id:
                 await interaction.followup.send("Not in a party.", ephemeral=True); return
 
-            party_to_disband = await party_manager.get_party(guild_id_str, current_party_id)
+            party_to_disband: Optional["Party"] = party_manager.get_party(guild_id_str, current_party_id) # Use Party
             if not party_to_disband:
                 await char_manager.set_current_party_id(guild_id_str, player_char.id, None) # Clear inconsistent data
                 await interaction.followup.send("Party info inconsistent, cleared your status.", ephemeral=True); return
@@ -103,15 +120,22 @@ class PartyCog(commands.Cog, name="Party Commands"):
     @app_commands.describe(party_identifier="The ID of the party you want to join.")
     async def cmd_party_join(self, interaction: Interaction, party_identifier: str):
         await interaction.response.defer(ephemeral=True)
-        if not self.bot.game_manager or not self.bot.game_manager.character_manager or not self.bot.game_manager.party_manager or not self.bot.game_manager.location_manager:
+        # Assuming self.bot is already RPGBot
+        bot_instance: RPGBot = self.bot
+        if not hasattr(bot_instance, 'game_manager') or bot_instance.game_manager is None:
             await interaction.followup.send("Error: Core game services not initialized.", ephemeral=True); return
-        char_manager: "CharacterManager" = self.bot.game_manager.character_manager
-        party_manager: "PartyManager" = self.bot.game_manager.party_manager
-        loc_manager: "LocationManager" = self.bot.game_manager.location_manager
+
+        game_mngr: "GameManager" = bot_instance.game_manager
+        if not game_mngr.character_manager or not game_mngr.party_manager or not game_mngr.location_manager:
+            await interaction.followup.send("Error: Character, Party or Location services are not fully initialized.", ephemeral=True); return
+
+        char_manager: "CharacterManager" = game_mngr.character_manager
+        party_manager: "PartyManager" = game_mngr.party_manager
+        loc_manager: "LocationManager" = game_mngr.location_manager
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
         try:
-            player_char: Optional["CharacterModel"] = await char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
+            player_char: Optional["Character"] = char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int) # Use Character
             if not player_char or not player_char.id:
                 await interaction.followup.send("You need a character.", ephemeral=True); return
 
@@ -123,13 +147,17 @@ class PartyCog(commands.Cog, name="Party Commands"):
             if not current_location_id:
                 await interaction.followup.send("Character not in a valid location.", ephemeral=True); return
 
-            target_party: Optional["PartyModel"] = await party_manager.get_party(guild_id_str, party_identifier)
+            target_party: Optional["Party"] = party_manager.get_party(guild_id_str, party_identifier) # Use Party
             if not target_party:
                 await interaction.followup.send(f"Party '{party_identifier}' not found.", ephemeral=True); return
 
+            if target_party.current_location_id is None: # Explicit None check for party's location
+                await interaction.followup.send(f"Party '{party_identifier}' is not currently at a known location.", ephemeral=True)
+                return
+
             if current_location_id != target_party.current_location_id:
-                player_loc_name = await loc_manager.get_location_name(guild_id_str, current_location_id) or current_location_id
-                party_loc_name = await loc_manager.get_location_name(guild_id_str, target_party.current_location_id) or target_party.current_location_id
+                player_loc_name = loc_manager.get_location_name(guild_id_str, current_location_id) or current_location_id
+                party_loc_name = loc_manager.get_location_name(guild_id_str, target_party.current_location_id) or target_party.current_location_id # target_party.current_location_id is now checked not to be None
                 await interaction.followup.send(f"Must be in same location. You: '{player_loc_name}', Party: '{party_loc_name}'.", ephemeral=True); return
 
             context_kwargs = {"guild_id": guild_id_str, "character_manager": char_manager}
@@ -150,15 +178,22 @@ class PartyCog(commands.Cog, name="Party Commands"):
     @party_group.command(name="leave", description="Leave your current party.")
     async def cmd_party_leave(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
-        if not self.bot.game_manager or not self.bot.game_manager.character_manager or not self.bot.game_manager.party_manager or not self.bot.game_manager.location_manager:
+        # Assuming self.bot is already RPGBot
+        bot_instance: RPGBot = self.bot
+        if not hasattr(bot_instance, 'game_manager') or bot_instance.game_manager is None:
             await interaction.followup.send("Error: Core game services not initialized.", ephemeral=True); return
-        char_manager: "CharacterManager" = self.bot.game_manager.character_manager
-        party_manager: "PartyManager" = self.bot.game_manager.party_manager
-        loc_manager: "LocationManager" = self.bot.game_manager.location_manager
+
+        game_mngr: "GameManager" = bot_instance.game_manager
+        if not game_mngr.character_manager or not game_mngr.party_manager or not game_mngr.location_manager:
+            await interaction.followup.send("Error: Character, Party or Location services are not fully initialized.", ephemeral=True); return
+
+        char_manager: "CharacterManager" = game_mngr.character_manager
+        party_manager: "PartyManager" = game_mngr.party_manager
+        loc_manager: "LocationManager" = game_mngr.location_manager
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
         try:
-            player_char: Optional["CharacterModel"] = await char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
+            player_char: Optional["Character"] = char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int) # Use Character
             if not player_char or not player_char.id:
                 await interaction.followup.send("You need a character.", ephemeral=True); return
 
@@ -166,7 +201,7 @@ class PartyCog(commands.Cog, name="Party Commands"):
             if not current_party_id:
                 await interaction.followup.send("Not in a party.", ephemeral=True); return
 
-            party_to_leave = await party_manager.get_party(guild_id_str, current_party_id)
+            party_to_leave: Optional["Party"] = party_manager.get_party(guild_id_str, current_party_id) # Use Party
             if not party_to_leave:
                 await char_manager.set_current_party_id(guild_id_str, player_char.id, None)
                 await interaction.followup.send("Party info inconsistent, cleared your status.", ephemeral=True); return
@@ -175,10 +210,14 @@ class PartyCog(commands.Cog, name="Party Commands"):
             if not current_location_id:
                  await interaction.followup.send("Character not in a valid location.", ephemeral=True); return
 
-            if current_location_id != party_to_leave.current_location_id:
-                player_loc_name = await loc_manager.get_location_name(guild_id_str, current_location_id) or current_location_id
-                party_loc_name = await loc_manager.get_location_name(guild_id_str, party_to_leave.current_location_id) or party_to_leave.current_location_id
-                await interaction.followup.send(f"Must be in same location to leave. You: '{player_loc_name}', Party: '{party_loc_name}'.", ephemeral=True); return # Added location check for leaving
+            party_location_id = getattr(party_to_leave, 'current_location_id', None)
+            if party_location_id is None: # Explicit None check
+                 await interaction.followup.send(f"Party '{current_party_id}' is not currently at a known location.", ephemeral=True); return
+
+            if current_location_id != party_location_id:
+                player_loc_name = loc_manager.get_location_name(guild_id_str, current_location_id) or current_location_id
+                party_loc_name = loc_manager.get_location_name(guild_id_str, party_location_id) or party_location_id # party_location_id is now checked not to be None
+                await interaction.followup.send(f"Must be in same location to leave. You: '{player_loc_name}', Party: '{party_loc_name}'.", ephemeral=True); return
 
             context_kwargs = {"guild_id": guild_id_str, "character_manager": char_manager}
             leave_success = await party_manager.remove_member_from_party(current_party_id, player_char.id, guild_id_str, context_kwargs)
@@ -193,5 +232,8 @@ class PartyCog(commands.Cog, name="Party Commands"):
 
 
 async def setup(bot: commands.Bot):
+    if not isinstance(bot, RPGBot):
+        print("Error: PartyCommands setup received a bot instance that is not RPGBot.")
+        return
     await bot.add_cog(PartyCog(bot))
     print("PartyCog loaded.")

@@ -562,4 +562,130 @@ class ItemManager:
             traceback.print_exc()
             return False
 
+    async def get_items_in_location_async(self, guild_id: str, location_id: str) -> List["Item"]: # Assuming Item model exists
+        """
+        Retrieves all item instances currently in a specific location.
+        Fetches from DBService and converts to Item model objects.
+        """
+        if not self.db_service:
+            print(f"ItemManager: DBService not available. Cannot get items in location {location_id} for guild {guild_id}.")
+            return []
+
+        # from bot.game.models.item import Item # Already imported globally
+
+        item_data_list = await self.db_service.get_item_instances_in_location(location_id=location_id, guild_id=guild_id)
+
+        items: List[Item] = []
+        for data in item_data_list:
+            try:
+                # The data from db_service.get_item_instances_in_location includes joined item_template data.
+                # Item.from_dict needs to handle this structure.
+                item_properties = data.get('properties', {}) # from item_templates
+                state_variables = data.get('state_variables', {}) # from items table (instance)
+
+                item_init_data = {
+                    "id": data.get("item_instance_id"), # Instance ID
+                    "template_id": data.get("template_id"),
+                    "guild_id": guild_id, # Passed guild_id
+                    "name": data.get("name"), # From template
+                    "description": data.get("description"), # From template
+                    "item_type": data.get("item_type"), # From template
+                    "quantity": data.get("quantity"), # From instance
+                    "properties": item_properties, # From template
+                    "state_variables": state_variables, # From instance
+                    "owner_id": None, # Items in location are not owned by an entity
+                    "owner_type": "location", # Or None, depending on how unowned items in locations are marked
+                    "location_id": location_id # Explicitly set items in this location
+                }
+                # Ensure all required fields by Item.from_dict are present
+                if not item_init_data["id"] or not item_init_data["template_id"]:
+                    print(f"ItemManager: Skipping item data due to missing id or template_id: {item_init_data}")
+                    continue
+
+                items.append(Item.from_dict(item_init_data))
+            except Exception as e:
+                print(f"ItemManager: Error converting data to Item object for item in location {location_id}: {data}, Error: {e}")
+                traceback.print_exc() # Ensure traceback is imported
+        return items
+
+    async def transfer_item_world_to_character(self, guild_id: str, character_id: str, item_instance_id: str, quantity: int = 1) -> bool:
+        """
+        Transfers a specific quantity of an item instance from the world (a location)
+        to a character's inventory.
+        """
+        if not self.db_service or not self._character_manager: # Use self._character_manager
+            print("ItemManager: DBService or CharacterManager not available. Cannot transfer item.")
+            return False
+
+        # 1. Get the item instance from the world
+        item_instance_data = await self.db_service.get_entity(table_name="items", entity_id=item_instance_id, guild_id=guild_id)
+
+        if not item_instance_data:
+            print(f"ItemManager: Item instance {item_instance_id} not found in guild {guild_id}.")
+            return False
+
+        current_quantity_in_world = item_instance_data.get('quantity', 0.0) # DB might store as float
+        if not isinstance(current_quantity_in_world, (int, float)): current_quantity_in_world = 0.0
+
+        template_id = item_instance_data.get('template_id')
+
+        if not template_id:
+             print(f"ItemManager: Item instance {item_instance_id} is missing a template_id.")
+             return False
+
+        if current_quantity_in_world < quantity:
+            print(f"ItemManager: Not enough quantity of item {item_instance_id} in world. Has {current_quantity_in_world}, needs {quantity}.")
+            return False
+
+        # 2. Add item to character's inventory
+        # CharacterManager.add_item_to_inventory expects template_id
+        add_success = await self._character_manager.add_item_to_inventory(
+            guild_id=guild_id,
+            character_id=character_id,
+            item_id=template_id, # Use template_id for adding to character
+            quantity=quantity
+        )
+
+        if not add_success:
+            print(f"ItemManager: Failed to add item (template: {template_id}) to character {character_id} inventory.")
+            return False
+
+        # 3. Update or delete the item instance from the world
+        if current_quantity_in_world == quantity:
+            delete_success = await self.db_service.delete_entity(table_name="items", entity_id=item_instance_id, guild_id=guild_id)
+            if not delete_success:
+                print(f"ItemManager: Failed to delete item instance {item_instance_id} from world. Manual cleanup may be needed.")
+                # Consider rolling back character inventory addition if possible, or log inconsistency.
+            else:
+                print(f"ItemManager: Item instance {item_instance_id} deleted from world.")
+                # Remove from local cache if it exists
+                guild_items_cache = self._items.get(guild_id, {})
+                if item_instance_id in guild_items_cache:
+                    del guild_items_cache[item_instance_id]
+                self._update_lookup_caches_remove(guild_id, item_instance_data) # item_instance_data is a dict
+                self._dirty_items.get(guild_id, set()).discard(item_instance_id)
+                self._deleted_items.setdefault(guild_id, set()).add(item_instance_id)
+
+
+        else:
+            new_world_quantity = current_quantity_in_world - quantity
+            update_success = await self.db_service.update_entity(
+                table_name="items",
+                entity_id=item_instance_id,
+                data={'quantity': new_world_quantity},
+                guild_id=guild_id
+            )
+            if not update_success:
+                print(f"ItemManager: Failed to update quantity for item instance {item_instance_id} in world.")
+                # Consider rolling back.
+            else:
+                print(f"ItemManager: Item instance {item_instance_id} quantity updated in world to {new_world_quantity}.")
+                # Update local cache if it exists
+                cached_item = self.get_item_instance(guild_id, item_instance_id)
+                if cached_item:
+                    cached_item.quantity = new_world_quantity
+                    self.mark_item_dirty(guild_id, item_instance_id)
+
+        return True
+
 print("DEBUG: item_manager.py module loaded.")

@@ -961,3 +961,48 @@ class DBService:
             # TODO: Log the error appropriately
             print(f"Error deleting entity {entity_id} from {table_name}: {e}")
             return False
+
+    async def set_guild_setting(self, guild_id: str, setting_key: str, setting_value: Any) -> bool:
+        """
+        Sets or updates a specific setting for a guild.
+        Settings are stored as key-value pairs, with value stored as JSON string.
+        """
+        if not self.adapter:
+            print(f"DBService: Adapter not available. Cannot set guild setting for {guild_id}.")
+            return False
+
+        # import json # Already imported at the top
+        # import traceback # Already imported at the top
+
+        value_json = json.dumps(setting_value)
+
+        sql = """
+            INSERT INTO guild_settings (guild_id, key, value)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (guild_id, key) DO UPDATE SET
+                value = EXCLUDED.value;
+        """
+        try:
+            status = await self.adapter.execute(sql, (guild_id, setting_key, value_json))
+            # Example status strings from asyncpg: "INSERT 0 1", "UPDATE 1"
+            if isinstance(status, str) and ("INSERT" in status.upper() or "UPDATE" in status.upper()):
+                 if "UPDATE" in status.upper():
+                     count_str = status.upper().split("UPDATE")[1].strip()
+                     if count_str.isdigit() and int(count_str) > 0:
+                         print(f"DBService: Successfully updated setting '{setting_key}' for guild {guild_id}.")
+                         return True
+                     elif count_str.isdigit() and int(count_str) == 0: # UPSERT did nothing as value was the same
+                         print(f"DBService: Setting '{setting_key}' for guild {guild_id} was not updated (no change or key not found for update part of upsert).")
+                         return True # Still considered a success as the state is as intended
+                 elif "INSERT" in status.upper(): # Check for "INSERT 0 1" specifically for new row
+                      parts = status.upper().split()
+                      if len(parts) == 3 and parts[0] == "INSERT" and parts[1] == "0" and parts[2] == "1":
+                           print(f"DBService: Successfully inserted setting '{setting_key}' for guild {guild_id}.")
+                           return True
+            # Fallback for other statuses or if parsing status string is too complex/brittle
+            print(f"DBService: Setting '{setting_key}' for guild {guild_id} completed with status: {status}. Assuming success if no error and not 'UPDATE 0'.")
+            return True
+        except Exception as e:
+            print(f"DBService: Error setting guild setting '{setting_key}' for guild {guild_id}: {e}")
+            traceback.print_exc()
+            return False
