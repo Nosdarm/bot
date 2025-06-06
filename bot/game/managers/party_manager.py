@@ -18,7 +18,7 @@ from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable
 # для классов, импортированных здесь, ЕСЛИ они импортированы только здесь.
 if TYPE_CHECKING:
     # Добавляем адаптер БД
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.services.db_service import DBService # Changed
     # Добавляем модели, используемые в аннотациях
     from bot.game.models.party import Party # Аннотируем как "Party"
     from bot.game.models.character import Character # Для clean_up_for_entity, rebuild_runtime_caches context
@@ -89,7 +89,7 @@ class PartyManager:
 
     def __init__(self,
                  # Используем строковые литералы для всех инжектированных зависимостей
-                 db_adapter: Optional["SqliteAdapter"] = None,
+                 db_service: Optional["DBService"] = None, # Changed
                  settings: Optional[Dict[str, Any]] = None,
                  npc_manager: Optional["NpcManager"] = None,
                  character_manager: Optional["CharacterManager"] = None,
@@ -98,7 +98,7 @@ class PartyManager:
                  # dialogue_manager: Optional["DialogueManager"] = None, # если Party может быть в диалоге
                 ):
         print("Initializing PartyManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings
 
         # Инжектированные зависимости
@@ -217,8 +217,8 @@ class PartyManager:
         """
         Создает новую партию с лидером и списком участников для определенной гильдии.
         """
-        if self._db_adapter is None:
-            print(f"PartyManager: No DB adapter for guild {guild_id}. Cannot create party.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"PartyManager: No DB service or adapter for guild {guild_id}. Cannot create party.")
             return None # Cannot proceed without DB for persistence
 
         guild_id_str = str(guild_id) # Убедимся, что guild_id строка
@@ -466,8 +466,8 @@ class PartyManager:
     # Needs to save ACTIVE parties for the specific guild, AND delete marked-for-deletion ones.
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         """Сохраняет активные/измененные партии для определенной гильдии."""
-        if self._db_adapter is None:
-            print(f"PartyManager: Warning: Cannot save parties for guild {guild_id}, DB adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"PartyManager: Warning: Cannot save parties for guild {guild_id}, DB service or adapter missing.")
             return
 
         guild_id_str = str(guild_id)
@@ -501,18 +501,21 @@ class PartyManager:
             # 4. Удаление партий, помеченных для удаления для этой гильдии
             if deleted_party_ids_for_guild_set:
                  ids_to_delete = list(deleted_party_ids_for_guild_set)
-                 placeholders_del = ','.join(['?'] * len(ids_to_delete))
-                 delete_sql = f"DELETE FROM parties WHERE guild_id = ? AND id IN ({placeholders_del})"
-                 try:
-                     await self._db_adapter.execute(sql=delete_sql, params=(guild_id_str, *tuple(ids_to_delete))); # Use keyword args
-                     print(f"PartyManager: Deleted {len(ids_to_delete)} parties from DB for guild {guild_id_str}.")
-                     # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
-                     self._deleted_parties.pop(guild_id_str, None)
-                 except Exception as e:
-                     print(f"PartyManager: Error deleting parties for guild {guild_id_str}: {e}")
-                     import traceback
-                     print(traceback.format_exc())
-                     # Do NOT clear _deleted_parties[guild_id_str], to try again next save
+                 if ids_to_delete: # Check if list is not empty
+                    placeholders_del = ','.join([f'${i+2}' for i in range(len(ids_to_delete))]) # $2, $3, ...
+                    delete_sql = f"DELETE FROM parties WHERE guild_id = $1 AND id IN ({placeholders_del})" # Changed placeholders
+                    try:
+                        await self._db_service.adapter.execute(sql=delete_sql, params=(guild_id_str, *tuple(ids_to_delete))); # Changed
+                        print(f"PartyManager: Deleted {len(ids_to_delete)} parties from DB for guild {guild_id_str}.")
+                        # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
+                        self._deleted_parties.pop(guild_id_str, None)
+                    except Exception as e:
+                        print(f"PartyManager: Error deleting parties for guild {guild_id_str}: {e}")
+                        import traceback
+                        print(traceback.format_exc())
+                        # Do NOT clear _deleted_parties[guild_id_str], to try again next save
+            else: # If the set was empty for this guild
+                self._deleted_parties.pop(guild_id_str, None)
 
 
             # 5. Сохранение/обновление партий для этой гильдии
@@ -520,10 +523,44 @@ class PartyManager:
                  print(f"PartyManager: Upserting {len(parties_to_save)} parties for guild {guild_id_str}...")
                  # INSERT OR REPLACE SQL для обновления существующих или вставки новых
                  upsert_sql = '''
-                 INSERT OR REPLACE INTO parties
+                 INSERT INTO parties
                  (id, guild_id, name_i18n, leader_id, player_ids, current_location_id, turn_status, state_variables, current_action)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 '''
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (id) DO UPDATE SET
+                    guild_id = EXCLUDED.guild_id,
+                    name_i18n = EXCLUDED.name_i18n,
+                    leader_id = EXCLUDED.leader_id,
+                    player_ids = EXCLUDED.player_ids,
+                    current_location_id = EXCLUDED.current_location_id,
+                    turn_status = EXCLUDED.turn_status,
+                    state_variables = EXCLUDED.state_variables,
+                    current_action = EXCLUDED.current_action
+                 ''' # PostgreSQL UPSERT
+                 # Note: 'member_ids' in DB was renamed to 'player_ids'
+                 data_to_upsert = []
+                 upserted_party_ids: Set[str] = set() # Keep track of successfully prepared IDs
+            else: # If the set was empty for this guild
+                self._deleted_parties.pop(guild_id_str, None)
+
+
+            # 5. Сохранение/обновление партий для этой гильдии
+            if parties_to_save:
+                 print(f"PartyManager: Upserting {len(parties_to_save)} parties for guild {guild_id_str}...")
+                 # INSERT OR REPLACE SQL для обновления существующих или вставки новых
+                 upsert_sql = '''
+                 INSERT INTO parties
+                 (id, guild_id, name_i18n, leader_id, player_ids, current_location_id, turn_status, state_variables, current_action)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (id) DO UPDATE SET
+                    guild_id = EXCLUDED.guild_id,
+                    name_i18n = EXCLUDED.name_i18n,
+                    leader_id = EXCLUDED.leader_id,
+                    player_ids = EXCLUDED.player_ids,
+                    current_location_id = EXCLUDED.current_location_id,
+                    turn_status = EXCLUDED.turn_status,
+                    state_variables = EXCLUDED.state_variables,
+                    current_action = EXCLUDED.current_action
+                 ''' # PostgreSQL UPSERT
                  # Note: 'member_ids' in DB was renamed to 'player_ids'
                  data_to_upsert = []
                  upserted_party_ids: Set[str] = set() # Keep track of successfully prepared IDs
@@ -579,10 +616,10 @@ class PartyManager:
                            # This party won't be saved in this batch but remains in _dirty_parties
 
                  if data_to_upsert:
-                      if self._db_adapter is None:
-                           print(f"PartyManager: Warning: DB adapter is None during upsert batch for guild {guild_id_str}.")
+                      if self._db_service is None or self._db_service.adapter is None: # Changed
+                           print(f"PartyManager: Warning: DB service or adapter is None during upsert batch for guild {guild_id_str}.")
                       else:
-                           await self._db_adapter.execute_many(sql=upsert_sql, data=data_to_upsert); # Use keyword args
+                           await self._db_service.adapter.execute_many(sql=upsert_sql, data=data_to_upsert); # Changed
                            print(f"PartyManager: Successfully upserted {len(data_to_upsert)} parties for guild {guild_id_str}.")
                            # ИСПРАВЛЕНИЕ: Очищаем dirty set для этой гильдии только для успешно сохраненных ID
                            if guild_id_str in self._dirty_parties:
@@ -603,8 +640,8 @@ class PartyManager:
 
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         """Загружает партии для определенной гильдии из базы данных в кеш."""
-        if self._db_adapter is None:
-            print(f"PartyManager: Warning: Cannot load parties for guild {guild_id}, DB adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"PartyManager: Warning: Cannot load parties for guild {guild_id}, DB service or adapter missing.")
             # TODO: Load placeholder data or raise
             return
 
@@ -624,10 +661,10 @@ class PartyManager:
             sql = '''
             SELECT id, guild_id, name_i18n, leader_id, player_ids, current_location_id, turn_status, state_variables, current_action
             FROM parties
-            WHERE guild_id = ?
-            '''
+            WHERE guild_id = $1
+            ''' # Changed placeholder
             # Note: 'member_ids' in DB was renamed to 'player_ids'
-            rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
+            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed
             print(f"PartyManager: Found {len(rows)} parties in DB for guild {guild_id_str}.")
 
         except Exception as e:
@@ -961,9 +998,9 @@ class PartyManager:
             return
         
         # Ensure db_service is available (assuming it's an attribute or accessible via game_manager)
-        # For this example, we'll assume self._db_adapter is used for direct DB writes if a service layer isn't specified for party updates.
-        if not self._db_adapter: # Changed from self.db_service to self._db_adapter based on existing code
-            print(f"PartyManager: DB Adapter not available for party {party_id} guild {guild_id}. Cannot process turn.")
+        # For this example, we'll assume self._db_service.adapter is used for direct DB writes if a service layer isn't specified for party updates.
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"PartyManager: DB Service or Adapter not available for party {party_id} guild {guild_id}. Cannot process turn.")
             return
 
         # Get all members of the party who are in the specified location
@@ -996,10 +1033,10 @@ class PartyManager:
             # 1. Update party status to 'обработка'
             party.turn_status = 'обработка'
             # Persist: Convert party to dict and update. Assuming DBService has an update_party method
-            # or we update the field directly using self._db_adapter.
+            # or we update the field directly using self._db_service.adapter.
             # For now, direct update via SQL as other party fields are saved.
-            update_sql = "UPDATE parties SET turn_status = ? WHERE id = ? AND guild_id = ?"
-            await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+            update_sql = "UPDATE parties SET turn_status = $1 WHERE id = $2 AND guild_id = $3" # Changed placeholders
+            await self._db_service.adapter.execute(update_sql, (party.turn_status, party.id, guild_id)) # Changed
             self.mark_party_dirty(guild_id, party.id) # Mark dirty for full save later if needed, though status is directly updated.
             print(f"PartyManager: Party {party.id} status set to 'обработка'.")
 
@@ -1110,7 +1147,7 @@ class PartyManager:
                 processor_target_name = '_character_action_processor' if hasattr(game_manager, '_character_action_processor') else 'action_processor (generic)'
                 print(f"PartyManager: {processor_target_name} not found on game_manager or no actions. Cannot process for party {party.id}.")
                 party.turn_status = 'ошибка_нет_АП_или_действий'
-                await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+                await self._db_service.adapter.execute(update_sql, (party.turn_status, party.id, guild_id)) # Changed
                 return
 
                 return # Return early as no action processing can occur
@@ -1153,7 +1190,7 @@ class PartyManager:
 
             # 5. Update party status back to 'сбор_действий' (or a default like 'активна')
             party.turn_status = 'сбор_действий'
-            await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+            await self._db_service.adapter.execute(update_sql, (party.turn_status, party.id, guild_id)) # Changed
             self.mark_party_dirty(guild_id, party.id)
             print(f"PartyManager: Party {party.id} status set back to 'сбор_действий'.")
 
@@ -1206,8 +1243,8 @@ class PartyManager:
             # Attempt to set party status to an error state if possible
             try:
                 party.turn_status = 'ошибка_обработки_крит'
-                update_sql = "UPDATE parties SET turn_status = ? WHERE id = ? AND guild_id = ?"
-                await self._db_adapter.execute(update_sql, (party.turn_status, party.id, guild_id))
+                update_sql = "UPDATE parties SET turn_status = $1 WHERE id = $2 AND guild_id = $3" # Changed placeholders
+                await self._db_service.adapter.execute(update_sql, (party.turn_status, party.id, guild_id)) # Changed
                 print(f"PartyManager: Party {party.id} status set to 'ошибка_обработки_крит' due to exception.")
             except Exception as e_crit:
                 print(f"PartyManager: Failed to set party status to error state after critical error: {e_crit}")
@@ -1256,8 +1293,8 @@ class PartyManager:
         """
         Saves a single party to the database using an UPSERT operation.
         """
-        if self._db_adapter is None:
-            print(f"PartyManager: Error: DB adapter missing for guild {guild_id}. Cannot save party {getattr(party, 'id', 'N/A')}.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"PartyManager: Error: DB service or adapter missing for guild {guild_id}. Cannot save party {getattr(party, 'id', 'N/A')}.")
             return False
 
         guild_id_str = str(guild_id)
@@ -1303,14 +1340,23 @@ class PartyManager:
             )
 
             upsert_sql = '''
-            INSERT OR REPLACE INTO parties (
+            INSERT INTO parties (
                 id, guild_id, name_i18n, leader_id, player_ids,
                 current_location_id, turn_status, state_variables, current_action
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            '''
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE SET
+                guild_id = EXCLUDED.guild_id,
+                name_i18n = EXCLUDED.name_i18n,
+                leader_id = EXCLUDED.leader_id,
+                player_ids = EXCLUDED.player_ids,
+                current_location_id = EXCLUDED.current_location_id,
+                turn_status = EXCLUDED.turn_status,
+                state_variables = EXCLUDED.state_variables,
+                current_action = EXCLUDED.current_action
+            ''' # PostgreSQL UPSERT
             # 9 columns, 9 placeholders.
 
-            await self._db_adapter.execute(upsert_sql, db_params)
+            await self._db_service.adapter.execute(upsert_sql, db_params) # Changed
             print(f"PartyManager: Successfully saved party {party_id} for guild {guild_id_str}.")
 
             if guild_id_str in self._dirty_parties and party_id in self._dirty_parties[guild_id_str]:

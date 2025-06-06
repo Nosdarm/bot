@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union
 from ..models.quest import Quest
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.services.db_service import DBService # Changed
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.item_manager import ItemManager
@@ -32,7 +32,7 @@ class QuestManager:
     # Instruction 2 & 3: Merged __init__ and consolidated cache initializations
     def __init__(
         self,
-        db_adapter: Optional["SqliteAdapter"],
+        db_service: Optional["DBService"], # Changed
         settings: Optional[Dict[str, Any]],
         npc_manager: Optional["NpcManager"] = None,
         character_manager: Optional["CharacterManager"] = None,
@@ -46,7 +46,7 @@ class QuestManager:
         openai_service: Optional["OpenAIService"] = None,
         ai_validator: Optional["AIResponseValidator"] = None # Added validator
     ):
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings if settings else {} # Ensure settings is a dict
         self._npc_manager = npc_manager
         self._character_manager = character_manager
@@ -243,14 +243,14 @@ class QuestManager:
             try:
                 # ai_generated_quest_data is already a dict from the validator
                 data_json = json.dumps(ai_generated_quest_data)
-                if self._db_adapter:
-                    await self._db_adapter.save_pending_moderation_request(
+                if self._db_service and self._db_service.adapter: # Changed
+                    await self._db_service.adapter.save_pending_moderation_request( # Changed
                         request_id, guild_id_str, str(user_id), content_type, data_json
                     )
                     print(f"QuestManager: AI-generated quest data for '{quest_concept}' saved for moderation. Request ID: {request_id}")
                     return {"status": "pending_moderation", "request_id": request_id}
                 else:
-                    print(f"QuestManager: ERROR - DB adapter not available. Cannot save quest for moderation.")
+                    print(f"QuestManager: ERROR - DB service or adapter not available. Cannot save quest for moderation.") # Changed
                     return None # Or handle differently, e.g., proceed without moderation if allowed by policy
             except Exception as e_mod_save:
                 print(f"QuestManager: ERROR saving AI quest content for moderation: {e_mod_save}")
@@ -554,8 +554,8 @@ class QuestManager:
 
         guild_id_str = str(guild_id)
         print(f"QuestManager: Loading all quests for guild {guild_id_str} from DB...")
-        if self._db_adapter is None:
-            print("QuestManager: DB adapter not available. Cannot load quests.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print("QuestManager: DB service or adapter not available. Cannot load quests.")
             return
 
         self._all_quests[guild_id_str] = {}
@@ -566,9 +566,9 @@ class QuestManager:
             sql_standard = """
                 SELECT id, name_i18n, description_i18n, status, influence_level,
                        prerequisites, connections, stages, rewards, npc_involvement, guild_id
-                FROM quests WHERE guild_id = ?
-            """
-            rows = await self._db_adapter.fetchall(sql_standard, (guild_id_str,))
+                FROM quests WHERE guild_id = $1
+            """ # Changed placeholder
+            rows = await self._db_service.adapter.fetchall(sql_standard, (guild_id_str,)) # Changed
             for row_data in rows:
                 data = dict(row_data)
                 data['is_ai_generated'] = False
@@ -594,9 +594,9 @@ class QuestManager:
                 SELECT id, title_i18n, description_i18n, status, suggested_level,
                        stages_json, rewards_json, prerequisites_json, consequences_json,
                        quest_giver_npc_id, ai_prompt_context_json, guild_id
-                FROM generated_quests WHERE guild_id = ?
-            """ # Removed 'is_moderated' as it's not in schema v20
-            rows_gen = await self._db_adapter.fetchall(sql_generated, (guild_id_str,))
+                FROM generated_quests WHERE guild_id = $1
+            """ # Removed 'is_moderated' as it's not in schema v20, Changed placeholder
+            rows_gen = await self._db_service.adapter.fetchall(sql_generated, (guild_id_str,)) # Changed
             for row_data_gen in rows_gen:
                 data_gen = dict(row_data_gen)
                 data_gen['is_ai_generated'] = True
@@ -809,8 +809,8 @@ class QuestManager:
             print("QuestManager: save_generated_quest called with invalid or non-AI quest object.")
             return False
 
-        if self._db_adapter is None:
-            print("QuestManager: DB adapter not available. Cannot save generated quest.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print("QuestManager: DB service or adapter not available. Cannot save generated quest.")
             return False
 
         try:
@@ -857,19 +857,31 @@ class QuestManager:
 
 
             sql = """
-                INSERT OR REPLACE INTO generated_quests (
+                INSERT INTO generated_quests (
                     id, guild_id, title_i18n, description_i18n, status,
                     suggested_level, stages_json, rewards_json, prerequisites_json,
                     consequences_json, quest_giver_npc_id, ai_prompt_context_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """ # 12 columns
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT (id) DO UPDATE SET
+                    guild_id = EXCLUDED.guild_id,
+                    title_i18n = EXCLUDED.title_i18n,
+                    description_i18n = EXCLUDED.description_i18n,
+                    status = EXCLUDED.status,
+                    suggested_level = EXCLUDED.suggested_level,
+                    stages_json = EXCLUDED.stages_json,
+                    rewards_json = EXCLUDED.rewards_json,
+                    prerequisites_json = EXCLUDED.prerequisites_json,
+                    consequences_json = EXCLUDED.consequences_json,
+                    quest_giver_npc_id = EXCLUDED.quest_giver_npc_id,
+                    ai_prompt_context_json = EXCLUDED.ai_prompt_context_json
+            """ # PostgreSQL UPSERT
             params = (
                 quest.id, quest.guild_id, title_i18n_json, description_i18n_json,
                 quest.status, suggested_level_val, stages_json, rewards_json,
                 prerequisites_json, consequences_json, quest_giver_npc_id,
                 ai_prompt_context_json
             )
-            await self._db_adapter.execute(sql, params)
+            await self._db_service.adapter.execute(sql, params) # Changed
             print(f"QuestManager: Successfully saved generated quest {quest.id} to DB.")
             return True
         except Exception as e:
