@@ -484,6 +484,7 @@ class GameManager:
             except Exception as shutdown_e:
                 print(f"GameManager: ❌ Error during shutdown from setup failure: {shutdown_e}")
                 traceback.print_exc() # Also print traceback for shutdown error
+            raise
 
     async def handle_discord_message(self, message: "Message") -> None:
         if message.author.bot:

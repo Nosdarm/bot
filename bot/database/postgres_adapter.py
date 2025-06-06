@@ -3,6 +3,7 @@
 Модуль для асинхронного адаптера базы данных PostgreSQL.
 """
 
+import asyncio
 import os # For accessing environment variables
 import traceback
 import json
@@ -60,19 +61,51 @@ class PostgresAdapter:
     async def _get_raw_connection(self) -> asyncpg.Connection:
         """Gets a raw connection from the pool, creating pool if necessary."""
         if self._conn_pool is None:
-            try:
-                # Adjust connect_min_size and connect_max_size as needed
-                self._conn_pool = await asyncpg.create_pool(dsn=self._asyncpg_url, min_size=1, max_size=10)
-                if self._conn_pool is None: # Check if create_pool actually returned a pool
-                    raise ConnectionError("Failed to create asyncpg connection pool: create_pool returned None")
-                print("PostgresAdapter: Asyncpg connection pool created.")
-            except (ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError) as e:
+            max_retries = 2
+            last_retryable_exception: Optional[Union[ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError]] = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    # Adjust connect_min_size and connect_max_size as needed
+                    self._conn_pool = await asyncpg.create_pool(dsn=self._asyncpg_url, min_size=1, max_size=10)
+
+                    if self._conn_pool is None:
+                        # This is an immediate failure, not to be retried by this loop.
+                        # Original error message for this specific case.
+                        print("PostgresAdapter: ❌ Failed to create asyncpg connection pool: create_pool returned None")
+                        # No traceback here for this specific known condition, just raise
+                        raise ConnectionError("Failed to create asyncpg connection pool: create_pool returned None")
+
+                    print("PostgresAdapter: Asyncpg connection pool created.")
+                    last_retryable_exception = None # Reset if successful
+                    break  # Exit loop if pool is created successfully
+
+                except (ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError) as e:
+                    last_retryable_exception = e
+                    print(f"PostgresAdapter: Connection attempt {attempt + 1}/{max_retries + 1} failed due to {type(e).__name__}.")
+                    if attempt < max_retries:
+                        print(f"PostgresAdapter: Retrying in 5 seconds...")
+                        await asyncio.sleep(5)
+                    # If it's the last attempt, the loop will end, and last_retryable_exception will be handled below.
+
+                except Exception as e:
+                    # This catches other exceptions during create_pool, or the ConnectionError from pool being None.
+                    # These are considered immediate failures.
+                    # Format and print the generic "unexpected error" message.
+                    print(f"PostgresAdapter: ❌ An unexpected error occurred while creating asyncpg connection pool: {e}")
+                    traceback.print_exc()
+                    raise # Re-raise immediately, no more retries for this type of error.
+
+            if last_retryable_exception is not None:
+                # All retries for ConnectionRefusedError or CannotConnectNowError failed.
+                # Now, format and print the detailed error message block and raise the last caught exception.
                 error_message = f"""
-PostgresAdapter: ❌ DATABASE CONNECTION FAILED!
+PostgresAdapter: ❌ DATABASE CONNECTION FAILED AFTER {max_retries + 1} ATTEMPTS!
 --------------------------------------------------------------------------------------
 Attempted to connect to: {self._asyncpg_url} (derived from {self._db_url})
 
-Could not establish a connection to the PostgreSQL server. Please check the following:
+Could not establish a connection to the PostgreSQL server after multiple retries.
+Please check the following:
 1. Is the PostgreSQL server running?
 2. Is the hostname and port in your DATABASE_URL correct?
    Current raw DATABASE_URL (from env or default): {self._db_url}
@@ -82,19 +115,21 @@ Could not establish a connection to the PostgreSQL server. Please check the foll
 5. Ensure the `DATABASE_URL` environment variable is correctly set if you are not using the default.
    Environment variable name: {DATABASE_URL_ENV_VAR}
 
-Original error: {e}
+Last encountered error: {last_retryable_exception}
 --------------------------------------------------------------------------------------
 """
                 print(error_message)
-                traceback.print_exc()
-                raise
-            except Exception as e:
-                print(f"PostgresAdapter: ❌ An unexpected error occurred while creating asyncpg connection pool: {e}")
-                traceback.print_exc()
-                raise
-        
-        # The pool itself is now stored in self._conn_pool
-        # Connections should be acquired from this pool when needed
+                traceback.print_exc() # Print traceback for the last_retryable_exception
+                raise last_retryable_exception
+
+        # Ensure pool is not None before acquiring. This should be guaranteed if loop exited successfully,
+        # or an exception was raised.
+        if self._conn_pool is None:
+            # This state should ideally not be reached if logic above is correct.
+            # It implies retries completed without success AND no exception was propagated.
+            print("PostgresAdapter: ❌ Connection pool is None after initialization attempts, and no exception was raised from retries.")
+            raise ConnectionError("PostgresAdapter: Connection pool is None after initialization attempts.")
+
         conn = await self._conn_pool.acquire()
         if conn is None:
             raise ConnectionError("Failed to acquire connection from asyncpg pool: acquire returned None")
