@@ -12,7 +12,8 @@ from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHE
 # Импорт модели StatusEffect (для объектов эффектов)
 from bot.game.models.status_effect import StatusEffect
 # Импорт адаптера БД
-from bot.database.postgres_adapter import PostgresAdapter
+# from bot.database.postgres_adapter import PostgresAdapter # Replaced with DBService
+from bot.services.db_service import DBService
 # Импорт утилиты для i18n
 from bot.utils.i18n_utils import get_i18n_text
 
@@ -51,7 +52,7 @@ class StatusManager:
 
 
     def __init__(self,
-                 db_adapter: Optional[PostgresAdapter] = None,
+                 db_service: Optional[DBService] = None, # Changed from db_adapter
                  settings: Optional[Dict[str, Any]] = None,
 
                  rule_engine: Optional['RuleEngine'] = None,
@@ -64,7 +65,7 @@ class StatusManager:
                  # event_stage_processor: Optional['EventStageProcessor'] = None,
                  ):
         print("Initializing StatusManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed from _db_adapter
         self._settings = settings
         self._rule_engine = rule_engine
         self._time_manager = time_manager
@@ -217,8 +218,8 @@ class StatusManager:
         guild_id_str = str(guild_id)
         print(f"StatusManager: Adding status '{status_type}' to {target_type} {target_id} for guild {guild_id_str}...")
 
-        if self._db_adapter is None:
-             print(f"StatusManager: Error adding status for guild {guild_id_str}: Database adapter is not available.")
+        if self._db_service is None: # Changed from _db_adapter
+             print(f"StatusManager: Error adding status for guild {guild_id_str}: Database service is not available.") # Changed message
              return None
 
         # TODO: Валидация target_id существует ли сущность (через Character/NPC/Party Manager из kwargs)
@@ -288,7 +289,7 @@ class StatusManager:
             # For consistency with granular saving, we'd ideally just create the object,
             # add to cache, mark dirty, and let the caller decide to save it via save_status_effect.
             # Let's keep the save for now as it's existing behavior, but granular save can also be called.
-            if self._db_adapter:
+            if self._db_service: # Changed from _db_adapter
                  sql = '''
                      INSERT INTO statuses (id, status_type, target_id, target_type, duration, applied_at, source_id, state_variables, guild_id)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -299,10 +300,10 @@ class StatusManager:
                      json.dumps(eff.state_variables),
                      eff.guild_id
                  )
-                 await self._db_adapter.execute(sql, params)
+                 await self._db_service.execute(sql, params) # Changed from _db_adapter
                  print(f"StatusManager: Status {eff.id} (type: {eff.status_type}) added and directly saved to DB for target {eff.target_id} in guild {guild_id_str}.")
             else:
-                 print(f"StatusManager: No DB adapter. Simulating save for status {eff.id} for guild {guild_id_str}.")
+                 print(f"StatusManager: No DB service. Simulating save for status {eff.id} for guild {guild_id_str}.") # Changed message
 
             self._status_effects.setdefault(guild_id_str, {})[eff.id] = eff
             self.mark_status_effect_dirty(guild_id_str, eff.id) # Use the new helper
@@ -348,14 +349,14 @@ class StatusManager:
 
         try:
             # --- Удаляем из БД ---
-            if self._db_adapter:
+            if self._db_service: # Changed from _db_adapter
                 # ИСПРАВЛЕНИЕ: Добавляем фильтр по guild_id в SQL DELETE
                 sql = 'DELETE FROM statuses WHERE id = ? AND guild_id = ?'
-                await self._db_adapter.execute(sql, (status_effect_id_str, guild_id_str))
+                await self._db_service.execute(sql, (status_effect_id_str, guild_id_str)) # Changed from _db_adapter
                 # execute уже коммитит
                 print(f"StatusManager: Status {status_effect_id_str} deleted from DB for guild {guild_id_str}.")
             else:
-                print(f"StatusManager: No DB adapter. Simulating delete from DB for status {status_effect_id_str} for guild {guild_id_str}.")
+                print(f"StatusManager: No DB service. Simulating delete from DB for status {status_effect_id_str} for guild {guild_id_str}.") # Changed message
 
             # --- Удаляем из кеша ---
             # Удаляем из пер-гильдийного кеша
@@ -512,8 +513,8 @@ class StatusManager:
         Сохраняет состояние StatusManager (активные статус-эффекты) для определенной гильдии в БД.
         """
         print(f"StatusManager: Saving state for guild {guild_id}...")
-        if self._db_adapter is None:
-             print(f"StatusManager: Database adapter is not available. Skipping save for guild {guild_id}.")
+        if self._db_service is None: # Changed from _db_adapter
+             print(f"StatusManager: Database service is not available. Skipping save for guild {guild_id}.") # Changed message
              return
 
         guild_id_str = str(guild_id)
@@ -541,7 +542,7 @@ class StatusManager:
                 # Параметры: сначала ID'ы, затем guild_id
                 params_del = tuple(ids_to_delete) + (guild_id_str,)
 
-                await self._db_adapter.execute(sql_del, params_del)
+                await self._db_service.execute(sql_del, params_del) # Changed from _db_adapter
                 # execute уже коммитит
                 print(f"StatusManager: Deleted {len(ids_to_delete)} statuses from DB for guild {guild_id_str}.")
                 # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
@@ -589,7 +590,7 @@ class StatusManager:
                     upserted_status_ids.add(eff.id)
 
                 if data_to_upsert:
-                     await self._db_adapter.execute_many(sql_upsert, data_to_upsert)
+                     await self._db_service.execute_many(sql_upsert, data_to_upsert) # Changed from _db_adapter
                      print(f"StatusManager: Successfully upserted {len(data_to_upsert)} statuses for guild {guild_id_str}.")
                      if guild_id_str in self._dirty_status_effects: # Check if key exists before difference_update
                         self._dirty_status_effects[guild_id_str].difference_update(upserted_status_ids)
@@ -612,8 +613,8 @@ class StatusManager:
         print(f"StatusManager: Loading state for guild {guild_id}...")
         guild_id_str = str(guild_id)
 
-        if self._db_adapter is None:
-             print(f"StatusManager: Database adapter is not available. Loading placeholder state or leaving default for guild {guild_id_str}.")
+        if self._db_service is None: # Changed from _db_adapter
+             print(f"StatusManager: Database service is not available. Loading placeholder state or leaving default for guild {guild_id_str}.") # Changed message
              # Очищаем или инициализируем кеши для этой гильдии
              self._status_effects.pop(guild_id_str, None)
              self._status_effects[guild_id_str] = {}
@@ -644,7 +645,7 @@ class StatusManager:
                 SELECT id, status_type, target_id, target_type, duration, applied_at, source_id, state_variables, guild_id
                 FROM statuses WHERE guild_id = ?
             '''
-            rows_statuses = await self._db_adapter.fetchall(sql_statuses, (guild_id_str,))
+            rows_statuses = await self._db_service.fetchall(sql_statuses, (guild_id_str,)) # Changed from _db_adapter
 
             if rows_statuses:
                  print(f"StatusManager: Found {len(rows_statuses)} statuses in DB for guild {guild_id_str}.")
@@ -770,8 +771,8 @@ class StatusManager:
         """
         Saves a single status effect to the database using an UPSERT operation.
         """
-        if self._db_adapter is None:
-            print(f"StatusManager: Error: DB adapter missing for guild {guild_id}. Cannot save status effect {getattr(status_effect, 'id', 'N/A')}.")
+        if self._db_service is None: # Changed from _db_adapter
+            print(f"StatusManager: Error: DB service missing for guild {guild_id}. Cannot save status effect {getattr(status_effect, 'id', 'N/A')}.") # Changed message
             return False
 
         guild_id_str = str(guild_id)
@@ -828,7 +829,7 @@ class StatusManager:
             '''
             # 9 columns, 9 placeholders.
 
-            await self._db_adapter.execute(upsert_sql, db_params)
+            await self._db_service.execute(upsert_sql, db_params) # Changed from _db_adapter
             print(f"StatusManager: Successfully saved status effect {db_id} for guild {guild_id_str}.")
 
             # If this status effect was marked as dirty, clean it from the dirty set for this guild
