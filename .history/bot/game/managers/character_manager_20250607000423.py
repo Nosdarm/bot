@@ -1480,8 +1480,8 @@ class CharacterManager:
              if self._item_manager and hasattr(self._item_manager, 'clean_up_for_character') and getattr(char, 'location_id', None) is not None:
                   await self._item_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass context dict
 
-             # Trigger death logic in RuleEngine
-             if self._rule_engine:
+            # Trigger death logic in RuleEngine
+            if self._rule_engine:
                 killer_entity = None
                 # Ensure context (base_cleanup_kwargs) has guild_id, it's already there
                 guild_id_for_fetch = base_cleanup_kwargs.get('guild_id', char.guild_id)
@@ -1527,17 +1527,17 @@ class CharacterManager:
                     print(f"CharacterManager: Error processing entity death for char {char.id} in guild {guild_id_str}: {e}")
                     import traceback
                     print(traceback.format_exc())
-             else:
+            else:
                 print(f"CharacterManager: RuleEngine not available for character {char.id} death processing. Basic death applied.")
 
-                # These print statements are part of the general cleanup process after all specific cleanup actions.
-                # Their indentation should align with the outer try block.
-                print(f"CharacterManager: Death cleanup initiated for character {character_id} in guild {guild_id_str}.")
-                print(f"CharacterManager: Death cleanup process completed for character {character_id} in guild {guild_id_str}.")
-         except Exception as e: # This is the except for the outer try block
-              print(f"CharacterManager: Error during death cleanup for character {character_id} in guild {guild_id_str}: {e}")
-    import traceback
-    print(traceback.format_exc())
+        # These print statements are part of the general cleanup process after all specific cleanup actions.
+        # Their indentation should align with the outer try block.
+        print(f"CharacterManager: Death cleanup initiated for character {character_id} in guild {guild_id_str}.")
+        print(f"CharacterManager: Death cleanup process completed for character {character_id} in guild {guild_id_str}.")
+        except Exception as e: # This is the except for the outer try block
+            print(f"CharacterManager: Error during death cleanup for character {character_id} in guild {guild_id_str}: {e}")
+            import traceback
+            print(traceback.format_exc())
             # Log error, continue
 
 

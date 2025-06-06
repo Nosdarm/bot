@@ -46,10 +46,10 @@ class ActionProcessor:
         """
 
         # --- Initial Checks (Same) ---
-        if not char_manager:
+        if not char_manager:,
             return {"success": False, "message": "**Мастер:** Менеджер персонажей недоступен.", "target_channel_id": ctx_channel_id, "state_changed": False}
         character = char_manager.get_character_by_discord_id(discord_user_id)
-        if not character:
+        if not character:,
             return {"success": False, "message": "**Мастер:** У вас еще нет персонажа в этой игре. Используйте `/join_game`.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
         # Ensure guild_id is consistently string
@@ -60,6 +60,7 @@ class ActionProcessor:
         current_location_id = getattr(character, 'current_location_id', None)
         # Assuming get_location is async
         location = await loc_manager.get_location(current_location_id, guild_id=guild_id_str_process) if current_location_id else None
+        # location = loc_manager.get_location(character.current_location_id)  # This line seems redundant or incorrect after the await
         if not location:  # location could be None if current_location_id was None or get_location returned None
             return {"success": False, "message": "**Мастер:** Ваш персонаж в неизвестной локации. Обратитесь к администратору.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
