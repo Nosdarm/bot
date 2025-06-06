@@ -13,7 +13,7 @@ from builtins import dict, set, list, str, int, bool, float
 
 # --- Imports needed ONLY for Type Checking ---
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.services.db_service import DBService # Changed
     from bot.game.models.item import Item
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.character_manager import CharacterManager
@@ -47,7 +47,7 @@ class ItemManager:
 
     def __init__(
         self,
-        db_adapter: Optional["SqliteAdapter"] = None,
+        db_service: Optional["DBService"] = None, # Changed
         settings: Optional[Dict[str, Any]] = None,
         rule_engine: Optional["RuleEngine"] = None,
         character_manager: Optional["CharacterManager"] = None,
@@ -60,7 +60,7 @@ class ItemManager:
         crafting_manager: Optional["CraftingManager"] = None,
     ):
         print("Initializing ItemManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings
         self._rule_engine = rule_engine
         self._character_manager = character_manager
@@ -197,8 +197,8 @@ class ItemManager:
         guild_id_str = str(guild_id)
         template_id_str = str(template_id)
 
-        if self._db_adapter is None:
-            print(f"ItemManager: No DB adapter for guild {guild_id_str}. Cannot create item instance.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"ItemManager: No DB service or adapter for guild {guild_id_str}. Cannot create item instance.")
             return None
 
         template = self.get_item_template(template_id_str)
@@ -258,9 +258,9 @@ class ItemManager:
             return False
 
         try:
-            if self._db_adapter:
-                sql = 'DELETE FROM items WHERE id = ? AND guild_id = ?'
-                await self._db_adapter.execute(sql, (item_id_str, guild_id_str))
+            if self._db_service and self._db_service.adapter: # Changed
+                sql = 'DELETE FROM items WHERE id = $1 AND guild_id = $2' # Changed placeholders
+                await self._db_service.adapter.execute(sql, (item_id_str, guild_id_str)) # Changed
 
             guild_items_cache = self._items.get(guild_id_str, {})
             if item_id_str in guild_items_cache:
@@ -315,7 +315,7 @@ class ItemManager:
 
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         guild_id_str = str(guild_id)
-        if self._db_adapter is None:
+        if self._db_service is None or self._db_service.adapter is None: # Changed
              self._clear_guild_state_cache(guild_id_str)
              return
 
@@ -323,8 +323,8 @@ class ItemManager:
         guild_items_cache = self._items[guild_id_str]
 
         try:
-            sql_items = 'SELECT id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary FROM items WHERE guild_id = ?'
-            rows_items = await self._db_adapter.fetchall(sql_items, (guild_id_str,))
+            sql_items = 'SELECT id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary FROM items WHERE guild_id = $1' # Changed placeholder
+            rows_items = await self._db_service.adapter.fetchall(sql_items, (guild_id_str,)) # Changed
             loaded_count = 0
             for row in rows_items:
                 try:
@@ -357,7 +357,7 @@ class ItemManager:
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         guild_id_str = str(guild_id)
-        if self._db_adapter is None: return
+        if self._db_service is None or self._db_service.adapter is None: return # Changed
 
         dirty_ids = self._dirty_items.get(guild_id_str, set()).copy()
         deleted_ids = self._deleted_items.get(guild_id_str, set()).copy()
@@ -368,20 +368,32 @@ class ItemManager:
             return
 
         if deleted_ids:
-            placeholders = ','.join(['?'] * len(deleted_ids))
-            sql_delete = f"DELETE FROM items WHERE guild_id = ? AND id IN ({placeholders})"
-            try:
-                await self._db_adapter.execute(sql_delete, (guild_id_str, *list(deleted_ids)))
+            if deleted_ids: # Ensure list is not empty
+                placeholders = ','.join([f'${i+2}' for i in range(len(deleted_ids))]) # $2, $3, ...
+                sql_delete = f"DELETE FROM items WHERE guild_id = $1 AND id IN ({placeholders})" # Changed placeholders
+                try:
+                    await self._db_service.adapter.execute(sql_delete, (guild_id_str, *list(deleted_ids))) # Changed
+                    self._deleted_items.pop(guild_id_str, None)
+                except Exception as e: print(f"ItemManager: Error deleting items: {e}")
+            else: # If deleted_ids was empty for this guild
                 self._deleted_items.pop(guild_id_str, None)
-            except Exception as e: print(f"ItemManager: Error deleting items: {e}")
 
         items_to_upsert = [obj.to_dict() for id_str in dirty_ids if (obj := self._items.get(guild_id_str, {}).get(id_str))]
 
         if items_to_upsert:
             upsert_sql = '''
-            INSERT OR REPLACE INTO items (id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            '''
+            INSERT INTO items (id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE SET
+                template_id = EXCLUDED.template_id,
+                guild_id = EXCLUDED.guild_id,
+                owner_id = EXCLUDED.owner_id,
+                owner_type = EXCLUDED.owner_type,
+                location_id = EXCLUDED.location_id,
+                quantity = EXCLUDED.quantity,
+                state_variables = EXCLUDED.state_variables,
+                is_temporary = EXCLUDED.is_temporary
+            ''' # PostgreSQL UPSERT
             data_tuples = []
             processed_ids = set()
             for item_data in items_to_upsert:
@@ -390,14 +402,14 @@ class ItemManager:
                         item_data['id'], item_data['template_id'], item_data['guild_id'],
                         item_data['owner_id'], item_data['owner_type'], item_data['location_id'],
                         item_data['quantity'], json.dumps(item_data['state_variables']),
-                        int(bool(item_data['is_temporary']))
+                        bool(item_data['is_temporary']) # Pass boolean directly
                     ))
                     processed_ids.add(item_data['id'])
                 except Exception as e: print(f"ItemManager: Error preparing item {item_data.get('id')} for save: {e}")
 
             if data_tuples:
                 try:
-                    await self._db_adapter.execute_many(upsert_sql, data_tuples)
+                    await self._db_service.adapter.execute_many(upsert_sql, data_tuples) # Changed
                     if guild_id_str in self._dirty_items:
                         self._dirty_items[guild_id_str].difference_update(processed_ids)
                         if not self._dirty_items[guild_id_str]: del self._dirty_items[guild_id_str]
@@ -502,7 +514,7 @@ class ItemManager:
                        if not guild_location_cache: self._items_by_location.pop(guild_id_str, None)
 
     async def save_item(self, item: "Item", guild_id: str) -> bool:
-        if self._db_adapter is None: return False
+        if self._db_service is None or self._db_service.adapter is None: return False # Changed
         guild_id_str = str(guild_id)
         item_id = getattr(item, 'id', None)
         if not item_id: return False
@@ -517,12 +529,22 @@ class ItemManager:
                 item_data_from_model.get('location_id'),
                 float(item_data_from_model.get('quantity', 1.0)),
                 json.dumps(item_data_from_model.get('state_variables', {})),
-                int(bool(item_data_from_model.get('is_temporary', False)))
+                bool(item_data_from_model.get('is_temporary', False)) # Pass boolean directly
             )
             upsert_sql = '''
-            INSERT OR REPLACE INTO items (id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'''
-            await self._db_adapter.execute(upsert_sql, db_params)
+            INSERT INTO items (id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE SET
+                template_id = EXCLUDED.template_id,
+                guild_id = EXCLUDED.guild_id,
+                owner_id = EXCLUDED.owner_id,
+                owner_type = EXCLUDED.owner_type,
+                location_id = EXCLUDED.location_id,
+                quantity = EXCLUDED.quantity,
+                state_variables = EXCLUDED.state_variables,
+                is_temporary = EXCLUDED.is_temporary
+            ''' # PostgreSQL UPSERT
+            await self._db_service.adapter.execute(upsert_sql, db_params) # Changed
 
             guild_dirty_set = self._dirty_items.get(guild_id_str)
             if guild_dirty_set:
