@@ -827,7 +827,7 @@ class TestLocationManagerContinued(unittest.IsolatedAsyncioTestCase):
         self.mock_on_enter_action_executor = AsyncMock()
         self.mock_stage_description_generator = AsyncMock()
 
-        self.guild_id = "test_guild_continued" # Use a distinct guild_id or reuse if appropriate
+        self.guild_id = "test_guild_continued", # Use a distinct guild_id or reuse if appropriate
 
         self.location_manager = LocationManager(
             db_adapter=self.mock_db_adapter,

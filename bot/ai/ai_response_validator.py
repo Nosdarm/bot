@@ -608,7 +608,7 @@ class AIResponseValidator:
                             "entity_id": None, "type": entity_type_str,
                             "status": "requires_moderation", "errors": [err_msg],
                             "notifications": [], "requires_moderation": True,
-                            "validated_data": item_data_uncast if isinstance(item_data_uncast, dict) else {"raw_data": item_data_uncast}
+                            "validated_data": item_data_uncast if isinstance(item_data_uncast, dict) else {"raw_data": item_data_uncast},
                         })
                         continue
                     # Call the appropriate block validator for the dictionary item
