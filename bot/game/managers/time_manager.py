@@ -389,9 +389,9 @@ class TimeManager:
             current_game_time_for_guild = self._current_game_time.get(guild_id_str, 0.0)
 
             # Сохраняем текущее игровое время для этой гильдии в global_state
-            await self._db_service.adapter.execute( # Changed from _db_adapter
-                "INSERT OR REPLACE INTO global_state (key, value) VALUES (?, ?)",
-                (f'game_time_{guild_id_str}', json.dumps(current_game_time_for_guild)) # Ключ 'game_time_<guild_id>', значение как JSON
+            await self._db_service.adapter.execute(
+                "INSERT INTO global_state (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (f'game_time_{guild_id_str}', json.dumps(current_game_time_for_guild))
             )
             # execute уже коммитит (для этой одной операции)
 
