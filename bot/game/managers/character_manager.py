@@ -1403,38 +1403,38 @@ class CharacterManager:
                   print(f"CharacterManager: Warning: No death channel ID found for guild {guild_id_str}. Cannot send death message.")
 
 
-         # Cleanup related states (statuses, combat, party, dialogue, etc.)
-         # Use injected managers (self._...) and pass the context kwargs.
-         cleanup_context: Dict[str, Any] = { # Assemble context for clean_up_* methods
-             'guild_id': guild_id_str, # Передаем guild_id_str
-             'character_id': character_id, # Передаем character_id
-             'character': char, # Pass the character object for convenience
-             # Add potentially relevant managers to context *from self* if they exist and are not already in kwargs
-             'item_manager': kwargs.get('item_manager', self._item_manager),
-             'status_manager': kwargs.get('status_manager', self._status_manager),
-             'party_manager': kwargs.get('party_manager', self._party_manager),
-             'combat_manager': kwargs.get('combat_manager', self._combat_manager),
-             'dialogue_manager': kwargs.get('dialogue_manager', self._dialogue_manager),
-             'location_manager': kwargs.get('location_manager', self._location_manager),
-             'rule_engine': kwargs.get('rule_engine', self._rule_engine),
-             'send_callback_factory': send_callback_factory, # Pass factory if available
-             'settings': kwargs.get('settings', self._settings), # Pass settings if available
-             'channel_id': channel_id, # Pass the originating channel_id if available
-             # TODO: Add other necessary managers/services from self._ or kwargs into cleanup_context
-         }
-         # Do NOT update cleanup_context with **kwargs here, as it might overwrite essential keys
-         # Instead, list the desired keys or handle kwargs individually within each cleanup call if needed.
-         # OR, add kwargs first, then overwrite with specific managers from self._ if self._ exists.
-         # Example: cleanup_context.update(kwargs) # Add passed kwargs
-         # if self._item_manager: cleanup_context['item_manager'] = self._item_manager # Overwrite if self._ is preferred
+        # Cleanup related states (statuses, combat, party, dialogue, etc.)
+        # Use injected managers (self._...) and pass the context kwargs.
+        cleanup_context: Dict[str, Any] = { # Assemble context for clean_up_* methods
+            'guild_id': guild_id_str, # Передаем guild_id_str
+            'character_id': character_id, # Передаем character_id
+            'character': char, # Pass the character object for convenience
+            # Add potentially relevant managers to context *from self* if they exist and are not already in kwargs
+            'item_manager': kwargs.get('item_manager', self._item_manager),
+            'status_manager': kwargs.get('status_manager', self._status_manager),
+            'party_manager': kwargs.get('party_manager', self._party_manager),
+            'combat_manager': kwargs.get('combat_manager', self._combat_manager),
+            'dialogue_manager': kwargs.get('dialogue_manager', self._dialogue_manager),
+            'location_manager': kwargs.get('location_manager', self._location_manager),
+            'rule_engine': kwargs.get('rule_engine', self._rule_engine),
+            'send_callback_factory': send_callback_factory, # Pass factory if available
+            'settings': kwargs.get('settings', self._settings), # Pass settings if available
+            'channel_id': channel_id, # Pass the originating channel_id if available
+            # TODO: Add other necessary managers/services from self._ or kwargs into cleanup_context
+        }
+        # Do NOT update cleanup_context with **kwargs here, as it might overwrite essential keys
+        # Instead, list the desired keys or handle kwargs individually within each cleanup call if needed.
+        # OR, add kwargs first, then overwrite with specific managers from self._ if self._ exists.
+        # Example: cleanup_context.update(kwargs) # Add passed kwargs
+        # if self._item_manager: cleanup_context['item_manager'] = self._item_manager # Overwrite if self._ is preferred
 
-         # Let's stick to explicitly listing needed managers in context for clarity, prioritizing self._ attributes if available.
-         # Re-assemble cleanup_context incorporating kwargs *where appropriate* or just passing all kwargs down.
-         # A safer approach is to pass character_id, guild_id, and the essential managers explicitly, then **kwargs for everything else.
-         # The cleanup methods themselves should be written to handle the received context.
-         # Let's pass the core info explicitly, then the collected managers/context dict as **kwargs.
+        # Let's stick to explicitly listing needed managers in context for clarity, prioritizing self._ attributes if available.
+        # Re-assemble cleanup_context incorporating kwargs *where appropriate* or just passing all kwargs down.
+        # A safer approach is to pass character_id, guild_id, and the essential managers explicitly, then **kwargs for everything else.
+        # The cleanup methods themselves should be written to handle the received context.
+        # Let's pass the core info explicitly, then the collected managers/context dict as **kwargs.
 
-         base_cleanup_kwargs = {
+        base_cleanup_kwargs = {
             'guild_id': guild_id_str,
             'character_id': character_id,
             'character': char,
@@ -1451,34 +1451,34 @@ class CharacterManager:
             'settings': self._settings, # Pass settings if cleanup logic needs them
             'channel_id': channel_id, # Pass originating channel if available
             # Add others needed for cleanup...
-         }
-         # Add any extra kwargs received by handle_character_death to the context passed to cleanup methods
-         base_cleanup_kwargs.update(kwargs) # Safely add remaining kwargs
+        }
+        # Add any extra kwargs received by handle_character_death to the context passed to cleanup methods
+        base_cleanup_kwargs.update(kwargs) # Safely add remaining kwargs
 
-         # Omit None managers from context passed to cleanup methods if clean_up methods expect Optional
-         # cleanup_context_filtered = {k: v for k, v in base_cleanup_kwargs.items() if v is not None} # Optional filtering
+        # Omit None managers from context passed to cleanup methods if clean_up methods expect Optional
+        # cleanup_context_filtered = {k: v for k, v in base_cleanup_kwargs.items() if v is not None} # Optional filtering
 
-         # Call cleanup methods, passing relevant arguments explicitly or via **kwargs
-         # Make sure cleanup methods accept these arguments.
-         # Assuming cleanup methods accept entity_id (character_id), context (Dict[str, Any]), and potentially other kwargs.
-         # Let's pass character_id and the gathered context dict as **context_kwargs
-         # Example: clean_up_for_character(character_id: str, context: Dict[str, Any]) -> None
+        # Call cleanup methods, passing relevant arguments explicitly or via **kwargs
+        # Make sure cleanup methods accept these arguments.
+        # Assuming cleanup methods accept entity_id (character_id), context (Dict[str, Any]), and potentially other kwargs.
+        # Let's pass character_id and the gathered context dict as **context_kwargs
+        # Example: clean_up_for_character(character_id: str, context: Dict[str, Any]) -> None
 
-         try:
-             if self._status_manager and hasattr(self._status_manager, 'clean_up_for_character'):
-                  await self._status_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass the context dict
-             if self._combat_manager and hasattr(self._combat_manager, 'clean_up_for_entity'): # Updated method name
-                  # remove_participant_from_combat might need entity_type
-                  await self._combat_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
-             if self._party_manager and hasattr(self._party_manager, 'clean_up_for_entity'): # Updated method name
-                  await self._party_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
-             if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_entity'): # Updated method name
-                  await self._dialogue_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
+        try:
+            if self._status_manager and hasattr(self._status_manager, 'clean_up_for_character'):
+                await self._status_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass the context dict
+            if self._combat_manager and hasattr(self._combat_manager, 'clean_up_for_entity'): # Updated method name
+                # remove_participant_from_combat might need entity_type
+                await self._combat_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
+            if self._party_manager and hasattr(self._party_manager, 'clean_up_for_entity'): # Updated method name
+                await self._party_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
+            if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_entity'): # Updated method name
+                await self._dialogue_manager.clean_up_for_entity(character_id, entity_type="Character", context=base_cleanup_kwargs) # Pass the context dict
 
-             # Drop items (if location_id is available on character)
-             # Changed to use clean_up_for_character as it handles dropping inventory
-             if self._item_manager and hasattr(self._item_manager, 'clean_up_for_character') and getattr(char, 'location_id', None) is not None:
-                  await self._item_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass context dict
+            # Drop items (if location_id is available on character)
+            # Changed to use clean_up_for_character as it handles dropping inventory
+            if self._item_manager and hasattr(self._item_manager, 'clean_up_for_character') and getattr(char, 'location_id', None) is not None:
+                await self._item_manager.clean_up_for_character(character_id, context=base_cleanup_kwargs) # Pass context dict
 
             # Trigger death logic in RuleEngine
             if self._rule_engine:
