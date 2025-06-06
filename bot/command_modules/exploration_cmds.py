@@ -4,6 +4,8 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
+    from bot.game.managers.game_manager import GameManager
+    from bot.game.character_processors.character_action_processor import CharacterActionProcessor
 
 class ExplorationCog(commands.Cog, name="Exploration Commands"):
     def __init__(self, bot: "RPGBot"):
@@ -13,19 +15,29 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
     @app_commands.describe(target="Объект или направление для осмотра (необязательно).")
     async def cmd_look(self, interaction: Interaction, target: Optional[str] = None):
         await interaction.response.defer(ephemeral=False)
-        game_mngr = self.bot.game_manager
-        if not game_mngr or not game_mngr.character_action_processor:
-            await interaction.followup.send("Система исследования мира временно недоступна.", ephemeral=True)
+
+        game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
+        if not game_mngr:
+            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
+            return
+
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        if not char_action_proc:
+            await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
+            return
+
+        if not game_mngr.character_manager: # Dependent manager check
+            await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
             return
 
         action_data = {"target": target} if target else {}
         
-        player_char = await game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
+        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
-        result = await game_mngr.character_action_processor.process_action(
+        result = await char_action_proc.process_action(
             character_id=player_char.id,
             action_type="look",
             action_data=action_data,
@@ -47,18 +59,28 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
     @app_commands.describe(destination="Название выхода или ID локации назначения.")
     async def cmd_move(self, interaction: Interaction, destination: str):
         await interaction.response.defer(ephemeral=False)
-        game_mngr = self.bot.game_manager
-        if not game_mngr or not game_mngr.character_action_processor:
-            await interaction.followup.send("Система перемещения временно недоступна.", ephemeral=True)
+
+        game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
+        if not game_mngr:
+            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        player_char = await game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        if not char_action_proc:
+            await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
+            return
+
+        if not game_mngr.character_manager: # Dependent manager check
+            await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
+            return
+
+        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
         action_data = {"destination": destination}
-        result = await game_mngr.character_action_processor.process_action(
+        result = await char_action_proc.process_action(
             character_id=player_char.id,
             action_type="move",
             action_data=action_data,
@@ -80,19 +102,29 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
     @app_commands.describe(skill_name="Навык для использования (например, внимательность, знание_магии).", target="Что или кого вы проверяете.")
     async def cmd_check(self, interaction: Interaction, skill_name: str, target: Optional[str] = None):
         await interaction.response.defer(ephemeral=False)
-        game_mngr = self.bot.game_manager
-        if not game_mngr or not game_mngr.character_action_processor:
-            await interaction.followup.send("Система проверки навыков временно недоступна.", ephemeral=True)
+
+        game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
+        if not game_mngr:
+            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        player_char = await game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        if not char_action_proc:
+            await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
+            return
+
+        if not game_mngr.character_manager: # Dependent manager check
+            await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
+            return
+
+        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
         action_data = {"skill_name": skill_name, "target": target if target else "окружение"}
         
-        result = await game_mngr.character_action_processor.process_action(
+        result = await char_action_proc.process_action(
             character_id=player_char.id,
             action_type="skill_check",
             action_data=action_data,
