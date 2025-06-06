@@ -147,7 +147,7 @@ class TimeManager:
                 # TODO: Добавить другие параметры в кортеж
             )
 
-            await self._db_service.execute(sql, params) # Changed from _db_adapter
+            await self._db_service.adapter.execute(sql, params) # Changed from _db_adapter
             # execute уже коммитит
 
             print(f"TimeManager: Timer '{timer_type}' added for guild {guild_id_str}, ends at {ends_at:.2f}, saved to DB with ID {timer_id}.")
@@ -190,7 +190,7 @@ class TimeManager:
             if self._db_service: # Changed from _db_adapter
                 # ИСПРАВЛЕНИЕ: Добавляем фильтр по guild_id в SQL DELETE
                 sql = 'DELETE FROM timers WHERE id = $1 AND guild_id = $2'
-                await self._db_service.execute(sql, (timer_id_str, guild_id_str)) # Changed from _db_adapter
+                await self._db_service.adapter.execute(sql, (timer_id_str, guild_id_str)) # Changed from _db_adapter
                 # execute уже коммитит
                 print(f"TimeManager: Timer {timer_id_str} deleted from DB for guild {guild_id_str}.")
             else:
@@ -504,7 +504,7 @@ class TimeManager:
 
             # Выбираем таймеры ТОЛЬКО для этой гильдии и которые активны
             sql_timers = '''SELECT id, type, ends_at, callback_data, is_active, guild_id FROM timers WHERE guild_id = ? AND is_active = 1'''
-            rows_timers = await self._db_service.fetchall(sql_timers, (guild_id_str,)) # Changed from _db_adapter
+            rows_timers = await self._db_service.adapter.fetchall(sql_timers, (guild_id_str,)) # Changed from _db_adapter
 
             if rows_timers:
                  print(f"TimeManager: Loaded {len(rows_timers)} active timers for guild {guild_id_str} from DB.")
