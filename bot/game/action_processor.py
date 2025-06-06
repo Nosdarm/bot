@@ -46,10 +46,10 @@ class ActionProcessor:
         """
 
         # --- Initial Checks (Same) ---
-        if not char_manager:,
+        if not char_manager:
             return {"success": False, "message": "**Мастер:** Менеджер персонажей недоступен.", "target_channel_id": ctx_channel_id, "state_changed": False}
         character = char_manager.get_character_by_discord_id(discord_user_id)
-        if not character:,
+        if not character:
             return {"success": False, "message": "**Мастер:** У вас еще нет персонажа в этой игре. Используйте `/join_game`.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
         # Ensure guild_id is consistently string
@@ -133,7 +133,7 @@ class ActionProcessor:
             system_prompt = "Ты - Мастер текстовой RPG в мире темного фэнтези. Описывай локации атмосферно и мрачно."
             user_prompt = (
                 f"Опиши локацию для персонажа '{character.name}' в мрачном фэнтези. "
-                f"Учитывай: Локация '{location.name}', ",
+                f"Учитывай: Локация '{location.name}', "
                 f"Шаблон описания: '''{location.description_template[:200]}'''. "
                 f"Активные события здесь: {', '.join([e.name for e in active_events]) if active_events else 'нет'}. "
                 f"Видимые персонажи/NPC (пример): {', '.join([c.name_i18n.get('en', c.id) for c in char_manager.get_characters_in_location(guild_id=str(game_state.server_id), location_id=location.id) if c.id != character.id][:3]) if char_manager.get_characters_in_location(guild_id=str(game_state.server_id), location_id=location.id) else 'нет'}. "
