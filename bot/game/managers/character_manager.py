@@ -369,7 +369,7 @@ class CharacterManager:
 
         data: Dict[str, Any] = {
             'id': new_id, # UUID как TEXT
-            'discord_user_id': discord_id, # Значение из параметра discord_id
+            'discord_id': discord_id, # Changed from discord_user_id
             'name': name, # Original name for direct use if needed, Character model might store it separately or just use name_i18n
             'name_i18n': name_i18n_data, # NEW
             'guild_id': guild_id_str, # <-- Добавляем guild_id_str
@@ -415,7 +415,7 @@ class CharacterManager:
         # Note: The 'name' column in DB will store name_i18n JSON.
         sql = """
         INSERT INTO players (
-            id, discord_user_id, name, guild_id, current_location_id, stats, inventory,
+            id, discord_id, name, guild_id, current_location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
             hp, max_health, is_alive, status_effects, level, experience, unspent_xp,
             selected_language, collected_actions_json,
@@ -426,7 +426,7 @@ class CharacterManager:
         # Убедитесь, что порядок параметров соответствует колонкам в SQL
         db_params = (
             data['id'],
-            data['discord_user_id'],
+            data['discord_id'], # Changed from discord_user_id
             json.dumps(data['name_i18n']), # Store name_i18n dict as JSON in 'name' column
             data['guild_id'], # <-- Параметр guild_id_str
             data['current_location_id'],
@@ -477,9 +477,9 @@ class CharacterManager:
 
             # ИСПРАВЛЕНИЕ: Добавляем персонажа в per-guild кеши
             self._characters.setdefault(guild_id_str, {})[char.id] = char
-            if char.discord_user_id is not None:
+            if char.discord_id is not None: # Changed from discord_user_id
                  # Убеждаемся, что discord_user_id является хэшируемым типом (int)
-                 self._discord_to_char_map.setdefault(guild_id_str, {})[char.discord_user_id] = char.id # Мапа discord_id -> char_id (per-guild)
+                 self._discord_to_char_map.setdefault(guild_id_str, {})[char.discord_id] = char.id # Мапа discord_id -> char_id (per-guild)
 
 
             # ИСПРАВЛЕНИЕ: Отмечаем как грязный для этой гильдии
@@ -765,7 +765,7 @@ class CharacterManager:
             # Ensure all new columns are selected.
             # 'name' column stores name_i18n. Other new columns: skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
             sql = '''
-            SELECT id, discord_user_id, name, guild_id, current_location_id, stats, inventory,
+            SELECT id, discord_id, name, guild_id, current_location_id, stats, inventory,
                    current_action, action_queue, party_id, state_variables, hp, max_health,
                    is_alive, status_effects, race, mp, attack, defense, level, experience, unspent_xp,
                    collected_actions_json, selected_language, current_game_status, current_party_id,
@@ -800,7 +800,7 @@ class CharacterManager:
             try:
                 # Проверяем наличие обязательных полей
                 char_id_raw = data.get('id')
-                discord_user_id_raw = data.get('discord_user_id')
+                discord_user_id_raw = data.get('discord_id') # Changed from discord_user_id
                 guild_id_raw = data.get('guild_id')
 
                 if char_id_raw is None or discord_user_id_raw is None or guild_id_raw is None:
@@ -873,7 +873,7 @@ class CharacterManager:
 
                 # Update data dict with validated/converted values
                 data['id'] = char_id
-                data['discord_user_id'] = discord_user_id_int
+                data['discord_id'] = discord_user_id_int # Changed from discord_user_id
                 data['guild_id'] = loaded_guild_id
                 # Ensure list fields are actually lists after potential JSON parsing issues
                 for list_field in ['inventory', 'action_queue', 'status_effects', 'skills_data', 'abilities_data', 'spells_data', 'active_quests', 'known_spells']:
@@ -1689,7 +1689,7 @@ class CharacterManager:
 
             db_params = (
                 char_data.get('id'),
-                char_data.get('discord_user_id'),
+                char_data.get('discord_id'), # Changed from discord_user_id
                 name_i18n_json, # 'name' column in DB stores name_i18n
                 char_data.get('guild_id'),
                 char_data.get('current_location_id'), # Use current_location_id
@@ -1724,7 +1724,7 @@ class CharacterManager:
             # Column names must match the 'players' table schema.
             upsert_sql = '''
             INSERT INTO players (
-                id, discord_user_id, name, guild_id, current_location_id,
+                id, discord_id, name, guild_id, current_location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, experience, unspent_xp, active_quests, known_spells,
