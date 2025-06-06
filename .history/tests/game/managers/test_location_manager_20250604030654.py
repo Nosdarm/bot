@@ -79,9 +79,6 @@ class TestLocationManagerMoveEntity(unittest.IsolatedAsyncioTestCase): # Renamed
             time_manager=self.mock_time_manager,
             send_callback_factory=self.mock_send_callback_factory,
             # Pass the other entity managers during LocationManager init
-            character_manager=self.mock_character_manager,
-            npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager,
             event_stage_processor=self.mock_event_stage_processor,
             event_action_processor=self.mock_event_action_processor,
             on_enter_action_executor=self.mock_on_enter_action_executor,
@@ -567,21 +564,6 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
             ai_validator=self.mock_ai_validator
         )
         # Ensure internal caches are initialized as dicts
-        (
-            event_manager=AsyncMock(), # Add all required by __init__
-            character_manager=AsyncMock(),
-            npc_manager=AsyncMock(),
-            item_manager=AsyncMock(),
-            combat_manager=AsyncMock(),
-            status_manager=AsyncMock(),
-            party_manager=AsyncMock(),
-            time_manager=AsyncMock(),
-            send_callback_factory=MagicMock(),
-            event_stage_processor=AsyncMock(),
-            event_action_processor=AsyncMock(),
-            on_enter_action_executor=AsyncMock(),
-            stage_description_generator=AsyncMock()
-        )
 
         # Initialize caches for testing purposes, assuming they are dicts
         self.location_manager._location_templates = {}
@@ -749,11 +731,6 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
 # However, typically you'd run tests with `python -m unittest discover` or similar.
 if __name__ == '__main__':
     unittest.main()
-
-        self.guild_id = "test_guild_1"
-        # Ensure guild-specific caches are initialized before each test if needed by the test
-        # For example, in a test for get_location_instance:
-        # self.location_manager._location_instances[self.guild_id] = {}
 
     async def test_init_manager(self):
         self.assertEqual(self.location_manager._db_adapter, self.mock_db_adapter)
@@ -1347,28 +1324,38 @@ if __name__ == '__main__':
 
         # Mock CharacterManager
         mock_char_manager = AsyncMock()
-        char1 = MagicMock() char1.id = "char1_in_loc"; char1.guild_id = guild_id
-        char2 = MagicMock(); char2.id = "char2_in_loc"; char2.guild_id = guild_id
+        char1 = MagicMock()
+        char1.id = "char1_in_loc"
+        char1.guild_id = guild_id
+        char2 = MagicMock()
+        char2.id = "char2_in_loc"
+        char2.guild_id = guild_id
         mock_char_manager.get_characters_in_location.return_value = [char1, char2]
         self.location_manager._character_manager = mock_char_manager # Inject mock
 
         # Mock NpcManager
         mock_npc_manager = AsyncMock()
-        npc1 = MagicMock(); npc1.id = "npc1_in_loc"; npc1.guild_id = guild_id
+        npc1 = MagicMock()
+        npc1.id = "npc1_in_loc"
+        npc1.guild_id = guild_id
         mock_npc_manager.get_npcs_in_location.return_value = [npc1]
         self.location_manager._npc_manager = mock_npc_manager
 
         # Mock ItemManager (assuming items might be directly in a location instance, or associated)
         # This depends heavily on ItemManager's design. For simplicity, let's assume a similar pattern.
         mock_item_manager = AsyncMock()
-        item1 = MagicMock(); item1.id = "item1_in_loc"; item1.guild_id = guild_id
+        item1 = MagicMock()
+        item1.id = "item1_in_loc"
+        item1.guild_id = guild_id
         mock_item_manager.get_items_in_location.return_value = [item1] # Fictional method for example
         mock_item_manager.remove_item_from_world = AsyncMock() # Fictional method
         self.location_manager._item_manager = mock_item_manager
 
         # Mock PartyManager
         mock_party_manager = AsyncMock()
-        party1 = MagicMock(); party1.id = "party1_in_loc"; party1.guild_id = guild_id
+        party1 = MagicMock()
+        party1.id = "party1_in_loc"
+        party1.guild_id = guild_id
         mock_party_manager.get_parties_in_location.return_value = [party1]
         # Parties might be moved to a default location or disbanded. Let's assume moved.
         self.location_manager._party_manager = mock_party_manager
