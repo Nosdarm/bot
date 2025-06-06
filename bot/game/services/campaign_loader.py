@@ -156,8 +156,7 @@ class CampaignLoader:
                             description_i18n=description_i18n, # New: pass dict (template desc)
                             guild_id=guild_id,
                             exits=exits_data,
-                            template_id=loc_def.get("template_id", loc_id),
-                            properties=properties # Pass other static properties
+                            template_id=loc_def.get("template_id", loc_id)
                         )
                         display_name = name_i18n.get(default_lang, loc_id)
                         print(f"CampaignLoader: Created location '{display_name}' (ID: {loc_id}) for guild '{guild_id}'.")
