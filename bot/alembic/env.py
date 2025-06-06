@@ -36,6 +36,7 @@ from bot.database.models import Base
 
 # this is the MetaData object that Alembic will use for comparison
 target_metadata = Base.metadata
+print(f"DEBUG env.py: Tables in target_metadata: {list(target_metadata.tables.keys())}")
 
 # Ensure target_metadata is now populated. You could add a print here *before*
 # the function definitions if you want to verify it *outside* the function.

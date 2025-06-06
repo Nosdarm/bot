@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint
+from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -52,6 +52,25 @@ class Location(Base):
     descriptions_i18n = Column(JSON, nullable=True)
     static_connections = Column(JSON, nullable=True)
     guild_id = Column(String, nullable=False)
+    exits = Column(JSON, nullable=True)
+    inventory = Column(JSON, nullable=True)
+
+
+class Timer(Base):
+    __tablename__ = 'timers'
+
+    id = Column(String, primary_key=True)
+    guild_id = Column(String, nullable=False, index=True)
+    type = Column(String, nullable=False) # Type of timer, e.g., 'event_stage_transition'
+    ends_at = Column(Float, nullable=False) # Game time when the timer should trigger
+    callback_data = Column(JSON, nullable=True) # Data needed by the callback
+    is_active = Column(Boolean, default=True, nullable=False)
+    # Optional: Add created_at/updated_at timestamps if desired for auditing
+    # created_at = Column(DateTime, default=datetime.utcnow)
+    # updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Timer(id='{self.id}', type='{self.type}', ends_at={self.ends_at}, active={self.is_active}, guild_id='{self.guild_id}')>"
 
 # WorldState is replaced by GlobalState as per analysis of traceback
 # class WorldState(Base):
