@@ -643,7 +643,7 @@ class StatusManager:
             # TODO: Убедитесь, что SELECT соответствует ВСЕМ колонкам таблицы statuses, включая guild_id
             sql_statuses = '''
                 SELECT id, status_type, target_id, target_type, duration, applied_at, source_id, state_variables, guild_id
-                FROM statuses WHERE guild_id = ?
+                FROM statuses WHERE guild_id = $1
             '''
             rows_statuses = await self._db_service.adapter.fetchall(sql_statuses, (guild_id_str,)) # Changed from _db_adapter
 
