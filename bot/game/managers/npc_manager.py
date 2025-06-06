@@ -1043,11 +1043,8 @@ class NpcManager:
                 except Exception as e:
                     print(f"NpcManager: Error deleting NPCs for guild {guild_id_str}: {e}")
                     traceback.print_exc() # Keep IDs in _deleted_npc_ids to retry next time
-            else: # If deleted_npc_ids_for_guild was empty for this guild
+            else: # If deleted_npc_ids_for_guild was empty for this guild, or if ids_to_delete_list was empty
                 self._deleted_npc_ids.pop(guild_id_str, None)
-            except Exception as e:
-                print(f"NpcManager: Error deleting NPCs for guild {guild_id_str}: {e}")
-                traceback.print_exc() # Keep IDs in _deleted_npc_ids to retry next time
 
         # Handle dirty NPCs
         guild_npcs_cache = self._npcs.get(guild_id_str, {})
