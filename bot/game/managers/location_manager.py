@@ -352,7 +352,7 @@ class LocationManager:
 
                           template_id = instance_data_dict.get('template_id')
 
-                           # Directly use name_i18n and descriptions_i18n from the instance data dict
+                          # Directly use name_i18n and descriptions_i18n from the instance data dict
                           name_i18n_dict = instance_data_dict.get('name_i18n', {})
                           instance_descriptions_i18n_dict = instance_data_dict.get('descriptions_i18n', {})
 
