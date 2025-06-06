@@ -46,11 +46,11 @@ class ActionProcessor:
         """
 
         # --- Initial Checks (Same) ---
-        if not char_manager:,
+        if not char_manager:
             return {"success": False, "message": "**Мастер:** Менеджер персонажей недоступен.", "target_channel_id": ctx_channel_id, "state_changed": False}
         character = char_manager.get_character_by_discord_id(discord_user_id)
         if not character:,
-            return {"success": False, "message": "**Мастер:** У вас еще нет персонажа в этой игре. Используйте `/join_game`.", "target_channel_id": ctx_channel_id, "state_changed": False}
+        return {"success": False, "message": "**Мастер:** У вас еще нет персонажа в этой игре. Используйте `/join_game`.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
         # Ensure guild_id is consistently string
         guild_id_str_process = str(game_state.server_id)
