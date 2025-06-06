@@ -12,13 +12,13 @@ from bot.game.managers.npc_manager import NpcManager # Though not directly used 
 from bot.game.managers.combat_manager import CombatManager # Though not directly used in these new tests
 from bot.game.managers.location_manager import LocationManager 
 from bot.game.action_processor import ActionProcessor 
-from bot.database.sqlite_adapter import SqliteAdapter 
+from bot.database.postgres_adapter import PostgresAdapter
 
 
 class TestPartyManager(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
-        self.mock_db_adapter = AsyncMock(spec=SqliteAdapter)
+        self.mock_db_adapter = AsyncMock(spec=PostgresAdapter)
         self.mock_settings = {}
         
         self.mock_character_manager = AsyncMock(spec=CharacterManager)

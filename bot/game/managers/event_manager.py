@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awai
 from bot.game.models.event import Event # Прямой импорт
 
 # Адаптер БД
-from bot.database.sqlite_adapter import SqliteAdapter
+from bot.services.db_service import DBService # Changed
 
 # Import built-in types for isinstance checks
 from builtins import dict, set, list, str, int, bool, float # Added relevant builtins
@@ -77,7 +77,7 @@ class EventManager:
     def __init__(
         self,
         # Используем строковые литералы для всех опциональных зависимостей
-        db_adapter: Optional["SqliteAdapter"] = None,
+        db_service: Optional["DBService"] = None, # Changed
         settings: Optional[Dict[str, Any]] = None,
         npc_manager: Optional["NpcManager"] = None, # Use string literal!
         item_manager: Optional["ItemManager"] = None, # Use string literal!
@@ -95,7 +95,7 @@ class EventManager:
         openai_service: Optional["OpenAIService"] = None
     ):
         print("Initializing EventManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings
 
         # Инжектированные зависимости
@@ -247,8 +247,8 @@ class EventManager:
         guild_id_str = str(guild_id)
         print(f"EventManager: Creating event for guild {guild_id_str} from template '{template_id}'")
 
-        if self._db_adapter is None:
-            print(f"EventManager: No DB adapter for guild {guild_id_str}. Cannot create persistent event.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"EventManager: No DB service or adapter for guild {guild_id_str}. Cannot create persistent event.")
             # Should creating an event require persistence? Maybe temporary events don't.
             # For now, assume events require persistence.
             return None
@@ -814,8 +814,8 @@ class EventManager:
         guild_id_str = str(guild_id)
         print(f"EventManager: Loading state for guild {guild_id_str} (events + templates)...")
 
-        if self._db_adapter is None:
-            print(f"EventManager: Warning: No DB adapter. Skipping event/template load for guild {guild_id_str}. It will work with empty caches.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"EventManager: Warning: No DB service or adapter. Skipping event/template load for guild {guild_id_str}. It will work with empty caches.")
             # TODO: In non-DB mode, load placeholder data
             return
 
@@ -843,9 +843,9 @@ class EventManager:
             SELECT id, template_id, name, is_active, channel_id,
                    current_stage_id, players, state_variables,
                    stages_data, end_message_template, guild_id
-            FROM events WHERE guild_id = ? AND is_active = 1
-            '''
-            rows = await self._db_adapter.fetchall(sql, (guild_id_str,)) # Filter by guild_id and active
+            FROM events WHERE guild_id = $1 AND is_active = TRUE
+            ''' # Changed placeholder and is_active condition
+            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed to db_service
             print(f"EventManager: Found {len(rows)} active events in DB for guild {guild_id_str}.")
 
         except Exception as e:
@@ -955,8 +955,8 @@ class EventManager:
         guild_id_str = str(guild_id)
         print(f"EventManager: Saving events for guild {guild_id_str}...")
 
-        if self._db_adapter is None:
-            print(f"EventManager: Warning: No DB adapter available. Skipping save for guild {guild_id_str}.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"EventManager: Warning: Cannot save events for guild {guild_id_str}, DB service or adapter missing.")
             return
 
         # ИСПРАВЛЕНИЕ: Соберите dirty/deleted ID ИЗ per-guild кешей
@@ -993,17 +993,20 @@ class EventManager:
             # 1. Удаляем помеченные для удаления события для этой гильдии
             if deleted_event_ids_set:
                 ids_to_delete = list(deleted_event_ids_set)
-                placeholders_del = ','.join('?' * len(ids_to_delete))
-                # Ensure deleting only for this guild and these IDs
-                sql_delete_batch = f"DELETE FROM events WHERE guild_id = ? AND id IN ({placeholders_del})"
-                try:
-                     await self._db_adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete)));
-                     print(f"EventManager: Deleted {len(ids_to_delete)} events from DB for guild {guild_id_str}.")
-                     # ИСПРАВЛЕНИЕ: Очищаем per-guild deleted set after successful deletion
-                     self._deleted_event_ids.pop(guild_id_str, None)
-                except Exception as e:
-                    print(f"EventManager: Error deleting events for guild {guild_id_str}: {e}"); traceback.print_exc();
-                    # Do NOT clear deleted set on error
+                if ids_to_delete: # Ensure list is not empty
+                    placeholders_del = ','.join([f'${i+2}' for i in range(len(ids_to_delete))]) # $2, $3, ...
+                    # Ensure deleting only for this guild and these IDs
+                    sql_delete_batch = f"DELETE FROM events WHERE guild_id = $1 AND id IN ({placeholders_del})" # Changed placeholders
+                    try:
+                         await self._db_service.adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete))); # Changed
+                         print(f"EventManager: Deleted {len(ids_to_delete)} events from DB for guild {guild_id_str}.")
+                         # ИСПРАВЛЕНИЕ: Очищаем per-guild deleted set after successful deletion
+                         self._deleted_event_ids.pop(guild_id_str, None)
+                    except Exception as e:
+                        print(f"EventManager: Error deleting events for guild {guild_id_str}: {e}"); traceback.print_exc();
+                        # Do NOT clear deleted set on error
+            else: # If the set was empty for this guild
+                self._deleted_event_ids.pop(guild_id_str, None)
 
 
             # 2. Сохраняем/обновляем измененные события для этого guild_id
@@ -1011,12 +1014,51 @@ class EventManager:
                  print(f"EventManager: Upserting {len(events_to_save)} active events for guild {guild_id_str}...")
                  # Use correct column names based on schema (added guild_id)
                  upsert_sql = '''
-                 INSERT OR REPLACE INTO events
+                 INSERT INTO events
                  (id, template_id, name, is_active, channel_id,
                   current_stage_id, players, state_variables,
                   stages_data, end_message_template, guild_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 '''
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                 ON CONFLICT (id) DO UPDATE SET
+                    template_id = EXCLUDED.template_id,
+                    name = EXCLUDED.name,
+                    is_active = EXCLUDED.is_active,
+                    channel_id = EXCLUDED.channel_id,
+                    current_stage_id = EXCLUDED.current_stage_id,
+                    players = EXCLUDED.players,
+                    state_variables = EXCLUDED.state_variables,
+                    stages_data = EXCLUDED.stages_data,
+                    end_message_template = EXCLUDED.end_message_template,
+                    guild_id = EXCLUDED.guild_id
+                 ''' # PostgreSQL UPSERT
+                 data_to_upsert = []
+                 upserted_event_ids: Set[str] = set() # Track IDs successfully prepared
+            else: # If the set was empty for this guild
+                self._deleted_event_ids.pop(guild_id_str, None)
+
+
+            # 2. Сохраняем/обновляем измененные события для этого guild_id
+            if events_to_save:
+                 print(f"EventManager: Upserting {len(events_to_save)} active events for guild {guild_id_str}...")
+                 # Use correct column names based on schema (added guild_id)
+                 upsert_sql = '''
+                 INSERT INTO events
+                 (id, template_id, name, is_active, channel_id,
+                  current_stage_id, players, state_variables,
+                  stages_data, end_message_template, guild_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                 ON CONFLICT (id) DO UPDATE SET
+                    template_id = EXCLUDED.template_id,
+                    name = EXCLUDED.name,
+                    is_active = EXCLUDED.is_active,
+                    channel_id = EXCLUDED.channel_id,
+                    current_stage_id = EXCLUDED.current_stage_id,
+                    players = EXCLUDED.players,
+                    state_variables = EXCLUDED.state_variables,
+                    stages_data = EXCLUDED.stages_data,
+                    end_message_template = EXCLUDED.end_message_template,
+                    guild_id = EXCLUDED.guild_id
+                 ''' # PostgreSQL UPSERT
                  data_to_upsert = []
                  upserted_event_ids: Set[str] = set() # Track IDs successfully prepared
 
@@ -1055,7 +1097,7 @@ class EventManager:
                                str(event_id),
                                str(template_id) if template_id is not None else None, # Ensure str or None
                                str(name),
-                               int(bool(is_active)), # Save bool as integer
+                               is_active, # Pass boolean directly
                                int(channel_id) if channel_id is not None else None, # Ensure int or None
                                str(current_stage_id), # Ensure string
                                players_json,
@@ -1073,10 +1115,10 @@ class EventManager:
                            # This event won't be saved but remains in _dirty_events
 
                  if data_to_upsert:
-                      if self._db_adapter is None:
-                           print(f"EventManager: Warning: DB adapter is None during event upsert batch for guild {guild_id_str}.")
+                      if self._db_service is None or self._db_service.adapter is None: # Changed
+                           print(f"EventManager: Warning: DB service or adapter is None during event upsert batch for guild {guild_id_str}.")
                       else:
-                           await self._db_adapter.execute_many(upsert_sql, data_to_upsert)
+                           await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert) # Changed
                            print(f"EventManager: Successfully upserted {len(data_to_upsert)} active events for guild {guild_id_str}.")
                            # Only clear dirty flags for events that were successfully processed
                            if guild_id_str in self._dirty_events:
@@ -1212,8 +1254,8 @@ class EventManager:
         """
         Saves a single event entity to the database using an UPSERT operation.
         """
-        if self._db_adapter is None:
-            print(f"EventManager: Error: DB adapter missing for guild {guild_id}. Cannot save event {getattr(event, 'id', 'N/A')}.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"EventManager: Error: DB service or adapter missing for guild {guild_id}. Cannot save event {getattr(event, 'id', 'N/A')}.")
             return False
 
         guild_id_str = str(guild_id)
@@ -1283,7 +1325,7 @@ class EventManager:
                 db_id,
                 db_template_id,
                 json.dumps(db_name_i18n),
-                int(db_is_active),
+                db_is_active, # Pass boolean directly
                 db_channel_id,
                 db_current_stage_id,
                 json.dumps(db_players_list),
@@ -1294,15 +1336,26 @@ class EventManager:
             )
 
             upsert_sql = '''
-            INSERT OR REPLACE INTO events (
+            INSERT INTO events (
                 id, template_id, name, is_active, channel_id,
                 current_stage_id, players, state_variables, stages_data,
                 end_message_template, guild_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            '''
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (id) DO UPDATE SET
+                template_id = EXCLUDED.template_id,
+                name = EXCLUDED.name,
+                is_active = EXCLUDED.is_active,
+                channel_id = EXCLUDED.channel_id,
+                current_stage_id = EXCLUDED.current_stage_id,
+                players = EXCLUDED.players,
+                state_variables = EXCLUDED.state_variables,
+                stages_data = EXCLUDED.stages_data,
+                end_message_template = EXCLUDED.end_message_template,
+                guild_id = EXCLUDED.guild_id
+            ''' # PostgreSQL UPSERT
             # 11 columns, 11 placeholders.
 
-            await self._db_adapter.execute(upsert_sql, db_params)
+            await self._db_service.adapter.execute(upsert_sql, db_params) # Changed
             print(f"EventManager: Successfully saved event {db_id} for guild {guild_id_str}.")
 
             # If this event was marked as dirty, clean it from the dirty set

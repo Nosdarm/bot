@@ -8,14 +8,14 @@ import json
 
 from bot.game.models.character import Character
 from bot.game.managers.character_manager import CharacterManager
-from bot.database.sqlite_adapter import SqliteAdapter # Corrected path
+from bot.database.postgres_adapter import PostgresAdapter # Corrected path
 
 class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         # self.mock_db_adapter = MagicMock()
         # If SqliteAdapter is a class that needs instantiation:
-        self.mock_db_adapter = MagicMock(spec=SqliteAdapter) # Use spec for better mocking
+        self.mock_db_adapter = MagicMock(spec=PostgresAdapter) # Use spec for better mocking
         # If SqliteAdapter methods are async, use AsyncMock for them:
         self.mock_db_adapter.execute = AsyncMock()
         self.mock_db_adapter.fetchone = AsyncMock()
