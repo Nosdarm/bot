@@ -398,7 +398,7 @@ class TimeManager:
 
             # --- Сохранение активных таймеров для этой гильдии (в таблице timers) ---
             # Удаляем ВСЕ таймеры для этой гильдии из БД перед вставкой
-            await self._db_service.execute("DELETE FROM timers WHERE guild_id = ?", (guild_id_str,)) # Changed from _db_adapter
+            await self._db_service.adapter.execute("DELETE FROM timers WHERE guild_id = ?", (guild_id_str,))
             # execute уже коммитит (для этой одной операции)
 
             # Вставляем все активные таймеры ИЗ КЕША, которые принадлежат этой гильдии
@@ -432,7 +432,7 @@ class TimeManager:
                     ))
                 # Используем execute_many для пакетной вставки таймеров
                 if data_to_save: # Только если есть что сохранять
-                     await self._db_service.execute_many(sql, data_to_save) # Changed from _db_adapter
+                     await self._db_service.adapter.execute_many(sql, data_to_save)
                      # execute_many коммитит сам
 
             # Note: При использовании execute и execute_many с авто-коммитом в каждом вызове,

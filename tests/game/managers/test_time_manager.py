@@ -13,7 +13,8 @@ from bot.game.managers.time_manager import TimeManager
 @pytest_asyncio.fixture
 async def mock_db_service():
     mock_adapter = AsyncMock(spec=PostgresAdapter)
-    mock_adapter.execute = AsyncMock() # Mock the specific method used by save_state
+    mock_adapter.execute = AsyncMock()
+    mock_adapter.execute_many = AsyncMock() # Explicitly mock execute_many
 
     # If DBService initializes the adapter internally, you might need to patch its __init__
     # or provide a way to inject the mock_adapter.
