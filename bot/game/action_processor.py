@@ -79,7 +79,7 @@ class ActionProcessor:
             relevant_event_id = None
             is_potentially_event_interactive = action_type in ["interact", "attack", "use_skill", "skill_check", "move", "use_item"]
             if is_potentially_event_interactive and active_events:
-                 relevant_event_id = active_events[0].id
+                relevant_event_id = active_events[0].id
 
         if relevant_event_id and event_manager: # Ensure event_manager is not None here
             print(f"Action {action_type} for {character.name} routed to event {relevant_event_id}.")
