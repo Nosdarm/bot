@@ -24,8 +24,8 @@ from builtins import dict, set, list, int
 # Используйте строковые литералы ("ClassName") для type hints в __init__ и методах
 # для классов, импортированных здесь.
 if TYPE_CHECKING:
-    # Add SqliteAdapter here
-    from bot.database.sqlite_adapter import SqliteAdapter
+    # Add DBService here
+    from bot.services.db_service import DBService
     # Add other managers and RuleEngine
     from bot.game.managers.item_manager import ItemManager
     from bot.game.managers.location_manager import LocationManager
@@ -87,7 +87,7 @@ class CharacterManager:
         self,
         # Используем строковые литералы для всех опциональных менеджеров/адаптеров,
         # особенно если они импортируются условно или только в TYPE_CHECKING
-        db_adapter: Optional["SqliteAdapter"] = None,
+        db_service: Optional["DBService"] = None, # Changed from db_adapter
         settings: Optional[Dict[str, Any]] = None,
         item_manager: Optional["ItemManager"] = None,
         location_manager: Optional["LocationManager"] = None,
@@ -102,7 +102,7 @@ class CharacterManager:
         game_manager: Optional["GameManager"] = None  # Add this
     ):
         print("Initializing CharacterManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed from _db_adapter
         self._settings = settings
         self._item_manager = item_manager
         self._location_manager = location_manager
@@ -283,10 +283,10 @@ class CharacterManager:
         Создает нового персонажа в базе данных, кеширует его и возвращает объект Character.
         Принимает discord_id, name, guild_id.
         """
-        if self._db_adapter is None:
-            print(f"CharacterManager: Error: DB adapter missing for guild {guild_id}.")
+        if self._db_service is None or self._db_service.adapter is None: # Check adapter too
+            print(f"CharacterManager: Error: DB service or adapter missing for guild {guild_id}.")
             # В многогильдийном режиме, возможно, нужно рейзить ошибку, т.к. без DB данные не будут персистировать
-            raise ConnectionError("Database adapter is not initialized in CharacterManager.")
+            raise ConnectionError("Database service or adapter is not initialized in CharacterManager.")
 
         guild_id_str = str(guild_id) # Убедимся, что guild_id строка
 
@@ -420,8 +420,9 @@ class CharacterManager:
             hp, max_health, is_alive, status_effects, level, experience, unspent_xp,
             selected_language, collected_actions_json,
             skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """ # 25 placeholders
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+        RETURNING id;
+        """ # 25 placeholders, changed to $n style, added RETURNING id
         # Убедитесь, что порядок параметров соответствует колонкам в SQL
         db_params = (
             data['id'],
@@ -437,7 +438,7 @@ class CharacterManager:
             json.dumps(data['state_variables']),
             data['hp'],
             data['max_health'],
-            int(data['is_alive']), # boolean как integer (0 or 1)
+            data['is_alive'], # Boolean directly
             json.dumps(data['status_effects']),
             data['level'],
             data['experience'],
@@ -452,17 +453,25 @@ class CharacterManager:
             data['flags_json']
         )
 
-        if self._db_adapter is None:
-             print(f"CharacterManager: Error creating character: DB adapter is None for guild {guild_id_str}.")
-             raise ConnectionError("Database adapter is not initialized in CharacterManager.")
+        if self._db_service is None or self._db_service.adapter is None:
+             print(f"CharacterManager: Error creating character: DB service or adapter is None for guild {guild_id_str}.")
+             raise ConnectionError("Database service or adapter is not initialized in CharacterManager.")
 
         try:
-            # Выполняем INSERT. Используем execute для вставки с заданным ID (UUID).
-            await self._db_adapter.execute(sql, db_params)
-            print(f"CharacterManager: Character '{name}' with ID {new_id} inserted into DB for guild {guild_id_str}.")
-
+            # Выполняем INSERT. Используем execute_insert для RETURNING id.
+            inserted_id = await self._db_service.adapter.execute_insert(sql, db_params)
+            if inserted_id == new_id:
+                print(f"CharacterManager: Character '{name}' with ID {new_id} inserted into DB for guild {guild_id_str}.")
+            else:
+                print(f"CharacterManager: Character '{name}' inserted for guild {guild_id_str}, but returned ID '{inserted_id}' differs from generated '{new_id}'. Using returned ID.")
+                # This case should be rare if UUIDs are truly unique.
+                # If this happens, it implies the DB might have generated a different ID or there's a logic flaw.
+                # For now, we'll proceed with the original new_id for the object, but log this.
+                # Consider if model_data['id'] should be updated to inserted_id if they differ.
+                # For consistency, let's assume the pre-generated new_id is authoritative for the object.
 
             # Создаем объект модели Character из данных (данные уже в формате Python объектов)
+            # model_data already contains new_id as 'id'
             char = Character.from_dict(model_data) # Use model_data with Python types
 
 
@@ -493,8 +502,8 @@ class CharacterManager:
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         """Сохраняет все измененные или удаленные персонажи для определенного guild_id."""
-        if self._db_adapter is None:
-            print(f"CharacterManager: Warning: Cannot save characters for guild {guild_id}, DB adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None:
+            print(f"CharacterManager: Warning: Cannot save characters for guild {guild_id}, DB service or adapter missing.")
             return
         guild_id_str = str(guild_id)
 
@@ -514,19 +523,24 @@ class CharacterManager:
         # Удалить помеченные для удаления персонажи для этого guild_id
         if deleted_char_ids_for_guild_set:
             ids_to_delete = list(deleted_char_ids_for_guild_set)
-            placeholders = ','.join(['?'] * len(ids_to_delete))
-            # Убеждаемся, что удаляем ТОЛЬКО для данного guild_id и по ID из списка
-            delete_sql = f"DELETE FROM players WHERE guild_id = ? AND id IN ({placeholders})"
-            try:
-                await self._db_adapter.execute(delete_sql, (guild_id_str, *tuple(ids_to_delete)))
-                print(f"CharacterManager: Deleted {len(ids_to_delete)} characters from DB for guild {guild_id_str}.")
-                # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
-                self._deleted_characters_ids.pop(guild_id_str, None)
-            except Exception as e:
-                print(f"CharacterManager: Error deleting characters for guild {guild_id_str}: {e}")
-                import traceback
-                print(traceback.format_exc())
-                # Не очищаем _deleted_characters_ids[guild_id_str], чтобы попробовать удалить снова при следующей сохранке
+            if ids_to_delete: # Ensure there are IDs to delete
+                # Dynamically create $2, $3, ... placeholders for player IDs
+                placeholders = ', '.join([f'${i+2}' for i in range(len(ids_to_delete))]) # Start from $2
+                # Убеждаемся, что удаляем ТОЛЬКО для данного guild_id и по ID из списка
+                delete_sql = f"DELETE FROM players WHERE guild_id = $1 AND id IN ({placeholders})"
+                try:
+                    await self._db_service.adapter.execute(delete_sql, (guild_id_str, *ids_to_delete))
+                    print(f"CharacterManager: Deleted {len(ids_to_delete)} characters from DB for guild {guild_id_str}.")
+                    # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
+                    self._deleted_characters_ids.pop(guild_id_str, None)
+                except Exception as e:
+                    print(f"CharacterManager: Error deleting characters for guild {guild_id_str}: {e}")
+                    import traceback
+                    print(traceback.format_exc())
+                    # Не очищаем _deleted_characters_ids[guild_id_str], чтобы попробовать удалить снова при следующей сохранке
+        else:
+            # If the set was empty to begin with for this guild, ensure it's removed from the main dict
+            self._deleted_characters_ids.pop(guild_id_str, None)
 
 
         # Обновить или вставить измененные персонажи для этого guild_id
@@ -537,18 +551,52 @@ class CharacterManager:
              print(f"CharacterManager: Upserting {len(characters_to_save)} characters for guild {guild_id_str}...")
              # INSERT OR REPLACE SQL для обновления существующих или вставки новых.
              # This SQL should now match the save_character method's SQL.
+             # PostgreSQL UPSERT syntax
              upsert_sql = '''
-             INSERT OR REPLACE INTO players (
+             INSERT INTO players (
                 id, discord_user_id, name, guild_id, location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, experience, unspent_xp, active_quests, known_spells,
-                spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json, -- DB specific column names
+                spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json,
                 character_class, selected_language, current_game_status, collected_actions_json, current_party_id
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ''' # 30 placeholders
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+             ON CONFLICT (id) DO UPDATE SET
+                discord_user_id = EXCLUDED.discord_user_id,
+                name = EXCLUDED.name,
+                guild_id = EXCLUDED.guild_id,
+                location_id = EXCLUDED.location_id,
+                stats = EXCLUDED.stats,
+                inventory = EXCLUDED.inventory,
+                current_action = EXCLUDED.current_action,
+                action_queue = EXCLUDED.action_queue,
+                party_id = EXCLUDED.party_id,
+                state_variables = EXCLUDED.state_variables,
+                hp = EXCLUDED.hp,
+                max_health = EXCLUDED.max_health,
+                is_alive = EXCLUDED.is_alive,
+                status_effects = EXCLUDED.status_effects,
+                level = EXCLUDED.level,
+                experience = EXCLUDED.experience,
+                unspent_xp = EXCLUDED.unspent_xp,
+                active_quests = EXCLUDED.active_quests,
+                known_spells = EXCLUDED.known_spells,
+                spell_cooldowns = EXCLUDED.spell_cooldowns,
+                skills_data_json = EXCLUDED.skills_data_json,
+                abilities_data_json = EXCLUDED.abilities_data_json,
+                spells_data_json = EXCLUDED.spells_data_json,
+                flags_json = EXCLUDED.flags_json,
+                character_class = EXCLUDED.character_class,
+                selected_language = EXCLUDED.selected_language,
+                current_game_status = EXCLUDED.current_game_status,
+                collected_actions_json = EXCLUDED.collected_actions_json,
+                current_party_id = EXCLUDED.current_party_id;
+             ''' # 30 placeholders, PostgreSQL UPSERT
              data_to_upsert = []
              upserted_char_ids: Set[str] = set() # Track IDs that were successfully prepared for upsert
+            # Ensure guild_id_str is used if _deleted_characters_ids was not initialized for this guild before.
+            # This pop will not raise an error if the key is missing.
+            pass # Logic moved up
 
              for char_obj in characters_to_save: # Renamed to char_obj to avoid conflict with char module if any
                  try:
@@ -573,7 +621,7 @@ class CharacterManager:
                      state_variables = getattr(char_obj, 'state_variables', {})
                      hp = getattr(char_obj, 'hp', 100.0)
                      max_health = getattr(char_obj, 'max_health', 100.0)
-                     is_alive = getattr(char_obj, 'is_alive', True)
+                     is_alive = getattr(char_obj, 'is_alive', True) # Boolean
                      status_effects = getattr(char_obj, 'status_effects', [])
                      level = getattr(char_obj, 'level', 1)
                      experience = getattr(char_obj, 'experience', 0)
@@ -635,7 +683,7 @@ class CharacterManager:
                          json.dumps(state_variables),
                          hp,
                          max_health,
-                         int(is_alive),
+                         is_alive, # Boolean
                          json.dumps(status_effects),
                          level,
                          experience,
@@ -664,10 +712,13 @@ class CharacterManager:
 
              if data_to_upsert:
                  try:
-                     if self._db_adapter is None:
-                          print(f"CharacterManager: Warning: DB adapter is None during upsert batch for guild {guild_id_str}.")
+                     if self._db_service is None or self._db_service.adapter is None:
+                          print(f"CharacterManager: Warning: DB service or adapter is None during upsert batch for guild {guild_id_str}.")
                      else:
-                          await self._db_adapter.execute_many(upsert_sql, data_to_upsert)
+                          # For PostgreSQL, execute_many with ON CONFLICT needs careful handling
+                          # or individual execute calls in a loop if asyncpg's executemany doesn't directly support complex ON CONFLICT logic easily.
+                          # However, a standard executemany with a VALUES list for INSERT INTO ... ON CONFLICT ... should work.
+                          await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert)
                           print(f"CharacterManager: Successfully upserted {len(data_to_upsert)} characters for guild {guild_id_str}.")
                           # ИСПРАВЛЕНИЕ: Очищаем dirty set для этой гильдии только для успешно сохраненных ID
                           if guild_id_str in self._dirty_characters:
@@ -686,8 +737,8 @@ class CharacterManager:
 
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         """Загружает все персонажи для определенного guild_id из базы данных в кеш."""
-        if self._db_adapter is None:
-            print(f"CharacterManager: Warning: Cannot load characters for guild {guild_id}, DB adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None:
+            print(f"CharacterManager: Warning: Cannot load characters for guild {guild_id}, DB service or adapter missing.")
             # TODO: В режиме без DB, нужно загрузить Placeholder персонажи
             return
 
@@ -720,9 +771,9 @@ class CharacterManager:
                    collected_actions_json, selected_language, current_game_status, current_party_id,
                    skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json,
                    active_quests, known_spells, spell_cooldowns -- Assuming these are also in Character.to_dict() / DB
-            FROM players WHERE guild_id = ?
+            FROM players WHERE guild_id = $1
             ''' # Ensure this matches all fields saved by save_character / save_state
-            rows = await self._db_adapter.fetchall(sql, (guild_id_str,))
+            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed to db_service
             print(f"CharacterManager: Found {len(rows)} characters in DB for guild {guild_id_str}.")
 
         except Exception as e:
@@ -1649,7 +1700,7 @@ class CharacterManager:
                 json.dumps(char_data.get('state_variables', {})),
                 float(char_data.get('hp', 0.0)),
                 float(char_data.get('max_health', 0.0)),
-                int(char_data.get('is_alive', True)),
+                char_data.get('is_alive', True), # Boolean directly
                 json.dumps(char_data.get('status_effects', [])),
                 int(char_data.get('level', 1)),
                 int(char_data.get('experience', 0)),
@@ -1668,23 +1719,51 @@ class CharacterManager:
                 char_data.get('current_party_id') # New party_id
             )
 
-            # SQL for UPSERT (INSERT OR REPLACE)
+            # SQL for UPSERT (PostgreSQL syntax)
             # Column names must match the 'players' table schema.
-            # This list of columns should correspond to Character.to_dict() keys + DB structure.
-            # The 'skills' column in the original SQL was ambiguous, it should be skills_data_json etc.
             upsert_sql = '''
-            INSERT OR REPLACE INTO players (
+            INSERT INTO players (
                 id, discord_user_id, name, guild_id, location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, experience, unspent_xp, active_quests, known_spells,
                 spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json,
                 character_class, selected_language, current_game_status, collected_actions_json, current_party_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''' # 30 columns, 30 placeholders. Matched with params above.
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+            ON CONFLICT (id) DO UPDATE SET
+                discord_user_id = EXCLUDED.discord_user_id,
+                name = EXCLUDED.name,
+                guild_id = EXCLUDED.guild_id,
+                location_id = EXCLUDED.location_id,
+                stats = EXCLUDED.stats,
+                inventory = EXCLUDED.inventory,
+                current_action = EXCLUDED.current_action,
+                action_queue = EXCLUDED.action_queue,
+                party_id = EXCLUDED.party_id,
+                state_variables = EXCLUDED.state_variables,
+                hp = EXCLUDED.hp,
+                max_health = EXCLUDED.max_health,
+                is_alive = EXCLUDED.is_alive,
+                status_effects = EXCLUDED.status_effects,
+                level = EXCLUDED.level,
+                experience = EXCLUDED.experience,
+                unspent_xp = EXCLUDED.unspent_xp,
+                active_quests = EXCLUDED.active_quests,
+                known_spells = EXCLUDED.known_spells,
+                spell_cooldowns = EXCLUDED.spell_cooldowns,
+                skills_data_json = EXCLUDED.skills_data_json,
+                abilities_data_json = EXCLUDED.abilities_data_json,
+                spells_data_json = EXCLUDED.spells_data_json,
+                flags_json = EXCLUDED.flags_json,
+                character_class = EXCLUDED.character_class,
+                selected_language = EXCLUDED.selected_language,
+                current_game_status = EXCLUDED.current_game_status,
+                collected_actions_json = EXCLUDED.collected_actions_json,
+                current_party_id = EXCLUDED.current_party_id;
+            ''' # 30 columns, 30 placeholders. PostgreSQL UPSERT.
 
             # Execute the database operation
-            await self._db_adapter.execute(upsert_sql, db_params)
+            await self._db_service.adapter.execute(upsert_sql, db_params) # Changed to db_service
             # print(f"CharacterManager: Successfully saved character {character.id} for guild {guild_id_str}.") # Debug log
 
             # If the character was saved, remove it from the dirty set for this guild

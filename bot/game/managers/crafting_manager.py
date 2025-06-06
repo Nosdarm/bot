@@ -17,7 +17,7 @@ from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awai
 # from bot.game.models.crafting_queue import CraftingQueue # Example import
 
 # Адаптер БД
-from bot.database.sqlite_adapter import SqliteAdapter
+from bot.services.db_service import DBService # Changed
 
 # Import built-in types for isinstance checks
 from builtins import dict, set, list, str, int, bool, float # Added relevant builtins
@@ -78,7 +78,7 @@ class CraftingManager:
     def __init__(
         self,
         # Используем строковые литералы для всех опциональных зависимостей
-        db_adapter: Optional["SqliteAdapter"] = None,
+        db_service: Optional["DBService"] = None, # Changed
         settings: Optional[Dict[str, Any]] = None,
         item_manager: Optional["ItemManager"] = None, # Use string literal! Needs to create/consume items
         rule_engine: Optional["RuleEngine"] = None, # Use string literal! Needs to process recipes, requirements, results
@@ -88,7 +88,7 @@ class CraftingManager:
         # Add other injected dependencies here with Optional and string literals
     ):
         print("Initializing CraftingManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings
 
         # Инжектированные зависимости
@@ -477,8 +477,8 @@ class CraftingManager:
         guild_id_str = str(guild_id)
         print(f"CraftingManager: Loading state for guild {guild_id_str} (queues + recipes)...")
 
-        if self._db_adapter is None:
-            print(f"CraftingManager: Warning: No DB adapter. Skipping queue/recipe load for guild {guild_id_str}. It will work with empty caches.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"CraftingManager: Warning: No DB service or adapter. Skipping queue/recipe load for guild {guild_id_str}. It will work with empty caches.")
             # TODO: In non-DB mode, load placeholder data
             return
 
@@ -502,9 +502,9 @@ class CraftingManager:
             # Assuming table has columns: entity_id, entity_type, guild_id, queue, state_variables
             sql = '''
             SELECT entity_id, entity_type, guild_id, queue, state_variables
-            FROM crafting_queues WHERE guild_id = ?
-            '''
-            rows = await self._db_adapter.fetchall(sql, (guild_id_str,)) # Filter by guild_id
+            FROM crafting_queues WHERE guild_id = $1
+            ''' # Changed placeholder
+            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed to db_service
             print(f"CraftingManager: Found {len(rows)} crafting queues in DB for guild {guild_id_str}.")
 
         except Exception as e:
@@ -598,8 +598,8 @@ class CraftingManager:
         guild_id_str = str(guild_id)
         print(f"CraftingManager: Saving crafting queue state for guild {guild_id_str}...")
 
-        if self._db_adapter is None:
-            print(f"CraftingManager: Warning: Cannot save crafting queue state for guild {guild_id_str}, DB adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"CraftingManager: Warning: Cannot save crafting queue state for guild {guild_id_str}, DB service or adapter missing.")
             return
 
         # ИСПРАВЛЕНИЕ: Соберите dirty/deleted ID ИЗ per-guild кешей
@@ -619,19 +619,22 @@ class CraftingManager:
             # 1. Удаление очередей, помеченных для удаления для этой гильдии
             if deleted_queue_entity_ids_set:
                 ids_to_delete = list(deleted_queue_entity_ids_set)
-                placeholders_del = ','.join(['?'] * len(ids_to_delete))
-                # Assuming the table PK is just entity_id as per the DB schema in sqlite_adapter
-                # If PK is composite (entity_id, entity_type, guild_id), the DELETE WHERE clause needs adjustment.
-                # Sticking to entity_id PK for now based on the last adapter code provided.
-                sql_delete_batch = f"DELETE FROM crafting_queues WHERE guild_id = ? AND entity_id IN ({placeholders_del})"
-                try:
-                    await self._db_adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete)))
-                    print(f"CraftingManager: Deleted {len(ids_to_delete)} crafting queues from DB for guild {guild_id_str}.")
-                    # ИСПРАВЛЕНИЕ: Очищаем per-guild deleted set after successful deletion
-                    self._deleted_crafting_queue_ids.pop(guild_id_str, None)
-                except Exception as e:
-                    print(f"CraftingManager: Error deleting crafting queues for guild {guild_id_str}: {e}"); traceback.print_exc();
-                    # Do NOT clear deleted set on error
+                if ids_to_delete: # Check if there are IDs to delete
+                    placeholders_del = ','.join([f'${i+2}' for i in range(len(ids_to_delete))]) # $2, $3, ...
+                    # Assuming the table PK is just entity_id as per the DB schema in sqlite_adapter
+                    # If PK is composite (entity_id, entity_type, guild_id), the DELETE WHERE clause needs adjustment.
+                    # Sticking to entity_id PK for now based on the last adapter code provided.
+                    sql_delete_batch = f"DELETE FROM crafting_queues WHERE guild_id = $1 AND entity_id IN ({placeholders_del})" # Changed placeholders
+                    try:
+                        await self._db_service.adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete))) # Changed
+                        print(f"CraftingManager: Deleted {len(ids_to_delete)} crafting queues from DB for guild {guild_id_str}.")
+                        # ИСПРАВЛЕНИЕ: Очищаем per-guild deleted set after successful deletion
+                        self._deleted_crafting_queue_ids.pop(guild_id_str, None)
+                    except Exception as e:
+                        print(f"CraftingManager: Error deleting crafting queues for guild {guild_id_str}: {e}"); traceback.print_exc();
+                        # Do NOT clear deleted set on error
+            else: # If the set was empty for this guild
+                self._deleted_crafting_queue_ids.pop(guild_id_str, None)
 
 
             # 2. Обновить или вставить измененные очереди для этого guild_id
@@ -644,10 +647,40 @@ class CraftingManager:
                  # Assuming table has columns: entity_id, entity_type, guild_id, queue, state_variables
                  # And PK is entity_id
                  upsert_sql = '''
-                 INSERT OR REPLACE INTO crafting_queues
+                 INSERT INTO crafting_queues
                  (entity_id, entity_type, guild_id, queue, state_variables)
-                 VALUES (?, ?, ?, ?, ?)
-                 '''
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (entity_id) DO UPDATE SET
+                    entity_type = EXCLUDED.entity_type,
+                    guild_id = EXCLUDED.guild_id,
+                    queue = EXCLUDED.queue,
+                    state_variables = EXCLUDED.state_variables
+                 ''' # PostgreSQL UPSERT
+                 data_to_upsert = []
+                 upserted_entity_ids: Set[str] = set() # Track entity IDs successfully prepared
+            else: # If the set was empty for this guild
+                self._deleted_crafting_queue_ids.pop(guild_id_str, None)
+
+
+            # 2. Обновить или вставить измененные очереди для этого guild_id
+            # Filter dirty IDs on queues that still exist in the per-guild active cache
+            guild_queues_cache = self._crafting_queues.get(guild_id_str, {})
+            queues_to_upsert_list: List[Dict[str, Any]] = [ qd for eid in list(dirty_queue_entity_ids_set) if (qd := guild_queues_cache.get(eid)) is not None ] # Iterate over a copy of IDs
+
+            if queues_to_upsert_list:
+                 print(f"CraftingManager: Upserting {len(queues_to_upsert_list)} crafting queues for guild {guild_id_str}...")
+                 # Assuming table has columns: entity_id, entity_type, guild_id, queue, state_variables
+                 # And PK is entity_id
+                 upsert_sql = '''
+                 INSERT INTO crafting_queues
+                 (entity_id, entity_type, guild_id, queue, state_variables)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (entity_id) DO UPDATE SET
+                    entity_type = EXCLUDED.entity_type,
+                    guild_id = EXCLUDED.guild_id,
+                    queue = EXCLUDED.queue,
+                    state_variables = EXCLUDED.state_variables
+                 ''' # PostgreSQL UPSERT
                  data_to_upsert = []
                  upserted_entity_ids: Set[str] = set() # Track entity IDs successfully prepared
 
@@ -690,10 +723,10 @@ class CraftingManager:
 
 
                  if data_to_upsert:
-                      if self._db_adapter is None:
-                           print(f"CraftingManager: Warning: DB adapter is None during queue upsert batch for guild {guild_id_str}.")
+                      if self._db_service is None or self._db_service.adapter is None: # Changed
+                           print(f"CraftingManager: Warning: DB service or adapter is None during queue upsert batch for guild {guild_id_str}.")
                       else:
-                           await self._db_adapter.execute_many(upsert_sql, data_to_upsert)
+                           await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert) # Changed
                            print(f"CraftingManager: Successfully upserted {len(data_to_upsert)} crafting queues for guild {guild_id_str}.")
                            # Only clear dirty flags for queues that were successfully processed
                            if guild_id_str in self._dirty_crafting_queues:
