@@ -472,7 +472,6 @@ class LocationManager:
 
          print(f"LocationManager: Instance {new_instance_id} created and added to cache and marked dirty for guild {guild_id_str}. Template: {template_id}, Name: '{resolved_instance_name}'.")
 
-
          return instance_for_cache
 
     def get_location_instance(self, guild_id: str, instance_id: str) -> Optional[Dict[str, Any]]:
@@ -923,8 +922,8 @@ class LocationManager:
                  print(f"LocationManager: OnExit triggers executed for {entity_type} {entity_id}.")
             # --- Конец блока try ---
             except Exception as e: # <--- except должен быть на том же уровне отступа, что и try
-                 print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
-                 traceback.print_exc() # <--- print и traceback должны быть внутри except блока (отступ 4 пробела от except)
+                print(f"LocationManager: ❌ Error executing OnExit triggers for {entity_type} {entity_id} from {location_id} (guild {guild_id_str}): {e}")
+                traceback.print_exc() # <--- print и traceback должны быть внутри except блока (отступ 4 пробела от except)
         # --- Конец блока if ---
         elif triggers:
             # ... остальная логика elif ...
@@ -972,8 +971,8 @@ class LocationManager:
                                 context=managers_context
                             )
                        except Exception as e: # <-- Corrected Indentation (aligned with try)
-                           print(f"LocationManager: ❌ Error processing tick for location instance {instance_id} in guild {guild_id_str}: {e}")
-                           traceback.print_exc() # <-- Corrected Indentation (aligned with print above)
+                            print(f"LocationManager: ❌ Error processing tick for location instance {instance_id} in guild {guild_id_str}: {e}")
+                            traceback.print_exc() # <-- Corrected Indentation (aligned with print above)
          elif rule_engine:
               print(f"LocationManager: Warning: RuleEngine injected/found, but 'process_location_tick' method not found for tick processing.")
 

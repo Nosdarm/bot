@@ -539,9 +539,6 @@ class PartyManager:
                  # Note: 'member_ids' in DB was renamed to 'player_ids'
                  data_to_upsert = []
                  upserted_party_ids: Set[str] = set() # Keep track of successfully prepared IDs
-            else: # If the set was empty for this guild
-                self._deleted_parties.pop(guild_id_str, None)
-
 
             # 5. Сохранение/обновление партий для этой гильдии
             if parties_to_save:
