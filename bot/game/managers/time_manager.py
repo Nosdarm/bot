@@ -503,8 +503,8 @@ class TimeManager:
 
 
             # Выбираем таймеры ТОЛЬКО для этой гильдии и которые активны
-            sql_timers = '''SELECT id, type, ends_at, callback_data, is_active, guild_id FROM timers WHERE guild_id = ? AND is_active = 1'''
-            rows_timers = await self._db_service.adapter.fetchall(sql_timers, (guild_id_str,)) # Changed from _db_adapter
+            sql_timers = '''SELECT id, type, ends_at, callback_data, is_active, guild_id FROM timers WHERE guild_id = $1 AND is_active = 1'''
+            rows_timers = await self._db_service.adapter.fetchall(sql_timers, (guild_id_str,))
 
             if rows_timers:
                  print(f"TimeManager: Loaded {len(rows_timers)} active timers for guild {guild_id_str} from DB.")
