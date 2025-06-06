@@ -54,7 +54,7 @@ class PartyCog(commands.Cog, name="Party Commands"):
                 await interaction.followup.send("Character not in a valid location.", ephemeral=True); return
 
             context_kwargs = {"guild_id": guild_id_str, "character_manager": char_manager} # Ensure GM has char_mgr if needed
-            new_party_obj: Optional["PartyModel"] = await party_manager.create_party(
+            new_party_obj: Optional["Party"] = await party_manager.create_party(
                 leader_id=player_char.id, member_ids=[player_char.id], guild_id=guild_id_str,
                 current_location_id=current_location_id, **context_kwargs
             )
@@ -89,7 +89,7 @@ class PartyCog(commands.Cog, name="Party Commands"):
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
         try:
-            player_char: Optional["CharacterModel"] = char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
+            player_char: Optional["Character"] = char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
             if not player_char or not player_char.id:
                 await interaction.followup.send("You need a character.", ephemeral=True); return
 
