@@ -1,7 +1,7 @@
 import psycopg2
 
 def test_connection():
-    conn_string = "postgresql://postgres:test123@localhost:5433/kvelin_bot"
+    conn_string = "postgresql://postgres:test123@localhost:5432/kvelin_bot"
     try:
         conn = psycopg2.connect(conn_string)
         print("Successfully connected to the PostgreSQL database!")
