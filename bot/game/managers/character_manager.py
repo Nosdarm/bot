@@ -1655,8 +1655,8 @@ class CharacterManager:
         Ensures all relevant fields of the Character model are saved.
         Handles serialization of complex types (e.g., to JSON strings).
         """
-        if self._db_adapter is None:
-            print(f"CharacterManager: Error: DB adapter missing for guild {guild_id}. Cannot save character {character.id}.")
+        if self._db_service is None or not hasattr(self._db_service, 'adapter') or self._db_service.adapter is None:
+            print(f"CharacterManager: Error: DB service or adapter missing for guild {guild_id}. Cannot save character {character.id}.")
             # Consider raising an error or returning a more specific status
             return False
 
@@ -1763,7 +1763,7 @@ class CharacterManager:
             ''' # 30 columns, 30 placeholders. PostgreSQL UPSERT.
 
             # Execute the database operation
-            await self._db_service.adapter.execute(upsert_sql, db_params) # Changed to db_service
+            await self._db_service.adapter.execute(upsert_sql, db_params)
             # print(f"CharacterManager: Successfully saved character {character.id} for guild {guild_id_str}.") # Debug log
 
             # If the character was saved, remove it from the dirty set for this guild
@@ -1791,5 +1791,73 @@ class CharacterManager:
             traceback.print_exc()
             return False
 
+    async def set_current_party_id(self, guild_id: str, character_id: str, party_id: Optional[str], **kwargs: Any) -> bool:
+        """Sets the current_party_id for a character for a specific guild."""
+        guild_id_str = str(guild_id)
+        char = self.get_character(guild_id_str, character_id)
+        if not char:
+            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to set current_party_id.")
+            return False
+
+        if not hasattr(char, 'current_party_id'):
+            print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'current_party_id' attribute.")
+            # Attempt to set it anyway if the model should have it
+            # but log that it might be a model definition issue.
+            # Or, return False if strict adherence to current model attributes is required.
+            # For now, let's assume the attribute should exist or will be dynamically set.
+            pass # Allow setting it
+
+        resolved_party_id = str(party_id) if party_id is not None else None
+
+        if getattr(char, 'current_party_id', None) == resolved_party_id:
+            return True # No change needed
+
+        char.current_party_id = resolved_party_id
+        self.mark_character_dirty(guild_id_str, character_id)
+        print(f"CharacterManager: Set current_party_id for character {character_id} in guild {guild_id_str} to {resolved_party_id}.")
+        return True
+
+    async def save_character_field(self, guild_id: str, character_id: str, field_name: str, value: Any, **kwargs: Any) -> bool:
+        """
+        Updates a specific field for a character and saves it to the database.
+        This is a convenience method that marks the character dirty and relies on the main save loop,
+        OR directly calls DBService if immediate persistence is needed (for now, mark dirty).
+        """
+        guild_id_str = str(guild_id)
+        char = self.get_character(guild_id_str, character_id)
+        if not char:
+            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to save field '{field_name}'.")
+            return False
+
+        if not hasattr(char, field_name):
+            print(f"CharacterManager: Character {character_id} has no field '{field_name}'.")
+            return False
+
+        setattr(char, field_name, value)
+        self.mark_character_dirty(guild_id_str, character_id)
+
+        # If immediate save is required (e.g., for critical fields not picked up by regular save cycle):
+        # if self._db_service:
+        #     success = await self._db_service.update_player_field(
+        #         player_id=character_id, # Assuming character_id is the player_id in DB
+        #         field_name=field_name,
+        #         value=value,
+        #         guild_id=guild_id_str
+        #     )
+        #     if success:
+        #         print(f"CharacterManager: Immediately saved field '{field_name}' for character {character_id} in guild {guild_id_str}.")
+        #         # Optionally, if DB save is direct, you might not need to mark_dirty
+        #         # or _dirty_characters set should be cleared for this field/char by DBService.
+        #         # For now, relying on mark_character_dirty and main save cycle.
+        #         return True
+        #     else:
+        #         print(f"CharacterManager: Failed to immediately save field '{field_name}' for character {character_id} in guild {guild_id_str}.")
+        #         return False
+        # else:
+        #     print(f"CharacterManager: DBService not available, cannot immediately save field '{field_name}'. Marked dirty.")
+        #     return True # Marked dirty, will save later
+
+        print(f"CharacterManager: Updated field '{field_name}' for character {character_id} in guild {guild_id_str}. Marked dirty for next save cycle.")
+        return True
 
 # --- Конец класса CharacterManager ---

@@ -998,5 +998,29 @@ class LocationManager:
          if guild_id_str in self._location_instances and instance_id_str in self._location_instances[guild_id_str]:
               self._dirty_instances.setdefault(guild_id_str, set()).add(instance_id_str)
 
+    def get_active_channel_ids_for_guild(self, guild_id: str) -> List[int]:
+        """
+        Retrieves a list of unique channel IDs for all active location instances in a given guild.
+        """
+        guild_id_str = str(guild_id)
+        active_channel_ids: Set[int] = set()
+        guild_instances = self._location_instances.get(guild_id_str, {})
+
+        for instance_data in guild_instances.values():
+            if instance_data.get('is_active'):
+                template_id = instance_data.get('template_id')
+                if not template_id:
+                    continue
+
+                template = self.get_location_static(guild_id_str, template_id)
+                if template:
+                    channel_id_raw = template.get('channel_id')
+                    if channel_id_raw is not None:
+                        try:
+                            active_channel_ids.add(int(channel_id_raw))
+                        except (ValueError, TypeError):
+                            print(f"LocationManager: Warning: Invalid channel_id '{channel_id_raw}' in template {template.get('id', 'N/A')} for guild {guild_id_str}.")
+
+        return list(active_channel_ids)
 
 # --- Конец класса LocationManager ---

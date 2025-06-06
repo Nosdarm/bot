@@ -750,14 +750,29 @@ class ConflictResolver:
             # So, if 'conflict_data' is stored as a JSON string in the DB, it needs parsing here.
             # The method signature in PostgresAdapter is `get_pending_conflict(...) -> Optional[Dict[str, Any]]`
             # and it does `SELECT id, guild_id, conflict_data ...`, so conflict_data is one of the keys.
-            # Let's assume conflict_data field from the DB is a JSON string that needs parsing.
-            if isinstance(pending_conflict_data.get('conflict_data'), str):
-                original_conflict = json.loads(pending_conflict_data['conflict_data'])
-            else: # If it's already a dict (e.g., if asyncpg/SQLAlchemy auto-parses JSONB to dict)
-                original_conflict = pending_conflict_data['conflict_data']
+
+            raw_conflict_json_payload = pending_conflict_data.get('conflict_data')
+            if isinstance(raw_conflict_json_payload, str):
+                original_conflict = json.loads(raw_conflict_json_payload)
+            elif isinstance(raw_conflict_json_payload, dict): # If it's already a dict (e.g. JSONB auto-parsed)
+                original_conflict = raw_conflict_json_payload
+            else:
+                # Handle case where 'conflict_data' is missing or not str/dict
+                error_msg = f"Error: 'conflict_data' field is missing or invalid in pending_conflict_data for conflict ID '{conflict_id}'."
+                if self.game_log_manager:
+                    await self.game_log_manager.log_event(guild_id=guild_id_log_param, event_type="conflict_manual_resolve_error", message=error_msg, metadata={"conflict_id": conflict_id})
+                else:
+                    print(f"❌ {error_msg}")
+                return {"success": False, "conflict_id": conflict_id, "message": error_msg}
 
             if not isinstance(original_conflict, dict): # Ensure it's a dict after loading/assignment
-                raise ValueError("Loaded conflict_data is not a dictionary.")
+                # This might seem redundant if the above block is perfect, but good for safety against unexpected JSON structures.
+                error_msg = f"Error: Loaded conflict_data for conflict ID '{conflict_id}' did not resolve to a dictionary."
+                if self.game_log_manager:
+                    await self.game_log_manager.log_event(guild_id=guild_id_log_param, event_type="conflict_manual_resolve_error", message=error_msg, metadata={"conflict_id": conflict_id})
+                else:
+                    print(f"❌ {error_msg}")
+                return {"success": False, "conflict_id": conflict_id, "message": error_msg}
 
             original_conflict["status"] = "resolved_manually" # Tentative status
             # guild_id should also be directly available from pending_conflict_data if it's a top-level field

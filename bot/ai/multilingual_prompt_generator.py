@@ -19,6 +19,17 @@ class MultilingualPromptGenerator:
         if self.main_bot_language not in self.target_languages:
             self.target_languages.append(self.main_bot_language)
 
+    def update_main_bot_language(self, new_language: str) -> None:
+        """Updates the main bot language used for prompt generation."""
+        self.main_bot_language = new_language
+        print(f"MultilingualPromptGenerator: Main bot language updated to '{new_language}'.")
+        # Optionally, re-evaluate self.target_languages if the new main language should always be included
+        if self.main_bot_language not in self.target_languages:
+            self.target_languages.append(self.main_bot_language)
+            # If target_languages should be strictly main + ru/en, then re-initialize:
+            # self.target_languages = list(set(["en", "ru", self.main_bot_language]))
+
+
     def _get_base_system_prompt(self) -> str:
         """
         Base instructions for the AI, including multilingual JSON output format.
