@@ -291,12 +291,12 @@ class StatusManager:
             # Let's keep the save for now as it's existing behavior, but granular save can also be called.
             if self._db_service: # Changed from _db_adapter
                  sql = '''
-                     INSERT INTO statuses (id, status_type, target_id, target_type, duration, applied_at, source_id, state_variables, guild_id)
+                     INSERT INTO statuses (id, status_type, target_id, target_type, duration_turns, applied_at, source_id, state_variables, guild_id)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                  '''
                  params = (
                      eff.id, eff.status_type, eff.target_id, eff.target_type,
-                     eff.duration, eff.applied_at, eff.source_id,
+                     eff.duration, eff.applied_at, eff.source_id, # eff.duration is used for duration_turns column
                      json.dumps(eff.state_variables),
                      eff.guild_id
                  )
@@ -570,7 +570,7 @@ class StatusManager:
             if statuses_to_save:
                 sql_upsert = '''
                     INSERT OR REPLACE INTO statuses
-                    (id, status_type, target_id, target_type, duration, applied_at, source_id, state_variables, guild_id)
+                    (id, status_type, target_id, target_type, duration_turns, applied_at, source_id, state_variables, guild_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 '''
                 data_to_upsert = []
@@ -583,7 +583,7 @@ class StatusManager:
 
                     data_to_upsert.append((
                         eff.id, eff.status_type, eff.target_id, eff.target_type,
-                        eff.duration, eff.applied_at, eff.source_id,
+                        eff.duration, eff.applied_at, eff.source_id, # eff.duration is used for duration_turns column
                         sv_json,
                         eff.guild_id
                     ))
@@ -642,7 +642,7 @@ class StatusManager:
             # Выбираем ВСЕ статус-эффекты ТОЛЬКО для этой гильдии
             # TODO: Убедитесь, что SELECT соответствует ВСЕМ колонкам таблицы statuses, включая guild_id
             sql_statuses = '''
-                SELECT id, status_type, target_id, target_type, duration, applied_at, source_id, state_variables, guild_id
+                SELECT id, status_type, target_id, target_type, duration_turns, applied_at, source_id, state_variables, guild_id
                 FROM statuses WHERE guild_id = $1
             '''
             rows_statuses = await self._db_service.adapter.fetchall(sql_statuses, (guild_id_str,)) # Changed from _db_adapter
@@ -674,8 +674,8 @@ class StatusManager:
                            # is_active уже фильтруется в SQL, но его можно загрузить, если нужно.
                            # row_dict['is_active'] = bool(row_dict.get('is_active', 0))
 
-                           # duration и applied_at могут быть NULL в БД (None в Python) или REAL (float)
-                           row_dict['duration'] = float(row_dict['duration']) if row_dict['duration'] is not None else None
+                           # duration_turns и applied_at могут быть NULL в БД (None в Python) или REAL (float)
+                           row_dict['duration'] = float(row_dict.pop('duration_turns')) if row_dict.get('duration_turns') is not None else None
                            row_dict['applied_at'] = float(row_dict['applied_at']) if row_dict['applied_at'] is not None else None
 
                            # Загружаем guild_id
@@ -798,7 +798,7 @@ class StatusManager:
             db_status_type = effect_data.get('status_type')
             db_target_id = effect_data.get('target_id')
             db_target_type = effect_data.get('target_type')
-            db_duration = effect_data.get('duration') # Can be None or float
+            db_duration_turns = effect_data.get('duration') # This will be mapped to duration_turns
             db_applied_at = effect_data.get('applied_at') # Can be None or float
             db_source_id = effect_data.get('source_id') # Can be None
 
@@ -814,7 +814,7 @@ class StatusManager:
                 db_status_type,
                 db_target_id,
                 db_target_type,
-                db_duration,
+                db_duration_turns, # Use db_duration_turns here
                 db_applied_at,
                 db_source_id,
                 json.dumps(db_state_variables),
@@ -823,7 +823,7 @@ class StatusManager:
 
             upsert_sql = '''
             INSERT OR REPLACE INTO statuses (
-                id, status_type, target_id, target_type, duration,
+                id, status_type, target_id, target_type, duration_turns,
                 applied_at, source_id, state_variables, guild_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             '''
