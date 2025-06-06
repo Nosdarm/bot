@@ -12,7 +12,8 @@ from typing import Optional, Dict, Any, List, Callable, Awaitable, Union, Set # 
 # from bot.game.models.game_time import GameTime # Если у вас есть модель для времени
 
 # TODO: Импорт адаптера БД - используем наш конкретный SQLite адаптер
-from bot.database.postgres_adapter import PostgresAdapter
+# from bot.database.postgres_adapter import PostgresAdapter # Replaced with DBService
+from bot.services.db_service import DBService
 
 # TODO: Импорт других менеджеров, если TimeManager их использует в своих методах
 # Например, менеджеры, методы которых вызываются при срабатывании таймеров
@@ -40,7 +41,7 @@ class TimeManager:
 
     def __init__(self,
                  # Принимаем зависимости, которые передает GameManager.
-                 db_adapter: Optional[PostgresAdapter] = None,
+                 db_service: Optional[DBService] = None, # Changed from db_adapter
                  settings: Optional[Dict[str, Any]] = None,
 
                  # TODO: Добавьте другие зависимости, если TimeManager их требует
@@ -50,7 +51,7 @@ class TimeManager:
                  # character_manager: Optional['CharacterManager'] = None,
                  ):
         print("Initializing TimeManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed from _db_adapter
         self._settings = settings
 
         # TODO: Сохраните другие зависимости
@@ -100,8 +101,8 @@ class TimeManager:
         guild_id_str = str(guild_id)
         print(f"TimeManager: Adding timer of type '{timer_type}' with duration {duration} for guild {guild_id_str}.")
 
-        if self._db_adapter is None:
-             print(f"TimeManager: Error adding timer for guild {guild_id_str}: Database adapter is not available.")
+        if self._db_service is None: # Changed from _db_adapter
+             print(f"TimeManager: Error adding timer for guild {guild_id_str}: Database service is not available.") # Changed message
              return None
 
         if duration <= 0:
@@ -146,7 +147,7 @@ class TimeManager:
                 # TODO: Добавить другие параметры в кортеж
             )
 
-            await self._db_adapter.execute(sql, params)
+            await self._db_service.execute(sql, params) # Changed from _db_adapter
             # execute уже коммитит
 
             print(f"TimeManager: Timer '{timer_type}' added for guild {guild_id_str}, ends at {ends_at:.2f}, saved to DB with ID {timer_id}.")
@@ -186,14 +187,14 @@ class TimeManager:
 
         try:
             # --- Удаляем из БД ---
-            if self._db_adapter:
+            if self._db_service: # Changed from _db_adapter
                 # ИСПРАВЛЕНИЕ: Добавляем фильтр по guild_id в SQL DELETE
                 sql = 'DELETE FROM timers WHERE id = ? AND guild_id = ?'
-                await self._db_adapter.execute(sql, (timer_id_str, guild_id_str))
+                await self._db_service.execute(sql, (timer_id_str, guild_id_str)) # Changed from _db_adapter
                 # execute уже коммитит
                 print(f"TimeManager: Timer {timer_id_str} deleted from DB for guild {guild_id_str}.")
             else:
-                print(f"TimeManager: No DB adapter. Simulating delete from DB for timer {timer_id_str} for guild {guild_id_str}.")
+                print(f"TimeManager: No DB service. Simulating delete from DB for timer {timer_id_str} for guild {guild_id_str}.") # Changed message
 
             # --- Удаляем из кеша ---
             # Удаляем из пер-гильдийного кеша
@@ -223,8 +224,8 @@ class TimeManager:
         """
         # print(f"TimeManager: Processing tick for guild {guild_id} with delta: {game_time_delta}") # Бывает очень шумно
 
-        if self._db_adapter is None:
-             print(f"TimeManager: Skipping tick processing for guild {guild_id} (no DB adapter).")
+        if self._db_service is None: # Changed from _db_adapter
+             print(f"TimeManager: Skipping tick processing for guild {guild_id} (no DB service).") # Changed message
              return
 
         guild_id_str = str(guild_id)
@@ -376,8 +377,8 @@ class TimeManager:
         Сохраняет состояние TimeManager (игровое время, активные таймеры) для определенной гильдии в БД.
         """
         print(f"TimeManager: Saving state for guild {guild_id}...")
-        if self._db_adapter is None:
-             print(f"TimeManager: Database adapter is not available. Skipping save for guild {guild_id}.")
+        if self._db_service is None: # Changed from _db_adapter
+             print(f"TimeManager: Database service is not available. Skipping save for guild {guild_id}.") # Changed message
              return
 
         guild_id_str = str(guild_id)
@@ -388,7 +389,7 @@ class TimeManager:
             current_game_time_for_guild = self._current_game_time.get(guild_id_str, 0.0)
 
             # Сохраняем текущее игровое время для этой гильдии в global_state
-            await self._db_adapter.execute(
+            await self._db_service.execute( # Changed from _db_adapter
                 "INSERT OR REPLACE INTO global_state (key, value) VALUES (?, ?)",
                 (f'game_time_{guild_id_str}', json.dumps(current_game_time_for_guild)) # Ключ 'game_time_<guild_id>', значение как JSON
             )
@@ -397,7 +398,7 @@ class TimeManager:
 
             # --- Сохранение активных таймеров для этой гильдии (в таблице timers) ---
             # Удаляем ВСЕ таймеры для этой гильдии из БД перед вставкой
-            await self._db_adapter.execute("DELETE FROM timers WHERE guild_id = ?", (guild_id_str,))
+            await self._db_service.execute("DELETE FROM timers WHERE guild_id = ?", (guild_id_str,)) # Changed from _db_adapter
             # execute уже коммитит (для этой одной операции)
 
             # Вставляем все активные таймеры ИЗ КЕША, которые принадлежат этой гильдии
@@ -431,7 +432,7 @@ class TimeManager:
                     ))
                 # Используем execute_many для пакетной вставки таймеров
                 if data_to_save: # Только если есть что сохранять
-                     await self._db_adapter.execute_many(sql, data_to_save)
+                     await self._db_service.execute_many(sql, data_to_save) # Changed from _db_adapter
                      # execute_many коммитит сам
 
             # Note: При использовании execute и execute_many с авто-коммитом в каждом вызове,
@@ -460,8 +461,8 @@ class TimeManager:
         print(f"TimeManager: Loading state for guild {guild_id}...")
         guild_id_str = str(guild_id)
 
-        if self._db_adapter is None:
-             print(f"TimeManager: Database adapter is not available. Loading placeholder state or leaving default for guild {guild_id_str}.")
+        if self._db_service is None: # Changed from _db_adapter
+             print(f"TimeManager: Database service is not available. Loading placeholder state or leaving default for guild {guild_id_str}.") # Changed message
              # Если игровое время пер-гильдийное, устанавливаем дефолтное время для этой гильдии
              if guild_id_str not in self._current_game_time: self._current_game_time[guild_id_str] = 0.0
              # Если таймеры пер-гильдийные, очищаем или инициализируем кеш для этой гильдии
@@ -476,7 +477,7 @@ class TimeManager:
             # Предполагаем, что время хранится per-guild в global_state с ключом 'game_time_<guild_id>'
             sql_time = '''SELECT value FROM global_state WHERE key = ?'''
             key = f'game_time_{guild_id_str}'
-            row_time = await self._db_adapter.fetchone(sql_time, (key,))
+            row_time = await self._db_service.fetchone(sql_time, (key,)) # Changed from _db_adapter
             if row_time and row_time['value']:
                 try:
                     loaded_time = json.loads(row_time['value'])
@@ -503,7 +504,7 @@ class TimeManager:
 
             # Выбираем таймеры ТОЛЬКО для этой гильдии и которые активны
             sql_timers = '''SELECT id, type, ends_at, callback_data, is_active, guild_id FROM timers WHERE guild_id = ? AND is_active = 1'''
-            rows_timers = await self._db_adapter.fetchall(sql_timers, (guild_id_str,))
+            rows_timers = await self._db_service.fetchall(sql_timers, (guild_id_str,)) # Changed from _db_adapter
 
             if rows_timers:
                  print(f"TimeManager: Loaded {len(rows_timers)} active timers for guild {guild_id_str} from DB.")
