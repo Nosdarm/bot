@@ -596,7 +596,7 @@ class CharacterManager:
              upserted_char_ids: Set[str] = set() # Track IDs that were successfully prepared for upsert
             # Ensure guild_id_str is used if _deleted_characters_ids was not initialized for this guild before.
             # This pop will not raise an error if the key is missing.
-            pass # Logic moved up
+            # The for loop below prepares data for a batch upsert.
 
              for char_obj in characters_to_save: # Renamed to char_obj to avoid conflict with char module if any
                  try:

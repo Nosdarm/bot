@@ -13,13 +13,12 @@ from typing import Set
 
 # Используем TYPE_CHECKING для импорта, который нужен только для аннотаций типов
 # и предотвращает циклический импорт, если адаптер БД зависит от моделей или других частей игры.
-# TYPE_CHECKING block for SqliteAdapter removed.
-# if TYPE_CHECKING:
+if TYPE_CHECKING:
     # Импорт для аннотаций типов
     # from ..database.sqlite_adapter import SqliteAdapter # Removed
     # Импорт класса Character для аннотаций типов
     # from .models.character import Character # Assuming these are still needed for type hints elsewhere or can be stringified
-    # from .managers.game_log_manager import GameLogManager
+    from .managers.game_log_manager import GameLogManager # Added for type hinting
 
 from bot.services.db_service import DBService # Added DBService import
 
