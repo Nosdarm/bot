@@ -252,20 +252,21 @@ class DBService:
     # --- Location Management ---
 
     async def create_location(
-        self, loc_id: str, name: str, description: str, guild_id: str,
+        self, loc_id: str, name_i18n: Dict[str, str], description_i18n: Dict[str, str], guild_id: str,
         exits: Optional[Dict[str, str]] = None, template_id: str = "default"
     ) -> Optional[Dict[str, Any]]:
         """Creates a new location instance."""
         # PostgresAdapter uses $1, $2 placeholders.
+        # Assuming 'name_i18n' column exists or will be added, and 'descriptions_i18n' for description.
         sql = """
-            INSERT INTO locations (id, template_id, name, description, guild_id, exits, state_variables, is_active)
+            INSERT INTO locations (id, template_id, name_i18n, descriptions_i18n, guild_id, exits, state_variables, is_active)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING id;
         """ # Added RETURNING id
         params = (
-            loc_id, template_id, name, description, guild_id,
+            loc_id, template_id, json.dumps(name_i18n), json.dumps(description_i18n), guild_id,
             json.dumps(exits) if exits else '{}',
-            '{}', 1
+            '{}', True  # Changed 1 to True for PostgreSQL boolean
         )
         inserted_id = await self.adapter.execute_insert(sql, params)
         if inserted_id:

@@ -389,7 +389,7 @@ class TimeManager:
             current_game_time_for_guild = self._current_game_time.get(guild_id_str, 0.0)
 
             # Сохраняем текущее игровое время для этой гильдии в global_state
-            await self._db_service.execute( # Changed from _db_adapter
+            await self._db_service.adapter.execute( # Changed from _db_adapter
                 "INSERT OR REPLACE INTO global_state (key, value) VALUES (?, ?)",
                 (f'game_time_{guild_id_str}', json.dumps(current_game_time_for_guild)) # Ключ 'game_time_<guild_id>', значение как JSON
             )
@@ -477,7 +477,7 @@ class TimeManager:
             # Предполагаем, что время хранится per-guild в global_state с ключом 'game_time_<guild_id>'
             sql_time = '''SELECT value FROM global_state WHERE key = ?'''
             key = f'game_time_{guild_id_str}'
-            row_time = await self._db_service.fetchone(sql_time, (key,)) # Changed from _db_adapter
+            row_time = await self._db_service.adapter.fetchone(sql_time, (key,)) # Changed from _db_adapter
             if row_time and row_time['value']:
                 try:
                     loaded_time = json.loads(row_time['value'])

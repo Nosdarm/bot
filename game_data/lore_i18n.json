@@ -1,26 +1,24 @@
-{
-  "lore_entries": [
-    {
-      "id": "world_creation",
-      "title_i18n": {
-        "en": "The Creation of Aethel",
-        "ru": "Сотворение Этель"
-      },
-      "text_i18n": {
-        "en": "In the mists of time, the world of Aethel was woven from the dreams of the slumbering titans. Their whispers shaped the mountains and their tears carved the rivers...",
-        "ru": "Во мгле времен мир Этель был соткан из снов дремлющих титанов. Их шепот формировал горы, а их слезы вырезали реки..."
-      }
+[
+  {
+    "id": "world_creation",
+    "title_i18n": {
+      "en": "The Creation of Aethel",
+      "ru": "Сотворение Этель"
     },
-    {
-      "id": "ancient_war",
-      "title_i18n": {
-        "en": "The Ancient War",
-        "ru": "Древняя Война"
-      },
-      "text_i18n": {
-        "en": "Ages ago, a cataclysmic war between the elemental lords and the shadow dwellers reshaped the continents and left scars upon the very fabric of magic.",
-        "ru": "Много веков назад катастрофическая война между повелителями стихий и обитателями теней изменила очертания континентов и оставила шрамы на самой ткани магии."
-      }
+    "text_i18n": {
+      "en": "In the mists of time, the world of Aethel was woven from the dreams of the slumbering titans. Their whispers shaped the mountains and their tears carved the rivers...",
+      "ru": "Во мгле времен мир Этель был соткан из снов дремлющих титанов. Их шепот формировал горы, а их слезы вырезали реки..."
     }
-  ]
-}
+  },
+  {
+    "id": "ancient_war",
+    "title_i18n": {
+      "en": "The Ancient War",
+      "ru": "Древняя Война"
+    },
+    "text_i18n": {
+      "en": "Ages ago, a cataclysmic war between the elemental lords and the shadow dwellers reshaped the continents and left scars upon the very fabric of magic.",
+      "ru": "Много веков назад катастрофическая война между повелителями стихий и обитателями теней изменила очертания континентов и оставила шрамы на самой ткани магии."
+    }
+  }
+]
