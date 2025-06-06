@@ -253,34 +253,34 @@ class GameManager:
         self.db_service = DBService() # Removed db_path
         await self.db_service.connect()
 
-        try:
-            print("GameManager: Preparing Alembic configuration for programmatic upgrade...")
-            alembic_cfg = Config()
-            # Assuming alembic.ini is in the root of the project, and this script is in a subfolder.
-            # Adjust "bot/alembic" if script_location is different relative to project root
-            # where alembic.ini is expected or where alembic commands are typically run from.
-            # For many projects, alembic.ini is in the root, and script_location points to the alembic scripts directory.
-            # If alembic.ini is *inside* 'bot/alembic', then config_file_name should be set.
-            # Let's assume script_location is 'bot/alembic' and alembic.ini is not explicitly loaded here,
-            # relying on defaults or that script_location implies enough.
-            # A common practice is to have alembic.ini in the repo root.
-            # If so, script_location should point to the directory with env.py
-            alembic_cfg.set_main_option("script_location", "bot/alembic") # Path to the alembic environment directory
-
-            alembic_cfg.set_main_option("sqlalchemy.url", PG_URL_FOR_ALEMBIC)
-
-            print(f"GameManager: Running alembic.command.upgrade('head') for URL: {PG_URL_FOR_ALEMBIC} using script location: bot/alembic")
-            
-            # Run synchronous Alembic command in a separate thread
-            await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
-            
-            print("GameManager: Alembic upgrade via command.upgrade completed successfully.")
-        except Exception as e:
-            print(f"GameManager: ❌ ERROR running alembic.command.upgrade: {e}")
-            sio = io.StringIO() # Ensure io is imported
-            traceback.print_exc(file=sio)
-            print(sio.getvalue())
-            # Consider re-raising or specific error handling
+        # try:
+        #     print("GameManager: Preparing Alembic configuration for programmatic upgrade...")
+        #     alembic_cfg = Config()
+        #     # Assuming alembic.ini is in the root of the project, and this script is in a subfolder.
+        #     # Adjust "bot/alembic" if script_location is different relative to project root
+        #     # where alembic.ini is expected or where alembic commands are typically run from.
+        #     # For many projects, alembic.ini is in the root, and script_location points to the alembic scripts directory.
+        #     # If alembic.ini is *inside* 'bot/alembic', then config_file_name should be set.
+        #     # Let's assume script_location is 'bot/alembic' and alembic.ini is not explicitly loaded here,
+        #     # relying on defaults or that script_location implies enough.
+        #     # A common practice is to have alembic.ini in the repo root.
+        #     # If so, script_location should point to the directory with env.py
+        #     alembic_cfg.set_main_option("script_location", "bot/alembic") # Path to the alembic environment directory
+        #
+        #     alembic_cfg.set_main_option("sqlalchemy.url", PG_URL_FOR_ALEMBIC)
+        #
+        #     print(f"GameManager: Running alembic.command.upgrade('head') for URL: {PG_URL_FOR_ALEMBIC} using script location: bot/alembic")
+        #
+        #     # Run synchronous Alembic command in a separate thread
+        #     await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
+        #
+        #     print("GameManager: Alembic upgrade via command.upgrade completed successfully.")
+        # except Exception as e:
+        #     print(f"GameManager: ❌ ERROR running alembic.command.upgrade: {e}")
+        #     sio = io.StringIO() # Ensure io is imported
+        #     traceback.print_exc(file=sio)
+        #     print(sio.getvalue())
+        #     # Consider re-raising or specific error handling
 
         # This might be redundant if alembic handles all table creation,
         # or could be for other non-schema initializations.
