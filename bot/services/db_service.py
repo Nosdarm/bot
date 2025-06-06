@@ -715,6 +715,22 @@ class DBService:
             print(f"DBService: Error creating item instance for template {template_id}: {e}")
             return None
 
+    # --- Pending Conflict Management ---
+
+    async def save_pending_conflict(self, conflict_id: str, guild_id: str, conflict_data: str) -> None:
+        if not isinstance(conflict_data, str):
+             raise TypeError("conflict_data must be a JSON string.")
+        # This method will be called by ConflictResolver, which prepares conflict_data as JSON string.
+        # The adapter's method (PostgresAdapter) handles specific SQL and placeholders.
+        await self.adapter.save_pending_conflict(conflict_id, guild_id, conflict_data)
+
+    async def get_pending_conflict(self, conflict_id: str) -> Optional[Dict[str, Any]]:
+        # The adapter's method (PostgresAdapter) returns a dict or None.
+        return await self.adapter.get_pending_conflict(conflict_id)
+
+    async def delete_pending_conflict(self, conflict_id: str) -> None:
+        await self.adapter.delete_pending_conflict(conflict_id)
+
     # --- Generic CRUD Operations ---
 
     async def create_entity(self, table_name: str, data: Dict[str, Any], id_field: str = 'id') -> Optional[str]:
