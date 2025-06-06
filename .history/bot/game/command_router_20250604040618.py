@@ -1763,12 +1763,6 @@ class CommandRouter:
                     else: # If not a character, check if it's an NPC
                         npc_obj = await npc_mgr.get_npc(guild_id, entity_id_to_inspect) if npc_mgr else None
                         if npc_obj:
-                    char_obj = char_mgr.get_character(guild_id, entity_id_to_inspect) if char_mgr else None
-                    if char_obj: # Check if char_obj is not None
-                        entity_name = getattr(char_obj, 'name', entity_id_to_inspect)
-                    else: # If not a character, check if it's an NPC
-                        npc_obj = npc_mgr.get_npc(guild_id, entity_id_to_inspect) if npc_mgr else None
-                        if npc_obj: # Check if npc_obj is not None
                             entity_name = getattr(npc_obj, 'name', entity_id_to_inspect)
                     
                     relations = await relationship_manager.get_relationships_for_entity(guild_id, entity_id_to_inspect, context=context) # Already awaited

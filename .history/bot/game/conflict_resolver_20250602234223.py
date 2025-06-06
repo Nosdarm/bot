@@ -560,4 +560,3 @@ if __name__ == '__main__':
         print(f"Final manual outcome: {final_manual_outcome}")
 
     print("\n--- End of Example Usage ---")
-"""

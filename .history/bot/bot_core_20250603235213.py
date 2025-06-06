@@ -172,11 +172,6 @@ class RPGBot(commands.Bot): # Changed base class to commands.Bot
             char_model = await self.game_manager.character_manager.get_character_by_discord_id(
                 discord_user_id=message.author.id,
                 guild_id=message.guild.id
-            char_model = self.game_manager.character_manager.get_character_by_discord_id(
-                discord_user_id=message.author.id, # discord_user_id is int
-                guild_id=str(message.guild.id) # ensure guild_id is string
-                user_id=message.author.id,
-                guild_id=str(message.guild.id)
             )
 
             if not char_model:

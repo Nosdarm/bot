@@ -25,8 +25,7 @@ async def handle_help_command(message: Message, args: List[str], context: Dict[s
     # This might mean CommandRouter still orchestrates the main help, or this handler gets more complex.
 
     if not args:
-        help_message = f"Доступные команды (префикс `{command_prefix}`):
-"
+        help_message = f"Доступные команды (префикс `{command_prefix}`):\n"
         help_message += ", ".join([f"`{cmd}`" for cmd in sorted(all_command_keywords)])
         help_message += f"\nИспользуйте `{command_prefix}help <команда>` для подробностей."
         await send_callback(help_message)
