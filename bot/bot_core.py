@@ -257,9 +257,12 @@ async def start_bot():
     global_game_manager = game_manager
 
     print("GameManager instantiated. Running setup...")
+    game_manager_setup_successful = False
     try:
         await game_manager.setup()
-        print("GameManager setup() successful.")
+        game_manager_setup_successful = True # Set flag on successful setup
+        if game_manager_setup_successful:
+            print("GameManager setup() successful.")
     except Exception as e:
         print(f"❌ FATAL: GameManager.setup() failed: {e}")
         traceback.print_exc()
