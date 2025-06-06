@@ -1,5 +1,6 @@
 # bot/services/db_service.py
 import json
+import traceback # Added for update_player_field
 from typing import Optional, List, Dict, Any
 # import aiosqlite # No longer required for aiosqlite.Row type hint
 
@@ -43,6 +44,61 @@ class DBService:
             player['stats'] = json.loads(player['stats'])
         # Add other JSON deserializations if needed (e.g., inventory if it were a JSON column)
         return player
+
+    async def update_player_field(self, player_id: str, field_name: str, value: Any, guild_id: str) -> bool:
+        """
+        Updates a specific field for a player in the 'players' table.
+        Ensures the player belongs to the correct guild.
+        Handles JSON serialization for dict/list values.
+        """
+        if not self.adapter:
+            print(f"DBService: Adapter not available. Cannot update player field for {player_id}.")
+            return False
+
+        # Basic validation for field_name to prevent SQL injection if it were less controlled.
+        # Here, assuming field_name is from a predefined set and safe.
+        valid_fields = [
+            'name', 'race', 'location_id', 'hp', 'mp', 'attack', 'defense', 'stats',
+            'inventory', 'current_action', 'action_queue', 'party_id', 'state_variables',
+            'is_alive', 'status_effects', 'level', 'experience', 'unspent_xp',
+            'active_quests', 'known_spells', 'spell_cooldowns',
+            'skills_data_json', 'abilities_data_json', 'spells_data_json', 'character_class', 'flags_json',
+            'selected_language', 'current_game_status', 'collected_actions_json', 'current_party_id'
+        ]
+        if field_name not in valid_fields:
+            print(f"DBService: Invalid field_name '{field_name}' for player update.")
+            return False
+
+        processed_value = value
+        if isinstance(value, (dict, list)):
+            processed_value = json.dumps(value)
+
+        # Check if player exists in the guild
+        sql_check = "SELECT id FROM players WHERE id = $1 AND guild_id = $2"
+        player_exists = await self.adapter.fetchone(sql_check, (player_id, guild_id))
+        if not player_exists:
+            print(f"DBService: Player {player_id} not found in guild {guild_id} for field update.")
+            return False
+
+        # Construct and execute the update query
+        # Use $1 for value, $2 for player_id, $3 for guild_id to match params order
+        sql_update = f"UPDATE players SET {field_name} = $1 WHERE id = $2 AND guild_id = $3"
+        try:
+            status = await self.adapter.execute(sql_update, (processed_value, player_id, guild_id))
+            # Assuming status "UPDATE 1" means success
+            if isinstance(status, str) and status.startswith("UPDATE ") and int(status.split(" ")[1]) > 0:
+                print(f"DBService: Successfully updated field '{field_name}' for player {player_id} in guild {guild_id}.")
+                return True
+            elif isinstance(status, str) and status == "UPDATE 0":
+                print(f"DBService: Field update for player {player_id} ran, but no rows affected (already correct value or race condition?).")
+                return True # Or False, depending on desired strictness
+            else:
+                print(f"DBService: Player field update for {player_id} completed with status: {status}. Assuming success if no error.")
+                return True # Default to true if command ran
+        except Exception as e:
+            print(f"DBService: Error updating field '{field_name}' for player {player_id}: {e}")
+            traceback.print_exc()
+            return False
 
     async def create_player(
         self, discord_user_id: int, name: str, race: str,

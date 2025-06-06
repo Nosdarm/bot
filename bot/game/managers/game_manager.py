@@ -9,13 +9,13 @@ import io
 from alembic.config import Config
 from alembic import command
 # from bot.alembic.env import run_async_upgrade # Removed
-from typing import Optional, Dict, Any, Callable, Awaitable, List, Set
-from typing import TYPE_CHECKING
+from typing import Optional, Dict, Any, Callable, Awaitable, List, Set, TYPE_CHECKING
+
+from bot.database.postgres_adapter import SQLALCHEMY_DATABASE_URL as PG_URL_FOR_ALEMBIC
 
 import discord
 from discord import Client
 
-# from bot.database.sqlite_adapter import SqliteAdapter # Removed
 from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 
@@ -72,12 +72,10 @@ class GameManager:
         self,
         discord_client: Client,
         settings: Dict[str, Any]
-        # db_path: str, # Removed
     ):
         print("Initializing GameManager…")
         self._discord_client = discord_client
         self._settings = settings
-        # self._db_path = db_path # Removed
         self._rules_config_cache: Optional[Dict[str, Any]] = None
 
         self.db_service: Optional[DBService] = None # Changed from _db_adapter
@@ -131,6 +129,7 @@ class GameManager:
     # --- Private Helper Methods for Setup ---
     async def _load_or_initialize_rules_config(self):
         print("GameManager: Loading or initializing rules configuration...")
+        self._rules_config_cache = {} # Initialize to empty dict
         if not self.db_service:
             print("GameManager: Error - DBService not available for loading rules config.")
             # Fallback to default rules if DB service is not up yet (should ideally not happen if called after DB init)
@@ -263,11 +262,9 @@ class GameManager:
             # If so, script_location should point to the directory with env.py
             alembic_cfg.set_main_option("script_location", "bot/alembic") # Path to the alembic environment directory
 
-            # Ensure os.path.abspath is used for self._db_path to get a full path for the URL
-            db_url = "postgresql+asyncpg://postgres:test123@localhost:5433/kvelin_bot" # Changed
-            alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+            alembic_cfg.set_main_option("sqlalchemy.url", PG_URL_FOR_ALEMBIC)
 
-            print(f"GameManager: Running alembic.command.upgrade('head') for URL: {db_url} using script location: bot/alembic")
+            print(f"GameManager: Running alembic.command.upgrade('head') for URL: {PG_URL_FOR_ALEMBIC} using script location: bot/alembic")
             
             # Run synchronous Alembic command in a separate thread
             await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
@@ -683,7 +680,7 @@ class GameManager:
             return None
         
         try:
-            player_obj_from_cm = self.character_manager.get_character_by_discord_id(discord_id, guild_id)
+            player_obj_from_cm = self.character_manager.get_character_by_discord_id(guild_id=guild_id, discord_user_id=discord_id)
 
             if player_obj_from_cm:
                 if not isinstance(player_obj_from_cm, Character) and player_obj_from_cm is not None:
