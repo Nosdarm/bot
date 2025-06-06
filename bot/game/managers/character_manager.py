@@ -1514,6 +1514,7 @@ class CharacterManager:
                          else:
                              print(f"CharacterManager: NPC killer type specified, but no NPC manager found to fetch NPC {killer_id_from_context}")
 
+                 # Pylance: Try/Except structure verified
                  try:
                      death_report = await self._rule_engine.process_entity_death(
                          entity=char,
