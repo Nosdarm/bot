@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List, Callable, Awaitable, Union, Set # 
 # from bot.game.models.game_time import GameTime # Если у вас есть модель для времени
 
 # TODO: Импорт адаптера БД - используем наш конкретный SQLite адаптер
-from bot.database.sqlite_adapter import SqliteAdapter
+from bot.database.postgres_adapter import PostgresAdapter
 
 # TODO: Импорт других менеджеров, если TimeManager их использует в своих методах
 # Например, менеджеры, методы которых вызываются при срабатывании таймеров
@@ -40,7 +40,7 @@ class TimeManager:
 
     def __init__(self,
                  # Принимаем зависимости, которые передает GameManager.
-                 db_adapter: Optional[SqliteAdapter] = None,
+                 db_adapter: Optional[PostgresAdapter] = None,
                  settings: Optional[Dict[str, Any]] = None,
 
                  # TODO: Добавьте другие зависимости, если TimeManager их требует
