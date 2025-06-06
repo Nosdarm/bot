@@ -29,7 +29,7 @@ class InventoryCog(commands.Cog, name="Inventory"):
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
 
-        character: Optional["CharacterModel"] = await character_manager.get_character_by_discord_id(
+        character: Optional["CharacterModel"] = character_manager.get_character_by_discord_id(
             guild_id=guild_id_str,
             discord_user_id=discord_user_id_int
         )
@@ -105,7 +105,7 @@ class InventoryCog(commands.Cog, name="Inventory"):
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
 
-        character: Optional["CharacterModel"] = await character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
+        character: Optional["CharacterModel"] = character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
         if not character:
             await interaction.followup.send("You need to create a character first! Use `/start_new_character`.", ephemeral=True)
             return
