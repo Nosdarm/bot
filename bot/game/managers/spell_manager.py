@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from ..models.spell import Spell # Import the Spell model
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.database.postgres_adapter import PostgresAdapter
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.status_manager import StatusManager
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 class SpellManager:
     def __init__(self, 
-                 db_adapter: Optional[SqliteAdapter] = None, 
+                 db_adapter: Optional[PostgresAdapter] = None,
                  settings: Optional[Dict[str, Any]] = None,
                  character_manager: Optional[CharacterManager] = None,
                  rule_engine: Optional[RuleEngine] = None,

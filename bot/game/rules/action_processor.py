@@ -133,7 +133,7 @@ class ActionProcessor:
 
 
         # --- If not an Event Action, Process as Regular World Interaction ---
-        print(f"Processing regular action {action_type} for player {character.name} at {location.name}")
+        print(f"Processing regular action {action_type} for player {actor_char.name} at {source_location_name}")
 
         # --- Handle Specific Action Types ---
 
@@ -271,9 +271,9 @@ class ActionProcessor:
              # Use AI to describe the outcome
              system_prompt = "Ты - Мастер текстовой RPG в мире темного фэнтези. Описывай действия и их результаты детализированно и атмосферно."
              user_prompt = (
-                 f"Персонаж '{character.name}' (Навыки: {list(character.skills.keys())}, Статы: {list(character.stats.keys())}) "
+                 f"Персонаж '{actor_char.name}' (Навыки: {list(actor_char.skills.keys())}, Статы: {list(actor_char.stats.keys())}) "
                  f"попытался совершить действие, связанное с навыком '{skill_name}', целью было {target_description}. "
-                 f"Ситуация: локация '{location.name}', атмосферное описание: {location.description_template[:100]}..."
+                 f"Ситуация: локация '{source_location_name}', атмосферное описание: {source_location_data.get('description_template', '')[:100]}..."
                  f"Механический результат проверки:\n{json.dumps(check_result, indent=2, ensure_ascii=False)}\n"
                  f"Опиши, КАК это выглядело и ощущалось в мире. Учитывай результат (Успех/Провал/Крит) и контекст. Будь мрачным и детальным."
              )

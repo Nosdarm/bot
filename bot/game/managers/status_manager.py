@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHE
 # Импорт модели StatusEffect (для объектов эффектов)
 from bot.game.models.status_effect import StatusEffect
 # Импорт адаптера БД
-from bot.database.sqlite_adapter import SqliteAdapter
+from bot.database.postgres_adapter import PostgresAdapter
 # Импорт утилиты для i18n
 from bot.utils.i18n_utils import get_i18n_text
 
@@ -51,7 +51,7 @@ class StatusManager:
 
 
     def __init__(self,
-                 db_adapter: Optional[SqliteAdapter] = None,
+                 db_adapter: Optional[PostgresAdapter] = None,
                  settings: Optional[Dict[str, Any]] = None,
 
                  rule_engine: Optional['RuleEngine'] = None,
