@@ -15,7 +15,7 @@ import traceback # Для вывода трассировки ошибок
 
 # TODO: Импорт адаптера базы данных - используем наш конкретный SQLite адаптер
 # ИСПРАВЛЕНИЕ: Импортируем напрямую, так как используется в аннотациях БЕЗ строковых литералов
-from bot.database.sqlite_adapter import SqliteAdapter
+from bot.services.db_service import DBService # Changed
 
 
 # Импорт ВСЕХ менеджеров, которые этот менеджер будет координировать для сохранения/загрузки.
@@ -76,7 +76,7 @@ class PersistenceManager:
                  character_manager: "CharacterManager", # Use string literal!
                  location_manager: "LocationManager", # Use string literal!
                  # ИСПРАВЛЕНИЕ: Убираем строковый литерал, т.к. SqliteAdapter импортирован напрямую
-                 db_adapter: Optional[SqliteAdapter] = None, # Use direct type hint!
+                 db_service: Optional[DBService] = None, # Changed # Use direct type hint!
 
                  # ОПЦИОНАЛЬНЫЕ зависимости
                  npc_manager: Optional["NpcManager"] = None, # Use string literal!
@@ -99,7 +99,7 @@ class PersistenceManager:
         # Сохраняем ССЫЛКИ на менеджеры и адаптер как АТРИБУТЫ экземпляра
         # Используем те же аннотации
         # ИСПРАВЛЕНИЕ: Убираем строковый литерал для db_adapter
-        self._db_adapter: Optional[SqliteAdapter] = db_adapter # Use direct type hint!
+        self._db_service: Optional[DBService] = db_service # Changed # Use direct type hint!
 
         # Обязательные (строковые литералы)
         self._event_manager: "EventManager" = event_manager
@@ -144,8 +144,8 @@ class PersistenceManager:
         # Передаем менеджеры и контекст в kwargs для _call_manager_save
         call_kwargs = {**kwargs} # Копируем входящие kwargs
 
-        if self._db_adapter is None:
-            print("PersistenceManager: Database adapter not provided. Managers will simulate save (if they support no DB).")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print("PersistenceManager: Database service or adapter not provided. Managers will simulate save (if they support no DB).")
             # В режиме без БД, просто вызываем save_state у менеджеров.
             for guild_id in guild_ids:
                  await self._call_manager_save(guild_id, **call_kwargs) # Передаем guild_id и kwargs
@@ -248,8 +248,8 @@ class PersistenceManager:
         call_kwargs = {**kwargs} # Копируем входящие kwargs
 
 
-        if self._db_adapter is None: # Если адаптер БД не был предоставлен
-            print("PersistenceManager: Database adapter not provided. Loading placeholder state (simulated loading).")
+        if self._db_service is None or self._db_service.adapter is None: # Changed # Если адаптер БД не был предоставлен
+            print("PersistenceManager: Database service or adapter not provided. Loading placeholder state (simulated loading).")
             # В режиме без БД, менеджеры должны загрузить свои in-memory заглушки.
             # Вызываем load_state (они должны сами симулировать/логировать) для каждой гильдии.
             for guild_id in guild_ids:

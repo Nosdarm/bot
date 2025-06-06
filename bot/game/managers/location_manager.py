@@ -17,7 +17,7 @@ from builtins import dict, set, list, str, int, bool, float # Added relevant bui
 
 # --- Imports needed ONLY for Type Checking ---
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.services.db_service import DBService # Changed
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.event_manager import EventManager
     from bot.game.managers.character_manager import CharacterManager
@@ -62,7 +62,7 @@ class LocationManager:
 
     def __init__(
         self,
-        db_adapter: Optional["SqliteAdapter"] = None,
+        db_service: Optional["DBService"] = None, # Changed
         settings: Optional[Dict[str, Any]] = None,
         rule_engine: Optional["RuleEngine"] = None,
         event_manager: Optional["EventManager"] = None,
@@ -80,7 +80,7 @@ class LocationManager:
         stage_description_generator: Optional["StageDescriptionGenerator"] = None,
     ):
         print("Initializing LocationManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings
         self._rule_engine = rule_engine
         self._event_manager = event_manager
@@ -110,9 +110,9 @@ class LocationManager:
         guild_id_str = str(guild_id)
         print(f"LocationManager: Loading state for guild {guild_id_str} (static templates + instances)...")
 
-        db_adapter = kwargs.get('db_adapter', self._db_adapter) # type: Optional["SqliteAdapter"]
-        if db_adapter is None:
-             print(f"LocationManager: Database adapter is not available. Cannot load state for guild {guild_id_str}.")
+        db_service = kwargs.get('db_service', self._db_service) # type: Optional["DBService"] # Changed
+        if db_service is None or db_service.adapter is None: # Changed
+             print(f"LocationManager: Database service or adapter is not available. Cannot load state for guild {guild_id_str}.")
              self._clear_guild_state_cache(guild_id_str)
              return # Let PM handle if critical
 
@@ -123,10 +123,10 @@ class LocationManager:
         loaded_templates_count = 0
         try:
             # Corrected SQL query based on schema - template data is in 'properties' column
-            # Using per-guild filter WHERE guild_id = ? as assumed for LocationManager
-            sql_templates = "SELECT id, name, description, properties FROM location_templates WHERE guild_id = ?"
+            # Using per-guild filter WHERE guild_id = $1 as assumed for LocationManager
+            sql_templates = "SELECT id, name, description, properties FROM location_templates WHERE guild_id = $1" # Changed
             # Passing guild_id parameter for fetchall on per-guild table
-            rows_templates = await db_adapter.fetchall(sql_templates, (guild_id_str,))
+            rows_templates = await db_service.adapter.fetchall(sql_templates, (guild_id_str,)) # Changed
             print(f"LocationManager: Found {len(rows_templates)} location template rows for guild {guild_id_str}.")
             for row in rows_templates:
                  tpl_id = row['id'] # Use direct access
@@ -178,9 +178,9 @@ class LocationManager:
             # Added descriptions_i18n to SELECT
             sql_instances = '''
             SELECT id, template_id, name, description, descriptions_i18n, exits, state_variables, is_active, guild_id
-            FROM locations WHERE guild_id = ?
-            '''
-            rows_instances = await db_adapter.fetchall(sql_instances, (guild_id_str,))
+            FROM locations WHERE guild_id = $1
+            ''' # Changed
+            rows_instances = await db_service.adapter.fetchall(sql_instances, (guild_id_str,)) # Changed
             if rows_instances:
                  print(f"LocationManager: Found {len(rows_instances)} instances for guild {guild_id_str}.")
 
@@ -286,9 +286,9 @@ class LocationManager:
         guild_id_str = str(guild_id)
         print(f"LocationManager: Saving state for guild {guild_id_str}...")
 
-        db_adapter = kwargs.get('db_adapter', self._db_adapter) # type: Optional["SqliteAdapter"]
-        if db_adapter is None:
-             print(f"LocationManager: Database adapter not available. Skipping save for guild {guild_id_str}.")
+        db_service = kwargs.get('db_service', self._db_service) # type: Optional["DBService"] # Changed
+        if db_service is None or db_service.adapter is None: # Changed
+             print(f"LocationManager: Database service or adapter not available. Skipping save for guild {guild_id_str}.")
              return
 
         guild_instances_cache = self._location_instances.get(guild_id_str, {})
@@ -308,11 +308,14 @@ class LocationManager:
             # Удалить помеченные для удаления инстансы для этого guild_id
             if deleted_instances_set:
                  ids_to_delete = list(deleted_instances_set)
-                 placeholders_del = ','.join(['?'] * len(ids_to_delete))
-                 sql_delete_batch = f"DELETE FROM locations WHERE guild_id = ? AND id IN ({placeholders_del})"
-                 await db_adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete)));
-                 print(f"LocationManager: Deleted {len(ids_to_delete)} instances from DB for guild {guild_id_str}.")
-                 self._deleted_instances.pop(guild_id_str, None)
+                 if ids_to_delete: # Check if list is not empty
+                    placeholders_del = ','.join([f'${i+2}' for i in range(len(ids_to_delete))]) # $2, $3, ...
+                    sql_delete_batch = f"DELETE FROM locations WHERE guild_id = $1 AND id IN ({placeholders_del})" # Changed
+                    await db_service.adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete))); # Changed
+                    print(f"LocationManager: Deleted {len(ids_to_delete)} instances from DB for guild {guild_id_str}.")
+                    self._deleted_instances.pop(guild_id_str, None)
+                 else: # If set was empty for this guild
+                    self._deleted_instances.pop(guild_id_str, None)
 
 
             # Обновить или вставить измененные инстансы для этого guild_id
@@ -322,11 +325,20 @@ class LocationManager:
                  print(f"LocationManager: Upserting {len(instances_to_upsert_list)} instances for guild {guild_id_str}...")
                  # Added descriptions_i18n to SQL
                  upsert_sql = '''
-                 INSERT OR REPLACE INTO locations (
+                 INSERT INTO locations (
                      id, guild_id, template_id, name, description, descriptions_i18n,
                      exits, state_variables, is_active
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ''' # 9 columns
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (id) DO UPDATE SET
+                    guild_id = EXCLUDED.guild_id,
+                    template_id = EXCLUDED.template_id,
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    descriptions_i18n = EXCLUDED.descriptions_i18n,
+                    exits = EXCLUDED.exits,
+                    state_variables = EXCLUDED.state_variables,
+                    is_active = EXCLUDED.is_active
+                 ''' # PostgreSQL UPSERT
                  data_to_upsert = []
                  upserted_instance_ids: Set[str] = set()
 
@@ -376,7 +388,7 @@ class LocationManager:
                               json.dumps(instance_descriptions_i18n_dict), # descriptions_i18n (stores instance specific i18n JSON)
                               json.dumps(instance_exits),               # exits
                               json.dumps(state_variables),              # state_variables
-                              int(bool(is_active)),                     # is_active
+                              bool(is_active),                          # is_active (boolean)
                           ));
                           upserted_instance_ids.add(str(instance_id))
 
@@ -385,7 +397,7 @@ class LocationManager:
 
                  if data_to_upsert:
                      try:
-                         await db_adapter.execute_many(upsert_sql, data_to_upsert);
+                         await db_service.adapter.execute_many(upsert_sql, data_to_upsert); # Changed
                          print(f"LocationManager: Successfully upserted {len(data_to_upsert)} instances for guild {guild_id_str}.")
                          if guild_id_str in self._dirty_instances:
                               self._dirty_instances[guild_id_str].difference_update(upserted_instance_ids)
