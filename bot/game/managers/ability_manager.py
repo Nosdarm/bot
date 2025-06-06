@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from ..models.ability import Ability # Import the Ability model
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    # from bot.database.sqlite_adapter import SqliteAdapter # Removed
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.status_manager import StatusManager
@@ -22,13 +22,13 @@ class AbilityManager:
     required_args_for_rebuild = ["guild_id", "campaign_data"]
 
     def __init__(self,
-                 db_adapter: Optional[SqliteAdapter] = None,
+                 # db_adapter: Optional[SqliteAdapter] = None, # Removed
                  settings: Optional[Dict[str, Any]] = None,
                  character_manager: Optional[CharacterManager] = None,
                  rule_engine: Optional[RuleEngine] = None,
                  status_manager: Optional[StatusManager] = None,
                  **kwargs: Any):
-        self._db_adapter = db_adapter
+        # self._db_adapter = db_adapter # Removed
         self._settings = settings if settings is not None else {}
         self._character_manager = character_manager
         self._rule_engine = rule_engine
