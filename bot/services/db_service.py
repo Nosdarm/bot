@@ -307,33 +307,79 @@ class DBService:
     # --- NPC Management ---
 
     async def create_npc(
-        self, npc_id: str, name: str, persona: str,
-        guild_id: str, location_id: str, hp: int, attack: int,
-        template_id: Optional[str] = None, # Added template_id
-        description: Optional[str] = None, stats: Optional[Dict[str, Any]] = None,
-        archetype: str = "commoner"
+        self, npc_id: str, guild_id: str, template_id: str,
+        name_i18n: Dict[str, str], stats: Dict[str, Any],
+        location_id: Optional[str] = None,
+        description_i18n: Optional[Dict[str, str]] = None,
+        persona_i18n: Optional[Dict[str, str]] = None,
+        backstory_i18n: Optional[Dict[str, str]] = None,
+        archetype: Optional[str] = "commoner",
+        inventory: Optional[List[str]] = None, # Simple list of item IDs
+        current_action: Optional[Dict[str, Any]] = None, # Changed from str to Dict
+        action_queue: Optional[List[Any]] = None,
+        party_id: Optional[str] = None,
+        state_variables: Optional[Dict[str, Any]] = None,
+        status_effects: Optional[List[str]] = None,
+        is_temporary: bool = False,
+        traits: Optional[List[str]] = None,
+        desires: Optional[List[str]] = None,
+        motives: Optional[List[str]] = None,
+        **kwargs # For other potential fields like skills_data, equipment_data etc. from CampaignLoader
     ) -> Optional[Dict[str, Any]]:
-        """Creates a new NPC."""
-        npc_stats = stats if stats else {}
-        if 'attack' not in npc_stats: # Store attack in stats if not provided there
-             npc_stats['attack'] = attack
+        """Creates a new NPC, aligning with the updated npcs table schema."""
 
-        final_description = description if description else persona
+        max_health = float(stats.get('max_health', 50.0))
+        current_health = float(stats.get('health', max_health)) # Current health can also be in stats or default to max
 
-        # PostgresAdapter uses $1, $2, etc. placeholders.
+        # Prepare data for JSON fields, ensuring None becomes empty JSON object/array
+        name_i18n_json = json.dumps(name_i18n or {})
+        description_i18n_json = json.dumps(description_i18n or {})
+        persona_i18n_json = json.dumps(persona_i18n or {}) # Assuming persona_i18n is a new field
+        backstory_i18n_json = json.dumps(backstory_i18n or {})
+        stats_json = json.dumps(stats or {})
+        inventory_json = json.dumps(inventory or [])
+        current_action_json = json.dumps(current_action) if current_action is not None else None # Can be NULL in DB
+        action_queue_json = json.dumps(action_queue or [])
+        state_variables_json = json.dumps(state_variables or {})
+        status_effects_json = json.dumps(status_effects or [])
+        traits_json = json.dumps(traits or [])
+        desires_json = json.dumps(desires or [])
+        motives_json = json.dumps(motives or [])
+
+        # Note: 'name' and 'description' simple text columns are no longer primary for i18n.
+        # The 'npcs' table schema from migration 6d887g92h0f1 uses i18n columns.
+        # Old 'name' and 'description' columns might be removed by a future migration if fully unused.
+        # For now, this create_npc will not populate them.
+
         sql = """
-            INSERT INTO npcs (id, template_id, name, description, guild_id, location_id, health, max_health, stats, archetype, is_alive)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO npcs (
+                id, template_id, guild_id, location_id,
+                name_i18n, description_i18n, persona_i18n, backstory_i18n,
+                stats, inventory, current_action, action_queue, party_id,
+                state_variables, health, max_health, is_alive, status_effects,
+                is_temporary, archetype, traits, desires, motives
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
             RETURNING id;
-        """ # Added RETURNING id
+        """
         params = (
-            npc_id, template_id, name, final_description, guild_id, location_id,
-            hp, hp, # current health and max health
-            json.dumps(npc_stats), archetype, 1 # is_alive = True
+            npc_id, template_id, guild_id, location_id,
+            name_i18n_json, description_i18n_json, persona_i18n_json, backstory_i18n_json,
+            stats_json, inventory_json, current_action_json, action_queue_json, party_id,
+            state_variables_json, current_health, max_health, True, status_effects_json,
+            is_temporary, archetype, traits_json, desires_json, motives_json
         )
+
         inserted_id = await self.adapter.execute_insert(sql, params)
         if inserted_id:
-            return await self.get_npc(npc_id, guild_id) # Fetch using original npc_id
+            # Ensure that the other fields passed in kwargs (like skills_data)
+            # are handled if they need to be stored in separate tables or processes.
+            # For now, this method only saves to the 'npcs' table.
+            # Example: if 'skills_data' was in kwargs, it's ignored by this direct INSERT.
+            if kwargs:
+                print(f"DBService.create_npc: Received additional kwargs not directly mapped to 'npcs' table columns: {list(kwargs.keys())}")
+
+            return await self.get_npc(npc_id, guild_id)
         return None
 
     async def get_npc(self, npc_id: str, guild_id: Optional[str] = None) -> Optional[Dict[str, Any]]:

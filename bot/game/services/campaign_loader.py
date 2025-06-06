@@ -183,47 +183,64 @@ class CampaignLoader:
 
         npc_archetypes = campaign_data["npc_archetypes"]
         print(f"CampaignLoader: Populating {len(npc_archetypes)} NPCs for guild '{guild_id}' from '{campaign_file_path}'...")
+        default_lang = 'en' # Hardcoded as per subtask instructions for simplicity
+
         for npc_def in npc_archetypes:
             npc_id = npc_def.get("id")
-            name = npc_def.get("name")
-            persona = npc_def.get("persona", "")
-            description = npc_def.get("description", persona) # Fallback description to persona
-            location_id = npc_def.get("location_id", "town_square") # Default location if not specified
+            name_i18n = npc_def.get("name_i18n")
+
+            display_name_log = npc_id # Fallback for logging
+            if isinstance(name_i18n, dict) and name_i18n:
+                display_name_log = name_i18n.get(default_lang, next(iter(name_i18n.values()), npc_id))
+
+            if not npc_id or not (isinstance(name_i18n, dict) and name_i18n):
+                print(f"CampaignLoader: Skipping NPC due to missing id or invalid/empty name_i18n: {npc_def}")
+                continue
+
+            # Extract other fields, assuming DBService.create_npc will be updated to handle them
+            location_id = npc_def.get("location_id", "town_square")
             archetype = npc_def.get("archetype", "commoner")
             stats = npc_def.get("stats", {})
-
-            hp = stats.get("max_health", 50) # Default HP
-            # Attack might be derived from stats.base_damage or a specific attack stat.
-            # DBService.create_npc expects an 'attack' param, which it puts into stats if not there.
-            # Let's assume 'base_damage' string needs parsing or a numeric 'attack' stat exists.
-            # For simplicity, let's look for 'attack' in stats or use a default.
-            attack_stat = stats.get("attack", stats.get("strength", 5)) # Default attack
-
-            if not npc_id or not name:
-                print(f"CampaignLoader: Skipping NPC due to missing id or name: {npc_def}")
-                continue
+            # description_i18n and persona_i18n are now part of the broader npc_def pass-through
 
             try:
                 existing_npc = await self._db_service.get_npc(npc_id, guild_id=guild_id)
                 if not existing_npc:
+                    # Updated call to self._db_service.create_npc
+                    # Passing i18n fields and other structured data.
+                    # The DBService.create_npc method will need to be adapted to this new signature.
                     await self._db_service.create_npc(
                         npc_id=npc_id,
-                        template_id=npc_id, # Pass the archetype ID as template_id
-                        name=name,
-                        persona=persona,
                         guild_id=guild_id,
+                        template_id=npc_id, # Using archetype ID (npc_id from file) as template_id
+                        name_i18n=name_i18n,
+                        description_i18n=npc_def.get("description_i18n", {}),
+                        persona_i18n=npc_def.get("persona_i18n", {}),
+                        backstory_i18n=npc_def.get("backstory_i18n", {}),
                         location_id=location_id,
-                        hp=int(hp),
-                        attack=int(attack_stat),
-                        description=description,
+                        archetype=archetype,
                         stats=stats,
-                        archetype=archetype
+                        # Explicit hp and attack are removed, assuming stats dict is comprehensive
+                        # and DBService.create_npc will derive health from stats.max_health.
+
+                        # Passing other structured data fields
+                        skills_data=npc_def.get("skills"),
+                        equipment_data=npc_def.get("equipment_slots"),
+                        abilities_data=npc_def.get("abilities"),
+                        traits_data=npc_def.get("traits"),
+                        desires_data=npc_def.get("desires"),
+                        motives_data=npc_def.get("motives"),
+                        faction_data=npc_def.get("faction"),
+                        behavior_tags_data=npc_def.get("behavior_tags"),
+                        loot_table_id_data=npc_def.get("loot_table_id")
+                        # Note: DBService.create_npc will need to be updated to accept these,
+                        # possibly via **kwargs or by adding them to its signature.
                     )
-                    print(f"CampaignLoader: Created NPC '{name}' (ID: {npc_id}, Template: {npc_id}) for guild '{guild_id}'.")
+                    print(f"CampaignLoader: Created NPC '{display_name_log}' (ID: {npc_id}, Template: {npc_id}) for guild '{guild_id}'.")
                 else:
-                    print(f"CampaignLoader: NPC '{name}' (ID: {npc_id}) already exists for guild '{guild_id}', skipping.")
+                    print(f"CampaignLoader: NPC '{display_name_log}' (ID: {npc_id}) already exists for guild '{guild_id}', skipping.")
             except Exception as e:
-                print(f"CampaignLoader: Error creating NPC '{name}' (ID: {npc_id}) for guild '{guild_id}': {e}")
+                print(f"CampaignLoader: Error creating NPC '{display_name_log}' (ID: {npc_id}) for guild '{guild_id}': {e}")
                 traceback.print_exc()
         print(f"CampaignLoader: NPC population for guild '{guild_id}' complete.")
 
