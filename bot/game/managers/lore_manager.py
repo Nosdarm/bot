@@ -5,16 +5,16 @@ from typing import Dict, Any, Optional, List
 from bot.game.models.lore import LoreEntry
 from bot.utils.i18n_utils import get_i18n_text
 # Assuming DBService and SqliteAdapter might be used later, but not for initial file-based loading
-# from bot.services.db_service import DBService
+from bot.services.db_service import DBService
 # from bot.database.sqlite_adapter import SqliteAdapter
 
 DEFAULT_LORE_FILE = "game_data/lore_i18n.json"
 
 class LoreManager:
-    def __init__(self, settings: Dict[str, Any], db_adapter: Optional[Any] = None): # db_adapter kept for future DB use
+    def __init__(self, settings: Dict[str, Any], db_service: Optional[DBService] = None): # Changed from db_adapter
         print("Initializing LoreManager...")
         self._settings = settings
-        self._db_adapter = db_adapter # Not used for file-based loading but good for consistency
+        self._db_service = db_service # Not used for file-based loading but good for consistency / future DB use
         self._lore_entries: Dict[str, LoreEntry] = {}
 
         # Determine the lore file path from settings or use default
