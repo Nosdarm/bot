@@ -40,6 +40,7 @@ class Player(Base):
     active_quests = Column(JSON, nullable=True)
     known_spells = Column(JSON, nullable=True)
     spell_cooldowns = Column(JSON, nullable=True)
+    inventory = Column(JSON, nullable=True) # Added
 
     location = relationship("Location")
     party = relationship("Party", foreign_keys=[current_party_id]) # Specify foreign_keys for clarity
@@ -54,6 +55,11 @@ class Location(Base):
     guild_id = Column(String, nullable=False)
     exits = Column(JSON, nullable=True)
     inventory = Column(JSON, nullable=True)
+    # Added columns:
+    name_i18n = Column(JSON, nullable=True)
+    template_id = Column(String, nullable=True)
+    state_variables = Column(JSON, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False) # Added
 
 
 class Timer(Base):
@@ -120,6 +126,15 @@ class GeneratedLocation(Base):
     __tablename__ = 'generated_locations'
     id = Column(String, primary_key=True)
     placeholder = Column(Text, nullable=True)
+
+class ItemTemplate(Base):
+    __tablename__ = 'item_templates'
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    type = Column(String, nullable=True) # e.g., weapon, armor, potion
+    properties = Column(JSON, nullable=True) # For stats, effects, etc.
+    guild_id = Column(String, nullable=True) # If templates can be guild-specific
 
 class LocationTemplate(Base):
     __tablename__ = 'location_templates'
@@ -256,7 +271,7 @@ class Status(Base):
     target_id = Column(String, nullable=False)
     target_type = Column(String, nullable=False) # "player", "npc"
     duration_turns = Column(Integer, nullable=True)
-    applied_at_time = Column(Integer, nullable=True)
+    applied_at = Column(Integer, nullable=True) # Changed from applied_at_time
     source_id = Column(String, nullable=True)
     state_variables = Column(JSON, nullable=True)
     guild_id = Column(String, nullable=False)
