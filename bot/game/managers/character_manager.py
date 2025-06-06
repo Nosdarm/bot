@@ -1528,11 +1528,11 @@ class CharacterManager:
              else:
                  print(f"CharacterManager: RuleEngine not available for character {char.id} death processing. Basic death applied.")
 
-             # These print statements seem to be part of the 'try' block, not 'except' or 'finally'
-             # Their indentation should align with the 'if self._rule_engine:' block or the 'try' block itself.
-             # Assuming they are part of the general cleanup process after RuleEngine interaction.
-             print(f"CharacterManager: Death cleanup initiated for character {character_id} in guild {guild_id_str}.")
-             print(f"CharacterManager: Death cleanup process completed for character {character_id} in guild {guild_id_str}.")
+            # These print statements seem to be part of the 'try' block, not 'except' or 'finally'
+            # Their indentation should align with the 'if self._rule_engine:' block or the 'try' block itself.
+            # Assuming they are part of the general cleanup process after RuleEngine interaction.
+            print(f"CharacterManager: Death cleanup initiated for character {character_id} in guild {guild_id_str}.")
+            print(f"CharacterManager: Death cleanup process completed for character {character_id} in guild {guild_id_str}.")
          except Exception as e:
             print(f"CharacterManager: Error during death cleanup for character {character_id} in guild {guild_id_str}: {e}")
             import traceback
