@@ -1230,17 +1230,16 @@ class NpcManager:
         # --- Load from 'generated_npcs' table ---
         rows_generated = []
         try:
+            # Updated query for new generated_npcs schema
             sql_generated_npcs = '''
-            SELECT id, guild_id, name_i18n, role_i18n, personality_i18n, motivation_i18n,
-                   backstory_i18n, dialogue_hints_i18n, stats_json, skills_json, abilities_json,
-                   spells_json, inventory_json, faction_affiliations_json, relationships_json,
-                   current_location_id, is_hostile, ai_prompt_context_json
-            FROM generated_npcs WHERE guild_id = $1
-            ''' # 18 columns, changed placeholder
-            rows_generated = await self._db_service.adapter.fetchall(sql_generated_npcs, (guild_id_str,)) # Changed
-            print(f"NpcManager: Found {len(rows_generated)} NPCs in 'generated_npcs' table for guild {guild_id_str}.")
+            SELECT id, placeholder
+            FROM generated_npcs
+            ''' # Removed WHERE guild_id = $1 as column is gone
+            rows_generated = await self._db_service.adapter.fetchall(sql_generated_npcs) # No params needed now
+            print(f"NpcManager: Found {len(rows_generated)} NPCs in 'generated_npcs' table (loaded all).") # Updated log
         except Exception as e:
-            print(f"NpcManager: ❌ CRITICAL ERROR executing DB fetchall for 'generated_npcs' table for guild {guild_id_str}: {e}")
+            print(f"NpcManager: ❌ CRITICAL ERROR executing DB fetchall for 'generated_npcs' table: {e}") # Updated log
+            import traceback # Ensure traceback is imported
             traceback.print_exc()
             # Continue even if this part fails, 'npcs' might have loaded.
 
@@ -1257,60 +1256,53 @@ class NpcManager:
             model_data_gen = {} # Data to be passed to NPC.from_dict()
             try:
                 npc_id_gen_raw = data_gen_db.get('id')
-                loaded_guild_id_gen_raw = data_gen_db.get('guild_id')
+                # loaded_guild_id_gen_raw = data_gen_db.get('guild_id') # guild_id no longer in generated_npcs
 
-                if npc_id_gen_raw is None or loaded_guild_id_gen_raw is None:
-                    print(f"NpcManager: Warning: Skipping generated_npcs row with missing ID or Guild ID. Data: {data_gen_db}")
+                if npc_id_gen_raw is None: # Only check npc_id now
+                    print(f"NpcManager: Warning: Skipping generated_npcs row with missing ID. Data: {data_gen_db}")
                     continue
 
                 npc_id_gen = str(npc_id_gen_raw)
-                if str(loaded_guild_id_gen_raw) != guild_id_str:
-                    print(f"NpcManager: Warning: Mismatch guild_id for generated_npc {npc_id_gen}. Skipping.")
-                    continue
+                # Since guild_id is removed from generated_npcs, we cannot filter by it here.
+                # All generated_npcs are loaded. If they need to be guild-specific,
+                # this needs a different design (e.g., placeholder stores guild_id or a linking table).
 
                 if npc_id_gen in guild_npcs_cache: # Check against already loaded standard NPCs
                     print(f"NpcManager: Warning: NPC ID {npc_id_gen} from 'generated_npcs' already loaded from 'npcs' table. Skipping duplicate from 'generated_npcs'.")
                     continue
 
                 model_data_gen['id'] = npc_id_gen
+                # model_data_gen['guild_id'] = guild_id_str # Cannot set guild_id from this table anymore
+
+                # All other i18n and JSON fields are gone from generated_npcs.
+                # We only have 'id' and 'placeholder'.
+                # The NPC object will be very minimal.
+                placeholder_text = data_gen_db.get('placeholder', f"Generated NPC {npc_id_gen}")
+                model_data_gen['name'] = placeholder_text # Use placeholder as name
+                model_data_gen['name_i18n'] = {"en": placeholder_text, "ru": placeholder_text}
+
+                # Fill with defaults for other required NPC fields
+                model_data_gen['stats'] = {"max_health": 10, "strength": 5} # Minimal stats
+                model_data_gen['inventory'] = []
+                model_data_gen['archetype'] = "generated_placeholder"
+                model_data_gen['description_i18n'] = {"en": placeholder_text}
+                model_data_gen['persona_i18n'] = {}
+                model_data_gen['backstory_i18n'] = {}
+                model_data_gen['traits'] = []
+                model_data_gen['desires'] = []
+                model_data_gen['motives'] = []
+                model_data_gen['health'] = float(model_data_gen['stats'].get('max_health', 10.0))
+                model_data_gen['max_health'] = float(model_data_gen['stats'].get('max_health', 10.0))
+                model_data_gen['is_alive'] = model_data_gen['health'] > 0
+                model_data_gen['status_effects'] = []
+                model_data_gen['action_queue'] = []
+                model_data_gen['state_variables'] = {}
+                model_data_gen['is_temporary'] = True # Generated NPCs might be temporary
+                model_data_gen['template_id'] = "generated_placeholder_template"
+                # Ensure guild_id is set for the NPC object, even if not from this table.
+                # This is problematic if generated NPCs are meant to be global.
+                # For now, assign to the current guild to satisfy NPC model if it requires guild_id.
                 model_data_gen['guild_id'] = guild_id_str
-
-                # Parse i18n fields
-                i18n_fields_from_db = ['name_i18n', 'role_i18n', 'personality_i18n', 'motivation_i18n', 'backstory_i18n', 'dialogue_hints_i18n']
-                # Description is not in generated_npcs, persona_i18n is also not.
-                # visual_description_i18n is also not in generated_npcs schema v20.
-                for field_name in i18n_fields_from_db:
-                    json_str = data_gen_db.get(field_name)
-                    model_data_gen[field_name] = json.loads(json_str or '{}') if isinstance(json_str, (str, bytes)) else (json_str if isinstance(json_str, dict) else {})
-
-                model_data_gen['name'] = model_data_gen['name_i18n'].get(selected_lang, list(model_data_gen['name_i18n'].values())[0] if model_data_gen['name_i18n'] else npc_id_gen)
-
-                # Parse JSON data fields
-                json_field_map = {
-                    'stats_json': 'stats_data', 'skills_json': 'skills_data', 'abilities_json': 'abilities_data',
-                    'spells_json': 'spells_data', 'inventory_json': 'inventory_data',
-                    'faction_affiliations_json': 'faction_affiliations_data',
-                    'relationships_json': 'relationships_data',
-                    'ai_prompt_context_json': 'ai_prompt_context_data'
-                }
-                for db_col, model_attr in json_field_map.items():
-                    default_val_str = '[]' if model_attr not in ['stats_data', 'relationships_data', 'ai_prompt_context_data'] else '{}'
-                    default_type = list if default_val_str == '[]' else dict
-                    json_str = data_gen_db.get(db_col)
-                    model_data_gen[model_attr] = json.loads(json_str or default_val_str) if isinstance(json_str, (str, bytes)) else (json_str if isinstance(json_str, default_type) else default_type())
-
-                # Map other fields from generated_npcs to NPC model fields
-                model_data_gen['location_id'] = data_gen_db.get('current_location_id')
-                model_data_gen['is_temporary'] = data_gen_db.get('is_temporary', True)
-                model_data_gen['template_id'] = data_gen_db.get('template_id', "generated_npc_default_template")
-                model_data_gen['archetype'] = data_gen_db.get('archetype', model_data_gen.get('role_i18n',{}).get(selected_lang, "generated"))
-                model_data_gen['is_hostile'] = bool(data_gen_db.get('is_hostile', False))
-
-                # Populate standard 'stats' and 'inventory' (simple list of IDs) from their '_data' counterparts for broader compatibility
-                model_data_gen['stats'] = model_data_gen.get('stats_data', {})
-                # For 'inventory' (List[str]), extract IDs if inventory_data is List[Dict]
-                inv_data_list = model_data_gen.get('inventory_data', [])
-                model_data_gen['inventory'] = [str(item.get("id", item.get("item_id"))) for item in inv_data_list if isinstance(item, dict) and (item.get("id") or item.get("item_id"))] if isinstance(inv_data_list, list) else []
 
 
                 # Fill in other NPC model fields with defaults if not provided by generated_npcs schema

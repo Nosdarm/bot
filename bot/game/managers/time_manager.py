@@ -142,7 +142,7 @@ class TimeManager:
                 new_timer_data['type'],
                 new_timer_data['ends_at'],
                 json.dumps(new_timer_data['callback_data']),
-                1 if new_timer_data['is_active'] else 0,
+                bool(new_timer_data['is_active']), # Changed to boolean
                 new_timer_data['guild_id'] # <-- Параметр guild_id
                 # TODO: Добавить другие параметры в кортеж
             )
@@ -306,6 +306,9 @@ class TimeManager:
         :param kwargs: Дополнительные менеджеры/сервисы, переданные из WorldSimulationProcessor.
                       (Включает guild_id, менеджеры и т.д.)
         """
+        if not isinstance(callback_data, dict):
+            print(f"TimeManager: Warning: callback_data is not a dictionary for timer type '{timer_type}'. Received: {type(callback_data)}. Guild: {kwargs.get('guild_id')}. Skipping.")
+            return
         # TODO: guild_id может быть нужен здесь, получить его из kwargs.get('guild_id')
         guild_id = kwargs.get('guild_id') # Получаем guild_id из контекста
 
@@ -426,7 +429,7 @@ class TimeManager:
                         timer_data['type'],
                         timer_data['ends_at'],
                         json.dumps(timer_data.get('callback_data', {})),
-                        1, # is_active = 1 в БД для активных
+                        bool(timer_data.get('is_active', True)), # Changed to boolean
                         timer_guild_id # <-- Параметр guild_id из данных таймера
                         # TODO: Добавить другие параметры в кортеж
                     ))
@@ -503,7 +506,7 @@ class TimeManager:
 
 
             # Выбираем таймеры ТОЛЬКО для этой гильдии и которые активны
-            sql_timers = '''SELECT id, type, ends_at, callback_data, is_active, guild_id FROM timers WHERE guild_id = $1 AND is_active = 1'''
+            sql_timers = '''SELECT id, type, ends_at, callback_data, is_active, guild_id FROM timers WHERE guild_id = $1 AND is_active = TRUE''' # Changed 1 to TRUE
             rows_timers = await self._db_service.adapter.fetchall(sql_timers, (guild_id_str,))
 
             if rows_timers:
