@@ -23,16 +23,12 @@ from builtins import dict, set, list, int, float, str, bool # Added relevant bui
 # для классов, импортированных здесь, ЕСЛИ они импортированы только здесь.
 if TYPE_CHECKING:
     # Добавляем адаптер БД
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.services.db_service import DBService # Changed
     # Добавляем модели, используемые в аннотациях или context
     from bot.game.models.npc import NPC # Аннотируем как "NPC"
     # from bot.game.models.character import Character # Если Character объекты передаются в методы NPCManager
     # from bot.game.models.party import Party # Если Party объекты передаются в методы NPCManager
-    # Добавляем адаптер БД
-    from bot.database.sqlite_adapter import SqliteAdapter
-    # Добавляем модели, используемые в аннотациях или context
-    from bot.game.models.npc import NPC # Аннотируем как "NPC"
-    # from bot.game.models.character import Character # Если Character объекты передаются в методы NPCManager
+    # Добавляем менеджеры
     # from bot.game.models.party import Party # Если Party объекты передаются в методы NPCManager
     # Добавляем менеджеры
     from bot.game.managers.item_manager import ItemManager
@@ -93,7 +89,7 @@ class NpcManager:
     def __init__(
         self,
         # Используем строковые литералы для всех инжектированных зависимостей
-        db_adapter: Optional["SqliteAdapter"] = None,
+        db_service: Optional["DBService"] = None, # Changed
         settings: Optional[Dict[str, Any]] = None,
         item_manager: Optional["ItemManager"] = None,
         status_manager: Optional["StatusManager"] = None,
@@ -110,7 +106,7 @@ class NpcManager:
         ai_validator: Optional["AIResponseValidator"] = None # New for validation
     ):
         print("Initializing NpcManager...")
-        self._db_adapter = db_adapter
+        self._db_service = db_service # Changed
         self._settings = settings
 
         # Инжектированные зависимости
@@ -234,8 +230,8 @@ class NpcManager:
         
         print(f"NpcManager: Creating NPC from template/archetype '{archetype_id_to_load}' at location {location_id} for guild {guild_id_str}...")
 
-        if self._db_adapter is None:
-            print(f"NpcManager: No DB adapter available for guild {guild_id_str}.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"NpcManager: No DB service or adapter available for guild {guild_id_str}.")
             return None
 
         npc_id = str(uuid.uuid4()) # Common ID for both paths initially
@@ -288,7 +284,7 @@ class NpcManager:
             content_type = 'npc'
             try:
                 data_json = json.dumps(ai_generated_data)
-                await self._db_adapter.save_pending_moderation_request(
+                await self._db_service.adapter.save_pending_moderation_request( # Changed
                     request_id, guild_id_str, str(user_id), content_type, data_json
                 )
                 print(f"NpcManager: AI-generated NPC data for '{npc_id_concept}' saved for moderation. Request ID: {request_id}")
@@ -1013,8 +1009,8 @@ class NpcManager:
         guild_id_str = str(guild_id)
         # print(f"NpcManager: Saving NPC state for guild {guild_id_str}...") # Can be noisy
 
-        if self._db_adapter is None:
-            print(f"NpcManager: Warning: Cannot save NPC state for guild {guild_id_str}, DB adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"NpcManager: Warning: Cannot save NPC state for guild {guild_id_str}, DB service or adapter missing.")
             return
 
         dirty_npc_ids_for_guild = self._dirty_npcs.get(guild_id_str, set()).copy()
@@ -1034,17 +1030,21 @@ class NpcManager:
             # Or, if NPC objects are still in cache when marked deleted, check 'is_ai_generated' then.
             # For simplicity now, try deleting from both if ID matches.
             # This assumes IDs are unique across npcs and generated_npcs, or it's fine if one of the DELETEs affects 0 rows.
-            sql_delete_npcs = f"DELETE FROM npcs WHERE guild_id = ? AND id IN ({placeholders})"
-            sql_delete_generated_npcs = f"DELETE FROM generated_npcs WHERE guild_id = ? AND id IN ({placeholders})"
+            if ids_to_delete_list: # Check if list is not empty
+                pg_placeholders = ','.join([f'${i+2}' for i in range(len(ids_to_delete_list))]) # $2, $3, ...
+                sql_delete_npcs = f"DELETE FROM npcs WHERE guild_id = $1 AND id IN ({pg_placeholders})" # Changed
+                sql_delete_generated_npcs = f"DELETE FROM generated_npcs WHERE guild_id = $1 AND id IN ({pg_placeholders})" # Changed
 
-            try:
-                await self._db_adapter.execute(sql_delete_npcs, (guild_id_str, *ids_to_delete_list))
-                await self._db_adapter.execute(sql_delete_generated_npcs, (guild_id_str, *ids_to_delete_list))
-                print(f"NpcManager: Attempted deletion for {len(ids_to_delete_list)} IDs from 'npcs' and 'generated_npcs' tables for guild {guild_id_str}.")
-                self._deleted_npc_ids.pop(guild_id_str, None) # Clear after attempting deletion
-            except Exception as e:
-                print(f"NpcManager: Error deleting NPCs for guild {guild_id_str}: {e}")
-                traceback.print_exc() # Keep IDs in _deleted_npc_ids to retry next time
+                try:
+                    await self._db_service.adapter.execute(sql_delete_npcs, (guild_id_str, *ids_to_delete_list)) # Changed
+                    await self._db_service.adapter.execute(sql_delete_generated_npcs, (guild_id_str, *ids_to_delete_list)) # Changed
+                    print(f"NpcManager: Attempted deletion for {len(ids_to_delete_list)} IDs from 'npcs' and 'generated_npcs' tables for guild {guild_id_str}.")
+                    self._deleted_npc_ids.pop(guild_id_str, None) # Clear after attempting deletion
+                except Exception as e:
+                    print(f"NpcManager: Error deleting NPCs for guild {guild_id_str}: {e}")
+                    traceback.print_exc() # Keep IDs in _deleted_npc_ids to retry next time
+            else: # If deleted_npc_ids_for_guild was empty for this guild, or if ids_to_delete_list was empty
+                self._deleted_npc_ids.pop(guild_id_str, None)
 
         # Handle dirty NPCs
         guild_npcs_cache = self._npcs.get(guild_id_str, {})
@@ -1093,8 +1093,8 @@ class NpcManager:
 
         print(f"NpcManager: Loading NPC instances for guild {guild_id_str} from DB...")
 
-        if self._db_adapter is None:
-            print(f"NpcManager: Warning: Cannot load NPC instances for guild {guild_id_str}, DB adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"NpcManager: Warning: Cannot load NPC instances for guild {guild_id_str}, DB service or adapter missing.")
             # TODO: In non-DB mode, load placeholder data or raise
             return
 
@@ -1118,9 +1118,9 @@ class NpcManager:
                    guild_id, location_id, stats, inventory, current_action, action_queue, party_id,
                    state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype,
                    traits, desires, motives
-            FROM npcs WHERE guild_id = ?
-            ''' # 23 columns for 'npcs' table
-            rows = await self._db_adapter.fetchall(sql_npcs, (guild_id_str,))
+            FROM npcs WHERE guild_id = $1
+            ''' # 23 columns for 'npcs' table, changed placeholder
+            rows = await self._db_service.adapter.fetchall(sql_npcs, (guild_id_str,)) # Changed
             print(f"NpcManager: Found {len(rows)} NPCs in 'npcs' table for guild {guild_id_str}.")
 
             # TODO: Add loading logic for 'generated_npcs' table if NpcManager should handle them.
@@ -1236,9 +1236,9 @@ class NpcManager:
                    backstory_i18n, dialogue_hints_i18n, stats_json, skills_json, abilities_json,
                    spells_json, inventory_json, faction_affiliations_json, relationships_json,
                    current_location_id, is_hostile, ai_prompt_context_json
-            FROM generated_npcs WHERE guild_id = ?
-            ''' # 18 columns
-            rows_generated = await self._db_adapter.fetchall(sql_generated_npcs, (guild_id_str,))
+            FROM generated_npcs WHERE guild_id = $1
+            ''' # 18 columns, changed placeholder
+            rows_generated = await self._db_service.adapter.fetchall(sql_generated_npcs, (guild_id_str,)) # Changed
             print(f"NpcManager: Found {len(rows_generated)} NPCs in 'generated_npcs' table for guild {guild_id_str}.")
         except Exception as e:
             print(f"NpcManager: ❌ CRITICAL ERROR executing DB fetchall for 'generated_npcs' table for guild {guild_id_str}: {e}")
@@ -1520,8 +1520,8 @@ class NpcManager:
         """
         Saves a single NPC to the database using an UPSERT operation.
         """
-        if self._db_adapter is None:
-            print(f"NpcManager: Error: DB adapter missing for guild {guild_id}. Cannot save NPC {getattr(npc, 'id', 'N/A')}.")
+        if self._db_service is None or self._db_service.adapter is None: # Changed
+            print(f"NpcManager: Error: DB service or adapter missing for guild {guild_id}. Cannot save NPC {getattr(npc, 'id', 'N/A')}.")
             return False
 
         guild_id_str = str(guild_id)
@@ -1586,8 +1586,17 @@ class NpcManager:
                     backstory_i18n, dialogue_hints_i18n, stats_json, skills_json, abilities_json,
                     spells_json, inventory_json, faction_affiliations_json, relationships_json,
                     current_location_id, is_hostile, ai_prompt_context_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """ # 18 placeholders
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                ON CONFLICT (id) DO UPDATE SET
+                    guild_id=EXCLUDED.guild_id, name_i18n=EXCLUDED.name_i18n, role_i18n=EXCLUDED.role_i18n,
+                    personality_i18n=EXCLUDED.personality_i18n, motivation_i18n=EXCLUDED.motivation_i18n,
+                    backstory_i18n=EXCLUDED.backstory_i18n, dialogue_hints_i18n=EXCLUDED.dialogue_hints_i18n,
+                    stats_json=EXCLUDED.stats_json, skills_json=EXCLUDED.skills_json, abilities_json=EXCLUDED.abilities_json,
+                    spells_json=EXCLUDED.spells_json, inventory_json=EXCLUDED.inventory_json,
+                    faction_affiliations_json=EXCLUDED.faction_affiliations_json, relationships_json=EXCLUDED.relationships_json,
+                    current_location_id=EXCLUDED.current_location_id, is_hostile=EXCLUDED.is_hostile,
+                    ai_prompt_context_json=EXCLUDED.ai_prompt_context_json
+                """ # PostgreSQL UPSERT for generated_npcs
             else: # target_table is 'npcs'
                 db_params = (
                     str(npc_id), # id
@@ -1606,24 +1615,32 @@ class NpcManager:
                     json.dumps(_ensure_dict(npc_data.get('state_variables', {}), "default_state_key")), # state_variables (JSON)
                     float(npc_data.get('health', 0.0)), # health
                     float(npc_data.get('max_health', 0.0)), # max_health
-                    int(bool(npc_data.get('is_alive', False))), # is_alive
+                    bool(npc_data.get('is_alive', False)), # is_alive (boolean)
                     json.dumps(_ensure_list(npc_data.get('status_effects', []))), # status_effects (JSON)
-                    int(bool(npc_data.get('is_temporary', False))), # is_temporary
+                    bool(npc_data.get('is_temporary', False)), # is_temporary (boolean)
                     npc_data.get('archetype', "commoner"), # archetype
                     json.dumps(_ensure_list(npc_data.get('traits', []))), # traits (JSON)
                     json.dumps(_ensure_list(npc_data.get('desires', []))), # desires (JSON)
                     json.dumps(_ensure_list(npc_data.get('motives', []))) # motives (JSON)
                 )
                 upsert_sql = """
-                INSERT OR REPLACE INTO npcs (
+                INSERT INTO npcs (
                     id, template_id, name_i18n, description_i18n, backstory_i18n, persona_i18n,
                     guild_id, location_id, stats, inventory, current_action, action_queue, party_id,
                     state_variables, health, max_health, is_alive, status_effects, is_temporary, archetype,
                     traits, desires, motives
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """ # 23 placeholders
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+                ON CONFLICT (id) DO UPDATE SET
+                    template_id=EXCLUDED.template_id, name_i18n=EXCLUDED.name_i18n, description_i18n=EXCLUDED.description_i18n,
+                    backstory_i18n=EXCLUDED.backstory_i18n, persona_i18n=EXCLUDED.persona_i18n, guild_id=EXCLUDED.guild_id,
+                    location_id=EXCLUDED.location_id, stats=EXCLUDED.stats, inventory=EXCLUDED.inventory,
+                    current_action=EXCLUDED.current_action, action_queue=EXCLUDED.action_queue, party_id=EXCLUDED.party_id,
+                    state_variables=EXCLUDED.state_variables, health=EXCLUDED.health, max_health=EXCLUDED.max_health,
+                    is_alive=EXCLUDED.is_alive, status_effects=EXCLUDED.status_effects, is_temporary=EXCLUDED.is_temporary,
+                    archetype=EXCLUDED.archetype, traits=EXCLUDED.traits, desires=EXCLUDED.desires, motives=EXCLUDED.motives
+                """ # PostgreSQL UPSERT for npcs
 
-            await self._db_adapter.execute(upsert_sql, db_params)
+            await self._db_service.adapter.execute(upsert_sql, db_params) # Changed
             # print(f"NpcManager: Successfully saved NPC {npc_id} to table '{target_table}' for guild {guild_id_str}.") # Debug
 
             # If this NPC was marked as dirty, clean it from the dirty set for this guild

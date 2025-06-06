@@ -14,7 +14,7 @@ from bot.game.models.relationship import Relationship
 from bot.game.models.character import Character
 
 if TYPE_CHECKING:
-    from bot.database.sqlite_adapter import SqliteAdapter
+    from bot.services.db_service import DBService # Changed
     from bot.game.managers.character_manager import CharacterManager # If directly interacting with characters
     from bot.game.rules.rule_engine import RuleEngine # If checking rules related to relationships
 
@@ -30,13 +30,13 @@ class RelationshipManager:
     required_args_for_rebuild: List[str] = ["guild_id"]
 
     def __init__(self,
-                 db_adapter: Optional["SqliteAdapter"] = None,
+                 db_service: Optional["DBService"] = None, # Changed
                  settings: Optional[Dict[str, Any]] = None,
                  character_manager: Optional["CharacterManager"] = None, # Added CharacterManager
                  rule_engine: Optional["RuleEngine"] = None, # Added RuleEngine for checks
                  ):
         print("Initializing RelationshipManager...")
-        self._db_adapter: Optional["SqliteAdapter"] = db_adapter
+        self._db_service: Optional["DBService"] = db_service # Changed
         self._settings: Optional[Dict[str, Any]] = settings
         self._character_manager: Optional["CharacterManager"] = character_manager # Store it
         self._rule_engine: Optional["RuleEngine"] = rule_engine # Store it
@@ -187,8 +187,8 @@ class RelationshipManager:
         """Loads relationships for a guild from the database."""
         guild_id_str = str(guild_id)
         print(f"RelationshipManager: Loading relationships for guild {guild_id_str} from DB...")
-        if not self._db_adapter:
-            print(f"RelationshipManager: DB adapter missing for {guild_id_str}. Cannot load relationships.")
+        if not self._db_service or not self._db_service.adapter: # Changed
+            print(f"RelationshipManager: DB service or adapter missing for {guild_id_str}. Cannot load relationships.")
             return
 
         # Clear existing cache for the guild
@@ -199,9 +199,9 @@ class RelationshipManager:
         # Example query (adjust table/column names as per your actual DB schema)
         query = """SELECT id, guild_id, entity1_id, entity1_type, entity2_id, entity2_type, 
                           relationship_type, strength, details, created_at, updated_at 
-                   FROM relationships WHERE guild_id = ?"""
+                   FROM relationships WHERE guild_id = $1""" # Changed placeholder
         try:
-            rows = await self._db_adapter.fetchall(query, (guild_id_str,))
+            rows = await self._db_service.adapter.fetchall(query, (guild_id_str,)) # Changed
         except Exception as e:
             print(f"RelationshipManager: DB error fetching relationships for {guild_id_str}: {e}")
             traceback.print_exc()
@@ -244,40 +244,40 @@ class RelationshipManager:
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         """Saves dirty relationships for a guild to the database and deletes marked ones."""
         guild_id_str = str(guild_id)
-        if not self._db_adapter:
-            print(f"RelationshipManager: DB adapter missing for {guild_id_str}. Cannot save relationships.")
+        if not self._db_service or not self._db_service.adapter:
+            print(f"RelationshipManager: DB service or adapter missing for {guild_id_str}. Cannot save relationships.")
             return
 
         # --- Handle Deletions ---
         ids_to_delete = list(self._deleted_relationship_ids.get(guild_id_str, set()))
-        if ids_to_delete:
-            placeholders = ','.join(['?'] * len(ids_to_delete))
-            delete_sql = f"DELETE FROM relationships WHERE guild_id = ? AND id IN ({placeholders})"
+        if ids_to_delete:  # Proceed only if the list is not empty
+            placeholders = ','.join([f'${i+2}' for i in range(len(ids_to_delete))])
+            delete_sql = f"DELETE FROM relationships WHERE guild_id = $1 AND id IN ({placeholders})"
             try:
-                await self._db_adapter.execute(delete_sql, (guild_id_str, *ids_to_delete))
+                await self._db_service.adapter.execute(delete_sql, (guild_id_str, *ids_to_delete))
                 print(f"RelationshipManager: Deleted {len(ids_to_delete)} relationships for guild {guild_id_str}.")
-                # Clear the deletion set only on successful DB operation
-                self._deleted_relationship_ids.pop(guild_id_str, None)
+                self._deleted_relationship_ids.pop(guild_id_str, None)  # Clear set for the guild on success
             except Exception as e:
                 print(f"RelationshipManager: DB error deleting relationships for {guild_id_str}: {e}"); traceback.print_exc()
-                # Don't clear the set so they are retried on the next save attempt
-                # return # Optional: exit save if deletions fail? Probably better to try saving dirty ones.
-
+                # Do NOT pop from _deleted_relationship_ids on error, to allow retry.
+        # else: # No explicit 'else' needed if list was initially empty or for successful no-op.
+            # If ids_to_delete was empty, self._deleted_relationship_ids.get(guild_id_str, set()) was empty.
+            # Popping a non-existent key with a default is fine: self._deleted_relationship_ids.pop(guild_id_str, None)
+            # However, we only want to pop if the guild's set was processed (either successfully deleted or was empty initially).
+            # The current logic correctly pops only on successful DB deletion. If ids_to_delete is empty, nothing happens here,
+            # and the guild_id key might remain in _deleted_relationship_ids with an empty set, which is harmless.
 
         # --- Handle Dirty (Inserts/Updates) ---
         dirty_ids = list(self._dirty_relationships.get(guild_id_str, set()))
         relationships_to_save_data = []
         successfully_prepared_ids = set()
 
-        # Need to get the latest state from the cache
         guild_relationships_cache = self._relationships.get(guild_id_str, {})
 
         for rel_id in dirty_ids:
             relationship = guild_relationships_cache.get(rel_id)
-            # Ensure relationship exists in cache and belongs to this guild before preparing data
             if relationship and str(getattr(relationship, 'guild_id', None)) == guild_id_str:
                 try:
-                    # Prepare data tuple for SQL INSERT/REPLACE
                     data_tuple = (
                         relationship.id,
                         relationship.guild_id,
@@ -287,39 +287,43 @@ class RelationshipManager:
                         relationship.entity2_type,
                         relationship.relationship_type,
                         relationship.strength,
-                        json.dumps(relationship.details) if relationship.details is not None else '{}', # Store details as JSON string
-                        relationship.created_at, # Keep original creation time
-                        int(time.time()), # Use current time for updated_at
+                        json.dumps(relationship.details) if relationship.details is not None else '{}',
+                        relationship.created_at,
                     )
                     relationships_to_save_data.append(data_tuple)
-                    successfully_prepared_ids.add(rel_id) # Mark as prepared for potential cleanup
+                    successfully_prepared_ids.add(rel_id)
                 except Exception as e:
                     print(f"RelationshipManager: Error preparing relationship {rel_id} for save: {e}"); traceback.print_exc()
-                    # Don't add to successfully_prepared_ids if there was an error
 
         if relationships_to_save_data:
-            # Using INSERT OR REPLACE to handle both new inserts and updates of existing rows
             upsert_sql = """
-                INSERT OR REPLACE INTO relationships 
-                (id, guild_id, entity1_id, entity1_type, entity2_id, entity2_type, 
+                INSERT INTO relationships
+                (id, guild_id, entity1_id, entity1_type, entity2_id, entity2_type,
                  relationship_type, strength, details, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """ # 11 placeholders
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                    guild_id = EXCLUDED.guild_id,
+                    entity1_id = EXCLUDED.entity1_id,
+                    entity1_type = EXCLUDED.entity1_type,
+                    entity2_id = EXCLUDED.entity2_id,
+                    entity2_type = EXCLUDED.entity2_type,
+                    relationship_type = EXCLUDED.relationship_type,
+                    strength = EXCLUDED.strength,
+                    details = EXCLUDED.details,
+                    created_at = EXCLUDED.created_at,
+                    updated_at = NOW()
+            """
             try:
-                await self._db_adapter.execute_many(upsert_sql, relationships_to_save_data)
+                await self._db_service.adapter.execute_many(upsert_sql, relationships_to_save_data)
                 print(f"RelationshipManager: Successfully saved/updated {len(relationships_to_save_data)} relationships for guild {guild_id_str}.")
-                # Clear the dirty set for the successfully processed IDs
                 if guild_id_str in self._dirty_relationships:
                     self._dirty_relationships[guild_id_str].difference_update(successfully_prepared_ids)
-                    if not self._dirty_relationships[guild_id_str]: # Remove key if set is empty
+                    if not self._dirty_relationships[guild_id_str]:
                         del self._dirty_relationships[guild_id_str]
             except Exception as e:
                 print(f"RelationshipManager: DB error saving relationships for {guild_id_str}: {e}"); traceback.print_exc()
-                # Don't clear dirty flags if save failed
-
 
         print(f"RelationshipManager: Save state complete for guild {guild_id_str}.")
-
 
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
         """Rebuilds any runtime caches if necessary (e.g., relationship graphs)."""

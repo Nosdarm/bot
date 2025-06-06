@@ -15,11 +15,12 @@ from typing import Set
 # и предотвращает циклический импорт, если адаптер БД зависит от моделей или других частей игры.
 if TYPE_CHECKING:
     # Импорт для аннотаций типов
-    from ..database.sqlite_adapter import SqliteAdapter
+    # from ..database.sqlite_adapter import SqliteAdapter # Removed
     # Импорт класса Character для аннотаций типов
-    from .models.character import Character
-    from .managers.game_log_manager import GameLogManager
-    from ..services.notification_service import NotificationService # Import for type hinting
+    # from .models.character import Character # Assuming these are still needed for type hints elsewhere or can be stringified
+    from .managers.game_log_manager import GameLogManager # Added for type hinting
+
+from bot.services.db_service import DBService # Added DBService import
 
 # Placeholder for actual RuleEngine classes
 # from ..core.rule_engine import RuleEngine # Assuming RuleEngine might be in a core module
@@ -32,8 +33,8 @@ class ConflictResolver:
     based on the game's rules configuration.
     """
 
-    # Аннотация для db_adapter теперь ссылается на импортированный (в TYPE_CHECKING) класс
-    def __init__(self, rule_engine: Any, rules_config_data: Dict[str, Any], notification_service: NotificationService, db_adapter: 'SqliteAdapter', game_log_manager: Optional['GameLogManager'] = None):
+    # Аннотация для db_service теперь ссылается на импортированный класс DBService
+    def __init__(self, rule_engine: Any, rules_config_data: Dict[str, Any], notification_service: Any, db_service: 'DBService', game_log_manager: Optional['GameLogManager'] = None):
         """
         Инициализирует ConflictResolver.
 
@@ -42,14 +43,14 @@ class ConflictResolver:
                          This engine will be used for checks like skill checks, stat checks, etc. Must be async-compatible.
             rules_config_data: A dictionary containing the loaded rules configuration.
             notification_service: A service object responsible for sending notifications (placeholder: Any). Must be async-compatible.
-            db_adapter: An instance of the SqliteAdapter for database operations.
+            db_service: An instance of the DBService for database operations.
         """
         self.rule_engine = rule_engine
         self.rules_config = rules_config_data
         self.notification_service = notification_service
-        self.db_adapter = db_adapter # Store the db_adapter
+        self.db_service = db_service # Store the db_service
         self.game_log_manager = game_log_manager
-        print(f"ConflictResolver initialized with db_adapter and game_log_manager {'present' if game_log_manager else 'not present'}.")
+        print(f"ConflictResolver initialized with db_service and game_log_manager {'present' if game_log_manager else 'not present'}.")
 
     async def analyze_actions_for_conflicts(self, player_actions_map: Dict[str, List[Dict[str, Any]]], guild_id: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -573,7 +574,7 @@ class ConflictResolver:
                  return {"status": "preparation_failed_no_guild_id", "message": error_msg, "original_conflict": conflict}
 
             conflict_data_json = json.dumps(conflict)
-            await self.db_adapter.save_pending_conflict(
+            await self.db_service.save_pending_conflict( # Changed to db_service
                  conflict_id=conflict_id,
                  guild_id=str(guild_id), # Ensure guild_id is string for DB
                  conflict_data=conflict_data_json
@@ -693,8 +694,8 @@ class ConflictResolver:
         guild_id_from_db: Optional[str] = None
 
         try:
-            pending_conflict_row = await self.db_adapter.get_pending_conflict(conflict_id)
-            if not pending_conflict_row:
+            pending_conflict_data = await self.db_service.get_pending_conflict(conflict_id) # Changed to db_service
+            if not pending_conflict_data: # db_service.get_pending_conflict returns a dict or None
                  error_msg = f"Error: Conflict ID '{conflict_id}' not found in pending manual resolutions database table."
                  if self.game_log_manager:
                      await self.game_log_manager.log_event(guild_id=guild_id_log_param, event_type="conflict_manual_resolve_error", message=error_msg, metadata={"conflict_id": conflict_id})
@@ -706,11 +707,44 @@ class ConflictResolver:
                     "message": error_msg
                  }
 
-            original_conflict = json.loads(pending_conflict_row['conflict_data'])
-            original_conflict["status"] = "resolved_manually" # Tentative status
-            guild_id_from_db = str(original_conflict.get("guild_id", guild_id_log_param)) # Prioritize guild_id from DB record
+            # pending_conflict_data is already a dict, no need for json.loads(row['conflict_data'])
+            # if db_service.get_pending_conflict correctly deserializes JSON from PostgresAdapter
+            # Assuming PostgresAdapter's fetchone (used by get_pending_conflict) returns a dict
+            # and the 'conflict_data' field within that dict is already parsed if it's JSONB in DB
+            # If 'conflict_data' is still a JSON string, then json.loads is needed.
+            # Based on current PostgresAdapter, it returns dicts, but JSON string fields are not auto-parsed by adapter.
+            # So, if 'conflict_data' is stored as a JSON string in the DB, it needs parsing here.
+            # The method signature in PostgresAdapter is `get_pending_conflict(...) -> Optional[Dict[str, Any]]`
+            # and it does `SELECT id, guild_id, conflict_data ...`, so conflict_data is one of the keys.
 
-            await self.db_adapter.delete_pending_conflict(conflict_id)
+            raw_conflict_json_payload = pending_conflict_data.get('conflict_data')
+            if isinstance(raw_conflict_json_payload, str):
+                original_conflict = json.loads(raw_conflict_json_payload)
+            elif isinstance(raw_conflict_json_payload, dict): # If it's already a dict (e.g. JSONB auto-parsed)
+                original_conflict = raw_conflict_json_payload
+            else:
+                # Handle case where 'conflict_data' is missing or not str/dict
+                error_msg = f"Error: 'conflict_data' field is missing or invalid in pending_conflict_data for conflict ID '{conflict_id}'."
+                if self.game_log_manager:
+                    await self.game_log_manager.log_event(guild_id=guild_id_log_param, event_type="conflict_manual_resolve_error", message=error_msg, metadata={"conflict_id": conflict_id})
+                else:
+                    print(f"❌ {error_msg}")
+                return {"success": False, "conflict_id": conflict_id, "message": error_msg}
+
+            if not isinstance(original_conflict, dict): # Ensure it's a dict after loading/assignment
+                # This might seem redundant if the above block is perfect, but good for safety against unexpected JSON structures.
+                error_msg = f"Error: Loaded conflict_data for conflict ID '{conflict_id}' did not resolve to a dictionary."
+                if self.game_log_manager:
+                    await self.game_log_manager.log_event(guild_id=guild_id_log_param, event_type="conflict_manual_resolve_error", message=error_msg, metadata={"conflict_id": conflict_id})
+                else:
+                    print(f"❌ {error_msg}")
+                return {"success": False, "conflict_id": conflict_id, "message": error_msg}
+
+            original_conflict["status"] = "resolved_manually" # Tentative status
+            # guild_id should also be directly available from pending_conflict_data if it's a top-level field
+            guild_id_from_db = str(pending_conflict_data.get("guild_id", original_conflict.get("guild_id", guild_id_log_param)))
+
+            await self.db_service.delete_pending_conflict(conflict_id) # Changed to db_service
             if self.game_log_manager:
                 await self.game_log_manager.log_event(guild_id=guild_id_from_db, event_type="conflict_manual_db_deleted", message=f"Conflict {conflict_id} retrieved and removed from DB.", metadata={"conflict_id": conflict_id})
             else:

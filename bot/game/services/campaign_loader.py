@@ -117,6 +117,8 @@ class CampaignLoader:
                         print(f"CampaignLoader: Skipping location ID '{loc_id}' due to missing 'name_i18n' and 'name'.")
                         continue
 
+                display_name = name_i18n.get(default_lang, loc_id) # Use loc_id as fallback
+
                 # Handle description_i18n (for template description)
                 description_i18n = loc_def.get("description_i18n") # This should be the template's description
                 if not isinstance(description_i18n, dict) or not description_i18n:

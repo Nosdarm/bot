@@ -14,7 +14,7 @@ from bot.game.managers.status_manager import StatusManager
 from bot.game.managers.persistence_manager import PersistenceManager
 from bot.services.openai_service import OpenAIService # For type hinting if needed in context
 from bot.ai.ai_response_validator import AIResponseValidator # For type hinting
-from bot.database.sqlite_adapter import SqliteAdapter # For type hinting
+from bot.database.postgres_adapter import PostgresAdapter # For type hinting
 
 # Mock discord.Message
 class MockMessage:
@@ -48,7 +48,7 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
         self.mock_character_manager = AsyncMock(spec=CharacterManager)
         self.mock_event_manager = AsyncMock()
         self.mock_persistence_manager = AsyncMock(spec=PersistenceManager)
-        self.mock_db_adapter = AsyncMock(spec=SqliteAdapter) # Mock for DB adapter
+        self.mock_db_adapter = AsyncMock(spec=PostgresAdapter) # Mock for DB adapter
         self.mock_persistence_manager.get_db_adapter.return_value = self.mock_db_adapter
 
         self.mock_settings = {

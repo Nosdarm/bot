@@ -193,9 +193,10 @@ class TestCharacterCreationFlow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created_char.location_id, self.default_start_location_instance_id)
 
         # Verify the location instance actually exists in LocationManager
-        start_location_instance = await self.location_manager.get_location_instance(self.guild_id, created_char.location_id)
+        start_location_instance = self.location_manager.get_location_instance(self.guild_id, created_char.location_id)
         self.assertIsNotNone(start_location_instance, "Default start location instance not found in LocationManager.")
-        self.assertEqual(start_location_instance['id'], self.default_start_location_instance_id)
+        if start_location_instance: # Added check as per subtask
+            self.assertEqual(start_location_instance['id'], self.default_start_location_instance_id)
 
         # 4. (Optional) Verify Default Item Spawning (if applicable)
         # Example: if characters should start with a "starting_sword"
@@ -294,9 +295,10 @@ class TestPlayerMovementFlow(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(move_result, "move_entity should return True for successful move.")
 
         # Verify character's location in CharacterManager
-        updated_char = await self.character_manager.get_character(self.guild_id, self.test_char.id)
+        updated_char = self.character_manager.get_character(self.guild_id, self.test_char.id)
         self.assertIsNotNone(updated_char)
-        self.assertEqual(updated_char.location_id, self.loc_b_instance['id'])
+        if updated_char: # Added check as per subtask
+            self.assertEqual(updated_char.location_id, self.loc_b_instance['id'])
 
         # Verify RuleEngine.execute_triggers calls
         self.assertGreaterEqual(self.rule_engine.execute_triggers.call_count, 2)
@@ -535,14 +537,16 @@ class TestCombatFlow(unittest.IsolatedAsyncioTestCase):
         )
 
         # Assertions
-        updated_defender = await self.character_manager.get_character(self.guild_id, self.char_defender.id)
+        updated_defender = self.character_manager.get_character(self.guild_id, self.char_defender.id)
         self.assertIsNotNone(updated_defender)
-        self.assertEqual(updated_defender.current_health, initial_defender_health + damage_amount)
+        if updated_defender: # Added check
+            self.assertEqual(updated_defender.current_health, initial_defender_health + damage_amount)
 
         # Attacker's health should be unchanged
-        attacker_unchanged = await self.character_manager.get_character(self.guild_id, self.char_attacker.id)
+        attacker_unchanged = self.character_manager.get_character(self.guild_id, self.char_attacker.id)
         self.assertIsNotNone(attacker_unchanged)
-        self.assertEqual(attacker_unchanged.current_health, self.char_attacker.current_health) # Assuming initial health was 100
+        if attacker_unchanged: # Added check
+            self.assertEqual(attacker_unchanged.current_health, self.char_attacker.current_health) # Assuming initial health was 100
 
     async def test_lethal_damage_and_death(self):
         # Setup: Defender has low health
@@ -564,10 +568,11 @@ class TestCombatFlow(unittest.IsolatedAsyncioTestCase):
         )
 
         # Assertions
-        dead_defender = await self.character_manager.get_character(self.guild_id, self.char_defender.id)
+        dead_defender = self.character_manager.get_character(self.guild_id, self.char_defender.id)
         self.assertIsNotNone(dead_defender)
-        self.assertEqual(dead_defender.current_health, 0) # Health should cap at 0 on death
-        self.assertFalse(dead_defender.is_alive)
+        if dead_defender: # Added check
+            self.assertEqual(dead_defender.current_health, 0) # Health should cap at 0 on death
+            self.assertFalse(dead_defender.is_alive)
 
         # Verify handle_character_death was called
         self.character_manager.handle_character_death.assert_called_once_with(self.guild_id, self.char_defender.id)
