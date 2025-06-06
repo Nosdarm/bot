@@ -81,11 +81,11 @@ class GameLogEntry(BaseModel):
             target_id=data.get("target_id"), # Optional, defaults to None
             target_type=data.get("target_type"), # Optional, defaults to None
             description_i18n=data.get("description_i18n"), # Will be handled if None
-            description_i18n=data.get("description_i18n"), 
+            # description_i18n=data.get("description_i18n"), # Duplicate removed
             description=data.get("description"), # For backward compatibility, __init__ will handle logic
             details=data.get("details", {}) # Default to empty dict if missing or None
         )
-        return instance
+        # return instance # Unreachable code removed
 
 # Example usage (optional, for testing)
 if __name__ == '__main__':
