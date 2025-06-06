@@ -23,7 +23,7 @@ from .models import Base # Assuming models.py is in the same directory
 # Example: DATABASE_URL="postgresql+asyncpg://user:password@host:port/dbname"
 
 DATABASE_URL_ENV_VAR = "DATABASE_URL"
-DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://postgres:test123@localhost:5433/kvelin_bot"
+DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot"
 
 SQLALCHEMY_DATABASE_URL = os.getenv(DATABASE_URL_ENV_VAR)
 
