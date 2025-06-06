@@ -373,7 +373,7 @@ class CharacterManager:
             'name': name, # Original name for direct use if needed, Character model might store it separately or just use name_i18n
             'name_i18n': name_i18n_data, # NEW
             'guild_id': guild_id_str, # <-- Добавляем guild_id_str
-            'location_id': resolved_initial_location_id, # Может быть None
+            'current_location_id': resolved_initial_location_id, # Может быть None
             'stats': stats, # dict
             'inventory': [], # list
             'current_action': None, # null
@@ -415,7 +415,7 @@ class CharacterManager:
         # Note: The 'name' column in DB will store name_i18n JSON.
         sql = """
         INSERT INTO players (
-            id, discord_user_id, name, guild_id, location_id, stats, inventory,
+            id, discord_user_id, name, guild_id, current_location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
             hp, max_health, is_alive, status_effects, level, experience, unspent_xp,
             selected_language, collected_actions_json,
@@ -429,7 +429,7 @@ class CharacterManager:
             data['discord_user_id'],
             json.dumps(data['name_i18n']), # Store name_i18n dict as JSON in 'name' column
             data['guild_id'], # <-- Параметр guild_id_str
-            data['location_id'],
+            data['current_location_id'],
             json.dumps(data['stats']),
             json.dumps(data['inventory']),
             json.dumps(data['current_action']) if data['current_action'] is not None else None,
@@ -554,7 +554,7 @@ class CharacterManager:
              # PostgreSQL UPSERT syntax
              upsert_sql = '''
              INSERT INTO players (
-                id, discord_user_id, name, guild_id, location_id,
+                id, discord_user_id, name, guild_id, current_location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, experience, unspent_xp, active_quests, known_spells,
@@ -565,7 +565,7 @@ class CharacterManager:
                 discord_user_id = EXCLUDED.discord_user_id,
                 name = EXCLUDED.name,
                 guild_id = EXCLUDED.guild_id,
-                location_id = EXCLUDED.location_id,
+                current_location_id = EXCLUDED.current_location_id,
                 stats = EXCLUDED.stats,
                 inventory = EXCLUDED.inventory,
                 current_action = EXCLUDED.current_action,
@@ -612,7 +612,7 @@ class CharacterManager:
                          print(f"CharacterManager: Warning: Skipping upsert for character with missing mandatory attributes or mismatched guild ({getattr(char_obj, 'id', 'N/A')}, guild {getattr(char_obj, 'guild_id', 'N/A')}). Expected guild {guild_id_str}.")
                          continue # Пропускаем этого персонажа
 
-                     location_id = getattr(char_obj, 'location_id', None)
+                     current_location_id = getattr(char_obj, 'current_location_id', None) # Use current_location_id
                      stats = getattr(char_obj, 'stats', {})
                      inventory = getattr(char_obj, 'inventory', [])
                      current_action = getattr(char_obj, 'current_action', None)
@@ -674,7 +674,7 @@ class CharacterManager:
                          discord_user_id,
                          json.dumps(char_name_i18n_dict), # Save name_i18n dict as JSON to 'name' column
                          guild_id_str,
-                         location_id,
+                         current_location_id, # Use current_location_id
                          json.dumps(stats),
                          json.dumps(inventory),
                          json.dumps(current_action) if current_action is not None else None,
@@ -765,7 +765,7 @@ class CharacterManager:
             # Ensure all new columns are selected.
             # 'name' column stores name_i18n. Other new columns: skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
             sql = '''
-            SELECT id, discord_user_id, name, guild_id, location_id, stats, inventory,
+            SELECT id, discord_user_id, name, guild_id, current_location_id, stats, inventory,
                    current_action, action_queue, party_id, state_variables, hp, max_health,
                    is_alive, status_effects, race, mp, attack, defense, level, experience, unspent_xp,
                    collected_actions_json, selected_language, current_game_status, current_party_id,
@@ -882,7 +882,7 @@ class CharacterManager:
                 for dict_field in ['name_i18n', 'stats', 'state_variables', 'flags', 'spell_cooldowns', 'skills']:
                      if not isinstance(data.get(dict_field), dict): data[dict_field] = {}
 
-                data['location_id'] = str(data['location_id']) if data.get('location_id') is not None else None
+                data['location_id'] = str(data['current_location_id']) if data.get('current_location_id') is not None else None
                 data['party_id'] = str(data['party_id']) if data.get('party_id') is not None else None
                 data['current_party_id'] = str(data.get('current_party_id')) if data.get('current_party_id') is not None else None
 
@@ -1692,7 +1692,7 @@ class CharacterManager:
                 char_data.get('discord_user_id'),
                 name_i18n_json, # 'name' column in DB stores name_i18n
                 char_data.get('guild_id'),
-                char_data.get('location_id'),
+                char_data.get('current_location_id'), # Use current_location_id
                 json.dumps(char_data.get('stats', {})),
                 json.dumps(char_data.get('inventory', [])),
                 json.dumps(char_data.get('current_action')) if char_data.get('current_action') is not None else None,
@@ -1724,7 +1724,7 @@ class CharacterManager:
             # Column names must match the 'players' table schema.
             upsert_sql = '''
             INSERT INTO players (
-                id, discord_user_id, name, guild_id, location_id,
+                id, discord_user_id, name, guild_id, current_location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, experience, unspent_xp, active_quests, known_spells,
@@ -1735,7 +1735,7 @@ class CharacterManager:
                 discord_user_id = EXCLUDED.discord_user_id,
                 name = EXCLUDED.name,
                 guild_id = EXCLUDED.guild_id,
-                location_id = EXCLUDED.location_id,
+                current_location_id = EXCLUDED.current_location_id, # Update current_location_id
                 stats = EXCLUDED.stats,
                 inventory = EXCLUDED.inventory,
                 current_action = EXCLUDED.current_action,
