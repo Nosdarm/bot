@@ -111,7 +111,7 @@ class Relationship(BaseModel):
         # else: self.details_i18n = {"en": ""}
         # So, as long as from_dict passes both details_i18n (from new field) and details (from old field)
         # to __init__, it should be fine.
-        return instance
+        # return instance # Removed unreachable and incorrect code
 
 # Example usage (optional, for testing)
 if __name__ == '__main__':
