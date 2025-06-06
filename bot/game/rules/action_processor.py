@@ -45,10 +45,14 @@ class ActionProcessor:
         """
 
         # --- Initial Checks ---
+        if not char_manager:
+            return {"success": False, "message": "**Мастер:** Менеджер персонажей недоступен.", "target_channel_id": ctx_channel_id, "state_changed": False}
         character = char_manager.get_character_by_discord_id(discord_user_id)
         if not character:
             return {"success": False, "message": "**Мастер:** У вас еще нет персонажа в этой игре. Используйте `/join_game`.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
+        if not loc_manager:
+            return {"success": False, "message": "**Мастер:** Менеджер локаций недоступен.", "target_channel_id": ctx_channel_id, "state_changed": False}
         location = loc_manager.get_location(character.current_location_id)
         if not location:
             return {"success": False, "message": "**Мастер:** Ваш персонаж в неизвестной локации. Обратитесь к администратору.", "target_channel_id": ctx_channel_id, "state_changed": False}
@@ -58,24 +62,29 @@ class ActionProcessor:
 
         # --- Check for actions targeting an event first (Same Logic, may need refined relevancy check) ---
         # This part assumes basic event handling exists and can potentially process the action.
-        active_events = event_manager.get_active_events_in_location(location.id)
-        relevant_event_id = None # Logic needed to determine event relevancy based on action_type, action_data, and active_events
+        if not event_manager:
+            active_events = []
+            relevant_event_id = None
+        else:
+            active_events = event_manager.get_active_events_in_location(location.id)
+            relevant_event_id = None # Logic needed to determine event relevancy based on action_type, action_data, and active_events
 
-        # Placeholder for event relevancy check (Simple: any event in location)
-        if action_type in ["interact", "attack", "use_skill", "skill_check", "move"] and active_events: # Basic types that can interact with events
-             # More complex: Does the action target an entity *in* an event?
-             relevant_event = active_events[0] # Still taking the first one for simplicity if ANY event is active and action type *could* be relevant
-             relevant_event_id = relevant_event.id # Mark it as relevant if the action type matches list
+            # Placeholder for event relevancy check (Simple: any event in location)
+            if action_type in ["interact", "attack", "use_skill", "skill_check", "move"] and active_events: # Basic types that can interact with events
+                 # More complex: Does the action target an entity *in* an event?
+                 relevant_event = active_events[0] # Still taking the first one for simplicity if ANY event is active and action type *could* be relevant
+                 relevant_event_id = relevant_event.id # Mark it as relevant if the action type matches list
 
 
-        if relevant_event_id:
+        if relevant_event_id and event_manager: # Ensure event_manager is not None here
              # Delegate handling to the EventManager, providing required managers/services
              # EventManager needs to handle moving within/away from event, etc.
              # Its method process_player_action_within_event MUST also return the correct dict format
              print(f"Action {action_type} for {character.name} processed within event {relevant_event_id}")
              # EventManager.process_player_action_within_event needs manager/service deps
              # Ensure set_dependencies is called on event_manager *before* this point if it needs them.
-             event_manager.set_dependencies(openai_service=openai_service) # Ensure AI is available if EventManager uses it
+             if hasattr(event_manager, 'set_dependencies') and openai_service : # Check if set_dependencies exists
+                event_manager.set_dependencies(openai_service=openai_service) # Ensure AI is available if EventManager uses it
              # Event manager needs other managers too!
              # event_manager.set_other_managers(char_manager, loc_manager, rule_engine) # Example dependency setting for event_manager
 
@@ -105,6 +114,8 @@ class ActionProcessor:
 
         if action_type == "look":
             # ... (Same look logic) ...
+            if not openai_service:
+                return {"success": False, "message": "**Мастер:** Сервис AI недоступен для генерации описания.", "target_channel_id": output_channel_id, "state_changed": False}
             system_prompt = "Ты - Мастер текстовой RPG в мире темного фэнтези. Описывай локации атмосферно и мрачно."
             user_prompt = (
                 f"Опиши локацию для персонажа '{character.name}' в мрачном фэнтези. "
@@ -170,7 +181,10 @@ class ActionProcessor:
                 f"Краткое описание конечной локации: {target_location.description_template[:100]}. "
                 f"Опиши краткое путешествие и прибытие в '{target_location.name}'. Будь атмосферным и мрачным. Укажи, что персонаж теперь находится в новой локации."
             )
-            description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=200)
+            if not openai_service:
+                description = f"Вы прибыли в {target_location.name}." # Fallback
+            else:
+                description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=200)
 
             # Determine where to send the description (usually the destination channel)
             destination_channel_id = loc_manager.get_location_channel(game_state, target_location.id)
@@ -208,6 +222,8 @@ class ActionProcessor:
 
              base_dc = skill_rules.get_base_dc(complexity)
 
+             if not rule_engine:
+                return {"success": False, "message": "**Мастер:** Движок правил недоступен для проверки навыка.", "target_channel_id": ctx_channel_id, "state_changed": False}
              # Perform the skill check using the RuleEngine
              check_result = rule_engine.perform_check(
                  character_id=character.id,
@@ -229,7 +245,10 @@ class ActionProcessor:
                  f"Механический результат проверки:\n{json.dumps(check_result, indent=2, ensure_ascii=False)}\n"
                  f"Опиши, КАК это выглядело и ощущалось в мире. Учитывай результат (Успех/Провал/Крит) и контекст. Будь мрачным и детальным."
              )
-             description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=300)
+             if not openai_service:
+                description = "Результат проверки навыка получен." # Fallback
+             else:
+                description = await openai_service.generate_master_response(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=300)
 
              mech_summary = check_result.get("description", "Проверка выполнена.")
              # Skill checks typically don't change state unless there's a critical failure consequence

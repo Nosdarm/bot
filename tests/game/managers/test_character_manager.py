@@ -191,15 +191,17 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         )
         self.char_manager._characters[guild_id] = {char_id: expected_char}
 
-        retrieved_char = await self.char_manager.get_character(guild_id, char_id)
-        self.assertEqual(retrieved_char, expected_char)
+        retrieved_char = self.char_manager.get_character(guild_id, char_id)
+        self.assertIsNotNone(retrieved_char)
+        if retrieved_char:
+            self.assertEqual(retrieved_char, expected_char)
 
     async def test_get_character_non_existent(self):
         guild_id = "guild1"
         char_id = "non_existent_char"
         self.char_manager._characters[guild_id] = {}
 
-        retrieved_char = await self.char_manager.get_character(guild_id, char_id)
+        retrieved_char = self.char_manager.get_character(guild_id, char_id)
         self.assertIsNone(retrieved_char)
 
     async def test_get_character_different_guild(self):
@@ -218,14 +220,14 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
 
 
         # Try to get char1 from guild2
-        retrieved_char = await self.char_manager.get_character(guild_id_2, char_id)
+        retrieved_char = self.char_manager.get_character(guild_id_2, char_id)
         self.assertIsNone(retrieved_char)
 
     async def test_get_character_guild_not_loaded(self):
         # guild_id has no entry in self.char_manager._characters
         guild_id = "unloaded_guild"
         char_id = "char1"
-        retrieved_char = await self.char_manager.get_character(guild_id, char_id)
+        retrieved_char = self.char_manager.get_character(guild_id, char_id)
         self.assertIsNone(retrieved_char)
 
     async def test_get_character_by_discord_id_exists(self):
@@ -240,8 +242,10 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.char_manager._characters[guild_id] = {char_id: expected_char}
         self.char_manager._discord_to_char_map[guild_id] = {str(discord_id_int): char_id} # Map uses str
 
-        retrieved_char = await self.char_manager.get_character_by_discord_id(guild_id, str(discord_id_int))
-        self.assertEqual(retrieved_char, expected_char)
+        retrieved_char = self.char_manager.get_character_by_discord_id(guild_id, str(discord_id_int))
+        self.assertIsNotNone(retrieved_char)
+        if retrieved_char:
+            self.assertEqual(retrieved_char, expected_char)
 
     async def test_get_character_by_discord_id_non_existent(self):
         guild_id = "guild1"
@@ -250,14 +254,14 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.char_manager._characters[guild_id] = {}
 
 
-        retrieved_char = await self.char_manager.get_character_by_discord_id(guild_id, discord_id)
+        retrieved_char = self.char_manager.get_character_by_discord_id(guild_id, discord_id)
         self.assertIsNone(retrieved_char)
 
     async def test_get_character_by_discord_id_guild_not_loaded(self):
         guild_id = "unloaded_guild"
         discord_id = "discord1"
         # No setup for unloaded_guild in _discord_to_char_map or _characters
-        retrieved_char = await self.char_manager.get_character_by_discord_id(guild_id, discord_id)
+        retrieved_char = self.char_manager.get_character_by_discord_id(guild_id, discord_id)
         self.assertIsNone(retrieved_char)
 
     async def test_get_character_by_discord_id_char_not_in_main_cache(self):
@@ -268,7 +272,7 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.char_manager._discord_to_char_map[guild_id] = {discord_id: char_id}
         self.char_manager._characters[guild_id] = {} # char_id is missing here
 
-        retrieved_char = await self.char_manager.get_character_by_discord_id(guild_id, discord_id)
+        retrieved_char = self.char_manager.get_character_by_discord_id(guild_id, discord_id)
         self.assertIsNone(retrieved_char)
 
     async def test_get_character_by_name_exists(self):
@@ -290,15 +294,17 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.char_manager._discord_to_char_map[guild_id] = {"12345": char_id, "67890": "char2"}
 
 
-        retrieved_char = await self.char_manager.get_character_by_name(guild_id, char_name)
-        self.assertEqual(retrieved_char, expected_char)
+        retrieved_char = self.char_manager.get_character_by_name(guild_id, char_name)
+        self.assertIsNotNone(retrieved_char)
+        if retrieved_char:
+            self.assertEqual(retrieved_char, expected_char)
 
     async def test_get_character_by_name_non_existent(self):
         guild_id = "guild1"
         char_name = "NonExistentName"
         self.char_manager._characters[guild_id] = {}
 
-        retrieved_char = await self.char_manager.get_character_by_name(guild_id, char_name)
+        retrieved_char = self.char_manager.get_character_by_name(guild_id, char_name)
         self.assertIsNone(retrieved_char)
 
     async def test_get_character_by_name_case_insensitive(self):
@@ -314,13 +320,15 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.char_manager._discord_to_char_map[guild_id] = {"12345": char_id}
 
 
-        retrieved_char = await self.char_manager.get_character_by_name(guild_id, char_name_lookup)
-        self.assertEqual(retrieved_char, expected_char)
+        retrieved_char = self.char_manager.get_character_by_name(guild_id, char_name_lookup)
+        self.assertIsNotNone(retrieved_char)
+        if retrieved_char:
+            self.assertEqual(retrieved_char, expected_char)
 
     async def test_get_character_by_name_guild_not_loaded(self):
         guild_id = "unloaded_guild"
         char_name = "TestChar"
-        retrieved_char = await self.char_manager.get_character_by_name(guild_id, char_name)
+        retrieved_char = self.char_manager.get_character_by_name(guild_id, char_name)
         self.assertIsNone(retrieved_char)
 
     async def test_update_character_location_success(self):
@@ -879,28 +887,30 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.char_manager._discord_to_char_map[guild_id]), 2)
 
         # Verify char1 details
-        char1 = await self.char_manager.get_character(guild_id, 'char1')
+        char1 = self.char_manager.get_character(guild_id, 'char1')
         self.assertIsNotNone(char1)
-        self.assertEqual(char1.name, 'Char1Name')
-        self.assertEqual(char1.discord_id, 'discord1')
-        self.assertEqual(char1.max_health, 100)
-        self.assertEqual(char1.current_health, 80)
-        self.assertEqual(char1.stats, {"str": 10, "hp": 100})
-        self.assertEqual(char1.inventory, [{"item_id": "potion", "quantity": 3}])
-        self.assertEqual(char1.location_id, 'loc_start')
-        self.assertEqual(char1.effects, ["buffed"])
-        self.assertTrue(char1.is_alive)
-        self.assertEqual(char1.level, 1)
-        self.assertEqual(char1.experience, 0)
+        if char1:
+            self.assertEqual(char1.name, 'Char1Name')
+            self.assertEqual(char1.discord_id, 'discord1')
+            self.assertEqual(char1.max_health, 100)
+            self.assertEqual(char1.current_health, 80)
+            self.assertEqual(char1.stats, {"str": 10, "hp": 100})
+            self.assertEqual(char1.inventory, [{"item_id": "potion", "quantity": 3}])
+            self.assertEqual(char1.location_id, 'loc_start')
+            self.assertEqual(char1.effects, ["buffed"])
+            self.assertTrue(char1.is_alive)
+            self.assertEqual(char1.level, 1)
+            self.assertEqual(char1.experience, 0)
 
 
         # Verify char2 details
-        char2 = await self.char_manager.get_character_by_discord_id(guild_id, 'discord2')
+        char2 = self.char_manager.get_character_by_discord_id(guild_id, 'discord2')
         self.assertIsNotNone(char2)
-        self.assertEqual(char2.name, 'Char2Name')
-        self.assertEqual(char2.id, 'char2')
-        self.assertFalse(char2.is_alive)
-        self.assertEqual(char2.stats, {"dex": 12, "hp": 120})
+        if char2:
+            self.assertEqual(char2.name, 'Char2Name')
+            self.assertEqual(char2.id, 'char2')
+            self.assertFalse(char2.is_alive)
+            self.assertEqual(char2.stats, {"dex": 12, "hp": 120})
 
         # Verify dirty and deleted lists are cleared for the guild
         self.assertNotIn(guild_id, self.char_manager._dirty_characters) # Should be removed entirely or be empty set

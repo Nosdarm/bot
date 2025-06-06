@@ -101,6 +101,10 @@ class StatusManager:
         print("StatusManager: Loading status templates...")
         self._status_templates = {}
         try:
+            if not self._settings:
+                print("StatusManager: Settings not available, cannot load status templates.")
+                return
+
             raw_templates = self._settings.get('status_templates', {})
             processed_templates = {}
             for template_id, template_data in raw_templates.items():
