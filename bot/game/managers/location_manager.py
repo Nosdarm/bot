@@ -51,8 +51,8 @@ class LocationManager:
 
 
     # --- Class-Level Attribute Annotations ---
-    # Статические шаблоны локаций (теперь per-guild, соответствует предполагаемой схеме)
-    _location_templates: Dict[str, Dict[str, Dict[str, Any]]] # {guild_id: {tpl_id: data}}
+    # Статические шаблоны локаций (глобальные)
+    _location_templates: Dict[str, Dict[str, Any]] # {tpl_id: data}
     # Динамические инстансы (per-guild)
     _location_instances: Dict[str, Dict[str, Dict[str, Any]]] # {guild_id: {instance_id: data}}
     # Наборы "грязных" и удаленных инстансов (per-guild)
@@ -102,74 +102,57 @@ class LocationManager:
         self._dirty_instances = {}
         self._deleted_instances = {}
 
+        self._load_location_templates()
         print("LocationManager initialized.")
+
+    def _load_location_templates(self):
+        print("LocationManager: Loading global location templates...")
+        self._location_templates = {} # Clear global template cache
+        if self._settings and 'location_templates' in self._settings:
+            templates_data = self._settings['location_templates']
+            if isinstance(templates_data, dict):
+                for template_id, data in templates_data.items():
+                    if isinstance(data, dict): # Ensure data is a dict
+                        data['id'] = str(template_id) # Ensure id is part of template data and is a string
+                        # Ensure name_i18n and description_i18n are dicts
+                        if not isinstance(data.get('name_i18n'), dict):
+                            data['name_i18n'] = {"en": data.get('name', template_id), "ru": data.get('name', template_id)}
+                        if not isinstance(data.get('description_i18n'), dict):
+                            data['description_i18n'] = {"en": data.get('description', ""), "ru": data.get('description', "")}
+                        self._location_templates[str(template_id)] = data
+                    else:
+                        print(f"LocationManager: Warning: Data for location template '{template_id}' is not a dictionary. Skipping.")
+                print(f"LocationManager: Loaded {len(self._location_templates)} global location templates from settings.")
+            else:
+                print("LocationManager: 'location_templates' in settings is not a dictionary.")
+        else:
+            print("LocationManager: No 'location_templates' found in settings.")
 
     # --- Методы для PersistenceManager ---
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
-        """Загружает статические шаблоны локаций и динамические инстансы для гильдии."""
+        """Загружает ДИНАМИЧЕСКИЕ ИНСТАНСЫ локаций для гильдии. Шаблоны загружаются глобально."""
         guild_id_str = str(guild_id)
-        print(f"LocationManager: Loading state for guild {guild_id_str} (static templates + instances)...")
+        print(f"LocationManager: Loading state for guild {guild_id_str} (instances only)...")
 
-        db_service = kwargs.get('db_service', self._db_service) # type: Optional["DBService"] # Changed
-        if db_service is None or db_service.adapter is None: # Changed
-             print(f"LocationManager: Database service or adapter is not available. Cannot load state for guild {guild_id_str}.")
-             self._clear_guild_state_cache(guild_id_str)
-             return # Let PM handle if critical
+        db_service = kwargs.get('db_service', self._db_service) # type: Optional["DBService"]
+        if db_service is None or db_service.adapter is None:
+             print(f"LocationManager: Database service or adapter is not available. Cannot load instances for guild {guild_id_str}.")
+             # Clear only instance related caches for the guild
+             self._location_instances.pop(guild_id_str, None)
+             self._dirty_instances.pop(guild_id_str, None)
+             self._deleted_instances.pop(guild_id_str, None)
+             return
 
-        self._clear_guild_state_cache(guild_id_str)
+        # Clear relevant per-guild caches before loading
+        self._location_instances[guild_id_str] = {}
+        self._dirty_instances.pop(guild_id_str, None)
+        self._deleted_instances.pop(guild_id_str, None)
 
-        guild_templates_cache: Dict[str, Dict[str, Any]] = self._location_templates.setdefault(guild_id_str, {})
-
-        loaded_templates_count = 0
-        try:
-            # Corrected SQL query based on schema - template data is in 'properties' column
-            # Using per-guild filter WHERE guild_id = $1 as assumed for LocationManager
-            sql_templates = "SELECT id, name, description, properties FROM location_templates WHERE guild_id = $1" # Changed
-            # Passing guild_id parameter for fetchall on per-guild table
-            rows_templates = await db_service.adapter.fetchall(sql_templates, (guild_id_str,)) # Changed
-            print(f"LocationManager: Found {len(rows_templates)} location template rows for guild {guild_id_str}.")
-            for row in rows_templates:
-                 tpl_id = row['id'] # Use direct access
-                 tpl_data_json = row['properties'] # Use direct access
-                 if tpl_id is None: # Should not happen if ID is PK and NOT NULL
-                      print(f"LocationManager: Warning: Skipping template row with missing ID for guild {guild_id_str}. Row: {row}.");
-                      continue
-                 try:
-                      data: Dict[str, Any] = json.loads(tpl_data_json or '{}') if isinstance(tpl_data_json, (str, bytes)) else {}
-                      if not isinstance(data, dict):
-                           print(f"LocationManager: Warning: Template data for template '{tpl_id}' is not a dictionary ({type(data)}) for guild {guild_id_str}. Skipping.");
-                           continue
-                      data['id'] = str(tpl_id) # Ensure string ID
-                      data.setdefault('name', row['name'] if row['name'] is not None else str(tpl_id)) # Use direct access
-                      data.setdefault('description', row['description'] if row['description'] is not None else "") # Use direct access
-                      # Ensure exits/connected_locations are parsed correctly if they exist
-                      exits = data.get('exits') or data.get('connected_locations') # .get() is fine for dict `data`
-                      if isinstance(exits, str):
-                           try: exits = json.loads(exits)
-                           except (json.JSONDecodeError, TypeError): exits = {}
-                      if not isinstance(exits, dict): exits = {}
-                      data['exits'] = exits
-                      data.pop('connected_locations', None)
-
-                      # Store in per-guild cache
-                      guild_templates_cache[str(tpl_id)] = data
-                      loaded_templates_count += 1
-                 except json.JSONDecodeError:
-                     print(f"LocationManager: Error decoding template '{tpl_id}' for guild {guild_id_str}: {traceback.format_exc()}. Skipping template row.");
-                 except Exception as e:
-                      print(f"LocationManager: Error processing template row '{tpl_id}' for guild {guild_id_str}: {e}. Skipping."); traceback.print_exc();
-
-
-            print(f"LocationManager: Loaded {loaded_templates_count} templates for guild {guild_id_str} from DB.")
-
-
-        except Exception as e:
-            print(f"LocationManager: ❌ Error during DB template load for guild {guild_id_str}: {e}"); traceback.print_exc();
-            self._location_templates.pop(guild_id_str, None)
-            raise
+        # Static templates are loaded globally in __init__, no need to load them here per guild.
+        # guild_templates_cache: Dict[str, Dict[str, Any]] = self._location_templates.setdefault(guild_id_str, {}) # Removed
 
         # --- Загрузка динамических инстансов (per-guild) ---
-        guild_instances_cache = self._location_instances.setdefault(guild_id_str, {})
+        guild_instances_cache = self._location_instances[guild_id_str]
         # dirty_instances set and deleted_instances set for this guild were cleared by _clear_guild_state_cache
 
         loaded_instances_count = 0
@@ -227,32 +210,26 @@ class LocationManager:
                                print(f"LocationManager: Warning: Exits data for instance ID {instance_id} not a dict ({type(instance_exits)}) for guild {guild_id_str}. Resetting.")
 
                            # Prepare data for Location.from_dict or direct cache
-                           # The Location model's from_dict will handle creating name_i18n
-                           # and descriptions_i18n directly from these dicts.
                            instance_data_for_model: Dict[str, Any] = {
                                'id': instance_id,
                                'guild_id': guild_id_str,
                                'template_id': template_id,
-                               'name_i18n': instance_name_i18n_dict, # Pass parsed i18n dict
-                               'descriptions_i18n': instance_descriptions_i18n_dict, # Pass parsed i18n dict
+                               'name_i18n': instance_name_i18n_dict,
+                               'descriptions_i18n': instance_descriptions_i18n_dict,
                                'exits': instance_exits,
-                               'state': instance_state_data, # Renamed from 'state_variables' to 'state' for model
+                               'state': instance_state_data,
                                'is_active': bool(is_active),
-                               # Include other fields from DB if Location model expects them directly
                                'static_name': row.get('static_name'),
                                'static_connections': row.get('static_connections')
                            }
 
-                           # If caching dicts directly:
-                           # guild_instances_cache[instance_id] = instance_data_for_model
-                           # If caching Location objects (preferred for consistency):
                            from bot.game.models.location import Location # Local import
                            location_obj = Location.from_dict(instance_data_for_model)
-                           guild_instances_cache[location_obj.id] = location_obj.to_dict() # Store as dict in cache for now to match existing type
+                           guild_instances_cache[location_obj.id] = location_obj.to_dict()
 
                            # Validation (template existence check can remain the same)
                            if template_id is not None:
-                               if not self.get_location_static(guild_id_str, template_id):
+                               if not self.get_location_static(template_id): # Removed guild_id_str
                                     print(f"LocationManager: Warning: Template '{template_id}' not found for instance '{instance_id}' in guild {guild_id_str} during load.")
                            else:
                                 print(f"LocationManager: Warning: Instance ID {instance_id} missing template_id for guild {guild_id_str} during load.")
@@ -423,14 +400,16 @@ class LocationManager:
          guild_id_str = str(guild_id)
          print(f"LocationManager: Creating instance for guild {guild_id_str} from template {template_id} in memory...")
 
-         guild_templates = self._location_templates.get(guild_id_str, {})
-         template = guild_templates.get(str(template_id))
+         # guild_templates = self._location_templates.get(guild_id_str, {}) # Templates are global now
+         template = self.get_location_static(str(template_id)) # Use global getter
 
          if not template:
-             print(f"LocationManager: Error creating instance: Template '{template_id}' not found for guild {guild_id_str}.")
+             print(f"LocationManager: Error creating instance: Template '{template_id}' not found (globally).")
              return None
-         if not template.get('name'):
-             print(f"LocationManager: Warning: Template '{template_id}' missing 'name' for guild {guild_id_str}. Using template ID as name.")
+         # Name check can use template.get('name_i18n') or a plain 'name' as fallback
+         template_name_i18n = template.get('name_i18n', {})
+         if not template_name_i18n.get('en', template.get('name')): # Check English name or fallback plain name
+             print(f"LocationManager: Warning: Template '{template_id}' missing 'name' or 'name_i18n.en'. Using template ID as name.")
 
          new_instance_id = str(uuid.uuid4())
 
@@ -441,8 +420,15 @@ class LocationManager:
              if isinstance(initial_state, dict): instance_state_data.update(initial_state)
              else: print(f"LocationManager: Warning: Provided initial_state is not a dict. Ignoring.")
 
-         resolved_instance_name = instance_name if instance_name is not None else template.get('name', str(template_id))
-         resolved_instance_description = instance_description if instance_description is not None else template.get('description', "")
+         # Use i18n name from template if instance_name not provided
+         default_name_i18n = template.get('name_i18n', {"en": str(template_id), "ru": str(template_id)})
+         resolved_instance_name_i18n = instance_name if isinstance(instance_name, dict) else \
+                                    ({"en": instance_name, "ru": instance_name} if instance_name else default_name_i18n)
+
+         default_desc_i18n = template.get('description_i18n', {"en": "", "ru": ""})
+         resolved_instance_description_i18n = instance_description if isinstance(instance_description, dict) else \
+                                           ({"en": instance_description, "ru": instance_description} if instance_description else default_desc_i18n)
+
          resolved_instance_exits = instance_exits if instance_exits is not None else template.get('exits', {})
          if not isinstance(resolved_instance_exits, dict):
               print(f"LocationManager: Warning: Resolved instance exits is not a dict ({type(resolved_instance_exits)}). Using {{}}.")
@@ -452,17 +438,20 @@ class LocationManager:
              'id': new_instance_id,
              'guild_id': guild_id_str,
              'template_id': str(template_id),
-             'name': str(resolved_instance_name) if resolved_instance_name is not None else None,
-             'description': str(resolved_instance_description) if resolved_instance_description is not None else None,
+             'name_i18n': resolved_instance_name_i18n,
+             'descriptions_i18n': resolved_instance_description_i18n,
              'exits': resolved_instance_exits,
              'state': instance_state_data,
              'is_active': True,
+             # Ensure 'name' and 'description' are also set for compatibility if Location model uses them
+             'name': resolved_instance_name_i18n.get('en', str(template_id)), # Fallback to English or ID
+             'description': resolved_instance_description_i18n.get('en', '') # Fallback to English or empty
          }
 
          self._location_instances.setdefault(guild_id_str, {})[new_instance_id] = instance_for_cache
          self._dirty_instances.setdefault(guild_id_str, set()).add(new_instance_id)
 
-         print(f"LocationManager: Instance {new_instance_id} created and added to cache and marked dirty for guild {guild_id_str}. Template: {template_id}, Name: '{resolved_instance_name}'.")
+         print(f"LocationManager: Instance {new_instance_id} created and added to cache and marked dirty for guild {guild_id_str}. Template: {template_id}, Name (en): '{instance_for_cache['name']}'.")
 
          return instance_for_cache
 
@@ -574,14 +563,22 @@ class LocationManager:
          guild_id_str = str(guild_id)
          instance = self.get_location_instance(guild_id_str, instance_id)
          if instance:
-             instance_name = instance.get('name')
+             # Prefer name_i18n, then plain name, then template name
+             name_i18n = instance.get('name_i18n', {})
+             # Assuming a default language or a way to get it, e.g., 'en'
+             lang_to_try = 'en' # Placeholder, ideally from context or settings
+             instance_name = name_i18n.get(lang_to_try, instance.get('name'))
+
              if instance_name is not None:
                  return str(instance_name)
 
              template_id = instance.get('template_id')
-             template = self.get_location_static(guild_id_str, template_id)
-             if template and template.get('name') is not None:
-                  return str(template['name'])
+             template = self.get_location_static(template_id) # Removed guild_id_str
+             if template:
+                 template_name_i18n = template.get('name_i18n', {})
+                 template_name = template_name_i18n.get(lang_to_try, template.get('name'))
+                 if template_name is not None:
+                      return str(template_name)
 
          if isinstance(instance_id, str):
              return f"Unknown Location ({instance_id[:6]})"
@@ -592,26 +589,21 @@ class LocationManager:
          guild_id_str = str(guild_id)
          instance = self.get_location_instance(guild_id_str, instance_id)
          if instance:
-              instance_exits = instance.get('exits')
-              if instance_exits is not None:
-                  if isinstance(instance_exits, dict):
-                       return {str(k): str(v) for k, v in instance_exits.items()}
-                  print(f"LocationManager: Warning: Instance {instance_id} exits data is not a dict ({type(instance_exits)}) for guild {guild_id_str}. Falling back to template exits.")
-
+              instance_exits_data = instance.get('exits')
+              if isinstance(instance_exits_data, dict): # Check if it's already a dict
+                  return {str(k): str(v) for k, v in instance_exits_data.items()} # Ensure keys/values are strings
+              # Fallback to template if instance exits are not a dict or missing
 
               template_id = instance.get('template_id')
-              template = self.get_location_static(guild_id_str, template_id)
+              template = self.get_location_static(template_id) # Removed guild_id_str
               if template:
-                  template_exits = template.get('exits')
-                  if template_exits is None:
-                       template_exits = template.get('connected_locations')
-
-                  if isinstance(template_exits, dict):
-                       return {str(k): str(v) for k, v in template_exits.items()}
-                  if isinstance(template_exits, list):
-                       return {str(loc_id): str(loc_id) for loc_id in template_exits if loc_id is not None}
-                  if template_exits is not None:
-                       print(f"LocationManager: Warning: Template {template_id} exits data is not a dict or list ({type(template_exits)}) for instance {instance_id} in guild {guild_id_str}. Returning {{}}.")
+                  template_exits_data = template.get('exits', template.get('connected_locations')) # Check both keys
+                  if isinstance(template_exits_data, dict):
+                       return {str(k): str(v) for k, v in template_exits_data.items()}
+                  if isinstance(template_exits_data, list): # Handle list format if present in template
+                       return {str(loc_id): str(loc_id) for loc_id in template_exits_data if loc_id is not None}
+                  if template_exits_data is not None: # If exists but not dict/list
+                       print(f"LocationManager: Warning: Template {template_id} exits data is not a dict or list ({type(template_exits_data)}) for instance {instance_id} in guild {guild_id_str}. Returning {{}}.")
 
 
          return {}
@@ -647,7 +639,7 @@ class LocationManager:
         instance = self.get_location_instance(guild_id_str, instance_id)
         if instance:
             template_id = instance.get('template_id')
-            template = self.get_location_static(guild_id_str, template_id)
+            template = self.get_location_static(template_id) # Removed guild_id_str
             if template and template.get('channel_id') is not None:
                  channel_id_raw = template['channel_id']
                  try:
@@ -835,10 +827,10 @@ class LocationManager:
         instance_data = kwargs.get('location_instance_data', self.get_location_instance(guild_id_str, location_id))
 
         template_id = instance_data.get('template_id') if instance_data else None
-        tpl = self.get_location_static(guild_id_str, template_id)
+        tpl = self.get_location_static(template_id) # Removed guild_id_str
 
         if not tpl:
-             print(f"LocationManager: Warning: No template found for location instance {location_id} (guild {guild_id_str}) on arrival of {entity_type} {entity_id}. Cannot execute triggers.")
+             print(f"LocationManager: Warning: No template found for location instance {location_id} (template ID: {template_id}, guild {guild_id_str}) on arrival of {entity_type} {entity_id}. Cannot execute triggers.")
              return
 
         triggers = tpl.get('on_enter_triggers')
@@ -885,13 +877,14 @@ class LocationManager:
 
         instance_data = kwargs.get('location_instance_data', self.get_location_instance(guild_id_str, location_id))
 
-        template_id = instance_data.get('template_id') if instance_data else None
-        if template_id is None: template_id = kwargs.get('location_template_id')
+        template_id_from_instance = instance_data.get('template_id') if instance_data else None
+        # Use template_id from instance if available, otherwise from kwargs (less ideal but for robustness)
+        final_template_id = template_id_from_instance if template_id_from_instance is not None else kwargs.get('location_template_id')
 
-        tpl = self.get_location_static(guild_id_str, template_id)
+        tpl = self.get_location_static(final_template_id) # Removed guild_id_str
 
         if not tpl:
-             print(f"LocationManager: Warning: No template found for location instance {location_id} (guild {guild_id_str}) on departure of {entity_type} {entity_id}. Cannot execute triggers.")
+             print(f"LocationManager: Warning: No template found for location instance {location_id} (template ID: {final_template_id}, guild {guild_id_str}) on departure of {entity_type} {entity_id}. Cannot execute triggers.")
              return
 
         triggers = tpl.get('on_exit_triggers')
@@ -950,12 +943,12 @@ class LocationManager:
                   is_active = instance_data.get('is_active', False)
 
                   if instance_id and is_active:
-                       try: # <-- Corrected Indentation Start
+                       try:
                             template_id = instance_data.get('template_id')
-                            template = self.get_location_static(guild_id_str, template_id)
+                            template = self.get_location_static(template_id) # Removed guild_id_str
 
                             if not template:
-                                 print(f"LocationManager: Warning: Template not found for active instance {instance_id} in guild {guild_id_str} during tick.")
+                                 print(f"LocationManager: Warning: Template not found for active instance {instance_id} (template ID: {template_id}) in guild {guild_id_str} during tick.")
                                  continue
 
                             await rule_engine.process_location_tick(
@@ -963,21 +956,20 @@ class LocationManager:
                                 template=template,
                                 context=managers_context
                             )
-                       except Exception as e: # <-- Corrected Indentation (aligned with try)
+                       except Exception as e:
                             print(f"LocationManager: ❌ Error processing tick for location instance {instance_id} in guild {guild_id_str}: {e}")
-                            traceback.print_exc() # <-- Corrected Indentation (aligned with print above)
+                            traceback.print_exc()
          elif rule_engine:
               print(f"LocationManager: Warning: RuleEngine injected/found, but 'process_location_tick' method not found for tick processing.")
 
-    def get_location_static(self, guild_id: str, template_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Получить статический шаблон локации по ID для данной гильдии."""
-        guild_id_str = str(guild_id)
-        guild_templates = self._location_templates.get(guild_id_str, {})
-        return guild_templates.get(str(template_id)) if template_id is not None else None
+    def get_location_static(self, template_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Получить глобальный статический шаблон локации по ID."""
+        return self._location_templates.get(str(template_id)) if template_id is not None else None
 
     def _clear_guild_state_cache(self, guild_id: str) -> None:
+        """Clears per-guild dynamic instance caches. Static templates are global and not cleared here."""
         guild_id_str = str(guild_id)
-        self._location_templates.pop(guild_id_str, None)
+        # self._location_templates.pop(guild_id_str, None) # Templates are global now
         self._location_instances.pop(guild_id_str, None)
         self._dirty_instances.pop(guild_id_str, None)
         self._deleted_instances.pop(guild_id_str, None)
@@ -1004,7 +996,7 @@ class LocationManager:
                 if not template_id:
                     continue
 
-                template = self.get_location_static(guild_id_str, template_id)
+                template = self.get_location_static(template_id) # Removed guild_id_str
                 if template:
                     channel_id_raw = template.get('channel_id')
                     if channel_id_raw is not None:
