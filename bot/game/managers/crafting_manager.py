@@ -56,9 +56,8 @@ class CraftingManager:
 
 
     # --- Class-Level Attribute Annotations ---
-    # Статические рецепты крафтинга: {guild_id: {recipe_id: data_dict}}
-    # ИСПРАВЛЕНИЕ: Рецепты должны быть per-guild
-    _crafting_recipes: Dict[str, Dict[str, Dict[str, Any]]]
+    # Статические рецепты крафтинга: {recipe_id: data_dict} (Global)
+    _crafting_recipes: Dict[str, Dict[str, Any]]
 
     # Кеш активных очередей крафтинга: {guild_id: {entity_id: queue_data}}
     # queue_data is a dict potentially with 'queue' (List[Dict]) and 'state_variables' (Dict).
@@ -100,8 +99,8 @@ class CraftingManager:
 
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
-        # Статические рецепты: {guild_id: {recipe_id: data_dict}}
-        self._crafting_recipes = {} # Инициализируем как пустой dict
+        # Статические рецепты: {recipe_id: data_dict}} (Global)
+        self._crafting_recipes = {}
 
         # Кеш активных очередей крафтинга: {guild_id: {entity_id: queue_data_dict}}
         self._crafting_queues = {} # Инициализируем как пустой dict
@@ -110,63 +109,37 @@ class CraftingManager:
         self._dirty_crafting_queues = {} # Инициализируем как пустой dict
         self._deleted_crafting_queue_ids = {} # Инициализируем как пустой dict
 
-        # Загружаем статические шаблоны НЕ здесь. Загрузка per-guild происходит в load_state.
-        # _load_crafting_recipes() # Remove this call from __init__
+        self.load_static_recipes()
 
         print("CraftingManager initialized.\n")
 
-    # load_static_recipes method (not called by PM directly)
-    # This method will be called from load_state
-    def load_static_recipes(self, guild_id: str) -> None:
-        """(Пример) Загружает статические рецепты для определенной гильдии из настроек или файлов."""
-        guild_id_str = str(guild_id)
-        print(f"CraftingManager: Loading crafting recipes for guild {guild_id_str}...")
+    def load_static_recipes(self) -> None:
+        """Загружает глобальные статические рецепты из self._settings."""
+        print("CraftingManager: Loading global crafting recipes...")
+        self._crafting_recipes = {} # Clear global recipe cache
 
-        # Очищаем кеш рецептов для этой гильдии перед загрузкой
-        self._crafting_recipes.pop(guild_id_str, None)
-        guild_recipes_cache = self._crafting_recipes.setdefault(guild_id_str, {}) # Create empty cache for this guild
-
-        try:
-            # Пример загрузки из settings (предполагаем структуру settings['guilds'][guild_id]['crafting_recipes']
-            guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
-            recipes_data = guild_settings.get('crafting_recipes')
-
-            # TODO: Add fallback to global recipes file if needed
-
-            if isinstance(recipes_data, dict):
-                 for recipe_id, data in recipes_data.items():
-                      # Basic validation
-                      if recipe_id and isinstance(data, dict):
-                           # Ensure required recipe data fields exist (e.g., 'ingredients', 'results', 'time')
-                           if isinstance(data.get('ingredients'), list) and isinstance(data.get('results'), list):
-                                data.setdefault('id', str(recipe_id)) # Ensure id is in data
-                                data.setdefault('name', f"Unnamed Recipe ({recipe_id})") # Ensure name
-                                data.setdefault('time', 10.0) # Default crafting time in game seconds
-                                data.setdefault('requirements', {}) # Default requirements (skills, tools, location)
-                                guild_recipes_cache[str(recipe_id)] = data # Store with string ID
-                           else:
-                               print(f"CraftingManager: Warning: Skipping invalid recipe '{recipe_id}' for guild {guild_id_str}: missing 'ingredients' or 'results' lists. Data: {data}")
-
-                 print(f"CraftingManager: Loaded {len(guild_recipes_cache)} crafting recipes for guild {guild_id_str}.")
-            elif recipes_data is not None:
-                 print(f"CraftingManager: Warning: Crafting recipes data for guild {guild_id_str} is not a dictionary ({type(recipes_data)}). Skipping recipe load.")
+        if self._settings and 'crafting_recipes' in self._settings:
+            recipes_data_dict = self._settings['crafting_recipes']
+            if isinstance(recipes_data_dict, dict):
+                for recipe_id, data in recipes_data_dict.items():
+                    if recipe_id and isinstance(data, dict):
+                        if isinstance(data.get('ingredients'), list) and isinstance(data.get('results'), list):
+                            data.setdefault('id', str(recipe_id))
+                            data.setdefault('name_i18n', {"en": f"Unnamed Recipe ({recipe_id})", "ru": f"Рецепт без имени ({recipe_id})"})
+                            data.setdefault('crafting_time_seconds', 10.0) # Renamed from 'time' for clarity
+                            data.setdefault('requirements', {})
+                            self._crafting_recipes[str(recipe_id)] = data
+                        else:
+                            print(f"CraftingManager: Warning: Skipping invalid recipe '{recipe_id}': missing 'ingredients' or 'results' lists. Data: {data}")
+                print(f"CraftingManager: Loaded {len(self._crafting_recipes)} global crafting recipes.")
             else:
-                 print(f"CraftingManager: No crafting recipes found in settings for guild {guild_id_str} or globally.")
+                print("CraftingManager: 'crafting_recipes' in settings is not a dictionary.")
+        else:
+            print("CraftingManager: No 'crafting_recipes' found in settings.")
 
-
-        except Exception as e:
-            print(f"CraftingManager: ❌ Error loading crafting recipes for guild {guild_id_str}: {e}")
-            traceback.print_exc()
-            # Decide how to handle error - critical or just log? Log and continue for now.
-
-
-    # get_recipe now needs guild_id
-    def get_recipe(self, guild_id: str, recipe_id: str) -> Optional[Dict[str, Any]]:
-        """Возвращает данные рецепта по его ID для определенной гильдии."""
-        guild_id_str = str(guild_id)
-        # Get recipes from the per-guild cache
-        guild_recipes = self._crafting_recipes.get(guild_id_str, {})
-        return guild_recipes.get(str(recipe_id)) # Ensure recipe_id is string
+    def get_recipe(self, recipe_id: str) -> Optional[Dict[str, Any]]:
+        """Возвращает данные рецепта по его ID (глобальный кеш)."""
+        return self._crafting_recipes.get(str(recipe_id))
 
 
     # get_crafting_queue now needs guild_id
@@ -211,11 +184,18 @@ class CraftingManager:
         if not time_manager: return {"success": False, "message": "Time system (TimeManager) is unavailable."}
 
         # Fetch the recipe
-        recipe = self.get_recipe(guild_id_str, recipe_id_str)
+        recipe = self.get_recipe(recipe_id_str) # Removed guild_id_str
         if not recipe:
             return {"success": False, "message": f"Recipe '{recipe_id_str}' not found."}
 
-        recipe_name = recipe.get('name', recipe_id_str)
+        # Use i18n name if available, fallback to plain name or ID
+        # Assuming get_default_bot_language() is available or a default can be used.
+        # For simplicity, let's assume a default or direct access to name_i18n here.
+        # This part might need a language context if used outside GameManager.
+        # default_lang = context.get('default_language', 'en') # Example, if context had language
+        default_lang = 'en' # Placeholder
+        recipe_name_i18n = recipe.get('name_i18n', {})
+        recipe_name = recipe_name_i18n.get(default_lang, recipe_name_i18n.get('en', recipe_id_str))
 
         # --- 4. Requirement Checks ---
         # FIXME: RuleEngine.check_crafting_requirements method does not exist. Implement or remove block.
@@ -386,14 +366,14 @@ class CraftingManager:
                        continue
 
                   # Get the recipe data to check total time
-                  recipe = self.get_recipe(guild_id_str, str(recipe_id)) # Use get_recipe with guild_id
+                  recipe = self.get_recipe(str(recipe_id)) # Use global get_recipe
                   if not recipe:
                        print(f"CraftingManager: Warning: Recipe '{recipe_id}' not found for task for entity {entity_id} in guild {guild_id_str}. Removing from queue.")
                        queue_list.pop(0) # Remove task with missing recipe
                        # Queue is already marked dirty
                        continue
 
-                  required_time = float(recipe.get('time', 10.0)) # Default recipe time if not specified
+                  required_time = float(recipe.get('crafting_time_seconds', 10.0)) # Use new field name
 
                   if task['progress'] >= required_time:
                        # Task is complete! Process result.
@@ -483,8 +463,8 @@ class CraftingManager:
             return
 
         # --- 1. Загрузка статических рецептов (per-guild) ---
-        # Call the helper method
-        self.load_static_recipes(guild_id_str)
+        # Recipes are now global and loaded in __init__. No per-guild recipe loading here.
+        # self.load_static_recipes(guild_id_str) # This line is removed.
 
 
         # --- 2. Загрузка активных очередей крафтинга (per-guild) ---

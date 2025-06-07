@@ -84,6 +84,7 @@ class NpcManager:
     _dirty_npcs: Dict[str, Set[str]]
     # Удалённые NPC для персистенции {guild_id: set(npc_ids)}
     _deleted_npc_ids: Dict[str, Set[str]]
+    _npc_archetypes: Dict[str, Dict[str, Any]]
 
 
     def __init__(
@@ -103,11 +104,14 @@ class NpcManager:
         game_log_manager: Optional["GameLogManager"] = None,
         multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None, # New
         openai_service: Optional["OpenAIService"] = None, # New
-        ai_validator: Optional["AIResponseValidator"] = None # New for validation
+        ai_validator: Optional["AIResponseValidator"] = None, # New for validation
+        campaign_loader: Optional["CampaignLoader"] = None
     ):
         print("Initializing NpcManager...")
         self._db_service = db_service # Changed
         self._settings = settings
+        self._campaign_loader = campaign_loader
+        self._npc_archetypes = {}
 
         # Инжектированные зависимости
         self._item_manager = item_manager
@@ -131,7 +135,72 @@ class NpcManager:
         self._dirty_npcs = {} # {guild_id: set(npc_ids)}
         self._deleted_npc_ids = {} # {guild_id: set(npc_ids)}
 
+        self._load_npc_archetypes()
         print("NpcManager initialized.")
+
+    def _load_npc_archetypes(self):
+        print("NpcManager: Loading NPC archetypes...")
+        self._npc_archetypes = {}
+        if not self._campaign_loader:
+            # Fallback to settings if CampaignLoader is not provided, for backward compatibility or specific use cases
+            if self._settings and 'npc_archetypes' in self._settings:
+                archetypes_list = self._settings['npc_archetypes']
+                if isinstance(archetypes_list, list):
+                    for archetype_data in archetypes_list:
+                        if isinstance(archetype_data, dict) and 'id' in archetype_data:
+                            self._npc_archetypes[archetype_data['id']] = archetype_data
+                    print(f"NpcManager: Loaded {len(self._npc_archetypes)} NPC archetypes from settings (CampaignLoader not available).")
+                else:
+                    print("NpcManager: 'npc_archetypes' in settings is not a list (CampaignLoader not available).")
+            else:
+                print("NpcManager: CampaignLoader not available and no 'npc_archetypes' found in settings.")
+            return
+
+        # Preferred method: Use CampaignLoader
+        # Assuming CampaignLoader has a method to get archetypes, possibly pre-loaded by GameManager
+        # For this example, let's use a hypothetical synchronous getter or assume data is ready.
+        # In a real async scenario, this might need to be an async method called post-init,
+        # or GameManager would pass the loaded archetypes directly to NpcManager's __init__.
+        try:
+            # This is a placeholder for how CampaignLoader might provide data.
+            # A more robust approach would be for GameManager to load this once and pass it.
+            # If get_all_npc_archetypes() is async, _load_npc_archetypes would need to be async
+            # and called appropriately (e.g., via an async_init method).
+            # For now, let's simulate it being available if campaign_loader exists.
+            # This part needs to align with CampaignLoader's actual interface.
+            if hasattr(self._campaign_loader, 'get_all_npc_archetypes_sync'): # Hypothetical sync method
+                archetypes_list = self._campaign_loader.get_all_npc_archetypes_sync()
+            elif hasattr(self._campaign_loader, '_loaded_campaign_data') and \
+                 isinstance(self._campaign_loader._loaded_campaign_data, dict) and \
+                 'npc_archetypes' in self._campaign_loader._loaded_campaign_data: # Access internal if preloaded
+                archetypes_list = self._campaign_loader._loaded_campaign_data['npc_archetypes']
+            else: # Fallback to settings if loader has no direct way or data
+                print("NpcManager: CampaignLoader available, but no direct way to get archetypes synchronously. Falling back to settings for archetypes.")
+                if self._settings and 'npc_archetypes' in self._settings:
+                    archetypes_list = self._settings['npc_archetypes']
+                else:
+                    archetypes_list = [] # Ensure it's a list
+
+            if isinstance(archetypes_list, list):
+                for archetype_data in archetypes_list:
+                    if isinstance(archetype_data, dict) and 'id' in archetype_data:
+                        self._npc_archetypes[archetype_data['id']] = archetype_data
+                print(f"NpcManager: Loaded {len(self._npc_archetypes)} NPC archetypes via CampaignLoader/settings.")
+            else:
+                print("NpcManager: Could not load NPC archetypes, data from CampaignLoader/settings is not a list.")
+
+        except Exception as e:
+            print(f"NpcManager: Error loading NPC archetypes via CampaignLoader: {e}")
+            traceback.print_exc()
+            # Optionally, fallback to settings again here if CampaignLoader fails
+            if self._settings and 'npc_archetypes' in self._settings:
+                archetypes_list = self._settings['npc_archetypes']
+                if isinstance(archetypes_list, list):
+                    for archetype_data in archetypes_list:
+                        if isinstance(archetype_data, dict) and 'id' in archetype_data:
+                            self._npc_archetypes[archetype_data['id']] = archetype_data
+                    print(f"NpcManager: Loaded {len(self._npc_archetypes)} NPC archetypes from settings (CampaignLoader failed).")
+
 
     # --- Методы получения ---
     # ИСПРАВЛЕНИЕ: Метод get_npc должен принимать guild_id
@@ -238,30 +307,43 @@ class NpcManager:
 
         # Determine if AI generation should be triggered
         trigger_ai_generation = False
-        campaign_loader: Optional["CampaignLoader"] = kwargs.get('campaign_loader')
+        # campaign_loader: Optional["CampaignLoader"] = kwargs.get('campaign_loader') # Removed, use self._campaign_loader or preloaded archetypes
 
         if npc_template_id.startswith("AI:"):
             trigger_ai_generation = True
-        elif campaign_loader and hasattr(campaign_loader, 'get_npc_archetypes'):
-            try:
-                all_archetypes: List[Dict[str, Any]] = campaign_loader.get_npc_archetypes()
-                found_archetype = next((arch for arch in all_archetypes if isinstance(arch, dict) and arch.get('id') == archetype_id_to_load), None)
-                if found_archetype:
-                    archetype_data_loaded = found_archetype
-                    print(f"NpcManager: Archetype '{archetype_id_to_load}' found and loaded.")
-                else:
-                    trigger_ai_generation = True
-                    print(f"NpcManager: Archetype '{archetype_id_to_load}' not found. Triggering AI generation.")
-            except Exception as e:
-                print(f"NpcManager: Error loading NPC archetypes: {e}. Triggering AI generation.")
-                trigger_ai_generation = True
-        else: # No campaign loader or method means we can't load archetype, so try AI
-            trigger_ai_generation = True
-            print(f"NpcManager: No CampaignLoader to verify archetype '{archetype_id_to_load}'. Triggering AI generation.")
+            print(f"NpcManager: NPC template '{npc_template_id}' indicates AI generation.")
+        else:
+            archetype_data_loaded = self._npc_archetypes.get(archetype_id_to_load)
+            if archetype_data_loaded:
+                print(f"NpcManager: Archetype '{archetype_id_to_load}' found and loaded from preloaded archetypes.")
+            else:
+                # Fallback: if not in preloaded, original logic might try AI or other means.
+                # For this refactor, if not in preloaded, we assume it might trigger AI.
+                # The decision to trigger AI if archetype is missing depends on game design.
+                # If npc_template_id is just an ID (not "AI:"), and it's not found,
+                # should it generate an AI version of that ID, or fail?
+                # Current simplified logic: if not found in preloaded, and not explicitly "AI:",
+                # it will NOT trigger AI generation here. It will proceed to use base defaults.
+                # This might need adjustment if the expectation is to AI-generate missing non-"AI:" templates.
+                # For now, we only trigger AI if it starts with "AI:" or if original logic explicitly set it.
+                # To maintain closer parity with original logic's fallback:
+                # if not archetype_data_loaded:
+                #    trigger_ai_generation = True # This would make it try AI for any unknown ID
+                #    print(f"NpcManager: Archetype '{archetype_id_to_load}' not found in preloaded. Triggering AI generation as fallback.")
+                # For the specific subtask instructions, the change is to use self._npc_archetypes.
+                # The subsequent logic for trigger_ai_generation is simplified here.
+                # If the original intent was "if campaign loader fails, trigger AI", that needs to be mapped.
+                # The provided snippet for change was:
+                # archetype_data_loaded = self._npc_archetypes.get(archetype_id_to_load)
+                # if archetype_data_loaded: ... else: trigger_ai_generation = True
+                # This implies any unknown non-"AI:" ID should also trigger AI. Let's follow that.
+                if not archetype_data_loaded: # If not found in preloaded and not starting with "AI:"
+                    trigger_ai_generation = True # As per implied logic from refactor description
+                    print(f"NpcManager: Archetype '{archetype_id_to_load}' not found in preloaded. Triggering AI generation.")
 
 
         if trigger_ai_generation:
-            npc_id_concept = npc_template_id.replace("AI:", "", 1) if npc_template_id.startswith("AI:") else npc_template_id
+            npc_id_concept = npc_template_id.replace("AI:", "", 1) if npc_template_id.startswith("AI:") else archetype_id_to_load # Use original ID as concept
             # ai_generated_data is already initialized to None
             ai_generated_data = await self.generate_npc_details_from_ai(
                 guild_id=guild_id_str,

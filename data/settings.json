@@ -85,6 +85,42 @@
         "weight": 0.01,
         "value": 1,
         "properties": { "stackable": true }
+    },
+    "herb_leaf": {
+        "name_i18n": {"en": "Herb Leaf", "ru": "Лист травы"},
+        "description_i18n": {"en": "A common herb leaf, useful in potions.", "ru": "Обычный лист травы, полезен в зельях."},
+        "type": "resource", "icon": "🌿", "weight": 0.01, "value": 1,
+        "properties": {"stackable": true, "max_stack": 100, "crafting_material_type": "herb"}
+    },
+    "iron_ingot": {
+        "name_i18n": {"en": "Iron Ingot", "ru": "Железный слиток"},
+        "description_i18n": {"en": "A bar of refined iron.", "ru": "Слиток очищенного железа."},
+        "type": "resource", "icon": "🔩", "weight": 1.0, "value": 10,
+        "properties": {"stackable": true, "max_stack": 20, "crafting_material_type": "metal_ingot"}
+    },
+    "leather_strips": {
+        "name_i18n": {"en": "Leather Strips", "ru": "Кожаные полоски"},
+        "description_i18n": {"en": "Strips of tanned leather.", "ru": "Полоски дубленой кожи."},
+        "type": "resource", "icon": "🧵", "weight": 0.1, "value": 2,
+        "properties": {"stackable": true, "max_stack": 50, "crafting_material_type": "leather"}
+    },
+    "wood_stick": {
+        "name_i18n": {"en": "Wood Stick", "ru": "Деревянная палка"},
+        "description_i18n": {"en": "A sturdy wooden stick.", "ru": "Крепкая деревянная палка."},
+        "type": "resource", "icon": "🪵", "weight": 0.2, "value": 1,
+        "properties": {"stackable": true, "max_stack": 50, "crafting_material_type": "wood"}
+    },
+    "iron_pickaxe": {
+        "name_i18n": {"en": "Iron Pickaxe", "ru": "Железная кирка"},
+        "description_i18n": {"en": "A sturdy iron pickaxe for mining.", "ru": "Крепкая железная кирка для добычи руды."},
+        "type": "tool", "icon": "⛏️", "weight": 2.0, "value": 30, "equipable": true,
+        "properties": {"skill_used": "mining", "tool_type": "pickaxe", "equip_slot": "main_hand", "durability": 100}
+    },
+    "iron_dagger": {
+        "name_i18n": {"en": "Iron Dagger", "ru": "Железный кинжал"},
+        "description_i18n": {"en": "A simple iron dagger.", "ru": "Простой железный кинжал."},
+        "type": "weapon", "icon": "🗡️", "weight": 0.5, "value": 15, "equipable": true,
+        "properties": { "damage": "1d4", "damage_type": "piercing", "skill_used": "short_blades", "equip_slot": "main_hand" }
     }
   },
   "status_templates": {
@@ -125,6 +161,78 @@
         {"type": "stat_modifier", "stat": "strength", "modifier_type": "flat", "amount": 2}
       ],
       "stacking_rules": {"max_stacks": 1, "stack_behavior": "refresh_duration"}
+    }
+  },
+  "crafting_recipes": {
+    "recipe_minor_healing_potion": {
+        "name_i18n": {"en": "Minor Healing Potion Recipe", "ru": "Рецепт малого зелья лечения"},
+        "description_i18n": {"en": "How to brew a Minor Healing Potion.", "ru": "Как сварить Малое зелье лечения."},
+        "skill_required": "herbalism",
+        "level_required": 1,
+        "ingredients": [
+            {"item_template_id": "herb_leaf", "quantity": 2}
+        ],
+        "results": [
+            {"item_template_id": "potion_health_minor", "quantity": 1}
+        ],
+        "crafting_time_seconds": 30,
+        "xp_reward": 25
+    },
+    "recipe_iron_dagger": {
+        "name_i18n": {"en": "Iron Dagger Recipe", "ru": "Рецепт железного кинжала"},
+        "description_i18n": {"en": "How to forge an Iron Dagger.", "ru": "Как выковать Железный кинжал."},
+        "skill_required": "blacksmithing",
+        "level_required": 1,
+        "ingredients": [
+            {"item_template_id": "iron_ingot", "quantity": 1},
+            {"item_template_id": "leather_strips", "quantity": 1}
+        ],
+        "results": [
+            {"item_template_id": "iron_dagger", "quantity": 1}
+        ],
+        "crafting_time_seconds": 120,
+        "xp_reward": 75
+    },
+    "recipe_iron_pickaxe": {
+        "name_i18n": {"en": "Iron Pickaxe Recipe", "ru": "Рецепт железной кирки"},
+        "description_i18n": {"en": "How to forge an Iron Pickaxe.", "ru": "Как выковать Железную кирку."},
+        "skill_required": "blacksmithing",
+        "level_required": 2,
+        "ingredients": [
+            {"item_template_id": "iron_ingot", "quantity": 2},
+            {"item_template_id": "wood_stick", "quantity": 1}
+        ],
+        "results": [
+            {"item_template_id": "iron_pickaxe", "quantity": 1}
+        ],
+        "crafting_time_seconds": 180,
+        "xp_reward": 100
+    }
+  },
+  "location_templates": {
+    "loc_template_forest_clearing_common": {
+        "name_i18n": {"en": "Forest Clearing", "ru": "Лесная Поляна"},
+        "description_i18n": {
+            "en": "A generic clearing in a forest, possibly with some common resources or wildlife.",
+            "ru": "Обычная поляна в лесу, возможно с некоторыми ресурсами или дикой живностью."
+        },
+        "tags": ["forest", "clearing", "natural"],
+        "possible_resources": ["wood_stick", "herb_leaf"],
+        "possible_npcs": ["deer_common", "wolf_common"],
+        "base_difficulty": 1,
+        "icon": "🌳"
+    },
+    "loc_template_cave_entrance_rocky": {
+        "name_i18n": {"en": "Rocky Cave Entrance", "ru": "Скалистый Вход в Пещеру"},
+        "description_i18n": {
+            "en": "The dark entrance to a cave, set into a rocky cliff face. It might hide dangers or treasures.",
+            "ru": "Темный вход в пещеру, расположенный в скалистом утесе. Он может скрывать опасности или сокровища."
+        },
+        "tags": ["cave", "entrance", "rocky", "mountain"],
+        "possible_resources": ["iron_ore_chunk", "stone"],
+        "possible_npcs": ["bat_swarm_common", "goblin_scout_weak"],
+        "base_difficulty": 2,
+        "icon": "⛰️"
     }
   },
   "game_rules": {

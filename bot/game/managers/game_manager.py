@@ -305,7 +305,7 @@ class GameManager:
         self.rule_engine = RuleEngine(settings=self._settings.get('rule_settings', {}), rules_data=self._rules_config_cache)
 
         self.time_manager = TimeManager(db_service=self.db_service, settings=self._settings.get('time_settings', {})) # Changed
-        self.location_manager = LocationManager(db_service=self.db_service, settings=self._settings.get('location_settings', {})) # Changed
+        self.location_manager = LocationManager(db_service=self.db_service, settings=self._settings) # Changed
 
         try:
             oset = self._settings.get('openai_settings', {})
@@ -339,18 +339,54 @@ class GameManager:
         from bot.services.nlu_data_service import NLUDataService
         from bot.game.managers.lore_manager import LoreManager
 
-        self.item_manager = ItemManager(db_service=self.db_service, settings=self._settings.get('item_settings', {}), location_manager=self.location_manager, rule_engine=self.rule_engine) # Changed
-        self.status_manager = StatusManager(db_service=self.db_service, settings=self._settings.get('status_settings', {}), rule_engine=self.rule_engine, time_manager=self.time_manager) # Changed
+        self.item_manager = ItemManager(db_service=self.db_service, settings=self._settings, location_manager=self.location_manager, rule_engine=self.rule_engine) # Changed
+        self.status_manager = StatusManager(db_service=self.db_service, settings=self._settings, rule_engine=self.rule_engine, time_manager=self.time_manager) # Changed
         self.combat_manager = CombatManager(db_service=self.db_service, settings=self._settings.get('combat_settings', {}), rule_engine=self.rule_engine, character_manager=self.character_manager, status_manager=self.status_manager, item_manager=self.item_manager) # Changed
-        self.crafting_manager = CraftingManager(db_service=self.db_service, settings=self._settings.get('crafting_settings', {}), item_manager=self.item_manager, character_manager=self.character_manager, time_manager=self.time_manager, rule_engine=self.rule_engine) # Changed
+        self.crafting_manager = CraftingManager(db_service=self.db_service, settings=self._settings, item_manager=self.item_manager, character_manager=self.character_manager, time_manager=self.time_manager, rule_engine=self.rule_engine) # Changed
         self.economy_manager = EconomyManager(db_service=self.db_service, settings=self._settings.get('economy_settings', {}), item_manager=self.item_manager, location_manager=self.location_manager, character_manager=self.character_manager, rule_engine=self.rule_engine, time_manager=self.time_manager) # Changed
-        self.npc_manager = NpcManager(db_service=self.db_service, settings=self._settings.get('npc_settings', {}), item_manager=self.item_manager, rule_engine=self.rule_engine, combat_manager=self.combat_manager, status_manager=self.status_manager, openai_service=self.openai_service) # Changed
+
+        # Initialize CampaignLoader before NpcManager if not already done
+        if not hasattr(self, 'campaign_loader') or self.campaign_loader is None:
+            self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service)
+            print("GameManager: Initialized CampaignLoader directly before NpcManager.")
+
+        # Load NPC archetypes from campaign to pass to NpcManager
+        npc_archetypes_from_campaign = []
+        if self.campaign_loader:
+            # Assuming load_campaign_data_from_source() is the method to get all data for a campaign.
+            # This might need adjustment based on actual CampaignLoader methods.
+            # For simplicity, using a default campaign or a specific one if defined in settings.
+            campaign_identifier = self._settings.get('default_campaign_identifier') # Or some other logic
+            default_campaign_data = await self.campaign_loader.load_campaign_data_from_source(campaign_identifier=campaign_identifier)
+            if default_campaign_data and isinstance(default_campaign_data.get('npc_archetypes'), list):
+                npc_archetypes_from_campaign = default_campaign_data['npc_archetypes']
+                print(f"GameManager: Loaded {len(npc_archetypes_from_campaign)} NPC archetypes from campaign '{campaign_identifier or 'default'}'.")
+            else:
+                print(f"GameManager: Warning - Could not load NPC archetypes from campaign '{campaign_identifier or 'default'}'. Using empty list.")
+        else:
+            print("GameManager: Warning - CampaignLoader not available. NPC archetypes will be empty for NpcManager.")
+
+        # Prepare NpcManager settings, ensuring 'npc_archetypes' key is present
+        npc_manager_settings = self._settings.get('npc_settings', {}).copy() # Start with existing npc_settings
+        npc_manager_settings['npc_archetypes'] = npc_archetypes_from_campaign # Add/overwrite with loaded archetypes
+
+        self.npc_manager = NpcManager(
+            db_service=self.db_service,
+            settings=npc_manager_settings, # Pass the combined settings
+            item_manager=self.item_manager,
+            rule_engine=self.rule_engine,
+            combat_manager=self.combat_manager,
+            status_manager=self.status_manager,
+            openai_service=self.openai_service,
+            campaign_loader=self.campaign_loader # Pass campaign_loader instance
+        )
+
         self.party_manager = PartyManager(db_service=self.db_service, settings=self._settings.get('party_settings', {}), character_manager=self.character_manager, npc_manager=self.npc_manager) # Changed
         self.ability_manager = AbilityManager(db_service=self.db_service, settings=self._settings.get('ability_settings', {}), character_manager=self.character_manager, rule_engine=self.rule_engine, status_manager=self.status_manager) # Changed
         self.spell_manager = SpellManager(db_service=self.db_service, settings=self._settings.get('spell_settings', {}), character_manager=self.character_manager, rule_engine=self.rule_engine, status_manager=self.status_manager) # Changed
         self.game_log_manager = GameLogManager(db_service=self.db_service, settings=self._settings.get('game_log_settings')) # Changed
         self.relationship_manager = RelationshipManager(db_service=self.db_service, settings=self._settings.get('relationship_settings')) # Changed
-        self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service)
+        # self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service) # Moved up
         self.dialogue_manager = DialogueManager(db_service=self.db_service, settings=self._settings.get('dialogue_settings', {}), character_manager=self.character_manager, npc_manager=self.npc_manager, rule_engine=self.rule_engine, time_manager=self.time_manager, openai_service=self.openai_service, relationship_manager=self.relationship_manager) # Changed
         self.consequence_processor = ConsequenceProcessor(quest_manager=None, character_manager=self.character_manager, npc_manager=self.npc_manager, item_manager=self.item_manager, location_manager=self.location_manager, event_manager=self.event_manager, status_manager=self.status_manager, rule_engine=self.rule_engine, economy_manager=self.economy_manager, relationship_manager=self.relationship_manager, game_log_manager=self.game_log_manager)
         self.quest_manager = QuestManager(db_service=self.db_service, settings=self._settings.get('quest_settings', {}), consequence_processor=self.consequence_processor, character_manager=self.character_manager, game_log_manager=self.game_log_manager, openai_service=self.openai_service) # Changed
