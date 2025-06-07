@@ -77,6 +77,23 @@ class RPGBot(commands.Bot):
             import traceback
             traceback.print_exc()
 
+    async def on_tree_command_error(self, interaction: Interaction, error: app_commands.AppCommandError):
+        import traceback
+        print(f"Unhandled error in command tree for command invoked by {interaction.user.name} ({interaction.user.id}) in guild {interaction.guild_id or 'DM'}")
+        print(f"Command: {interaction.command.name if interaction.command else 'Unknown Command'}")
+        print(f"Error type: {type(error)}")
+        print(f"Error: {error}")
+        # Log the full traceback
+        traceback_str = traceback.format_exc()
+        print("Traceback:")
+        print(traceback_str)
+
+        # Optionally, send a generic message to the user
+        if interaction.response.is_done():
+            await interaction.followup.send("Произошла непредвиденная ошибка при выполнении команды. Администратор был уведомлен.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Произошла непредвиденная ошибка при выполнении команды. Администратор был уведомлен.", ephemeral=True)
+
     async def on_ready(self):
         if self.user:
             print(f'Logged in as {self.user.name} ({self.user.id})')

@@ -141,65 +141,79 @@ class NpcManager:
     def _load_npc_archetypes(self):
         print("NpcManager: Loading NPC archetypes...")
         self._npc_archetypes = {}
+        source_description = "an unknown source" # Initialize source description
+
         if not self._campaign_loader:
-            # Fallback to settings if CampaignLoader is not provided, for backward compatibility or specific use cases
+            # Fallback to settings if CampaignLoader is not provided
+            source_description = "settings (CampaignLoader not available)"
             if self._settings and 'npc_archetypes' in self._settings:
                 archetypes_list = self._settings['npc_archetypes']
                 if isinstance(archetypes_list, list):
                     for archetype_data in archetypes_list:
                         if isinstance(archetype_data, dict) and 'id' in archetype_data:
                             self._npc_archetypes[archetype_data['id']] = archetype_data
-                    print(f"NpcManager: Loaded {len(self._npc_archetypes)} NPC archetypes from settings (CampaignLoader not available).")
                 else:
-                    print("NpcManager: 'npc_archetypes' in settings is not a list (CampaignLoader not available).")
+                    print(f"NpcManager: 'npc_archetypes' in {source_description} is not a list.")
             else:
-                print("NpcManager: CampaignLoader not available and no 'npc_archetypes' found in settings.")
-            return
+                print(f"NpcManager: No 'npc_archetypes' found in {source_description}.")
+            # No return here, print final summary at the end
+        else:
+            # Preferred method: Use CampaignLoader
+            try:
+                archetypes_list = None
+                if hasattr(self._campaign_loader, 'get_all_npc_archetypes_sync'):
+                    archetypes_list = self._campaign_loader.get_all_npc_archetypes_sync()
+                    source_description = "CampaignLoader"
+                elif hasattr(self._campaign_loader, '_loaded_campaign_data') and \
+                     isinstance(self._campaign_loader._loaded_campaign_data, dict) and \
+                     'npc_archetypes' in self._campaign_loader._loaded_campaign_data:
+                    archetypes_list = self._campaign_loader._loaded_campaign_data['npc_archetypes']
+                    source_description = "CampaignLoader" # Internal data access
+                else:
+                    source_description = "settings (CampaignLoader had no direct archetype access)"
+                    print(f"NpcManager: CampaignLoader available, but no direct way to get archetypes synchronously. Falling back to {source_description} for archetypes.")
+                    if self._settings and 'npc_archetypes' in self._settings:
+                        archetypes_list = self._settings['npc_archetypes']
+                    else:
+                        archetypes_list = [] # Ensure it's a list
 
-        # Preferred method: Use CampaignLoader
-        # Assuming CampaignLoader has a method to get archetypes, possibly pre-loaded by GameManager
-        # For this example, let's use a hypothetical synchronous getter or assume data is ready.
-        # In a real async scenario, this might need to be an async method called post-init,
-        # or GameManager would pass the loaded archetypes directly to NpcManager's __init__.
-        try:
-            # This is a placeholder for how CampaignLoader might provide data.
-            # A more robust approach would be for GameManager to load this once and pass it.
-            # If get_all_npc_archetypes() is async, _load_npc_archetypes would need to be async
-            # and called appropriately (e.g., via an async_init method).
-            # For now, let's simulate it being available if campaign_loader exists.
-            # This part needs to align with CampaignLoader's actual interface.
-            if hasattr(self._campaign_loader, 'get_all_npc_archetypes_sync'): # Hypothetical sync method
-                archetypes_list = self._campaign_loader.get_all_npc_archetypes_sync()
-            elif hasattr(self._campaign_loader, '_loaded_campaign_data') and \
-                 isinstance(self._campaign_loader._loaded_campaign_data, dict) and \
-                 'npc_archetypes' in self._campaign_loader._loaded_campaign_data: # Access internal if preloaded
-                archetypes_list = self._campaign_loader._loaded_campaign_data['npc_archetypes']
-            else: # Fallback to settings if loader has no direct way or data
-                print("NpcManager: CampaignLoader available, but no direct way to get archetypes synchronously. Falling back to settings for archetypes.")
+                if isinstance(archetypes_list, list):
+                    for archetype_data in archetypes_list:
+                        if isinstance(archetype_data, dict) and 'id' in archetype_data:
+                            self._npc_archetypes[archetype_data['id']] = archetype_data
+                else:
+                    print(f"NpcManager: Could not load NPC archetypes, data from {source_description} is not a list.")
+                    # Keep source_description as is, it indicates where it tried to load from
+
+            except Exception as e:
+                print(f"NpcManager: Error loading NPC archetypes via CampaignLoader: {e}")
+                traceback.print_exc()
+                source_description = "settings (CampaignLoader failed)"
+                # Optionally, fallback to settings again here if CampaignLoader fails
                 if self._settings and 'npc_archetypes' in self._settings:
-                    archetypes_list = self._settings['npc_archetypes']
+                    archetypes_list_fallback = self._settings['npc_archetypes']
+                    if isinstance(archetypes_list_fallback, list):
+                        # Clear any partially loaded archetypes from failed CampaignLoader attempt
+                        self._npc_archetypes.clear()
+                        for archetype_data_fallback in archetypes_list_fallback:
+                            if isinstance(archetype_data_fallback, dict) and 'id' in archetype_data_fallback:
+                                self._npc_archetypes[archetype_data_fallback['id']] = archetype_data_fallback
+                    else:
+                        print(f"NpcManager: 'npc_archetypes' in {source_description} (fallback) is not a list.")
                 else:
-                    archetypes_list = [] # Ensure it's a list
+                    print(f"NpcManager: No 'npc_archetypes' found in {source_description} (fallback).")
 
-            if isinstance(archetypes_list, list):
-                for archetype_data in archetypes_list:
-                    if isinstance(archetype_data, dict) and 'id' in archetype_data:
-                        self._npc_archetypes[archetype_data['id']] = archetype_data
-                print(f"NpcManager: Finished loading {len(self._npc_archetypes)} NPC archetypes. Source should be indicated in logs above if specific path taken.")
-            else:
-                print("NpcManager: Could not load NPC archetypes, data from CampaignLoader/settings is not a list.")
 
-        except Exception as e:
-            print(f"NpcManager: Error loading NPC archetypes via CampaignLoader: {e}")
-            traceback.print_exc()
-            # Optionally, fallback to settings again here if CampaignLoader fails
-            if self._settings and 'npc_archetypes' in self._settings:
-                archetypes_list = self._settings['npc_archetypes']
-                if isinstance(archetypes_list, list):
-                    for archetype_data in archetypes_list:
-                        if isinstance(archetype_data, dict) and 'id' in archetype_data:
-                            self._npc_archetypes[archetype_data['id']] = archetype_data
-                    print(f"NpcManager: Loaded {len(self._npc_archetypes)} NPC archetypes from settings (CampaignLoader failed).")
+        if not self._npc_archetypes and source_description not in ["settings (CampaignLoader not available)", "settings (CampaignLoader had no direct archetype access)", "settings (CampaignLoader failed)"]:
+            # If still no archetypes and it wasn't a settings-specific fallback path already logged.
+            # This condition might need refinement based on exact desired logging for "none found".
+            # The goal is to capture if after all attempts, nothing was loaded.
+            # If source_description is already one of the "settings" paths, it implies it tried and found none there.
+             if not (self._settings and 'npc_archetypes' in self._settings): # Check if settings were even tried
+                source_description = "any configured source (none found)"
+
+
+        print(f"NpcManager: Loaded {len(self._npc_archetypes)} NPC archetypes from {source_description}.")
 
 
     # --- Методы получения ---
