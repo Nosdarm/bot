@@ -28,9 +28,10 @@ import bot.database.models # Assuming importing the package imports the relevant
 # --- END: Import models to populate metadata ---
 
 
+import asyncio # Add asyncio import
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import pool # engine_from_config will be replaced for async
+from sqlalchemy.ext.asyncio import create_async_engine # Import for async engine
 from alembic import context
 
 # assuming 'Base' is defined in bot.database.models and has a 'metadata' attribute
@@ -72,38 +73,41 @@ def run_migrations_online() -> None:
     In this scenario we need to create an Engine
     and associate a connection with the context.
     """
-    alembic_config = context.config
-
-    if alembic_config.config_file_name is not None:
-        fileConfig(alembic_config.config_file_name)
-
-    db_url = alembic_config.get_main_option("sqlalchemy.url")
+    # retrieve the SQLAlchemy URL from the alembic.ini file
+    db_url = context.config.get_main_option("sqlalchemy.url")
     if not db_url:
         raise ValueError("sqlalchemy.url is not set in alembic.ini for online CLI mode.")
 
+    # create an asyncio event loop and run the migration logic
+    # We create an async engine here.
     connectable = create_async_engine(db_url, poolclass=pool.NullPool)
 
-    def do_run_migrations(connection):
-        # Detect if we are running against SQLite
-        is_sqlite = connection.engine.dialect.name == 'sqlite'
-
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            compare_type=True,
-            compare_server_default=True,
-            render_as_batch=is_sqlite # Enable batch mode only for SQLite
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
-
-    async def run_migrations_async():
+    async def run_async_migrations():
+        """Wrapper to run migrations in an async context."""
         async with connectable.connect() as connection:
-            await connection.run_sync(do_run_migrations)
+            # Detect if we are running against SQLite (though less likely with asyncpg)
+            # For async, the dialect name might be different or this check might need adjustment
+            # However, render_as_batch is primarily for SQLite's limitations with ALTER TABLE.
+            # For PostgreSQL, batch mode is generally not needed.
+            is_sqlite = connection.dialect.name == 'sqlite'
 
-    asyncio.run(run_migrations_async())
+            await connection.run_sync(do_run_migrations, is_sqlite)
 
+    asyncio.run(run_async_migrations())
+
+
+def do_run_migrations(connection, is_sqlite: bool):
+    """Helper function to be called by await connection.run_sync()"""
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        compare_server_default=True,
+        render_as_batch=is_sqlite # Enable batch mode only for SQLite
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
 
 # This is the section for CLI execution or direct script run
 if context.is_offline_mode():
