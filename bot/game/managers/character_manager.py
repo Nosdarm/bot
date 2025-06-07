@@ -417,7 +417,7 @@ class CharacterManager:
         INSERT INTO players (
             id, discord_id, name, guild_id, current_location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
-            hp, max_health, is_alive, status_effects, level, experience, unspent_xp,
+            hp, max_health, is_alive, status_effects, level, xp, unspent_xp,
             selected_language, collected_actions_json,
             skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
@@ -441,7 +441,7 @@ class CharacterManager:
             data['is_alive'], # Boolean directly
             json.dumps(data['status_effects']),
             data['level'],
-            data['experience'],
+            data['experience'], # This is data['experience'] from the model, which maps to 'xp' column
             data['unspent_xp'],
             data['selected_language'],
             data['collected_actions_json'],
@@ -557,7 +557,7 @@ class CharacterManager:
                 id, discord_id, name, guild_id, current_location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
-                level, experience, unspent_xp, active_quests, known_spells,
+                level, xp, unspent_xp, active_quests, known_spells,
                 spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json,
                 character_class, selected_language, current_game_status, collected_actions_json, current_party_id
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
@@ -577,7 +577,7 @@ class CharacterManager:
                 is_alive = EXCLUDED.is_alive,
                 status_effects = EXCLUDED.status_effects,
                 level = EXCLUDED.level,
-                experience = EXCLUDED.experience,
+                xp = EXCLUDED.experience,
                 unspent_xp = EXCLUDED.unspent_xp,
                 active_quests = EXCLUDED.active_quests,
                 known_spells = EXCLUDED.known_spells,
@@ -767,7 +767,7 @@ class CharacterManager:
             sql = '''
             SELECT id, discord_id, name, guild_id, current_location_id, stats, inventory,
                    current_action, action_queue, party_id, state_variables, hp, max_health,
-                   is_alive, status_effects, race, mp, attack, defense, level, experience, unspent_xp,
+                   is_alive, status_effects, race, mp, attack, defense, level, xp AS experience, unspent_xp,
                    collected_actions_json, selected_language, current_game_status, current_party_id,
                    skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json,
                    active_quests, known_spells, spell_cooldowns -- Assuming these are also in Character.to_dict() / DB
@@ -1727,7 +1727,7 @@ class CharacterManager:
                 id, discord_id, name, guild_id, current_location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
-                level, experience, unspent_xp, active_quests, known_spells,
+                level, xp, unspent_xp, active_quests, known_spells,
                 spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json,
                 character_class, selected_language, current_game_status, collected_actions_json, current_party_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
@@ -1747,7 +1747,7 @@ class CharacterManager:
                 is_alive = EXCLUDED.is_alive,
                 status_effects = EXCLUDED.status_effects,
                 level = EXCLUDED.level,
-                experience = EXCLUDED.experience,
+                xp = EXCLUDED.experience,
                 unspent_xp = EXCLUDED.unspent_xp,
                 active_quests = EXCLUDED.active_quests,
                 known_spells = EXCLUDED.known_spells,
