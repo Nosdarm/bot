@@ -8,7 +8,7 @@ class Player(Base):
     __tablename__ = 'players'
 
     id = Column(String, primary_key=True)
-    discord_id = Column(Integer, nullable=True)
+    discord_id = Column(String, nullable=True)
     name = Column(String) # Assuming String for now, can be changed to JSON if needed
     current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
     selected_language = Column(String, nullable=True)
