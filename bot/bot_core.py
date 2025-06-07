@@ -76,7 +76,7 @@ class RPGBot(commands.Bot):
 
     async def load_all_cogs(self):
         logging.info(f"{datetime.now()} - RPGBot: load_all_cogs waiting for bot to be ready...")
-        await self.wait_until_ready() 
+        await self.wait_until_ready()
         logging.info(f"{datetime.now()} - RPGBot: Bot is ready, proceeding to load cogs.")
         
         cog_list = [
@@ -150,36 +150,41 @@ class RPGBot(commands.Bot):
         traceback.print_exc()
 
     async def on_ready(self):
-        logging.debug(f"{datetime.now()} - RPGBot: Entering on_ready handler...")
-        if self.user:
-            logging.info(f"{datetime.now()} - RPGBot: Logged in as {self.user.name} ({self.user.id})")
-        else:
-            logging.warning(f"{datetime.now()} - RPGBot: Bot logged in, but self.user is None.")
-        if self.game_manager:
-            logging.info(f"{datetime.now()} - RPGBot: GameManager is initialized in RPGBot.")
-        else:
-            logging.warning(f"{datetime.now()} - RPGBot: GameManager is NOT initialized in RPGBot at on_ready.")
-
-        logging.info(f"{datetime.now()} - RPGBot: Attempting to sync command tree...")
+        print("DEBUG_PRINT: RPGBot.on_ready CALLED") # New raw print
         try:
-            if self.debug_guild_ids:
-                logging.info(f"{datetime.now()} - RPGBot: Found {len(self.debug_guild_ids)} debug guild(s): {self.debug_guild_ids}")
-                for guild_id_val in self.debug_guild_ids:
-                    guild = discord.Object(id=guild_id_val)
-                    logging.info(f"{datetime.now()} - RPGBot: Syncing command tree for debug guild {guild_id_val}...")
-                    await self.tree.sync(guild=guild)
-                    logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree for debug guild {guild_id_val}.")
-                logging.info(f"{datetime.now()} - RPGBot: Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
+            # Existing on_ready code starts here
+            logging.debug(f"{datetime.now()} - RPGBot: Entering on_ready handler...")
+            if self.user:
+                logging.info(f"{datetime.now()} - RPGBot: Logged in as {self.user.name} ({self.user.id})")
             else:
-                logging.info(f"{datetime.now()} - RPGBot: Syncing command tree globally...")
-                await self.tree.sync()
-                logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree globally.")
-        except Exception as e:
-            logging.error(f"{datetime.now()} - RPGBot: Error during command tree sync: {e}", exc_info=True)
-        
-        logging.info(f"{datetime.now()} - RPGBot: Command tree synchronization process completed.")
-        logging.debug(f"{datetime.now()} - RPGBot: Exiting on_ready handler.")
-        logging.info(f"{datetime.now()} - RPGBot: Bot is ready!")
+                logging.warning(f"{datetime.now()} - RPGBot: Bot logged in, but self.user is None.")
+            if self.game_manager:
+                logging.info(f"{datetime.now()} - RPGBot: GameManager is initialized in RPGBot.")
+            else:
+                logging.warning(f"{datetime.now()} - RPGBot: GameManager is NOT initialized in RPGBot at on_ready.")
+
+            logging.info(f"{datetime.now()} - RPGBot: Attempting to sync command tree...")
+            try:
+                if self.debug_guild_ids:
+                    logging.info(f"{datetime.now()} - RPGBot: Found {len(self.debug_guild_ids)} debug guild(s): {self.debug_guild_ids}")
+                    for guild_id_val in self.debug_guild_ids:
+                        guild = discord.Object(id=guild_id_val)
+                        logging.info(f"{datetime.now()} - RPGBot: Syncing command tree for debug guild {guild_id_val}...")
+                        await self.tree.sync(guild=guild)
+                        logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree for debug guild {guild_id_val}.")
+                    logging.info(f"{datetime.now()} - RPGBot: Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
+                else:
+                    logging.info(f"{datetime.now()} - RPGBot: Syncing command tree globally...")
+                    await self.tree.sync()
+                    logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree globally.")
+            except Exception as e_sync: # Specific exception for tree sync
+                logging.error(f"{datetime.now()} - RPGBot: Error during command tree sync: {e_sync}", exc_info=True)
+
+            logging.info(f"{datetime.now()} - RPGBot: Command tree synchronization process completed.")
+            logging.debug(f"{datetime.now()} - RPGBot: Exiting on_ready handler.")
+            logging.info(f"{datetime.now()} - RPGBot: Bot is ready!")
+        except Exception as e_outer: # New outer wrapper
+            logging.exception(f"{datetime.now()} - RPGBot: UNHANDLED EXCEPTION IN ON_READY")
 
     async def on_message(self, message: discord.Message):
         if message.author.bot:
@@ -285,7 +290,7 @@ async def start_bot():
     print("DEBUG_PRINT: Entered start_bot() function.") # New diagnostic print
 
     global _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS, global_game_manager
-    
+
     print("DEBUG_PRINT: About to configure logging.") # New diagnostic print
     logging.basicConfig(
         level=logging.DEBUG,
@@ -373,8 +378,8 @@ async def start_bot():
 
     print("Starting Discord bot (RPGBot)...")
     # Avoid logging full token
-    print(f"RPGBot: Calling rpg_bot.start(TOKEN) with token: {'******' if TOKEN else 'None'}") 
-    
+    print(f"RPGBot: Calling rpg_bot.start(TOKEN) with token: {'******' if TOKEN else 'None'}")
+
     try:
         logging.info(f"{datetime.now()} - RPGBot Core: PRE - Attempting await rpg_bot.start(TOKEN)...")
         await rpg_bot.start(TOKEN)
@@ -390,9 +395,9 @@ async def start_bot():
     finally:
         print("RPGBot Core: Entered finally block for start_bot. Performing cleanup...")
         logging.info("RPGBot Core: Entered finally block for start_bot. Performing cleanup...")
-        
+
         # Use global_game_manager for consistency as it's set up for this
-        if global_game_manager: 
+        if global_game_manager:
             print("Shutting down GameManager...")
             logging.info("RPGBot Core: Shutting down GameManager...")
             try:
@@ -402,7 +407,7 @@ async def start_bot():
             except Exception as e_gm:
                 print(f"Error during GameManager shutdown: {e_gm}")
                 logging.exception("RPGBot Core: Error during GameManager shutdown.")
-        
+
         # Use _rpg_bot_instance_for_global_send for consistency
         if _rpg_bot_instance_for_global_send and not _rpg_bot_instance_for_global_send.is_closed():
             print("Closing Discord connection...")
