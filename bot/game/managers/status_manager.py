@@ -102,11 +102,25 @@ class StatusManager:
         print("StatusManager: Loading status templates...")
         self._status_templates = {}
         try:
-            if not self._settings:
-                print("StatusManager: Settings not available, cannot load status templates.")
+            if self._settings is None:
+                print("StatusManager: Error: Settings object is None. Cannot load status templates.")
+                return
+            if not isinstance(self._settings, dict):
+                print(f"StatusManager: Error: Settings object is not a dictionary (type: {type(self._settings)}). Cannot load status templates.")
                 return
 
-            raw_templates = self._settings.get('status_templates', {})
+            raw_templates = self._settings.get('status_templates')
+            if raw_templates is None:
+                print("StatusManager: 'status_templates' key not found in settings. Cannot load status templates.")
+                if not self._settings: # Check if the dict is empty
+                    print("StatusManager: Further info: The settings object is an empty dictionary.")
+                return
+            if not isinstance(raw_templates, dict):
+                print(f"StatusManager: 'status_templates' in settings is not a dictionary (type: {type(raw_templates)}). Cannot load status templates.")
+                return
+            # If raw_templates is an empty dict, it will be handled by the loop not running or specific checks if needed.
+            # The original code had a `if not raw_templates:` check here, which is now covered by the None check and type check.
+            # If it's an empty dict, it's valid but contains no templates.
             processed_templates = {}
             for template_id, template_data in raw_templates.items():
                 if not isinstance(template_data, dict):
