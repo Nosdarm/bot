@@ -96,6 +96,7 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
         character_name: str,
         player_language: Optional[str] = None
     ):
+        logging.info(f"Command /start_new_character received from {interaction.user.name} ({interaction.user.id}) with arguments: character_name={character_name}, player_language={player_language}")
         if not interaction.guild:
             await interaction.response.send_message(
                 "Эту команду можно использовать только на сервере.",
@@ -150,6 +151,7 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
             )
 
             if new_character:
+                logging.info(f"Command /start_new_character processed for {interaction.user.name} ({interaction.user.id}). Character created: {bool(new_character)}")
                 # If selected_language was provided and Character model has
                 # selected_language field
                 if (player_language and  # Break before and
@@ -180,14 +182,13 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
                     ephemeral=True
                 )
             else:
+                logging.warning(f"Command /start_new_character failed for {interaction.user.name} ({interaction.user.id}). Reason: Failed to create character.")
                 await interaction.followup.send(
                     f"Не удалось создать персонажа '{character_name}'.",
                     ephemeral=True
                 )
         except Exception as e:
-            logging.error(
-                f"Error in cmd_start_new_character: {e}", exc_info=True
-            )
+            logging.error(f"Command /start_new_character encountered an exception for {interaction.user.name} ({interaction.user.id}). Exception: {e}", exc_info=True)
             await interaction.followup.send(
                 f"Произошла ошибка при создании персонажа: {e}",
                 ephemeral=True
