@@ -399,6 +399,11 @@ class CharacterManager:
 
         # Data for Character.from_dict (Python types)
         model_data = data.copy()
+
+        # Align key for Character.from_dict
+        if 'discord_id' in model_data:
+            model_data['discord_user_id'] = model_data.pop('discord_id')
+
         model_data['name_i18n'] = name_i18n_data
         model_data['skills_data'] = []
         model_data['abilities_data'] = []
