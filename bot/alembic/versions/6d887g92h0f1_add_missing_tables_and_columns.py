@@ -7,7 +7,6 @@ Create Date: YYYY-MM-DD HH:MM:SS.MS
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql # For JSONB
 
 # revision identifiers, used by Alembic.
 revision = '6d887g92h0f1'
@@ -25,7 +24,7 @@ def upgrade():
         sa.Column('name', sa.String(), nullable=False),
         sa.Column('description', sa.Text(), nullable=True),
         sa.Column('type', sa.String(), nullable=True),
-        sa.Column('properties', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column('properties', sa.JSON(), nullable=True),
         sa.Column('guild_id', sa.String(), nullable=True), # Allowing global (NULL) and guild-specific
         sa.PrimaryKeyConstraint('id')
     )
@@ -38,7 +37,7 @@ def upgrade():
     # Alter locations table
     with op.batch_alter_table('locations', schema=None) as batch_op:
         batch_op.add_column(sa.Column('template_id', sa.String(), nullable=True))
-        batch_op.add_column(sa.Column('name_i18n', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
+        batch_op.add_column(sa.Column('name_i18n', sa.JSON(), nullable=True))
         # descriptions_i18n (plural) is assumed to exist from 5c3a0b7555c0 and is JSONB.
         # If it was JSON in SQLite and needs to be JSONB in PG, that's a type alteration.
         # For now, assuming it's compatible or was already JSONB.
@@ -46,29 +45,29 @@ def upgrade():
     # Alter generated_npcs table
     with op.batch_alter_table('generated_npcs', schema=None) as batch_op:
         batch_op.add_column(sa.Column('guild_id', sa.String(), nullable=True)) # Made nullable=True for safety
-        batch_op.add_column(sa.Column('name_i18n', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('role_i18n', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('personality_i18n', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('motivation_i18n', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('backstory_i18n', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('dialogue_hints_i18n', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('stats_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('skills_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('abilities_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('spells_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('inventory_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('faction_affiliations_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('relationships_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
+        batch_op.add_column(sa.Column('name_i18n', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('role_i18n', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('personality_i18n', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('motivation_i18n', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('backstory_i18n', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('dialogue_hints_i18n', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('stats_json', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('skills_json', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('abilities_json', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('spells_json', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('inventory_json', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('faction_affiliations_json', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('relationships_json', sa.JSON(), nullable=True))
         batch_op.add_column(sa.Column('current_location_id', sa.String(), nullable=True))
         batch_op.add_column(sa.Column('is_hostile', sa.Boolean(), nullable=True))
-        batch_op.add_column(sa.Column('ai_prompt_context_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
+        batch_op.add_column(sa.Column('ai_prompt_context_json', sa.JSON(), nullable=True))
         batch_op.drop_column('placeholder')
 
     # Create pending_conflicts table
     op.create_table('pending_conflicts',
         sa.Column('id', sa.String(), nullable=False),
         sa.Column('guild_id', sa.String(), nullable=False),
-        sa.Column('conflict_data', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('conflict_data', sa.JSON(), nullable=False),
         sa.Column('created_at', sa.TIMESTAMP(), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint('id')
     )
@@ -77,7 +76,7 @@ def upgrade():
     op.create_table('guild_settings',
         sa.Column('guild_id', sa.String(), nullable=False),
         sa.Column('key', sa.String(), nullable=False),
-        sa.Column('value', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('value', sa.JSON(), nullable=False),
         sa.PrimaryKeyConstraint('guild_id', 'key')
     )
 
@@ -91,8 +90,8 @@ def upgrade():
         batch_op.add_column(sa.Column('player_id', sa.String(), nullable=True))
         batch_op.add_column(sa.Column('event_type', sa.String(), nullable=False, server_default="unknown_event")) # temp default
         batch_op.add_column(sa.Column('message', sa.Text(), nullable=True))
-        batch_op.add_column(sa.Column('related_entities', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
-        batch_op.add_column(sa.Column('context_data', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
+        batch_op.add_column(sa.Column('related_entities', sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column('context_data', sa.JSON(), nullable=True))
         batch_op.add_column(sa.Column('is_undone', sa.Boolean(), nullable=False, server_default=sa.false()))
         batch_op.drop_column('placeholder')
     # Remove server_default after data backfill if necessary, for columns that shouldn't have defaults long-term
@@ -103,10 +102,10 @@ def upgrade():
     op.create_table('dialogues',
         sa.Column('id', sa.String(), nullable=False),
         sa.Column('guild_id', sa.String(), nullable=False),
-        sa.Column('participants', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('participants', sa.JSON(), nullable=False),
         sa.Column('channel_id', sa.String(), nullable=True),
-        sa.Column('conversation_history', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column('state_variables', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column('conversation_history', sa.JSON(), nullable=True),
+        sa.Column('state_variables', sa.JSON(), nullable=True),
         sa.Column('is_active', sa.Boolean(), nullable=True, default=True), # Default for Booleans
         sa.Column('last_activity_game_time', sa.TIMESTAMP(), nullable=True),
         sa.Column('current_stage_id', sa.String(), nullable=True),
@@ -128,7 +127,7 @@ def upgrade():
         sa.Column('guild_id', sa.String(), nullable=False),
         sa.Column('user_id', sa.String(), nullable=False),
         sa.Column('content_type', sa.String(), nullable=False),
-        sa.Column('data', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('data', sa.JSON(), nullable=False),
         sa.Column('status', sa.String(), nullable=False, default='pending'),
         sa.Column('created_at', sa.TIMESTAMP(), server_default=sa.func.now(), nullable=False),
         sa.Column('moderator_id', sa.String(), nullable=True),
