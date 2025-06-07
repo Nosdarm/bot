@@ -1550,44 +1550,18 @@ class NpcManager:
                 target_table = 'npcs'
 
             if target_table == 'generated_npcs':
-                # Ensure all necessary fields for generated_npcs are present in npc_data or defaulted
+                # generated_npcs table now only has id and placeholder
                 db_params = (
                     str(npc_id), # id
-                    guild_id_str, # guild_id
-                    json.dumps(_ensure_dict(npc_data.get('name_i18n', {}))), # name_i18n
-                    json.dumps(_ensure_dict(npc_data.get('role_i18n', {"en": "N/A"}))), # role_i18n
-                    json.dumps(_ensure_dict(npc_data.get('personality_i18n', {}))), # personality_i18n
-                    json.dumps(_ensure_dict(npc_data.get('motivation_i18n', {}))), # motivation_i18n
-                    json.dumps(_ensure_dict(npc_data.get('backstory_i18n', {}))), # backstory_i18n
-                    json.dumps(_ensure_dict(npc_data.get('dialogue_hints_i18n', {}))), # dialogue_hints_i18n
-                    json.dumps(_ensure_dict(npc_data.get('stats_data', npc_data.get('stats', {})), "strength")), # stats_json
-                    json.dumps(_ensure_list(npc_data.get('skills_data', []))), # skills_json
-                    json.dumps(_ensure_list(npc_data.get('abilities_data', []))), # abilities_json
-                    json.dumps(_ensure_list(npc_data.get('spells_data', []))), # spells_json
-                    json.dumps(_ensure_list(npc_data.get('inventory_data', npc_data.get('inventory',[])))), # inventory_json (fallback to simple inventory)
-                    json.dumps(_ensure_list(npc_data.get('faction_affiliations_data', npc_data.get('faction_affiliations', [])))), # faction_affiliations_json
-                    json.dumps(_ensure_dict(npc_data.get('relationships_data', npc_data.get('relationships', {})), "default_rel_key")), # relationships_json
-                    str(npc_data.get('location_id')) if npc_data.get('location_id') is not None else None, # current_location_id
-                    int(bool(npc_data.get('is_hostile', False))), # is_hostile
-                    json.dumps(_ensure_dict(npc_data.get('ai_prompt_context_data', {}), "prompt")) # ai_prompt_context_json
+                    # Use English name as placeholder, or a default if not available
+                    npc_data.get('name_i18n', {}).get('en', f"Generated NPC {str(npc_id)[:8]}")
                 )
                 upsert_sql = """
-                INSERT OR REPLACE INTO generated_npcs (
-                    id, guild_id, name_i18n, role_i18n, personality_i18n, motivation_i18n,
-                    backstory_i18n, dialogue_hints_i18n, stats_json, skills_json, abilities_json,
-                    spells_json, inventory_json, faction_affiliations_json, relationships_json,
-                    current_location_id, is_hostile, ai_prompt_context_json
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                INSERT INTO generated_npcs (id, placeholder)
+                VALUES ($1, $2)
                 ON CONFLICT (id) DO UPDATE SET
-                    guild_id=EXCLUDED.guild_id, name_i18n=EXCLUDED.name_i18n, role_i18n=EXCLUDED.role_i18n,
-                    personality_i18n=EXCLUDED.personality_i18n, motivation_i18n=EXCLUDED.motivation_i18n,
-                    backstory_i18n=EXCLUDED.backstory_i18n, dialogue_hints_i18n=EXCLUDED.dialogue_hints_i18n,
-                    stats_json=EXCLUDED.stats_json, skills_json=EXCLUDED.skills_json, abilities_json=EXCLUDED.abilities_json,
-                    spells_json=EXCLUDED.spells_json, inventory_json=EXCLUDED.inventory_json,
-                    faction_affiliations_json=EXCLUDED.faction_affiliations_json, relationships_json=EXCLUDED.relationships_json,
-                    current_location_id=EXCLUDED.current_location_id, is_hostile=EXCLUDED.is_hostile,
-                    ai_prompt_context_json=EXCLUDED.ai_prompt_context_json
-                """ # PostgreSQL UPSERT for generated_npcs
+                    placeholder = EXCLUDED.placeholder
+                """ # PostgreSQL UPSERT for generated_npcs (simplified)
             else: # target_table is 'npcs'
                 db_params = (
                     str(npc_id), # id
