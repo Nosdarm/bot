@@ -332,6 +332,20 @@ class DBService:
         max_health = float(stats.get('max_health', 50.0))
         current_health = float(stats.get('health', max_health)) # Current health can also be in stats or default to max
 
+        skills_data = kwargs.get('skills_data')
+        equipment_data = kwargs.get('equipment_data')
+        abilities_data = kwargs.get('abilities_data')
+        faction = kwargs.get('faction')
+        behavior_tags = kwargs.get('behavior_tags')
+        loot_table_id = kwargs.get('loot_table_id')
+
+        skills_data_json = json.dumps(skills_data) if skills_data is not None else None
+        equipment_data_json = json.dumps(equipment_data) if equipment_data is not None else None
+        abilities_data_json = json.dumps(abilities_data) if abilities_data is not None else None
+        faction_json = json.dumps(faction) if faction is not None else None
+        behavior_tags_json = json.dumps(behavior_tags) if behavior_tags is not None else None
+        # loot_table_id is a string, so no json.dumps needed if it's directly passed
+
         # Prepare data for JSON fields, ensuring None becomes empty JSON object/array
         name_i18n_json = json.dumps(name_i18n or {})
         description_i18n_json = json.dumps(description_i18n or {})
@@ -358,9 +372,9 @@ class DBService:
                 name_i18n, description_i18n, persona_i18n, backstory_i18n,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, health, max_health, is_alive, status_effects,
-                is_temporary, archetype, traits, desires, motives
+                is_temporary, archetype, traits, desires, motives, skills_data, equipment_data, abilities_data, faction, behavior_tags, loot_table_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
             RETURNING id;
         """
         params = (
@@ -368,7 +382,7 @@ class DBService:
             name_i18n_json, description_i18n_json, persona_i18n_json, backstory_i18n_json,
             stats_json, inventory_json, current_action_json, action_queue_json, party_id,
             state_variables_json, current_health, max_health, True, status_effects_json,
-            is_temporary, archetype, traits_json, desires_json, motives_json
+            is_temporary, archetype, traits_json, desires_json, motives_json, skills_data_json, equipment_data_json, abilities_data_json, faction_json, behavior_tags_json, loot_table_id
         )
 
         inserted_id = await self.adapter.execute_insert(sql, params)
@@ -378,8 +392,7 @@ class DBService:
             # For now, this method only saves to the 'npcs' table.
             # Example: if 'skills_data' was in kwargs, it's ignored by this direct INSERT.
             if kwargs:
-                # print(f"DBService.create_npc: Received additional kwargs not directly mapped to 'npcs' table columns: {list(kwargs.keys())}")
-                pass # Acknowledge kwargs without printing, or implement proper storage later.
+                pass
 
             return await self.get_npc(npc_id, guild_id)
         return None
