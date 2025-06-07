@@ -47,11 +47,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
         else:
             await interaction.followup.send("**Мастер:** GameManager недоступен.", ephemeral=True)
 
-async def setup(bot: commands.Bot):
-    await bot.add_cog(GMAppCog(bot)) # type: ignore
-    print("GMAppCog loaded.")
-
-# Correctly indented as a method of GMAppCog
+    # Correctly indented as a method of GMAppCog
     @app_commands.command(name="resolve_conflict", description="ГМ: Разрешить ожидающий конфликт.")
     @app_commands.describe(
         conflict_id="ID ожидающего конфликта для разрешения.",
@@ -130,3 +126,7 @@ async def setup(bot: commands.Bot):
             traceback.print_exc()
             await interaction.followup.send(f"**Мастер:** Произошла серьезная ошибка при обработке разрешения конфликта: {e}", ephemeral=True)
 # Make sure this method is part of the class by proper indentation
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(GMAppCog(bot)) # type: ignore
+    print("GMAppCog loaded.")
