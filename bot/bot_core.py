@@ -70,11 +70,14 @@ class RPGBot(commands.Bot):
         # The command tree will process the interaction further.
 
     async def setup_hook(self):
+        logging.info(f"{datetime.now()} - RPGBot: Entering setup_hook.")
         await self.load_all_cogs()
+        logging.info(f"{datetime.now()} - RPGBot: Exiting setup_hook (after load_all_cogs).")
 
     async def load_all_cogs(self):
-        await self.wait_until_ready() # Ensures bot is ready before loading extensions.
-        logging.info(f"{datetime.now()} - RPGBot: Starting to load all cogs...")
+        logging.info(f"{datetime.now()} - RPGBot: load_all_cogs waiting for bot to be ready...")
+        await self.wait_until_ready() 
+        logging.info(f"{datetime.now()} - RPGBot: Bot is ready, proceeding to load cogs.")
         
         cog_list = [
             "bot.command_modules.general_cmds",
@@ -148,7 +151,6 @@ class RPGBot(commands.Bot):
 
     async def on_ready(self):
         logging.debug(f"{datetime.now()} - RPGBot: Entering on_ready handler...")
-        logging.info(f"{datetime.now()} - RPGBot: on_ready event triggered.")
         if self.user:
             logging.info(f"{datetime.now()} - RPGBot: Logged in as {self.user.name} ({self.user.id})")
         else:
@@ -159,22 +161,25 @@ class RPGBot(commands.Bot):
             logging.warning(f"{datetime.now()} - RPGBot: GameManager is NOT initialized in RPGBot at on_ready.")
 
         logging.info(f"{datetime.now()} - RPGBot: Attempting to sync command tree...")
-        if self.debug_guild_ids:
-            logging.info(f"{datetime.now()} - RPGBot: Found {len(self.debug_guild_ids)} debug guild(s): {self.debug_guild_ids}")
-            for guild_id_val in self.debug_guild_ids:
-                guild = discord.Object(id=guild_id_val)
-                logging.info(f"{datetime.now()} - RPGBot: Syncing command tree for debug guild {guild_id_val}...")
-                await self.tree.sync(guild=guild)
-                logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree for debug guild {guild_id_val}.")
-            logging.info(f"{datetime.now()} - RPGBot: Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
-        else:
-            logging.info(f"{datetime.now()} - RPGBot: Syncing command tree globally...")
-            await self.tree.sync()
-            logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree globally.")
+        try:
+            if self.debug_guild_ids:
+                logging.info(f"{datetime.now()} - RPGBot: Found {len(self.debug_guild_ids)} debug guild(s): {self.debug_guild_ids}")
+                for guild_id_val in self.debug_guild_ids:
+                    guild = discord.Object(id=guild_id_val)
+                    logging.info(f"{datetime.now()} - RPGBot: Syncing command tree for debug guild {guild_id_val}...")
+                    await self.tree.sync(guild=guild)
+                    logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree for debug guild {guild_id_val}.")
+                logging.info(f"{datetime.now()} - RPGBot: Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
+            else:
+                logging.info(f"{datetime.now()} - RPGBot: Syncing command tree globally...")
+                await self.tree.sync()
+                logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree globally.")
+        except Exception as e:
+            logging.error(f"{datetime.now()} - RPGBot: Error during command tree sync: {e}", exc_info=True)
+        
         logging.info(f"{datetime.now()} - RPGBot: Command tree synchronization process completed.")
         logging.debug(f"{datetime.now()} - RPGBot: Exiting on_ready handler.")
         logging.info(f"{datetime.now()} - RPGBot: Bot is ready!")
-        # Replaced print with logging for consistency
 
     async def on_message(self, message: discord.Message):
         if message.author.bot:
@@ -277,22 +282,28 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
         print("Warning: _rpg_bot_instance_for_global_send not set. Cannot send message.")
 
 async def start_bot():
-    logging.info(f"{datetime.now()} - RPGBot Core: start_bot() called.")
-    global _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS, global_game_manager
+    print("DEBUG_PRINT: Entered start_bot() function.") # New diagnostic print
 
-    # Configure logging
+    global _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS, global_game_manager
+    
+    print("DEBUG_PRINT: About to configure logging.") # New diagnostic print
     logging.basicConfig(
         level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        force=True # Add force=True to ensure reconfiguration if already configured by another module
     )
+    # Ensure this log is right after basicConfig
+    logging.info(f"{datetime.now()} - RPGBot Core: start_bot() called.") # Existing, ensure it's here
+
     discord_logger = logging.getLogger('discord')
     discord_logger.setLevel(logging.DEBUG)
     discord_http_logger = logging.getLogger('discord.http')
     discord_http_logger.setLevel(logging.DEBUG)
 
-    print("--- RPG Bot Core: Starting ---")
+    print("--- RPG Bot Core: Starting ---") # Existing print
+    # logging.info(f"{datetime.now()} - RPGBot Core: --- RPG Bot Core: Starting ---") # This was moved up or duplicated by the required log line
     load_dotenv()
-    print(f"DEBUG: Value from os.getenv('DISCORD_TOKEN') AFTER load_dotenv(): {os.getenv('DISCORD_TOKEN')}")
+    # print(f"DEBUG: Value from os.getenv('DISCORD_TOKEN') AFTER load_dotenv(): {os.getenv('DISCORD_TOKEN')}") # Keep for debug if needed
 
     settings = load_settings_from_file('settings.json')
     data_settings = load_settings_from_file('data/settings.json')
@@ -350,48 +361,73 @@ async def start_bot():
     print("GameManager instantiated. Running setup...")
     game_manager_setup_successful = False
     try:
-        await game_manager.setup()
-        game_manager_setup_successful = True # Set flag on successful setup
-        if game_manager_setup_successful:
+        await game_manager.setup() # Ensure global_game_manager is used if game_manager is local
+        game_manager_setup_successful = True
+        if game_manager_setup_successful: # Redundant check, if setup fails it raises
             print("GameManager setup() successful.")
+            logging.info(f"{datetime.now()} - RPGBot Core: GameManager setup() successful.") # Added
     except Exception as e:
         print(f"❌ FATAL: GameManager.setup() failed: {e}")
-        traceback.print_exc()
-        return
+        logging.exception("RPGBot Core: FATAL - GameManager.setup() failed.")
+        return # Crucial: if GM setup fails, don't try to start the bot
 
     print("Starting Discord bot (RPGBot)...")
-    print("RPGBot: Calling rpg_bot.start(TOKEN)...")
-    print(f"RPGBot: Attempting to start with TOKEN: {TOKEN}")
-    logging.info(f"{datetime.now()} - RPGBot Core: Attempting to call rpg_bot.start(TOKEN)...")
+    # Avoid logging full token
+    print(f"RPGBot: Calling rpg_bot.start(TOKEN) with token: {'******' if TOKEN else 'None'}") 
+    
     try:
-        logging.info("RPGBot: rpg_bot.start(TOKEN) has been called.")
+        logging.info(f"{datetime.now()} - RPGBot Core: PRE - Attempting await rpg_bot.start(TOKEN)...")
         await rpg_bot.start(TOKEN)
     except discord.errors.LoginFailure:
         print("❌ FATAL: Invalid Discord token. Please check your DISCORD_TOKEN.")
+        logging.error("RPGBot Core: Discord login failure. Invalid token.")
+    except asyncio.CancelledError:
+        print("RPGBot Core: Bot startup was cancelled (e.g., KeyboardInterrupt).")
+        logging.info("RPGBot Core: Bot startup was cancelled.")
     except Exception as e:
-        print(f"❌ FATAL: RPGBot.start() error: {e}")
-        traceback.print_exc()
+        print(f"❌ FATAL: RPGBot.start() exited with error: {e}")
+        logging.exception("RPGBot Core: Error during rpg_bot.start() or general bot operation.")
     finally:
-        print("Application shutting down...")
-        if game_manager:
+        print("RPGBot Core: Entered finally block for start_bot. Performing cleanup...")
+        logging.info("RPGBot Core: Entered finally block for start_bot. Performing cleanup...")
+        
+        # Use global_game_manager for consistency as it's set up for this
+        if global_game_manager: 
             print("Shutting down GameManager...")
-            await game_manager.shutdown()
-            print("GameManager shutdown complete.")
-        if rpg_bot and not rpg_bot.is_closed():
+            logging.info("RPGBot Core: Shutting down GameManager...")
+            try:
+                await global_game_manager.shutdown()
+                print("GameManager shutdown complete.")
+                logging.info("RPGBot Core: GameManager shutdown complete.")
+            except Exception as e_gm:
+                print(f"Error during GameManager shutdown: {e_gm}")
+                logging.exception("RPGBot Core: Error during GameManager shutdown.")
+        
+        # Use _rpg_bot_instance_for_global_send for consistency
+        if _rpg_bot_instance_for_global_send and not _rpg_bot_instance_for_global_send.is_closed():
             print("Closing Discord connection...")
-            await rpg_bot.close()
-            print("Discord connection closed.")
+            logging.info("RPGBot Core: Closing Discord connection...")
+            try:
+                await _rpg_bot_instance_for_global_send.close()
+                print("Discord connection closed.")
+                logging.info("RPGBot Core: Discord connection closed.")
+            except Exception as e_dc:
+                print(f"Error during Discord connection close: {e_dc}")
+                logging.exception("RPGBot Core: Error during Discord connection close.")
+        logging.info("RPGBot Core: Cleanup in start_bot's finally block finished.")
 
 def run_bot():
     try:
         asyncio.run(start_bot())
     except KeyboardInterrupt:
-        print("Interrupted by user (KeyboardInterrupt), exiting.")
+        print("run_bot: KeyboardInterrupt caught by run_bot. asyncio.run() should handle task cancellation.")
+        logging.info("run_bot: KeyboardInterrupt caught by run_bot.")
     except Exception as e:
-        print(f"Error running bot: {e}")
-        traceback.print_exc()
+        print(f"run_bot: Unexpected error at top level: {e}")
+        logging.exception("run_bot: Unexpected error at top level.")
     finally:
-        print("Application finished.")
+        print("run_bot: Application finished.")
+        logging.info("run_bot: Application finished (from run_bot finally).") # Clarified source
 
 
 if __name__ == "__main__":
