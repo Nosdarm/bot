@@ -73,7 +73,6 @@ class RPGBot(commands.Bot):
         await self.load_all_cogs()
 
     async def load_all_cogs(self):
-        await self.wait_until_ready() # Ensures bot is ready before loading extensions.
         logging.info(f"{datetime.now()} - RPGBot: Starting to load all cogs...")
         
         cog_list = [
