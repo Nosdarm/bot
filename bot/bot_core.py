@@ -126,9 +126,11 @@ class RPGBot(commands.Bot):
             await interaction.response.send_message("Произошла непредвиденная ошибка при выполнении команды. Администратор был уведомлен.", ephemeral=True)
 
     async def on_connect(self):
-        logging.debug(f"{datetime.now()} - RPGBot: Entering on_connect handler...")
-        logging.info(f"{datetime.now()} - RPGBot: Discord Bot connected to Gateway!")
-        logging.debug(f"{datetime.now()} - RPGBot: Exiting on_connect handler.")
+        print("DEBUG_PRINT: RPGBot.on_connect CALLED") # New raw print
+        logging.info(f"{datetime.now()} - RPGBot: on_connect event successfully triggered.") # New log
+        logging.debug(f"{datetime.now()} - RPGBot: Entering on_connect handler...") # Existing log, kept for context
+        logging.info(f"{datetime.now()} - RPGBot: Discord Bot connected to Gateway!") # Existing log
+        logging.debug(f"{datetime.now()} - RPGBot: Exiting on_connect handler.") # Existing log, kept for context
 
     async def on_disconnect(self):
         # Attempt to determine if the disconnect was clean or not.
