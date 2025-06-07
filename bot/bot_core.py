@@ -249,6 +249,16 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
 async def start_bot():
     global _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS, global_game_manager
 
+    # Configure logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    discord_logger = logging.getLogger('discord')
+    discord_logger.setLevel(logging.DEBUG)
+    discord_http_logger = logging.getLogger('discord.http')
+    discord_http_logger.setLevel(logging.DEBUG)
+
     print("--- RPG Bot Core: Starting ---")
     load_dotenv()
     print(f"DEBUG: Value from os.getenv('DISCORD_TOKEN') AFTER load_dotenv(): {os.getenv('DISCORD_TOKEN')}")
@@ -288,6 +298,7 @@ async def start_bot():
     bot_intents.members = True
     bot_intents.guilds = True
     bot_intents.message_content = True
+    bot_intents.presences = True
 
     rpg_bot = RPGBot(
         game_manager=None,
@@ -322,6 +333,7 @@ async def start_bot():
     print(f"RPGBot: Attempting to start with TOKEN: {TOKEN}")
     try:
         await rpg_bot.start(TOKEN)
+        logging.info("RPGBot: rpg_bot.start(TOKEN) has been called.")
     except discord.errors.LoginFailure:
         print("❌ FATAL: Invalid Discord token. Please check your DISCORD_TOKEN.")
     except Exception as e:
