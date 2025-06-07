@@ -273,6 +273,7 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
         print("Warning: _rpg_bot_instance_for_global_send not set. Cannot send message.")
 
 async def start_bot():
+    logging.info(f"{datetime.now()} - RPGBot Core: start_bot() called.")
     global _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS, global_game_manager
 
     # Configure logging
@@ -357,9 +358,10 @@ async def start_bot():
     print("Starting Discord bot (RPGBot)...")
     print("RPGBot: Calling rpg_bot.start(TOKEN)...")
     print(f"RPGBot: Attempting to start with TOKEN: {TOKEN}")
+    logging.info(f"{datetime.now()} - RPGBot Core: Attempting to call rpg_bot.start(TOKEN)...")
     try:
-        await rpg_bot.start(TOKEN)
         logging.info("RPGBot: rpg_bot.start(TOKEN) has been called.")
+        await rpg_bot.start(TOKEN)
     except discord.errors.LoginFailure:
         print("❌ FATAL: Invalid Discord token. Please check your DISCORD_TOKEN.")
     except Exception as e:
