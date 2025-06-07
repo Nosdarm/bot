@@ -19,6 +19,7 @@ class Player(Base):
     current_game_status = Column(String, nullable=True)
     collected_actions_json = Column(JSON, nullable=True)
     current_party_id = Column(String, ForeignKey('parties.id'), nullable=True)
+    party_id = Column(String, ForeignKey('parties.id'), nullable=True)
     guild_id = Column(String, nullable=False)
     stats = Column(JSON, nullable=True)
     current_action = Column(String, nullable=True)

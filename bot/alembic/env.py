@@ -91,13 +91,15 @@ def run_migrations_online() -> None:
         # You can add a print here for verification if needed, but don't raise an error:
         # print(f"DEBUG: Tables in target_metadata (inside run_migrations_online after imports): {target_metadata.tables.keys()}")
 
+        # Detect if we are running against SQLite
+        is_sqlite = connection.engine.dialect.name == 'sqlite'
+
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
-            compare_server_default=True
-            # add render_as_batch=True here if using SQLite and needing batch mode for alter column
-            # render_as_batch=True
+            compare_server_default=True,
+            render_as_batch=is_sqlite # Enable batch mode only for SQLite
         )
 
         with context.begin_transaction():
