@@ -1,5 +1,6 @@
 import sys
 from os.path import abspath, dirname
+import asyncio
 
 # This adds the project root (directory containing 'bot') to sys.path
 # Ensure this path correction is correct for your project structure.
@@ -85,12 +86,7 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
-        # --- REMOVED Diagnostic Exception and sys.path.insert ---
-        # The target_metadata should be populated now because models were imported at the top.
-        # You can add a print here for verification if needed, but don't raise an error:
-        # print(f"DEBUG: Tables in target_metadata (inside run_migrations_online after imports): {target_metadata.tables.keys()}")
-
+    def do_run_migrations(connection):
         # Detect if we are running against SQLite
         is_sqlite = connection.engine.dialect.name == 'sqlite'
 
@@ -104,6 +100,12 @@ def run_migrations_online() -> None:
 
         with context.begin_transaction():
             context.run_migrations()
+
+    async def run_migrations_async():
+        async with connectable.connect() as connection:
+            await connection.run_sync(do_run_migrations)
+
+    asyncio.run(run_migrations_async())
 
 
 # This is the section for CLI execution or direct script run
