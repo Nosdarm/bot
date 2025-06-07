@@ -5,6 +5,7 @@ import json
 import discord
 import asyncio
 import traceback
+import logging
 from typing import Optional, Dict, Any, List
 
 # Правильные импорты для slash commands и контекста
@@ -55,6 +56,17 @@ class RPGBot(commands.Bot):
         global_openai_service = self.openai_service
         global global_game_manager
         global_game_manager = self.game_manager
+
+    async def on_interaction(self, interaction: discord.Interaction):
+        if interaction.type == discord.InteractionType.application_command:
+            command_name = interaction.data.get('name', 'Unknown Command')
+            logging.info(
+                f"Received application command '/{command_name}' "
+                f"from user {interaction.user.name} ({interaction.user.id}) "
+                f"in guild {interaction.guild_id or 'DM'} "
+                f"channel {interaction.channel_id or 'DM'}"
+            )
+        # The command tree will process the interaction further.
 
     async def setup_hook(self):
         await self.load_all_cogs()
