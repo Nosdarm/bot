@@ -114,16 +114,20 @@ class RPGBot(commands.Bot):
         if self.game_manager:
             print("GameManager is initialized in RPGBot.")
 
-        print('Syncing command tree...')
+        logging.info("Attempting to sync command tree...")
         if self.debug_guild_ids:
-            print(f"Debugging slash commands on guilds: {self.debug_guild_ids}")
+            logging.info(f"Found {len(self.debug_guild_ids)} debug guild(s): {self.debug_guild_ids}")
             for guild_id_val in self.debug_guild_ids:
                 guild = discord.Object(id=guild_id_val)
+                logging.info(f"Syncing command tree for debug guild {guild_id_val}...")
                 await self.tree.sync(guild=guild)
-            print(f"Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
+                logging.info(f"Successfully synced command tree for debug guild {guild_id_val}.")
+            logging.info(f"Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
         else:
+            logging.info("Syncing command tree globally...")
             await self.tree.sync()
-            print("Command tree synced globally.")
+            logging.info("Successfully synced command tree globally.")
+        logging.info("Command tree synchronization process completed.")
         print('Bot is ready!')
 
     async def on_message(self, message: discord.Message):
