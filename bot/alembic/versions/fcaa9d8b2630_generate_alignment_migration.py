@@ -20,41 +20,27 @@ depends_on: Union[str, Sequence[str], None] = None
 # Helper functions to make operations idempotent
 def table_exists(table_name):
     conn = op.get_bind()
-    # inspector = sa.inspect(conn) # Not available in offline mode if script is pre-generating SQL
-    # For online mode, this is fine.
     return conn.dialect.has_table(conn, table_name)
 
 def column_exists(table_name, column_name):
     conn = op.get_bind()
-    # inspector = sa.inspect(conn) # As above
     try:
-        # A more direct way that works in "online" block for PostgreSQL
-        # For other DBs, information_schema might differ.
-        # This check is simplified; a full inspector-based check is more robust
-        # but might not be available in all Alembic contexts (e.g. offline SQL generation).
         if conn.dialect.name == 'postgresql':
             result = conn.execute(sa.text(
                 f"SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name='{table_name}' AND column_name='{column_name}'"
             )).scalar_one_or_none()
             return result == 1
-        else: # Fallback for other dialects - less reliable, inspector is better
+        else:
             insp = sa.inspect(conn)
             columns = insp.get_columns(table_name)
             return any(c['name'] == column_name for c in columns)
     except Exception:
-        # If table doesn't exist or other reflection error.
         return False
 
 
 def try_drop_column(table_name, column_name):
-    # Only try to drop if table and column exist
-    # Note: batch_alter_table is preferred for SQLite, but direct op.drop_column is fine for PostgreSQL
     if column_exists(table_name, column_name):
-        # For PostgreSQL, direct op.drop_column is fine
         op.drop_column(table_name, column_name)
-        # For SQLite, it would be:
-        # with op.batch_alter_table(table_name) as batch_op:
-        #     batch_op.drop_column(column_name)
 
 
 def upgrade() -> None:
@@ -80,14 +66,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id')
         )
 
-    # These tables are confirmed not in models.py
     if table_exists('guild_settings'): op.drop_table('guild_settings')
     if table_exists('game_logs'): op.drop_table('game_logs')
     if table_exists('pending_conflicts'): op.drop_table('pending_conflicts')
     if table_exists('dialogues'): op.drop_table('dialogues')
     if table_exists('pending_moderation_requests'): op.drop_table('pending_moderation_requests')
 
-    # Modify generated_locations (model now only has id, placeholder)
     if table_exists('generated_locations'):
         if not column_exists('generated_locations', 'placeholder'):
             op.add_column('generated_locations', sa.Column('placeholder', sa.Text(), nullable=True))
@@ -95,7 +79,6 @@ def upgrade() -> None:
         try_drop_column('generated_locations', 'user_id')
         try_drop_column('generated_locations', 'generated_at')
 
-    # Modify generated_npcs (model now only has id, placeholder)
     if table_exists('generated_npcs'):
         if not column_exists('generated_npcs', 'placeholder'):
              op.add_column('generated_npcs', sa.Column('placeholder', sa.Text(), nullable=True))
@@ -117,26 +100,29 @@ def upgrade() -> None:
         try_drop_column('generated_npcs', 'spells_json')
         try_drop_column('generated_npcs', 'stats_json')
 
-    # Modify inventory table
     if table_exists('inventory'):
         if not column_exists('inventory', 'id'):
-             # The model 'Inventory' has id as PK. Defaulting to gen_random_uuid for existing rows.
              op.add_column('inventory', sa.Column('id', sa.String(), nullable=False, server_default=sa.text("gen_random_uuid()")))
-        try_drop_column('inventory', 'inventory_id') # Old PK part
-        try_drop_column('inventory', 'item_template_id') # Old FK
+        try_drop_column('inventory', 'inventory_id')
+        try_drop_column('inventory', 'item_template_id')
 
-    # Add missing columns identified from application errors
     if table_exists('locations'):
         if not column_exists('locations', 'is_active'):
             op.add_column('locations', sa.Column('is_active', sa.Boolean(), nullable=False, server_default=sa.true()))
 
-        # Type changes for locations
+        # Add name_i18n if it doesn't exist, then alter
+        if not column_exists('locations', 'name_i18n'):
+            op.add_column('locations', sa.Column('name_i18n', sa.JSON(), nullable=True))
         op.alter_column('locations', 'name_i18n',
-                existing_type=postgresql.JSONB(astext_type=sa.Text()),
+                existing_type=postgresql.JSONB(astext_type=sa.Text()), # This might fail if added as JSON already
                 type_=sa.JSON(),
                 existing_nullable=True)
+
+        # Add state_variables if it doesn't exist, then alter
+        if not column_exists('locations', 'state_variables'):
+            op.add_column('locations', sa.Column('state_variables', sa.JSON(), nullable=True))
         op.alter_column('locations', 'state_variables',
-                existing_type=postgresql.JSONB(astext_type=sa.Text()),
+                existing_type=postgresql.JSONB(astext_type=sa.Text()), # This might fail if added as JSON already
                 type_=sa.JSON(),
                 existing_nullable=True,
                 existing_server_default=False)
@@ -191,15 +177,24 @@ def downgrade() -> None:
     if table_exists('locations'):
         if column_exists('locations', 'is_active'):
             op.drop_column('locations', 'is_active')
+
+        # For name_i18n and state_variables, reverse the alter and then drop if they were added by this migration
         op.alter_column('locations', 'state_variables',
-               existing_type=sa.JSON(),
-               type_=postgresql.JSONB(astext_type=sa.Text()),
+               existing_type=sa.JSON(), # Current type
+               type_=postgresql.JSONB(astext_type=sa.Text()), # Target type for downgrade
                existing_nullable=True,
                server_default=sa.text("'{}'::jsonb"))
+        if column_exists('locations', 'state_variables_added_by_fcaa9d8b2630'): # Hypothetical flag if we knew it was added
+            op.drop_column('locations', 'state_variables')
+
+
         op.alter_column('locations', 'name_i18n',
-               existing_type=sa.JSON(),
-               type_=postgresql.JSONB(astext_type=sa.Text()),
+               existing_type=sa.JSON(), # Current type
+               type_=postgresql.JSONB(astext_type=sa.Text()), # Target type for downgrade
                existing_nullable=True)
+        if column_exists('locations', 'name_i18n_added_by_fcaa9d8b2630'): # Hypothetical flag
+            op.drop_column('locations', 'name_i18n')
+
 
     if table_exists('inventory'):
         try_drop_column('inventory', 'id')
@@ -211,16 +206,11 @@ def downgrade() -> None:
 
     if table_exists('generated_npcs'):
         try_drop_column('generated_npcs', 'placeholder')
-        # Add back other columns if they were part of acd0f397bcd8's definition of generated_npcs
 
     if table_exists('generated_locations'):
         try_drop_column('generated_locations', 'placeholder')
-        # Add back other columns if they were part of acd0f397bcd8's definition of generated_locations
 
     if table_exists('logs'):
         op.drop_table('logs')
 
-    # Restore dropped tables if they were part of acd0f397bcd8
-    # if not table_exists('guild_settings'): op.create_table('guild_settings', ...)
-    # ... and so on for other potentially dropped tables
     # ### END Manually added downgrade commands ###
