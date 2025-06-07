@@ -426,7 +426,7 @@ class CharacterManager:
         # Убедитесь, что порядок параметров соответствует колонкам в SQL
         db_params = (
             data['id'],
-            data['discord_id'], # Changed from discord_user_id
+            str(data['discord_id']), # Changed from discord_user_id
             json.dumps(data['name_i18n']), # Store name_i18n dict as JSON in 'name' column
             data['guild_id'], # <-- Параметр guild_id_str
             data['current_location_id'],
