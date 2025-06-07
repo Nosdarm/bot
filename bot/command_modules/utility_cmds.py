@@ -1,7 +1,6 @@
 import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
-from discord.app_commands import Choice as app_commands_Choice
 from typing import Optional, TYPE_CHECKING, Dict, Any, List, cast
 import traceback
 import json
@@ -64,45 +63,6 @@ class UtilityCog(commands.Cog, name="Utility"):
         except Exception as e:
             print(f"Error in /undo: {e}"); traceback.print_exc()
             await interaction.followup.send("Error undoing action.", ephemeral=True)
-
-
-    @app_commands.command(name="lang", description="Sets your preferred language for game messages.")
-    @app_commands.describe(language="Choose your language (русский/english)")
-    @app_commands.choices(language=[
-        app_commands_Choice(name="Русский", value="ru"),
-        app_commands_Choice(name="English", value="en")
-    ])
-    async def cmd_lang(self, interaction: Interaction, language: app_commands.Choice[str]):
-        await interaction.response.defer(ephemeral=True)
-        if not interaction.guild_id:
-            await interaction.followup.send("Use on a server.", ephemeral=True); return
-
-        bot_instance = self.bot # type: RPGBot
-        if not hasattr(bot_instance, 'game_manager') or bot_instance.game_manager is None:
-            await interaction.followup.send("GameManager is not available.", ephemeral=True)
-            return
-        game_mngr: "GameManager" = bot_instance.game_manager
-
-        if not game_mngr.character_manager:
-            await interaction.followup.send("CharacterManager is not available.", ephemeral=True)
-            return
-        character_manager: "CharacterManager" = game_mngr.character_manager
-
-        chosen_lang = language.value
-        try:
-            guild_id_str = str(interaction.guild_id)
-            player_char: Optional["Character"] = character_manager.get_character_by_discord_id(guild_id_str, interaction.user.id)
-            if not player_char:
-                await interaction.followup.send({"ru": "Создайте персонажа: /start_new_character.", "en": "Create character: /start_new_character."}.get(chosen_lang, "Create character first."), ephemeral=True); return
-
-            # Directly update attribute on model instance
-            setattr(player_char, 'selected_language', chosen_lang)
-            # Save the specific field
-            await character_manager.save_character_field(guild_id_str, player_char.id, 'selected_language', chosen_lang)
-            await interaction.followup.send({"ru": "Язык изменен на Русский.", "en": "Language changed to English."}[chosen_lang], ephemeral=True)
-        except Exception as e:
-            print(f"Error in /lang: {e}"); traceback.print_exc()
-            await interaction.followup.send("Error setting language.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(UtilityCog(bot)) # type: ignore
