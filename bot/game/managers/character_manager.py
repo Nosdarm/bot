@@ -554,7 +554,7 @@ class CharacterManager:
              # PostgreSQL UPSERT syntax
              upsert_sql = '''
              INSERT INTO players (
-                id, discord_user_id, name, guild_id, current_location_id,
+                id, discord_id, name, guild_id, current_location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, experience, unspent_xp, active_quests, known_spells,
@@ -562,7 +562,7 @@ class CharacterManager:
                 character_class, selected_language, current_game_status, collected_actions_json, current_party_id
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
              ON CONFLICT (id) DO UPDATE SET
-                discord_user_id = EXCLUDED.discord_user_id,
+                discord_id = EXCLUDED.discord_id,
                 name = EXCLUDED.name,
                 guild_id = EXCLUDED.guild_id,
                 current_location_id = EXCLUDED.current_location_id,
@@ -602,13 +602,13 @@ class CharacterManager:
                  try:
                      # Убеждаемся, что у объекта Character есть все нужные атрибуты
                      char_id = getattr(char_obj, 'id', None)
-                     discord_user_id = getattr(char_obj, 'discord_user_id', None)
+                     discord_id_val = getattr(char_obj, 'discord_id', None) # Changed from discord_user_id
                      # name_i18n is a dict on model, char_name is for logging
                      char_name_i18n_dict = getattr(char_obj, 'name_i18n', {"en": getattr(char_obj, 'name', "Unknown")})
                      char_guild_id = getattr(char_obj, 'guild_id', None)
 
                      # Дополнительная проверка на критически важные атрибуты и совпадение guild_id
-                     if char_id is None or discord_user_id is None or not char_name_i18n_dict or char_guild_id is None or str(char_guild_id) != guild_id_str:
+                     if char_id is None or discord_id_val is None or not char_name_i18n_dict or char_guild_id is None or str(char_guild_id) != guild_id_str: # Changed discord_user_id to discord_id_val
                          print(f"CharacterManager: Warning: Skipping upsert for character with missing mandatory attributes or mismatched guild ({getattr(char_obj, 'id', 'N/A')}, guild {getattr(char_obj, 'guild_id', 'N/A')}). Expected guild {guild_id_str}.")
                          continue # Пропускаем этого персонажа
 
@@ -671,7 +671,7 @@ class CharacterManager:
 
                      data_to_upsert.append((
                          char_id,
-                         discord_user_id,
+                         discord_id_val, # Changed from discord_user_id
                          json.dumps(char_name_i18n_dict), # Save name_i18n dict as JSON to 'name' column
                          guild_id_str,
                          current_location_id, # Use current_location_id
@@ -1732,7 +1732,7 @@ class CharacterManager:
                 character_class, selected_language, current_game_status, collected_actions_json, current_party_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
             ON CONFLICT (id) DO UPDATE SET
-                discord_user_id = EXCLUDED.discord_user_id,
+                discord_id = EXCLUDED.discord_id,
                 name = EXCLUDED.name,
                 guild_id = EXCLUDED.guild_id,
                 current_location_id = EXCLUDED.current_location_id, # Update current_location_id
