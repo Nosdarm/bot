@@ -106,6 +106,22 @@ class RPGBot(commands.Bot):
         else:
             await interaction.response.send_message("Произошла непредвиденная ошибка при выполнении команды. Администратор был уведомлен.", ephemeral=True)
 
+    async def on_connect(self):
+        logging.info("RPGBot: Discord Bot connected to Gateway!")
+
+    async def on_disconnect(self):
+        logging.warning("RPGBot: Discord Bot disconnected from Gateway!")
+
+    async def on_error(self, event_method: str, *args: Any, **kwargs: Any):
+        logging.error(f"RPGBot: Unhandled Discord event error in '{event_method}': Args: {args}, Kwargs: {kwargs}", exc_info=True)
+        # Also print to console for immediate visibility during development
+        print(f"ERROR: RPGBot: Unhandled Discord event error in '{event_method}'. Check logs for details.")
+        # You might want to print args and kwargs too, but they can be verbose.
+        # print(f"Args: {args}")
+        # print(f"Kwargs: {kwargs}")
+        import traceback
+        traceback.print_exc()
+
     async def on_ready(self):
         if self.user:
             print(f'Logged in as {self.user.name} ({self.user.id})')
@@ -302,6 +318,7 @@ async def start_bot():
         return
 
     print("Starting Discord bot (RPGBot)...")
+    print("RPGBot: Calling rpg_bot.start(TOKEN)...")
     try:
         await rpg_bot.start(TOKEN)
     except discord.errors.LoginFailure:
