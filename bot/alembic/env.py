@@ -30,6 +30,7 @@ import bot.database.models # Assuming importing the package imports the relevant
 
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.ext.asyncio import create_async_engine
 from alembic import context
 
 # assuming 'Base' is defined in bot.database.models and has a 'metadata' attribute
@@ -80,11 +81,7 @@ def run_migrations_online() -> None:
     if not db_url:
         raise ValueError("sqlalchemy.url is not set in alembic.ini for online CLI mode.")
 
-    connectable = engine_from_config(
-        alembic_config.get_section(alembic_config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = create_async_engine(db_url, poolclass=pool.NullPool)
 
     def do_run_migrations(connection):
         # Detect if we are running against SQLite
