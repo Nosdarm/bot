@@ -170,6 +170,12 @@ class NPC(Base): # Renamed from Npc to NPC for convention
     traits = Column(JSON, nullable=True)
     desires = Column(JSON, nullable=True)
     motives = Column(JSON, nullable=True)
+    skills_data = Column(JSON, nullable=True)
+    equipment_data = Column(JSON, nullable=True)
+    abilities_data = Column(JSON, nullable=True)
+    faction = Column(JSON, nullable=True)
+    behavior_tags = Column(JSON, nullable=True)
+    loot_table_id = Column(String, nullable=True)
 
     location = relationship("Location")
     party = relationship("Party")
