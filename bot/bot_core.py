@@ -75,9 +75,7 @@ class RPGBot(commands.Bot):
         logging.info(f"{datetime.now()} - RPGBot: Exiting setup_hook (after load_all_cogs).")
 
     async def load_all_cogs(self):
-        logging.info(f"{datetime.now()} - RPGBot: load_all_cogs waiting for bot to be ready...")
-        await self.wait_until_ready()
-        logging.info(f"{datetime.now()} - RPGBot: Bot is ready, proceeding to load cogs.")
+        logging.info(f"{datetime.now()} - RPGBot: Starting to load all cogs...")
         
         cog_list = [
             "bot.command_modules.general_cmds",
