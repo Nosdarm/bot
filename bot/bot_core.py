@@ -319,6 +319,7 @@ async def start_bot():
 
     print("Starting Discord bot (RPGBot)...")
     print("RPGBot: Calling rpg_bot.start(TOKEN)...")
+    print(f"RPGBot: Attempting to start with TOKEN: {TOKEN}")
     try:
         await rpg_bot.start(TOKEN)
     except discord.errors.LoginFailure:
