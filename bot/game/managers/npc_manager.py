@@ -185,7 +185,7 @@ class NpcManager:
                 for archetype_data in archetypes_list:
                     if isinstance(archetype_data, dict) and 'id' in archetype_data:
                         self._npc_archetypes[archetype_data['id']] = archetype_data
-                print(f"NpcManager: Loaded {len(self._npc_archetypes)} NPC archetypes via CampaignLoader/settings.")
+                print(f"NpcManager: Finished loading {len(self._npc_archetypes)} NPC archetypes. Source should be indicated in logs above if specific path taken.")
             else:
                 print("NpcManager: Could not load NPC archetypes, data from CampaignLoader/settings is not a list.")
 
@@ -1157,21 +1157,7 @@ class NpcManager:
         
         campaign_data: Optional[Dict[str, Any]] = kwargs.get('campaign_data')
         # ... (campaign data logging remains the same) ...
-        if campaign_data and isinstance(campaign_data.get("npc_archetypes"), list):
-            npc_archetypes_data = campaign_data["npc_archetypes"]
-            loaded_archetype_count = len(npc_archetypes_data)
-            print(f"NpcManager (load_state): Received {loaded_archetype_count} NPC archetypes from campaign_data for guild {guild_id_str}.")
-            if loaded_archetype_count > 0:
-                print("NpcManager (load_state): Example NPC archetypes received:")
-                for i, archetype_data in enumerate(npc_archetypes_data):
-                    if i < 3:
-                        print(f"  - ID: {archetype_data.get('id', 'N/A')}, Name: {archetype_data.get('name', 'N/A')}, Archetype: {archetype_data.get('archetype', 'N/A')}")
-                    else:
-                        break
-                if loaded_archetype_count > 3:
-                    print(f"  ... and {loaded_archetype_count - 3} more.")
-        else:
-            print(f"NpcManager (load_state): No NPC archetypes found in campaign_data for guild {guild_id_str} or format is incorrect.")
+        print(f"NpcManager (load_state): Received campaign_data for guild {guild_id_str}. Note: Global NPC archetypes are loaded during NpcManager initialization, not from this specific campaign_data pass.")
 
         print(f"NpcManager: Loading NPC instances for guild {guild_id_str} from DB...")
 

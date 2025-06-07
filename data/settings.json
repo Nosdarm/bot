@@ -5,122 +5,228 @@
     "temperature": 0.7,
     "model": "gpt-4-turbo-preview"
   },
-  "active_guild_ids": ["1364930265591320586"],
+  "active_guild_ids": [
+    "1364930265591320586"
+  ],
   "item_templates": {
     "potion_health_minor": {
-        "name_i18n": {
-            "en": "Minor Healing Potion",
-            "ru": "Малое зелье лечения"
-        },
-        "description_i18n": {
-            "en": "A common potion that restores a small amount of health.",
-            "ru": "Обычное зелье, восстанавливающее небольшое количество здоровья."
-        },
-        "type": "potion",
-        "icon": "🧪",
-        "weight": 0.1,
-        "value": 10,
-        "usable": true,
-        "consumable": true,
-        "properties": { "effect_type": "heal", "amount": 20, "target": "self", "sfx": "glug" }
+      "name_i18n": {
+        "en": "Minor Healing Potion",
+        "ru": "Малое зелье лечения"
+      },
+      "description_i18n": {
+        "en": "A common potion that restores a small amount of health.",
+        "ru": "Обычное зелье, восстанавливающее небольшое количество здоровья."
+      },
+      "type": "potion",
+      "icon": "🧪",
+      "weight": 0.1,
+      "value": 10,
+      "usable": true,
+      "consumable": true,
+      "properties": {
+        "effect_type": "heal",
+        "amount": 20,
+        "target": "self",
+        "sfx": "glug"
+      }
     },
     "sword_iron_short": {
-        "name_i18n": {
-            "en": "Iron Shortsword",
-            "ru": "Железный короткий меч"
-        },
-        "description_i18n": {
-            "en": "A basic but reliable iron shortsword.",
-            "ru": "Простой, но надежный железный короткий меч."
-        },
-        "type": "weapon",
-        "icon": "⚔️",
-        "weight": 1.5,
-        "value": 25,
-        "equipable": true,
-        "properties": { "damage": "1d6", "damage_type": "slashing", "skill_used": "short_blades", "equip_slot": "main_hand", "parry_bonus": 1 }
+      "name_i18n": {
+        "en": "Iron Shortsword",
+        "ru": "Железный короткий меч"
+      },
+      "description_i18n": {
+        "en": "A basic but reliable iron shortsword.",
+        "ru": "Простой, но надежный железный короткий меч."
+      },
+      "type": "weapon",
+      "icon": "⚔️",
+      "weight": 1.5,
+      "value": 25,
+      "equipable": true,
+      "properties": {
+        "damage": "1d6",
+        "damage_type": "slashing",
+        "skill_used": "short_blades",
+        "equip_slot": "main_hand",
+        "parry_bonus": 1
+      }
     },
     "leather_jerkin": {
-        "name_i18n": {
-            "en": "Leather Jerkin",
-            "ru": "Кожаная куртка"
-        },
-        "description_i18n": {
-            "en": "A simple leather jerkin offering basic protection.",
-            "ru": "Простая кожаная куртка, предлагающая базовую защиту."
-        },
-        "type": "armor",
-        "icon": "👕",
-        "weight": 2.0,
-        "value": 15,
-        "equipable": true,
-        "properties": { "defense": 3, "armor_type": "light", "equip_slot": "chest", "stealth_penalty": 0 }
+      "name_i18n": {
+        "en": "Leather Jerkin",
+        "ru": "Кожаная куртка"
+      },
+      "description_i18n": {
+        "en": "A simple leather jerkin offering basic protection.",
+        "ru": "Простая кожаная куртка, предлагающая базовую защиту."
+      },
+      "type": "armor",
+      "icon": "👕",
+      "weight": 2.0,
+      "value": 15,
+      "equipable": true,
+      "properties": {
+        "defense": 3,
+        "armor_type": "light",
+        "equip_slot": "chest",
+        "stealth_penalty": 0
+      }
     },
     "iron_ore_chunk": {
-        "name_i18n": {
-            "en": "Iron Ore Chunk",
-            "ru": "Кусок железной руды"
-        },
-        "description_i18n": {
-            "en": "A chunk of raw iron ore.",
-            "ru": "Кусок необработанной железной руды."
-        },
-        "type": "resource",
-        "icon": "🪨",
-        "weight": 0.5,
-        "value": 5,
-        "properties": { "stackable": true, "max_stack": 20, "crafting_material_type": "metal_ore" }
+      "name_i18n": {
+        "en": "Iron Ore Chunk",
+        "ru": "Кусок железной руды"
+      },
+      "description_i18n": {
+        "en": "A chunk of raw iron ore.",
+        "ru": "Кусок необработанной железной руды."
+      },
+      "type": "resource",
+      "icon": "🪨",
+      "weight": 0.5,
+      "value": 5,
+      "properties": {
+        "stackable": true,
+        "max_stack": 20,
+        "crafting_material_type": "metal_ore"
+      }
     },
     "gold_coin": {
-        "name_i18n": {
-            "en": "Gold Coin",
-            "ru": "Золотая монета"
-        },
-        "description_i18n": {
-            "en": "A standard gold coin.",
-            "ru": "Стандартная золотая монета."
-        },
-        "type": "currency",
-        "icon": "🪙",
-        "weight": 0.01,
-        "value": 1,
-        "properties": { "stackable": true }
+      "name_i18n": {
+        "en": "Gold Coin",
+        "ru": "Золотая монета"
+      },
+      "description_i18n": {
+        "en": "A standard gold coin.",
+        "ru": "Стандартная золотая монета."
+      },
+      "type": "currency",
+      "icon": "🪙",
+      "weight": 0.01,
+      "value": 1,
+      "properties": {
+        "stackable": true
+      }
     },
     "herb_leaf": {
-        "name_i18n": {"en": "Herb Leaf", "ru": "Лист травы"},
-        "description_i18n": {"en": "A common herb leaf, useful in potions.", "ru": "Обычный лист травы, полезен в зельях."},
-        "type": "resource", "icon": "🌿", "weight": 0.01, "value": 1,
-        "properties": {"stackable": true, "max_stack": 100, "crafting_material_type": "herb"}
+      "name_i18n": {
+        "en": "Herb Leaf",
+        "ru": "Лист травы"
+      },
+      "description_i18n": {
+        "en": "A common herb leaf, useful in potions.",
+        "ru": "Обычный лист травы, полезен в зельях."
+      },
+      "type": "resource",
+      "icon": "🌿",
+      "weight": 0.01,
+      "value": 1,
+      "properties": {
+        "stackable": true,
+        "max_stack": 100,
+        "crafting_material_type": "herb"
+      }
     },
     "iron_ingot": {
-        "name_i18n": {"en": "Iron Ingot", "ru": "Железный слиток"},
-        "description_i18n": {"en": "A bar of refined iron.", "ru": "Слиток очищенного железа."},
-        "type": "resource", "icon": "🔩", "weight": 1.0, "value": 10,
-        "properties": {"stackable": true, "max_stack": 20, "crafting_material_type": "metal_ingot"}
+      "name_i18n": {
+        "en": "Iron Ingot",
+        "ru": "Железный слиток"
+      },
+      "description_i18n": {
+        "en": "A bar of refined iron.",
+        "ru": "Слиток очищенного железа."
+      },
+      "type": "resource",
+      "icon": "🔩",
+      "weight": 1.0,
+      "value": 10,
+      "properties": {
+        "stackable": true,
+        "max_stack": 20,
+        "crafting_material_type": "metal_ingot"
+      }
     },
     "leather_strips": {
-        "name_i18n": {"en": "Leather Strips", "ru": "Кожаные полоски"},
-        "description_i18n": {"en": "Strips of tanned leather.", "ru": "Полоски дубленой кожи."},
-        "type": "resource", "icon": "🧵", "weight": 0.1, "value": 2,
-        "properties": {"stackable": true, "max_stack": 50, "crafting_material_type": "leather"}
+      "name_i18n": {
+        "en": "Leather Strips",
+        "ru": "Кожаные полоски"
+      },
+      "description_i18n": {
+        "en": "Strips of tanned leather.",
+        "ru": "Полоски дубленой кожи."
+      },
+      "type": "resource",
+      "icon": "🧵",
+      "weight": 0.1,
+      "value": 2,
+      "properties": {
+        "stackable": true,
+        "max_stack": 50,
+        "crafting_material_type": "leather"
+      }
     },
     "wood_stick": {
-        "name_i18n": {"en": "Wood Stick", "ru": "Деревянная палка"},
-        "description_i18n": {"en": "A sturdy wooden stick.", "ru": "Крепкая деревянная палка."},
-        "type": "resource", "icon": "🪵", "weight": 0.2, "value": 1,
-        "properties": {"stackable": true, "max_stack": 50, "crafting_material_type": "wood"}
+      "name_i18n": {
+        "en": "Wood Stick",
+        "ru": "Деревянная палка"
+      },
+      "description_i18n": {
+        "en": "A sturdy wooden stick.",
+        "ru": "Крепкая деревянная палка."
+      },
+      "type": "resource",
+      "icon": "🪵",
+      "weight": 0.2,
+      "value": 1,
+      "properties": {
+        "stackable": true,
+        "max_stack": 50,
+        "crafting_material_type": "wood"
+      }
     },
     "iron_pickaxe": {
-        "name_i18n": {"en": "Iron Pickaxe", "ru": "Железная кирка"},
-        "description_i18n": {"en": "A sturdy iron pickaxe for mining.", "ru": "Крепкая железная кирка для добычи руды."},
-        "type": "tool", "icon": "⛏️", "weight": 2.0, "value": 30, "equipable": true,
-        "properties": {"skill_used": "mining", "tool_type": "pickaxe", "equip_slot": "main_hand", "durability": 100}
+      "name_i18n": {
+        "en": "Iron Pickaxe",
+        "ru": "Железная кирка"
+      },
+      "description_i18n": {
+        "en": "A sturdy iron pickaxe for mining.",
+        "ru": "Крепкая железная кирка для добычи руды."
+      },
+      "type": "tool",
+      "icon": "⛏️",
+      "weight": 2.0,
+      "value": 30,
+      "equipable": true,
+      "properties": {
+        "skill_used": "mining",
+        "tool_type": "pickaxe",
+        "equip_slot": "main_hand",
+        "durability": 100
+      }
     },
     "iron_dagger": {
-        "name_i18n": {"en": "Iron Dagger", "ru": "Железный кинжал"},
-        "description_i18n": {"en": "A simple iron dagger.", "ru": "Простой железный кинжал."},
-        "type": "weapon", "icon": "🗡️", "weight": 0.5, "value": 15, "equipable": true,
-        "properties": { "damage": "1d4", "damage_type": "piercing", "skill_used": "short_blades", "equip_slot": "main_hand" }
+      "name_i18n": {
+        "en": "Iron Dagger",
+        "ru": "Железный кинжал"
+      },
+      "description_i18n": {
+        "en": "A simple iron dagger.",
+        "ru": "Простой железный кинжал."
+      },
+      "type": "weapon",
+      "icon": "🗡️",
+      "weight": 0.5,
+      "value": 15,
+      "equipable": true,
+      "properties": {
+        "damage": "1d4",
+        "damage_type": "piercing",
+        "skill_used": "short_blades",
+        "equip_slot": "main_hand"
+      }
     }
   },
   "status_templates": {
@@ -138,11 +244,18 @@
       "duration_type": "fixed",
       "default_duration_seconds": 180,
       "effects_per_tick": [
-        {"type": "damage", "amount": "1d2", "damage_type": "poison"}
+        {
+          "type": "damage",
+          "amount": "1d2",
+          "damage_type": "poison"
+        }
       ],
       "on_apply_effects": [],
       "on_remove_effects": [],
-      "stacking_rules": {"max_stacks": 1, "stack_behavior": "refresh_duration"}
+      "stacking_rules": {
+        "max_stacks": 1,
+        "stack_behavior": "refresh_duration"
+      }
     },
     "blessed_might": {
       "name_i18n": {
@@ -158,81 +271,310 @@
       "duration_type": "fixed",
       "default_duration_seconds": 600,
       "on_apply_effects": [
-        {"type": "stat_modifier", "stat": "strength", "modifier_type": "flat", "amount": 2}
+        {
+          "type": "stat_modifier",
+          "stat": "strength",
+          "modifier_type": "flat",
+          "amount": 2
+        }
       ],
-      "stacking_rules": {"max_stacks": 1, "stack_behavior": "refresh_duration"}
+      "stacking_rules": {
+        "max_stacks": 1,
+        "stack_behavior": "refresh_duration"
+      }
     }
   },
   "crafting_recipes": {
     "recipe_minor_healing_potion": {
-        "name_i18n": {"en": "Minor Healing Potion Recipe", "ru": "Рецепт малого зелья лечения"},
-        "description_i18n": {"en": "How to brew a Minor Healing Potion.", "ru": "Как сварить Малое зелье лечения."},
-        "skill_required": "herbalism",
-        "level_required": 1,
-        "ingredients": [
-            {"item_template_id": "herb_leaf", "quantity": 2}
-        ],
-        "results": [
-            {"item_template_id": "potion_health_minor", "quantity": 1}
-        ],
-        "crafting_time_seconds": 30,
-        "xp_reward": 25
+      "name_i18n": {
+        "en": "Minor Healing Potion Recipe",
+        "ru": "Рецепт малого зелья лечения"
+      },
+      "description_i18n": {
+        "en": "How to brew a Minor Healing Potion.",
+        "ru": "Как сварить Малое зелье лечения."
+      },
+      "skill_required": "herbalism",
+      "level_required": 1,
+      "ingredients": [
+        {
+          "item_template_id": "herb_leaf",
+          "quantity": 2
+        }
+      ],
+      "results": [
+        {
+          "item_template_id": "potion_health_minor",
+          "quantity": 1
+        }
+      ],
+      "crafting_time_seconds": 30,
+      "xp_reward": 25
     },
     "recipe_iron_dagger": {
-        "name_i18n": {"en": "Iron Dagger Recipe", "ru": "Рецепт железного кинжала"},
-        "description_i18n": {"en": "How to forge an Iron Dagger.", "ru": "Как выковать Железный кинжал."},
-        "skill_required": "blacksmithing",
-        "level_required": 1,
-        "ingredients": [
-            {"item_template_id": "iron_ingot", "quantity": 1},
-            {"item_template_id": "leather_strips", "quantity": 1}
-        ],
-        "results": [
-            {"item_template_id": "iron_dagger", "quantity": 1}
-        ],
-        "crafting_time_seconds": 120,
-        "xp_reward": 75
+      "name_i18n": {
+        "en": "Iron Dagger Recipe",
+        "ru": "Рецепт железного кинжала"
+      },
+      "description_i18n": {
+        "en": "How to forge an Iron Dagger.",
+        "ru": "Как выковать Железный кинжал."
+      },
+      "skill_required": "blacksmithing",
+      "level_required": 1,
+      "ingredients": [
+        {
+          "item_template_id": "iron_ingot",
+          "quantity": 1
+        },
+        {
+          "item_template_id": "leather_strips",
+          "quantity": 1
+        }
+      ],
+      "results": [
+        {
+          "item_template_id": "iron_dagger",
+          "quantity": 1
+        }
+      ],
+      "crafting_time_seconds": 120,
+      "xp_reward": 75
     },
     "recipe_iron_pickaxe": {
-        "name_i18n": {"en": "Iron Pickaxe Recipe", "ru": "Рецепт железной кирки"},
-        "description_i18n": {"en": "How to forge an Iron Pickaxe.", "ru": "Как выковать Железную кирку."},
-        "skill_required": "blacksmithing",
-        "level_required": 2,
-        "ingredients": [
-            {"item_template_id": "iron_ingot", "quantity": 2},
-            {"item_template_id": "wood_stick", "quantity": 1}
-        ],
-        "results": [
-            {"item_template_id": "iron_pickaxe", "quantity": 1}
-        ],
-        "crafting_time_seconds": 180,
-        "xp_reward": 100
+      "name_i18n": {
+        "en": "Iron Pickaxe Recipe",
+        "ru": "Рецепт железной кирки"
+      },
+      "description_i18n": {
+        "en": "How to forge an Iron Pickaxe.",
+        "ru": "Как выковать Железную кирку."
+      },
+      "skill_required": "blacksmithing",
+      "level_required": 2,
+      "ingredients": [
+        {
+          "item_template_id": "iron_ingot",
+          "quantity": 2
+        },
+        {
+          "item_template_id": "wood_stick",
+          "quantity": 1
+        }
+      ],
+      "results": [
+        {
+          "item_template_id": "iron_pickaxe",
+          "quantity": 1
+        }
+      ],
+      "crafting_time_seconds": 180,
+      "xp_reward": 100
     }
   },
   "location_templates": {
     "loc_template_forest_clearing_common": {
-        "name_i18n": {"en": "Forest Clearing", "ru": "Лесная Поляна"},
-        "description_i18n": {
-            "en": "A generic clearing in a forest, possibly with some common resources or wildlife.",
-            "ru": "Обычная поляна в лесу, возможно с некоторыми ресурсами или дикой живностью."
-        },
-        "tags": ["forest", "clearing", "natural"],
-        "possible_resources": ["wood_stick", "herb_leaf"],
-        "possible_npcs": ["deer_common", "wolf_common"],
-        "base_difficulty": 1,
-        "icon": "🌳"
+      "name_i18n": {
+        "en": "Forest Clearing",
+        "ru": "Лесная Поляна"
+      },
+      "description_i18n": {
+        "en": "A generic clearing in a forest, possibly with some common resources or wildlife.",
+        "ru": "Обычная поляна в лесу, возможно с некоторыми ресурсами или дикой живностью."
+      },
+      "tags": [
+        "forest",
+        "clearing",
+        "natural"
+      ],
+      "possible_resources": [
+        "wood_stick",
+        "herb_leaf"
+      ],
+      "possible_npcs": [
+        "deer_common",
+        "wolf_common"
+      ],
+      "base_difficulty": 1,
+      "icon": "🌳"
     },
     "loc_template_cave_entrance_rocky": {
-        "name_i18n": {"en": "Rocky Cave Entrance", "ru": "Скалистый Вход в Пещеру"},
-        "description_i18n": {
-            "en": "The dark entrance to a cave, set into a rocky cliff face. It might hide dangers or treasures.",
-            "ru": "Темный вход в пещеру, расположенный в скалистом утесе. Он может скрывать опасности или сокровища."
-        },
-        "tags": ["cave", "entrance", "rocky", "mountain"],
-        "possible_resources": ["iron_ore_chunk", "stone"],
-        "possible_npcs": ["bat_swarm_common", "goblin_scout_weak"],
-        "base_difficulty": 2,
-        "icon": "⛰️"
+      "name_i18n": {
+        "en": "Rocky Cave Entrance",
+        "ru": "Скалистый Вход в Пещеру"
+      },
+      "description_i18n": {
+        "en": "The dark entrance to a cave, set into a rocky cliff face. It might hide dangers or treasures.",
+        "ru": "Темный вход в пещеру, расположенный в скалистом утесе. Он может скрывать опасности или сокровища."
+      },
+      "tags": [
+        "cave",
+        "entrance",
+        "rocky",
+        "mountain"
+      ],
+      "possible_resources": [
+        "iron_ore_chunk",
+        "stone"
+      ],
+      "possible_npcs": [
+        "bat_swarm_common",
+        "goblin_scout_weak"
+      ],
+      "base_difficulty": 2,
+      "icon": "⛰️"
+    },
+    "town_square": {
+      "name_i18n": {
+        "en": "Town Square",
+        "ru": "[RU] Town Square"
+      },
+      "description_i18n": {
+        "en": "A bustling town square with a fountain in the center. Cobblestone paths lead in various directions.",
+        "ru": "[RU] A bustling town square with a fountain in the center. Cobblestone paths lead in various directions."
+      },
+      "exits": {
+        "tavern": "tavern",
+        "market_street": "market_street",
+        "guild_hall": "guild_hall",
+        "city_gate": "city_gate"
+      }
+    },
+    "tavern": {
+      "name_i18n": {
+        "en": "The Drunken Dragon Tavern",
+        "ru": "[RU] The Drunken Dragon Tavern"
+      },
+      "description_i18n": {
+        "en": "A cozy, dimly lit tavern filled with the murmur of adventurers and locals. The air smells of ale and stew.",
+        "ru": "[RU] A cozy, dimly lit tavern filled with the murmur of adventurers and locals. The air smells of ale and stew."
+      },
+      "exits": {
+        "town_square": "town_square"
+      }
+    },
+    "market_street": {
+      "name_i18n": {
+        "en": "Market Street",
+        "ru": "[RU] Market Street"
+      },
+      "description_i18n": {
+        "en": "A vibrant, busy street lined with colorful market stalls. Merchants hawk their wares, and shoppers haggle for goods.",
+        "ru": "[RU] A vibrant, busy street lined with colorful market stalls. Merchants hawk their wares, and shoppers haggle for goods."
+      },
+      "exits": {
+        "town_square": "town_square",
+        "alchemist_shop": "alchemist_shop"
+      }
+    },
+    "guild_hall": {
+      "name_i18n": {
+        "en": "Adventurers' Guild Hall",
+        "ru": "[RU] Adventurers' Guild Hall"
+      },
+      "description_i18n": {
+        "en": "A grand hall with high ceilings and walls adorned with maps and trophies. A large board displays available quests.",
+        "ru": "[RU] A grand hall with high ceilings and walls adorned with maps and trophies. A large board displays available quests."
+      },
+      "exits": {
+        "town_square": "town_square"
+      }
+    },
+    "city_gate": {
+      "name_i18n": {
+        "en": "Main City Gate",
+        "ru": "[RU] Main City Gate"
+      },
+      "description_i18n": {
+        "en": "The main gate of the city, heavily fortified and guarded. A wide road leads out into the wilderness.",
+        "ru": "[RU] The main gate of the city, heavily fortified and guarded. A wide road leads out into the wilderness."
+      },
+      "exits": {
+        "town_square": "town_square",
+        "wilderness_ crossroads": "wilderness_ crossroads"
+      }
+    },
+    "alchemist_shop": {
+      "name_i18n": {
+        "en": "The Alchemist's Brew",
+        "ru": "[RU] The Alchemist's Brew"
+      },
+      "description_i18n": {
+        "en": "A shop filled with bubbling concoctions, strange ingredients, and the scent of exotic herbs.",
+        "ru": "[RU] A shop filled with bubbling concoctions, strange ingredients, and the scent of exotic herbs."
+      },
+      "exits": {
+        "market_street": "market_street"
+      }
+    },
+    "wilderness_crossroads": {
+      "name_i18n": {
+        "en": "Wilderness Crossroads",
+        "ru": "[RU] Wilderness Crossroads"
+      },
+      "description_i18n": {
+        "en": "A dusty crossroads outside the city. Paths lead into the forest, towards the mountains, and along the river.",
+        "ru": "[RU] A dusty crossroads outside the city. Paths lead into the forest, towards the mountains, and along the river."
+      },
+      "exits": {
+        "city_gate": "city_gate",
+        "forest_path": "forest_path",
+        "mountain_trail": "mountain_trail"
+      }
+    },
+    "forest_path": {
+      "name_i18n": {
+        "en": "Forest Path",
+        "ru": "[RU] Forest Path"
+      },
+      "description_i18n": {
+        "en": "A winding path leading into a dark and ancient forest.",
+        "ru": "[RU] A winding path leading into a dark and ancient forest."
+      },
+      "exits": {
+        "wilderness_crossroads": "wilderness_crossroads",
+        "clearing_deepwood": "clearing_deepwood"
+      }
+    },
+    "mountain_trail": {
+      "name_i18n": {
+        "en": "Mountain Trail",
+        "ru": "[RU] Mountain Trail"
+      },
+      "description_i18n": {
+        "en": "A steep and rocky trail ascending into the nearby mountains.",
+        "ru": "[RU] A steep and rocky trail ascending into the nearby mountains."
+      },
+      "exits": {
+        "wilderness_crossroads": "wilderness_crossroads",
+        "cave_entrance": "cave_entrance"
+      }
+    },
+    "clearing_deepwood": {
+      "name_i18n": {
+        "en": "Clearing in Deepwood",
+        "ru": "[RU] Clearing in Deepwood"
+      },
+      "description_i18n": {
+        "en": "A small, sun-dappled clearing deep within the forest. Ancient ruins are barely visible through the undergrowth.",
+        "ru": "[RU] A small, sun-dappled clearing deep within the forest. Ancient ruins are barely visible through the undergrowth."
+      },
+      "exits": {
+        "forest_path": "forest_path"
+      }
+    },
+    "cave_entrance": {
+      "name_i18n": {
+        "en": "Cave Entrance",
+        "ru": "[RU] Cave Entrance"
+      },
+      "description_i18n": {
+        "en": "A dark and foreboding cave entrance at the foot of the mountains.",
+        "ru": "[RU] A dark and foreboding cave entrance at the foot of the mountains."
+      },
+      "exits": {
+        "mountain_trail": "mountain_trail"
+      }
     }
   },
   "game_rules": {
