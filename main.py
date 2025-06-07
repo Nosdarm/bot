@@ -3,6 +3,8 @@
 Основной файл для запуска Discord-бота.
 Этот файл теперь делегирует всю логику инициализации и запуска бота модулю bot.bot_core.
 """
+from dotenv import load_dotenv
+load_dotenv()
 
 import asyncio
 from bot.bot_core import run_bot # Импортируем новую функцию запуска
