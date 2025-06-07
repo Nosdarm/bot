@@ -378,7 +378,8 @@ class DBService:
             # For now, this method only saves to the 'npcs' table.
             # Example: if 'skills_data' was in kwargs, it's ignored by this direct INSERT.
             if kwargs:
-                print(f"DBService.create_npc: Received additional kwargs not directly mapped to 'npcs' table columns: {list(kwargs.keys())}")
+                # print(f"DBService.create_npc: Received additional kwargs not directly mapped to 'npcs' table columns: {list(kwargs.keys())}")
+                pass # Acknowledge kwargs without printing, or implement proper storage later.
 
             return await self.get_npc(npc_id, guild_id)
         return None
