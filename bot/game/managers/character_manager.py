@@ -482,9 +482,9 @@ class CharacterManager:
 
             # ИСПРАВЛЕНИЕ: Добавляем персонажа в per-guild кеши
             self._characters.setdefault(guild_id_str, {})[char.id] = char
-            if char.discord_id is not None: # Changed from discord_user_id
+            if char.discord_user_id is not None: # Changed from discord_user_id
                  # Убеждаемся, что discord_user_id является хэшируемым типом (int)
-                 self._discord_to_char_map.setdefault(guild_id_str, {})[char.discord_id] = char.id # Мапа discord_id -> char_id (per-guild)
+                 self._discord_to_char_map.setdefault(guild_id_str, {})[char.discord_user_id] = char.id # Мапа discord_user_id -> char_id (per-guild)
 
 
             # ИСПРАВЛЕНИЕ: Отмечаем как грязный для этой гильдии
@@ -878,7 +878,9 @@ class CharacterManager:
 
                 # Update data dict with validated/converted values
                 data['id'] = char_id
-                data['discord_id'] = discord_user_id_int # Changed from discord_user_id
+                if 'discord_id' in data: # If the original key from DB was 'discord_id' (which it is, as per SQL SELECT)
+                    data.pop('discord_id') # Remove it before setting the new key
+                data['discord_user_id'] = discord_user_id_int # Set the correct key for Character.from_dict
                 data['guild_id'] = loaded_guild_id
                 # Ensure list fields are actually lists after potential JSON parsing issues
                 for list_field in ['inventory', 'action_queue', 'status_effects', 'skills_data', 'abilities_data', 'spells_data', 'active_quests', 'known_spells']:
