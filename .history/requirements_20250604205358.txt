@@ -1,7 +1,0 @@
-discord.py
-openai
-python-dotenv
-pytest
-pydanticaiosqlite
-SQLAlchemy
-alembic

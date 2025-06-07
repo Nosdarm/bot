@@ -6,6 +6,7 @@ import discord
 import asyncio
 import traceback
 import logging
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 # Правильные импорты для slash commands и контекста
@@ -72,22 +73,37 @@ class RPGBot(commands.Bot):
         await self.load_all_cogs()
 
     async def load_all_cogs(self):
-        await self.wait_until_ready()
-        print("RPGBot: Loading Cogs...")
-        try:
-            await self.load_extension("bot.command_modules.general_cmds")
-            await self.load_extension("bot.command_modules.game_setup_cmds")
-            await self.load_extension("bot.command_modules.exploration_cmds")
-            await self.load_extension("bot.command_modules.action_cmds")
-            await self.load_extension("bot.command_modules.gm_app_cmds")
-            await self.load_extension("bot.command_modules.inventory_cmds")
-            await self.load_extension("bot.command_modules.party_cmds")
-            await self.load_extension("bot.command_modules.utility_cmds")
-            print("RPGBot: All command module Cogs loaded.")
-        except Exception as e:
-            print(f"RPGBot: Error loading cogs: {e}")
-            import traceback
-            traceback.print_exc()
+        await self.wait_until_ready() # Ensures bot is ready before loading extensions.
+        logging.info(f"{datetime.now()} - RPGBot: Starting to load all cogs...")
+        
+        cog_list = [
+            "bot.command_modules.general_cmds",
+            "bot.command_modules.game_setup_cmds",
+            "bot.command_modules.exploration_cmds",
+            "bot.command_modules.action_cmds",
+            "bot.command_modules.gm_app_cmds",
+            "bot.command_modules.inventory_cmds",
+            "bot.command_modules.party_cmds",
+            "bot.command_modules.utility_cmds"
+        ]
+        
+        all_cogs_loaded_successfully = True
+        for cog_name in cog_list:
+            try:
+                logging.info(f"{datetime.now()} - RPGBot: Attempting to load cog '{cog_name}'...")
+                await self.load_extension(cog_name)
+                logging.info(f"{datetime.now()} - RPGBot: Successfully loaded cog '{cog_name}'.")
+            except Exception as e:
+                logging.error(f"{datetime.now()} - RPGBot: Failed to load cog '{cog_name}'. Error: {e}", exc_info=True)
+                # Print traceback for immediate visibility during development
+                import traceback
+                traceback.print_exc()
+                all_cogs_loaded_successfully = False # Mark that at least one cog failed
+
+        if all_cogs_loaded_successfully:
+            logging.info(f"{datetime.now()} - RPGBot: All command module Cogs loaded successfully.")
+        else:
+            logging.error(f"{datetime.now()} - RPGBot: Finished loading cogs, but one or more cogs failed to load.")
 
     async def on_tree_command_error(self, interaction: Interaction, error: app_commands.AppCommandError):
         import traceback
@@ -107,15 +123,21 @@ class RPGBot(commands.Bot):
             await interaction.response.send_message("Произошла непредвиденная ошибка при выполнении команды. Администратор был уведомлен.", ephemeral=True)
 
     async def on_connect(self):
-        logging.info("RPGBot: Discord Bot connected to Gateway!")
+        logging.info(f"{datetime.now()} - RPGBot: Discord Bot connected to Gateway!")
 
     async def on_disconnect(self):
-        logging.warning("RPGBot: Discord Bot disconnected from Gateway!")
+        # Attempt to determine if the disconnect was clean or not.
+        # This is a basic check; discord.py might not always provide explicit flags for unexpected disconnects here.
+        # For more detailed analysis, one might need to handle specific exceptions in the main run loop or specific tasks.
+        if self.is_closed(): # is_closed() is True if close() was called.
+            logging.info(f"{datetime.now()} - RPGBot: Discord Bot disconnected from Gateway (Planned).")
+        else:
+            logging.warning(f"{datetime.now()} - RPGBot: Discord Bot disconnected from Gateway (Unexpected).")
 
     async def on_error(self, event_method: str, *args: Any, **kwargs: Any):
-        logging.error(f"RPGBot: Unhandled Discord event error in '{event_method}': Args: {args}, Kwargs: {kwargs}", exc_info=True)
+        logging.error(f"{datetime.now()} - RPGBot: Unhandled Discord event error in '{event_method}': Args: {args}, Kwargs: {kwargs}", exc_info=True)
         # Also print to console for immediate visibility during development
-        print(f"ERROR: RPGBot: Unhandled Discord event error in '{event_method}'. Check logs for details.")
+        print(f"ERROR: {datetime.now()} - RPGBot: Unhandled Discord event error in '{event_method}'. Check logs for details.")
         # You might want to print args and kwargs too, but they can be verbose.
         # print(f"Args: {args}")
         # print(f"Kwargs: {kwargs}")
@@ -123,28 +145,32 @@ class RPGBot(commands.Bot):
         traceback.print_exc()
 
     async def on_ready(self):
+        logging.info(f"{datetime.now()} - RPGBot: on_ready event triggered.")
         if self.user:
-            print(f'Logged in as {self.user.name} ({self.user.id})')
+            logging.info(f"{datetime.now()} - RPGBot: Logged in as {self.user.name} ({self.user.id})")
         else:
-            print("Bot logged in, but self.user is None.")
+            logging.warning(f"{datetime.now()} - RPGBot: Bot logged in, but self.user is None.")
         if self.game_manager:
-            print("GameManager is initialized in RPGBot.")
+            logging.info(f"{datetime.now()} - RPGBot: GameManager is initialized in RPGBot.")
+        else:
+            logging.warning(f"{datetime.now()} - RPGBot: GameManager is NOT initialized in RPGBot at on_ready.")
 
-        logging.info("Attempting to sync command tree...")
+        logging.info(f"{datetime.now()} - RPGBot: Attempting to sync command tree...")
         if self.debug_guild_ids:
-            logging.info(f"Found {len(self.debug_guild_ids)} debug guild(s): {self.debug_guild_ids}")
+            logging.info(f"{datetime.now()} - RPGBot: Found {len(self.debug_guild_ids)} debug guild(s): {self.debug_guild_ids}")
             for guild_id_val in self.debug_guild_ids:
                 guild = discord.Object(id=guild_id_val)
-                logging.info(f"Syncing command tree for debug guild {guild_id_val}...")
+                logging.info(f"{datetime.now()} - RPGBot: Syncing command tree for debug guild {guild_id_val}...")
                 await self.tree.sync(guild=guild)
-                logging.info(f"Successfully synced command tree for debug guild {guild_id_val}.")
-            logging.info(f"Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
+                logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree for debug guild {guild_id_val}.")
+            logging.info(f"{datetime.now()} - RPGBot: Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
         else:
-            logging.info("Syncing command tree globally...")
+            logging.info(f"{datetime.now()} - RPGBot: Syncing command tree globally...")
             await self.tree.sync()
-            logging.info("Successfully synced command tree globally.")
-        logging.info("Command tree synchronization process completed.")
-        print('Bot is ready!')
+            logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree globally.")
+        logging.info(f"{datetime.now()} - RPGBot: Command tree synchronization process completed.")
+        logging.info(f"{datetime.now()} - RPGBot: Bot is ready!")
+        # Replaced print with logging for consistency
 
     async def on_message(self, message: discord.Message):
         if message.author.bot:
@@ -249,6 +275,16 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
 async def start_bot():
     global _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS, global_game_manager
 
+    # Configure logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    discord_logger = logging.getLogger('discord')
+    discord_logger.setLevel(logging.DEBUG)
+    discord_http_logger = logging.getLogger('discord.http')
+    discord_http_logger.setLevel(logging.DEBUG)
+
     print("--- RPG Bot Core: Starting ---")
     load_dotenv()
     print(f"DEBUG: Value from os.getenv('DISCORD_TOKEN') AFTER load_dotenv(): {os.getenv('DISCORD_TOKEN')}")
@@ -288,6 +324,7 @@ async def start_bot():
     bot_intents.members = True
     bot_intents.guilds = True
     bot_intents.message_content = True
+    bot_intents.presences = True
 
     rpg_bot = RPGBot(
         game_manager=None,
@@ -322,6 +359,7 @@ async def start_bot():
     print(f"RPGBot: Attempting to start with TOKEN: {TOKEN}")
     try:
         await rpg_bot.start(TOKEN)
+        logging.info("RPGBot: rpg_bot.start(TOKEN) has been called.")
     except discord.errors.LoginFailure:
         print("❌ FATAL: Invalid Discord token. Please check your DISCORD_TOKEN.")
     except Exception as e:
