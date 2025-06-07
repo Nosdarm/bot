@@ -123,7 +123,9 @@ class RPGBot(commands.Bot):
             await interaction.response.send_message("Произошла непредвиденная ошибка при выполнении команды. Администратор был уведомлен.", ephemeral=True)
 
     async def on_connect(self):
+        logging.debug(f"{datetime.now()} - RPGBot: Entering on_connect handler...")
         logging.info(f"{datetime.now()} - RPGBot: Discord Bot connected to Gateway!")
+        logging.debug(f"{datetime.now()} - RPGBot: Exiting on_connect handler.")
 
     async def on_disconnect(self):
         # Attempt to determine if the disconnect was clean or not.
@@ -145,6 +147,7 @@ class RPGBot(commands.Bot):
         traceback.print_exc()
 
     async def on_ready(self):
+        logging.debug(f"{datetime.now()} - RPGBot: Entering on_ready handler...")
         logging.info(f"{datetime.now()} - RPGBot: on_ready event triggered.")
         if self.user:
             logging.info(f"{datetime.now()} - RPGBot: Logged in as {self.user.name} ({self.user.id})")
@@ -169,6 +172,7 @@ class RPGBot(commands.Bot):
             await self.tree.sync()
             logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree globally.")
         logging.info(f"{datetime.now()} - RPGBot: Command tree synchronization process completed.")
+        logging.debug(f"{datetime.now()} - RPGBot: Exiting on_ready handler.")
         logging.info(f"{datetime.now()} - RPGBot: Bot is ready!")
         # Replaced print with logging for consistency
 
