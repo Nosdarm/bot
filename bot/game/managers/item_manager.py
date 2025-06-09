@@ -313,6 +313,105 @@ class ItemManager:
         self.mark_item_dirty(guild_id_str, item_id_str)
         return True
 
+    async def revert_item_creation(self, guild_id: str, item_id: str, **kwargs: Any) -> bool:
+        """Reverts the creation of an item by removing its instance."""
+        print(f"ItemManager.revert_item_creation: Attempting to remove item {item_id} for guild {guild_id}.")
+        success = await self.remove_item_instance(guild_id, item_id, **kwargs)
+        if success:
+            print(f"ItemManager.revert_item_creation: Successfully removed item {item_id} for guild {guild_id}.")
+        else:
+            print(f"ItemManager.revert_item_creation: Failed to remove item {item_id} for guild {guild_id}.")
+        return success
+
+    async def revert_item_deletion(self, guild_id: str, item_data: Dict[str, Any], **kwargs: Any) -> bool:
+        """Reverts the deletion of an item by recreating it from its data."""
+        item_id_to_recreate = item_data.get('id')
+        if not item_id_to_recreate:
+            print(f"ItemManager.revert_item_deletion: Invalid item_data, missing 'id'. Cannot revert deletion for guild {guild_id}.")
+            return False
+
+        print(f"ItemManager.revert_item_deletion: Attempting to recreate item {item_id_to_recreate} for guild {guild_id} from data: {item_data}")
+
+        # Check if item already exists (e.g., partial undo)
+        existing_item = self.get_item_instance(guild_id, item_id_to_recreate)
+        if existing_item:
+            print(f"ItemManager.revert_item_deletion: Item {item_id_to_recreate} already exists in guild {guild_id}. Assuming already reverted.")
+            # Potentially verify if existing_item matches item_data and update if necessary,
+            # but for now, if it exists, consider it done.
+            return True
+
+        try:
+            # Ensure all necessary fields for Item.from_dict are present or have defaults
+            # Item.from_dict should be robust enough or we need to ensure item_data is complete
+            # based on Item model's requirements.
+            item_data.setdefault('guild_id', guild_id) # Ensure guild_id is in the data for from_dict
+            item_data.setdefault('state_variables', item_data.get('state_variables', {}))
+            item_data.setdefault('is_temporary', item_data.get('is_temporary', False))
+            # Ensure quantity is float for Item model
+            item_data['quantity'] = float(item_data.get('quantity', 1.0))
+
+
+            newly_created_item_object = Item.from_dict(item_data)
+
+            # Save_item handles adding to caches and DB persistence.
+            # It's crucial that save_item correctly handles an item with a pre-existing ID
+            # by performing an UPSERT or by checking existence before INSERT.
+            # Based on save_item's current UPSERT logic, this should be fine.
+            save_success = await self.save_item(newly_created_item_object, guild_id)
+
+            if save_success:
+                print(f"ItemManager.revert_item_deletion: Successfully recreated and saved item {item_id_to_recreate} for guild {guild_id}.")
+                return True
+            else:
+                print(f"ItemManager.revert_item_deletion: Failed to save recreated item {item_id_to_recreate} for guild {guild_id}.")
+                return False
+        except Exception as e:
+            print(f"ItemManager.revert_item_deletion: Error during item recreation for {item_id_to_recreate} in guild {guild_id}: {e}")
+            traceback.print_exc()
+            return False
+
+    async def revert_item_update(self, guild_id: str, item_id: str, old_field_values: Dict[str, Any], **kwargs: Any) -> bool:
+        """Reverts specific fields of an item to their old values."""
+        item = self.get_item_instance(guild_id, item_id)
+        if not item:
+            print(f"ItemManager.revert_item_update: Item {item_id} not found in guild {guild_id}. Cannot revert update.")
+            return False
+
+        print(f"ItemManager.revert_item_update: Reverting fields for item {item_id} in guild {guild_id}. Old values: {old_field_values}")
+
+        old_item_dict_for_lookup = item.to_dict() # Capture state before this specific revert
+
+        for field_name, old_value in old_field_values.items():
+            if hasattr(item, field_name):
+                # Special handling for quantity to ensure it's float
+                if field_name == 'quantity' and old_value is not None:
+                    try:
+                        setattr(item, field_name, float(old_value))
+                    except ValueError:
+                        print(f"ItemManager.revert_item_update: Invalid old_value '{old_value}' for quantity on item {item_id}. Skipping field.")
+                        continue
+                else:
+                    setattr(item, field_name, old_value)
+            else:
+                print(f"ItemManager.revert_item_update: Warning - Item {item_id} has no attribute '{field_name}'. Skipping field.")
+
+        new_item_dict_for_lookup = item.to_dict() # Capture state after this specific revert
+
+        # Check if owner or location changed to update lookup caches
+        owner_changed = (old_item_dict_for_lookup.get('owner_id') != new_item_dict_for_lookup.get('owner_id') or
+                         old_item_dict_for_lookup.get('owner_type') != new_item_dict_for_lookup.get('owner_type'))
+
+        location_changed = old_item_dict_for_lookup.get('location_id') != new_item_dict_for_lookup.get('location_id')
+
+        if owner_changed or location_changed:
+            print(f"ItemManager.revert_item_update: Owner or location changed for item {item_id}. Updating lookup caches.")
+            self._update_lookup_caches_remove(guild_id, old_item_dict_for_lookup) # Remove based on state *before* this revert
+            self._update_lookup_caches_add(guild_id, new_item_dict_for_lookup)   # Add based on state *after* this revert
+
+        self.mark_item_dirty(guild_id, item_id)
+        print(f"ItemManager.revert_item_update: Successfully reverted fields for item {item_id} in guild {guild_id}.")
+        return True
+
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         guild_id_str = str(guild_id)
         if self._db_service is None or self._db_service.adapter is None: # Changed

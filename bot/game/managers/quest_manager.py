@@ -546,6 +546,129 @@ class QuestManager:
         # print(f"Quest '{quest_id_str}' failed for character '{character_id_str}'.")
         return True
 
+    async def revert_quest_start(self, guild_id: str, character_id: str, quest_id: str, **kwargs: Any) -> bool:
+        """Reverts the start of a quest for a character."""
+        guild_id_str = str(guild_id)
+        character_id_str = str(character_id)
+        quest_id_str = str(quest_id)
+
+        char_active_quests = self._active_quests.get(guild_id_str, {}).get(character_id_str, {})
+
+        if quest_id_str in char_active_quests:
+            del char_active_quests[quest_id_str]
+            # If the character's quest dict becomes empty, remove the character entry
+            if not char_active_quests:
+                if guild_id_str in self._active_quests and character_id_str in self._active_quests[guild_id_str]:
+                    del self._active_quests[guild_id_str][character_id_str]
+                # If the guild's active quest dict becomes empty, remove the guild entry
+                if guild_id_str in self._active_quests and not self._active_quests[guild_id_str]:
+                    del self._active_quests[guild_id_str]
+
+            self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+            print(f"QuestManager.revert_quest_start: Successfully reverted start of quest {quest_id_str} for character {character_id_str} in guild {guild_id_str}.")
+            return True
+        else:
+            print(f"QuestManager.revert_quest_start: Warning: Quest {quest_id_str} not found active for character {character_id_str} in guild {guild_id_str}. Cannot revert start.")
+            return False
+
+    async def revert_quest_status_change(self, guild_id: str, character_id: str, quest_id: str, old_status: str, old_quest_data: Dict[str, Any], **kwargs: Any) -> bool:
+        """Reverts a quest's status to a previous state."""
+        guild_id_str = str(guild_id)
+        character_id_str = str(character_id)
+        quest_id_str = str(quest_id)
+
+        char_active_quests = self._active_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, {})
+        char_completed_quests = self._completed_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, [])
+
+        # current_quest_data = char_active_quests.get(quest_id_str) # Not needed with current logic flow
+        is_currently_completed = quest_id_str in char_completed_quests
+        # is_currently_failed = ... (if you have a separate failed list)
+
+        if old_status == "active": # Reverting to 'active' (e.g., from completed/failed)
+            if is_currently_completed:
+                char_completed_quests[:] = [qid for qid in char_completed_quests if qid != quest_id_str]
+            # if is_currently_failed:
+            #     # remove from failed list
+            #     pass
+
+            # Restore the full quest data as it was when active
+            char_active_quests[quest_id_str] = old_quest_data.copy() # Store a copy
+            char_active_quests[quest_id_str]['status'] = old_status # Ensure status is correctly set
+            print(f"QuestManager.revert_quest_status_change: Quest {quest_id_str} for char {character_id_str} restored to active state from old data.")
+
+        elif quest_id_str in char_active_quests : # Reverting status of an already active quest to something else (e.g. active -> failed)
+            char_active_quests[quest_id_str]['status'] = old_status
+            # Potentially update other fields from old_quest_data if needed for this transition
+            # For example, if reverting from a specific stage back to 'active' but before objectives were done:
+            # char_active_quests[quest_id_str]['progress'] = old_quest_data.get('progress', {})
+            # char_active_quests[quest_id_str]['current_stage_id'] = old_quest_data.get('current_stage_id', 'start')
+            print(f"QuestManager.revert_quest_status_change: Quest {quest_id_str} for char {character_id_str} status changed to {old_status}.")
+
+            # If the new old_status is not 'active', it should be removed from active_quests
+            # and potentially added to completed_quests or a failed_quests list.
+            if old_status == "completed":
+                if quest_id_str not in char_completed_quests:
+                    char_completed_quests.append(quest_id_str)
+                del char_active_quests[quest_id_str] # Remove from active
+            elif old_status == "failed":
+                # Add to a failed list if one exists, then remove from active
+                # For now, just remove from active if changed to failed
+                del char_active_quests[quest_id_str]
+                print(f"QuestManager.revert_quest_status_change: Quest {quest_id_str} for char {character_id_str} moved to '{old_status}' and removed from active list.")
+
+
+        else: # Quest not in active_quests and old_status is not 'active'
+            print(f"QuestManager.revert_quest_status_change: Warning: Active quest {quest_id_str} not found for character {character_id_str} in guild {guild_id_str} to revert status to {old_status}.")
+            # If the quest is not in active list (e.g. it was completed/failed and removed),
+            # and we are reverting to a non-active status, this might be an issue or imply
+            # the quest should be moved to a different list (e.g. failed list if old_status is 'failed').
+            # This block handles if the quest should be, for example, 'failed' and it's not in active list.
+            if old_status == "completed":
+                if quest_id_str not in char_completed_quests:
+                    char_completed_quests.append(quest_id_str)
+                # Ensure it's not in active if it was somehow there
+                if quest_id_str in char_active_quests: del char_active_quests[quest_id_str]
+            elif old_status == "failed":
+                # Add to failed list if exists, ensure not in active/completed
+                if quest_id_str in char_active_quests: del char_active_quests[quest_id_str]
+                if quest_id_str in char_completed_quests:
+                    char_completed_quests[:] = [qid for qid in char_completed_quests if qid != quest_id_str]
+                # print(f"Quest {quest_id_str} for char {character_id_str} marked as '{old_status}' (was not active).")
+            else: # Unknown non-active old_status
+                print(f"QuestManager.revert_quest_status_change: Quest {quest_id_str} not active and old_status is '{old_status}'. No specific list to move to.")
+                return False
+
+
+        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+        print(f"QuestManager.revert_quest_status_change: Successfully reverted quest {quest_id_str} status to '{old_status}' for character {character_id_str} in guild {guild_id_str}.")
+        return True
+
+    async def revert_quest_progress_update(self, guild_id: str, character_id: str, quest_id: str, objective_id: str, old_progress: Any, **kwargs: Any) -> bool:
+        """Reverts the progress of a specific quest objective."""
+        guild_id_str = str(guild_id)
+        character_id_str = str(character_id)
+        quest_id_str = str(quest_id)
+        objective_id_str = str(objective_id)
+
+        quest_data = self._active_quests.get(guild_id_str, {}).get(character_id_str, {}).get(quest_id_str)
+
+        if not quest_data:
+            print(f"QuestManager.revert_quest_progress_update: Error: Active quest '{quest_id_str}' not found for character '{character_id_str}'. Cannot revert progress.")
+            return False
+
+        if quest_data.get("status") != "active":
+            print(f"QuestManager.revert_quest_progress_update: Warning: Quest '{quest_id_str}' for character '{character_id_str}' is not active (status: {quest_data.get('status')}). Cannot revert progress for objective {objective_id_str}.")
+            return False
+
+        if not isinstance(quest_data.get('progress'), dict):
+            quest_data['progress'] = {} # Initialize if not a dict
+
+        quest_data['progress'][objective_id_str] = old_progress
+
+        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+        print(f"QuestManager.revert_quest_progress_update: Successfully reverted progress for objective '{objective_id_str}' in quest '{quest_id_str}' to '{old_progress}' for character {character_id_str}.")
+        return True
+
     # Instruction 12: load_state and save_state consistent with dict structure
     def load_state(self, guild_id: str, character_id: str, data: List[Dict[str, Any]]) -> None:
         """

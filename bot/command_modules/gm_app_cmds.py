@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING, Optional, Dict, Any # For type hints
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot # For type hinting self.bot
-    # from bot.game.managers.game_manager import GameManager (already on RPGBot)
+    from bot.game.managers.game_manager import GameManager
+    from bot.game.managers.character_manager import CharacterManager
+    from bot.game.managers.party_manager import PartyManager
+    from bot.game.managers.undo_manager import UndoManager
     # from bot.game.conflict_resolver import ConflictResolver (already on GameManager)
 
 class GMAppCog(commands.Cog, name="GM App Commands"):
@@ -182,6 +185,139 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             print(f"Error in cmd_gm_delete_character: {e}")
             traceback.print_exc()
             await interaction.followup.send(f"**Мастер:** Произошла ошибка при удалении персонажа: {e}", ephemeral=True)
+
+    @app_commands.command(name="master_undo", description="ГМ: Отменить последнее событие для игрока или партии.")
+    @app_commands.describe(
+        num_steps="Количество последних событий для отмены (по умолчанию 1).",
+        entity_id="ID игрока или партии, для которого отменяются события. Если не указано, действие не будет выполнено."
+    )
+    async def cmd_master_undo(self, interaction: Interaction, num_steps: Optional[int] = 1, entity_id: Optional[str] = None):
+        if not await is_master_or_admin_check(interaction):
+            await interaction.response.send_message("**Мастер:** Только Мастера Игры могут использовать эту команду.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        if not interaction.guild_id:
+            await interaction.followup.send("**Мастер:** Эту команду можно использовать только на сервере.", ephemeral=True)
+            return
+        guild_id_str = str(interaction.guild_id)
+
+        if num_steps is None or num_steps < 1:
+            num_steps = 1
+
+        game_mngr: GameManager = self.bot.game_manager
+        if not game_mngr:
+            await interaction.followup.send("**Мастер:** GameManager недоступен.", ephemeral=True)
+            return
+
+        undo_manager: Optional[UndoManager] = getattr(game_mngr, 'undo_manager', None)
+        if not undo_manager:
+            await interaction.followup.send("**Мастер:** UndoManager недоступен.", ephemeral=True)
+            return
+
+        character_manager: Optional[CharacterManager] = game_mngr.character_manager
+        party_manager: Optional[PartyManager] = game_mngr.party_manager
+
+        if not entity_id:
+            await interaction.followup.send("**Мастер:** Guild-wide undo без указания ID игрока или партии не поддерживается. Пожалуйста, укажите ID.", ephemeral=True)
+            return
+
+        success = False
+        action_type = "unknown"
+
+        if character_manager:
+            # Check if entity_id is a player
+            # Assuming get_character is synchronous or we have an async version
+            # For now, assuming synchronous get_character from cache for this check
+            char = character_manager.get_character(guild_id_str, entity_id)
+            if char:
+                action_type = "player"
+                success = await undo_manager.undo_last_player_event(guild_id_str, entity_id, num_steps)
+
+        if not success and party_manager: # If not found as player or player undo failed, try party
+            # Check if entity_id is a party
+            # Assuming get_party is synchronous or we have an async version
+            party = party_manager.get_party(guild_id_str, entity_id)
+            if party:
+                action_type = "party"
+                success = await undo_manager.undo_last_party_event(guild_id_str, entity_id, num_steps)
+
+        if action_type == "unknown":
+            await interaction.followup.send(f"**Мастер:** Сущность с ID '{entity_id}' не найдена как игрок или партия.", ephemeral=True)
+            return
+
+        if success:
+            await interaction.followup.send(f"**Мастер:** Последние {num_steps} событий для {action_type} '{entity_id}' были успешно отменены.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"**Мастер:** Не удалось отменить события для {action_type} '{entity_id}'. Проверьте логи для деталей.", ephemeral=True)
+
+
+    @app_commands.command(name="master_goto_log", description="ГМ: Отменить события до указанной записи в логе.")
+    @app_commands.describe(
+        log_id_target="ID записи лога, до которой (не включая) нужно отменить события.",
+        entity_id="Опционально: ID игрока или партии, для которого выполняется откат. Если не указано, откат затрагивает все события гильдии."
+    )
+    async def cmd_master_goto_log(self, interaction: Interaction, log_id_target: str, entity_id: Optional[str] = None):
+        if not await is_master_or_admin_check(interaction):
+            await interaction.response.send_message("**Мастер:** Только Мастера Игры могут использовать эту команду.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        if not interaction.guild_id:
+            await interaction.followup.send("**Мастер:** Эту команду можно использовать только на сервере.", ephemeral=True)
+            return
+        guild_id_str = str(interaction.guild_id)
+
+        game_mngr: GameManager = self.bot.game_manager
+        if not game_mngr:
+            await interaction.followup.send("**Мастер:** GameManager недоступен.", ephemeral=True)
+            return
+
+        undo_manager: Optional[UndoManager] = getattr(game_mngr, 'undo_manager', None)
+        if not undo_manager:
+            await interaction.followup.send("**Мастер:** UndoManager недоступен.", ephemeral=True)
+            return
+
+        character_manager: Optional[CharacterManager] = game_mngr.character_manager
+        party_manager: Optional[PartyManager] = game_mngr.party_manager
+
+        entity_type_str: Optional[str] = None
+        if entity_id:
+            if character_manager and character_manager.get_character(guild_id_str, entity_id):
+                entity_type_str = "player"
+            elif party_manager and party_manager.get_party(guild_id_str, entity_id):
+                entity_type_str = "party"
+            else:
+                await interaction.followup.send(f"**Мастер:** Сущность с ID '{entity_id}' не найдена как игрок или партия. Откат будет применен ко всем событиям гильдии до указанного лога.", ephemeral=True)
+                # Proceeding with entity_id=None and entity_type_str=None for guild-wide if GM confirms or if this is desired behavior
+                # For safety, if entity_id was provided but not found, one might choose to abort.
+                # Current logic: if entity_id is given but not found, it proceeds as guild-wide.
+                # Let's refine: if entity_id is given but not found, it's an error for that entity.
+                # If entity_id is NOT given, it's guild-wide (which we might restrict).
+                # For now, if entity_id is given and not found, let's send an error and stop.
+                await interaction.followup.send(f"**Мастер:** Сущность с ID '{entity_id}' не найдена. Укажите корректный ID игрока/партии или не указывайте ID для отката всех событий гильдии (с осторожностью).", ephemeral=True)
+                return
+
+
+        success = await undo_manager.undo_to_log_entry(
+            guild_id_str,
+            log_id_target,
+            player_or_party_id=entity_id,
+            entity_type=entity_type_str
+        )
+
+        if success:
+            message = f"**Мастер:** События успешно отменены до записи лога '{log_id_target}'."
+            if entity_id:
+                message += f" Для сущности ({entity_type_str}) '{entity_id}'."
+            else:
+                message += " Для всей гильдии."
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.followup.send(f"**Мастер:** Не удалось отменить события до записи лога '{log_id_target}'. Проверьте логи.", ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GMAppCog(bot)) # type: ignore

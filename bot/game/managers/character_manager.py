@@ -1887,4 +1887,156 @@ class CharacterManager:
         print(f"CharacterManager: Updated field '{field_name}' for character {character_id} in guild {guild_id_str}. Marked dirty for next save cycle.")
         return True
 
+    async def revert_location_change(self, guild_id: str, character_id: str, old_location_id: str, **kwargs: Any) -> bool:
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_location_change: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        char.current_location_id = old_location_id
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_location_change: Reverted location for character {character_id} to {old_location_id}.")
+        return True
+
+    async def revert_hp_change(self, guild_id: str, character_id: str, old_hp: float, old_is_alive: bool, **kwargs: Any) -> bool:
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_hp_change: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        char.hp = old_hp
+        char.is_alive = old_is_alive
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_hp_change: Reverted HP for character {character_id} to {old_hp}, is_alive to {old_is_alive}.")
+        return True
+
+    async def revert_stat_changes(self, guild_id: str, character_id: str, stat_changes: List[Dict[str, Any]], **kwargs: Any) -> bool:
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_stat_changes: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        direct_attributes = ["xp", "level", "unspent_xp", "gold", "hp", "max_health", "is_alive", "mp", "attack", "defense"]
+
+        for change in stat_changes:
+            stat_name = change.get("stat")
+            old_value = change.get("old_value")
+
+            if stat_name is None or old_value is None:
+                print(f"CharacterManager.revert_stat_changes: Invalid stat change entry for {character_id}: {change}. Skipping.")
+                continue
+
+            if stat_name in direct_attributes:
+                setattr(char, stat_name, old_value)
+            else:
+                if not hasattr(char, 'stats') or char.stats is None:
+                    char.stats = {}
+                elif not isinstance(char.stats, dict):
+                    print(f"CharacterManager.revert_stat_changes: Character {character_id} stats attribute is not a dict. Initializing.")
+                    char.stats = {}
+                char.stats[stat_name] = old_value
+
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_stat_changes: Reverted stat changes for character {character_id}.")
+        return True
+
+    async def revert_party_id_change(self, guild_id: str, character_id: str, old_party_id: Optional[str], **kwargs: Any) -> bool:
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_party_id_change: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        char.party_id = old_party_id
+        char.current_party_id = old_party_id # Ensure this is also reverted
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_party_id_change: Reverted party ID for character {character_id} to {old_party_id}.")
+        return True
+
+    async def revert_status_effect_change(self, guild_id: str, character_id: str, action_taken: str, status_effect_id: str, full_status_effect_data: Optional[Dict[str, Any]] = None, **kwargs: Any) -> bool:
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_status_effect_change: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        if not hasattr(char, 'status_effects') or char.status_effects is None:
+            char.status_effects = []
+        elif not isinstance(char.status_effects, list):
+            print(f"CharacterManager.revert_status_effect_change: Character {character_id} status_effects attribute is not a list. Initializing.")
+            char.status_effects = []
+
+        if action_taken == "lost": # Originally removed, so undo adds it back
+            if full_status_effect_data and isinstance(full_status_effect_data, dict):
+                # Ensure not to add duplicates if the ID already exists (though "lost" implies it shouldn't)
+                if not any(se.get("id") == status_effect_id for se in char.status_effects if isinstance(se, dict)):
+                    char.status_effects.append(full_status_effect_data)
+                else:
+                    print(f"CharacterManager.revert_status_effect_change: Warning: Status effect {status_effect_id} (to be re-added) already present for char {character_id}.")
+            else:
+                print(f"CharacterManager.revert_status_effect_change: Warning: Cannot re-add status effect {status_effect_id} for char {character_id} without full_status_effect_data.")
+                return False
+        elif action_taken == "gained": # Originally added, so undo removes it
+            char.status_effects = [se for se in char.status_effects if not (isinstance(se, dict) and se.get("id") == status_effect_id)]
+        else:
+            print(f"CharacterManager.revert_status_effect_change: Unknown action_taken '{action_taken}' for status effect {status_effect_id} on char {character_id}.")
+            return False
+
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_status_effect_change: Reverted status effect change (action: {action_taken}, effect_id: {status_effect_id}) for character {character_id}.")
+        return True
+
+    async def revert_inventory_changes(self, guild_id: str, character_id: str, inventory_changes: List[Dict[str, Any]], **kwargs: Any) -> bool:
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_inventory_changes: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        if not hasattr(char, 'inventory') or char.inventory is None:
+            char.inventory = []
+        elif not isinstance(char.inventory, list):
+            print(f"CharacterManager.revert_inventory_changes: Character {character_id} inventory attribute is not a list. Initializing.")
+            char.inventory = []
+
+        for change in inventory_changes:
+            original_action = change.get("action")
+            item_id = change.get("item_id") # This is template_id
+            quantity = change.get("quantity")
+            old_quantity = change.get("old_quantity")
+
+            if not item_id or quantity is None:
+                print(f"CharacterManager.revert_inventory_changes: Invalid inventory change entry for {character_id}: {change}. Skipping.")
+                continue
+
+            if original_action == "added":
+                await self.remove_item_from_inventory(guild_id, character_id, item_id, quantity)
+            elif original_action == "removed":
+                await self.add_item_to_inventory(guild_id, character_id, item_id, quantity)
+            elif original_action == "modified":
+                if old_quantity is None:
+                    print(f"CharacterManager.revert_inventory_changes: 'modified' action for item {item_id} on char {character_id} is missing 'old_quantity'. Skipping.")
+                    continue
+
+                item_found_in_inventory = False
+                for inv_item in char.inventory:
+                    if isinstance(inv_item, dict) and inv_item.get("item_id") == item_id:
+                        inv_item["quantity"] = old_quantity
+                        item_found_in_inventory = True
+                        break
+
+                if old_quantity <= 0: # If new quantity is zero or less, remove the item entry
+                    char.inventory = [inv_item for inv_item in char.inventory if not (isinstance(inv_item, dict) and inv_item.get("item_id") == item_id and inv_item.get("quantity") <= 0)]
+
+                if not item_found_in_inventory and old_quantity > 0 : # If item was not found but should be restored
+                     print(f"CharacterManager.revert_inventory_changes: Item {item_id} was not found in inventory of {character_id} to modify. Adding it with old_quantity {old_quantity}.")
+                     char.inventory.append({"item_id": item_id, "quantity": old_quantity}) # Add it back
+                elif not item_found_in_inventory:
+                     print(f"CharacterManager.revert_inventory_changes: Item {item_id} was not found in inventory of {character_id} to modify (old_quantity was {old_quantity}). Not re-adding.")
+
+
+            else:
+                print(f"CharacterManager.revert_inventory_changes: Unknown original_action '{original_action}' for item {item_id} on char {character_id}. Skipping.")
+
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_inventory_changes: Reverted inventory changes for character {character_id}.")
+        return True
+
 # --- Конец класса CharacterManager ---
