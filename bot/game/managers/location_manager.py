@@ -654,20 +654,29 @@ class LocationManager:
         guild_id_str = str(guild_id)
         guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
         default_id = guild_settings.get('default_start_location_id')
+        source_setting = "guild-specific"
+
         if default_id is None:
-             default_id = self._settings.get('default_start_location_id')
+            default_id = self._settings.get('default_start_location_id')
+            source_setting = "global"
 
-        if isinstance(default_id, (str, int)):
-             default_id_str = str(default_id)
-             if self.get_location_instance(guild_id_str, default_id_str):
-                 print(f"LocationManager: Found default start location instance ID '{default_id_str}' in settings for guild {guild_id_str}.")
-                 return default_id_str
-             else:
-                 print(f"LocationManager: Warning: Default start location instance ID '{default_id_str}' found in settings for guild {guild_id_str}, but no corresponding instance exists.")
-                 return None
-
-        print(f"LocationManager: Warning: Default start location setting ('default_start_location_id') not found or is invalid for guild {guild_id_str}.")
-        return None
+        if default_id is not None:
+            if isinstance(default_id, (str, int)):
+                default_id_str = str(default_id)
+                print(f"LocationManager: Found default_start_location_id: '{default_id_str}' in {source_setting} settings for guild {guild_id_str}.")
+                if self.get_location_instance(guild_id_str, default_id_str):
+                    return default_id_str
+                else:
+                    print(f"LocationManager: Default start location ID '{default_id_str}' (from {source_setting} settings) for guild {guild_id_str} does not have a corresponding active instance.")
+                    return None
+            else:
+                # This case should ideally not happen if settings are structured correctly,
+                # but handles invalid type for default_id if it's not str/int.
+                print(f"LocationManager: Warning: Default start location ID '{default_id}' found in {source_setting} settings for guild {guild_id_str} is invalid type ({type(default_id)}).")
+                return None
+        else:
+            print(f"LocationManager: default_start_location_id key not found in global or guild-specific settings for guild {guild_id_str}.")
+            return None
 
     async def move_entity(
         self,
