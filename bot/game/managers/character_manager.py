@@ -507,9 +507,9 @@ class CharacterManager:
             # ИСПРАВЛЕНИЕ: Отмечаем как грязный для этой гильдии
             self.mark_character_dirty(guild_id_str, char.id)
 
-            print(f"{log_prefix} Character '{char.name}' (ID: {char.id}) created with current_location_id: {char.current_location_id}")
+            print(f"{log_prefix} Character '{char.name}' (ID: {char.id}) created with location_id: {char.location_id}")
             # The existing log below is also good.
-            print(f"CharacterManager: Character '{name}' (ID: {char.id}, Guild: {char.guild_id}) created and cached for guild {guild_id_str}. Location ID: {char.current_location_id}")
+            print(f"CharacterManager: Character '{name}' (ID: {char.id}, Guild: {char.guild_id}) created and cached for guild {guild_id_str}. Location ID: {char.location_id}")
             return char
 
         except Exception as e:
