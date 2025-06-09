@@ -1078,11 +1078,12 @@ class GameManager:
         This might involve just creating the character or setting up an initial session state.
         For now, it primarily delegates to CharacterManager.create_character.
         """
+        print(f"GameManager: Attempting to start new character session for user {user_id} in guild {guild_id} with name {character_name}.")
         if not self.character_manager:
             print("GameManager: CharacterManager not available. Cannot start new character session.")
             return None
 
-        print(f"GameManager: Starting new character session for user {user_id} in guild {guild_id} with name {character_name}")
+        # print(f"GameManager: Starting new character session for user {user_id} in guild {guild_id} with name {character_name}") # Original log, now covered by the one above
         try:
             # import traceback # Already imported at the top of the file
             character = await self.character_manager.create_character(
@@ -1093,9 +1094,13 @@ class GameManager:
                 # are handled by CharacterManager.create_character using its defaults or settings.
             )
             if character:
-                print(f"GameManager: Successfully created character {character.id} for user {user_id}.")
+                # Safely access attributes for logging
+                char_id_log = getattr(character, 'id', "N/A")
+                char_name_log = getattr(character, 'name', "N/A")
+                char_loc_id_log = getattr(character, 'location_id', "N/A") # or current_location_id depending on model
+                print(f"GameManager: Successfully started new character session. Character ID: {char_id_log}, Name: {char_name_log}, Location ID: {char_loc_id_log}.")
             else:
-                print(f"GameManager: Failed to create character for user {user_id}.")
+                print(f"GameManager: Failed to start new character session for user {user_id}, character creation failed.")
             return character
         except Exception as e:
             print(f"GameManager: Error in start_new_character_session for user {user_id}: {e}")

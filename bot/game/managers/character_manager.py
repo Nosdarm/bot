@@ -313,51 +313,57 @@ class CharacterManager:
         # Генерируем уникальный ID (UUID)
         new_id = str(uuid.uuid4())
 
-        # Определяем начальную локацию (используем инжектированный location_manager, если он есть)
-        resolved_initial_location_id = initial_location_id
-        # Убедимся, что self._location_manager доступен
-        if resolved_initial_location_id is None and self._location_manager is not None: # Explicit None check
-             if hasattr(self._location_manager, 'get_default_location_id'):
-                 try:
-                     # LocationManager.get_default_location_id(guild_id: str) -> Optional[str]
-                     resolved_initial_location_id = self._location_manager.get_default_location_id(guild_id=guild_id_str)
-                     if resolved_initial_location_id:
-                          print(f"CharacterManager: Using default location ID: {resolved_initial_location_id} for guild {guild_id_str}")
-                 except Exception as e:
-                     print(f"CharacterManager: Warning: Could not get default location ID for guild {guild_id_str}: {e}")
-                     import traceback
-                     print(traceback.format_exc())
-             else:
-                print(f"CharacterManager: Warning: LocationManager is present but missing 'get_default_location_id' method.")
+        # Определяем начальную локацию
+        resolved_initial_location_id: Optional[str] = None
 
-        # Check if resolved_initial_location_id is None after attempting to get it
-        if resolved_initial_location_id is None and self._location_manager is not None and self._settings is not None:
-            print(f"CharacterManager: Default location instance not found for guild {guild_id_str}. Checking settings for default_start_location_id.")
-            # Access settings for default_start_location_id
-            guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
-            default_template_id_from_settings = guild_settings.get('default_start_location_id')
-            if default_template_id_from_settings is None: # Try global setting if not found in guild specific
-                default_template_id_from_settings = self._settings.get('default_start_location_id')
+        if initial_location_id is not None:
+            resolved_initial_location_id = initial_location_id
+            print(f"CharacterManager: `initial_location_id` provided: {initial_location_id}. Using this directly.")
+        else:
+            print("CharacterManager: `initial_location_id` not provided. Attempting to use default start location.")
+            if self._settings is not None and self._location_manager is not None:
+                print(f"CharacterManager: Looking for `default_start_location_id` (template ID) in settings for guild {guild_id_str}.")
+                guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
+                default_template_id_from_settings = guild_settings.get('default_start_location_id')
+                if default_template_id_from_settings is None: # Try global setting if not found in guild specific
+                    default_template_id_from_settings = self._settings.get('default_start_location_id')
 
-            if default_template_id_from_settings:
-                print(f"CharacterManager: Default location instance not found for guild {guild_id_str} using template ID {default_template_id_from_settings}. Attempting to create it.")
-                try:
-                    # Ensure create_location_instance is awaitable if it's an async method
-                    new_instance_data = await self._location_manager.create_location_instance(guild_id_str, default_template_id_from_settings)
-                    if new_instance_data and isinstance(new_instance_data, dict) and 'id' in new_instance_data:
-                        resolved_initial_location_id = new_instance_data['id']
-                        print(f"CharacterManager: Successfully created and assigned new default start location instance {resolved_initial_location_id} for guild {guild_id_str}.")
-                    else:
-                        print(f"CharacterManager: Warning: Failed to create default start location instance from template {default_template_id_from_settings} for guild {guild_id_str}. Character will start with no location. Data: {new_instance_data}")
-                except Exception as e_create:
-                    print(f"CharacterManager: Error creating default start location instance from template {default_template_id_from_settings} for guild {guild_id_str}: {e_create}")
-                    traceback.print_exc()
-                    print(f"CharacterManager: Warning: Character will start with no location due to error in creation.")
-            else:
-                print(f"CharacterManager: Warning: No default_start_location_id found in settings for guild {guild_id_str} after explicit check. Character will start with no location.")
-        elif resolved_initial_location_id is None and (self._location_manager is None or self._settings is None) :
-            print(f"CharacterManager: LocationManager or Settings not available, cannot create default location for guild {guild_id_str}. Character will start with no location.")
+                if default_template_id_from_settings:
+                    print(f"CharacterManager: Found `default_start_location_id` (template ID) from settings: {default_template_id_from_settings}.")
+                    print(f"CharacterManager: Attempting to create new location instance from template ID {default_template_id_from_settings} for guild {guild_id_str}.")
+                    try:
+                        # Ensure create_location_instance is awaitable if it's an async method
+                        new_instance_data = await self._location_manager.create_location_instance(guild_id_str, default_template_id_from_settings)
+                        if new_instance_data and isinstance(new_instance_data, dict) and 'id' in new_instance_data:
+                            resolved_initial_location_id = new_instance_data['id']
+                            print(f"CharacterManager: Successfully created new start location instance: {resolved_initial_location_id} from template {default_template_id_from_settings}.")
+                        else:
+                            print(f"CharacterManager: Failed to create new start location instance from template {default_template_id_from_settings}. `resolved_initial_location_id` remains None. Data: {new_instance_data}")
+                    except Exception as e_create:
+                        print(f"CharacterManager: Error creating default start location instance from template {default_template_id_from_settings} for guild {guild_id_str}: {e_create}")
+                        traceback.print_exc()
+                        print(f"CharacterManager: Failed to create new start location instance from template {default_template_id_from_settings}. `resolved_initial_location_id` remains None.")
+                else:
+                    print(f"CharacterManager: `default_start_location_id` (template ID) not found in settings for guild {guild_id_str}.")
+            elif self._location_manager is None:
+                 print("CharacterManager: `_location_manager` is not available. Cannot create default start location instance.")
+            # Deprioritized: Direct call to get_default_location_id()
+            # if resolved_initial_location_id is None and self._location_manager is not None: # Explicit None check
+            #      if hasattr(self._location_manager, 'get_default_location_id'):
+            #          try:
+            #              # LocationManager.get_default_location_id(guild_id: str) -> Optional[str]
+            #              resolved_initial_location_id = self._location_manager.get_default_location_id(guild_id=guild_id_str)
+            #              if resolved_initial_location_id:
+            #                   print(f"CharacterManager: Using existing default location ID: {resolved_initial_location_id} for guild {guild_id_str}")
+            #          except Exception as e:
+            #              print(f"CharacterManager: Warning: Could not get existing default location ID for guild {guild_id_str}: {e}")
+            #              import traceback
+            #              print(traceback.format_exc())
+            #      else:
+            #         print(f"CharacterManager: Warning: LocationManager is present but missing 'get_default_location_id' method.")
 
+        # Final check and logging before assigning to character data
+        print(f"CharacterManager: Final `current_location_id` for new character {new_id} will be: {resolved_initial_location_id}.")
 
         # Определяем начальные статы (можно использовать RuleEngine, если он передан)
         stats = {'strength': 10, 'dexterity': 10, 'intelligence': 10} # Default stats
@@ -395,6 +401,7 @@ class CharacterManager:
         # Подготавливаем данные для вставки в DB и создания модели
         name_i18n_data = {"en": name, "ru": name} # Basic i18n structure
 
+        # This log is now before the data dictionary creation, using the already determined resolved_initial_location_id
         print(f"CharacterManager: Assigning current_location_id: {resolved_initial_location_id} to new character {new_id} in guild {guild_id_str}.")
         data: Dict[str, Any] = {
             'id': new_id, # UUID как TEXT
