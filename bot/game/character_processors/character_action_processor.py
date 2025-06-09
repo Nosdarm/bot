@@ -1111,8 +1111,8 @@ class CharacterActionProcessor:
             return {"success": True, "message": "You are floating in the void. There is nothing to see.", "state_changed": False}
 
         print(f"{log_prefix} Attempting to get location instance for char_loc_id: {char_loc_id} in guild {guild_id}")
-        location = self._location_manager.get_location_instance(guild_id, char_loc_id) 
-        
+        location = self._location_manager.get_location_instance(guild_id, char_loc_id)
+
         print(f"{log_prefix} Type of fetched location: {type(location)}")
         if location is None:
             print(f"{log_prefix} Fetched location is None")

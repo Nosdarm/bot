@@ -3,6 +3,7 @@
 from __future__ import annotations
 import json
 from bot.game.models.party import Party
+from bot.game.models.location import Location
 import traceback
 import asyncio
 # --- Необходимые импорты для runtime ---
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from bot.game.character_processors.character_view_service import CharacterViewService
     from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor
     from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator
+    from bot.game.models.location import Location # Ensure Location is available for type hints
 
 
 # Define Callback Types
@@ -228,7 +230,7 @@ class LocationManager:
                                'static_connections': row.get('static_connections')
                            }
 
-                           from bot.game.models.location import Location # Local import
+                           # from bot.game.models.location import Location # No longer local import
                            location_obj = Location.from_dict(instance_data_for_model)
                            print(f"LocationManager.load_state: Location object created from row data: {location_obj.id if location_obj else 'Failed to create Location obj'}. Added to guild_instances_cache.")
                            guild_instances_cache[location_obj.id] = location_obj.to_dict()
@@ -614,10 +616,10 @@ class LocationManager:
          guild_id_str = str(guild_id)
          instance_id_str = str(instance_id)
          print(f"LocationManager.get_location_instance: Called for guild_id: {guild_id_str}, instance_id: {instance_id_str}")
-         
+
          guild_instances = self._location_instances.get(guild_id_str, {})
          print(f"LocationManager.get_location_instance: Instances cached for guild {guild_id_str}: {bool(guild_instances)}")
-         
+
          instance_data = guild_instances.get(instance_id_str)
          print(f"LocationManager.get_location_instance: Instance data found in cache for {instance_id_str}: {bool(instance_data)}")
 
@@ -627,7 +629,7 @@ class LocationManager:
                  return None
              try:
                  # Ensure the 'Location' class is available for from_dict
-                 from bot.game.models.location import Location # Local import for safety
+                 # from bot.game.models.location import Location # No longer local import for safety
                  location_obj = Location.from_dict(instance_data)
                  print(f"LocationManager.get_location_instance: Successfully created Location object for {instance_id_str}.")
                  return location_obj
@@ -1042,7 +1044,7 @@ class LocationManager:
         if not instance_data_dict: # If not provided in kwargs, fetch and convert
             location_obj = self.get_location_instance(guild_id_str, location_id)
             instance_data_dict = location_obj.to_dict() if location_obj else None
-        
+
         if not instance_data_dict:
             print(f"LocationManager: Warning: Could not retrieve instance data for location {location_id} (guild {guild_id_str}) on arrival of {entity_type} {entity_id}.")
             return
@@ -1106,7 +1108,7 @@ class LocationManager:
         if not instance_data_dict:
             print(f"LocationManager: Warning: Could not retrieve instance data for location {location_id} (guild {guild_id_str}) on departure of {entity_type} {entity_id}.")
             return
-            
+
         template_id_from_instance = instance_data_dict.get('template_id')
         # Use template_id from instance if available, otherwise from kwargs
         final_template_id = template_id_from_instance if template_id_from_instance is not None else kwargs.get('location_template_id')
@@ -1242,7 +1244,7 @@ class LocationManager:
         Creates a new location instance from moderated (AI-generated) data.
         Saves it to the database and marks it as generated.
         """
-        from bot.game.models.location import Location  # Local import
+        # from bot.game.models.location import Location  # No longer local import
 
         guild_id_str = str(guild_id)
         user_id_str = str(user_id) # Ensure user_id is string
