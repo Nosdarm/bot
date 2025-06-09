@@ -316,7 +316,7 @@ class GameManager:
         except Exception as e: self.openai_service = None; print(f"GameManager: Warn: Failed OpenAIService init ({e})")
 
         self.event_manager = EventManager(db_service=self.db_service, settings=self._settings.get('event_settings', {}), openai_service=self.openai_service) # Changed
-        self.character_manager = CharacterManager(db_service=self.db_service, settings=self._settings.get('character_settings', {}), location_manager=self.location_manager, rule_engine=self.rule_engine) # Changed
+        self.character_manager = CharacterManager(db_service=self.db_service, settings=self._settings, location_manager=self.location_manager, rule_engine=self.rule_engine) # Changed
         print("GameManager: Core managers and OpenAI service initialized.")
 
     async def _initialize_dependent_managers(self):
