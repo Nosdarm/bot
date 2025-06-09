@@ -1186,7 +1186,16 @@ class CharacterActionProcessor:
             description_parts.append(f"Something seems to be happening: {', '.join(event_names)}.")
 
         # Exits
-        exits = self._location_manager.get_location_exits_details(guild_id, char_loc_id) # Returns List[Dict] e.g. [{'name': 'north door', 'target_location_name': 'Treasury'}]
+        exits = [] # Initialize as an empty list
+        # 'location' is the current Location object for char_loc_id, fetched earlier in this method.
+        if location and hasattr(location, 'exits') and isinstance(location.exits, dict):
+            for exit_name, target_loc_id in location.exits.items():
+                if target_loc_id: # Ensure target_loc_id is not None or empty
+                    # Note: get_location_instance is synchronous
+                    target_loc_obj = self._location_manager.get_location_instance(guild_id, target_loc_id)
+                    target_name = target_loc_obj.name if target_loc_obj and hasattr(target_loc_obj, 'name') else 'an unknown place'
+                    exits.append({'name': exit_name, 'target_location_name': target_name})
+
         if exits:
             exit_descs = [f"{ex.get('name', 'a passage')} (to {ex.get('target_location_name', 'somewhere')})" for ex in exits]
             description_parts.append(f"Paths lead: {', '.join(exit_descs)}.")
