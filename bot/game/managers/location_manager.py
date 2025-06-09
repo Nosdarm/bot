@@ -609,19 +609,35 @@ class LocationManager:
 
          return instance_for_cache
 
-    def get_location_instance(self, guild_id: str, instance_id: str) -> Optional[Dict[str, Any]]:
+    def get_location_instance(self, guild_id: str, instance_id: str) -> Optional["Location"]:
          """Получить динамический инстанс локации по ID для данной гильдии."""
          guild_id_str = str(guild_id)
-         print(f"LocationManager.get_location_instance: Called for guild_id: {guild_id_str}, instance_id: {instance_id}")
+         instance_id_str = str(instance_id)
+         print(f"LocationManager.get_location_instance: Called for guild_id: {guild_id_str}, instance_id: {instance_id_str}")
+         
          guild_instances = self._location_instances.get(guild_id_str, {})
          print(f"LocationManager.get_location_instance: Instances cached for guild {guild_id_str}: {bool(guild_instances)}")
-         instance_data = guild_instances.get(str(instance_id))
-         print(f"LocationManager.get_location_instance: Instance data found in cache for {instance_id}: {bool(instance_data)}")
+         
+         instance_data = guild_instances.get(instance_id_str)
+         print(f"LocationManager.get_location_instance: Instance data found in cache for {instance_id_str}: {bool(instance_data)}")
+
          if instance_data:
-             print(f"LocationManager.get_location_instance: Keys in instance_data for {instance_id}: {list(instance_data.keys())}")
+             if not isinstance(instance_data, dict):
+                 print(f"LocationManager.get_location_instance: Warning: Instance data for {instance_id_str} in guild {guild_id_str} is not a dict ({type(instance_data)}). Returning None.")
+                 return None
+             try:
+                 # Ensure the 'Location' class is available for from_dict
+                 from bot.game.models.location import Location # Local import for safety
+                 location_obj = Location.from_dict(instance_data)
+                 print(f"LocationManager.get_location_instance: Successfully created Location object for {instance_id_str}.")
+                 return location_obj
+             except Exception as e:
+                 print(f"LocationManager.get_location_instance: Error creating Location object from instance data for {instance_id_str} in guild {guild_id_str}: {e}")
+                 traceback.print_exc()
+                 return None
          else:
-             print(f"LocationManager.get_location_instance: No instance data found in cache for {instance_id} under guild {guild_id_str}.")
-         return instance_data
+             print(f"LocationManager.get_location_instance: No instance data found in cache for {instance_id_str} under guild {guild_id_str}.")
+             return None
 
 
     async def delete_location_instance(self, guild_id: str, instance_id: str, **kwargs: Any) -> bool:
@@ -873,8 +889,8 @@ class LocationManager:
         guild_id_str = str(guild_id)
         print(f"LocationManager: Attempting to move {entity_type} {entity_id} for guild {guild_id_str} from {from_location_id} to {to_location_id}.")
 
-        target_instance = self.get_location_instance(guild_id_str, to_location_id)
-        if not target_instance:
+        target_instance_obj = self.get_location_instance(guild_id_str, to_location_id) # Returns Location object or None
+        if not target_instance_obj: # Check if the Location object is None
              print(f"LocationManager: Error: Target location instance '{to_location_id}' not found for guild {guild_id_str}. Cannot move {entity_type} {entity_id}.")
              send_cb_factory = kwargs.get('send_callback_factory', self._send_callback_factory)
              channel_id = kwargs.get('channel_id') or self.get_location_channel(guild_id_str, from_location_id or to_location_id)
@@ -946,8 +962,9 @@ class LocationManager:
 
 
         if from_location_id:
-            from_instance_data = self.get_location_instance(guild_id_str, from_location_id)
-            departure_context = {**movement_context, 'location_instance_data': from_instance_data}
+            from_instance_obj = self.get_location_instance(guild_id_str, from_location_id) # Returns Location obj or None
+            from_instance_data_dict = from_instance_obj.to_dict() if from_instance_obj else None # Convert to dict for context if needed
+            departure_context = {**movement_context, 'location_instance_data': from_instance_data_dict}
             await self.handle_entity_departure(from_location_id, entity_id, entity_type, **departure_context)
 
         try:
@@ -996,8 +1013,9 @@ class LocationManager:
                 print(f"LocationManager: Warning: PartyManager not found in movement_context. Cannot update party member locations.")
 
 
-        target_instance_data = self.get_location_instance(guild_id_str, to_location_id) # Get target instance data AFTER entity is moved
-        arrival_context = {**movement_context, 'location_instance_data': target_instance_data}
+        target_instance_obj_after_move = self.get_location_instance(guild_id_str, to_location_id) # Get Location obj AFTER entity is moved
+        target_instance_data_dict = target_instance_obj_after_move.to_dict() if target_instance_obj_after_move else None # Convert to dict
+        arrival_context = {**movement_context, 'location_instance_data': target_instance_data_dict}
         await self.handle_entity_arrival(to_location_id, entity_id, entity_type, **arrival_context)
 
         print(f"LocationManager: Completed movement process for {entity_type} {entity_id} for guild {guild_id_str} to {to_location_id}.")
@@ -1015,10 +1033,22 @@ class LocationManager:
         if not guild_id: print("LocationManager: Warning: guild_id missing in context for handle_entity_arrival."); return
         guild_id_str = str(guild_id)
 
-        instance_data = kwargs.get('location_instance_data', self.get_location_instance(guild_id_str, location_id))
+        # location_instance_data in kwargs is expected to be a dict, not a Location object,
+        # based on how it's set in move_entity.
+        # If it might be a Location object, type checking and conversion would be needed here.
+        # For now, assuming it's a dict as per current usage in move_entity.
+        instance_data_dict = kwargs.get('location_instance_data')
 
-        template_id = instance_data.get('template_id') if instance_data else None
-        tpl = self.get_location_static(template_id) # Removed guild_id_str
+        if not instance_data_dict: # If not provided in kwargs, fetch and convert
+            location_obj = self.get_location_instance(guild_id_str, location_id)
+            instance_data_dict = location_obj.to_dict() if location_obj else None
+        
+        if not instance_data_dict:
+            print(f"LocationManager: Warning: Could not retrieve instance data for location {location_id} (guild {guild_id_str}) on arrival of {entity_type} {entity_id}.")
+            return
+
+        template_id = instance_data_dict.get('template_id')
+        tpl = self.get_location_static(template_id)
 
         if not tpl:
              print(f"LocationManager: Warning: No template found for location instance {location_id} (template ID: {template_id}, guild {guild_id_str}) on arrival of {entity_type} {entity_id}. Cannot execute triggers.")
@@ -1038,7 +1068,7 @@ class LocationManager:
                      'location_instance_id': location_id,
                      'entity_id': entity_id, 'entity_type': entity_type,
                      'location_template_id': tpl.get('id'),
-                     'location_instance_data': instance_data,
+                     'location_instance_data': instance_data_dict, # Pass the dict
                      'location_template_data': tpl,
                  }
                 await engine.execute_triggers(triggers, context=trigger_context)
@@ -1066,13 +1096,22 @@ class LocationManager:
         if not guild_id: print("LocationManager: Warning: guild_id missing in context for handle_entity_departure."); return
         guild_id_str = str(guild_id)
 
-        instance_data = kwargs.get('location_instance_data', self.get_location_instance(guild_id_str, location_id))
+        # Similar to handle_entity_arrival, assume location_instance_data in kwargs is a dict.
+        instance_data_dict = kwargs.get('location_instance_data')
 
-        template_id_from_instance = instance_data.get('template_id') if instance_data else None
-        # Use template_id from instance if available, otherwise from kwargs (less ideal but for robustness)
+        if not instance_data_dict: # If not provided in kwargs, fetch and convert
+            location_obj = self.get_location_instance(guild_id_str, location_id)
+            instance_data_dict = location_obj.to_dict() if location_obj else None
+
+        if not instance_data_dict:
+            print(f"LocationManager: Warning: Could not retrieve instance data for location {location_id} (guild {guild_id_str}) on departure of {entity_type} {entity_id}.")
+            return
+            
+        template_id_from_instance = instance_data_dict.get('template_id')
+        # Use template_id from instance if available, otherwise from kwargs
         final_template_id = template_id_from_instance if template_id_from_instance is not None else kwargs.get('location_template_id')
 
-        tpl = self.get_location_static(final_template_id) # Removed guild_id_str
+        tpl = self.get_location_static(final_template_id)
 
         if not tpl:
              print(f"LocationManager: Warning: No template found for location instance {location_id} (template ID: {final_template_id}, guild {guild_id_str}) on departure of {entity_type} {entity_id}. Cannot execute triggers.")
@@ -1092,7 +1131,7 @@ class LocationManager:
                      'location_instance_id': location_id,
                      'entity_id': entity_id, 'entity_type': entity_type,
                      'location_template_id': tpl.get('id'),
-                     'location_instance_data': instance_data,
+                     'location_instance_data': instance_data_dict, # Pass the dict
                      'location_template_data': tpl,
                  }
                  await engine.execute_triggers(triggers, context=trigger_context)
