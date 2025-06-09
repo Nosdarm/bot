@@ -150,7 +150,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
         try:
             # Ensure guild_id is a string for the remove_character method
             guild_id_str = str(interaction.guild_id)
-            
+
             # Call the existing remove_character method in CharacterManager
             # This method handles removing from cache, marking for DB deletion, and associated cleanup.
             removed_char_id = await game_mngr.character_manager.remove_character(

@@ -29,31 +29,39 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
         if not game_mngr.character_manager: # Dependent manager check
             await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
             return
-
-        action_data = {"target": target} if target else {}
         
         player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
-        result = await char_action_proc.process_action(
-            character_id=player_char.id,
-            action_type="look",
-            action_data=action_data,
-            context={
-                'guild_id': str(interaction.guild_id),
-                'author_id': str(interaction.user.id),
-                'channel_id': interaction.channel_id,
-                'game_manager': game_mngr,
-                'character_manager': game_mngr.character_manager,
-                'location_manager': game_mngr.location_manager,
-                'item_manager': game_mngr.item_manager,
-                'npc_manager': game_mngr.npc_manager,
-                'openai_service': game_mngr.openai_service,
-                'send_to_command_channel': interaction.followup.send
-            }
-        )
+        if char_action_proc:
+            try:
+                action_params_for_handler = {}
+                if target: # 'target' is the argument to cmd_look
+                    action_params_for_handler['target_name'] = target
+
+                explore_result = await char_action_proc.handle_explore_action(
+                    character=player_char,
+                    guild_id=str(interaction.guild_id),
+                    action_params=action_params_for_handler,
+                    context_channel_id=interaction.channel_id
+                )
+
+                if explore_result.get("success"):
+                    # Send as non-ephemeral to the channel by default
+                    await interaction.followup.send(explore_result.get("message", "Вы ничего особенного не видите."), ephemeral=False)
+                else:
+                    await interaction.followup.send(explore_result.get("message", "Вы не можете осмотреться."), ephemeral=True)
+            except Exception as e:
+                print(f"Error in cmd_look calling handle_explore_action: {e}")
+                # Consider logging traceback
+                # import traceback
+                # traceback.print_exc()
+                await interaction.followup.send("Произошла ошибка при попытке осмотреться.", ephemeral=True)
+        else:
+            # This case should ideally be caught by earlier checks for char_action_proc
+            await interaction.followup.send("Не удалось обработать команду осмотра в данный момент.", ephemeral=True)
 
     @app_commands.command(name="move", description="Переместиться в другую локацию.")
     @app_commands.describe(destination="Название выхода или ID локации назначения.")
