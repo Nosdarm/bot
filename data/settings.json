@@ -1,4 +1,5 @@
 {
+  "default_start_location_id": "town_square",
   "main_bot_language": "ru",
   "npc_generation_ai_settings": {
     "max_tokens": 2000,
@@ -8,7 +9,6 @@
   "active_guild_ids": [
     "1364930265591320586"
   ],
-  "default_start_location_id": "town_square",
   "item_templates": {
     "potion_health_minor": {
       "name_i18n": {
