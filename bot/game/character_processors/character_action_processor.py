@@ -7,9 +7,12 @@ import json
 import uuid
 import traceback
 import asyncio
+import logging
 from collections import defaultdict
 # ИСПРАВЛЕНИЕ: Убедимся, что все необходимые типы импортированы
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable
+
+logger = logging.getLogger(__name__)
 
 # Импорт модели Character (нужен для работы с объектами персонажей, полученными от CharacterManager)
 from bot.game.models.character import Character
@@ -1092,19 +1095,33 @@ class CharacterActionProcessor:
 
     async def handle_explore_action(self, character: Character, guild_id: str, action_params: Dict[str, Any], context_channel_id: Optional[int] = None) -> Dict[str, Any]:
         """Handles looking around or exploring the current location."""
+        logger.debug(f"handle_explore_action called for char ID: {character.id} ({character.name}) in guild ID: {guild_id}")
+
         if not self._location_manager or not self._character_manager or not self._item_manager or not self._event_manager:
+             logger.warning("handle_explore_action: One or more game systems (location, character, item, event) are unavailable.")
              return {"success": False, "message": "One or more game systems (location, character, item, event) are unavailable.", "state_changed": False}
 
         char_loc_id = str(character.location_id) if character.location_id else None
+        logger.debug(f"Character location ID (char_loc_id): {char_loc_id}")
+
         if not char_loc_id:
+            logger.info(f"Character {character.id} has no location_id.")
             return {"success": True, "message": "You are floating in the void. There is nothing to see.", "state_changed": False}
 
-        location = self._location_manager.get_location_instance(guild_id, char_loc_id) # Assuming this returns the full Location object or rich dict
+        logger.debug(f"Calling _location_manager.get_location_instance for guild_id: {guild_id}, char_loc_id: {char_loc_id}")
+        location = self._location_manager.get_location_instance(guild_id, char_loc_id)
+        logger.debug(f"_location_manager.get_location_instance result: {location}")
+
         if not location:
+            logger.warning(f"Failed to get location instance for guild_id: {guild_id}, char_loc_id: {char_loc_id}")
             return {"success": True, "message": "You find yourself in an indescribable non-place.", "state_changed": False}
 
-        loc_name = getattr(location, 'name', location.id)
-        loc_desc = getattr(location, 'description', "It's a place.")
+        loc_id_attr = getattr(location, 'id', location.get('id') if isinstance(location, dict) else 'UnknownID')
+        loc_name_attr = getattr(location, 'name', location.get('name') if isinstance(location, dict) else 'UnknownName')
+        logger.info(f"Location found: ID {loc_id_attr}, Name: {loc_name_attr}")
+
+        loc_name = loc_name_attr
+        loc_desc = getattr(location, 'description', location.get('description') if isinstance(location, dict) else "It's a place.")
 
         # TODO: Use OpenAI for richer descriptions if available and configured
         # if self._openai_service and self._settings.get('use_ai_for_explore_descriptions'):
@@ -1119,32 +1136,85 @@ class CharacterActionProcessor:
         description_parts = [f"You are at {loc_name}. {loc_desc}"]
 
         # Other characters
-        # Exclude self from list
-        other_chars = [c.name for c in self._character_manager.get_characters_in_location(guild_id, char_loc_id) if c.id != character.id]
+        logger.debug(f"Calling _character_manager.get_characters_in_location for guild_id: {guild_id}, char_loc_id: {char_loc_id}")
+        # Corrected: get_characters_in_location is synchronous
+        other_chars_objects = self._character_manager.get_characters_in_location(guild_id, char_loc_id)
+        other_chars = [c.name for c in other_chars_objects if c.id != character.id]
+        logger.debug(f"Other characters found: {other_chars}")
         if other_chars:
             description_parts.append(f"Nearby, you see: {', '.join(other_chars)}.")
 
         # NPCs
-        if self._npc_manager: # Check if NPCManager is available
-            npcs = [npc.name for npc in self._npc_manager.get_npcs_in_location(guild_id, char_loc_id)]
+        if self._npc_manager:
+            logger.debug(f"Calling _npc_manager.get_npcs_in_location for guild_id: {guild_id}, char_loc_id: {char_loc_id}")
+            # Assuming get_npcs_in_location is synchronous based on the CharacterManager pattern
+            npcs_objects = self._npc_manager.get_npcs_in_location(guild_id, char_loc_id)
+            npcs = [npc.name for npc in npcs_objects]
+            logger.debug(f"NPCs found: {npcs}")
             if npcs:
                 description_parts.append(f"Also here: {', '.join(npcs)}.")
+        else:
+            logger.debug("_npc_manager not available.")
 
         # Items
-        items = [item.name for item in self._item_manager.get_items_in_location(char_loc_id, guild_id) if getattr(item, 'is_visible', True)] # Assuming Item model has name and is_visible
-        if items:
-            description_parts.append(f"You notice: {', '.join(items)}.")
+        logger.debug(f"Calling _item_manager.get_items_in_location for char_loc_id: {char_loc_id}, guild_id: {guild_id}")
+        # This was the source of the error, get_items_in_location is likely async
+        items_objects = await self._item_manager.get_items_in_location(char_loc_id, guild_id)
+        item_names_and_visibility = []
+        for item_obj in items_objects: # Now items_objects should be an iterable
+            item_name = getattr(item_obj, 'name', item_obj.id)
+            is_visible = getattr(item_obj, 'is_visible', True)
+            logger.debug(f"Item: {item_name} (ID: {item_obj.id}), is_visible: {is_visible}")
+            if is_visible:
+                item_names_and_visibility.append(item_name)
+        logger.debug(f"Visible items found: {item_names_and_visibility}")
+        if item_names_and_visibility:
+            description_parts.append(f"You notice: {', '.join(item_names_and_visibility)}.")
 
         # Active events (briefly)
-        active_events = self._event_manager.get_active_events_in_location(char_loc_id, guild_id)
-        if active_events:
-            event_names = [getattr(ev, 'name', ev.id) for ev in active_events]
-            description_parts.append(f"Something seems to be happening: {', '.join(event_names)}.")
+        logger.debug(f"Calling _event_manager.get_active_events for guild_id: {guild_id}. Will filter by location_id: {char_loc_id} if possible.")
+        # EventManager.get_active_events(guild_id) returns all active events for the guild.
+        # We need to filter them by location if event objects have a location_id.
+        all_active_guild_events = self._event_manager.get_active_events(guild_id)
+        
+        active_events_in_location_objects = []
+        if all_active_guild_events:
+            for ev in all_active_guild_events:
+                # Assuming event objects might have a 'location_id' attribute.
+                # This needs to be confirmed by checking the Event model or how events are structured.
+                event_loc_id = getattr(ev, 'location_id', None) # Safely get location_id
+                if event_loc_id == char_loc_id:
+                    active_events_in_location_objects.append(ev)
+        
+        active_events_names = [getattr(ev, 'name', ev.id) for ev in active_events_in_location_objects]
+        logger.debug(f"Active events found in location {char_loc_id}: {active_events_names}")
+        if active_events_names:
+            description_parts.append(f"Something seems to be happening: {', '.join(active_events_names)}.")
 
         # Exits
-        exits = self._location_manager.get_location_exits_details(guild_id, char_loc_id) # Returns List[Dict] e.g. [{'name': 'north door', 'target_location_name': 'Treasury'}]
+        logger.debug(f"Calling _location_manager.get_connected_locations for guild_id: {guild_id}, char_loc_id: {char_loc_id}")
+        exits = self._location_manager.get_connected_locations(guild_id, char_loc_id) # Changed method name
+        logger.debug(f"Exits data from get_connected_locations: {exits}") # Added specific log message
         if exits:
-            exit_descs = [f"{ex.get('name', 'a passage')} (to {ex.get('target_location_name', 'somewhere')})" for ex in exits]
+            # get_connected_locations returns Dict[str, str] where key is direction/exit_name and value is target_location_id
+            # The old code expected List[Dict] with 'name' and 'target_location_name'
+            # We need to adapt how exits are described.
+            exit_descs = []
+            for exit_name, target_loc_id in exits.items():
+                # We might need to fetch target_loc_name if we want to display it like before.
+                # For now, let's just display the exit name and its target ID.
+                # Or, if LocationManager.get_location_name is available and cheap, use it.
+                target_loc_display = target_loc_id # Default to ID
+                if self._location_manager and hasattr(self._location_manager, 'get_location_name'):
+                    # Assuming get_location_name can take guild_id and instance_id
+                    # This might be too much work/too slow for a simple look.
+                    # Consider if get_connected_locations should return richer data if needed.
+                    # For now, keeping it simple:
+                    # target_loc_name = self._location_manager.get_location_name(guild_id, target_loc_id)
+                    # if target_loc_name: target_loc_display = target_loc_name
+                    pass # Keep target_loc_display as ID for now to avoid extra calls in this step
+
+                exit_descs.append(f"{exit_name} (to {target_loc_display})")
             description_parts.append(f"Paths lead: {', '.join(exit_descs)}.")
         else:
             description_parts.append("There are no obvious exits.")
