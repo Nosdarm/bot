@@ -184,7 +184,25 @@ async def handle_reject_content_command(message: Message, args: List[str], conte
                 player_char = await char_manager.get_character_by_discord_id(guild_id, int(original_user_id))
                 if player_char:
                     await status_manager.remove_status_effects_by_type(player_char.id, 'Character', 'awaiting_moderation', guild_id, context)
-                    print(f"ModerationCommands: User {original_user_id} should be notified of rejection for {request_id}.")
+                    # Notify player of rejection
+                    notification_service = context.get('notification_service')
+                    if notification_service and hasattr(notification_service, 'send_player_direct_message'):
+                        rejection_message = (
+                            f"Your content submission (Request ID: `{request_id}`) has been reviewed and unfortunately rejected.\n"
+                            f"Reason: {reason}\n\n"
+                            f"If you have questions, please contact a moderator or GM."
+                        )
+                        try:
+                            await notification_service.send_player_direct_message(str(original_user_id), rejection_message)
+                            print(f"ModerationCommands: Sent rejection notification to user {original_user_id} for request {request_id}.")
+                        except Exception as e_notify:
+                            print(f"ModerationCommands: Error sending rejection DM to user {original_user_id}: {e_notify}")
+                    else:
+                        print(f"ModerationCommands: NotificationService or send_player_direct_message not available. User {original_user_id} not notified of rejection for {request_id}.")
+                else:
+                    print(f"ModerationCommands: Player character for user ID {original_user_id} not found. Cannot remove status or notify of rejection for {request_id}.")
+            else:
+                print(f"ModerationCommands: CharacterManager or StatusManager not available. Cannot remove status or notify of rejection for {request_id}.")
         else:
             await send_callback(f"Error: Failed to update status for request `{request_id}`.")
     except Exception as e:

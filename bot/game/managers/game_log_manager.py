@@ -40,7 +40,7 @@ class GameLogManager:
         context_data_json = json.dumps(kwargs) if kwargs else None
 
         sql = """
-            INSERT INTO logs
+            INSERT INTO game_logs 
             (log_id, timestamp, guild_id, channel_id, event_type, message, related_entities, context_data)
             VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7)
         """ # Changed placeholders and added NOW()
@@ -69,7 +69,7 @@ class GameLogManager:
         params: List[Any] = [guild_id_str]
         param_idx = 1
 
-        sql_parts = ["SELECT log_id, timestamp, guild_id, channel_id, event_type, message, related_entities, context_data FROM logs WHERE guild_id = $1"]
+        sql_parts = ["SELECT log_id, timestamp, guild_id, channel_id, event_type, message, related_entities, context_data FROM game_logs WHERE guild_id = $1"]
 
         if event_type_filter:
             param_idx += 1

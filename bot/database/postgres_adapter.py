@@ -415,4 +415,60 @@ Last encountered error: {last_retryable_exception}
         """
         await self.execute(sql, (location_id, guild_id, user_id))
 
+    async def upsert_location(self, location_data: Dict[str, Any]) -> bool:
+        """
+        Inserts a new location or updates an existing one based on ID.
+        location_data should be a dictionary matching Location model fields.
+        """
+        if not location_data.get('id') or not location_data.get('guild_id'):
+            print("PostgresAdapter: Error: Location data must include 'id' and 'guild_id' for upsert.")
+            return False
+
+        # Ensure all JSON fields are dumped to strings for the query
+        data_for_sql = {}
+        for key, value in location_data.items():
+            if isinstance(value, dict) or isinstance(value, list):
+                data_for_sql[key] = json.dumps(value)
+            else:
+                data_for_sql[key] = value
+
+        # Ensure boolean is_active is correctly represented if not present or None
+        if 'is_active' not in data_for_sql or data_for_sql['is_active'] is None:
+            data_for_sql['is_active'] = True # Default to True
+
+        # Define all columns that can be inserted/updated
+        # Order must match the VALUES clause and the EXCLUDED part of ON CONFLICT
+        # Ensure all fields from Location.to_dict() are covered here.
+        # 'static_name' was present in Location.to_dict(), ensure it's handled.
+        # 'static_connections' was present in Location.to_dict().
+        # 'inventory' was present in Location.to_dict().
+        columns = [
+            'id', 'guild_id', 'template_id', 'name_i18n', 'descriptions_i18n',
+            'details_i18n', 'tags_i18n', 'atmosphere_i18n', 'features_i18n',
+            'exits', 'state_variables', 'is_active', 'channel_id', 'image_url',
+            'static_name', 'static_connections', 'inventory'
+        ]
+
+        # Prepare values in the correct order, using None for missing optional fields
+        values_tuple = tuple(data_for_sql.get(col) for col in columns)
+
+        # Construct SET clause for ON CONFLICT
+        set_clauses = [f"{col} = EXCLUDED.{col}" for col in columns if col != 'id']
+
+        sql = f"""
+            INSERT INTO locations ({', '.join(columns)})
+            VALUES ({', '.join([f'${i+1}' for i in range(len(columns))])})
+            ON CONFLICT (id) DO UPDATE SET
+                {', '.join(set_clauses)};
+        """
+        try:
+            status = await self.execute(sql, values_tuple)
+            # Successful execution might return "INSERT 0 1" or "UPDATE 1"
+            print(f"PostgresAdapter: Upserted location {location_data.get('id')}. Status: {status}")
+            return True # Assuming success if no exception for now
+        except Exception as e:
+            print(f"PostgresAdapter: ❌ Error upserting location {location_data.get('id')}: {e}")
+            traceback.print_exc()
+            return False
+
 print(f"DEBUG: Finished loading postgres_adapter.py from: {__file__}")
