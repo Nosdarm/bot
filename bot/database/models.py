@@ -57,10 +57,69 @@ class Location(Base):
     exits = Column(JSON, nullable=True)
     inventory = Column(JSON, nullable=True)
     # Added columns:
-    name_i18n = Column(JSON, nullable=True)
-    template_id = Column(String, nullable=True)
-    state_variables = Column(JSON, nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False) # Added
+    name_i18n = Column(JSON, nullable=True) # Name of the location instance
+    template_id = Column(String, nullable=True) # Template it was based on, if any
+    state_variables = Column(JSON, nullable=True) # Dynamic state
+    is_active = Column(Boolean, default=True, nullable=False) # Whether it's active in the world
+
+    # New i18n fields for AI-generated content
+    details_i18n = Column(JSON, nullable=True) # More detailed descriptions or lore
+    tags_i18n = Column(JSON, nullable=True) # Searchable/filterable tags, possibly i18n
+    atmosphere_i18n = Column(JSON, nullable=True) # Sensory details, mood
+    features_i18n = Column(JSON, nullable=True) # Points of interest or interactable elements within
+
+    channel_id = Column(String, nullable=True) # Optional Discord channel ID associated
+    image_url = Column(String, nullable=True) # Optional image URL for the location
+
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Location':
+        # Ensure essential fields like 'id' and 'guild_id' are present
+        if 'id' not in data or 'guild_id' not in data:
+            raise ValueError("Location data must include 'id' and 'guild_id'.")
+
+        # Handle known i18n fields explicitly, defaulting to empty dicts if None
+        i18n_fields = ['name_i18n', 'descriptions_i18n', 'details_i18n',
+                       'tags_i18n', 'atmosphere_i18n', 'features_i18n']
+        for field in i18n_fields:
+            if data.get(field) is None:
+                data[field] = {}
+
+        # Handle other JSON fields that might be None
+        json_fields_default_dict = ['exits', 'inventory', 'state_variables', 'static_connections']
+        for field in json_fields_default_dict:
+            if data.get(field) is None:
+                data[field] = {}
+
+        # Boolean default
+        if data.get('is_active') is None:
+            data['is_active'] = True
+
+        # Create instance with all keys from data that match columns
+        # This relies on the input `data` dict having keys that match column names.
+        # SQLAlchemy will ignore extra keys not defined in the model.
+        return cls(**data)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "guild_id": self.guild_id,
+            "template_id": self.template_id,
+            "static_name": self.static_name, # Retained for compatibility if used
+            "name_i18n": self.name_i18n or {},
+            "descriptions_i18n": self.descriptions_i18n or {},
+            "details_i18n": self.details_i18n or {},
+            "tags_i18n": self.tags_i18n or {},
+            "atmosphere_i18n": self.atmosphere_i18n or {},
+            "features_i18n": self.features_i18n or {},
+            "static_connections": self.static_connections or {}, # Retained for compatibility
+            "exits": self.exits or {},
+            "inventory": self.inventory or {},
+            "state_variables": self.state_variables or {},
+            "is_active": self.is_active,
+            "channel_id": self.channel_id,
+            "image_url": self.image_url,
+        }
 
 
 class Timer(Base):
