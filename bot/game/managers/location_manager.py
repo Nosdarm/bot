@@ -667,21 +667,50 @@ class LocationManager:
     def get_default_location_id(self, guild_id: str) -> Optional[str]:
         """Получить ID дефолтной начальной локации для данной гильдии."""
         guild_id_str = str(guild_id)
+        if self._settings is None:
+            print(f"LocationManager: Settings not available, cannot determine default start location for guild {guild_id_str}.")
+            return None
+
         guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
-        default_id = guild_settings.get('default_start_location_id')
-        if default_id is None:
-             default_id = self._settings.get('default_start_location_id')
+        guild_default_id = guild_settings.get('default_start_location_id')
+        global_default_id = self._settings.get('default_start_location_id')
+
+        default_id: Optional[Union[str, int]] = None # Explicitly define type for default_id
+
+        if guild_default_id is not None:
+            default_id = guild_default_id
+            print(f"LocationManager: Found guild-specific default_start_location_id: '{guild_default_id}' for guild {guild_id_str}.")
+        elif global_default_id is not None:
+            default_id = global_default_id
+            print(f"LocationManager: Using global default_start_location_id: '{global_default_id}' for guild {guild_id_str} (no guild-specific setting found).")
+        else:
+            print(f"LocationManager: No default_start_location_id found in guild-specific or global settings for guild {guild_id_str}.")
+            # This log covers the "not found" case, so the final warning might be redundant or needs adjustment.
+
+        if default_id is None: # If neither guild nor global setting was found
+            # The previous log already covered this. This path leads to the final "Could not determine" log if it's kept.
+            # Or simply return None here.
+            print(f"LocationManager: 최종적으로, 길드 {guild_id_str}에 대한 기본 시작 위치 ID를 결정할 수 없습니다. (Could not determine a default start location ID for guild {guild_id_str}.)")
+            return None
 
         if isinstance(default_id, (str, int)):
              default_id_str = str(default_id)
+             # Check if the instance exists for this guild
              if self.get_location_instance(guild_id_str, default_id_str):
-                 print(f"LocationManager: Found default start location instance ID '{default_id_str}' in settings for guild {guild_id_str}.")
+                 print(f"LocationManager: Successfully found and validated default start location instance ID '{default_id_str}' for guild {guild_id_str}.")
                  return default_id_str
              else:
-                 print(f"LocationManager: Warning: Default start location instance ID '{default_id_str}' found in settings for guild {guild_id_str}, but no corresponding instance exists.")
+                 print(f"LocationManager: Warning: Setting 'default_start_location_id' resolved to '{default_id_str}' for guild {guild_id_str}, but no location instance with this ID currently exists for this guild. Returning None.")
                  return None
+        else: # default_id was found but is not str or int (e.g. it was a dict or list by mistake in settings)
+            print(f"LocationManager: Warning: Default start location ID '{default_id}' found for guild {guild_id_str}, but its type is invalid (expected string or integer).")
+            print(f"LocationManager: 최종적으로, 길드 {guild_id_str}에 대한 기본 시작 위치 ID를 결정할 수 없습니다. (Could not determine a default start location ID for guild {guild_id_str}.)")
+            return None
 
-        print(f"LocationManager: Warning: Default start location setting ('default_start_location_id') not found or is invalid for guild {guild_id_str}.")
+        # This part should ideally not be reached if logic above is complete.
+        # However, as a fallback or if the structure implies it could be.
+        # print(f"LocationManager: Warning: Default start location setting ('default_start_location_id') not found or is invalid for guild {guild_id_str}.")
+        # The Korean log is now used in more specific places.
         return None
 
     async def move_entity(
