@@ -422,6 +422,7 @@ class GameManager:
         from bot.game.managers.persistence_manager import PersistenceManager
         from bot.game.world_processors.world_simulation_processor import WorldSimulationProcessor
         from bot.game.command_router import CommandRouter
+        from bot.game.managers.undo_manager import UndoManager # Ensure import here if not at top
         # TurnProcessingService is imported at the top level
 
         self._on_enter_action_executor = OnEnterActionExecutor(npc_manager=self.npc_manager, item_manager=self.item_manager, combat_manager=self.combat_manager, status_manager=self.status_manager)
@@ -458,6 +459,23 @@ class GameManager:
             self._persistence_manager = PersistenceManager(db_service=self.db_service, event_manager=self.event_manager, character_manager=self.character_manager, location_manager=self.location_manager, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, crafting_manager=self.crafting_manager, economy_manager=self.economy_manager, party_manager=self.party_manager) # Changed
         else: self._persistence_manager = None
 
+        # Initialize UndoManager after its dependencies are ready
+        if self.db_service and self.game_log_manager and self.character_manager and self.item_manager and self.quest_manager and self.party_manager:
+            self.undo_manager = UndoManager(
+                db_service=self.db_service,
+                game_log_manager=self.game_log_manager,
+                character_manager=self.character_manager,
+                item_manager=self.item_manager,
+                quest_manager=self.quest_manager,
+                party_manager=self.party_manager
+                # settings=self._settings # Pass settings if UndoManager needs them
+            )
+            print("GameManager: UndoManager initialized.")
+        else:
+            print("GameManager: CRITICAL - UndoManager could not be initialized due to missing dependencies.")
+            self.undo_manager = None
+
+
         self._world_simulation_processor = WorldSimulationProcessor(event_manager=self.event_manager, character_manager=self.character_manager, location_manager=self.location_manager, rule_engine=self.rule_engine, openai_service=self.openai_service, event_stage_processor=self._event_stage_processor, event_action_processor=self._event_action_processor, persistence_manager=self._persistence_manager, settings=self._settings, send_callback_factory=self._get_discord_send_callback, character_action_processor=self._character_action_processor, party_action_processor=self._party_action_processor, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, crafting_manager=self.crafting_manager, economy_manager=self.economy_manager, dialogue_manager=self.dialogue_manager, quest_manager=self.quest_manager, relationship_manager=self.relationship_manager, game_log_manager=self.game_log_manager, multilingual_prompt_generator=self.multilingual_prompt_generator)
 
         if self._party_command_handler:
@@ -474,7 +492,7 @@ class GameManager:
             else: await self.campaign_loader.load_and_populate_items()
 
         if self._persistence_manager:
-            load_context_kwargs = {k: getattr(self, k, None) for k in ['rule_engine', 'time_manager', 'location_manager', 'event_manager', 'character_manager', 'item_manager', 'status_manager', 'combat_manager', 'crafting_manager', 'economy_manager', 'npc_manager', 'party_manager', 'openai_service', 'quest_manager', 'relationship_manager', 'dialogue_manager', 'game_log_manager', 'lore_manager', 'campaign_loader', 'consequence_processor', '_on_enter_action_executor', '_stage_description_generator', '_event_stage_processor', '_event_action_processor', '_character_action_processor', '_character_view_service', '_party_action_processor', '_persistence_manager', '_world_simulation_processor', 'conflict_resolver', 'db_service', 'nlu_data_service', 'ability_manager', 'spell_manager', 'prompt_context_collector', 'multilingual_prompt_generator']} # Removed _db_adapter
+            load_context_kwargs = {k: getattr(self, k, None) for k in ['rule_engine', 'time_manager', 'location_manager', 'event_manager', 'character_manager', 'item_manager', 'status_manager', 'combat_manager', 'crafting_manager', 'economy_manager', 'npc_manager', 'party_manager', 'openai_service', 'quest_manager', 'relationship_manager', 'dialogue_manager', 'game_log_manager', 'lore_manager', 'campaign_loader', 'consequence_processor', '_on_enter_action_executor', '_stage_description_generator', '_event_stage_processor', '_event_action_processor', '_character_action_processor', '_character_view_service', '_party_action_processor', '_persistence_manager', '_world_simulation_processor', 'conflict_resolver', 'db_service', 'nlu_data_service', 'ability_manager', 'spell_manager', 'prompt_context_collector', 'multilingual_prompt_generator', 'undo_manager']} # Added undo_manager to context
             load_context_kwargs.update({'send_callback_factory': self._get_discord_send_callback, 'settings': self._settings, 'discord_client': self._discord_client})
             await self._persistence_manager.load_game_state(guild_ids=self._active_guild_ids, **load_context_kwargs)
         print("GameManager: Initial data and game state loaded.")
