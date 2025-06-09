@@ -294,7 +294,7 @@ class CharacterManager:
         # ИСПРАВЛЕНИЕ: Используем get_character_by_discord_id с guild_id
         existing_char = self.get_character_by_discord_id(guild_id_str, discord_id)
         if existing_char:
-             print(f"CharacterManager: Character already exists for discord ID {discord_id} in guild {guild_id_str} (ID: {existing_char.id}). Creation failed.")
+             print(f"CharacterManager: Player data (character object ID: {existing_char.id}) already exists for discord ID {discord_id} in guild {guild_id_str} in 'players' table. Creation failed.")
              # В зависимости от логики, можно вернуть None или рейзить ValueЕrror
              # raise ValueError(f"User already has a character (ID: {existing_char.id}) in this guild.")
              return None
@@ -466,9 +466,9 @@ class CharacterManager:
             # Выполняем INSERT. Используем execute_insert для RETURNING id.
             inserted_id = await self._db_service.adapter.execute_insert(sql, db_params)
             if inserted_id == new_id:
-                print(f"CharacterManager: Character '{name}' with ID {new_id} inserted into DB for guild {guild_id_str}.")
+                print(f"CharacterManager: Player data for character '{name}' with ID {new_id} inserted into 'players' table for guild {guild_id_str}.")
             else:
-                print(f"CharacterManager: Character '{name}' inserted for guild {guild_id_str}, but returned ID '{inserted_id}' differs from generated '{new_id}'. Using returned ID.")
+                print(f"CharacterManager: Player data for character '{name}' inserted into 'players' table for guild {guild_id_str}, but returned ID '{inserted_id}' differs from generated '{new_id}'. Using returned ID.")
                 # This case should be rare if UUIDs are truly unique.
                 # If this happens, it implies the DB might have generated a different ID or there's a logic flaw.
                 # For now, we'll proceed with the original new_id for the object, but log this.
@@ -491,11 +491,11 @@ class CharacterManager:
             self.mark_character_dirty(guild_id_str, char.id)
 
 
-            print(f"CharacterManager: Character '{name}' (ID: {char.id}, Guild: {char.guild_id}) created and cached for guild {guild_id_str}.")
+            print(f"CharacterManager: Player data for character '{name}' (ID: {char.id}, Guild: {char.guild_id}) loaded into 'players' table, Character object created and cached for guild {guild_id_str}.")
             return char
 
         except Exception as e:
-            print(f"CharacterManager: Error creating character '{name}' for discord ID {discord_id} in guild {guild_id_str}: {e}")
+            print(f"CharacterManager: Error creating new player entry in 'players' table for character '{name}' (discord ID {discord_id}, guild {guild_id_str}): {e}")
             import traceback
             print(traceback.format_exc())
             # Перебрасываем исключение, чтобы GameManager/CommandRouter мог его поймать
@@ -523,7 +523,7 @@ class CharacterManager:
             # print(f"CharacterManager: No dirty or deleted characters to save for guild {guild_id_str}.") # Debug
             return
 
-        print(f"CharacterManager: Saving {len(dirty_char_ids_for_guild_set)} dirty, {len(deleted_char_ids_for_guild_set)} deleted characters for guild {guild_id_str}...")
+        print(f"CharacterManager: Saving {len(dirty_char_ids_for_guild_set)} dirty, {len(deleted_char_ids_for_guild_set)} characters (player data) for guild {guild_id_str} to 'players' table...")
 
         # Удалить помеченные для удаления персонажи для этого guild_id
         if deleted_char_ids_for_guild_set:
@@ -535,7 +535,7 @@ class CharacterManager:
                 delete_sql = f"DELETE FROM players WHERE guild_id = $1 AND id IN ({placeholders})"
                 try:
                     await self._db_service.adapter.execute(delete_sql, (guild_id_str, *ids_to_delete))
-                    print(f"CharacterManager: Deleted {len(ids_to_delete)} characters from DB for guild {guild_id_str}.")
+                    print(f"CharacterManager: Deleted {len(ids_to_delete)} player entries from 'players' table for guild {guild_id_str}.")
                     # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
                     self._deleted_characters_ids.pop(guild_id_str, None)
                 except Exception as e:
@@ -553,7 +553,7 @@ class CharacterManager:
         guild_chars_cache = self._characters.get(guild_id_str, {})
         characters_to_save = [guild_chars_cache[cid] for cid in list(dirty_char_ids_for_guild_set) if cid in guild_chars_cache]
         if characters_to_save:
-             print(f"CharacterManager: Upserting {len(characters_to_save)} characters for guild {guild_id_str}...")
+             print(f"CharacterManager: Upserting {len(characters_to_save)} player entries into 'players' table for guild {guild_id_str}...")
              # INSERT OR REPLACE SQL для обновления существующих или вставки новых.
              # This SQL should now match the save_character method's SQL.
              # PostgreSQL UPSERT syntax
@@ -724,7 +724,7 @@ class CharacterManager:
                           # or individual execute calls in a loop if asyncpg's executemany doesn't directly support complex ON CONFLICT logic easily.
                           # However, a standard executemany with a VALUES list for INSERT INTO ... ON CONFLICT ... should work.
                           await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert)
-                          print(f"CharacterManager: Successfully upserted {len(data_to_upsert)} characters for guild {guild_id_str}.")
+                          print(f"CharacterManager: Successfully upserted {len(data_to_upsert)} player entries into 'players' table for guild {guild_id_str}.")
                           # ИСПРАВЛЕНИЕ: Очищаем dirty set для этой гильдии только для успешно сохраненных ID
                           if guild_id_str in self._dirty_characters:
                                 self._dirty_characters[guild_id_str].difference_update(upserted_char_ids)
@@ -748,7 +748,7 @@ class CharacterManager:
             return
 
         guild_id_str = str(guild_id)
-        print(f"CharacterManager: Loading characters for guild {guild_id_str} from DB...")
+        print(f"CharacterManager: Loading player data for guild {guild_id_str} from 'players' table in DB to create Character objects...")
 
         # ИСПРАВЛЕНИЕ: Очистите кеши ТОЛЬКО для этой гильдии перед загрузкой
         self._characters.pop(guild_id_str, None)
@@ -779,7 +779,7 @@ class CharacterManager:
             FROM players WHERE guild_id = $1
             ''' # Ensure this matches all fields saved by save_character / save_state
             rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed to db_service
-            print(f"CharacterManager: Found {len(rows)} characters in DB for guild {guild_id_str}.")
+            print(f"CharacterManager: Found {len(rows)} player entries in 'players' table for guild {guild_id_str}.")
 
         except Exception as e:
             # Если произошла ошибка при самом выполнении запроса fetchall
@@ -803,6 +803,14 @@ class CharacterManager:
             # Убеждаемся, что row - это dict-подобный объект
             data = {key: row[key] for key in row.keys()} # Correctly convert aiosqlite.Row to dict
             try:
+                # Add new logging here:
+                char_id_to_log = data.get('id')
+                discord_id_to_log = data.get('discord_id')
+                guild_id_to_log = data.get('guild_id')
+                # Log only for the specific guild ID mentioned in the issue to reduce noise
+                if str(guild_id_to_log) == '1364930265591320586':
+                    print(f"DEBUG_USER_DATA_CHECK: Loading player from DB: discord_id='{discord_id_to_log}', character_obj_id='{char_id_to_log}', guild_id='{guild_id_to_log}'")
+
                 # Проверяем наличие обязательных полей
                 char_id_raw = data.get('id')
                 discord_user_id_raw = data.get('discord_id') # Changed from discord_user_id
@@ -917,9 +925,9 @@ class CharacterManager:
                 print(traceback.format_exc())
                 # Continue loop for other rows
 
-        print(f"CharacterManager: Successfully loaded {loaded_count} characters into cache for guild {guild_id_str}.")
+        print(f"CharacterManager: Successfully loaded data for {loaded_count} players from 'players' table and created Character objects in cache for guild {guild_id_str}.")
         if loaded_count < len(rows):
-             print(f"CharacterManager: Note: Failed to load {len(rows) - loaded_count} characters for guild {guild_id_str} due to errors.")
+             print(f"CharacterManager: Note: Failed to load data for {len(rows) - loaded_count} players from 'players' table for guild {guild_id_str} due to errors.")
 
     # Метод rebuild_runtime_caches принимает guild_id
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:

@@ -2,6 +2,7 @@ import discord # Ensure discord is imported for discord.Interaction
 from discord import Interaction, app_commands
 from discord.ext import commands
 import traceback
+from bot.command_modules.game_setup_cmds import is_master_or_admin_check
 import json # For parsing parameters_json
 from typing import TYPE_CHECKING, Optional, Dict, Any # For type hints
 
@@ -126,6 +127,60 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             traceback.print_exc()
             await interaction.followup.send(f"**Мастер:** Произошла серьезная ошибка при обработке разрешения конфликта: {e}", ephemeral=True)
 # Make sure this method is part of the class by proper indentation
+
+    @app_commands.command(name="gm_delete_character", description="ГМ: Удалить данные персонажа по его ID.")
+    @app_commands.describe(character_id="ID персонажа (Character object UUID) для удаления.")
+    async def cmd_gm_delete_character(self, interaction: discord.Interaction, character_id: str):
+        if not interaction.guild_id:
+            await interaction.response.send_message("Эта команда должна быть использована на сервере.", ephemeral=True)
+            return
+
+        # GM Check using the imported helper
+        if not await is_master_or_admin_check(interaction):
+            await interaction.response.send_message("**Мастер:** Только истинный Мастер или администратор может удалять персонажей!", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        game_mngr = self.bot.game_manager
+        if not game_mngr or not game_mngr.character_manager:
+            await interaction.followup.send("**Мастер:** CharacterManager недоступен.", ephemeral=True)
+            return
+
+        try:
+            # Ensure guild_id is a string for the remove_character method
+            guild_id_str = str(interaction.guild_id)
+            
+            # Call the existing remove_character method in CharacterManager
+            # This method handles removing from cache, marking for DB deletion, and associated cleanup.
+            removed_char_id = await game_mngr.character_manager.remove_character(
+                character_id=character_id,
+                guild_id=guild_id_str
+                # Optional: pass interaction or other context if remove_character can use it
+            )
+
+            if removed_char_id:
+                response_message = f"Персонаж с ID '{removed_char_id}' был помечен для удаления. Данные будут удалены из БД при следующем сохранении."
+                # Log GM action
+                if game_mngr.game_log_manager:
+                    try:
+                        await game_mngr.game_log_manager.log_event(
+                            guild_id=guild_id_str,
+                            event_type="gm_action_delete_character",
+                            message=f"GM {interaction.user.name} ({interaction.user.id}) initiated deletion for character ID {character_id}.",
+                            metadata={"character_id": character_id, "deleter_user_id": str(interaction.user.id)}
+                        )
+                    except Exception as log_e:
+                        print(f"Error logging GM character deletion: {log_e}")
+                await interaction.followup.send(f"**Мастер:** {response_message}", ephemeral=True)
+            else:
+                # This might happen if the character_id was not found in the cache for that guild
+                await interaction.followup.send(f"**Мастер:** Не удалось найти персонажа с ID '{character_id}' в указанной гильдии для удаления. Возможно, он уже удален или ID неверен.", ephemeral=True)
+
+        except Exception as e:
+            print(f"Error in cmd_gm_delete_character: {e}")
+            traceback.print_exc()
+            await interaction.followup.send(f"**Мастер:** Произошла ошибка при удалении персонажа: {e}", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GMAppCog(bot)) # type: ignore
