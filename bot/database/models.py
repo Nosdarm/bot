@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint, Float
+from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint, Float, TIMESTAMP
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+import uuid
 from typing import Dict, Any
 
 Base = declarative_base()
@@ -305,10 +307,26 @@ class GlobalState(Base): # Was WorldState, but table name from error is global_s
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=True)
 
-class Log(Base): # Renamed from logs to avoid conflict with math.log if imported
-    __tablename__ = 'logs'
-    id = Column(String, primary_key=True)
-    placeholder = Column(Text, nullable=True)
+class GameLog(Base):
+    __tablename__ = 'game_logs'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    timestamp = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    guild_id = Column(String, nullable=False, index=True)
+    player_id = Column(String, ForeignKey('players.id'), nullable=True)
+    party_id = Column(String, ForeignKey('parties.id'), nullable=True)
+    event_type = Column(String, nullable=False)
+    message_key = Column(String, nullable=True)
+    message_params = Column(JSON, nullable=True)
+    location_id = Column(String, ForeignKey('locations.id'), nullable=True)
+    involved_entities_ids = Column(JSON, nullable=True)
+    details = Column(JSON, nullable=False)
+    channel_id = Column(String, nullable=True)
+
+    # Basic relationships for convenience, can be expanded
+    player = relationship("Player")
+    party = relationship("Party")
+    location = relationship("Location")
 
 class Relationship(Base):
     __tablename__ = 'relationships'
