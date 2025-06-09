@@ -8,7 +8,6 @@
   "active_guild_ids": [
     "1364930265591320586"
   ],
-  "default_start_location_id": "town_square",
   "item_templates": {
     "potion_health_minor": {
       "name_i18n": {

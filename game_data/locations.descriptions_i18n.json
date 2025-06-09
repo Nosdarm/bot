@@ -1,30 +1,37 @@
+{
+  "locations": [
     {
-      "id": "meldor_city",
+      "id": "forest_entrance",
       "name_i18n": {
-        "en": "Meldor",
-        "ru": "Мэлдор"
+        "en": "Forest Entrance",
+        "ru": "Вход в лес"
       },
       "description_i18n": {
-        "en": "The capital of the Nunril Empire's colony on the Kwellin Archipelago. A grim, fortified city built to guard the Seal from demons. Life here is harsh and full of dangers, both outside and within, where the intrigues of the Secret Service and the Governor's officials thrive. The city is mostly populated by exiled criminals and deceived craftsmen, who are forbidden to leave the Archipelago. Rumors of conspiracies, curses, and strange events are common here.",
-        "ru": "Столица колонии Нунрильской Империи на Архипелаге Квеллин. Мрачный, укрепленный город, построенный для охраны Печати от демонов. Жизнь здесь сурова и полна опасностей, как снаружи, так и внутри, где процветают интриги Тайной Службы и чиновников Губернатора. Город населен по большей части сосланными преступниками и обманутыми ремесленниками, которым запрещено покидать Архипелаг. Здесь обычны слухи о заговорах, проклятиях и странных происшествиях."
+        "en": "A dark and ominous entrance to a dense forest. The air is heavy with the scent of pine and damp earth.",
+        "ru": "Темный и зловещий вход в густой лес. Воздух пропитан запахом сосны и влажной земли."
+      }
+    },
+    {
+      "id": "abandoned_cabin",
+      "name_i18n": {
+        "en": "Abandoned Cabin",
+        "ru": "Заброшенная хижина"
       },
-      "exits": {
-        "south": "saiden_fortress_area",         
-        "east": "kwellin_village_area",          
-        "outskirts": "kwellin_northern_outskirts" 
+      "description_i18n": {
+        "en": "A dilapidated wooden cabin stands silently in a small clearing. The windows are broken, and the door hangs precariously on a single hinge.",
+        "ru": "Ветхая деревянная хижина молча стоит на небольшой поляне. Окна разбиты, а дверь ненадежно висит на одной петле."
+      }
+    },
+    {
+      "id": "crystal_cave",
+      "name_i18n": {
+        "en": "Crystal Cave",
+        "ru": "Хрустальная пещера"
       },
-      "initial_state": {
-        "governor_present": true,
-        "secret_service_activity": "high",
-        "guard_patrols": "frequent",
-        "current_rumor_theme": "conspiracy" 
-      },
-      "on_enter_triggers": [
-         {"action": "announce_city_arrival", "params": {"city_name_i18n_key": "meldor_city"}}, 
-         {"action": "generate_rumor", "params": {"theme_state_key": "current_rumor_theme", "location_id": "current"}} 
-      ],
-      "on_exit_triggers": [
-         {"action": "warn_about_dangers", "params": {"location_id": "destination"}} 
-      ]
-     
+      "description_i18n": {
+        "en": "A glittering cave where large, luminous crystals grow from the walls and ceiling, casting an ethereal glow.",
+        "ru": "Сверкающая пещера, где со стен и потолка растут большие светящиеся кристаллы, излучающие неземное сияние."
+      }
     }
+  ]
+}

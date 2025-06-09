@@ -654,29 +654,20 @@ class LocationManager:
         guild_id_str = str(guild_id)
         guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
         default_id = guild_settings.get('default_start_location_id')
-        source_setting = "guild-specific"
-
         if default_id is None:
-            default_id = self._settings.get('default_start_location_id')
-            source_setting = "global"
+             default_id = self._settings.get('default_start_location_id')
 
-        if default_id is not None:
-            if isinstance(default_id, (str, int)):
-                default_id_str = str(default_id)
-                print(f"LocationManager: Found default_start_location_id: '{default_id_str}' in {source_setting} settings for guild {guild_id_str}.")
-                if self.get_location_instance(guild_id_str, default_id_str):
-                    return default_id_str
-                else:
-                    print(f"LocationManager: Default start location ID '{default_id_str}' (from {source_setting} settings) for guild {guild_id_str} does not have a corresponding active instance.")
-                    return None
-            else:
-                # This case should ideally not happen if settings are structured correctly,
-                # but handles invalid type for default_id if it's not str/int.
-                print(f"LocationManager: Warning: Default start location ID '{default_id}' found in {source_setting} settings for guild {guild_id_str} is invalid type ({type(default_id)}).")
-                return None
-        else:
-            print(f"LocationManager: default_start_location_id key not found in global or guild-specific settings for guild {guild_id_str}.")
-            return None
+        if isinstance(default_id, (str, int)):
+             default_id_str = str(default_id)
+             if self.get_location_instance(guild_id_str, default_id_str):
+                 print(f"LocationManager: Found default start location instance ID '{default_id_str}' in settings for guild {guild_id_str}.")
+                 return default_id_str
+             else:
+                 print(f"LocationManager: Warning: Default start location instance ID '{default_id_str}' found in settings for guild {guild_id_str}, but no corresponding instance exists.")
+                 return None
+
+        print(f"LocationManager: Warning: Default start location setting ('default_start_location_id') not found or is invalid for guild {guild_id_str}.")
+        return None
 
     async def move_entity(
         self,
@@ -1015,5 +1006,80 @@ class LocationManager:
                             print(f"LocationManager: Warning: Invalid channel_id '{channel_id_raw}' in template {template.get('id', 'N/A')} for guild {guild_id_str}.")
 
         return list(active_channel_ids)
+
+    async def create_location_instance_from_moderated_data(self, guild_id: str, location_data: Dict[str, Any], user_id: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Creates a new location instance from moderated (AI-generated) data.
+        Saves it to the database and marks it as generated.
+        """
+        from bot.game.models.location import Location  # Local import
+
+        guild_id_str = str(guild_id)
+        user_id_str = str(user_id) # Ensure user_id is string
+
+        print(f"LocationManager: Creating location instance from moderated data for guild {guild_id_str} by user {user_id_str}.")
+
+        if self._db_service is None or self._db_service.adapter is None:
+            print("LocationManager: Error: DBService or adapter not available.")
+            return None
+
+        # Ensure location_data has an ID, or assign a new one.
+        loc_id = location_data.get('id')
+        if not loc_id:
+            loc_id = str(uuid.uuid4())
+            location_data['id'] = loc_id
+            print(f"LocationManager: Assigned new ID {loc_id} to location from moderated data.")
+
+        # Ensure guild_id is correctly set in the data for the model
+        location_data['guild_id'] = guild_id_str
+
+        # Ensure essential i18n fields and other JSON fields are at least empty dicts if not present
+        # This is mostly handled by Location.from_dict now, but good to be explicit.
+        i18n_fields = ['name_i18n', 'descriptions_i18n', 'details_i18n',
+                       'tags_i18n', 'atmosphere_i18n', 'features_i18n']
+        for field in i18n_fields:
+            location_data.setdefault(field, {})
+
+        json_fields_default_dict = ['exits', 'inventory', 'state_variables', 'static_connections']
+        for field in json_fields_default_dict:
+            location_data.setdefault(field, {})
+
+        location_data.setdefault('is_active', True) # Default to active
+
+        try:
+            # Create Location object using the class method
+            loc_obj = Location.from_dict(location_data)
+
+            # Convert to dictionary for database operation
+            location_dict_for_db = loc_obj.to_dict()
+
+            # Save/update the location in the 'locations' table
+            upsert_success = await self._db_service.adapter.upsert_location(location_dict_for_db)
+            if not upsert_success:
+                print(f"LocationManager: Failed to upsert location {loc_obj.id} to database.")
+                return None
+
+            print(f"LocationManager: Successfully upserted location {loc_obj.id} to database.")
+
+            # Mark the location as AI-generated
+            await self._db_service.adapter.add_generated_location(loc_obj.id, guild_id_str, user_id_str)
+            print(f"LocationManager: Marked location {loc_obj.id} as generated by user {user_id_str}.")
+
+            # Add to in-memory cache
+            # The cache _location_instances stores dicts.
+            self._location_instances.setdefault(guild_id_str, {})[loc_obj.id] = location_dict_for_db
+            self.mark_location_instance_dirty(guild_id_str, loc_obj.id) # Mark as dirty to ensure it's persisted if save_state relies on dirty flags
+
+            print(f"LocationManager: Location instance {loc_obj.id} created from moderated data and cached.")
+            return location_dict_for_db
+
+        except ValueError as ve: # Catch errors from Location.from_dict (e.g. missing id/guild_id)
+            print(f"LocationManager: Error creating Location object from moderated data: {ve}")
+            traceback.print_exc()
+            return None
+        except Exception as e:
+            print(f"LocationManager: Error processing moderated location data for ID {location_data.get('id', 'N/A')}: {e}")
+            traceback.print_exc()
+            return None
 
 # --- Конец класса LocationManager ---
