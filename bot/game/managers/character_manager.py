@@ -283,8 +283,11 @@ class CharacterManager:
         Создает нового персонажа в базе данных, кеширует его и возвращает объект Character.
         Принимает discord_id, name, guild_id.
         """
+        log_prefix = "CM.create_character DEBUG:"
+        print(f"{log_prefix} Method called with initial_location_id: {initial_location_id}")
+
         if self._db_service is None or self._db_service.adapter is None: # Check adapter too
-            print(f"CharacterManager: Error: DB service or adapter missing for guild {guild_id}.")
+            print(f"{log_prefix} Error: DB service or adapter missing for guild {guild_id}.")
             # В многогильдийном режиме, возможно, нужно рейзить ошибку, т.к. без DB данные не будут персистировать
             raise ConnectionError("Database service or adapter is not initialized in CharacterManager.")
 
@@ -349,7 +352,7 @@ class CharacterManager:
         resolved_initial_location_id = initial_location_id # Keep this line
 
         if resolved_initial_location_id is None:
-            print(f"CharacterManager: `initial_location_id` not provided. Attempting to use default start location ID from settings.")
+            print(f"{log_prefix} initial_location_id is None. Attempting to use default start location ID from settings.")
 
             default_location_id_from_settings = None
             if self._settings: # Check if settings object exists
@@ -357,23 +360,24 @@ class CharacterManager:
                 default_location_id_from_settings = guild_settings.get('default_start_location_id')
                 if default_location_id_from_settings is None:
                     default_location_id_from_settings = self._settings.get('default_start_location_id')
+                print(f"{log_prefix} default_location_id_from_settings: {default_location_id_from_settings}")
             else:
-                print(f"CharacterManager: CRITICAL - self._settings is not available in CharacterManager. Cannot determine default start location.")
+                print(f"{log_prefix} CRITICAL - self._settings is not available in CharacterManager. Cannot determine default start location.")
 
             if default_location_id_from_settings:
                 # CRITICAL CHANGE: Directly use the ID from settings. Do NOT create a new instance here.
                 resolved_initial_location_id = str(default_location_id_from_settings)
-                print(f"CharacterManager: Found and using default start location ID from settings: '{resolved_initial_location_id}' directly for `current_location_id`.")
+                print(f"{log_prefix} Found and using default start location ID from settings: '{resolved_initial_location_id}' directly for `current_location_id`.")
             else:
-                print(f"CharacterManager: `default_start_location_id` not found in settings for guild {guild_id_str}. `current_location_id` will be None.")
+                print(f"{log_prefix} default_start_location_id not found in settings for guild {guild_id_str}. `current_location_id` will be None.")
                 # resolved_initial_location_id remains None in this case
         else:
             # If initial_location_id was provided as an argument
             resolved_initial_location_id = str(initial_location_id) # Ensure it is a string
-            print(f"CharacterManager: `initial_location_id` provided: '{resolved_initial_location_id}'. Using this directly.")
+            print(f"{log_prefix} initial_location_id provided: '{resolved_initial_location_id}'. Using this directly.")
 
         # This log is important for verification before data dictionary creation
-        print(f"CharacterManager: Final `current_location_id` for new character {new_id} will be: {resolved_initial_location_id}.")
+        print(f"{log_prefix} Final resolved_initial_location_id for new character {new_id}: {resolved_initial_location_id}")
         # END OF EXACTLY SPECIFIED BLOCK
 
         # Подготавливаем данные для вставки в DB и создания модели
@@ -503,8 +507,9 @@ class CharacterManager:
             # ИСПРАВЛЕНИЕ: Отмечаем как грязный для этой гильдии
             self.mark_character_dirty(guild_id_str, char.id)
 
-
-            print(f"CharacterManager: Character '{name}' (ID: {char.id}, Guild: {char.guild_id}) created and cached for guild {guild_id_str}.")
+            print(f"{log_prefix} Character '{char.name}' (ID: {char.id}) created with current_location_id: {char.current_location_id}")
+            # The existing log below is also good.
+            print(f"CharacterManager: Character '{name}' (ID: {char.id}, Guild: {char.guild_id}) created and cached for guild {guild_id_str}. Location ID: {char.current_location_id}")
             return char
 
         except Exception as e:

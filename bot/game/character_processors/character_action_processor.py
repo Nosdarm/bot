@@ -1092,33 +1092,50 @@ class CharacterActionProcessor:
 
     async def handle_explore_action(self, character: Character, guild_id: str, action_params: Dict[str, Any], context_channel_id: Optional[int] = None) -> Dict[str, Any]:
         """Handles looking around or exploring the current location."""
-        print(f"CharacterActionProcessor.handle_explore_action: Called for character {character.id} in guild {guild_id}. Action params: {action_params}")
-        print(f"Location Manager available: {bool(self._location_manager)}")
-        print(f"Character Manager available: {bool(self._character_manager)}")
-        print(f"Item Manager available: {bool(self._item_manager)}")
-        print(f"Event Manager available: {bool(self._event_manager)}")
+        log_prefix = "CAP.handle_explore_action DEBUG:"
+        print(f"{log_prefix} Called for character {character.id} in guild {guild_id}. Action params: {action_params}")
+        print(f"{log_prefix} Location Manager available: {bool(self._location_manager)}")
+        print(f"{log_prefix} Character Manager available: {bool(self._character_manager)}")
+        print(f"{log_prefix} Item Manager available: {bool(self._item_manager)}")
+        print(f"{log_prefix} Event Manager available: {bool(self._event_manager)}")
+
         if not self._location_manager or not self._character_manager or not self._item_manager or not self._event_manager:
+             print(f"{log_prefix} One or more game systems (location, character, item, event) are unavailable.")
              return {"success": False, "message": "One or more game systems (location, character, item, event) are unavailable.", "state_changed": False}
 
-        print(f"CharacterActionProcessor.handle_explore_action: Character current_location_id: {character.location_id}")
-        char_loc_id = str(character.location_id) if character.location_id else None
+        print(f"{log_prefix} Character {character.id} initial current_location_id: {character.current_location_id}")
+        char_loc_id = str(character.current_location_id) if character.current_location_id else None # Use current_location_id
+
         if not char_loc_id:
-            print("CharacterActionProcessor.handle_explore_action: char_loc_id is None. Returning 'floating in the void'.")
+            print(f"{log_prefix} char_loc_id is None for character {character.id}. Returning 'floating in the void'.")
             return {"success": True, "message": "You are floating in the void. There is nothing to see.", "state_changed": False}
 
-        print(f"CharacterActionProcessor.handle_explore_action: Attempting to get location instance for char_loc_id: {char_loc_id} in guild {guild_id}")
-        location = self._location_manager.get_location_instance(guild_id, char_loc_id) # Assuming this returns the full Location object or rich dict
-        print(f"CharacterActionProcessor.handle_explore_action: Location instance from LocationManager: {location}")
-        if not location:
-            print("CharacterActionProcessor.handle_explore_action: Location instance is None. Returning 'indescribable non-place'.")
+        print(f"{log_prefix} Attempting to get location instance for char_loc_id: {char_loc_id} in guild {guild_id}")
+        location = self._location_manager.get_location_instance(guild_id, char_loc_id)
+
+        print(f"{log_prefix} Type of fetched location: {type(location)}")
+        if location is None:
+            print(f"{log_prefix} Fetched location is None")
+            print(f"{log_prefix} Fetched location is None for char_loc_id {char_loc_id}. Returning 'indescribable non-place'.")
             return {"success": True, "message": "You find yourself in an indescribable non-place.", "state_changed": False}
+        else:
+            # Ensure location is a Location object as expected by the recent change
+            # The previous subtask ensured get_location_instance returns a Location object
+            if hasattr(location, 'to_dict'):
+                print(f"{log_prefix} Fetched location content: {location.to_dict()}")
+            else:
+                # This case should ideally not happen if previous subtask was correct
+                print(f"{log_prefix} Fetched location content (not a Location object, raw): {location}")
 
-        print(f"CharacterActionProcessor.handle_explore_action: Location details - ID: {location.get('id')}, Name: {location.get('name_i18n', {}).get('en', location.get('name'))}")
-        print(f"CharacterActionProcessor.handle_explore_action: Location descriptions_i18n: {location.get('descriptions_i18n')}")
-        print(f"CharacterActionProcessor.handle_explore_action: Location description (legacy field): {location.get('description')}") # Check if a singular 'description' field is ever used
 
-        loc_name = getattr(location, 'name', location.id)
-        loc_desc = getattr(location, 'description', "It's a place.")
+        # Assuming 'location' is now a Location object, access attributes directly
+        loc_name = location.name # Uses property getter from Location model
+        loc_desc = location.display_description # Uses property getter for description
+
+        # Existing print statements for specific details can be kept if useful,
+        # but the to_dict() log above should be comprehensive.
+        # Example: print(f"{log_prefix} Location details - ID: {location.id}, Name: {loc_name}")
+        # print(f"{log_prefix} Location descriptions_i18n: {location.descriptions_i18n}")
 
         # TODO: Use OpenAI for richer descriptions if available and configured
         # if self._openai_service and self._settings.get('use_ai_for_explore_descriptions'):
