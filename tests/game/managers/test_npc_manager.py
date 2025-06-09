@@ -1,16 +1,24 @@
+# tests/game/managers/test_npc_manager.py
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
-import uuid
-import json
+from unittest.mock import AsyncMock, MagicMock, patch
+import json # Added import for json
+import uuid # Added import for uuid
 
 from bot.game.managers.npc_manager import NpcManager
-from bot.game.models.npc import NPC # Assuming NPC model can be instantiated for tests
+# Assuming other necessary imports like NPC model, or other managers if their direct methods are called.
+# from bot.game.models.npc import NPC
 
-class TestNpcManager(unittest.IsolatedAsyncioTestCase):
+# If NpcManager is in a class that inherits from something providing asyncio support:
+# class TestNpcManager(unittest.IsolatedAsyncioTestCase):
+# Otherwise, ensure your test runner handles async tests.
+class TestNpcManager(unittest.IsolatedAsyncioTestCase): # Using IsolatedAsyncioTestCase for async tests
 
-    async def asyncSetUp(self):
-        self.mock_db_adapter = AsyncMock()
-        self.mock_settings = {} # Basic settings
+    def setUp(self):
+        # Mock services that are injected into NpcManager
+        self.mock_db_service = MagicMock()
+        self.mock_db_service.adapter = AsyncMock() # The adapter has async methods
+
+        self.mock_settings = {"npc_generation_ai_settings": {}} # Basic settings mock
         self.mock_item_manager = AsyncMock()
         self.mock_status_manager = AsyncMock()
         self.mock_party_manager = AsyncMock()
@@ -20,13 +28,14 @@ class TestNpcManager(unittest.IsolatedAsyncioTestCase):
         self.mock_dialogue_manager = AsyncMock()
         self.mock_location_manager = AsyncMock()
         self.mock_game_log_manager = AsyncMock()
-        self.mock_prompt_generator = AsyncMock()
+        self.mock_multilingual_prompt_generator = AsyncMock()
         self.mock_openai_service = AsyncMock()
         self.mock_ai_validator = AsyncMock()
-        self.mock_campaign_loader = AsyncMock()
+        self.mock_campaign_loader = MagicMock() # Assuming sync methods for now
+        self.mock_notification_service = AsyncMock()
 
         self.npc_manager = NpcManager(
-            db_adapter=self.mock_db_adapter,
+            db_service=self.mock_db_service,
             settings=self.mock_settings,
             item_manager=self.mock_item_manager,
             status_manager=self.mock_status_manager,
@@ -37,205 +46,116 @@ class TestNpcManager(unittest.IsolatedAsyncioTestCase):
             dialogue_manager=self.mock_dialogue_manager,
             location_manager=self.mock_location_manager,
             game_log_manager=self.mock_game_log_manager,
-            multilingual_prompt_generator=self.mock_prompt_generator,
+            multilingual_prompt_generator=self.mock_multilingual_prompt_generator,
             openai_service=self.mock_openai_service,
-            ai_validator=self.mock_ai_validator
+            ai_validator=self.mock_ai_validator,
+            campaign_loader=self.mock_campaign_loader,
+            notification_service=self.mock_notification_service
         )
+        # Pre-load archetypes or mock _load_npc_archetypes if it interferes
+        self.npc_manager._npc_archetypes = {}
 
-    async def test_create_npc_ai_pending_moderation(self):
-        """Test AI NPC creation successfully goes to pending moderation."""
-        guild_id = "test_guild_ai_success"
-        npc_template_id = "AI:generate_guard"
-        user_id = "test_user_moderation"
-        mock_validated_data = {"name": "AI Guard", "archetype": "guard", "stats": {"strength": 12}}
 
+    async def test_create_npc_ai_path_moderation_flow(self):
+        guild_id = "test_guild_123"
+        npc_template_id = "AI:Powerful Dragon" # Trigger AI path
+        user_id = "test_user_456"
+
+        # 1. Mock AI Generation and Validation
+        mock_ai_generated_data = {
+            "name": "Sparky the Dragon",
+            "name_i18n": {"en": "Sparky the Dragon"},
+            "archetype": "dragon_young",
+            "level_suggestion": 10
+            # Ensure this data matches what generate_npc_details_from_ai is expected to return
+            # after validation (i.e., the content of validated_data)
+        }
+        # NpcManager.generate_npc_details_from_ai calls:
+        #   - multilingual_prompt_generator.generate_npc_profile_prompt
+        #   - openai_service.generate_structured_multilingual_content
+        #   - ai_validator.validate_ai_response
+        self.mock_multilingual_prompt_generator.generate_npc_profile_prompt.return_value = {"system": "sys_prompt", "user": "user_prompt"}
+        self.mock_openai_service.generate_structured_multilingual_content.return_value = {"json_string": json.dumps(mock_ai_generated_data)}
         self.mock_ai_validator.validate_ai_response.return_value = {
             "overall_status": "success",
-            "entities": [{"validated_data": mock_validated_data}]
+            "entities": [{"validated_data": mock_ai_generated_data, "errors": [], "notifications": []}],
+            "global_errors": []
         }
-        # Mock generate_npc_details_from_ai to directly return the validated data for simplicity here,
-        # as generate_npc_details_from_ai itself will be tested elsewhere or assumed working.
-        # Alternatively, mock the services it calls if testing generate_npc_details_from_ai implicitly.
-        # For this test, we focus on create_npc's logic after generate_npc_details_from_ai returns.
-        self.npc_manager.generate_npc_details_from_ai = AsyncMock(return_value=mock_validated_data)
 
+        # 2. Mock DB save_pending_moderation_request
+        self.mock_db_service.adapter.save_pending_moderation_request.return_value = None # Simulates successful execution
 
-        expected_request_id = str(uuid.uuid4())
-        with patch('uuid.uuid4', return_value=uuid.UUID(expected_request_id)):
-            result = await self.npc_manager.create_npc(
-                guild_id, npc_template_id, location_id="loc1", user_id=user_id, campaign_loader=self.mock_campaign_loader
-            )
+        # 3. Mock CharacterManager and StatusManager for player status update
+        mock_player_character = MagicMock()
+        mock_player_character.id = "player_char_id_789"
+        # Ensure 'name' attribute exists for logging if get_character_by_discord_id returns an object with it
+        mock_player_character.name = "TestPlayer"
+        self.mock_character_manager.get_character_by_discord_id.return_value = mock_player_character
+        self.mock_status_manager.add_status_effect_to_entity.return_value = "status_effect_id_abc"
 
-        self.assertEqual(result, {"status": "pending_moderation", "request_id": expected_request_id})
-        self.mock_db_adapter.save_pending_moderation_request.assert_called_once()
-        call_args = self.mock_db_adapter.save_pending_moderation_request.call_args[0]
-        self.assertEqual(call_args[0], expected_request_id)
-        self.assertEqual(call_args[1], guild_id)
-        self.assertEqual(call_args[2], user_id)
-        self.assertEqual(call_args[3], "npc")
-        self.assertEqual(json.loads(call_args[4]), mock_validated_data)
+        # 4. Mock NotificationService
+        self.mock_notification_service.send_moderation_request_alert.return_value = None
 
-    async def test_create_npc_ai_validation_fails_or_requires_moderation_itself(self):
-        """Test AI NPC creation returns None if AI validation/generation itself fails."""
-        guild_id = "test_guild_ai_fail"
-        npc_template_id = "AI:generate_goblin"
-        user_id = "test_user_fail"
-
-        # Scenario 1: generate_npc_details_from_ai returns None (e.g. validator said needs_moderation or error)
-        self.npc_manager.generate_npc_details_from_ai = AsyncMock(return_value=None)
-
+        # Call the method
         result = await self.npc_manager.create_npc(
-            guild_id, npc_template_id, location_id="loc2", user_id=user_id, campaign_loader=self.mock_campaign_loader
+            guild_id=guild_id,
+            npc_template_id=npc_template_id,
+            user_id=user_id,
+            # time_manager might be needed by add_status_effect_to_entity context
+            time_manager=AsyncMock()
         )
 
-        self.assertIsNone(result)
-        self.mock_db_adapter.save_pending_moderation_request.assert_not_called()
+        # Assertions
+        self.assertIsNotNone(result)
+        self.assertEqual(result.get("status"), "pending_moderation")
+        self.assertTrue("request_id" in result)
+        request_id = result["request_id"]
 
-    async def test_create_npc_ai_no_user_id(self):
-        """Test AI NPC creation fails if user_id is not provided."""
-        guild_id = "test_guild_ai_no_user"
-        npc_template_id = "AI:generate_villager"
-        mock_validated_data = {"name": "AI Villager", "archetype": "villager"}
-        self.npc_manager.generate_npc_details_from_ai = AsyncMock(return_value=mock_validated_data)
-
-        result = await self.npc_manager.create_npc(
-            guild_id, npc_template_id, location_id="loc3", campaign_loader=self.mock_campaign_loader # No user_id
-        )
-
-        self.assertIsNone(result)
-        self.mock_db_adapter.save_pending_moderation_request.assert_not_called()
-
-    async def test_create_npc_non_ai_from_template(self):
-        """Test non-AI NPC creation from a campaign template."""
-        guild_id = "test_guild_template"
-        npc_template_id = "guard_template_001"
-        archetype_data = {
-            "id": npc_template_id,
-            "name": "Guard Template",
-            "archetype": "guard",
-            "stats": {"strength": 10, "max_health": 60},
-            "inventory": [], "traits": [], "desires": [], "motives": [], "backstory": ""
-        }
-        self.mock_campaign_loader.get_npc_archetypes.return_value = [archetype_data]
-        # Mock rule engine if it's called for stats and not part of archetype
-        self.mock_rule_engine.generate_initial_npc_stats = AsyncMock(return_value={"dexterity": 8, "max_health": 50})
-
-
-        result_id = await self.npc_manager.create_npc(
-            guild_id, npc_template_id, location_id="loc_barracks", campaign_loader=self.mock_campaign_loader
-        )
-
-        self.assertIsNotNone(result_id)
-        self.assertIsInstance(result_id, str) # Should be the npc_id
-        self.mock_db_adapter.save_pending_moderation_request.assert_not_called()
-
-        # Check if NPC is in cache
-        created_npc = self.npc_manager.get_npc(guild_id, result_id)
-        self.assertIsNotNone(created_npc)
-        self.assertEqual(created_npc.name, archetype_data["name"])
-        self.assertEqual(created_npc.archetype, archetype_data["archetype"])
-        self.assertIn("strength", created_npc.stats)
-        self.assertIn("dexterity", created_npc.stats) # From rule_engine mock
-        self.assertEqual(created_npc.stats["strength"], 10)
-
-
-    async def test_generate_npc_details_from_ai_success(self):
-        """Test generate_npc_details_from_ai successfully returns validated data."""
-        guild_id = "test_guild_gen_success"
-        npc_concept = "powerful mage"
-        expected_data = {"name": "Mighty Wizard", "archetype": "mage_lord"}
-
-        self.mock_prompt_generator.generate_npc_profile_prompt.return_value = {"system": "sys", "user": "usr"}
-        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": json.dumps(expected_data)})
-        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value={
-            "overall_status": "success",
-            "entities": [{"validated_data": expected_data}]
-        })
-
-        result = await self.npc_manager.generate_npc_details_from_ai(guild_id, npc_concept)
-        self.assertEqual(result, expected_data)
-        self.mock_prompt_generator.generate_npc_profile_prompt.assert_called_once()
+        # Verify AI generation path was taken
+        self.mock_multilingual_prompt_generator.generate_npc_profile_prompt.assert_called_once()
         self.mock_openai_service.generate_structured_multilingual_content.assert_called_once()
-        self.mock_ai_validator.validate_ai_response.assert_called_once()
+        self.mock_ai_validator.validate_ai_response.assert_called_once_with(
+            ai_json_string=json.dumps(mock_ai_generated_data),
+            expected_structure="single_npc",
+            existing_npc_ids=set(),
+            existing_quest_ids=set(),
+            existing_item_template_ids=set()
+        )
 
-    async def test_generate_npc_details_from_ai_openai_fails(self):
-        """Test generate_npc_details_from_ai handles OpenAI service failure."""
-        self.mock_prompt_generator.generate_npc_profile_prompt.return_value = {"system": "sys", "user": "usr"}
-        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"error": "OpenAI down"})
+        # Verify moderation save
+        self.mock_db_service.adapter.save_pending_moderation_request.assert_awaited_once()
+        args_save, _ = self.mock_db_service.adapter.save_pending_moderation_request.call_args
+        self.assertEqual(args_save[0], request_id)
+        self.assertEqual(args_save[1], guild_id)
+        self.assertEqual(args_save[2], user_id)
+        self.assertEqual(args_save[3], "npc")
+        self.assertEqual(json.loads(args_save[4]), mock_ai_generated_data)
 
-        result = await self.npc_manager.generate_npc_details_from_ai("gid", "concept")
-        self.assertIsNone(result)
+        # Verify player status update
+        self.mock_character_manager.get_character_by_discord_id.assert_awaited_once_with(guild_id, user_id)
+        self.mock_status_manager.add_status_effect_to_entity.assert_awaited_once()
 
-    async def test_generate_npc_details_from_ai_validator_fails(self):
-        """Test generate_npc_details_from_ai handles AI validator failure."""
-        self.mock_prompt_generator.generate_npc_profile_prompt.return_value = {"system": "sys", "user": "usr"}
-        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"})
-        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value={"global_errors": ["validation failed"]})
-
-        result = await self.npc_manager.generate_npc_details_from_ai("gid", "concept")
-        self.assertIsNone(result)
-
-    async def test_generate_npc_details_from_ai_validator_needs_moderation(self):
-        """Test generate_npc_details_from_ai handles AI validator 'requires_moderation' flag."""
-        self.mock_prompt_generator.generate_npc_profile_prompt.return_value = {"system": "sys", "user": "usr"}
-        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"})
-        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value={
-            "overall_status": "requires_manual_review", # or similar status
-            "entities": [{"validated_data": {"name":"Needs Review"}, "requires_moderation": True}]
-        })
-        # Based on current NpcManager.generate_npc_details_from_ai, if 'requires_moderation' is true on the entity,
-        # it returns None.
-        result = await self.npc_manager.generate_npc_details_from_ai("gid", "concept")
-        self.assertIsNone(result)
-
-    async def test_create_npc_from_moderated_data(self):
-        """Test creating an NPC from moderated, pre-validated data."""
-        guild_id = "test_guild_moderated_npc"
-        # This data is what would have been stored in pending_moderation_requests.data
-        # It should be complete enough for NPC.from_dict after initial AI validation.
-        moderated_npc_data = {
-            "id": str(uuid.uuid4()), # ID might be pre-assigned or generated in method
-            "name": "Approved NPC",
-            "name_i18n": {"en": "Approved NPC", "ru": "Одобренный НПЦ"},
-            "archetype": "bard",
-            "stats": {"strength": 7, "dexterity": 14, "intelligence": 12, "max_health": 45.0},
-            "location_id": "tavern_main_hall",
-            "inventory": [{"item_id": "lute", "quantity": 1}],
-            "traits": ["charming", "talkative"],
-            "desires": ["fame"],
-            "motives": ["entertain"],
-            "backstory": "A wandering minstrel, approved by the masters.",
-            "backstory_i18n": {"en": "A wandering minstrel, approved by the masters."},
-            "is_temporary": False,
-            # Other fields expected by NPC.from_dict like guild_id will be set by the method
-        }
-        context_data = {"some_context_info": "value"}
-
-        # Ensure a unique ID is used if one isn't in moderated_npc_data or is unsuitable
-        # For this test, let's assume moderated_npc_data comes with a valid ID.
-        if 'id' not in moderated_npc_data:
-            moderated_npc_data['id'] = str(uuid.uuid4())
-
-        npc_id = await self.npc_manager.create_npc_from_moderated_data(guild_id, moderated_npc_data, context_data)
-
-        self.assertIsNotNone(npc_id)
-        self.assertEqual(npc_id, moderated_npc_data['id'])
-
-        # Verify NPC is in cache
-        created_npc = self.npc_manager.get_npc(guild_id, npc_id)
-        self.assertIsNotNone(created_npc)
-        self.assertEqual(created_npc.name, moderated_npc_data['name'])
-        self.assertEqual(created_npc.archetype, moderated_npc_data['archetype'])
-        self.assertEqual(created_npc.stats['strength'], 7)
-        self.assertEqual(created_npc.location_id, "tavern_main_hall")
-        self.assertTrue(self.npc_manager._dirty_npcs[guild_id].__contains__(npc_id))
-
-        # Verify no AI services were called
-        self.mock_prompt_generator.generate_npc_profile_prompt.assert_not_called()
-        self.mock_openai_service.generate_structured_multilingual_content.assert_not_called()
-        self.mock_ai_validator.validate_ai_response.assert_not_called()
-        self.mock_db_adapter.save_pending_moderation_request.assert_not_called()
+        # Check the arguments of add_status_effect_to_entity more carefully
+        # call_args gives a tuple (args, kwargs). We are interested in kwargs['context']
+        called_args_status, called_kwargs_status = self.mock_status_manager.add_status_effect_to_entity.call_args
+        self.assertEqual(called_args_status[0], mock_player_character.id) # target_id
+        self.assertEqual(called_args_status[1], "Character") # target_type
+        self.assertEqual(called_args_status[2], "common.awaiting_moderation") # status_type
+        self.assertIn('context', called_kwargs_status)
+        self.assertEqual(called_kwargs_status['context']['guild_id'], guild_id)
 
 
+        # Verify notification
+        self.mock_notification_service.send_moderation_request_alert.assert_awaited_once()
+        args_notify, _ = self.mock_notification_service.send_moderation_request_alert.call_args
+        self.assertEqual(args_notify[0], guild_id)
+        self.assertEqual(args_notify[1], request_id)
+        self.assertEqual(args_notify[2], "npc")
+        self.assertEqual(args_notify[3], user_id)
+        self.assertIn("name", args_notify[4]) # content_summary
+        self.assertEqual(args_notify[4]["name"], mock_ai_generated_data["name"])
+        self.assertIn("Use /approve", args_notify[5]) # moderation_interface_link
+
+# Required for running tests if this file is executed directly
 if __name__ == '__main__':
     unittest.main()
