@@ -37,23 +37,20 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
-        result = await char_action_proc.process_action(
-            character_id=player_char.id,
-            action_type="look",
-            action_data=action_data,
-            context={
-                'guild_id': str(interaction.guild_id),
-                'author_id': str(interaction.user.id),
-                'channel_id': interaction.channel_id,
-                'game_manager': game_mngr,
-                'character_manager': game_mngr.character_manager,
-                'location_manager': game_mngr.location_manager,
-                'item_manager': game_mngr.item_manager,
-                'npc_manager': game_mngr.npc_manager,
-                'openai_service': game_mngr.openai_service,
-                'send_to_command_channel': interaction.followup.send
-            }
+        # The action_data dictionary ({'target': target} or {}) is suitable for action_params
+        result = await char_action_proc.handle_explore_action(
+            character=player_char,
+            guild_id=str(interaction.guild_id),
+            action_params=action_data, # action_data already contains {'target': target} or is empty
+            context_channel_id=interaction.channel_id
         )
+
+        # Send the message from the result
+        if result and result.get("success"):
+            await interaction.followup.send(result.get("message", "You look around."), ephemeral=False)
+        else:
+            error_message = result.get("message", "You can't seem to see anything clearly right now.") if result else "An unexpected error occurred while looking around."
+            await interaction.followup.send(error_message, ephemeral=True)
 
     @app_commands.command(name="move", description="Переместиться в другую локацию.")
     @app_commands.describe(destination="Название выхода или ID локации назначения.")
