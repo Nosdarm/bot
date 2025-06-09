@@ -1167,7 +1167,20 @@ class CharacterActionProcessor:
             description_parts.append(f"You notice: {', '.join(items)}.")
 
         # Active events (briefly)
-        active_events = self._event_manager.get_active_events_in_location(char_loc_id, guild_id)
+        all_active_events_for_guild = self._event_manager.get_active_events(guild_id)
+        active_events = []
+        if all_active_events_for_guild: # Ensure it's not None or empty before iterating
+            for ev in all_active_events_for_guild:
+                # Assuming Event object has a 'location_id' attribute or stores it in 'state_variables'
+                # Adjust the access to event_location_id based on how Event model stores it.
+                # Common patterns: getattr(ev, 'location_id', None) or ev.state_variables.get('location_id')
+                event_location_id = getattr(ev, 'location_id', None)
+                if event_location_id is None and hasattr(ev, 'state_variables') and isinstance(ev.state_variables, dict):
+                    event_location_id = ev.state_variables.get('location_id')
+
+                if event_location_id == char_loc_id:
+                    active_events.append(ev)
+
         if active_events:
             event_names = [getattr(ev, 'name', ev.id) for ev in active_events]
             description_parts.append(f"Something seems to be happening: {', '.join(event_names)}.")
