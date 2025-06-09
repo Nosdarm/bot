@@ -262,6 +262,153 @@ class LocationManager:
         print(f"LocationManager.load_state: Successfully loaded {loaded_instances_count} instances into cache for guild {guild_id_str}.")
         print(f"LocationManager: Load state complete for guild {guild_id_str}.")
 
+        # Ensure default start location exists as a persistent instance
+        if self._settings:
+            guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
+            default_start_location_template_id = guild_settings.get('default_start_location_id')
+            if default_start_location_template_id is None:
+                default_start_location_template_id = self._settings.get('default_start_location_id')
+
+            if default_start_location_template_id:
+                print(f"LocationManager: Ensuring default start location '{default_start_location_template_id}' exists as a persistent instance for guild '{guild_id_str}'.")
+                await self._ensure_persistent_location_exists(guild_id_str, str(default_start_location_template_id))
+            else:
+                print(f"LocationManager: No default_start_location_id found in settings for guild {guild_id_str}. Cannot ensure its persistence.")
+        else:
+            print("LocationManager: Settings not available, cannot ensure default start location persistence.")
+
+
+    async def _ensure_persistent_location_exists(self, guild_id: str, location_template_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Ensures a location instance with ID = location_template_id exists for the guild.
+        If not, it creates one from the template and saves it to the DB with the template_id as its ID.
+        """
+        print(f"LocationManager: Checking for persistent instance of '{location_template_id}' in guild '{guild_id}'.")
+        guild_id_str = str(guild_id)
+        loc_template_id_str = str(location_template_id)
+
+        # Check cache first
+        if guild_id_str in self._location_instances and loc_template_id_str in self._location_instances[guild_id_str]:
+            print(f"LocationManager: Persistent instance '{loc_template_id_str}' already exists in guild '{guild_id_str}' (found in cache).")
+            return self._location_instances[guild_id_str][loc_template_id_str]
+
+        # Check database if not in cache
+        if self._db_service and self._db_service.adapter:
+            try:
+                # Assuming get_entity can filter by guild_id if provided, or we handle it post-fetch.
+                # For locations, the ID should be unique across guilds if it's a template_id.
+                # However, instances are guild-specific. So, we need a query that checks id AND guild_id.
+                # The locations table has id (PK) and guild_id.
+                # A specific query might be needed if get_entity is not flexible enough.
+                # Let's assume get_entity on 'locations' table with id=loc_template_id_str implies it's the instance ID.
+                # We need to ensure this instance also matches the guild_id.
+                # A better DB check would be: SELECT * FROM locations WHERE id = $1 AND guild_id = $2
+                # For now, let's see if get_entity can be used or if we need raw SQL.
+                # The table structure implies 'id' is the primary key for instances.
+                # If we are ensuring a location with id='town_square' for guild '123',
+                # we check if a row with id='town_square' AND guild_id='123' exists.
+
+                # Using a more direct check:
+                # existing_instance_row = await self._db_service.adapter.fetchone(
+                #     "SELECT * FROM locations WHERE id = $1 AND guild_id = $2", (loc_template_id_str, guild_id_str)
+                # )
+                # For simplicity with existing tools, let's use get_entity and then verify guild_id if found.
+                # This is less efficient if many guilds share template IDs as instance IDs for different things.
+                # But for ensuring specific named locations (like 'town_square'), 'id' itself is the key.
+                existing_instance_data_from_db = await self._db_service.get_entity(
+                    table_name='locations',
+                    entity_id=loc_template_id_str, # This is the instance ID to check
+                    id_field='id'
+                    # We need to also ensure guild_id matches. If get_entity doesn't support compound keys or extra filters,
+                    # this check needs refinement.
+                    # For now, if it returns, we'll check guild_id from the result.
+                )
+
+                if existing_instance_data_from_db and str(existing_instance_data_from_db.get('guild_id')) == guild_id_str:
+                    print(f"LocationManager: Persistent instance '{loc_template_id_str}' already exists in guild '{guild_id_str}' (found in DB).")
+                    # Add to cache if loaded from DB and not there
+                    self._location_instances.setdefault(guild_id_str, {})[loc_template_id_str] = existing_instance_data_from_db
+                    return existing_instance_data_from_db
+                elif existing_instance_data_from_db: # ID exists but for a different guild
+                    print(f"LocationManager: Instance with ID '{loc_template_id_str}' found in DB but for a different guild ({existing_instance_data_from_db.get('guild_id')}). Will proceed to create for guild '{guild_id_str}'.")
+
+
+            except Exception as e:
+                print(f"LocationManager: DB error checking for instance '{loc_template_id_str}' in guild '{guild_id_str}': {e}")
+                # Continue to creation attempt if DB check fails, as if not found.
+
+        print(f"LocationManager: Creating new persistent instance for '{loc_template_id_str}' in guild '{guild_id_str}' as it was not found or belonged to another guild.")
+        template_data = self.get_location_static(loc_template_id_str)
+        if not template_data:
+            print(f"LocationManager: Cannot create persistent instance for '{loc_template_id_str}' in guild '{guild_id_str}', template not found.")
+            return None
+
+        # Prepare new instance data
+        new_instance_data = {
+            'id': loc_template_id_str, # Use template ID as instance ID
+            'guild_id': guild_id_str,
+            'template_id': loc_template_id_str,
+            'name_i18n': template_data.get('name_i18n', {'en': loc_template_id_str}),
+            'descriptions_i18n': template_data.get('description_i18n', template_data.get('descriptions_i18n', {'en': 'A default location.'})),
+            'exits': template_data.get('exits', template_data.get('connected_locations', {})),
+            'state': template_data.get('initial_state', {}), # DB uses state_variables
+            'is_active': True,
+            # Ensure other fields for DB are present
+            'static_name': template_data.get('static_name', template_data.get('name_i18n', {}).get('en', loc_template_id_str)),
+            'static_connections': json.dumps(template_data.get('static_connections', template_data.get('exits', {}))),
+            # Fields expected by DB adapter's upsert_location or direct SQL
+            'state_variables': json.dumps(template_data.get('initial_state', {})), # Ensure this is JSON string for DB
+        }
+        # Ensure correct types for JSON fields if not using direct to_dict from a model
+        if not isinstance(new_instance_data['name_i18n'], str):
+            new_instance_data['name_i18n'] = json.dumps(new_instance_data['name_i18n'])
+        if not isinstance(new_instance_data['descriptions_i18n'], str):
+            new_instance_data['descriptions_i18n'] = json.dumps(new_instance_data['descriptions_i18n'])
+        if not isinstance(new_instance_data['exits'], str):
+            new_instance_data['exits'] = json.dumps(new_instance_data['exits'])
+        # 'state' is used by model, 'state_variables' by DB. We prepared state_variables above.
+
+        if self._db_service and self._db_service.adapter and hasattr(self._db_service.adapter, 'upsert_location'):
+            try:
+                # Prepare a dict that matches what upsert_location expects (often a model.to_dict() like structure)
+                db_ready_data = {
+                    'id': new_instance_data['id'],
+                    'guild_id': new_instance_data['guild_id'],
+                    'template_id': new_instance_data['template_id'],
+                    'name_i18n': new_instance_data['name_i18n'], # Should be JSON string
+                    'descriptions_i18n': new_instance_data['descriptions_i18n'], # Should be JSON string
+                    'exits': new_instance_data['exits'], # Should be JSON string
+                    'state_variables': new_instance_data['state_variables'], # Should be JSON string
+                    'is_active': new_instance_data['is_active'],
+                    'static_name': new_instance_data.get('static_name'),
+                    'static_connections': new_instance_data.get('static_connections') # Should be JSON string
+                }
+                await self._db_service.adapter.upsert_location(db_ready_data)
+                print(f"LocationManager: Created persistent instance for '{loc_template_id_str}' in guild '{guild_id_str}' via upsert_location.")
+
+                # Add to cache (use the structure expected by the cache, typically Python dicts, not JSON strings)
+                cache_data = {
+                    'id': loc_template_id_str,
+                    'guild_id': guild_id_str,
+                    'template_id': loc_template_id_str,
+                    'name_i18n': json.loads(new_instance_data['name_i18n']),
+                    'descriptions_i18n': json.loads(new_instance_data['descriptions_i18n']),
+                    'exits': json.loads(new_instance_data['exits']),
+                    'state': json.loads(new_instance_data['state_variables']), # Cache uses 'state'
+                    'is_active': True,
+                    'static_name': new_instance_data.get('static_name'),
+                    'static_connections': json.loads(new_instance_data['static_connections'] or '{}')
+                }
+                self._location_instances.setdefault(guild_id_str, {})[loc_template_id_str] = cache_data
+                self.mark_location_instance_dirty(guild_id_str, loc_template_id_str) # Mark as dirty
+                return cache_data
+            except Exception as e:
+                print(f"LocationManager: Error saving persistent instance '{loc_template_id_str}' for guild '{guild_id_str}': {e}")
+                traceback.print_exc()
+                return None
+        else:
+            print("LocationManager: DBService or adapter not available, or upsert_location missing. Cannot save persistent instance.")
+            return None
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         """Сохраняет измененные/удаленные динамические инстансы локаций для определенной гильдии."""
