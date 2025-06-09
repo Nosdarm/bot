@@ -28,6 +28,23 @@ class DBService:
         """Initializes the database schema by running migrations."""
         await self.adapter.initialize_database()
 
+    async def get_global_state_value(self, key: str) -> Optional[str]:
+        """Fetches a single value from the global_state table."""
+        # global_state table has 'key' and 'value' columns.
+        if not self.adapter:
+            print("DBService: Adapter not available for get_global_state_value.")
+            return None
+        sql = "SELECT value FROM global_state WHERE key = $1"
+        try:
+            row = await self.adapter.fetchone(sql, (key,))
+            if row and row.get('value') is not None:
+                return str(row['value'])
+        except Exception as e:
+            print(f"DBService: Error fetching global state for key '{key}': {e}")
+            # import traceback # Already imported
+            traceback.print_exc()
+        return None
+
     # _row_to_dict and _rows_to_dicts are no longer needed as PostgresAdapter
     # methods fetchone() and fetchall() return dicts directly.
 
