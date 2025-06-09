@@ -132,6 +132,7 @@ class LocationManager:
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         """Загружает ДИНАМИЧЕСКИЕ ИНСТАНСЫ локаций для гильдии. Шаблоны загружаются глобально."""
         guild_id_str = str(guild_id)
+        print(f"LocationManager.load_state: Called for guild_id: {guild_id_str}")
         print(f"LocationManager: Loading state for guild {guild_id_str} (instances only)...")
 
         db_service = kwargs.get('db_service', self._db_service) # type: Optional["DBService"]
@@ -163,12 +164,16 @@ class LocationManager:
             SELECT id, template_id, name_i18n, descriptions_i18n, exits, state_variables, is_active, guild_id, static_name, static_connections
             FROM locations WHERE guild_id = $1
             ''' # Changed
+            print(f"LocationManager.load_state: Preparing to load instances from DB for guild {guild_id_str}. SQL query: {sql_instances}")
             rows_instances = await db_service.adapter.fetchall(sql_instances, (guild_id_str,)) # Changed
+            print(f"LocationManager.load_state: Fetched {len(rows_instances) if rows_instances else 0} rows from DB for guild {guild_id_str}.")
             if rows_instances:
                  print(f"LocationManager: Found {len(rows_instances)} instances for guild {guild_id_str}.")
 
                  for row in rows_instances:
                       try:
+                           print(f"LocationManager.load_state: Processing row: {dict(row) if row else 'Empty row'}")
+                           print(f"LocationManager.load_state: Row data - id: {row['id']}, template_id: {row['template_id']}, descriptions_i18n: {row.get('descriptions_i18n')}")
                            instance_id_raw = row['id']
                            loaded_guild_id_raw = row['guild_id']
 
@@ -225,6 +230,7 @@ class LocationManager:
 
                            from bot.game.models.location import Location # Local import
                            location_obj = Location.from_dict(instance_data_for_model)
+                           print(f"LocationManager.load_state: Location object created from row data: {location_obj.id if location_obj else 'Failed to create Location obj'}. Added to guild_instances_cache.")
                            guild_instances_cache[location_obj.id] = location_obj.to_dict()
 
                            # Validation (template existence check can remain the same)
@@ -253,6 +259,7 @@ class LocationManager:
             self._deleted_instances.pop(guild_id_str, None)
             raise
 
+        print(f"LocationManager.load_state: Successfully loaded {loaded_instances_count} instances into cache for guild {guild_id_str}.")
         print(f"LocationManager: Load state complete for guild {guild_id_str}.")
 
 
@@ -458,8 +465,16 @@ class LocationManager:
     def get_location_instance(self, guild_id: str, instance_id: str) -> Optional[Dict[str, Any]]:
          """Получить динамический инстанс локации по ID для данной гильдии."""
          guild_id_str = str(guild_id)
+         print(f"LocationManager.get_location_instance: Called for guild_id: {guild_id_str}, instance_id: {instance_id}")
          guild_instances = self._location_instances.get(guild_id_str, {})
-         return guild_instances.get(str(instance_id))
+         print(f"LocationManager.get_location_instance: Instances cached for guild {guild_id_str}: {bool(guild_instances)}")
+         instance_data = guild_instances.get(str(instance_id))
+         print(f"LocationManager.get_location_instance: Instance data found in cache for {instance_id}: {bool(instance_data)}")
+         if instance_data:
+             print(f"LocationManager.get_location_instance: Keys in instance_data for {instance_id}: {list(instance_data.keys())}")
+         else:
+             print(f"LocationManager.get_location_instance: No instance data found in cache for {instance_id} under guild {guild_id_str}.")
+         return instance_data
 
 
     async def delete_location_instance(self, guild_id: str, instance_id: str, **kwargs: Any) -> bool:

@@ -802,6 +802,7 @@ class CharacterManager:
 
         for row in rows:
             # Убеждаемся, что row - это dict-подобный объект
+            print(f"CharacterManager.load_state: DB Row Check for char {row.get('id')} - raw current_location_id from row object: {row.get('current_location_id')}, type: {type(row.get('current_location_id'))}")
             data = {key: row[key] for key in row.keys()} # Correctly convert aiosqlite.Row to dict
             try:
                 # Проверяем наличие обязательных полей
