@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.services.openai_service import OpenAIService
     from bot.ai.ai_response_validator import AIResponseValidator # Added import
+    from bot.services.notification_service import NotificationService # Added import
 
     # Добавляем процессоры, если они используются в аннотациях методов
     # from bot.game.character_processors.character_action_processor import CharacterActionProcessor
@@ -105,7 +106,8 @@ class NpcManager:
         multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None, # New
         openai_service: Optional["OpenAIService"] = None, # New
         ai_validator: Optional["AIResponseValidator"] = None, # New for validation
-        campaign_loader: Optional["CampaignLoader"] = None
+        campaign_loader: Optional["CampaignLoader"] = None,
+        notification_service: Optional["NotificationService"] = None # New
     ):
         print("Initializing NpcManager...")
         self._db_service = db_service # Changed
@@ -127,6 +129,7 @@ class NpcManager:
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
         self._ai_validator = ai_validator # Store the validator instance
+        self._notification_service = notification_service # Store notification service
 
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
@@ -384,9 +387,52 @@ class NpcManager:
                     request_id, guild_id_str, str(user_id), content_type, data_json
                 )
                 print(f"NpcManager: AI-generated NPC data for '{npc_id_concept}' saved for moderation. Request ID: {request_id}")
+
+                # --- Update Player Status & Send Master Notification ---
+                if self._character_manager and self._status_manager:
+                    player_char = await self._character_manager.get_character_by_discord_id(guild_id_str, str(user_id))
+                    if player_char:
+                        status_context = {
+                            "guild_id": guild_id_str,
+                            "source_entity_id": "system", # Or a specific GM/moderation system ID
+                            "time_manager": kwargs.get("time_manager") # Pass time_manager if available in kwargs
+                        }
+                        # Duration: very long (e.g., seconds in a year) or handle None as indefinite in StatusManager
+                        # Using a large number for now.
+                        await self._status_manager.add_status_effect_to_entity(
+                            target_id=player_char.id,
+                            target_type="Character",
+                            status_type="common.awaiting_moderation",
+                            duration=31536000, # 1 year in seconds
+                            context=status_context
+                        )
+                        print(f"NpcManager: Applied 'awaiting_moderation' status to character {player_char.id} for user {user_id}.")
+                    else:
+                        print(f"NpcManager: Warning - Player character not found for user_id {user_id} in guild {guild_id_str}. Cannot apply status.")
+                else:
+                    print("NpcManager: Warning - CharacterManager or StatusManager not available. Skipping player status update.")
+
+                if self._notification_service:
+                    content_summary = {
+                        "name": ai_generated_data.get("name", npc_id_concept),
+                        "archetype": ai_generated_data.get("archetype", "N/A"),
+                        "level_suggestion": ai_generated_data.get("level_suggestion", "N/A")
+                    }
+                    moderation_link = "Use /approve, /reject, /edit commands with the Request ID."
+                    await self._notification_service.send_moderation_request_alert(
+                        guild_id=guild_id_str,
+                        request_id=request_id,
+                        content_type=content_type,
+                        user_id=str(user_id),
+                        content_summary=content_summary,
+                        moderation_interface_link=moderation_link
+                    )
+                else:
+                    print("NpcManager: Warning - NotificationService not available. Skipping master notification.")
+
                 return {"status": "pending_moderation", "request_id": request_id}
             except Exception as e_mod_save:
-                print(f"NpcManager: ERROR saving AI NPC content for moderation: {e_mod_save}")
+                print(f"NpcManager: ERROR saving AI NPC content for moderation or in post-save steps: {e_mod_save}")
                 traceback.print_exc()
                 return None # Failed to save for moderation, abort NPC creation
 

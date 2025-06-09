@@ -428,7 +428,23 @@ class GameManager:
         self._stage_description_generator = StageDescriptionGenerator(openai_service=self.openai_service)
         self._event_stage_processor = EventStageProcessor(on_enter_action_executor=self._on_enter_action_executor, stage_description_generator=self._stage_description_generator, character_manager=self.character_manager, loc_manager=self.location_manager, rule_engine=self.rule_engine, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, party_manager=self.party_manager)
         self._event_action_processor = EventActionProcessor(event_stage_processor=self._event_stage_processor, event_manager=self.event_manager, character_manager=self.character_manager, loc_manager=self.location_manager, rule_engine=self.rule_engine, openai_service=self.openai_service, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, send_callback_factory=self._get_discord_send_callback, dialogue_manager=self.dialogue_manager, crafting_manager=self.crafting_manager, on_enter_action_executor=self._on_enter_action_executor, stage_description_generator=self._stage_description_generator)
-        self._character_action_processor = CharacterActionProcessor(character_manager=self.character_manager, send_callback_factory=self._get_discord_send_callback, item_manager=self.item_manager, location_manager=self.location_manager, rule_engine=self.rule_engine, time_manager=self.time_manager, combat_manager=self.combat_manager, status_manager=self.status_manager, party_manager=self.party_manager, npc_manager=self.npc_manager, event_stage_processor=self._event_stage_processor, event_action_processor=self._event_action_processor)
+        self._character_action_processor = CharacterActionProcessor(
+            character_manager=self.character_manager,
+            send_callback_factory=self._get_discord_send_callback,
+            item_manager=self.item_manager,
+            location_manager=self.location_manager,
+            rule_engine=self.rule_engine,
+            time_manager=self.time_manager,
+            combat_manager=self.combat_manager,
+            status_manager=self.status_manager,
+            party_manager=self.party_manager,
+            npc_manager=self.npc_manager,
+            event_stage_processor=self._event_stage_processor,
+            event_action_processor=self._event_action_processor,
+            game_log_manager=self.game_log_manager,
+            openai_service=self.openai_service,
+            event_manager=self.event_manager
+        )
         self._character_view_service = CharacterViewService(character_manager=self.character_manager, item_manager=self.item_manager, location_manager=self.location_manager, rule_engine=self.rule_engine, status_manager=self.status_manager, party_manager=self.party_manager)
         self._party_action_processor = PartyActionProcessor(party_manager=self.party_manager, send_callback_factory=self._get_discord_send_callback, rule_engine=self.rule_engine, location_manager=self.location_manager, character_manager=self.character_manager, npc_manager=self.npc_manager, time_manager=self.time_manager, combat_manager=self.combat_manager, event_stage_processor=self._event_stage_processor)
         if self.party_manager is None: self._party_action_processor = None

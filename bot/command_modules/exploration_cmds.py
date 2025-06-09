@@ -21,7 +21,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return
@@ -36,24 +36,22 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
+        else: print(f"ExplorationCog.cmd_look: Fetched player_char (ID: {player_char.id}), location_id: {player_char.location_id}, type: {type(player_char.location_id)}")
 
-        result = await char_action_proc.process_action(
-            character_id=player_char.id,
-            action_type="look",
-            action_data=action_data,
-            context={
-                'guild_id': str(interaction.guild_id),
-                'author_id': str(interaction.user.id),
-                'channel_id': interaction.channel_id,
-                'game_manager': game_mngr,
-                'character_manager': game_mngr.character_manager,
-                'location_manager': game_mngr.location_manager,
-                'item_manager': game_mngr.item_manager,
-                'npc_manager': game_mngr.npc_manager,
-                'openai_service': game_mngr.openai_service,
-                'send_to_command_channel': interaction.followup.send
-            }
+        # The action_data dictionary ({'target': target} or {}) is suitable for action_params
+        result = await char_action_proc.handle_explore_action(
+            character=player_char,
+            guild_id=str(interaction.guild_id),
+            action_params=action_data, # action_data already contains {'target': target} or is empty
+            context_channel_id=interaction.channel_id
         )
+
+        # Send the message from the result
+        if result and result.get("success"):
+            await interaction.followup.send(result.get("message", "You look around."), ephemeral=False)
+        else:
+            error_message = result.get("message", "You can't seem to see anything clearly right now.") if result else "An unexpected error occurred while looking around."
+            await interaction.followup.send(error_message, ephemeral=True)
 
     @app_commands.command(name="move", description="Переместиться в другую локацию.")
     @app_commands.describe(destination="Название выхода или ID локации назначения.")
@@ -65,7 +63,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return
@@ -108,7 +106,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return

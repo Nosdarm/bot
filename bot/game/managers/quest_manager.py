@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.services.openai_service import OpenAIService
     from bot.ai.ai_response_validator import AIResponseValidator # Added validator
+    from bot.services.notification_service import NotificationService # Added import
     # from typing import Union # For updated return type # Already added above
 
     # The import for 'Quest' model is removed as per instruction 10, assuming dicts are used.
@@ -44,7 +45,8 @@ class QuestManager:
         # New parameters
         multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None,
         openai_service: Optional["OpenAIService"] = None,
-        ai_validator: Optional["AIResponseValidator"] = None # Added validator
+        ai_validator: Optional["AIResponseValidator"] = None, # Added validator
+        notification_service: Optional["NotificationService"] = None # New
     ):
         self._db_service = db_service # Changed
         self._settings = settings if settings else {} # Ensure settings is a dict
@@ -59,6 +61,7 @@ class QuestManager:
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
         self._ai_validator = ai_validator # Store validator
+        self._notification_service = notification_service # Store notification service
 
         # guild_id -> character_id -> quest_id -> quest_data
         self._active_quests: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -248,12 +251,53 @@ class QuestManager:
                         request_id, guild_id_str, str(user_id), content_type, data_json
                     )
                     print(f"QuestManager: AI-generated quest data for '{quest_concept}' saved for moderation. Request ID: {request_id}")
+
+                    # --- Update Player Status & Send Master Notification ---
+                    if self._character_manager and hasattr(self._character_manager, 'get_character_by_discord_id') and self._status_manager:
+                        player_char = await self._character_manager.get_character_by_discord_id(guild_id_str, str(user_id))
+                        if player_char:
+                            status_context = {
+                                "guild_id": guild_id_str,
+                                "source_entity_id": "system",
+                                "time_manager": kwargs.get("time_manager")
+                            }
+                            await self._status_manager.add_status_effect_to_entity(
+                                target_id=player_char.id,
+                                target_type="Character",
+                                status_type="common.awaiting_moderation",
+                                duration=31536000, # 1 year
+                                context=status_context
+                            )
+                            print(f"QuestManager: Applied 'awaiting_moderation' status to character {player_char.id} for user {user_id}.")
+                        else:
+                            print(f"QuestManager: Warning - Player character not found for user_id {user_id} in guild {guild_id_str}. Cannot apply status.")
+                    else:
+                        print("QuestManager: Warning - CharacterManager or StatusManager not available/suitable. Skipping player status update.")
+
+                    if self._notification_service:
+                        content_summary = {
+                            "name": ai_generated_quest_data.get("name_i18n", {}).get(self._default_lang, quest_concept),
+                            "description_snippet": (ai_generated_quest_data.get("description_i18n", {}).get(self._default_lang, "")[:75] + "...") if ai_generated_quest_data.get("description_i18n", {}).get(self._default_lang) else "N/A",
+                            "level_suggestion": ai_generated_quest_data.get("level_suggestion", "N/A")
+                        }
+                        moderation_link = "Use /approve, /reject, /edit commands with the Request ID."
+                        await self._notification_service.send_moderation_request_alert(
+                            guild_id=guild_id_str,
+                            request_id=request_id,
+                            content_type=content_type,
+                            user_id=str(user_id),
+                            content_summary=content_summary,
+                            moderation_interface_link=moderation_link
+                        )
+                    else:
+                        print("QuestManager: Warning - NotificationService not available. Skipping master notification.")
+
                     return {"status": "pending_moderation", "request_id": request_id}
                 else:
                     print(f"QuestManager: ERROR - DB service or adapter not available. Cannot save quest for moderation.") # Changed
                     return None # Or handle differently, e.g., proceed without moderation if allowed by policy
             except Exception as e_mod_save:
-                print(f"QuestManager: ERROR saving AI quest content for moderation: {e_mod_save}")
+                print(f"QuestManager: ERROR saving AI quest content for moderation or in post-save steps: {e_mod_save}")
                 traceback.print_exc()
                 return None # Failed to save for moderation
 
