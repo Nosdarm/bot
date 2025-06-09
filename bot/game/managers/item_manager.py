@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from bot.game.managers.status_manager import StatusManager
     from bot.game.managers.economy_manager import EconomyManager
     from bot.game.managers.crafting_manager import CraftingManager
+    from bot.game.managers.game_log_manager import GameLogManager # Added for logging
 
 # --- Imports needed at Runtime ---
 from bot.game.models.item import Item # Ensure Item model is imported for runtime instantiation
@@ -58,6 +59,7 @@ class ItemManager:
         status_manager: Optional["StatusManager"] = None,
         economy_manager: Optional["EconomyManager"] = None,
         crafting_manager: Optional["CraftingManager"] = None,
+        game_log_manager: Optional["GameLogManager"] = None, # Added game_log_manager
     ):
         print("Initializing ItemManager...")
         self._db_service = db_service # Changed
@@ -71,6 +73,7 @@ class ItemManager:
         self._status_manager = status_manager
         self._economy_manager = economy_manager
         self._crafting_manager = crafting_manager
+        self._game_log_manager = game_log_manager # Store game_log_manager
 
         self._item_templates = {}
         self._items = {}
@@ -240,6 +243,27 @@ class ItemManager:
                 print(f"ItemManager: Failed to save new item {new_item_id} to DB for guild {guild_id_str}.")
                 return None
 
+            # Log creation for undo
+            if self._game_log_manager:
+                revert_data = {"item_id": new_item.id}
+                log_details = {
+                    "action_type": "ITEM_INSTANCE_CREATE",
+                    "item_id": new_item.id,
+                    "template_id": new_item.template_id,
+                    "owner_id": new_item.owner_id,
+                    "owner_type": new_item.owner_type,
+                    "location_id": new_item.location_id,
+                    "quantity": new_item.quantity,
+                    "revert_data": revert_data
+                }
+                player_id_context = kwargs.get('player_id_context')
+                asyncio.create_task(self._game_log_manager.log_event(
+                    guild_id=guild_id_str,
+                    event_type="ITEM_CREATED",
+                    details=log_details,
+                    player_id=player_id_context
+                ))
+
             print(f"ItemManager: Item instance {new_item_id} (Template: {template_id_str}) created, saved, and cached for guild {guild_id_str}.")
             return new_item
         except Exception as e:
@@ -254,8 +278,31 @@ class ItemManager:
 
         if not item_to_remove:
             if guild_id_str in self._deleted_items and item_id_str in self._deleted_items[guild_id_str]:
-                 return True
+                 # Already marked for deletion or previously deleted and handled
+                 print(f"ItemManager.remove_item_instance: Item {item_id_str} already marked as deleted or not found in active cache for guild {guild_id_str}.")
+                 return True # Consistent with allowing multiple calls to remove a deleted item
+            print(f"ItemManager.remove_item_instance: Item {item_id_str} not found for removal in guild {guild_id_str}.")
             return False
+
+        # Log before actual removal attempt
+        if self._game_log_manager:
+            revert_data = {"original_item_data": item_to_remove.to_dict()}
+            log_details = {
+                "action_type": "ITEM_INSTANCE_DELETE",
+                "item_id": item_to_remove.id,
+                "template_id": item_to_remove.template_id,
+                "owner_id": item_to_remove.owner_id,
+                "location_id": item_to_remove.location_id,
+                "revert_data": revert_data
+            }
+            player_id_context = kwargs.get('player_id_context')
+            # Awaiting directly as remove_item_instance is async
+            await self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="ITEM_DELETED",
+                details=log_details,
+                player_id=player_id_context
+            )
 
         try:
             if self._db_service and self._db_service.adapter: # Changed
@@ -283,22 +330,50 @@ class ItemManager:
         item_object = self.get_item_instance(guild_id_str, item_id_str)
 
         if not item_object:
+            print(f"ItemManager.update_item_instance: Item {item_id_str} not found in guild {guild_id_str}.")
             return False
 
         old_item_dict_for_lookup = item_object.to_dict() # For lookup cache removal
+
+        # Prepare revert_data by capturing old values *before* applying updates
+        old_field_values = {}
+        for key_to_update in updates.keys():
+            if hasattr(item_object, key_to_update):
+                old_field_values[key_to_update] = getattr(item_object, key_to_update)
+                # For mutable types like dict (state_variables), a deepcopy might be better if not handled by to_dict
+                if isinstance(old_field_values[key_to_update], dict):
+                     old_field_values[key_to_update] = json.loads(json.dumps(old_field_values[key_to_update]))
+
 
         # Apply updates to the Item object's attributes
         for key, value in updates.items():
             if hasattr(item_object, key):
                 if key == 'state_variables' and isinstance(value, dict):
                     current_state = getattr(item_object, key, {})
-                    if not isinstance(current_state, dict) : current_state = {}
-                    current_state.update(value)
+                    if not isinstance(current_state, dict) : current_state = {} # Ensure it's a dict
+                    current_state.update(value) # Merge new state variables
                     setattr(item_object, key, current_state)
                 else:
                     setattr(item_object, key, value)
             else:
                 print(f"ItemManager: Warning - Attempted to update unknown attribute {key} for item {item_id_str}")
+
+        # Log the update with revert_data
+        if self._game_log_manager and old_field_values: # Only log if there were valid fields to capture for revert
+            revert_data = {"item_id": item_object.id, "old_field_values": old_field_values}
+            log_details = {
+                "action_type": "ITEM_INSTANCE_UPDATE",
+                "item_id": item_object.id,
+                "updated_fields_new_values": updates, # Log the changes that were applied
+                "revert_data": revert_data
+            }
+            player_id_context = kwargs.get('player_id_context')
+            await self._game_log_manager.log_event( # Assuming update_item_instance is async
+                guild_id=guild_id_str,
+                event_type="ITEM_UPDATED",
+                details=log_details,
+                player_id=player_id_context
+            )
 
         # Recalculate if owner/location changed for lookup caches
         new_item_dict_for_lookup = item_object.to_dict()

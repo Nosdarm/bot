@@ -1125,13 +1125,31 @@ class CharacterManager:
 
         # Ensure party_id is str or None
         resolved_party_id = str(party_id) if party_id is not None else None
+        old_party_id = char.party_id # Capture before change
+        # Also consider char.current_party_id if it's distinct and needs separate revert logic
 
         if getattr(char, 'party_id', None) == resolved_party_id: # Compare using getattr for safety
             return True # Already in this group or already without group
 
         char.party_id = resolved_party_id # Set the updated party ID
+        # If current_party_id should also be updated, do it here:
+        # char.current_party_id = resolved_party_id
 
-        self.mark_character_dirty(guild_id_str, character_id) # Помечаем, что персонаж изменен для этой гильдии
+        self.mark_character_dirty(guild_id_str, character_id)
+
+        revert_data = {"old_party_id": old_party_id}
+        log_details = {
+            "action_type": "PARTY_ID_CHANGE",
+            "character_id": character_id,
+            "old_party_id": old_party_id,
+            "new_party_id": resolved_party_id,
+            "revert_data": revert_data
+        }
+        if self._game_log_manager:
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str, event_type="PLAYER_PARTY_CHANGE", player_id=character_id, details=log_details
+            ))
+
         print(f"CharacterManager: Set party ID for character {character_id} in guild {guild_id_str} to {resolved_party_id}.")
         return True
 
@@ -1153,16 +1171,33 @@ class CharacterManager:
         # Ensure location_id is str or None
         resolved_location_id = str(location_id) if location_id is not None else None
 
-        old_location_id = getattr(char, 'location_id', None) # Get old location for logging/events
+        old_location_id_val = getattr(char, 'current_location_id', None) # Capture before change
+        # Character model uses current_location_id
 
-        if old_location_id == resolved_location_id:
-             # print(f"CharacterManager: Character {character_id} already in location {resolved_location_id}. No update needed.") # Debug
-             return char # Already there, return the character object
+        if old_location_id_val == resolved_location_id:
+             return char
 
-        char.location_id = resolved_location_id # Set the updated location ID
+        char.current_location_id = resolved_location_id
+        self.mark_character_dirty(guild_id_str, character_id)
 
-        self.mark_character_dirty(guild_id_str, character_id) # Помечаем измененным для этой гильдии
-        print(f"CharacterManager: Updated location for character {character_id} in guild {guild_id_str} from {old_location_id} to {resolved_location_id}.")
+        if self._game_log_manager:
+            log_details = {
+                "action_type": "MOVE", # For UndoManager processing
+                "old_location_id": old_location_id_val,
+                "new_location_id": resolved_location_id,
+                "revert_data": {
+                    "old_location_id": old_location_id_val # Data needed by revert_location_change
+                }
+            }
+            # Use asyncio.create_task to avoid awaiting log_event if it's not critical path
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="PLAYER_MOVE",
+                player_id=character_id,
+                details=log_details
+            ))
+
+        print(f"CharacterManager: Updated location for character {character_id} in guild {guild_id_str} from {old_location_id_val} to {resolved_location_id}.")
 
         # TODO: Trigger arrival/departure events here or delegate
         # Example: if self._location_manager and hasattr(self._location_manager, 'handle_entity_departure'):
@@ -1199,26 +1234,53 @@ class CharacterManager:
          # Assuming char.inventory - это List[Dict[str, Any]] с полями 'item_id', 'quantity'
          # Iterate through a copy if you modify the list structure (add/remove entries)
          for item_entry in char.inventory:
-             # Check if item_entry is a dictionary and has 'item_id'
              if isinstance(item_entry, dict) and item_entry.get('item_id') == resolved_item_id:
-                 # Check if item_entry contains 'quantity' and it's a number type
-                 current_quantity = item_entry.get('quantity', 0)
-                 if not isinstance(current_quantity, (int, float)):
-                     print(f"CharacterManager: Warning: Invalid quantity type for item '{resolved_item_id}' in inventory of {character_id} ({type(current_quantity)}). Resetting to 0.")
-                     current_quantity = 0
+                 current_quantity_before_increase = item_entry.get('quantity', 0)
+                 if not isinstance(current_quantity_before_increase, (int, float)):
+                     current_quantity_before_increase = 0 # Default if invalid type
 
-                 item_entry['quantity'] = current_quantity + resolved_quantity
+                 item_entry['quantity'] = current_quantity_before_increase + resolved_quantity
                  item_found = True
+
+                 if self._game_log_manager:
+                     revert_data = {
+                         "item_id": resolved_item_id,
+                         "quantity": resolved_quantity, # Quantity that was added
+                         "old_quantity": current_quantity_before_increase,
+                         "action": "removed" # To revert, we "removed" what was "added"
+                     }
+                     log_details = {
+                         "item_id": resolved_item_id, "quantity_change": resolved_quantity,
+                         "new_total_quantity": item_entry['quantity'], "change_type": "added",
+                         "action_type": "INVENTORY_ADD", # For UndoManager
+                         "revert_data": revert_data
+                     }
+                     asyncio.create_task(self._game_log_manager.log_event(
+                         guild_id=guild_id_str, event_type="PLAYER_INVENTORY_CHANGE", player_id=character_id, details=log_details
+                     ))
                  print(f"CharacterManager: Increased quantity of item '{resolved_item_id}' for {character_id} to {item_entry['quantity']} in guild {guild_id_str}.")
-                 break # Found and updated, break loop
+                 break
 
          if not item_found:
-             # Add new item entry if not found
              char.inventory.append({'item_id': resolved_item_id, 'quantity': resolved_quantity})
+             if self._game_log_manager:
+                 revert_data = {
+                     "item_id": resolved_item_id,
+                     "quantity": resolved_quantity, # Quantity that was added
+                     "action": "removed" # To revert, we "removed" what was "added" (entire entry)
+                 }
+                 log_details = {
+                     "item_id": resolved_item_id, "quantity_change": resolved_quantity,
+                     "new_total_quantity": resolved_quantity, "change_type": "added_new",
+                     "action_type": "INVENTORY_ADD", # For UndoManager
+                     "revert_data": revert_data
+                 }
+                 asyncio.create_task(self._game_log_manager.log_event(
+                     guild_id=guild_id_str, event_type="PLAYER_INVENTORY_CHANGE", player_id=character_id, details=log_details
+                 ))
              print(f"CharacterManager: Added new item '{resolved_item_id}' (x{resolved_quantity}) to {character_id} inventory in guild {guild_id_str}.")
 
-
-         self.mark_character_dirty(guild_id_str, character_id) # Помечаем персонажа измененным для этой гильдии
+         self.mark_character_dirty(guild_id_str, character_id)
          return True
 
 
@@ -1251,80 +1313,62 @@ class CharacterManager:
          item_was_modified = False # Flag if quantity was decreased or item was removed
 
          # Iterate through a copy if you might remove elements
-         inventory_copy = list(char.inventory) # Work on a copy to find index for removal safely
-         for i, item_entry in enumerate(inventory_copy):
-             # Assuming char.inventory - это List[Dict[str, Any]]
-             if isinstance(item_entry, dict) and item_entry.get('item_id') == resolved_item_id:
-                 item_found_to_remove = True # Found the item entry
+         inventory_copy = list(char.inventory)
+         current_item_data_for_log: Optional[Dict[str, Any]] = None # To store data of the item being modified
 
-                 current_quantity = item_entry.get('quantity', 0)
-                 if not isinstance(current_quantity, (int, float)):
-                      print(f"CharacterManager: Warning: Invalid quantity type for item '{resolved_item_id}' in inventory of {character_id} ({type(current_quantity)}). Resetting to 0 for calculation.")
-                      current_quantity = 0
+         for i, item_entry_loop_var in enumerate(inventory_copy):
+             if isinstance(item_entry_loop_var, dict) and item_entry_loop_var.get('item_id') == resolved_item_id:
+                 item_found_to_remove = True
+                 current_item_data_for_log = item_entry_loop_var.copy() # Log current state before modification
+                 original_quantity_of_item = item_entry_loop_var.get('quantity', 0)
+                 if not isinstance(original_quantity_of_item, (int, float)):
+                      original_quantity_of_item = 0
 
-                 if current_quantity > 0: # Only remove if quantity is positive
-                      new_quantity = max(0.0, current_quantity - resolved_quantity) # Prevent negative quantity
-                      if new_quantity < current_quantity: # Check if quantity actually decreased
+                 if original_quantity_of_item > 0:
+                      new_quantity = max(0.0, original_quantity_of_item - resolved_quantity)
+                      actual_removed_quantity = original_quantity_of_item - new_quantity
+
+                      if actual_removed_quantity > 0: # If any quantity was actually removed
                            item_was_modified = True
                            # Find the original item entry in the actual inventory list by item_id
-                           # Assuming item_id is unique in the inventory list structure
-                           for original_entry in char.inventory:
-                               if isinstance(original_entry, dict) and original_entry.get('item_id') == resolved_item_id:
-                                   original_entry['quantity'] = new_quantity # Update the actual list
+                           for original_entry_in_char_inv in char.inventory:
+                               if isinstance(original_entry_in_char_inv, dict) and original_entry_in_char_inv.get('item_id') == resolved_item_id:
+                                   original_entry_in_char_inv['quantity'] = new_quantity
+
+                                   revert_data: Dict[str, Any]
                                    if new_quantity <= 0:
-                                        # Mark for removal from the actual list AFTER the loop
-                                        # This requires a different approach than iterating and modifying the same list
-                                        # A common pattern is to rebuild the list or collect indices/items to remove
-                                        # Let's rebuild the list after the loop if needed
-                                        pass # Mark for removal later
-                                   break # Found original entry
-                      # else: print(f"CharacterManager: Warning: Attempted to remove {resolved_quantity} of item '{resolved_item_id}' from {character_id}, but only {current_quantity} available.")
+                                       # Item fully removed
+                                       revert_data = {"item_id": resolved_item_id, "quantity": original_quantity_of_item, "action": "added"}
+                                   else:
+                                       # Item quantity decreased
+                                       revert_data = {"item_id": resolved_item_id, "quantity": actual_removed_quantity, "old_quantity": original_quantity_of_item, "action": "added"}
 
-                 break # Found the item entry, no need to continue iteration
+                                   if self._game_log_manager:
+                                       log_details = {
+                                           "item_id": resolved_item_id, "quantity_change": -actual_removed_quantity,
+                                           "quantity_before_remove": original_quantity_of_item, "new_total_quantity": new_quantity,
+                                           "change_type": "removed" if new_quantity > 0 else "removed_fully",
+                                           "action_type": "INVENTORY_REMOVE", # For UndoManager
+                                           "revert_data": revert_data
+                                       }
+                                       asyncio.create_task(self._game_log_manager.log_event(
+                                           guild_id=guild_id_str, event_type="PLAYER_INVENTORY_CHANGE", player_id=character_id, details=log_details
+                                       ))
+                                   break # Found and updated original entry
+                 break # Found the item entry in inventory_copy
 
-
-         # Rebuild the inventory list if items need to be removed (quantity <= 0)
          if item_found_to_remove and item_was_modified:
-             new_inventory = []
-             removed_any = False
-             for original_entry in char.inventory:
-                 if isinstance(original_entry, dict) and original_entry.get('item_id') == resolved_item_id:
-                     if original_entry.get('quantity', 0) > 0:
-                         new_inventory.append(original_entry) # Keep if quantity is positive
-                     else:
-                         removed_any = True # Item removed
-                 else:
-                     new_inventory.append(original_entry) # Keep other items
-
-             if removed_any:
-                 char.inventory = new_inventory # Replace the inventory list
-
-
-         # Check if the item was found at all
-         if not item_found_to_remove:
-              print(f"CharacterManager: Warning: Attempted to remove item '{resolved_item_id}' from character {character_id} in guild {guild_id_str}, but item entry not found in inventory.")
-              return False # Item entry not found
-
-
-         # If we reached here, the item entry was found.
-         # item_was_modified indicates if the quantity was decreased.
-         # Even if quantity wasn't decreased (e.g. quantity requested was 0),
-         # if the item was found, the method technically succeeded in *checking*.
-         # But usually, remove_item implies quantity > 0.
-         # Let's return True if the item entry was found and quantity requested was > 0.
-         # Or better, return True if the item entry was found AND its quantity was updated (or it was removed).
-         if item_found_to_remove and item_was_modified:
-              self.mark_character_dirty(guild_id_str, character_id) # Mark dirty only if modified
-              print(f"CharacterManager: Removed {resolved_quantity} of item '{resolved_item_id}' from character {character_id} inventory (if available) in guild {guild_id_str}.")
-              return True # Item was found and potentially modified/removed
-
-         # If found but not modified (e.g., tried to remove 0 quantity, or quantity was already 0)
-         if item_found_to_remove:
-              print(f"CharacterManager: Item '{resolved_item_id}' found in {character_id}'s inventory, but quantity not decreased (current: {item_entry.get('quantity', 'N/A')}, remove: {resolved_quantity}) in guild {guild_id_str}.")
-              return False # Or True, depending on exact desired behavior. Let's return False if quantity wasn't removed.
-
-         # Should not reach here if item_found_to_remove logic is correct
-         return False
+             # Rebuild the inventory list if any item's quantity dropped to zero or less
+             char.inventory = [inv_item for inv_item in char.inventory if isinstance(inv_item, dict) and inv_item.get('quantity', 0) > 0]
+             self.mark_character_dirty(guild_id_str, character_id)
+             print(f"CharacterManager: Processed removal of up to {resolved_quantity} of item '{resolved_item_id}' for character {character_id} in guild {guild_id_str}.")
+             return True
+         elif item_found_to_remove and not item_was_modified:
+             print(f"CharacterManager: Item '{resolved_item_id}' found for character {character_id}, but no quantity was removed (requested: {resolved_quantity}, available: {current_item_data_for_log.get('quantity',0) if current_item_data_for_log else 'N/A'}).")
+             return False # No change made
+         else: # Item not found
+             print(f"CharacterManager: Warning: Attempted to remove item '{resolved_item_id}' from character {character_id} in guild {guild_id_str}, but item not found in inventory.")
+             return False
 
 
     # ИСПРАВЛЕНИЕ: Добавляем guild_id и **kwargs
@@ -1348,27 +1392,60 @@ class CharacterManager:
              print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'is_alive' attribute or it's not boolean ({type(getattr(char, 'is_alive', None))}). Cannot update health.")
              return False
 
-         # If character is already dead and this is not positive healing/resurrection
-         # Check against the actual is_alive attribute
-         if not char.is_alive and amount <= 0:
-             # print(f"CharacterManager: Character {character_id} in guild {guild_id_str} is dead, cannot take non-positive damage/healing.")
-             return False # Cannot harm or not heal a dead character
+         old_hp_val = char.hp # Renamed to avoid confusion
+         old_is_alive_val = char.is_alive # Renamed
 
+         if not old_is_alive_val and amount <= 0:
+             return False
 
-         # Общая логика обновления здоровья
-         new_hp = char.hp + amount
-         # Ограничиваем здоровье между 0 и max_health
-         char.hp = max(0.0, min(char.max_health, new_hp)) # Use 0.0 and char.max_health as float
+         new_hp_after_change = old_hp_val + amount
+         char.hp = max(0.0, min(char.max_health, new_hp_after_change))
 
-         self.mark_character_dirty(guild_id_str, character_id) # Помечаем измененным для этой гильдии
+         final_is_alive_status = char.hp > 0
 
-         # Проверяем смерть после обновления
-         # Check against the updated health attribute
-         if char.hp <= 0 and char.is_alive: # If health became <= 0 AND character is still marked as alive
-              # handle_character_death expects character_id, guild_id and **kwargs
-              await self.handle_character_death(guild_id_str, character_id, **kwargs) # Pass guild_id and context to handler
+         # Log the health change itself
+         if self._game_log_manager:
+             log_details_health_change = {
+                 "action_type": "HEALTH_UPDATE", # For UndoManager
+                 "character_id": character_id,
+                 "amount_changed": amount,
+                 "old_hp": old_hp_val,
+                 "new_hp": char.hp,
+                 "old_is_alive": old_is_alive_val,
+                 "new_is_alive": final_is_alive_status, # Reflects state *after* this HP update
+                 "revert_data": {
+                     "old_hp": old_hp_val,
+                     "old_is_alive": old_is_alive_val # State before this specific HP update
+                 }
+             }
+             asyncio.create_task(self._game_log_manager.log_event(
+                 guild_id=guild_id_str, event_type="PLAYER_HEALTH_CHANGE", player_id=character_id, details=log_details_health_change
+             ))
 
-         print(f"CharacterManager: Updated health for character {character_id} in guild {guild_id_str} to {char.hp}. Amount: {amount}.")
+         # Determine if is_alive status flipped *due to this specific health update*
+         # This is important because handle_character_death might be called separately for other reasons.
+         is_alive_flipped_by_this_update = False
+         if old_is_alive_val and char.hp <= 0: # Died as a result of this damage
+             char.is_alive = False
+             is_alive_flipped_by_this_update = True
+         elif not old_is_alive_val and char.hp > 0: # Resurrected by this healing
+             char.is_alive = True
+             is_alive_flipped_by_this_update = True
+         # If is_alive_flipped_by_this_update is False, char.is_alive remains as it was before this method,
+         # unless it's explicitly changed by handle_character_death.
+
+         self.mark_character_dirty(guild_id_str, character_id)
+
+         # If character's HP dropped to 0 or below AND they were previously alive, trigger death processing.
+         if char.hp <= 0 and old_is_alive_val:
+              # Pass the state *before this current health update* to handle_character_death,
+              # as handle_character_death will log its own changes.
+              kwargs_for_death_handler = kwargs.copy()
+              kwargs_for_death_handler['hp_before_death_processing'] = old_hp_val # HP that led to death
+              kwargs_for_death_handler['was_alive_before_death_processing'] = old_is_alive_val # Should be true
+              await self.handle_character_death(guild_id_str, character_id, **kwargs_for_death_handler)
+
+         print(f"CharacterManager: Updated health for character {character_id} in guild {guild_id_str} to {char.hp}. Amount: {amount}. Was alive: {old_is_alive_val}, Is alive now: {char.is_alive}.")
          return True
 
 
@@ -1384,20 +1461,43 @@ class CharacterManager:
              print(f"CharacterManager: handle_character_death called for non-existent ({char is None}) or already dead character {character_id} in guild {guild_id_str}.")
              return
 
-         # Убедимся, что у объекта Character есть атрибут is_alive перед изменением
-         if hasattr(char, 'is_alive'):
-             char.is_alive = False # Помечаем как мертвого
-         else:
-             print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'is_alive' attribute. Cannot mark as dead.")
-             # Decide if this should stop the death handling process or continue best effort
-             # Let's continue best effort for cleanup but log the warning.
+         # This method is called when char.hp <= 0 and they *were* alive.
+         # The primary change this method makes is setting char.is_alive = False.
+         # Other consequences (item drops, status clear) are often delegated or should also log revert_data.
 
+         if not char: # Should be caught by caller (update_health)
+             print(f"CharacterManager.handle_character_death: Character {character_id} not found. Cannot process death.")
+             return
 
-         self.mark_character_dirty(guild_id_str, character_id) # Помечаем измененным для этой гильдии
+         # State before this specific method's changes (is_alive should be True if called from update_health)
+         was_alive_before_this_method = char.is_alive
 
-         print(f"Character {character_id} ({getattr(char, 'name', 'N/A')}) has died in guild {guild_id_str}.")
+         char.is_alive = False
+         self.mark_character_dirty(guild_id_str, character_id)
 
-         # TODO: Логика смерти:
+         if self._game_log_manager:
+             # Log the fact that is_alive was set to False.
+             # The revert_data should capture the state *before* this method set is_alive to False.
+             # If death has other direct consequences handled *here*, they should be in revert_data too.
+             revert_data = {
+                 "old_is_alive": was_alive_before_this_method,
+                 # Example: if this method cleared specific statuses NOT handled by status manager's own logging
+                 # "statuses_cleared_by_death_handler": [s.to_dict() for s in specific_statuses_cleared_here]
+             }
+             log_details = {
+                 "action_type": "DEATH_PROCESSING", # For UndoManager
+                 "character_id": character_id,
+                 "final_hp_at_death": char.hp, # Could be useful context
+                 "revert_data": revert_data,
+                 "message": f"Character {getattr(char, 'name', character_id)} processed as deceased (is_alive set to False)."
+             }
+             asyncio.create_task(self._game_log_manager.log_event(
+                 guild_id=guild_id_str, event_type="PLAYER_DEATH_PROCESSED", player_id=character_id, details=log_details
+             ))
+
+         print(f"Character {character_id} ({getattr(char, 'name', 'N/A')}) has been marked as dead in guild {guild_id_str}.")
+
+         # TODO: Логика смерти (item drops, reputation etc. will be handled by RuleEngine.process_entity_death):
          # Используем менеджеры, которые были инжектированы в __init__
          # Получаем колбэк отправки сообщения из kwargs, если он передан (из ActionProcessor or CommandRouter)
          # Если send_callback_factory проинжектирован в GameManager и доступен в kwargs, используем его.
@@ -1860,8 +1960,42 @@ class CharacterManager:
             print(f"CharacterManager: Character {character_id} has no field '{field_name}'.")
             return False
 
+        old_value = None
+        try:
+            old_value = getattr(char, field_name)
+            # If old_value is a mutable type (dict, list), we should store a deep copy for revert_data
+            if isinstance(old_value, (dict, list)):
+                old_value = json.loads(json.dumps(old_value)) # Simple deep copy via JSON serialization
+        except AttributeError:
+            # Field might not exist yet, so old_value is effectively None or some default
+            # This case needs careful consideration for revert logic if the field was created.
+            # For now, assume field usually exists for updates.
+            print(f"CharacterManager.save_character_field: Field {field_name} did not exist on character {character_id} before setting. Old value considered None for revert.")
+            old_value = None
+
+
         setattr(char, field_name, value)
         self.mark_character_dirty(guild_id_str, character_id)
+
+        if self._game_log_manager:
+            revert_data = {
+                "stat_changes": [{"stat": field_name, "old_value": old_value}]
+            }
+            # More specific action_type if possible, e.g. based on field_name
+            action_type = f"FIELD_UPDATE_{field_name.upper()}"
+            log_details = {
+                "action_type": action_type,
+                "field_name": field_name,
+                "new_value": value,
+                "old_value_logged": old_value, # Log what was captured as old_value
+                "revert_data": revert_data
+            }
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="PLAYER_FIELD_CHANGED",
+                player_id=character_id,
+                details=log_details
+            ))
 
         # If immediate save is required (e.g., for critical fields not picked up by regular save cycle):
         # if self._db_service:
