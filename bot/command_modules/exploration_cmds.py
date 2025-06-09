@@ -21,7 +21,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return
@@ -65,7 +65,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return
@@ -108,7 +108,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return

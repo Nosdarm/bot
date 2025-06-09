@@ -1,6 +1,6 @@
 {
   "starting_area": {
-    "id": "town_gate_square",
+    "id": "town_square",
     "name_i18n": {
       "ru": "Площадь у городских ворот",
       "en": "[EN] Square by the city gates"
@@ -26,7 +26,7 @@
         "en": "[EN] The wooden door creaks open, revealing a dark and smoky tavern hall. The heavy air is saturated with the smell of spilled beer, cheap wine, and sweat. Gloomy patrons sit at roughly hewn tables, their faces barely visible in the flickering light of a few greasy candles. Swearing and the clatter of dishes can be heard from the kitchen. The atmosphere is as thick as the local stew."
       },
       "exits": [
-        {"direction": "запад", "target_location_id": "town_gate_square"}
+        {"direction": "запад", "target_location_id": "town_square"}
       ]
     },
      {
@@ -40,7 +40,7 @@
         "en": "[EN] This is a place of noise, bustle, and deceit. Merchants and onlookers scurry between rows of rickety stalls, shouting the names of their goods. The smells of spices, leather, rotting vegetables, and exotic potions mingle into a chaotic stench. Pickpockets work the crowd, and shadows in the alleyways conceal dubious deals."
       },
       "exits": [
-        {"direction": "юг", "target_location_id": "town_gate_square"}
+        {"direction": "юг", "target_location_id": "town_square"}
       ]
     }
    
