@@ -1162,7 +1162,7 @@ class CharacterActionProcessor:
                 description_parts.append(f"Also here: {', '.join(npcs)}.")
 
         # Items
-        items = [item.name for item in self._item_manager.get_items_in_location(char_loc_id, guild_id) if getattr(item, 'is_visible', True)] # Assuming Item model has name and is_visible
+        items = [item.name for item in await self._item_manager.get_items_in_location(char_loc_id, guild_id) if getattr(item, 'is_visible', True)] # Assuming Item model has name and is_visible
         if items:
             description_parts.append(f"You notice: {', '.join(items)}.")
 
