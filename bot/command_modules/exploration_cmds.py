@@ -36,6 +36,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
+        else: print(f"ExplorationCog.cmd_look: Fetched player_char (ID: {player_char.id}), location_id: {player_char.location_id}, type: {type(player_char.location_id)}")
 
         # The action_data dictionary ({'target': target} or {}) is suitable for action_params
         result = await char_action_proc.handle_explore_action(
