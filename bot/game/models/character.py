@@ -129,7 +129,7 @@ class Character:
             'name_i18n': data.get('name_i18n'),
             'guild_id': data.get('guild_id'),
             'selected_language': data.get('selected_language', "en"), # Default to "en"
-            'location_id': data.get('location_id'),
+            'location_id': data.get('current_location_id', data.get('location_id')),
             'stats': data.get('stats', {}),
             'inventory': data.get('inventory', []),
             'current_action': data.get('current_action'),
