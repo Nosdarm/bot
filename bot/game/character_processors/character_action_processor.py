@@ -1103,8 +1103,8 @@ class CharacterActionProcessor:
              print(f"{log_prefix} One or more game systems (location, character, item, event) are unavailable.")
              return {"success": False, "message": "One or more game systems (location, character, item, event) are unavailable.", "state_changed": False}
 
-        print(f"{log_prefix} Character {character.id} initial current_location_id: {character.current_location_id}")
-        char_loc_id = str(character.current_location_id) if character.current_location_id else None # Use current_location_id
+        print(f"{log_prefix} Character {character.id} initial location_id: {character.location_id}")
+        char_loc_id = str(character.location_id) if character.location_id else None # Use location_id
 
         if not char_loc_id:
             print(f"{log_prefix} char_loc_id is None for character {character.id}. Returning 'floating in the void'.")
