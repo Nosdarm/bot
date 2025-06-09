@@ -1092,6 +1092,10 @@ class CharacterActionProcessor:
 
     async def handle_explore_action(self, character: Character, guild_id: str, action_params: Dict[str, Any], context_channel_id: Optional[int] = None) -> Dict[str, Any]:
         """Handles looking around or exploring the current location."""
+        print(f"Location Manager available: {bool(self._location_manager)}")
+        print(f"Character Manager available: {bool(self._character_manager)}")
+        print(f"Item Manager available: {bool(self._item_manager)}")
+        print(f"Event Manager available: {bool(self._event_manager)}")
         if not self._location_manager or not self._character_manager or not self._item_manager or not self._event_manager:
              return {"success": False, "message": "One or more game systems (location, character, item, event) are unavailable.", "state_changed": False}
 
