@@ -3,6 +3,7 @@ from discord import Interaction, app_commands
 from discord.ext import commands
 import traceback
 from bot.command_modules.game_setup_cmds import is_master_or_admin_check
+from bot.command_modules.game_setup_cmds import is_master_or_admin_check
 import json # For parsing parameters_json
 from typing import TYPE_CHECKING, Optional, Dict, Any # For type hints
 
@@ -150,7 +151,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
         try:
             # Ensure guild_id is a string for the remove_character method
             guild_id_str = str(interaction.guild_id)
-            
+
             # Call the existing remove_character method in CharacterManager
             # This method handles removing from cache, marking for DB deletion, and associated cleanup.
             removed_char_id = await game_mngr.character_manager.remove_character(
