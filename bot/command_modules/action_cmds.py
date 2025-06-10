@@ -158,7 +158,7 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
-        result = await char_action_proc.process_action(
+        result = await char_action_proc.process_tick(
             character_id=player_char.id,
             action_type="end_turn",
             action_data={},
