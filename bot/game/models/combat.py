@@ -10,6 +10,7 @@ class CombatParticipant:
     max_hp: int
     initiative: Optional[int] = None
     acted_this_round: bool = False
+    aggro: float = 0.0  # Accumulated threat/aggro
     # Add other combat-specific temp stats if needed, e.g., temp_attack_bonus
 
     def to_dict(self) -> Dict[str, Any]:
@@ -20,6 +21,7 @@ class CombatParticipant:
             "max_hp": self.max_hp,
             "initiative": self.initiative,
             "acted_this_round": self.acted_this_round,
+            "aggro": self.aggro,  # Added aggro
         }
 
     @classmethod
@@ -34,7 +36,8 @@ class CombatParticipant:
             hp=int(data.get("hp", 0)),
             max_hp=int(data.get("max_hp", 0)),
             initiative=int(data["initiative"]) if data.get("initiative") is not None else None,
-            acted_this_round=bool(data.get("acted_this_round", False))
+            acted_this_round=bool(data.get("acted_this_round", False)),
+            aggro=float(data.get("aggro", 0.0))  # Added aggro
         )
 
 @dataclass

@@ -9,6 +9,9 @@ import random # Added for initiative rolls
 from typing import Optional, Dict, Any, List, Callable, Awaitable, TYPE_CHECKING, Set, Tuple, Union
 
 from bot.game.models.combat import Combat, CombatParticipant # Updated import
+from bot.game.ai.npc_combat_ai import NpcCombatAI # <<< Added Import
+from bot.game.models.npc import NPC as NpcModel # For type hinting actual NPC objects
+from bot.game.models.character import Character as CharacterModel # For type hinting Character objects
 from builtins import dict, set, list, str, int, bool, float
 
 
@@ -262,22 +265,113 @@ class CombatManager:
         combat = self.get_combat(guild_id_str, combat_id)
 
         if not combat or not getattr(combat, 'is_active', False):
-            return True
+            return True # Combat ended or doesn't exist
 
-        # Turn-based logic will go here in later tasks.
-        # For now, basic round timer and end condition check remains.
-        # 'time_in_current_phase' is not used by the new Combat model for simple turn advancement.
-        # We can remove round_timer logic once turns are fully implemented.
+        # --- NPC AI Turn Processing ---
+        current_actor_id = combat.get_current_actor_id()
+        if not current_actor_id:
+            print(f"CombatManager: No current actor in combat {combat_id}, advancing turn to clear.")
+            # This might happen if turn_order is empty or current_turn_index is out of bounds (should be rare)
+            if combat.turn_order: # Avoid division by zero if turn_order is empty
+                combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
+            else: # No one in turn order, maybe combat should end?
+                combat.is_active = False # Mark for cleanup
+                print(f"CombatManager: Combat {combat_id} has no participants in turn_order. Ending combat.")
+                self.mark_combat_dirty(guild_id_str, combat_id)
+                return True # Combat effectively ended
+            self.mark_combat_dirty(guild_id_str, combat_id)
+            # Check end conditions again after this potential auto-end
+            rule_engine_for_check = kwargs.get('rule_engine', self._rule_engine)
+            if rule_engine_for_check and hasattr(rule_engine_for_check, 'check_combat_end_conditions'):
+                if await rule_engine_for_check.check_combat_end_conditions(combat=combat, context=kwargs):
+                    return True # Combat ended
+            return False # Combat continues, but this tick was just for fixing turn
 
-        # combat.time_in_current_phase += game_time_delta # No longer using this field in Combat model
-        # combat_settings = self._settings.get('combat_settings', {})
-        # round_duration = float(combat_settings.get('round_duration_seconds', 6.0))
-        # if combat.time_in_current_phase >= round_duration:
-        #     print(f"CombatManager: Round {combat.current_round} finished for {combat_id}. Starting new round.")
-        #     combat.time_in_current_phase = 0.0
-        #     combat.current_round += 1
-            # TODO: Reset acted_this_round for all participants
+        actor_participant_data = combat.get_participant_data(current_actor_id)
 
+        if actor_participant_data and actor_participant_data.entity_type == "NPC" and \
+           not actor_participant_data.acted_this_round and actor_participant_data.hp > 0:
+
+            print(f"CombatManager: NPC Turn: {current_actor_id} in combat {combat_id}")
+            npc_object = self._npc_manager.get_npc(guild_id_str, current_actor_id)
+
+            if npc_object:
+                ai_instance = NpcCombatAI(npc_object)
+
+                # Prepare potential targets: actual Character/NPC objects
+                potential_target_entities: List[Union[CharacterModel, NpcModel]] = []
+                for p_data in combat.participants:
+                    if p_data.entity_id != current_actor_id and p_data.hp > 0: # is_alive check
+                        target_entity: Optional[Union[CharacterModel, NpcModel]] = None
+                        if p_data.entity_type == "Character" and self._character_manager:
+                            target_entity = self._character_manager.get_character(guild_id_str, p_data.entity_id)
+                        elif p_data.entity_type == "NPC" and self._npc_manager:
+                            target_entity = self._npc_manager.get_npc(guild_id_str, p_data.entity_id)
+
+                        if target_entity:
+                            potential_target_entities.append(target_entity)
+
+                combat_context_for_ai = {"combat": combat, "guild_id": guild_id_str, "rule_engine": self._rule_engine}
+
+                print(f"CombatManager: NPC {current_actor_id} selecting target from {len(potential_target_entities)} potential targets.")
+                selected_target = ai_instance.select_target(potential_target_entities, combat_context_for_ai)
+                target_log_id = getattr(selected_target, 'id', 'None')
+                print(f"CombatManager: NPC {current_actor_id} selected target: {target_log_id}")
+
+                print(f"CombatManager: NPC {current_actor_id} selecting action.")
+                action_dict = ai_instance.select_action(selected_target, combat_context_for_ai)
+                print(f"CombatManager: NPC {current_actor_id} selected action: {action_dict}")
+
+                # Movement is placeholder for now
+                # movement_dict = ai_instance.select_movement(selected_target, combat_context_for_ai)
+                # print(f"CombatManager: NPC {current_actor_id} selected movement: {movement_dict}")
+
+                if action_dict and action_dict.get("type") != "wait":
+                    # Pass necessary context to handle_participant_action_complete
+                    action_kwargs = {**kwargs, 'guild_id': guild_id_str, 'rule_engine': self._rule_engine}
+                    await self.handle_participant_action_complete(combat_id, current_actor_id, action_dict, **action_kwargs)
+                    # handle_participant_action_complete now marks acted_this_round and advances turn
+                elif action_dict and action_dict.get("type") == "wait":
+                    print(f"CombatManager: NPC {current_actor_id} chose to wait.")
+                    combat.combat_log.append(f"NPC {npc_object.name_i18n.get('en', current_actor_id)} waits.")
+                    actor_participant_data.acted_this_round = True # Mark as acted even if waiting
+                    # Explicitly advance turn after a wait action by NPC
+                    combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
+                    if combat.current_turn_index == 0: # Check if a new round begins
+                        combat.current_round += 1
+                        combat.combat_log.append(f"Round {combat.current_round} begins.")
+                        for p_data_reset in combat.participants:
+                            p_data_reset.acted_this_round = False
+                    self.mark_combat_dirty(guild_id_str, combat_id)
+
+                else: # No action selected or invalid action
+                    print(f"CombatManager: NPC {current_actor_id} did not select a valid action. They hesitate.")
+                    combat.combat_log.append(f"NPC {npc_object.name_i18n.get('en', current_actor_id)} hesitates.")
+                    actor_participant_data.acted_this_round = True # Mark as acted
+                    # Explicitly advance turn if NPC does nothing
+                    combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
+                    if combat.current_turn_index == 0: # Check if a new round begins
+                        combat.current_round += 1
+                        combat.combat_log.append(f"Round {combat.current_round} begins.")
+                        for p_data_reset in combat.participants:
+                            p_data_reset.acted_this_round = False
+                    self.mark_combat_dirty(guild_id_str, combat_id)
+
+            else: # NPC object not found
+                print(f"CombatManager: ERROR - NPC object {current_actor_id} not found. Cannot process turn.")
+                actor_participant_data.acted_this_round = True # Mark as acted to prevent loop
+                # Explicitly advance turn if NPC object is missing
+                combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
+                if combat.current_turn_index == 0: # Check if a new round begins
+                    combat.current_round += 1
+                    combat.combat_log.append(f"Round {combat.current_round} begins.")
+                    for p_data_reset in combat.participants:
+                        p_data_reset.acted_this_round = False
+                self.mark_combat_dirty(guild_id_str, combat_id)
+
+        # --- End of NPC AI Turn Processing ---
+
+        # Check combat end conditions after any potential action or turn advancement
         rule_engine = kwargs.get('rule_engine', self._rule_engine)
         combat_finished = False
         if rule_engine and hasattr(rule_engine, 'check_combat_end_conditions'):
@@ -287,11 +381,16 @@ class CombatManager:
                 print(f"CombatManager: Error in check_combat_end_conditions for {combat_id}: {e}")
                 traceback.print_exc()
 
-        self.mark_combat_dirty(guild_id_str, combat_id)
+        # self.mark_combat_dirty(guild_id_str, combat_id) # Already marked in most branches
         if combat_finished:
              print(f"CombatManager: Combat {combat_id} meets end conditions.")
-             return True
-        return False
+             # end_combat will be called by WorldSimulator or similar based on this return
+             return True # Combat has ended
+
+        # If it's a player's turn and they haven't acted, process_tick just returns False.
+        # The player's action will come through an external command, which should then call
+        # handle_participant_action_complete, which now handles turn advancement.
+        return False # Combat continues
 
     async def handle_participant_action_complete(
         self, combat_id: str, participant_id: str,
@@ -314,32 +413,73 @@ class CombatManager:
             print(f"CombatManager: Action for non-participant {participant_id} in combat {combat_id}. Ignoring.")
             return
 
-        # Mark actor as having acted (this logic will be refined)
+        if actor_participant_data.hp <= 0 and completed_action_data.get("type") != "system_death_processing": # Already dead, ignore actions unless it's special processing
+            print(f"CombatManager: Participant {participant_id} is incapacitated (HP: {actor_participant_data.hp}). Action {completed_action_data.get('type')} ignored unless system death processing.")
+            # If they are dead, they shouldn't be acting. We advance turn to prevent stall.
+            # But only if this action isn't part of their death processing itself.
+            if combat.turn_order: # Ensure turn_order is not empty
+                combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
+                if combat.current_turn_index == 0: # Check if a new round begins
+                    combat.current_round += 1
+                    combat.combat_log.append(f"Round {combat.current_round} begins (turn advanced due to incapacitated actor).")
+                    for p_data_reset in combat.participants:
+                        p_data_reset.acted_this_round = False
+            self.mark_combat_dirty(guild_id_str, combat_id)
+            return
+
+        # Mark actor as having acted BEFORE applying effects, as effects might change turn state (e.g. counter-attack)
         actor_participant_data.acted_this_round = True
-        combat.combat_log.append(f"{getattr(actor_participant_data, 'entity_type', 'Entity')} {participant_id} performed action: {completed_action_data.get('type')}")
+
+        # Use a more descriptive name if available for logging
+        actor_name_for_log = participant_id
+        if actor_participant_data.entity_type == "Character" and self._character_manager:
+            char = self._character_manager.get_character(guild_id_str, participant_id)
+            if char: actor_name_for_log = getattr(char, 'name_i18n', {}).get('en', participant_id)
+        elif actor_participant_data.entity_type == "NPC" and self._npc_manager:
+            npc = self._npc_manager.get_npc(guild_id_str, participant_id)
+            if npc: actor_name_for_log = getattr(npc, 'name_i18n', {}).get('en', participant_id)
+
+        combat.combat_log.append(f"{actor_name_for_log} ({actor_participant_data.entity_type}) performed action: {completed_action_data.get('type')}")
 
         rule_engine = kwargs.get('rule_engine', self._rule_engine)
         if rule_engine and hasattr(rule_engine, 'apply_combat_action_effects'):
             print(f"CombatManager: Applying effects for action by {participant_id} in {combat_id}...")
             try:
                  action_outcomes = await rule_engine.apply_combat_action_effects(
-                     combat=combat, # Pass the Combat object
+                     combat=combat,
                      actor_id=participant_id,
-                     action_data=completed_action_data, # The action dict itself
-                     context=kwargs
+                     action_data=completed_action_data,
+                     context=kwargs # Pass full context which includes guild_id etc.
                  )
-                 if isinstance(action_outcomes, list): # Expecting list of log messages
+                 if isinstance(action_outcomes, list):
                      combat.combat_log.extend(action_outcomes)
                  print(f"CombatManager: Effects applied for {participant_id} in {combat_id}.")
-                 self.mark_combat_dirty(guild_id_str, combat_id)
             except Exception as e:
                  print(f"CombatManager: Error applying effects for {participant_id} in {combat_id}: {e}")
                  traceback.print_exc()
 
-        # TODO: Advance turn after action (this will be more complex)
-        # combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
-        # actor_participant_data.acted_this_round = True (or reset all at start of new round)
-        # self.mark_combat_dirty(guild_id_str, combat_id)
+        # --- Turn Advancement Logic (moved here, happens after ANY action completion) ---
+        # Ensure current actor is still the one who just acted before advancing.
+        # This handles cases where effects might have changed the turn order or ended combat.
+        if combat.is_active and combat.get_current_actor_id() == participant_id:
+            if combat.turn_order: # Ensure turn_order is not empty
+                combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
+                if combat.current_turn_index == 0: # A new round begins
+                    combat.current_round += 1
+                    combat.combat_log.append(f"Round {combat.current_round} begins.")
+                    for p_data_reset in combat.participants:
+                        # Only reset 'acted_this_round' if they are still alive.
+                        # Dead participants should not act again.
+                        if p_data_reset.hp > 0:
+                             p_data_reset.acted_this_round = False
+                        else: # Ensure they are marked as acted if dead, to prevent them from being selected for turns.
+                             p_data_reset.acted_this_round = True
+            else: # No one in turn order, combat should probably end
+                combat.is_active = False # Mark for cleanup
+                print(f"CombatManager: Combat {combat_id} has no participants in turn_order after action. Ending combat.")
+
+        self.mark_combat_dirty(guild_id_str, combat_id)
+        # Note: check_combat_end_conditions will be called by process_tick after this returns
 
     async def end_combat(self, combat_id: str, **kwargs: Any) -> None:
         guild_id = kwargs.get('guild_id')
