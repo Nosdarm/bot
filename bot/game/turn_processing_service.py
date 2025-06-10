@@ -40,6 +40,84 @@ class TurnProcessingService:
         self.settings = settings
         print("TurnProcessingService initialized.")
 
+    async def run_turn_cycle_check(self, guild_id: str) -> None:
+        """
+        Checks for players awaiting turn processing and initiates processing for them.
+        This is intended to be called periodically by the game loop or an event.
+        """
+        print(f"TurnProcessingService: Starting turn cycle check for guild {guild_id}.")
+        await self.game_log_manager.log_event(
+            guild_id=guild_id,
+            event_type="turn_cycle_check_start",
+            message=f"Turn cycle check started for guild {guild_id}.",
+            metadata={"guild_id": guild_id}
+        )
+
+        # Dependency: self.character_manager.get_all_characters(guild_id)
+        # Assuming it returns List[CharacterModel]
+        # For this subtask, if it doesn't exist, this part would need mocking.
+        # Let's assume it exists and works as expected for now.
+        all_characters_in_guild = await self.character_manager.get_all_characters(guild_id)
+
+        if not all_characters_in_guild:
+            print(f"TurnProcessingService: No characters found in guild {guild_id} during turn cycle check.")
+            await self.game_log_manager.log_event(guild_id, "turn_cycle_no_characters", "No characters in guild.")
+            return
+
+        pending_players = [
+            p for p in all_characters_in_guild
+            if hasattr(p, 'current_game_status') and p.current_game_status == 'ожидание_обработки'
+        ]
+
+        if not pending_players:
+            print(f"TurnProcessingService: No players awaiting turn processing in guild {guild_id}.")
+            await self.game_log_manager.log_event(guild_id, "turn_cycle_no_pending_players", "No players awaiting processing.")
+            return
+
+        player_ids_to_process = [p.id for p in pending_players]
+        print(f"TurnProcessingService: Players to process in guild {guild_id}: {player_ids_to_process}")
+        await self.game_log_manager.log_event(
+            guild_id,
+            "turn_cycle_players_to_process",
+            f"Found {len(player_ids_to_process)} players for processing.",
+            {"player_ids": player_ids_to_process}
+        )
+
+        # Crucially, update status BEFORE processing to prevent race conditions
+        # if the cycle runs again quickly.
+        updated_char_ids_for_processing = []
+        for player_id in player_ids_to_process:
+            char = await self.character_manager.get_character(guild_id, player_id)
+            if char and getattr(char, 'current_game_status', '') == 'ожидание_обработки':
+                char.current_game_status = 'обрабатывается'
+                self.character_manager.mark_character_dirty(guild_id, player_id) # mark_character_dirty instead of mark_dirty
+                updated_char_ids_for_processing.append(player_id)
+            else:
+                print(f"TurnProcessingService: Warning - Player {player_id} status changed or char not found before 'обрабатывается' update.")
+
+        if not updated_char_ids_for_processing:
+            print(f"TurnProcessingService: No players were successfully updated to 'обрабатывается'. Aborting processing for this cycle.")
+            await self.game_log_manager.log_event(guild_id, "turn_cycle_no_players_updated", "No players updated to processing state.")
+            return
+
+        # Persist status changes immediately
+        print(f"TurnProcessingService: Saving game state for guild {guild_id} after marking players as 'обрабатывается'.")
+        await self.game_manager.save_game_state_after_action(guild_id)
+
+        # Now process turns for those whose status was successfully updated
+        # (or all in player_ids_to_process if we are optimistic that mark_dirty + save worked)
+        # Using updated_char_ids_for_processing is safer.
+        print(f"TurnProcessingService: Calling process_player_turns for players: {updated_char_ids_for_processing}")
+        await self.process_player_turns(updated_char_ids_for_processing, guild_id)
+
+        print(f"TurnProcessingService: Turn cycle check completed for guild {guild_id}.")
+        await self.game_log_manager.log_event(
+            guild_id=guild_id,
+            event_type="turn_cycle_check_end",
+            message=f"Turn cycle check completed for guild {guild_id}.",
+            metadata={"processed_player_ids": updated_char_ids_for_processing}
+        )
+
     async def process_player_turns(self, player_ids: List[str], guild_id: str) -> Dict[str, Any]:
         """
         Processes turns for a list of players in a given guild.

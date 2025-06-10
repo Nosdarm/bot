@@ -6,15 +6,16 @@ import traceback
 import asyncio
 
 # Import typing components
-from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union
+from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union, TypedDict
 
 # Import built-in types for isinstance checks
 from builtins import dict, set, list, str, int, bool, float
 
 # --- Imports needed ONLY for Type Checking ---
 if TYPE_CHECKING:
-    from bot.services.db_service import DBService # Changed
+    from bot.services.db_service import DBService
     from bot.game.models.item import Item
+    from bot.game.models.character import Character as CharacterModel # For type hinting
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.npc_manager import NpcManager
@@ -27,11 +28,20 @@ if TYPE_CHECKING:
     from bot.game.managers.game_log_manager import GameLogManager
 
 # --- Imports needed at Runtime ---
-from bot.game.models.item import Item # Ensure Item model is imported for runtime instantiation
-from bot.utils.i18n_utils import get_i18n_text # For new display methods
+from bot.game.models.item import Item
+from bot.utils.i18n_utils import get_i18n_text
+from bot.ai.rules_schema import CoreGameRulesConfig, EquipmentSlotDefinition # For equip/unequip logic
+from bot.game.utils.stats_calculator import calculate_effective_stats # For equip/unequip logic
 
 print("DEBUG: item_manager.py module loaded.")
 
+# --- Data Classes for Method Results ---
+class EquipResult(TypedDict):
+    success: bool
+    message: str
+    character_id: Optional[str]
+    item_id: Optional[str] # template_id of item involved
+    slot_id: Optional[str]
 
 class ItemManager:
     required_args_for_load = ["guild_id"]
@@ -84,6 +94,324 @@ class ItemManager:
 
         self._load_item_templates()
         print("ItemManager initialized.")
+
+    # --- Equip / Unequip Logic ---
+
+    def _unequip_item_from_slot(self, character_inventory_data: List[Dict[str, Any]], slot_id_to_clear: str) -> bool:
+        """
+        Synchronous helper to mark an item in a specific slot as unequipped in the inventory list.
+        Modifies character_inventory_data directly.
+        Returns True if an item was unequipped, False otherwise.
+        """
+        item_was_unequipped = False
+        for item_entry in character_inventory_data:
+            if item_entry.get("equipped") and item_entry.get("slot_id") == slot_id_to_clear:
+                item_entry["equipped"] = False
+                item_entry.pop("slot_id", None) # Remove slot_id
+                item_was_unequipped = True
+                # Do not break; clear all items from this slot if multiple (though rules should prevent this for most slots)
+        return item_was_unequipped
+
+    async def equip_item(self,
+                         character_id: str,
+                         guild_id: str,
+                         item_template_id_to_equip: str,
+                         rules_config: CoreGameRulesConfig, # Added
+                         slot_id_preference: Optional[str] = None
+                        ) -> EquipResult:
+
+        if not self._character_manager or not self._db_service: # Ensure critical managers are present
+            return EquipResult(success=False, message="Character or DB service not available.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
+
+        character = await self._character_manager.get_character(guild_id, character_id)
+        if not character:
+            return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
+
+        inventory_list_json = getattr(character, 'inventory', "[]")
+        character_inventory_data: List[Dict[str, Any]] = json.loads(inventory_list_json) if isinstance(inventory_list_json, str) else inventory_list_json
+
+        item_entry_to_equip: Optional[Dict[str, Any]] = None
+        item_index_in_inventory: Optional[int] = None
+
+        for i, entry in enumerate(character_inventory_data):
+            entry_template_id = entry.get('template_id') or entry.get('item_id')
+            if entry_template_id == item_template_id_to_equip and not entry.get('equipped'):
+                item_entry_to_equip = entry
+                item_index_in_inventory = i
+                break
+
+        if not item_entry_to_equip or item_index_in_inventory is None:
+            return EquipResult(success=False, message=f"Unequipped item '{item_template_id_to_equip}' not found in inventory.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
+
+        item_template = self.get_item_template(item_template_id_to_equip)
+        if not item_template:
+            return EquipResult(success=False, message=f"Item template '{item_template_id_to_equip}' not found.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
+
+        item_type = item_template.get("type", "unknown")
+
+        target_slot_id: Optional[str] = None
+        if slot_id_preference:
+            if slot_id_preference in rules_config.equipment_slots and \
+               item_type in rules_config.equipment_slots[slot_id_preference].compatible_item_types:
+                target_slot_id = slot_id_preference
+            else:
+                return EquipResult(success=False, message=f"Preferred slot '{slot_id_preference}' is not compatible with item type '{item_type}'.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
+        else:
+            # Find first available compatible slot
+            for slot_def_id, slot_def in rules_config.equipment_slots.items():
+                if item_type in slot_def.compatible_item_types:
+                    # Check if slot is already occupied
+                    is_occupied = any(inv_item.get("equipped") and inv_item.get("slot_id") == slot_def_id for inv_item in character_inventory_data)
+                    if not is_occupied:
+                        target_slot_id = slot_def_id
+                        break
+            if not target_slot_id: # If all compatible slots are occupied, try to find one to suggest unequip or use first one
+                 for slot_def_id, slot_def in rules_config.equipment_slots.items():
+                     if item_type in slot_def.compatible_item_types:
+                         target_slot_id = slot_def_id # Will overwrite if occupied
+                         break
+
+        if not target_slot_id:
+            return EquipResult(success=False, message=f"No suitable slot found for item type '{item_type}'.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=None)
+
+        # Unequip any item currently in the target_slot_id
+        self._unequip_item_from_slot(character_inventory_data, target_slot_id)
+
+        # Equip the new item
+        character_inventory_data[item_index_in_inventory]["equipped"] = True
+        character_inventory_data[item_index_in_inventory]["slot_id"] = target_slot_id
+
+        character.inventory = json.dumps(character_inventory_data)
+
+        # Update effective stats
+        # Ensure nlu_data_service is available if calculate_effective_stats needs it for some reason (not typical)
+        effective_stats = await calculate_effective_stats(self._db_service, character.id, "player", rules_config)
+        character.effective_stats_json = json.dumps(effective_stats)
+
+        self._character_manager.mark_dirty(character.id, guild_id)
+        # await self._character_manager.save_character(character) # Or ensure save happens
+
+        return EquipResult(success=True, message=f"Item '{item_template.get('name', item_template_id_to_equip)}' equipped to slot '{target_slot_id}'.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=target_slot_id)
+
+    async def unequip_item(self,
+                           character_id: str,
+                           guild_id: str,
+                           rules_config: CoreGameRulesConfig, # Added
+                           item_template_id_to_unequip: Optional[str] = None,
+                           slot_id_to_unequip: Optional[str] = None
+                          ) -> EquipResult:
+
+        if not self._character_manager or not self._db_service:
+             return EquipResult(success=False, message="Character or DB service not available.", character_id=character_id, item_id=item_template_id_to_unequip, slot_id=slot_id_to_unequip)
+
+        character = await self._character_manager.get_character(guild_id, character_id)
+        if not character:
+            return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_template_id_to_unequip, slot_id=slot_id_to_unequip)
+
+        inventory_list_json = getattr(character, 'inventory', "[]")
+        character_inventory_data: List[Dict[str, Any]] = json.loads(inventory_list_json) if isinstance(inventory_list_json, str) else inventory_list_json
+
+        item_found_and_unequipped = False
+        unequipped_item_template_id: Optional[str] = None
+        actual_slot_unequipped: Optional[str] = None
+
+        if slot_id_to_unequip:
+            for item_entry in character_inventory_data:
+                if item_entry.get("equipped") and item_entry.get("slot_id") == slot_id_to_unequip:
+                    unequipped_item_template_id = item_entry.get('template_id') or item_entry.get('item_id')
+                    item_entry["equipped"] = False
+                    actual_slot_unequipped = item_entry.pop("slot_id", None)
+                    item_found_and_unequipped = True
+                    break
+        elif item_template_id_to_unequip:
+            for item_entry in character_inventory_data:
+                entry_template_id = item_entry.get('template_id') or item_entry.get('item_id')
+                if entry_template_id == item_template_id_to_unequip and item_entry.get('equipped'):
+                    unequipped_item_template_id = entry_template_id
+                    item_entry["equipped"] = False
+                    actual_slot_unequipped = item_entry.pop("slot_id", None)
+                    item_found_and_unequipped = True
+                    break
+        else:
+            return EquipResult(success=False, message="No item or slot specified to unequip.", character_id=character_id)
+
+        if not item_found_and_unequipped:
+            msg = f"Equipped item matching criteria not found."
+            if slot_id_to_unequip: msg = f"No item equipped in slot '{slot_id_to_unequip}'."
+            elif item_template_id_to_unequip: msg = f"Item '{item_template_id_to_unequip}' is not equipped."
+            return EquipResult(success=False, message=msg, character_id=character_id, item_id=item_template_id_to_unequip, slot_id=slot_id_to_unequip)
+
+        character.inventory = json.dumps(character_inventory_data)
+
+        effective_stats = await calculate_effective_stats(self._db_service, character.id, "player", rules_config)
+        character.effective_stats_json = json.dumps(effective_stats)
+
+        self._character_manager.mark_dirty(character.id, guild_id)
+        # await self._character_manager.save_character(character)
+
+        item_template = self.get_item_template(unequipped_item_template_id) if unequipped_item_template_id else None
+        item_name = item_template.get('name', unequipped_item_template_id) if item_template else unequipped_item_template_id
+
+        return EquipResult(success=True, message=f"Item '{item_name}' unequipped from slot '{actual_slot_unequipped}'.", character_id=character_id, item_id=unequipped_item_template_id, slot_id=actual_slot_unequipped)
+
+    async def use_item(self,
+                       character_id: str,
+                       guild_id: str,
+                       item_template_id: str,
+                       rules_config: CoreGameRulesConfig,
+                       target_entity_id: Optional[str] = None,
+                       target_entity_type: Optional[str] = None
+                      ) -> EquipResult: # Reusing EquipResult for now, can be renamed to UseItemResult
+
+        if not self._character_manager or not self._db_service or not self._status_manager: # Added _status_manager check
+            return EquipResult(success=False, message="Required services (Character, DB, Status) not available.", character_id=character_id, item_id=item_template_id, slot_id=None)
+
+        char_model_type = "player" # Assuming player for now, could be expanded
+        character = await self._character_manager.get_character(guild_id, character_id)
+        if not character:
+            return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_template_id, slot_id=None)
+
+        inventory_list_json = getattr(character, 'inventory', "[]")
+        character_inventory_data: List[Dict[str, Any]] = json.loads(inventory_list_json) if isinstance(inventory_list_json, str) else inventory_list_json
+
+        item_entry_to_use: Optional[Dict[str, Any]] = None
+        item_index_in_inventory: Optional[int] = None
+
+        for i, entry in enumerate(character_inventory_data):
+            entry_template_id = entry.get('template_id') or entry.get('item_id')
+            if entry_template_id == item_template_id:
+                item_entry_to_use = entry
+                item_index_in_inventory = i
+                break
+
+        if not item_entry_to_use or item_index_in_inventory is None:
+            return EquipResult(success=False, message=f"Item '{item_template_id}' not found in inventory.", character_id=character_id, item_id=item_template_id, slot_id=None)
+
+        item_effect_def = rules_config.item_effects.get(item_template_id)
+        if not item_effect_def:
+            return EquipResult(success=False, message=f"No defined effects for item '{item_template_id}'.", character_id=character_id, item_id=item_template_id, slot_id=None)
+
+        # Target policy check
+        actual_target_id = character_id # Default to self
+        actual_target_type = char_model_type # Default to self type
+
+        if item_effect_def.target_policy == "requires_target":
+            if not target_entity_id or not target_entity_type:
+                return EquipResult(success=False, message=f"Item '{item_template_id}' requires a target, but none was provided.", character_id=character_id, item_id=item_template_id, slot_id=None)
+            actual_target_id = target_entity_id
+            actual_target_type = target_entity_type
+        elif item_effect_def.target_policy == "no_target":
+            actual_target_id = None # Explicitly no target
+            actual_target_type = None
+
+
+        # --- Apply Effects ---
+        # This section requires careful interaction with CharacterManager, NPCManager, StatusManager
+        # For now, direct modifications to character object are shown for some, assuming CM saves later.
+        # A more robust solution would involve methods on those managers.
+
+        # Direct Health Effects
+        if item_effect_def.direct_health_effects:
+            for health_effect in item_effect_def.direct_health_effects:
+                target_hp_changed = False
+                # This needs to fetch the target entity (player or NPC) and modify its HP
+                # Simplified: if target is self (the character using the item)
+                if actual_target_id == character.id and actual_target_type == char_model_type:
+                    if health_effect.effect_type == "heal":
+                        character.hp = min(getattr(character, 'max_health', character.hp), getattr(character, 'hp', 0) + health_effect.amount)
+                        target_hp_changed = True
+                    elif health_effect.effect_type == "damage":
+                        character.hp = getattr(character, 'hp', 0) - health_effect.amount
+                        target_hp_changed = True
+                    # TODO: Add handling for other targets (NPCs) via NPCManager
+                if target_hp_changed: print(f"Applied health effect: {health_effect.amount} to {actual_target_id}")
+
+
+        # Apply Status Effects
+        if item_effect_def.apply_status_effects:
+            for status_rule in item_effect_def.apply_status_effects:
+                eff_target_id = character.id if status_rule.target == "self" else actual_target_id
+                eff_target_type = char_model_type if status_rule.target == "self" else actual_target_type
+
+                if eff_target_id and eff_target_type:
+                    # Assuming StatusManager.apply_status takes these args. Duration from rule or status_def.
+                    status_def = rules_config.status_effects.get(status_rule.status_effect_id)
+                    duration = status_rule.duration_turns if status_rule.duration_turns is not None else (status_def.default_duration_turns if status_def else None)
+
+                    await self._status_manager.apply_status(
+                        target_id=eff_target_id,
+                        target_type=eff_target_type,
+                        status_id=status_rule.status_effect_id,
+                        guild_id=guild_id,
+                        duration_turns=duration
+                        # source_id (e.g. item_instance_id) could be added if StatusManager supports it
+                    )
+                    print(f"Applied status {status_rule.status_effect_id} to {eff_target_id}")
+
+        # Learn Spells (applies only to self - the character using the item)
+        if item_effect_def.learn_spells:
+            if hasattr(character, 'known_spells') and isinstance(character.known_spells, list):
+                for spell_rule in item_effect_def.learn_spells:
+                    if spell_rule.spell_id not in character.known_spells:
+                        character.known_spells.append(spell_rule.spell_id)
+                        print(f"Character {character.id} learned spell {spell_rule.spell_id}")
+            else: # Fallback or if known_spells is JSON string
+                try:
+                    known_spells_list = json.loads(getattr(character, 'known_spells', "[]")) if isinstance(getattr(character, 'known_spells', "[]"), str) else (getattr(character, 'known_spells', []) or [])
+                    for spell_rule in item_effect_def.learn_spells:
+                        if spell_rule.spell_id not in known_spells_list:
+                            known_spells_list.append(spell_rule.spell_id)
+                    character.known_spells = json.dumps(known_spells_list)
+                    print(f"Character {character.id} learned spells (JSON update)")
+                except json.JSONDecodeError:
+                    print(f"Error parsing known_spells JSON for character {character.id}")
+
+
+        # Grant Resources (applies only to self)
+        if item_effect_def.grant_resources:
+            for resource_rule in item_effect_def.grant_resources:
+                current_val = getattr(character, resource_rule.resource_name, 0)
+                if isinstance(current_val, (int, float)): # Ensure it's a number
+                    setattr(character, resource_rule.resource_name, current_val + resource_rule.amount)
+                    print(f"Granted {resource_rule.amount} of {resource_rule.resource_name} to character {character.id}")
+
+
+        # Stat Modifiers (typically for ongoing effects from equipped, but could be instant for consumables via a status)
+        # If consumable applies direct stat changes not via a status, it's more complex.
+        # For now, assuming stat_modifiers on consumables are applied via a temporary status effect defined in apply_status_effects.
+        # If they are direct, permanent changes for a consumable, that's unusual but could be handled.
+        # This `stats_calculator` call is mainly if an equipped item is consumed, or if a consumable grants a status that then needs recalc.
+        stats_changed_by_consumption_or_status = False
+        if item_effect_def.apply_status_effects or (item_effect_def.consumable and item_entry_to_use.get("equipped")):
+            stats_changed_by_consumption_or_status = True
+
+
+        # Consume Item
+        if item_effect_def.consumable:
+            current_quantity = item_entry_to_use.get('quantity', 1)
+            if current_quantity > 1:
+                character_inventory_data[item_index_in_inventory]['quantity'] = current_quantity - 1
+            else:
+                character_inventory_data.pop(item_index_in_inventory)
+
+            character.inventory = json.dumps(character_inventory_data)
+            print(f"Item {item_template_id} consumed by {character.id}")
+            # If the consumed item was equipped and provided stats, a recalc is needed.
+            if item_entry_to_use.get("equipped"):
+                 stats_changed_by_consumption_or_status = True # Ensure recalc if equipped item consumed
+
+        if stats_changed_by_consumption_or_status:
+            effective_stats = await calculate_effective_stats(self._db_service, character.id, char_model_type, rules_config)
+            character.effective_stats_json = json.dumps(effective_stats)
+
+        self._character_manager.mark_dirty(character.id, guild_id)
+        # await self._character_manager.save_character(character) # Or ensure save happens
+
+        item_template_for_name = self.get_item_template(item_template_id)
+        item_name_display = item_template_for_name.get('name', item_template_id) if item_template_for_name else item_template_id
+
+        return EquipResult(success=True, message=f"Used '{item_name_display}'.", character_id=character_id, item_id=item_template_id, slot_id=None)
+
 
     def _load_item_templates(self):
         print("ItemManager: Loading global item templates...")
