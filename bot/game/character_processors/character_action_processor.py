@@ -356,104 +356,127 @@ class CharacterActionProcessor:
 
     # Метод для завершения ИНДИВИДУАЛЬНОГО действия персонажа (ПЕРЕНЕСЕН ИЗ CharacterManager)
     # Вызывается из process_tick, когда действие завершено.
-    async def process_tick(self, char_id: str, game_time_delta: float, **kwargs) -> None:
-        print(f"CharacterActionProcessor.process_tick: Received char_id='{char_id}', game_time_delta={game_time_delta}")
-        print(f"CharacterActionProcessor.process_tick: Received kwargs: {kwargs}")
-        guild_id_from_kwargs = kwargs.get('guild_id')
-        print(f"CharacterActionProcessor.process_tick: Extracted guild_id='{guild_id_from_kwargs}' from kwargs")
-        # char = self._character_manager.get_character(char_id) # Original, needs guild_id
-        # This method is called by WorldSimulationProcessor which iterates over active entities.
-        # It should already have guild_id context or the char object.
-        # For now, let's assume char_id is enough if CharacterManager can get guild from its internal caches or if char_id is globally unique.
-        # However, most CharacterManager methods now require guild_id.
-        # This implies process_tick needs guild_id or the char object passed in directly.
-        # Let's assume CharacterManager.get_character can resolve without guild_id if char_id is unique UUID.
-        # This is a potential issue if char_id is not globally unique or CM requires guild_id.
+    async def process_tick(self, char_id: str, game_time_delta: float, **kwargs) -> Dict[str, Any]:
+        log_prefix = f"CAP.process_tick(char='{char_id}', delta={game_time_delta}):"
+        print(f"{log_prefix} Called. kwargs: {kwargs}")
 
         char_guild_id_for_tick = kwargs.get('guild_id')
         if not char_guild_id_for_tick:
-            print(f"CharacterActionProcessor (process_tick): CRITICAL: guild_id missing for character {char_id}. Cannot process tick.")
-            # Decide how to handle this: maybe remove from active actions if guild_id is essential
-            # For now, just return to prevent further errors.
+            print(f"{log_prefix} CRITICAL: guild_id missing for character {char_id}. Cannot process tick.")
             active_entities_map = self._character_manager._entities_with_active_action
             if isinstance(active_entities_map, dict):
-                for gid_key, id_set in list(active_entities_map.items()): # Use list for safe iteration and deletion
+                for gid_key, id_set in list(active_entities_map.items()):
                     if isinstance(id_set, set) and char_id in id_set:
                         id_set.discard(char_id)
-                        if not id_set: # Remove guild_id from dict if set is empty
+                        if not id_set:
                             del active_entities_map[gid_key]
-            return
+            print(f"{log_prefix} Exiting early: guild_id missing.")
+            return {"success": False, "message": f"Внутренняя ошибка: ID сервера отсутствует для персонажа {char_id}."}
+        else:
+            print(f"{log_prefix} Guild ID for tick: '{char_guild_id_for_tick}'")
 
         char: Optional[Character] = self._character_manager.get_character(guild_id=str(char_guild_id_for_tick), character_id=char_id)
 
+        if not char:
+            print(f"{log_prefix} Character not found in guild '{char_guild_id_for_tick}'. Removing from active if present.")
+            active_set = self._character_manager._entities_with_active_action.get(str(char_guild_id_for_tick))
+            if isinstance(active_set, set):
+                active_set.discard(char_id)
+                if not active_set:
+                    del self._character_manager._entities_with_active_action[str(char_guild_id_for_tick)]
+            print(f"{log_prefix} Exiting early: Character not found.")
+            return {"success": False, "message": f"Персонаж {char_id} не найден."}
+        else:
+            current_action_temp = getattr(char, 'current_action', None) # Use temp var for initial log
+            action_queue_temp = getattr(char, 'action_queue', [])   # Use temp var for initial log
+            print(f"{log_prefix} Character '{char.name}' (ID: {char.id}) fetched. Current action type: {type(current_action_temp)}. Action queue length: {len(action_queue_temp)}")
+            if current_action_temp:
+                print(f"{log_prefix} Details of current_action: {current_action_temp}")
 
-        if not char or (getattr(char, 'current_action', None) is None and not getattr(char, 'action_queue', [])):
-             # Ensure _entities_with_active_action.get returns a set before calling discard
-             # char_guild_id_for_tick should be valid here due to the check above
+        current_action = getattr(char, 'current_action', None)
+        action_queue = getattr(char, 'action_queue', [])
+
+        if current_action is None and not action_queue:
+             print(f"{log_prefix} No current action and no queued actions for '{char.name}'. Removing from active if present.")
              active_set = self._character_manager._entities_with_active_action.get(str(char_guild_id_for_tick))
              if isinstance(active_set, set):
                 active_set.discard(char_id)
-                if not active_set: # Remove guild_id from dict if set is empty
+                if not active_set:
                     del self._character_manager._entities_with_active_action[str(char_guild_id_for_tick)]
-             return
+             print(f"{log_prefix} Exiting early: No current or queued actions.")
+             return {"success": True, "message": "Персонаж уже бездействует."}
 
-        # ... (rest of process_tick logic, ensuring guild_id is used for CM calls) ...
-        # Make sure mark_character_dirty and other CM calls use the determined char_guild_id_for_tick
-        if char_guild_id_for_tick and getattr(char, 'current_action', None) is not None: # Check current_action again
-            current_action = getattr(char, 'current_action') # Should not be None here
+        action_completed_this_tick = False
+        action_started_this_tick = False
+
+        if current_action is not None:
+            print(f"{log_prefix} Processing current_action: {current_action.get('type')}")
             duration = current_action.get('total_duration', 0.0)
-            # ... (progress update logic) ...
-            if isinstance(duration, (int, float)) and duration > 0: # Ensure duration is valid number
-                 # ... (progress update logic) ...
-                 self._character_manager.mark_character_dirty(str(char_guild_id_for_tick), char_id)
-                 # ... (check for completion) ...
+            print(f"{log_prefix} Current action duration: {duration}, progress: {current_action.get('progress', 0.0)}")
 
-        # ... (complete_action call if needed, passing char_guild_id_for_tick in kwargs if not already there) ...
-        # ... (logic for removing from _entities_with_active_action if no more actions) ...
-        # char_guild_id_for_tick is guaranteed by the check at the beginning of the method.
-        if getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue):
-            # Ensure get returns a set before calling discard
+            if isinstance(duration, (int, float)) and duration > 0:
+                current_action['progress'] = current_action.get('progress', 0.0) + game_time_delta
+                print(f"{log_prefix} Updated action progress: {current_action['progress']}")
+                self._character_manager.mark_character_dirty(str(char_guild_id_for_tick), char_id)
+
+                if current_action['progress'] >= duration:
+                    print(f"{log_prefix} Attempting to complete action: {current_action.get('type')}")
+                    await self.complete_action(char_id, current_action, guild_id=str(char_guild_id_for_tick), **kwargs)
+                    print(f"{log_prefix} Called complete_action for: {current_action.get('type')}")
+                    action_completed_this_tick = True
+                else:
+                    print(f"{log_prefix} Action {current_action.get('type')} ongoing.")
+                    return {"success": True, "message": "Действие продолжается."}
+            else:
+                print(f"{log_prefix} Attempting to complete action: {current_action.get('type')} (zero/invalid duration)")
+                await self.complete_action(char_id, current_action, guild_id=str(char_guild_id_for_tick), **kwargs)
+                print(f"{log_prefix} Called complete_action for: {current_action.get('type')}")
+                action_completed_this_tick = True
+
+        current_action = getattr(char, 'current_action', None)
+        action_queue = getattr(char, 'action_queue', [])
+
+        if current_action is None and action_queue:
+            next_action_data = action_queue.pop(0)
+            print(f"{log_prefix} No current action, but queue has items. Attempting to start next action: {next_action_data.get('type')}")
+            self._character_manager.mark_character_dirty(str(char_guild_id_for_tick), char_id)
+            await self.start_action(char_id, next_action_data, guild_id=str(char_guild_id_for_tick), **kwargs)
+            print(f"{log_prefix} Called start_action for: {next_action_data.get('type')}")
+            action_started_this_tick = True
+
+        current_action = getattr(char, 'current_action', None)
+        action_queue = getattr(char, 'action_queue', [])
+
+        if current_action is None and not action_queue:
+            print(f"{log_prefix} Character '{char.name}' is now idle. Removing from active if present.")
             active_set_final = self._character_manager._entities_with_active_action.get(str(char_guild_id_for_tick))
             if isinstance(active_set_final, set):
                 active_set_final.discard(char_id)
-                if not active_set_final: # Remove guild_id from dict if set is empty
+                if not active_set_final:
                     del self._character_manager._entities_with_active_action[str(char_guild_id_for_tick)]
-            # The return that was here is removed as the function should continue to the end.
-            # The lines "if char_id in id_set: id_set.discard(char_id)" were part of an erroneous merge before, removed.
+            # If an action was completed and queue is now empty, it's a specific kind of success.
+            if action_completed_this_tick:
+                 print(f"{log_prefix} Exiting: Action completed and character is now idle.")
+                 return {"success": True, "message": "Текущее действие завершено, персонаж теперь бездействует."} # More specific
+            # Otherwise, it's the "already idle" case, though this path should ideally be caught earlier.
+            print(f"{log_prefix} Exiting: Character became idle in this tick (or was already).")
+            return {"success": True, "message": "Персонаж бездействует."}
 
-        # The following block is now redundant due to the initial check and handling for `not char`
-        # and the updated logic for removing from active_entities_map when a character becomes inactive.
-        # if not char or (getattr(char, 'current_action', None) is None and not getattr(char, 'action_queue', [])):
-        #      # char_guild_id_for_tick should be valid here
-        #      active_set_redundant = self._character_manager._entities_with_active_action.get(str(char_guild_id_for_tick))
-        #      if isinstance(active_set_redundant, set):
-        #          active_set_redundant.discard(char_id)
-        #          if not active_set_redundant:
-        #              del self._character_manager._entities_with_active_action[str(char_guild_id_for_tick)]
-        #      return
+        if action_completed_this_tick and action_started_this_tick:
+            return {"success": True, "message": "Текущее действие завершено и начато новое из очереди."}
+        elif action_completed_this_tick: # Implies queue was empty and remained empty
+            return {"success": True, "message": "Текущее действие завершено."} # Char might still be idle if queue was empty
+        elif action_started_this_tick:
+            return {"success": True, "message": "Начато новое действие из очереди."}
 
-        # ... (rest of process_tick logic, ensuring guild_id is used for CM calls) ...
-        # Make sure mark_character_dirty and other CM calls use the determined char_guild_id_for_tick
-        # This check is already performed above and includes mark_character_dirty
-        # if char_guild_id_for_tick and getattr(char, 'current_action', None) is not None: # Check current_action again
-        #     current_action = getattr(char, 'current_action') # Should not be None here
-        #     duration = current_action.get('total_duration', 0.0)
-        #     # ... (progress update logic) ...
-        #     if isinstance(duration, (int, float)) and duration > 0: # Ensure duration is valid number
-        #          # ... (progress update logic) ...
-        #          self._character_manager.mark_character_dirty(str(char_guild_id_for_tick), char_id) # Pass guild_id
-        #          # ... (check for completion) ...
+        # Fallback for any active character state not leading to completion, start, or ongoing.
+        # This might indicate an unexpected state if current_action is not None but wasn't processed.
+        if current_action is not None:
+            print(f"{log_prefix} Exiting: Action {current_action.get('type')} is still the current action but was not processed as ongoing. This might be an issue.")
+            return {"success": False, "message": f"Не удалось полностью обработать текущее действие: {current_action.get('type')}."}
 
-        # ... (complete_action call if needed, passing char_guild_id_for_tick in kwargs if not already there) ...
-        # ... (logic for removing from _entities_with_active_action if no more actions) ...
-        # This final check and discard is also covered by the logic at the beginning of the char processing (after char is fetched)
-        # and after complete_action.
-        # if char_guild_id_for_tick and getattr(char, 'current_action', None) is None and (hasattr(char, 'action_queue') and not char.action_queue):
-        #     final_check_set = self._character_manager._entities_with_active_action.get(str(char_guild_id_for_tick))
-        #     if isinstance(final_check_set, set):
-        #         final_check_set.discard(char_id)
-        #         if not final_check_set:
-        #             del self._character_manager._entities_with_active_action[str(char_guild_id_for_tick)]
+        print(f"{log_prefix} Exiting with default status: Unable to determine specific outcome.")
+        return {"success": False, "message": "Не удалось обработать текущее состояние персонажа."}
 
 
     async def complete_action(self, character_id: str, completed_action_data: Dict[str, Any], **kwargs) -> List[Any]:

@@ -162,14 +162,26 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
         game_time_delta = 1.0
         guild_id_str = str(interaction.guild_id)
         result = await char_action_proc.process_tick(char_id, game_time_delta, guild_id=guild_id_str)
-        if result and result.get("message"):
-             await interaction.followup.send(result.get("message"), ephemeral=True)
-        elif not result or not result.get("success"):
-            # Only send this if process_action didn't already send a more specific message.
-            # This requires process_action to have a clear contract about its own messaging.
-            # For now, assuming if success is false, a generic message here is okay if no message in result.
-            if not (result and result.get("message")):
-                 await interaction.followup.send("Не удалось завершить ход.", ephemeral=True)
+
+        message_to_send = "Не удалось завершить ход. (Нет дополнительной информации)" # Default vague message
+        if result and isinstance(result, dict):
+            # Use the message from process_tick if available, otherwise keep the default
+            message_to_send = result.get("message", message_to_send)
+
+        # Check success status from result, if result is a dict, otherwise assume failure if result is None or not a dict
+        is_successful = result.get("success", False) if isinstance(result, dict) else False
+
+        if is_successful:
+            # If successful, send the message (which might be "Action ongoing", "Action completed", etc.)
+            await interaction.followup.send(message_to_send, ephemeral=True)
+        else:
+            # If not successful, send the error message (which might be from process_tick or the default)
+            # Prepend a generic error indicator if the message from process_tick doesn't already imply error.
+            if "ошибка" not in message_to_send.lower() and "не удалось" not in message_to_send.lower():
+                 error_prefix = "Ошибка: "
+            else:
+                 error_prefix = ""
+            await interaction.followup.send(f"{error_prefix}{message_to_send}", ephemeral=True)
 
 
     @app_commands.command(name="end_party_turn", description="ГМ: Завершить ход для всей текущей активной партии.")
