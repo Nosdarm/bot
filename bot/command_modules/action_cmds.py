@@ -1,7 +1,7 @@
 from discord import Interaction, app_commands
 from discord.ext import commands
 from typing import Optional, TYPE_CHECKING
-
+import asyncio
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.game.managers.game_manager import GameManager
