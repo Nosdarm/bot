@@ -1,3 +1,11 @@
+"""
+Calculates effective character/NPC statistics based on base stats, items, and status effects.
+
+This module provides the `calculate_effective_stats` function, which is the core
+logic for determining an entity's final stats after all modifications are applied.
+It uses the `CoreGameRulesConfig` to understand base stat definitions, item effects,
+and status effects.
+"""
 import json
 import asyncio # For __main__
 from typing import Dict, Any, List, Optional, Tuple, Union
@@ -53,9 +61,36 @@ async def calculate_effective_stats(
     entity_type: str, # "player" or "npc"
     rules_config_data: CoreGameRulesConfig
 ) -> Dict[str, Any]:
-    """
-    Calculates the effective stats for an entity by applying modifiers from
-    base stats, items, and status effects defined in CoreGameRulesConfig.
+    """Calculates effective stats for an entity.
+
+    This function computes the final statistics of a player or NPC by:
+    1.  Starting with base stats (from entity data or defaults in rules_config).
+    2.  Loading base skills.
+    3.  Applying flat bonuses from equipped items.
+    4.  Applying multiplier bonuses from equipped items.
+    5.  Applying flat bonuses from active status effects.
+    6.  Applying multiplier bonuses from active status effects.
+    7.  Applying min/max caps to stats as defined in rules_config.
+    8.  Collecting any abilities or skills granted by items or statuses.
+
+    The order of operations for stat modification is generally:
+    base -> flat bonuses -> multipliers -> caps.
+
+    Args:
+        db_service: An instance of the database service (or a mock) to fetch entity data.
+        entity_id: The ID of the player or NPC.
+        entity_type: A string indicating the type of entity ("player" or "npc").
+        rules_config_data: A CoreGameRulesConfig object containing game rule definitions
+                           (base stats, item effects, status effects).
+
+    Returns:
+        A dictionary where keys are stat names (lowercase) and values are their
+        effective calculated values. Includes a special key 'granted_abilities_skills'
+        listing any abilities/skills granted by effects. Returns an empty dict if
+        the entity is not found.
+
+    Raises:
+        ValueError: If an unknown `entity_type` is provided.
     """
     effective_stats: Dict[str, Any] = {}
     granted_abilities_skills: List[GrantedAbilityOrSkill] = []

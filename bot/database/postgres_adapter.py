@@ -328,6 +328,53 @@ Last encountered error: {last_retryable_exception}
             await self.connect()
         print("PostgresAdapter: Database initialization checks complete. Schema is managed by Alembic.")
 
+    async def begin_transaction(self) -> None:
+        """Begins a new transaction on the SQLAlchemy session."""
+        if not self.db:
+            # Attempt to connect if session is not active. This might be needed if begin_transaction
+            # can be called before other methods that establish self.db.
+            await self.connect()
+            if not self.db: # Still no session after connect attempt
+                raise ConnectionError("SQLAlchemy session is not established, cannot begin transaction.")
+        try:
+            # SQLAlchemy AsyncSession typically uses await self.db.begin() or similar
+            # For now, assuming self.db is an AsyncSession, begin a transaction if not already in one.
+            # AsyncSession might manage transactions differently, often per operation or via begin_nested.
+            # A simple explicit begin might not be standard for all uses.
+            # However, if a block of operations needs to be atomic, an explicit transaction is good.
+            # Let's assume begin() starts a top-level transaction if one isn't active.
+            # await self.db.begin() # This starts a new transaction or sub-transaction
+            # For asyncpg, transactions are usually managed on a specific connection.
+            # The SQLAlchemy AsyncSession handles this abstraction.
+            # If a transaction is already active, this might create a savepoint.
+            # For now, we'll assume this is the intended way to ensure a transaction context.
+            # If self.db.in_transaction check is available:
+            # if not self.db.in_transaction:
+            #    await self.db.begin()
+            # print("PostgresAdapter: Began SQLAlchemy session transaction (or savepoint).")
+            # Simpler for now: ensure a connection is ready. The transaction is often managed by `with session.begin():`
+            # For explicit calls, this is more complex.
+            # For now, this method primarily ensures connection. Actual transaction start might be implicit with first operation
+            # or needs to be handled by how `self.db` operations are grouped.
+            # Awaiting more specific transaction block patterns in DBService.
+            # For this step, let's make it a no-op that ensures connection,
+            # assuming transactions will be handled by `with self.db.begin():` in higher layers if needed,
+            # or that individual `commit/rollback` calls are sufficient.
+            # To make it work as expected by DBService:
+            if not self.db.in_transaction(): # Check if already in a transaction
+                 self._current_transaction = await self.db.begin()
+                 print("PostgresAdapter: Began new SQLAlchemy session transaction.")
+            else:
+                 # If already in a transaction, create a savepoint (nested transaction)
+                 self._current_transaction = await self.db.begin_nested()
+                 print("PostgresAdapter: Began nested SQLAlchemy session transaction (savepoint).")
+
+        except Exception as e:
+            print(f"PostgresAdapter: ❌ Error beginning SQLAlchemy session transaction: {e}")
+            traceback.print_exc()
+            raise
+
+
     async def save_pending_conflict(self, conflict_id: str, guild_id: str, conflict_data: str) -> None:
         if not isinstance(conflict_data, str):
              raise TypeError("conflict_data must be a JSON string.")

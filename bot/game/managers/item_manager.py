@@ -1,4 +1,13 @@
 # bot/game/managers/item_manager.py
+"""
+Manages item instances and item templates within the game.
+
+This manager handles creation, retrieval, update, and deletion (CRUD) of item
+instances, as well as loading and providing access to item templates.
+It also contains logic for character equipping, unequipping, and using items,
+coordinating with CharacterManager, StatusManager, and applying effects based
+on CoreGameRulesConfig.
+"""
 from __future__ import annotations # Enables using type hints as strings implicitly, simplifying things
 import json
 import uuid
@@ -58,7 +67,7 @@ class ItemManager:
 
     def __init__(
         self,
-        db_service: Optional["DBService"] = None, # Changed
+        db_service: Optional["DBService"] = None,
         settings: Optional[Dict[str, Any]] = None,
         rule_engine: Optional["RuleEngine"] = None,
         character_manager: Optional["CharacterManager"] = None,
@@ -71,6 +80,23 @@ class ItemManager:
         crafting_manager: Optional["CraftingManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
     ):
+        """
+        Initializes the ItemManager.
+
+        Args:
+            db_service: Service for database interactions.
+            settings: Game settings, often used for loading initial data like templates.
+            rule_engine: Engine for accessing game rules, including CoreGameRulesConfig.
+            character_manager: Manages character data.
+            npc_manager: Manages NPC data.
+            location_manager: Manages location data.
+            party_manager: Manages party data.
+            combat_manager: Manages combat state and logic.
+            status_manager: Manages status effects.
+            economy_manager: Manages game economy (e.g., item prices).
+            crafting_manager: Manages item crafting.
+            game_log_manager: Service for logging game events.
+        """
         print("Initializing ItemManager...")
         self._db_service = db_service
         self._settings = settings
@@ -119,11 +145,23 @@ class ItemManager:
                          rules_config: CoreGameRulesConfig, # Added
                          slot_id_preference: Optional[str] = None
                         ) -> EquipResult:
+        """
+        Equips an item to a character from their inventory.
 
+        Args:
+            character_id: The ID of the character equipping the item.
+            guild_id: The ID of the guild.
+            item_template_id_to_equip: The template ID of the item to equip.
+            rules_config: The CoreGameRulesConfig containing equipment slot definitions.
+            slot_id_preference: Optional preferred slot ID to equip the item into.
+
+        Returns:
+            An EquipResult dictionary indicating success, a message, and involved IDs.
+        """
         if not self._character_manager or not self._db_service: # Ensure critical managers are present
             return EquipResult(success=False, message="Character or DB service not available.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
 
-        character = await self._character_manager.get_character(guild_id, character_id)
+        character: Optional["CharacterModel"] = await self._character_manager.get_character(guild_id, character_id)
         if not character:
             return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
 
@@ -200,11 +238,23 @@ class ItemManager:
                            item_template_id_to_unequip: Optional[str] = None,
                            slot_id_to_unequip: Optional[str] = None
                           ) -> EquipResult:
+        """
+        Unequips an item from a character.
 
+        Args:
+            character_id: The ID of the character.
+            guild_id: The ID of the guild.
+            rules_config: The CoreGameRulesConfig.
+            item_template_id_to_unequip: Optional template ID of the item to unequip.
+            slot_id_to_unequip: Optional slot ID from which to unequip an item.
+                                One of item_template_id or slot_id must be provided.
+        Returns:
+            An EquipResult dictionary indicating success, a message, and involved IDs.
+        """
         if not self._character_manager or not self._db_service:
              return EquipResult(success=False, message="Character or DB service not available.", character_id=character_id, item_id=item_template_id_to_unequip, slot_id=slot_id_to_unequip)
 
-        character = await self._character_manager.get_character(guild_id, character_id)
+        character: Optional["CharacterModel"] = await self._character_manager.get_character(guild_id, character_id)
         if not character:
             return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_template_id_to_unequip, slot_id=slot_id_to_unequip)
 
@@ -261,13 +311,27 @@ class ItemManager:
                        rules_config: CoreGameRulesConfig,
                        target_entity_id: Optional[str] = None,
                        target_entity_type: Optional[str] = None
-                      ) -> EquipResult: # Reusing EquipResult for now, can be renamed to UseItemResult
+                      ) -> EquipResult: # Reusing EquipResult for now, can be UseItemResult
+        """
+        Uses an item from a character's inventory, applying its effects.
 
-        if not self._character_manager or not self._db_service or not self._status_manager: # Added _status_manager check
+        Args:
+            character_id: ID of the character using the item.
+            guild_id: ID of the guild.
+            item_template_id: Template ID of the item to be used.
+            rules_config: The CoreGameRulesConfig containing item effect definitions.
+            target_entity_id: Optional ID of the target entity for the item's effects.
+            target_entity_type: Optional type of the target entity.
+
+        Returns:
+            An EquipResult (or similar UseItemResult) dictionary indicating success,
+            a message, and involved IDs.
+        """
+        if not self._character_manager or not self._db_service or not self._status_manager:
             return EquipResult(success=False, message="Required services (Character, DB, Status) not available.", character_id=character_id, item_id=item_template_id, slot_id=None)
 
-        char_model_type = "player" # Assuming player for now, could be expanded
-        character = await self._character_manager.get_character(guild_id, character_id)
+        char_model_type = "player" # Assuming player for now, could be expanded for NPCs using items
+        character: Optional["CharacterModel"] = await self._character_manager.get_character(guild_id, character_id)
         if not character:
             return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_template_id, slot_id=None)
 

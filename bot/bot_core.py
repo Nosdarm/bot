@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 # Импорты наших сервисов и менеджеров.
 from bot.services.openai_service import OpenAIService
 from bot.game.managers.game_manager import GameManager
-
+from bot.game.services.location_interaction_service import LocationInteractionService # Added for GameManager setup
 from bot.nlu.player_action_parser import parse_player_action
 from bot.services.nlu_data_service import NLUDataService
 
@@ -26,6 +26,8 @@ from bot.services.nlu_data_service import NLUDataService
 # from bot.command_modules.game_setup_cmds import is_master_or_admin, is_gm_channel # Now part of GameSetupCog
 
 LOADED_TEST_GUILD_IDS: List[int] = []
+
+TURN_CYCLE_INTERVAL_SECONDS = 10 # Or load from settings if preferred
 
 
 def load_settings_from_file(file_path: str) -> Dict[str, Any]:
@@ -52,11 +54,38 @@ class RPGBot(commands.Bot):
         self.game_manager = game_manager
         self.debug_guild_ids = debug_guild_ids
         self.openai_service = openai_service
+        self.turn_processing_task: Optional[asyncio.Task] = None # For periodic turn checks
 
         global global_openai_service
         global_openai_service = self.openai_service
         global global_game_manager
         global_game_manager = self.game_manager
+
+    async def run_periodic_turn_checks(self):
+        await self.wait_until_ready() # Ensure bot is fully ready
+        logging.info("Starting periodic turn checks loop.")
+        try:
+            while not self.is_closed():
+                if self.game_manager and self.game_manager.turn_processing_service:
+                    logging.debug(f"Periodic turn check: Iterating {len(self.guilds)} guilds.")
+                    for guild in self.guilds:
+                        try:
+                            logging.debug(f"Periodic turn check: Running for guild {guild.id}.")
+                            await self.game_manager.turn_processing_service.run_turn_cycle_check(str(guild.id))
+                            logging.debug(f"Periodic turn check: Completed for guild {guild.id}.")
+                        except Exception as e:
+                            logging.error(f"Error during run_turn_cycle_check for guild {guild.id}: {e}", exc_info=True)
+                    logging.debug(f"Periodic turn check: Sleeping for {TURN_CYCLE_INTERVAL_SECONDS} seconds.")
+                    await asyncio.sleep(TURN_CYCLE_INTERVAL_SECONDS)
+                else:
+                    logging.warning("Periodic turn check: GameManager or TurnProcessingService not available. Sleeping.")
+                    await asyncio.sleep(TURN_CYCLE_INTERVAL_SECONDS * 3) # Longer sleep if services not ready
+        except asyncio.CancelledError:
+            logging.info("Periodic turn checks task was cancelled.")
+        except Exception as e:
+            logging.error(f"Unhandled error in periodic_turn_checks loop: {e}", exc_info=True)
+        finally:
+            logging.info("Periodic turn checks loop has ended.")
 
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type == discord.InteractionType.application_command:
@@ -181,6 +210,14 @@ class RPGBot(commands.Bot):
                 logging.error(f"{datetime.now()} - RPGBot: Error during command tree sync: {e_sync}", exc_info=True)
 
             logging.info(f"{datetime.now()} - RPGBot: Command tree synchronization process completed.")
+
+            # Start periodic turn checks task
+            if not self.turn_processing_task or self.turn_processing_task.done():
+                logging.info("RPGBot.on_ready: Launching periodic turn checks task.")
+                self.turn_processing_task = asyncio.create_task(self.run_periodic_turn_checks())
+            else:
+                logging.info("RPGBot.on_ready: Periodic turn checks task already running.")
+
             logging.debug(f"{datetime.now()} - RPGBot: Exiting on_ready handler.")
             logging.info(f"{datetime.now()} - RPGBot: Bot is ready!")
         except Exception as e_outer: # New outer wrapper
@@ -401,6 +438,18 @@ async def start_bot():
     finally:
         print("RPGBot Core: Entered finally block for start_bot. Performing cleanup...")
         logging.info("RPGBot Core: Entered finally block for start_bot. Performing cleanup...")
+
+        # Cancel periodic turn checks task
+        if _rpg_bot_instance_for_global_send and _rpg_bot_instance_for_global_send.turn_processing_task and \
+           not _rpg_bot_instance_for_global_send.turn_processing_task.done():
+            logging.info("RPGBot Core: Cancelling periodic turn checks task...")
+            _rpg_bot_instance_for_global_send.turn_processing_task.cancel()
+            try:
+                await _rpg_bot_instance_for_global_send.turn_processing_task
+            except asyncio.CancelledError:
+                logging.info("RPGBot Core: Periodic turn checks task successfully cancelled.")
+            except Exception as e_task_cancel: # Catch other potential errors during await
+                logging.error(f"RPGBot Core: Error awaiting cancelled turn_processing_task: {e_task_cancel}", exc_info=True)
 
         # Use global_game_manager for consistency as it's set up for this
         if global_game_manager:

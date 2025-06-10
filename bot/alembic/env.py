@@ -20,7 +20,8 @@ from bot.database.models import (
     Base, Player, Location, Timer, Event, Party, RulesConfig, GeneratedLocation,
     ItemTemplate, LocationTemplate, NPC, GeneratedNpc, GeneratedFaction, GeneratedQuest,
     Item, Inventory, Combat, GlobalState, GameLog, Relationship, PlayerNpcMemory,
-    Ability, Skill, Status, CraftingQueue, ItemProperty, Questline, QuestStep, MobileGroup
+    Ability, Skill, Status, CraftingQueue, ItemProperty, Questline, QuestStep, MobileGroup,
+    PendingConflict # Added new model
 )
 
 # If your models are defined within the bot.database.models package,
