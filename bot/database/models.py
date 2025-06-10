@@ -12,7 +12,7 @@ class Player(Base):
 
     id = Column(String, primary_key=True)
     discord_id = Column(String, nullable=True)
-    name = Column(String) # Assuming String for now, can be changed to JSON if needed
+    name_i18n = Column(JSON)
     current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
     selected_language = Column(String, nullable=True)
     xp = Column(Integer, default=0)
@@ -45,6 +45,7 @@ class Player(Base):
     known_spells = Column(JSON, nullable=True)
     spell_cooldowns = Column(JSON, nullable=True)
     inventory = Column(JSON, nullable=True) # Added
+    effective_stats_json = Column(JSON, nullable=True)
 
     location = relationship("Location")
     party = relationship("Party", foreign_keys=[current_party_id]) # Specify foreign_keys for clarity
@@ -152,14 +153,14 @@ class Event(Base):
     __tablename__ = 'events'
     id = Column(String, primary_key=True)
     template_id = Column(String, nullable=True)
-    name = Column(String, nullable=True)
+    name_i18n = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True)
     channel_id = Column(String, nullable=True)
     current_stage_id = Column(String, nullable=True)
     players = Column(JSON, nullable=True) # Store as JSON list of player IDs
     state_variables = Column(JSON, nullable=True)
     stages_data = Column(JSON, nullable=True)
-    end_message_template = Column(Text, nullable=True)
+    end_message_template_i18n = Column(JSON, nullable=True)
     guild_id = Column(String, nullable=False)
 
 class Party(Base):
@@ -188,13 +189,18 @@ class RulesConfig(Base):
 class GeneratedLocation(Base):
     __tablename__ = 'generated_locations'
     id = Column(String, primary_key=True)
-    placeholder = Column(Text, nullable=True)
+    name_i18n = Column(JSON, nullable=True)
+    descriptions_i18n = Column(JSON, nullable=True)
+    details_i18n = Column(JSON, nullable=True)
+    tags_i18n = Column(JSON, nullable=True)
+    atmosphere_i18n = Column(JSON, nullable=True)
+    features_i18n = Column(JSON, nullable=True)
 
 class ItemTemplate(Base):
     __tablename__ = 'item_templates'
     id = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
-    description = Column(Text, nullable=True)
+    name_i18n = Column(JSON, nullable=False)
+    description_i18n = Column(JSON, nullable=True)
     type = Column(String, nullable=True) # e.g., weapon, armor, potion
     properties = Column(JSON, nullable=True) # For stats, effects, etc.
     guild_id = Column(String, nullable=True) # If templates can be guild-specific
@@ -238,6 +244,7 @@ class NPC(Base): # Renamed from Npc to NPC for convention
     faction = Column(JSON, nullable=True)
     behavior_tags = Column(JSON, nullable=True)
     loot_table_id = Column(String, nullable=True)
+    effective_stats_json = Column(JSON, nullable=True)
 
     location = relationship("Location")
     party = relationship("Party")
@@ -245,7 +252,11 @@ class NPC(Base): # Renamed from Npc to NPC for convention
 class GeneratedNpc(Base):
     __tablename__ = 'generated_npcs'
     id = Column(String, primary_key=True)
-    placeholder = Column(Text, nullable=True)
+    name_i18n = Column(JSON, nullable=True)
+    description_i18n = Column(JSON, nullable=True)
+    backstory_i18n = Column(JSON, nullable=True)
+    persona_i18n = Column(JSON, nullable=True)
+    effective_stats_json = Column(JSON, nullable=True)
 
 class GeneratedFaction(Base):
     __tablename__ = 'generated_factions'
@@ -341,12 +352,14 @@ class PlayerNpcMemory(Base):
 class Ability(Base):
     __tablename__ = 'abilities'
     id = Column(String, primary_key=True)
-    placeholder = Column(Text, nullable=True)
+    name_i18n = Column(JSON, nullable=True)
+    description_i18n = Column(JSON, nullable=True)
 
 class Skill(Base):
     __tablename__ = 'skills'
     id = Column(String, primary_key=True)
-    placeholder = Column(Text, nullable=True)
+    name_i18n = Column(JSON, nullable=True)
+    description_i18n = Column(JSON, nullable=True)
 
 class Status(Base):
     __tablename__ = 'statuses'
@@ -361,6 +374,8 @@ class Status(Base):
     state_variables = Column(JSON, nullable=True)
     guild_id = Column(String, nullable=False)
     effects = Column(JSON, nullable=True)
+    name_i18n = Column(JSON, nullable=True)
+    description_i18n = Column(JSON, nullable=True)
 
 class CraftingQueue(Base):
     __tablename__ = 'crafting_queues'
@@ -375,7 +390,8 @@ class CraftingQueue(Base):
 class ItemProperty(Base):
     __tablename__ = 'item_properties'
     id = Column(String, primary_key=True)
-    placeholder = Column(Text, nullable=True)
+    name_i18n = Column(JSON, nullable=True)
+    description_i18n = Column(JSON, nullable=True)
 
 class Questline(Base):
     __tablename__ = 'questlines'
