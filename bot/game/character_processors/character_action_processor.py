@@ -357,6 +357,10 @@ class CharacterActionProcessor:
     # Метод для завершения ИНДИВИДУАЛЬНОГО действия персонажа (ПЕРЕНЕСЕН ИЗ CharacterManager)
     # Вызывается из process_tick, когда действие завершено.
     async def process_tick(self, char_id: str, game_time_delta: float, **kwargs) -> None:
+        print(f"CharacterActionProcessor.process_tick: Received char_id='{char_id}', game_time_delta={game_time_delta}")
+        print(f"CharacterActionProcessor.process_tick: Received kwargs: {kwargs}")
+        guild_id_from_kwargs = kwargs.get('guild_id')
+        print(f"CharacterActionProcessor.process_tick: Extracted guild_id='{guild_id_from_kwargs}' from kwargs")
         # char = self._character_manager.get_character(char_id) # Original, needs guild_id
         # This method is called by WorldSimulationProcessor which iterates over active entities.
         # It should already have guild_id context or the char object.
