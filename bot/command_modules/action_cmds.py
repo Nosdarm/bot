@@ -160,7 +160,8 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
 
         char_id = player_char.id
         game_time_delta = 1.0
-        result = await char_action_proc.process_tick(char_id, game_time_delta)
+        guild_id_str = str(interaction.guild_id)
+        result = await char_action_proc.process_tick(char_id, game_time_delta, guild_id=guild_id_str)
         if result and result.get("message"):
              await interaction.followup.send(result.get("message"), ephemeral=True)
         elif not result or not result.get("success"):
