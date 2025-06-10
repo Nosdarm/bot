@@ -260,7 +260,8 @@ class RPGBot(commands.Bot):
                     print(f"RPGBot: DBService not available for updating player {player.id} in guild {message.guild.id}")
                     await message.add_reaction("⚠️")
             else:
-                await message.add_reaction("❓")
+                response_text = "Ваш запрос не был распознан как известное действие. Пожалуйста, используйте слеш-команды (например, /move, /look) или попробуйте переформулировать ваше действие (например, 'идти в таверну', 'осмотреть сундук')."
+                await message.reply(response_text)
 
         elif player_status in ['бой', 'диалог', 'торговля']:
             print(f"RPGBot: Message from {message.author.name} in status '{player_status}' ignored by NLU: {message.content}")
