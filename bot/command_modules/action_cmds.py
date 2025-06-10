@@ -158,19 +158,9 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
-        result = await char_action_proc.process_tick(
-            character_id=player_char.id,
-            action_type="end_turn",
-            action_data={},
-            context={
-                'guild_id': str(interaction.guild_id), 'author_id': str(interaction.user.id),
-                'channel_id': interaction.channel_id, 'game_manager': game_mngr,
-                'character_manager': game_mngr.character_manager, # Added for completeness
-                'combat_manager': game_mngr.combat_manager,
-                'party_manager': game_mngr.party_manager,
-                'send_to_command_channel': interaction.followup.send
-            }
-        )
+        char_id = player_char.id
+        game_time_delta = 1.0
+        result = await char_action_proc.process_tick(char_id, game_time_delta)
         if result and result.get("message"):
              await interaction.followup.send(result.get("message"), ephemeral=True)
         elif not result or not result.get("success"):
