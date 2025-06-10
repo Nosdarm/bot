@@ -143,45 +143,37 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
-        if not char_action_proc:
-            await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
+        # Keep existing boilerplate for GameManager
+        # CharacterManager is retrieved below, as per existing structure.
+
+        turn_processing_service = game_mngr.turn_processing_service
+        if not turn_processing_service:
+            await interaction.followup.send("Сервис обработки ходов не доступен.", ephemeral=True)
             return
 
-        # Check for other essential managers
-        if not game_mngr.character_manager or not game_mngr.combat_manager:
-            await interaction.followup.send("Один или несколько необходимых игровых модулей не доступны.", ephemeral=True)
+        if not game_mngr.character_manager: # Check for CharacterManager as it's used next
+            await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
             return
 
         player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
-        if not player_char:
+
+        if player_char:
+            player_char.current_status = 'processing_turn'
+            game_mngr.character_manager.mark_character_dirty(player_char) # Assumes player_char object is passed
+
+            # Import asyncio if not already imported at the top of the file
+            # For this refactoring, assuming asyncio is available (standard library)
+            # import asyncio # Add this at the top if it's missing
+            await asyncio.sleep(0.5) # Make sure asyncio is imported
+
+            # Ensure player_char.id is the correct attribute for the player's ID
+            # The method expects a list of player IDs.
+            await game_mngr.turn_processing_service.process_player_turns([player_char.id], str(interaction.guild_id))
+
+            await interaction.followup.send("Turn processing initiated.", ephemeral=True)
+        else:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
-
-        char_id = player_char.id
-        game_time_delta = 1.0
-        guild_id_str = str(interaction.guild_id)
-        result = await char_action_proc.process_tick(char_id, game_time_delta, guild_id=guild_id_str)
-
-        message_to_send = "Не удалось завершить ход. (Нет дополнительной информации)" # Default vague message
-        if result and isinstance(result, dict):
-            # Use the message from process_tick if available, otherwise keep the default
-            message_to_send = result.get("message", message_to_send)
-
-        # Check success status from result, if result is a dict, otherwise assume failure if result is None or not a dict
-        is_successful = result.get("success", False) if isinstance(result, dict) else False
-
-        if is_successful:
-            # If successful, send the message (which might be "Action ongoing", "Action completed", etc.)
-            await interaction.followup.send(message_to_send, ephemeral=True)
-        else:
-            # If not successful, send the error message (which might be from process_tick or the default)
-            # Prepend a generic error indicator if the message from process_tick doesn't already imply error.
-            if "ошибка" not in message_to_send.lower() and "не удалось" not in message_to_send.lower():
-                 error_prefix = "Ошибка: "
-            else:
-                 error_prefix = ""
-            await interaction.followup.send(f"{error_prefix}{message_to_send}", ephemeral=True)
 
 
     @app_commands.command(name="end_party_turn", description="ГМ: Завершить ход для всей текущей активной партии.")

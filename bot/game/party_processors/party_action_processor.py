@@ -748,5 +748,85 @@ class PartyActionProcessor:
 
     # NOTE: process_tick (for ONE party) is here and implemented above.
 
+    async def gm_force_end_party_turn(self, guild_id, context):
+        """
+        Forces the end of the current party's turn.
+        """
+        game_mngr = context.get("game_manager")
+        if not game_mngr:
+            return "Error: GameManager not found in context."
+
+        character_mngr = game_mngr.character_manager
+        party_mngr = game_mngr.party_manager
+        turn_processing_service = game_mngr.turn_processing_service
+
+        if not character_mngr or not party_mngr or not turn_processing_service:
+            return "Error: CharacterManager, PartyManager, or TurnProcessingService not found in GameManager."
+
+        # Identify the 'active' or target party
+        # guild_game_state = game_mngr.guild_game_state_manager.get_guild_game_state(guild_id)
+        # active_party_id = guild_game_state.state_variables.get("active_party_id")
+        # For now, using a simplified way to get guild_game_state as it's not directly available here.
+        # This part might need adjustment depending on how guild_game_state is accessed in this context.
+        # Assuming game_mngr has a way to get the relevant guild_game_state or active_party_id
+
+        # Placeholder for active_party_id logic - to be refined based on actual context availability
+        active_party_id = None
+        if hasattr(game_mngr, 'guild_game_state_manager'):
+            guild_game_state = game_mngr.guild_game_state_manager.get_guild_game_state(guild_id)
+            if guild_game_state:
+                active_party_id = guild_game_state.state_variables.get("active_party_id")
+
+
+        party = None
+        if active_party_id:
+            party = party_mngr.get_party(active_party_id)
+
+        if not party:
+            all_parties = party_mngr.get_all_parties()
+            if all_parties: # party_mngr.get_all_parties() returns a list
+                party = all_parties[0] # Get the first party if list is not empty
+
+        if not party:
+            return "Error: No party found to end turn for."
+
+        # Ensure party.members is not None and is iterable
+        player_member_ids = getattr(party, 'members', [])
+        if not player_member_ids: # Checks for None or empty list
+            return "Error: No player members found in the party."
+
+        player_ids_for_processing = [] # Renamed to avoid conflict with player_ids later
+
+        for player_id in player_member_ids:
+            player = character_mngr.get_character(player_id)
+            if player:
+                player.current_status = 'processing_turn'
+                character_mngr.mark_character_dirty(player) # Assumes player object is passed
+                player_ids_for_processing.append(player.character_id) # Collect ID for process_player_turns
+
+        if not player_ids_for_processing: # If no valid players were processed
+             return "Error: No valid player members could be prepared for turn processing."
+
+        party.turn_status = 'processing'
+        party_mngr.mark_party_dirty(party) # Assumes party object is passed
+
+        # Allow NLU saves to complete
+        await asyncio.sleep(0.5) # Ensure asyncio is imported in the file
+
+        # Call process_player_turns with the collected player_ids
+        await turn_processing_service.process_player_turns(player_ids_for_processing, guild_id)
+
+        # After process_player_turns completes, player statuses are updated by that service.
+        # Set party status accordingly.
+        party.turn_status = 'turn_completed' # Or 'awaiting_new_turn'
+        party_mngr.mark_party_dirty(party)
+
+        # The send_to_command_channel from context is not explicitly used here to send a message back
+        # as per the problem description's return value.
+        # If a message needed to be sent via context.send_to_command_channel, it would be done here.
+        # e.g., await context["send_to_command_channel"](f"Successfully forced end of turn for party {party.party_id}.")
+
+        return f"Successfully forced end of turn for party {party.party_id}."
+
 
 # End of PartyActionProcessor class
