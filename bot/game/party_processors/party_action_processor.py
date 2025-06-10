@@ -7,6 +7,7 @@ import traceback
 import asyncio
 # ИСПРАВЛЕНИЕ: Убедимся, что все необходимые типы импортированы
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable
+import logging # Added for logging
 
 
 # Импорт модели Party (нужен для работы с объектами партий, полученными от PartyManager)
@@ -814,19 +815,77 @@ class PartyActionProcessor:
         await asyncio.sleep(0.5) # Ensure asyncio is imported in the file
 
         # Call process_player_turns with the collected player_ids
-        await turn_processing_service.process_player_turns(player_ids_for_processing, guild_id)
+        result = await turn_processing_service.process_player_turns(player_ids_for_processing, guild_id)
 
         # After process_player_turns completes, player statuses are updated by that service.
         # Set party status accordingly.
         party.turn_status = 'turn_completed' # Or 'awaiting_new_turn'
         party_mngr.mark_party_dirty(party)
 
-        # The send_to_command_channel from context is not explicitly used here to send a message back
-        # as per the problem description's return value.
-        # If a message needed to be sent via context.send_to_command_channel, it would be done here.
-        # e.g., await context["send_to_command_channel"](f"Successfully forced end of turn for party {party.party_id}.")
+        # Analyze result and construct feedback for GM
+        players_with_no_actions = 0
+        total_players_processed = len(player_ids_for_processing)
 
-        return f"Successfully forced end of turn for party {party.party_id}."
+        if result.get("status") == "no_actions":
+            players_with_no_actions = total_players_processed
+        else:
+            processed_action_details = result.get("processed_action_details", [])
+            for player_id in player_ids_for_processing:
+                player_had_action = False
+                for detail in processed_action_details:
+                    if detail.get("player_id") == player_id and detail.get("actions"): # Check if 'actions' list is non-empty
+                        player_had_action = True
+                        break
+                if not player_had_action:
+                    # Secondary check: review feedback_per_player for explicit "no action" messages
+                    feedback_msgs = result.get("feedback_per_player", {}).get(player_id, [])
+                    if any("no actions taken" in msg.lower() for msg in feedback_msgs): # Example check
+                         pass # Already counted as no action by lack of processed_action_details
+                    elif not any(detail.get("player_id") == player_id and detail.get("actions") for detail in processed_action_details):
+                         players_with_no_actions +=1
+
+
+        feedback_message = f"DEBUG: Party {party.party_id} turn processing default message." # Default debug
+        log_details = f"Party ID: {party.party_id}, Total Players: {total_players_processed}, Players with no actions: {players_with_no_actions}, TPS Status: {result.get('status')}"
+
+        if players_with_no_actions == total_players_processed:
+            feedback_message = f"Ход партии {party.party_id} завершен. Ни для одного из игроков ({total_players_processed}) не было обнаружено действий для обработки."
+            logging.info(f"gm_force_end_party_turn: All players had no actions. {log_details}")
+        elif players_with_no_actions > 0:
+            feedback_message = (
+                f"Ход партии {party.party_id} завершен. "
+                f"Для {players_with_no_actions} из {total_players_processed} игроков не было обнаружено действий для обработки."
+            )
+            logging.info(f"gm_force_end_party_turn: Some players had no actions. {log_details}")
+        else: # All players had actions processed
+            feedback_message = f"Ход партии {party.party_id} успешно обработан для всех {total_players_processed} игроков."
+            # Potentially use a general message from result if available and more descriptive
+            # general_tps_message = result.get("message")
+            # if general_tps_message: feedback_message = general_tps_message
+            logging.info(f"gm_force_end_party_turn: Actions processed for all players. {log_details}")
+
+        if result.get("status") == "error":
+            logging.error(f"gm_force_end_party_turn: Error during party turn processing. {log_details}. Result: {result}")
+            # Append to feedback or override if error is critical
+            feedback_message += " Обнаружена ошибка в процессе обработки хода партии."
+
+
+        send_to_command_channel = context.get("send_to_command_channel")
+        if send_to_command_channel:
+            try:
+                await send_to_command_channel(feedback_message) # Removed ephemeral=True, GM command
+            except Exception as e:
+                logging.error(f"gm_force_end_party_turn: Failed to send feedback to command channel. Error: {e}. {log_details}")
+                return f"Error: Failed to send feedback: {e}. Original outcome: {feedback_message}" # Return error to internal caller
+        else:
+            logging.warning(f"gm_force_end_party_turn: 'send_to_command_channel' not in context. Cannot send feedback. {log_details}")
+            # If no callback, return the message so it can be logged by the caller or handled
+            return feedback_message
+
+        # The original problem asks the method to return a success message.
+        # The feedback is now sent via callback. What should this method return?
+        # Let's return a summary object/dict or the feedback_message itself for logging by caller.
+        return {"status": "completed", "message": feedback_message, "details": log_details}
 
 
 # End of PartyActionProcessor class
