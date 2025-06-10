@@ -1920,4 +1920,4 @@ class NpcManager:
 
 print("DEBUG: npc_manager.py module loaded.")
 
-[end of bot/game/managers/npc_manager.py]
+

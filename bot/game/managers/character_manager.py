@@ -2139,4 +2139,4 @@ class CharacterManager:
 
 # --- Конец класса CharacterManager ---
 
-[end of bot/game/managers/character_manager.py]
+
