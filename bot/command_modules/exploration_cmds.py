@@ -1,6 +1,9 @@
+import discord # Ensure discord is imported
 from discord import Interaction, app_commands
 from discord.ext import commands
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, List, Dict, Any
+import functools # For partial
+from discord.ui import View, Button, ButtonStyle # Added UI components
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
@@ -48,7 +51,131 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
 
         # Send the message from the result
         if result and result.get("success"):
-            await interaction.followup.send(result.get("message", "You look around."), ephemeral=False)
+            message_content = result.get("message", "You look around.")
+            exits_data = result.get("data", {}).get("exits", [])
+
+            view = None
+            if exits_data:
+                view = View(timeout=300.0) # Increased timeout
+
+                async def button_callback(interaction: discord.Interaction, target_loc_id: str, char_id: str, gm: "GameManager", cap: "CharacterActionProcessor"):
+                    await interaction.response.defer(ephemeral=True) # Acknowledge button press, visible only to user
+
+                    move_action_data = {"destination": target_loc_id, "is_interaction_button": True}
+
+                    # Prepare context similar to how cmd_move does, but simplified for button interaction
+                    # Note: Accessing managers directly from 'gm' (GameManager)
+                    move_context = {
+                        'guild_id': str(interaction.guild_id),
+                        'author_id': str(interaction.user.id), # This is the user who clicked the button
+                        'channel_id': interaction.channel_id, # Original channel
+                        'game_manager': gm,
+                        'character_manager': gm.character_manager,
+                        'location_manager': gm.location_manager,
+                        'rule_engine': gm.rule_engine,
+                        'time_manager': gm.time_manager,
+                        'openai_service': gm.openai_service,
+                        # 'send_to_command_channel': interaction.followup.send # For ephemeral button responses
+                    }
+
+                    move_result = await cap.process_action(
+                        character_id=char_id, # Use the character ID passed to the callback
+                        action_type="move",
+                        action_data=move_action_data,
+                        context=move_context
+                    )
+
+                    response_message = "Вы не смогли переместиться." # Default if no message in result
+                    if move_result and move_result.get("message"):
+                        response_message = move_result.get("message")
+
+                    # Check if the original /look message needs updating (e.g. if move was successful)
+                    if move_result and move_result.get("success"):
+                        # Attempt to fetch new location description
+                        # This requires the character object to be updated or re-fetched
+                        updated_char = gm.character_manager.get_character_by_id(char_id, str(interaction.guild_id))
+                        if updated_char:
+                            new_look_action_data = {} # Look at the new location
+                            new_look_result = await cap.handle_explore_action(
+                                character=updated_char,
+                                guild_id=str(interaction.guild_id),
+                                action_params=new_look_action_data,
+                                context_channel_id=interaction.channel_id
+                            )
+                            if new_look_result and new_look_result.get("success"):
+                                new_message_content = new_look_result.get("message", "Вы прибыли в новую локацию.")
+                                new_exits_data = new_look_result.get("data", {}).get("exits", [])
+
+                                new_view = View(timeout=300.0)
+                                if new_exits_data:
+                                    for exit_info_new in new_exits_data:
+                                        btn_new = Button(
+                                            label=f"Идти: {exit_info_new.get('name', 'Неизвестный выход')}",
+                                            style=ButtonStyle.secondary,
+                                            custom_id=f"look_move_{exit_info_new.get('target_location_id')}"
+                                        )
+                                        # Need to re-bind callback for new buttons
+                                        # This recursive-like structure for callbacks can get complex.
+                                        # For simplicity in this step, the new buttons won't auto-update the message again upon click.
+                                        # A more robust solution might involve a stateful View class.
+                                        # For now, new buttons will just attempt a move and send ephemeral feedback.
+
+                                        # Re-create partial for the new buttons
+                                        # Important: Need player_char.id for the new callback as well.
+                                        # It's better to pass player_char.id to the initial callback.
+                                        callback_new = functools.partial(button_callback,
+                                                                         target_loc_id=exit_info_new.get('target_location_id'),
+                                                                         char_id=char_id, # Pass original character ID
+                                                                         gm=game_mngr,
+                                                                         cap=char_action_proc)
+                                        btn_new.callback = callback_new
+                                        new_view.add_item(btn_new)
+                                else: # no exits from new location
+                                     new_view = None # Pass None if no new exits
+
+                                await interaction.message.edit(content=new_message_content, view=new_view if new_view and new_view.children else None)
+                                await interaction.followup.send(f"Вы переместились. {response_message}", ephemeral=True)
+                                return # Exit after successful move and message edit
+                            else: # Failed to get new look description
+                                await interaction.message.edit(content=f"Вы прибыли, но не удалось осмотреться: {new_look_result.get('message', '')}", view=None) # Clear buttons
+                                await interaction.followup.send(response_message, ephemeral=True) # Send move feedback
+                                return
+
+                        else: # Failed to get updated character
+                            await interaction.message.edit(content="Вы прибыли, но не удалось обновить информацию о персонаже.", view=None)
+                            await interaction.followup.send(response_message, ephemeral=True)
+                            return
+                    else: # Move failed
+                        await interaction.followup.send(f"Не удалось переместиться: {response_message}", ephemeral=True)
+
+                for exit_info in exits_data:
+                    target_location_id = exit_info.get("target_location_id")
+                    exit_name = exit_info.get("name", "Неизвестный выход")
+                    if not target_location_id:
+                        continue
+
+                    button = Button(
+                        label=f"Идти: {exit_name}",
+                        style=ButtonStyle.secondary,
+                        # custom_id is good for persistent views, but direct callback is fine too
+                        custom_id=f"look_move_{target_location_id}"
+                    )
+
+                    # Use functools.partial to pass additional arguments to the callback
+                    # Need player_char.id for the callback
+                    if not player_char: # Should not happen due to earlier checks, but as a safeguard
+                         await interaction.followup.send("Ошибка: информация о персонаже потеряна перед созданием кнопок.", ephemeral=True)
+                         return
+
+                    callback_with_args = functools.partial(button_callback,
+                                                           target_loc_id=target_location_id,
+                                                           char_id=player_char.id, # Pass character ID
+                                                           gm=game_mngr,
+                                                           cap=char_action_proc)
+                    button.callback = callback_with_args
+                    view.add_item(button)
+
+            await interaction.followup.send(message_content, view=view if view and view.children else None, ephemeral=False)
         else:
             error_message = result.get("message", "You can't seem to see anything clearly right now.") if result else "An unexpected error occurred while looking around."
             await interaction.followup.send(error_message, ephemeral=True)
