@@ -22,7 +22,7 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return
@@ -62,7 +62,7 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return
@@ -104,7 +104,7 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return
@@ -143,7 +143,7 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
+        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
         if not char_action_proc:
             await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
             return
@@ -195,7 +195,7 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("GameManager не доступен.", ephemeral=True)
             return
 
-        party_action_proc: Optional["PartyActionProcessor"] = game_mngr.party_action_processor # type: ignore
+    char_action_proc: Optional["CharacterActionProcessor"] = game_mngr.character_action_processor # type: ignore
         if not party_action_proc:
             await interaction.followup.send("Обработчик действий партии не доступен.", ephemeral=True)
             return
