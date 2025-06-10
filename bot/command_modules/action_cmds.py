@@ -134,7 +134,7 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             }
         )
 
-    @app_commands.command(name="end_turn", description="Завершает ваш текущий ход. Используйте, чтобы пропустить оставшееся время действия, если персонаж занят, или чтобы передать инициативу в пошаговом режиме (например, в бою). Если персонаж бездействует, команда немного продвинет игровое время и проверит наличие обновлений в мире.")
+    @app_commands.command(name="end_turn", description="Завершает ход: пропускает время/передает инициативу. Если персонаж бездействует, продвигает время.")
     async def cmd_end_turn(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
 
