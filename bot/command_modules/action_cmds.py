@@ -7,6 +7,8 @@ if TYPE_CHECKING:
     from bot.game.managers.game_manager import GameManager
     from bot.game.character_processors.character_action_processor import CharacterActionProcessor
     from bot.game.party_processors.party_action_processor import PartyActionProcessor
+import asyncio # Should be already here from previous step
+import logging # Added for logging
 
 class ActionModuleCog(commands.Cog, name="Action Commands Module"):
     def __init__(self, bot: "RPGBot"):
@@ -168,10 +170,70 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
 
             # Ensure player_char.id is the correct attribute for the player's ID
             # The method expects a list of player IDs.
-            await game_mngr.turn_processing_service.process_player_turns([player_char.id], str(interaction.guild_id))
+            result = await game_mngr.turn_processing_service.process_player_turns([player_char.id], str(interaction.guild_id))
 
-            await interaction.followup.send("Turn processing initiated.", ephemeral=True)
+            guild_id_str = str(interaction.guild_id)
+            # Assuming player_char.id is the correct attribute and is a string.
+            # If player_char.id is not a string, it should be str(player_char.id).
+            # For consistency with how player_id is used in TurnProcessingService results (often string keys in dicts).
+            player_id_str = player_char.id
+
+            log_message_suffix = f"for player {player_id_str} in guild {guild_id_str}."
+
+            no_actions_detected = False
+            # Condition 1: Global status indicates no actions
+            if result.get("status") == "no_actions":
+                no_actions_detected = True
+            else:
+                # Condition 2: Player-specific feedback indicates no actions.
+                # This requires checking `processed_action_details` for this player.
+                processed_actions_for_player = []
+                if isinstance(result.get("processed_action_details"), list):
+                    for detail in result["processed_action_details"]:
+                        # Ensure comparison is between same types, e.g. both strings if player_id_str is string.
+                        if detail.get("player_id") == player_id_str:
+                            processed_actions_for_player.append(detail)
+
+                if not processed_actions_for_player and result.get("status") != "error": # Avoid masking errors as "no action"
+                    # If no actions were processed for this specific player,
+                    # and there wasn't a general error, it's effectively "no actions" for them.
+                    # This handles cases where TPS might not set global "no_actions" if other players had actions.
+                    no_actions_detected = True
+                    # Also check if feedback_per_player for this player explicitly says no actions
+                    player_feedback = result.get("feedback_per_player", {}).get(player_id_str, [])
+                    if player_feedback and "no actions taken" in player_feedback[0].lower(): # Example check
+                         no_actions_detected = True
+
+
+            if no_actions_detected:
+                logging.info(f"cmd_end_turn: No actions found or processed {log_message_suffix}")
+                await interaction.followup.send(
+                    "Ход завершен, но не было обнаружено действий для обработки. "
+                    "Если вы описывали действия текстом, попробуйте еще раз или используйте /undo_action, "
+                    "если считаете, что они не были распознаны.",
+                    ephemeral=True
+                )
+            elif result.get("status") == "completed":
+                logging.info(f"cmd_end_turn: Actions processed successfully {log_message_suffix}")
+                await interaction.followup.send("Ход обработан.", ephemeral=True)
+            elif result.get("status") == "error":
+                logging.error(f"cmd_end_turn: Error during turn processing {log_message_suffix}. Result: {result}")
+                # Provide more specific error if available in feedback
+                error_message = "Ошибка при обработке хода."
+                player_feedback_msgs = result.get("feedback_per_player", {}).get(player_id_str, [])
+                if player_feedback_msgs:
+                    error_message = player_feedback_msgs[0]
+                await interaction.followup.send(error_message, ephemeral=True)
+            else: # Other statuses like "in_progress" or custom ones
+                player_feedback_msgs = result.get("feedback_per_player", {}).get(player_id_str, [])
+                # Default message if no specific feedback for this player
+                default_message = "Обработка вашего хода продолжается или ожидает дополнительных действий."
+                feedback_to_send = player_feedback_msgs[0] if player_feedback_msgs else default_message
+
+                logging.info(f"cmd_end_turn: Turn processing status '{result.get('status')}' {log_message_suffix}. Feedback: {feedback_to_send}")
+                await interaction.followup.send(feedback_to_send, ephemeral=True)
         else:
+            logging.warning(f"cmd_end_turn: Player character not found for Discord user {interaction.user.id} in guild {str(interaction.guild_id)}.")
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
