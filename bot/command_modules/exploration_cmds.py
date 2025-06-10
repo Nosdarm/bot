@@ -176,8 +176,10 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
                     button.callback = callback_with_args
                     view.add_item(button)
 
-            # discord.py handles view=None correctly.
-            await interaction.followup.send(message_content, view=view, ephemeral=False)
+            if view is not None and isinstance(view, discord.ui.View) and view.children:
+                await interaction.followup.send(message_content, view=view, ephemeral=False)
+            else:
+                await interaction.followup.send(message_content, ephemeral=False)
         else:
             error_message = result.get("message", "You can't seem to see anything clearly right now.") if result else "An unexpected error occurred while looking around."
             await interaction.followup.send(error_message, view=None, ephemeral=True) # view=None for clarity
