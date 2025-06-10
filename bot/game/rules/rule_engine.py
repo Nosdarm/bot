@@ -2539,8 +2539,8 @@ class RuleEngine:
             elif not item_use_outcome.get("success"):
                 pass # Message already added from item_use_outcome
 
-        else:
-            log_messages.append(f"RuleEngine: Unknown or unsupported action type '{action_type}' for actor {actor_id}.")
+            else:
+             log_messages.append(f"RuleEngine: Unknown or unsupported action type '{action_type}' for actor {actor_id}.")
             if game_log_manager: await game_log_manager.add_log_entry(log_messages[-1], "error_rule_engine")
 
         if game_log_manager:
