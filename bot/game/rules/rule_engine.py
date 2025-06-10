@@ -22,25 +22,26 @@ if TYPE_CHECKING:
     # from bot.game.models.character import Character # Character модель импортируется напрямую, т.к. используется в runtime (check isinstance)
     from bot.game.models.npc import NPC # Возможно, нужен прямой импорт для isinstance
     from bot.game.models.party import Party # Возможно, нужен прямой импорт для isinstance
-    from bot.game.models.combat import Combat # Возможно, нужен прямой импорт для isinstance
+    # from bot.game.models.combat import Combat # Already imported directly
     # from bot.game.models.combat import CombatParticipant # Already imported below for runtime
     from bot.game.models.ability import Ability # For Ability logic
     from bot.game.models.item import Item # For Item type hinting
     from bot.game.models.spell import Spell # For spell logic
-    from bot.game.models.skill import Skill # Added for use_skill
+    from bot.game.models.skill import Skill
+    # Item is already listed above, no need to add again
     from bot.game.models.rules_config import RulesConfig # For type hint
 
     # Менеджеры и процессоры, которые могут создавать циклические импорты
-    from bot.game.managers.location_manager import LocationManager # <-- Moved here to break cycle
-    from bot.game.managers.character_manager import CharacterManager # <-- Moved here for consistency/safety
-    from bot.game.managers.item_manager import ItemManager # <-- Moved here for consistency/safety
-    from bot.game.managers.party_manager import PartyManager # <-- Moved here for consistency/safety
+    from bot.game.managers.location_manager import LocationManager
+    from bot.game.managers.character_manager import CharacterManager
+    from bot.game.managers.item_manager import ItemManager
+    from bot.game.managers.party_manager import PartyManager
     from bot.game.managers.status_manager import StatusManager
     from bot.game.managers.combat_manager import CombatManager
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.dialogue_manager import DialogueManager
     from bot.game.managers.game_log_manager import GameLogManager
-    from bot.services.openai_service import OpenAIService # Если используется
+    from bot.services.openai_service import OpenAIService
     from bot.game.managers.spell_manager import SpellManager
     from bot.game.managers.skill_manager import SkillManager
 
@@ -2386,13 +2387,228 @@ class RuleEngine:
                 if game_log_manager: await game_log_manager.add_log_entry(log_messages[-1], "info_rule_engine")
 
         elif action_type == "use_item":
-            # This would be similar to spell casting, where item effects are defined in its template
-            # and combat_rules.apply_status_effect or a new combat_rules.process_item_effect could be called.
-            log_messages.append(f"RuleEngine: 'use_item' action type processing is a placeholder and not fully implemented with combat_rules yet.")
-            # item_instance_id = action_data.get("item_instance_id")
-            # ... fetch item_template from item_manager ...
-            # ... iterate item_template.effects ...
-            # ... call combat_rules functions for each effect ...
+            item_instance_id = action_data.get("item_instance_id") # This is the ID of the item IN THE INVENTORY
+            explicit_target_id = action_data.get("target_id") # Target specified in the command
+
+            if not item_instance_id:
+                log_messages.append(f"RuleEngine: 'use_item' action by {actor_id} missing item_instance_id.")
+                if game_log_manager: await game_log_manager.add_log_entry(log_messages[-1], "error_rule_engine")
+                return log_messages
+
+            # Call ItemManager to handle item usage and consumption
+            item_use_outcome = await item_manager.use_item_in_combat(
+                guild_id=guild_id,
+                actor_id=actor_id,
+                item_instance_id=item_instance_id,
+                target_id=explicit_target_id,
+                game_log_manager=game_log_manager
+            )
+
+            log_messages.append(item_use_outcome.get("message", f"Processing use of item {item_instance_id}."))
+
+            if item_use_outcome.get("success") and item_use_outcome.get("consumed"):
+                effects_to_apply = item_use_outcome.get("effects", [])
+                item_name_for_log = item_use_outcome.get("item_name", item_instance_id)
+
+                for effect_detail in effects_to_apply:
+                    effect_type = effect_detail.get("type")
+
+                    target_for_this_effect_id = item_use_outcome.get("resolved_target_id", actor_id)
+                    if effect_detail.get("target_rule") == "self":
+                        target_for_this_effect_id = actor_id
+                    elif effect_detail.get("target_rule") == "chosen_target" and explicit_target_id:
+                        target_for_this_effect_id = explicit_target_id
+
+                    if not target_for_this_effect_id:
+                        log_messages.append(f"RuleEngine: Item '{item_name_for_log}' effect '{effect_type}' could not determine target.")
+                        continue
+
+                    target_participant_for_effect = combat.get_participant_data(target_for_this_effect_id)
+                    if not target_participant_for_effect:
+                        log_messages.append(f"RuleEngine: Target {target_for_this_effect_id} for item '{item_name_for_log}' effect not found in combat.")
+                        continue
+                    target_type_for_effect = target_participant_for_effect.entity_type
+
+                    if effect_type == "damage" and target_type_for_effect:
+                        damage_outcome = await combat_rules.process_direct_damage(
+                            actor_id=actor_id, actor_type=actor_type,
+                            target_id=target_for_this_effect_id, target_type=target_type_for_effect,
+                            damage_amount_str=effect_detail.get("amount", "0"),
+                            damage_type=effect_detail.get("damage_type", "physical"),
+                            rules_config=rules_config, character_manager=character_manager,
+                            npc_manager=npc_manager, game_log_manager=game_log_manager
+                        )
+                        log_messages.extend(damage_outcome.get("log_messages", []))
+                        if damage_outcome.get("damage_dealt", 0) > 0:
+                            target_participant_for_effect.hp = damage_outcome.get("target_hp_after", target_participant_for_effect.hp)
+                            if target_participant_for_effect.hp <= 0:
+                                target_participant_for_effect.is_alive = False
+                                log_messages.append(f"{target_participant_for_effect.name} was defeated by item damage!")
+                        if game_log_manager:
+                            details = {
+                                "user_id": actor_id, "user_type": actor_type, "user_name": actor_name,
+                                "item_name": item_name_for_log, "item_instance_id": item_instance_id,
+                                "effect_detail": effect_detail,
+                                "target_id": target_for_this_effect_id, "target_type": target_type_for_effect,
+                                "target_name": target_participant_for_effect.name if target_participant_for_effect else target_for_this_effect_id,
+                                "damage_dealt": damage_outcome.get("damage_dealt", 0),
+                                "target_hp_after": damage_outcome.get("target_hp_after"),
+                                "summary_logs_from_rule": damage_outcome.get("log_messages", [])
+                            }
+                            await game_log_manager.log_event(
+                                guild_id, "COMBAT_ITEM_EFFECT_DAMAGE", details, player_id=actor_id if actor_type == "Character" else None
+                            )
+
+                    elif effect_type == "heal" and target_type_for_effect:
+                        heal_outcome = await combat_rules.process_healing(
+                            target_id=target_for_this_effect_id, target_type=target_type_for_effect,
+                            heal_amount_str=effect_detail.get("amount", "0"), rules_config=rules_config,
+                            character_manager=character_manager, npc_manager=npc_manager, game_log_manager=game_log_manager
+                        )
+                        log_messages.extend(heal_outcome.get("log_messages", []))
+                        if heal_outcome.get("healing_done", 0) > 0:
+                            target_participant_for_effect.hp = heal_outcome.get("target_hp_after", target_participant_for_effect.hp)
+                        if game_log_manager:
+                            details = {
+                                "user_id": actor_id, "user_type": actor_type, "user_name": actor_name,
+                                "item_name": item_name_for_log, "item_instance_id": item_instance_id,
+                                "effect_detail": effect_detail,
+                                "target_id": target_for_this_effect_id, "target_type": target_type_for_effect,
+                                "target_name": target_participant_for_effect.name if target_participant_for_effect else target_for_this_effect_id,
+                                "healing_done": heal_outcome.get("healing_done", 0),
+                                "target_hp_after": heal_outcome.get("target_hp_after"),
+                                "summary_logs_from_rule": heal_outcome.get("log_messages", [])
+                            }
+                            await game_log_manager.log_event(
+                                guild_id, "COMBAT_ITEM_EFFECT_HEAL", details, player_id=actor_id if actor_type == "Character" else None
+                            )
+
+                    elif effect_type == "status_effect" and target_type_for_effect:
+                        status_template_id = effect_detail.get("status_template_id")
+                        if status_template_id:
+                            status_applied_outcome = await combat_rules.apply_status_effect( # Ensure this returns the dict
+                                 target_id=target_for_this_effect_id, target_type=target_type_for_effect,
+                                 status_template_id=status_template_id, rules_config=rules_config,
+                                 status_manager=status_manager, character_manager=character_manager,
+                                 npc_manager=npc_manager, game_log_manager=game_log_manager,
+                                 source_id=actor_id, source_type=actor_type,
+                                 duration_override_rounds=effect_detail.get("duration_rounds"),
+                                 requires_save_info=effect_detail.get("requires_save_info"),
+                                 current_game_time=current_game_time
+                             )
+                            log_messages.extend(status_applied_outcome.get("log_messages", []))
+                            if game_log_manager:
+                                details = {
+                                    "user_id": actor_id, "user_type": actor_type, "user_name": actor_name,
+                                    "item_name": item_name_for_log, "item_instance_id": item_instance_id,
+                                    "effect_detail": effect_detail,
+                                    "target_id": target_for_this_effect_id, "target_type": target_type_for_effect,
+                                    "target_name": target_participant_for_effect.name if target_participant_for_effect else target_for_this_effect_id,
+                                    "status_template_id": status_template_id,
+                                    "processed_successfully": status_applied_outcome.get("success", False),
+                                    "actually_applied_or_resisted": status_applied_outcome.get("status_actually_applied_or_resisted", False),
+                                    "summary_logs_from_rule": status_applied_outcome.get("log_messages", [])
+                                }
+                                await game_log_manager.log_event(
+                                    guild_id, "COMBAT_ITEM_EFFECT_STATUS", details, player_id=actor_id if actor_type == "Character" else None
+                                )
+                        else:
+                            log_messages.append(f"RuleEngine: Item '{item_name_for_log}' status_effect detail missing 'status_template_id'.")
+                    else:
+                        log_messages.append(f"RuleEngine: Item '{item_name_for_log}' has unhandled effect type '{effect_type}'.")
+            elif not item_use_outcome.get("success"):
+                pass
+
+        else:
+            log_messages.append(f"RuleEngine: Unknown or unsupported action type '{action_type}' for actor {actor_id}.")
+            if game_log_manager: await game_log_manager.add_log_entry(log_messages[-1], "error_rule_engine")
+            explicit_target_id = action_data.get("target_id")
+
+            if not item_instance_id:
+                log_messages.append(f"RuleEngine: 'use_item' action by {actor_id} missing item_instance_id.")
+                if game_log_manager: await game_log_manager.add_log_entry(log_messages[-1], "error_rule_engine")
+                return log_messages
+
+            item_use_outcome = await item_manager.use_item_in_combat(
+                guild_id=guild_id,
+                actor_id=actor_id,
+                item_instance_id=item_instance_id,
+                target_id=explicit_target_id,
+                game_log_manager=game_log_manager
+            )
+
+            log_messages.append(item_use_outcome.get("message", f"Processing use of item {item_instance_id}."))
+
+            if item_use_outcome.get("success") and item_use_outcome.get("consumed"):
+                effects_to_apply = item_use_outcome.get("effects", [])
+                item_name_for_log = item_use_outcome.get("item_name", item_instance_id)
+
+                for effect_detail in effects_to_apply:
+                    effect_type = effect_detail.get("type")
+
+                    target_for_this_effect_id = item_use_outcome.get("resolved_target_id", actor_id)
+                    if effect_detail.get("target_rule") == "self":
+                        target_for_this_effect_id = actor_id
+                    elif effect_detail.get("target_rule") == "chosen_target" and explicit_target_id:
+                        target_for_this_effect_id = explicit_target_id
+
+                    if not target_for_this_effect_id:
+                        log_messages.append(f"RuleEngine: Item '{item_name_for_log}' effect '{effect_type}' could not determine target.")
+                        continue
+
+                    target_participant_for_effect = combat.get_participant_data(target_for_this_effect_id)
+                    if not target_participant_for_effect:
+                        log_messages.append(f"RuleEngine: Target {target_for_this_effect_id} for item '{item_name_for_log}' effect not found in combat.")
+                        continue
+                    target_type_for_effect = target_participant_for_effect.entity_type
+
+                    if effect_type == "damage" and target_type_for_effect:
+                        damage_outcome = await combat_rules.process_direct_damage(
+                            actor_id=actor_id, actor_type=actor_type,
+                            target_id=target_for_this_effect_id, target_type=target_type_for_effect,
+                            damage_amount_str=effect_detail.get("amount", "0"),
+                            damage_type=effect_detail.get("damage_type", "physical"),
+                            rules_config=rules_config, character_manager=character_manager,
+                            npc_manager=npc_manager, game_log_manager=game_log_manager
+                        )
+                        log_messages.extend(damage_outcome.get("log_messages", []))
+                        if damage_outcome.get("damage_dealt", 0) > 0:
+                            target_participant_for_effect.hp = damage_outcome.get("target_hp_after", target_participant_for_effect.hp)
+                            if target_participant_for_effect.hp <= 0:
+                                target_participant_for_effect.is_alive = False
+                                log_messages.append(f"{target_participant_for_effect.name} was defeated by item damage!")
+
+                    elif effect_type == "heal" and target_type_for_effect:
+                        heal_outcome = await combat_rules.process_healing(
+                            target_id=target_for_this_effect_id, target_type=target_type_for_effect,
+                            heal_amount_str=effect_detail.get("amount", "0"), rules_config=rules_config,
+                            character_manager=character_manager, npc_manager=npc_manager, game_log_manager=game_log_manager
+                        )
+                        log_messages.extend(heal_outcome.get("log_messages", []))
+                        if heal_outcome.get("healing_done", 0) > 0:
+                            target_participant_for_effect.hp = heal_outcome.get("target_hp_after", target_participant_for_effect.hp)
+
+                    elif effect_type == "status_effect" and target_type_for_effect:
+                        status_template_id = effect_detail.get("status_template_id")
+                        if status_template_id:
+                            status_applied = await combat_rules.apply_status_effect(
+                                 target_id=target_for_this_effect_id, target_type=target_type_for_effect,
+                                 status_template_id=status_template_id, rules_config=rules_config,
+                                 status_manager=status_manager, character_manager=character_manager,
+                                 npc_manager=npc_manager, game_log_manager=game_log_manager,
+                                 source_id=actor_id, source_type=actor_type,
+                                 duration_override_rounds=effect_detail.get("duration_rounds"),
+                                 requires_save_info=effect_detail.get("requires_save_info"),
+                                 current_game_time=current_game_time
+                             )
+                            log_msg = f"Item '{item_name_for_log}' attempted to apply status '{status_template_id}' to {target_participant_for_effect.name}: {'Processed' if status_applied else 'Failed'}"
+                            log_messages.append(log_msg)
+                        else:
+                            log_messages.append(f"RuleEngine: Item '{item_name_for_log}' status_effect detail missing 'status_template_id'.")
+                    else:
+                        log_messages.append(f"RuleEngine: Item '{item_name_for_log}' has unhandled effect type '{effect_type}'.")
+            elif not item_use_outcome.get("success"):
+                pass # Message already added from item_use_outcome
 
         else:
             log_messages.append(f"RuleEngine: Unknown or unsupported action type '{action_type}' for actor {actor_id}.")
