@@ -1035,6 +1035,82 @@ class NpcManager:
             print(traceback.format_exc())
             return None
 
+    async def update_npc_stats(
+        self,
+        guild_id: str,
+        npc_id: str,
+        stats_update: Dict[str, Any], # e.g., {"health": 50, "stats.strength": 12}
+        **kwargs: Any
+    ) -> bool:
+        guild_id_str = str(guild_id)
+        npc = self.get_npc(guild_id_str, npc_id)
+        if not npc:
+            print(f"NpcManager: NPC {npc_id} not found in guild {guild_id_str} to update stats.")
+            return False
+
+        updated_fields = []
+        old_values_for_log = {} # For logging specific revert data
+
+        for key, value in stats_update.items():
+            try:
+                if key == "health": # NPCs use 'health' attribute typically
+                    old_hp = getattr(npc, 'health', 0.0)
+                    if old_hp != value: # Direct comparison, ensure value is float if necessary
+                        old_values_for_log[key] = old_hp
+                        updated_fields.append(f"health to {float(value)}")
+                    npc.health = float(value)
+                    # Update is_alive based on new health
+                    new_is_alive = npc.health > 0
+                    if npc.is_alive != new_is_alive:
+                        old_values_for_log["is_alive"] = npc.is_alive # Log previous is_alive state if it changed
+                        updated_fields.append(f"is_alive to {new_is_alive}")
+                        npc.is_alive = new_is_alive
+                    # TODO: Consider calling a specific handle_npc_death if health <= 0
+                    # For now, direct update. Death handling is often part of combat flow.
+                elif key.startswith("stats."):
+                    stat_name = key.split("stats.", 1)[1]
+                    if not hasattr(npc, 'stats') or not isinstance(npc.stats, dict):
+                        npc.stats = {}
+
+                    old_stat_val = npc.stats.get(stat_name)
+                    if old_stat_val != value:
+                        old_values_for_log[key] = old_stat_val
+                        updated_fields.append(f"{key} to {value}")
+                    npc.stats[stat_name] = value
+
+                elif hasattr(npc, key):
+                    old_direct_attr_val = getattr(npc, key)
+                    if old_direct_attr_val != value:
+                        old_values_for_log[key] = old_direct_attr_val
+                        updated_fields.append(f"{key} to {value}")
+                    setattr(npc, key, value)
+                else:
+                    print(f"NpcManager: Warning: Key '{key}' not a direct attribute or 'stats.' prefixed. Cannot update for NPC {npc_id}.")
+                    continue
+            except Exception as e:
+                print(f"NpcManager: Error updating key '{key}' for NPC {npc_id}: {e}")
+
+        if updated_fields:
+            self.mark_npc_dirty(guild_id_str, npc_id)
+            log_message = f"NPC {npc_id} stats updated: {', '.join(updated_fields)}."
+            print(f"NpcManager: {log_message}")
+            if self._game_log_manager:
+                revert_stat_changes = [{"stat": k, "old_value": v} for k, v in old_values_for_log.items()]
+                log_details = {
+                    "action_type": "NPC_STATS_UPDATE",
+                    "npc_id": npc_id,
+                    "updated_stats": stats_update,
+                    "applied_changes": updated_fields,
+                    "revert_data": {"stat_changes": revert_stat_changes}
+                }
+                # player_id for NPC_STATS_UPDATED could be the actor causing the change if applicable from kwargs
+                player_id_context = kwargs.get('player_id_context', None)
+                asyncio.create_task(self._game_log_manager.log_event(
+                    guild_id=guild_id_str, event_type="NPC_STATS_UPDATED", player_id=player_id_context,
+                    details=log_details
+                ))
+            return True
+        return False # No fields updated
 
     # Methods for persistence (called by PersistenceManager):
     # These methods must work per-guild
@@ -1274,7 +1350,7 @@ class NpcManager:
 
                 if npc_id_raw is None or loaded_guild_id_raw is None:
                      print(f"NpcManager: Warning: Skipping row with missing mandatory fields (ID, Guild ID) for guild {guild_id_str}. Row data: {data}. ")
-                     continue
+                     continue # Пропускаем строку без обязательных полей
 
                 npc_id = str(npc_id_raw)
                 loaded_guild_id = str(loaded_guild_id_raw)
@@ -1762,7 +1838,7 @@ class NpcManager:
         guild_id_str = str(guild_id)
         print(f"NpcManager: Creating NPC from moderated data for guild {guild_id_str}...")
 
-        if self._db_adapter is None:
+        if self._db_adapter is None: # This should be self._db_service.adapter
             print(f"NpcManager: No DB adapter available for guild {guild_id_str}. Cannot create NPC from moderated data.")
             return None
 
@@ -1821,9 +1897,6 @@ class NpcManager:
 
             # Mark as dirty for persistence
             # This will use the regular save_npc or save_state logic which handles i18n fields
-            self.mark_npc_dirty(guild_id_str, npc.id)
-
-            # Explicitly save now to ensure it's in DB (save_state might be deferred)
             # The `save_npc` method handles i18n fields correctly if NPC model's to_dict provides them.
             # However, the current save_state in NpcManager uses a simpler direct mapping for npcs table.
             # For consistency, it's better if save_npc is robust for all fields including i18n,
@@ -1846,3 +1919,5 @@ class NpcManager:
 # --- Конец класса NpcManager ---
 
 print("DEBUG: npc_manager.py module loaded.")
+
+[end of bot/game/managers/npc_manager.py]

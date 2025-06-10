@@ -1027,86 +1027,6 @@ class CharacterManager:
              print(f"CharacterManager: Warning: Attempted to mark non-existent character {character_id} in guild {guild_id_str} as deleted.")
 
 
-    # --- Метод удаления (публичный) ---
-    # Метод уже принимает guild_id и **kwargs
-    async def remove_character(self, character_id: str, guild_id: str, **kwargs: Any) -> Optional[str]:
-        """
-        Удаляет персонажа (помечает для удаления из DB) и выполняет очистку
-        связанных сущностей (предметы, статусы, группа, бой, диалог) для определенной гильдии.
-        """
-        guild_id_str = str(guild_id)
-        # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-        char = self.get_character(guild_id_str, character_id)
-        if not char:
-            print(f"CharacterManager: Character {character_id} not found for removal in guild {guild_id_str}.")
-            return None
-
-        # Дополнительная проверка guild_id (уже делается в get_character с guild_id, но оставим для явности)
-        # char_guild_id = getattr(char, 'guild_id', None)
-        # if str(char_guild_id) != guild_id_str: # This check is redundant if get_character works correctly
-        #      print(f"CharacterManager: Logic error: Character {character_id} belongs to guild {char_guild_id}, but remove_character called with {guild_id_str}.")
-        #      return None # Should not happen if get_character is used correctly
-
-
-        print(f"CharacterManager: Removing character {character_id} ({getattr(char, 'name', 'N/A')}) from guild {guild_id_str}...")
-
-        # Cleanup via managers (используем менеджеры, переданные в __init__)
-        # Передаем context, включая guild_id и character_id
-        cleanup_context: Dict[str, Any] = { # Явная аннотация Dict
-            'guild_id': guild_id_str, # Передаем guild_id_str
-            'character_id': character_id, # Передаем character_id
-            'character': char, # Pass the character object for convenience
-            # TODO: Добавить другие необходимые менеджеры, сервисы из self._ в cleanup_context
-            # Включаем прочие из kwargs, если передаются в remove_character (напр., send_callback_factory)
-        }
-        cleanup_context.update(kwargs) # Добавляем kwargs через update
-
-        # Add potentially relevant managers to context *from self* if they exist and are not already in kwargs
-        # This ensures cleanup methods receive managers they might need, even if GameManager didn't pass them explicitly in kwargs
-        if self._item_manager: cleanup_context['item_manager'] = self._item_manager
-        if self._status_manager: cleanup_context['status_manager'] = self._status_manager
-        if self._party_manager: cleanup_context['party_manager'] = self._party_manager
-        if self._combat_manager: cleanup_context['combat_manager'] = self._combat_manager
-        if self._dialogue_manager: cleanup_context['dialogue_manager'] = self._dialogue_manager
-        if self._location_manager: cleanup_context['location_manager'] = self._location_manager
-        if self._rule_engine: cleanup_context['rule_engine'] = self._rule_engine
-        # TODO: Add other managers if needed in cleanup methods (Economy? Crafting? Event?)
-
-
-        try:
-            # Убедитесь, что методы clean_up_* существуют в соответствующих менеджерах
-            # и что они принимают entity_id ('character_id') и context.
-            # Предполагаем, что они принимают entity_id и context.
-            if self._item_manager and hasattr(self._item_manager, 'clean_up_for_character'):
-                await self._item_manager.clean_up_for_character(character_id, context=cleanup_context)
-            if self._status_manager and hasattr(self._status_manager, 'clean_up_for_character'):
-                 await self._status_manager.clean_up_for_character(character_id, context=cleanup_context)
-            # PartyManager.clean_up_for_character должен уметь чистить по character_id и guild_id (через context)
-            if self._party_manager and hasattr(self._party_manager, 'clean_up_for_entity'): # Updated method name
-                 await self._party_manager.clean_up_for_entity(character_id, entity_type="Character", context=cleanup_context)
-            # CombatManager.clean_up_for_character должен уметь чистить по character_id и guild_id (через context)
-            if self._combat_manager and hasattr(self._combat_manager, 'clean_up_for_entity'): # Updated method name
-                 await self._combat_manager.clean_up_for_entity(character_id, entity_type="Character", context=cleanup_context)
-            # DialogueManager.clean_up_for_character должен уметь чистить по character_id и guild_id (через context)
-            if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_entity'): # Updated method name
-                 await self._dialogue_manager.clean_up_for_entity(character_id, entity_type="Character", context=cleanup_context)
-
-            print(f"CharacterManager: Cleanup initiated for character {character_id} in guild {guild_id_str}.")
-
-        except Exception as e:
-             print(f"CharacterManager: Error during cleanup for character {character_id} in guild {guild_id_str}: {e}")
-             import traceback
-             print(traceback.format_exc())
-             # Decide whether to re-raise or just log. Logging allows the core character removal to proceed.
-
-
-        # Отмечаем персонажа как удаленного (удалит из кеша и добавит в per-guild список на удаление из DB)
-        # ИСПРАВЛЕНИЕ: Передаем guild_id в mark_character_deleted
-        self.mark_character_deleted(guild_id_str, character_id)
-
-        print(f"CharacterManager: Character {character_id} ({getattr(char, 'name', 'N/A')}) removal process initiated for guild {guild_id_str}. Will be deleted from DB on next save.")
-        return character_id # Возвращаем ID удаленного персонажа
-
     # --- Методы обновления состояния персонажа ---
 
     # Добавляем guild_id и **kwargs к методам обновления
@@ -1448,6 +1368,80 @@ class CharacterManager:
          print(f"CharacterManager: Updated health for character {character_id} in guild {guild_id_str} to {char.hp}. Amount: {amount}. Was alive: {old_is_alive_val}, Is alive now: {char.is_alive}.")
          return True
 
+    async def update_character_stats(
+        self,
+        guild_id: str,
+        character_id: str,
+        stats_update: Dict[str, Any], # e.g., {"hp": 50, "stats.strength": 12, "mana": 30}
+        **kwargs: Any
+    ) -> bool:
+        guild_id_str = str(guild_id)
+        char = self.get_character(guild_id_str, character_id)
+        if not char:
+            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to update stats.")
+            return False
+
+        updated_fields = []
+        old_values_for_log = {}
+
+        for key, value in stats_update.items():
+            try:
+                if key == "hp": # Special handling for HP via existing method for logging and death checks
+                    old_hp = char.hp
+                    # We need to calculate the *change* in HP to pass to update_health
+                    hp_change = value - old_hp
+                    await self.update_health(guild_id_str, character_id, hp_change, **kwargs)
+                    # update_health logs and marks dirty, so we can just note it here
+                    updated_fields.append(f"hp to {char.hp} (via update_health)")
+                    # old_values_for_log["hp"] is handled by update_health's logging
+                    continue # Skip generic handling for HP
+
+                elif key.startswith("stats."): # Update a nested stat in char.stats dictionary
+                    stat_name = key.split("stats.", 1)[1]
+                    if not hasattr(char, 'stats') or not isinstance(char.stats, dict):
+                        char.stats = {} # Initialize if missing
+
+                    old_stat_val = char.stats.get(stat_name)
+                    if old_stat_val != value: # Only log if changed
+                         old_values_for_log[key] = old_stat_val
+                         updated_fields.append(f"{key} to {value}")
+                    char.stats[stat_name] = value
+
+                elif hasattr(char, key): # Update a direct attribute of the Character object
+                    old_direct_attr_val = getattr(char, key)
+                    if old_direct_attr_val != value:
+                         old_values_for_log[key] = old_direct_attr_val
+                         updated_fields.append(f"{key} to {value}")
+                    setattr(char, key, value)
+                else:
+                    print(f"CharacterManager: Warning: Key '{key}' not a direct attribute or 'stats.' prefixed. Cannot update for char {character_id}.")
+                    continue
+            except Exception as e:
+                print(f"CharacterManager: Error updating key '{key}' for char {character_id}: {e}")
+                # Continue to next key
+
+        if updated_fields: # Only mark dirty and log if actual changes were made
+            self.mark_character_dirty(guild_id_str, character_id)
+            log_message = f"Character {character_id} stats updated: {', '.join(updated_fields)}."
+            print(f"CharacterManager: {log_message}")
+            if self._game_log_manager:
+                # Construct revert_data from old_values_for_log
+                revert_stat_changes = [{"stat": k, "old_value": v} for k, v in old_values_for_log.items()]
+                log_details = {
+                    "action_type": "STATS_UPDATE", # Generic type for UndoManager
+                    "character_id": character_id,
+                    "updated_stats": stats_update, # What was requested
+                    "applied_changes": updated_fields, # What was actually changed (excluding HP if handled by update_health)
+                    "revert_data": {"stat_changes": revert_stat_changes}
+                }
+                asyncio.create_task(self._game_log_manager.log_event(
+                    guild_id=guild_id_str, event_type="PLAYER_STATS_UPDATED", player_id=character_id, details=log_details
+                ))
+            return True
+        elif "hp" in stats_update and not updated_fields: # HP was the only thing, and update_health handled it
+             return True
+
+        return False # No recognized fields updated or no changes made
 
     # ИСПРАВЛЕНИЕ: handle_character_death должен принимать guild_id
     async def handle_character_death(self, guild_id: str, character_id: str, **kwargs: Any):
@@ -1545,7 +1539,7 @@ class CharacterManager:
              'rule_engine': kwargs.get('rule_engine', self._rule_engine),
              'send_callback_factory': send_callback_factory, # Pass factory if available
              'settings': kwargs.get('settings', self._settings), # Pass settings if available
-             'channel_id': channel_id, # Pass the originating channel_id if available
+             'channel_id': channel_id, # Pass originating channel_id if available
              # TODO: Add other necessary managers/services from self._ or kwargs into cleanup_context
          }
          # Do NOT update cleanup_context with **kwargs here, as it might overwrite essential keys
@@ -1558,35 +1552,6 @@ class CharacterManager:
          # Re-assemble cleanup_context incorporating kwargs *where appropriate* or just passing all kwargs down.
          # A safer approach is to pass character_id, guild_id, and the essential managers explicitly, then **kwargs for everything else.
          # The cleanup methods themselves should be written to handle the received context.
-         # Let's pass the core info explicitly, then the collected managers/context dict as **kwargs.
-
-         base_cleanup_kwargs = {
-            'guild_id': guild_id_str,
-            'character_id': character_id,
-            'character': char,
-            # Essential managers for cleanup
-            'item_manager': self._item_manager,
-            'status_manager': self._status_manager,
-            'party_manager': self._party_manager,
-            'combat_manager': self._combat_manager,
-            'dialogue_manager': self._dialogue_manager,
-            'location_manager': self._location_manager,
-            'rule_engine': self._rule_engine,
-            # Potentially pass send_callback_factory if cleanup needs to send messages
-            'send_callback_factory': send_callback_factory,
-            'settings': self._settings, # Pass settings if cleanup logic needs them
-            'channel_id': channel_id, # Pass originating channel if available
-            # Add others needed for cleanup...
-         }
-         # Add any extra kwargs received by handle_character_death to the context passed to cleanup methods
-         base_cleanup_kwargs.update(kwargs) # Safely add remaining kwargs
-
-         # Omit None managers from context passed to cleanup methods if clean_up methods expect Optional
-         # cleanup_context_filtered = {k: v for k, v in base_cleanup_kwargs.items() if v is not None} # Optional filtering
-
-         # Call cleanup methods, passing relevant arguments explicitly or via **kwargs
-         # Make sure cleanup methods accept these arguments.
-         # Assuming cleanup methods accept entity_id (character_id), context (Dict[str, Any]), and potentially other kwargs.
          # Let's pass character_id and the gathered context dict as **context_kwargs
          # Example: clean_up_for_character(character_id: str, context: Dict[str, Any]) -> None
 
@@ -2174,3 +2139,5 @@ class CharacterManager:
         return True
 
 # --- Конец класса CharacterManager ---
+
+[end of bot/game/managers/character_manager.py]
