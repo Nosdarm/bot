@@ -176,10 +176,11 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
                     button.callback = callback_with_args
                     view.add_item(button)
 
-            await interaction.followup.send(message_content, view=view if view and view.children else None, ephemeral=False)
+            # discord.py handles view=None correctly.
+            await interaction.followup.send(message_content, view=view, ephemeral=False)
         else:
             error_message = result.get("message", "You can't seem to see anything clearly right now.") if result else "An unexpected error occurred while looking around."
-            await interaction.followup.send(error_message, ephemeral=True)
+            await interaction.followup.send(error_message, view=None, ephemeral=True) # view=None for clarity
 
     @app_commands.command(name="move", description="Переместиться в другую локацию.")
     @app_commands.describe(destination="Название выхода или ID локации назначения.")
