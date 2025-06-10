@@ -9,6 +9,7 @@ from bot.utils.i18n_utils import get_i18n_text # Import for localization
 # For NLU integration
 from bot.services.nlu_data_service import NLUDataService
 from bot.nlu.player_action_parser import parse_player_action
+from bot.ai.rules_schema import CoreGameRulesConfig
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
@@ -253,7 +254,7 @@ class InventoryCog(commands.Cog, name="Inventory"):
         if not self.bot.game_manager.rule_engine or not self.bot.game_manager.rule_engine.rules_config_data:
             await interaction.followup.send("Error: Game rules not loaded.", ephemeral=True)
             return
-        rules_config: "CoreGameRulesConfig" = self.bot.game_manager.rule_engine.rules_config_data
+        rules_config: CoreGameRulesConfig = self.bot.game_manager.rule_engine.rules_config_data
 
 
         character = character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
@@ -310,7 +311,7 @@ class InventoryCog(commands.Cog, name="Inventory"):
         if not self.bot.game_manager.rule_engine or not self.bot.game_manager.rule_engine.rules_config_data:
             await interaction.followup.send("Error: Game rules not loaded.", ephemeral=True)
             return
-        rules_config: "CoreGameRulesConfig" = self.bot.game_manager.rule_engine.rules_config_data
+        rules_config: CoreGameRulesConfig = self.bot.game_manager.rule_engine.rules_config_data
 
         character = character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
         language = character.selected_language if character and character.selected_language else (interaction.locale.language if interaction.locale else DEFAULT_BOT_LANGUAGE)
@@ -557,7 +558,7 @@ class InventoryCog(commands.Cog, name="Inventory"):
         character_manager: "CharacterManager" = self.bot.game_manager.character_manager
         item_manager: "ItemManager" = self.bot.game_manager.item_manager
         nlu_data_service: "NLUDataService" = self.bot.nlu_data_service
-        rules_config: "CoreGameRulesConfig" = self.bot.game_manager.rule_engine.rules_config_data
+        rules_config: CoreGameRulesConfig = self.bot.game_manager.rule_engine.rules_config_data
 
         character = character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
         language = character.selected_language if character and character.selected_language else \

@@ -90,7 +90,7 @@ class ConflictResolver:
                 guild_id=guild_id,
                 event_type="conflict_analysis_start",
                 message=f"Starting conflict analysis for {len(player_actions_map)} players.",
-                metadata={"player_action_summary": action_summary_for_log, "context": context}
+                metadata={"player_action_summary": action_summary_for_log}
             )
         else:
             print(f"Analyzing actions for conflicts in guild {guild_id} using CoreGameRulesConfig.")
@@ -219,40 +219,40 @@ class ConflictResolver:
                 })
 
         # Logging the overall result of conflict analysis
-        if self.game_log_manager :
+        if not all_actions_flat and self.game_log_manager : # Changed condition to check if all_actions_flat is empty
              await self.game_log_manager.log_event(
                 guild_id=guild_id,
                 event_type="conflict_analysis_no_actions",
                 message="No actions submitted by any player for conflict analysis."
             )
-        elif not pending_manual_conflicts and not auto_resolution_outcomes and actions_to_execute and self.game_log_manager:
+        elif not analysis_result["pending_conflict_details"] and not analysis_result["auto_resolution_outcomes"] and analysis_result["actions_to_execute"] and self.game_log_manager:
              await self.game_log_manager.log_event(
                 guild_id=guild_id,
                 event_type="conflict_analysis_no_conflicts_found",
-                message=f"No specific conflicts identified among {len(all_submitted_actions_with_context)} actions. Processed {len(processed_action_ids)} in conflicts. Adding {len(actions_to_execute)} to execution queue.",
-                metadata={"num_submitted": len(all_submitted_actions_with_context), "num_processed_in_conflict": len(processed_action_ids), "num_to_execute_directly": len(actions_to_execute)}
+                message=f"No specific conflicts identified among {len(all_actions_flat)} actions. Processed {(len(analysis_result['pending_conflict_details']) + len(analysis_result['auto_resolution_outcomes']))} in conflicts. Adding {len(analysis_result['actions_to_execute'])} to execution queue.",
+                metadata={"num_submitted": len(all_actions_flat), "num_processed_in_conflict": (len(analysis_result['pending_conflict_details']) + len(analysis_result['auto_resolution_outcomes'])), "num_to_execute_directly": len(analysis_result['actions_to_execute'])}
             )
 
         if self.game_log_manager:
             await self.game_log_manager.log_event(
                 guild_id=guild_id,
                 event_type="conflict_analysis_end",
-                message=(f"Conflict analysis finished. Manual resolution required: {requires_manual_resolution_flag}. "
-                         f"Actions to execute: {len(actions_to_execute)}. "
-                         f"Pending manual: {len(pending_manual_conflicts)}. Auto-resolved: {len(auto_resolution_outcomes)}."),
+                message=(f"Conflict analysis finished. Manual resolution required: {analysis_result['requires_manual_resolution']}. "
+                         f"Actions to execute: {len(analysis_result['actions_to_execute'])}. "
+                         f"Pending manual: {len(analysis_result['pending_conflict_details'])}. Auto-resolved: {len(analysis_result['auto_resolution_outcomes'])}."),
                 metadata={
-                    "requires_manual_resolution": requires_manual_resolution_flag,
-                    "num_actions_to_execute": len(actions_to_execute),
-                    "num_pending_manual": len(pending_manual_conflicts),
-                    "num_auto_resolved": len(auto_resolution_outcomes)
+                    "requires_manual_resolution": analysis_result["requires_manual_resolution"],
+                    "num_actions_to_execute": len(analysis_result["actions_to_execute"]),
+                    "num_pending_manual": len(analysis_result["pending_conflict_details"]),
+                    "num_auto_resolved": len(analysis_result["auto_resolution_outcomes"])
                 }
             )
 
         return {
-            "requires_manual_resolution": requires_manual_resolution_flag,
-            "pending_conflict_details": pending_manual_conflicts,
-            "actions_to_execute": actions_to_execute,
-            "auto_resolution_outcomes": auto_resolution_outcomes
+            "requires_manual_resolution": analysis_result["requires_manual_resolution"],
+            "pending_conflict_details": analysis_result["pending_conflict_details"],
+            "actions_to_execute": analysis_result["actions_to_execute"],
+            "auto_resolution_outcomes": analysis_result["auto_resolution_outcomes"]
         }
 
     async def resolve_conflict_automatically(self, conflict: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
