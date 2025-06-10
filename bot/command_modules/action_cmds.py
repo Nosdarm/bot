@@ -2,6 +2,7 @@ from discord import Interaction, app_commands
 from discord.ext import commands
 from typing import Optional, TYPE_CHECKING
 import asyncio
+from bot.utils.i18n_utils import get_i18n_text
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.game.managers.game_manager import GameManager
