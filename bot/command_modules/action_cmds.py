@@ -157,86 +157,36 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
             return
 
-        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
+        guild_id_str = str(interaction.guild_id) # Define guild_id_str here
+        player_char = game_mngr.character_manager.get_character_by_discord_id(guild_id_str, interaction.user.id)
 
         if player_char:
-            player_char.current_status = 'processing_turn'
-            game_mngr.character_manager.mark_character_dirty(player_char) # Assumes player_char object is passed
+            # Set status to indicate readiness for periodic processing
+            player_char.current_game_status = 'ожидание_обработки'
+            game_mngr.character_manager.mark_character_dirty(guild_id_str, player_char.id)
 
-            # Import asyncio if not already imported at the top of the file
-            # For this refactoring, assuming asyncio is available (standard library)
-            # import asyncio # Add this at the top if it's missing
-            await asyncio.sleep(0.5) # Make sure asyncio is imported
+            # Optional: Immediately save this status change to DB
+            try:
+                await game_mngr.save_game_state_after_action(guild_id_str)
+                logging.info(f"cmd_end_turn: Player {player_char.id} status updated to 'ожидание_обработки' and saved for guild {guild_id_str}.")
+            except Exception as e:
+                logging.error(f"cmd_end_turn: Error saving player status update for {player_char.id} in guild {guild_id_str}: {e}", exc_info=True)
+                # Decide if we should inform the user of save failure or proceed with optimistic message
 
-            # Ensure player_char.id is the correct attribute for the player's ID
-            # The method expects a list of player IDs.
-            result = await game_mngr.turn_processing_service.process_player_turns([player_char.id], str(interaction.guild_id))
-
-            guild_id_str = str(interaction.guild_id)
-            # Assuming player_char.id is the correct attribute and is a string.
-            # If player_char.id is not a string, it should be str(player_char.id).
-            # For consistency with how player_id is used in TurnProcessingService results (often string keys in dicts).
-            player_id_str = player_char.id
-
-            log_message_suffix = f"for player {player_id_str} in guild {guild_id_str}."
-
-            no_actions_detected = False
-            # Condition 1: Global status indicates no actions
-            if result.get("status") == "no_actions":
-                no_actions_detected = True
-            else:
-                # Condition 2: Player-specific feedback indicates no actions.
-                # This requires checking `processed_action_details` for this player.
-                processed_actions_for_player = []
-                if isinstance(result.get("processed_action_details"), list):
-                    for detail in result["processed_action_details"]:
-                        # Ensure comparison is between same types, e.g. both strings if player_id_str is string.
-                        if detail.get("player_id") == player_id_str:
-                            processed_actions_for_player.append(detail)
-
-                if not processed_actions_for_player and result.get("status") != "error": # Avoid masking errors as "no action"
-                    # If no actions were processed for this specific player,
-                    # and there wasn't a general error, it's effectively "no actions" for them.
-                    # This handles cases where TPS might not set global "no_actions" if other players had actions.
-                    no_actions_detected = True
-                    # Also check if feedback_per_player for this player explicitly says no actions
-                    player_feedback = result.get("feedback_per_player", {}).get(player_id_str, [])
-                    if player_feedback and "no actions taken" in player_feedback[0].lower(): # Example check
-                         no_actions_detected = True
-
-
-            if no_actions_detected:
-                logging.info(f"cmd_end_turn: No actions found or processed {log_message_suffix}")
-                await interaction.followup.send(
-                    "Ход завершен, но не было обнаружено действий для обработки. "
-                    "Если вы описывали действия текстом, попробуйте еще раз или используйте /undo_action, "
-                    "если считаете, что они не были распознаны.",
-                    ephemeral=True
-                )
-            elif result.get("status") == "completed":
-                logging.info(f"cmd_end_turn: Actions processed successfully {log_message_suffix}")
-                await interaction.followup.send("Ход обработан.", ephemeral=True)
-            elif result.get("status") == "error":
-                logging.error(f"cmd_end_turn: Error during turn processing {log_message_suffix}. Result: {result}")
-                # Provide more specific error if available in feedback
-                error_message = "Ошибка при обработке хода."
-                player_feedback_msgs = result.get("feedback_per_player", {}).get(player_id_str, [])
-                if player_feedback_msgs:
-                    error_message = player_feedback_msgs[0]
-                await interaction.followup.send(error_message, ephemeral=True)
-            else: # Other statuses like "in_progress" or custom ones
-                player_feedback_msgs = result.get("feedback_per_player", {}).get(player_id_str, [])
-                # Default message if no specific feedback for this player
-                default_message = "Обработка вашего хода продолжается или ожидает дополнительных действий."
-                feedback_to_send = player_feedback_msgs[0] if player_feedback_msgs else default_message
-
-                logging.info(f"cmd_end_turn: Turn processing status '{result.get('status')}' {log_message_suffix}. Feedback: {feedback_to_send}")
-                await interaction.followup.send(feedback_to_send, ephemeral=True)
+            # Inform the user
+            # TODO: Localize "Turn ended. Your actions will be processed shortly."
+            # Assuming get_i18n_text is available and configured for this cog or globally
+            # For now, using a direct string.
+            lang = player_char.selected_language or (interaction.locale.language if interaction.locale else "en")
+            end_turn_confirmation = get_i18n_text(None, "end_turn_confirmation", lang, default_lang="en", default_text="Turn ended. Your actions will be processed shortly.")
+            await interaction.followup.send(end_turn_confirmation, ephemeral=True)
         else:
-            logging.warning(f"cmd_end_turn: Player character not found for Discord user {interaction.user.id} in guild {str(interaction.guild_id)}.")
-            await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
+            # TODO: Localize "Character not found."
+            lang_for_error = interaction.locale.language if interaction.locale else "en"
+            char_not_found_msg = get_i18n_text(None, "inventory_error_no_character", lang_for_error, default_lang="en", default_text="You need to create a character first! Use `/start_new_character`.")
+            logging.warning(f"cmd_end_turn: Player character not found for Discord user {interaction.user.id} in guild {guild_id_str}.")
+            await interaction.followup.send(char_not_found_msg, ephemeral=True)
             return
-
 
     @app_commands.command(name="end_party_turn", description="ГМ: Завершить ход для всей текущей активной партии.")
     async def cmd_end_party_turn(self, interaction: Interaction):

@@ -1,3 +1,11 @@
+"""
+Resolves skill checks, saving throws, and contested checks based on game rules.
+
+This module provides the `resolve_check` function, which is the core logic for
+determining the outcome of various checks by comparing dice rolls (plus modifiers)
+against a Difficulty Class (DC) or an opponent's check result. It uses the
+`CoreGameRulesConfig` to fetch definitions for different check types.
+"""
 from typing import TypedDict, Dict, Any, Optional, List # Added List
 from bot.game.rules.dice_roller import roll_dice
 from bot.ai.rules_schema import CoreGameRulesConfig, CheckDefinition # Import new schema
@@ -21,6 +29,21 @@ MOCK_EFFECTIVE_STATS_DB = {
 }
 
 def get_entity_effective_stats(entity_id: str, entity_type: str) -> Dict[str, Any]:
+    """
+    Mock function to retrieve pre-defined effective stats for an entity.
+
+    In a real implementation, this would fetch data from a CharacterManager or
+    calculate effective stats considering items, statuses, etc. For use in
+    check_resolver.py's __main__ block and unit tests.
+
+    Args:
+        entity_id: The ID of the entity.
+        entity_type: The type of the entity (e.g., "player", "npc"), ignored by this mock.
+
+    Returns:
+        A dictionary of stat names to their values for the given entity,
+        or an empty dictionary if the entity_id is not found in the mock DB.
+    """
     # entity_type is ignored for this mock
     # In a real scenario, this would fetch from CharacterManager or similar
     return MOCK_EFFECTIVE_STATS_DB.get(entity_id, {})
@@ -35,6 +58,30 @@ def resolve_check(
     difficulty_dc: Optional[int] = None,
     check_context: Optional[Dict[str, Any]] = None
 ) -> CheckResult:
+    """
+    Resolves a skill check or contested check based on defined rules.
+
+    Args:
+        rules_config_data: The CoreGameRulesConfig object containing all check definitions.
+        check_type: The identifier for the type of check to perform (e.g., "perception", "stealth_vs_perception").
+        entity_doing_check_id: ID of the entity performing the check.
+        entity_doing_check_type: Type of the entity performing the check (e.g., "player", "npc").
+        target_entity_id: Optional ID of the target entity (for contested checks).
+        target_entity_type: Optional type of the target entity.
+        difficulty_dc: Optional explicit DC for the check, overriding rule's base_dc.
+        check_context: Optional dictionary for any contextual modifiers or information.
+
+    Returns:
+        A CheckResult TypedDict containing:
+            - outcome: 'success', 'fail', 'crit_success', or 'crit_fail'.
+            - roll_details: Dictionary from `roll_dice` (total, rolls, dice_str, raw_roll for crits).
+            - modifier: The total modifier applied from stats.
+            - final_result: The sum of roll_total + modifier.
+            - dc_or_vs_result: The DC or opponent's roll result that was checked against.
+            - check_type: The type of check performed.
+            - succeeded: Boolean indicating if the check was a success or crit_success.
+            - error: Optional string for any errors encountered (e.g., invalid check_type).
+    """
     if check_context is None:
         check_context = {}
 
