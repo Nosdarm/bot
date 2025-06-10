@@ -33,7 +33,8 @@ if TYPE_CHECKING:
     from bot.game.character_processors.character_view_service import CharacterViewService
     from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor
     from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator
-    from bot.game.models.location import Location # Ensure Location is available for type hints
+    # Location is already imported at the top level, so it's available for type hints.
+    # from bot.game.models.location import Location
 
 
 # Define Callback Types
@@ -282,64 +283,61 @@ class LocationManager:
 
     async def _ensure_persistent_location_exists(self, guild_id: str, location_template_id: str) -> Optional[Dict[str, Any]]:
         """
-        Ensures a location instance with ID = location_template_id exists for the guild.
-        If not, it creates one from the template and saves it to the DB with the template_id as its ID.
+        Ensures a canonical location instance for the given template_id exists for the guild.
+        If an instance with id=location_template_id exists, it's used.
+        If not, but another instance for the same template_id exists, that one is used.
+        If none exist, creates one with id=location_template_id.
+        Prevents creating a new instance with id=template_id if another instance for that template already serves the purpose.
         """
-        print(f"LocationManager: Checking for persistent instance of '{location_template_id}' in guild '{guild_id}'.")
         guild_id_str = str(guild_id)
         loc_template_id_str = str(location_template_id)
 
-        # Check cache first
+        print(f"LocationManager: Ensuring persistent location for template '{loc_template_id_str}' in guild '{guild_id_str}'.")
+
+        # 1. Check cache for an instance where instance_id IS loc_template_id_str
         if guild_id_str in self._location_instances and loc_template_id_str in self._location_instances[guild_id_str]:
-            print(f"LocationManager: Persistent instance '{loc_template_id_str}' already exists in guild '{guild_id_str}' (found in cache).")
+            print(f"LocationManager: Instance '{loc_template_id_str}' (id=template_id) already in cache for guild '{guild_id_str}'.")
             return self._location_instances[guild_id_str][loc_template_id_str]
 
-        # Check database if not in cache
         if self._db_service and self._db_service.adapter:
             try:
-                # Assuming get_entity can filter by guild_id if provided, or we handle it post-fetch.
-                # For locations, the ID should be unique across guilds if it's a template_id.
-                # However, instances are guild-specific. So, we need a query that checks id AND guild_id.
-                # The locations table has id (PK) and guild_id.
-                # A specific query might be needed if get_entity is not flexible enough.
-                # Let's assume get_entity on 'locations' table with id=loc_template_id_str implies it's the instance ID.
-                # We need to ensure this instance also matches the guild_id.
-                # A better DB check would be: SELECT * FROM locations WHERE id = $1 AND guild_id = $2
-                # For now, let's see if get_entity can be used or if we need raw SQL.
-                # The table structure implies 'id' is the primary key for instances.
-                # If we are ensuring a location with id='town_square' for guild '123',
-                # we check if a row with id='town_square' AND guild_id='123' exists.
-
-                # Using a more direct check:
-                # existing_instance_row = await self._db_service.adapter.fetchone(
-                #     "SELECT * FROM locations WHERE id = $1 AND guild_id = $2", (loc_template_id_str, guild_id_str)
-                # )
-                # For simplicity with existing tools, let's use get_entity and then verify guild_id if found.
-                # This is less efficient if many guilds share template IDs as instance IDs for different things.
-                # But for ensuring specific named locations (like 'town_square'), 'id' itself is the key.
-                existing_instance_data_from_db = await self._db_service.get_entity(
-                    table_name='locations',
-                    entity_id=loc_template_id_str, # This is the instance ID to check
-                    id_field='id'
-                    # We need to also ensure guild_id matches. If get_entity doesn't support compound keys or extra filters,
-                    # this check needs refinement.
-                    # For now, if it returns, we'll check guild_id from the result.
+                # 2. Check DB for an instance where instance.id IS loc_template_id_str AND guild_id matches
+                specific_instance_row = await self._db_service.adapter.fetchone(
+                    "SELECT * FROM locations WHERE id = $1 AND guild_id = $2", (loc_template_id_str, guild_id_str)
                 )
+                if specific_instance_row:
+                    print(f"LocationManager: Instance '{loc_template_id_str}' (id=template_id) found in DB for guild '{guild_id_str}'.")
+                    # Convert row to dict, then to Location model, then to dict for cache
+                    cached_data = Location.from_dict(dict(specific_instance_row)).to_dict()
+                    self._location_instances.setdefault(guild_id_str, {})[loc_template_id_str] = cached_data
+                    return cached_data
 
-                if existing_instance_data_from_db and str(existing_instance_data_from_db.get('guild_id')) == guild_id_str:
-                    print(f"LocationManager: Persistent instance '{loc_template_id_str}' already exists in guild '{guild_id_str}' (found in DB).")
-                    # Add to cache if loaded from DB and not there
-                    self._location_instances.setdefault(guild_id_str, {})[loc_template_id_str] = existing_instance_data_from_db
-                    return existing_instance_data_from_db
-                elif existing_instance_data_from_db: # ID exists but for a different guild
-                    print(f"LocationManager: Instance with ID '{loc_template_id_str}' found in DB but for a different guild ({existing_instance_data_from_db.get('guild_id')}). Will proceed to create for guild '{guild_id_str}'.")
+                # 3. If specific instance (id=template_id) not found,
+                #    check if ANY instance for this template_id already exists for this guild.
+                existing_template_instance_row = await self._db_service.adapter.fetchone(
+                    "SELECT * FROM locations WHERE template_id = $1 AND guild_id = $2", (loc_template_id_str, guild_id_str)
+                )
+                if existing_template_instance_row:
+                    existing_instance_id = str(existing_template_instance_row['id'])
+                    print(f"LocationManager: An instance (ID: {existing_instance_id}) for template_id '{loc_template_id_str}' already exists in guild '{guild_id_str}'.")
+                    print(f"LocationManager: Will not create a new persistent instance with id='{loc_template_id_str}' to avoid potential duplicates of the template's representation.")
 
+                    # Load this existing one into cache if not already there by its actual ID
+                    # and return its data from the cache.
+                    if existing_instance_id not in self._location_instances.get(guild_id_str, {}):
+                         cached_data = Location.from_dict(dict(existing_template_instance_row)).to_dict()
+                         self._location_instances.setdefault(guild_id_str, {})[existing_instance_id] = cached_data
+                    # Return the data of the instance found by template_id match
+                    return self._location_instances[guild_id_str].get(existing_instance_id)
 
             except Exception as e:
-                print(f"LocationManager: DB error checking for instance '{loc_template_id_str}' in guild '{guild_id_str}': {e}")
-                # Continue to creation attempt if DB check fails, as if not found.
+                print(f"LocationManager: DB error during check for instance (template_id '{loc_template_id_str}') in guild '{guild_id_str}': {e}")
+                traceback.print_exc()
+                # Fall through to creation if DB check fails, as if not found.
 
-        print(f"LocationManager: Creating new persistent instance for '{loc_template_id_str}' in guild '{guild_id_str}' as it was not found or belonged to another guild.")
+        # 4. If no instance for this template_id exists for this guild (neither id=template_id nor any other id with this template_id),
+        #    then proceed to create the persistent instance with id = template_id.
+        print(f"LocationManager: No existing instance found for template '{loc_template_id_str}' in guild '{guild_id_str}'. Creating new persistent instance with id='{loc_template_id_str}'.")
         template_data = self.get_location_static(loc_template_id_str)
         if not template_data:
             print(f"LocationManager: Cannot create persistent instance for '{loc_template_id_str}' in guild '{guild_id_str}', template not found.")
