@@ -260,25 +260,7 @@ class RPGBot(commands.Bot):
                     print(f"RPGBot: DBService not available for updating player {player.id} in guild {message.guild.id}")
                     await message.add_reaction("⚠️")
             else:
-                embed = discord.Embed(
-                    title="Неверный формат команды",
-                    description="Для выполнения игровых действий, пожалуйста, используйте слеш-команды. Они начинаются с символа `/`.",
-                    color=discord.Color.orange()
-                )
-                embed.add_field(
-                    name="Примеры команд:",
-                    value="- `/move <направление или место>` (для передвижения)\n"
-                          "- `/look <объект или ничего>` (чтобы осмотреться)\n"
-                          "- `/interact <объект>` (для взаимодействия)\n"
-                          "- `/inventory` (чтобы проверить инвентарь)",
-                    inline=False
-                )
-                embed.add_field(
-                    name="Естественный язык:",
-                    value="Если вы предпочитаете писать действия текстом (например, 'идти в таверну'), убедитесь, что фраза четко описывает ваше намерение. Бот попытается её понять, но слеш-команды работают надежнее.",
-                    inline=False
-                )
-                await message.reply(embed=embed)
+                await message.add_reaction("❓")
 
         elif player_status in ['бой', 'диалог', 'торговля']:
             print(f"RPGBot: Message from {message.author.name} in status '{player_status}' ignored by NLU: {message.content}")

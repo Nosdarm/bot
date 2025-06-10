@@ -3,7 +3,8 @@ from discord import Interaction, app_commands
 from discord.ext import commands
 from typing import Optional, TYPE_CHECKING, List, Dict, Any
 import functools # For partial
-from discord.ui import View, Button, ButtonStyle # Added UI components
+from discord.ui import View, Button # Corrected import
+from discord import ButtonStyle # Corrected import
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
