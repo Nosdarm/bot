@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import traceback
+import asyncio # Added for asyncio.sleep
 from typing import TYPE_CHECKING, List, Dict, Any, Optional, Callable, Awaitable
 
 if TYPE_CHECKING:
@@ -13,7 +14,11 @@ if TYPE_CHECKING:
     from bot.game.character_processors.character_action_processor import CharacterActionProcessor
     from bot.game.managers.combat_manager import CombatManager
     from bot.game.managers.location_manager import LocationManager
+    from bot.game.services.location_interaction_service import LocationInteractionService # Added
     # from bot.services.notification_service import NotificationService # For player feedback
+
+from bot.database.models import PendingConflict # Import for manual conflict resolution
+from bot.ai.rules_schema import CoreGameRulesConfig # For accessing conflict rules
 
 class TurnProcessingService:
     def __init__(self,
@@ -26,6 +31,7 @@ class TurnProcessingService:
                  character_action_processor: CharacterActionProcessor,
                  combat_manager: CombatManager,
                  location_manager: LocationManager,
+                 location_interaction_service: LocationInteractionService, # Added
                  # notification_service: NotificationService # If sending direct feedback to players
                  settings: Dict[str, Any]):
         self.character_manager = character_manager
@@ -36,6 +42,7 @@ class TurnProcessingService:
         self.character_action_processor = character_action_processor
         self.combat_manager = combat_manager
         self.location_manager = location_manager
+        self.location_interaction_service = location_interaction_service # Added
         # self.notification_service = notification_service
         self.settings = settings
         print("TurnProcessingService initialized.")
@@ -140,11 +147,16 @@ class TurnProcessingService:
         all_processed_action_results: List[Dict[str, Any]] = []
 
         # --- 1. Action Collection Phase ---
+        action_read_delay = self.settings.get("turn_processing_action_read_delay", 0.5) # Get delay from settings or default
         for player_id in player_ids:
-            char = await self.character_manager.get_character(guild_id, player_id) # Ensure get_character is async or adjust
+            char = await self.character_manager.get_character(guild_id, player_id)
+
+            # Add small delay before reading char.collected_actions_json
+            await asyncio.sleep(action_read_delay)
+
             if not char:
-                print(f"TurnProcessingService: Character {player_id} not found in guild {guild_id}. Skipping.")
-                await self.game_log_manager.log_event(guild_id, "turn_processing_char_not_found", f"Character {player_id} not found.", {"player_id": player_id})
+                print(f"TurnProcessingService: Character {player_id} not found in guild {guild_id} after delay. Skipping.")
+                await self.game_log_manager.log_event(guild_id, "turn_processing_char_not_found", f"Character {player_id} not found post-delay.", {"player_id": player_id})
                 turn_feedback_reports[player_id].append("Error: Your character data was not found.")
                 continue
 
@@ -155,6 +167,11 @@ class TurnProcessingService:
                         player_actions_map[char.id] = actions
                         print(f"TurnProcessingService: Collected {len(actions)} actions for player {char.id}.")
                         await self.game_log_manager.log_event(guild_id, "actions_collected", f"Collected {len(actions)} for player {char.id}.", {"player_id": char.id, "num_actions": len(actions)})
+
+                        # Clear actions from character object immediately after successful load into memory
+                        char.collected_actions_json = None
+                        self.character_manager.mark_character_dirty(guild_id, char.id)
+                        print(f"TurnProcessingService: Cleared collected_actions_json for player {char.id} and marked dirty.")
                     else:
                         print(f"TurnProcessingService: Warning: Parsed collected_actions_json for player {char.id} is not a list of dicts. Found: {type(actions)}")
                         await self.game_log_manager.log_event(guild_id, "actions_invalid_format", f"Collected actions for {char.id} not list of dicts.", {"player_id": char.id, "type": str(type(actions))})
@@ -165,18 +182,22 @@ class TurnProcessingService:
                     await self.game_log_manager.log_event(guild_id, "actions_decode_error", f"Error decoding actions for {char.id}.", {"player_id": char.id, "error": str(e)})
                     turn_feedback_reports[player_id].append("Error: Could not parse your collected actions.")
                     player_actions_map[char.id] = []
-            else:
-                print(f"TurnProcessingService: No actions collected for player {char.id}.")
-                await self.game_log_manager.log_event(guild_id, "no_actions_collected", f"No actions for player {char.id}.", {"player_id": char.id})
+            else: # No char.collected_actions_json or it was empty
+                print(f"TurnProcessingService: No actions collected for player {char.id} from char.collected_actions_json.")
+                log_message = f"Player {char.id} had no actions in collected_actions_json. Original status might have been 'ожидание_обработки' and NLU processing might have been too slow or failed before this read."
+                await self.game_log_manager.log_event(guild_id, "empty_action_queue_on_processing", log_message, {"player_id": char.id})
+
+                if char.id in turn_feedback_reports:
+                    turn_feedback_reports[char.id].append(
+                        "No actions were detected for your turn. If you submitted actions recently, they might be processed in the next cycle. If this persists, please use /end_turn again or contact a GM."
+                    )
                 player_actions_map[char.id] = []
 
-            # Clear collected actions using the new method
-            if hasattr(char, 'clear_collected_actions'):
-                char.clear_collected_actions() # This sets collected_actions_json to None
-            else: # Fallback if method not yet on all Character instances
-                char.collected_actions_json = None
-            self.character_manager.mark_character_dirty(guild_id, char.id)
-            # Save will be handled by game_manager at end of processing or after state-changing actions.
+            # The clearing of char.collected_actions_json is now done right after successful loading (if actions were present)
+            # or implicitly remains None/empty if they were not present or invalid.
+            # The mark_dirty call is also done at the point of clearing or after processing the loaded JSON.
+            # No need for the separate hasattr(char, 'clear_collected_actions') block here anymore for this specific purpose.
+            # self.character_manager.mark_character_dirty(guild_id, char.id) # This is already called above if actions were loaded and cleared.
 
         if not player_actions_map or all(not v for v in player_actions_map.values()):
             print(f"TurnProcessingService: No actions found for any players in {player_ids}. Ending turn processing early.")
@@ -193,8 +214,21 @@ class TurnProcessingService:
             return {"status": "no_actions", "feedback_per_player": turn_feedback_reports, "processed_action_details": all_processed_action_results}
 
         # --- 2. Conflict Analysis & Resolution Phase ---
-        print(f"TurnProcessingService: Analyzing actions for conflicts. Action map: {json.dumps(player_actions_map, indent=2)}")
-        analysis_result = await self.conflict_resolver.analyze_actions_for_conflicts(player_actions_map, guild_id)
+        # Load CoreGameRulesConfig
+        rules_config: Optional[CoreGameRulesConfig] = None
+        if self.rule_engine and hasattr(self.rule_engine, 'rules_config_data') and isinstance(self.rule_engine.rules_config_data, CoreGameRulesConfig):
+            rules_config = self.rule_engine.rules_config_data
+
+        if not rules_config:
+            print(f"TurnProcessingService: CRITICAL - CoreGameRulesConfig not available for guild {guild_id}. Conflict resolution will be basic.")
+            # Fallback to basic conflict analysis if rules are missing
+            analysis_result = await self.conflict_resolver.analyze_actions_for_conflicts(player_actions_map, guild_id, None) # Pass None for rules_config
+        else:
+            # Pass rules_config to conflict_resolver (assuming it's updated to accept it)
+            # For this subtask, we'll assume analyze_actions_for_conflicts is updated to use rules_config
+            # and its return structure for "pending_conflict_details" is enhanced.
+            print(f"TurnProcessingService: Analyzing actions for conflicts with rules. Action map: {json.dumps(player_actions_map, indent=2)}")
+            analysis_result = await self.conflict_resolver.analyze_actions_for_conflicts(player_actions_map, guild_id, rules_config)
 
         for auto_res_outcome in analysis_result.get("auto_resolution_outcomes", []):
             involved_chars = [act_ctx["character_id"] for act_ctx in auto_res_outcome.get("involved_actions", [])]
@@ -205,25 +239,72 @@ class TurnProcessingService:
             all_processed_action_results.append(auto_res_outcome)
 
         if analysis_result.get("requires_manual_resolution"):
-            print(f"TurnProcessingService: Manual resolution required for some conflicts.")
-            for pending_conflict in analysis_result.get("pending_conflict_details", []):
-                conflict_id_manual = pending_conflict.get('conflict_id', 'UnknownConflict')
-                # The `pending_conflict` is the dict returned by `prepare_for_manual_resolution`.
-                # The actual actions are within the data saved to DB, and what `NotificationService` gets.
-                # To get involved players for feedback, we need to ensure `involved_actions` (or at least player IDs)
-                # are part of what `analyze_actions_for_conflicts` returns in `pending_conflict_details`.
-                # `current_conflict_details` in `analyze_actions_for_conflicts` has `involved_actions`.
-                # This `current_conflict_details` becomes an item in `pending_manual_conflicts`.
-                involved_char_ids_in_pending = [action_ctx['character_id'] for action_ctx in pending_conflict.get('involved_actions', [])]
+            print(f"TurnProcessingService: Manual resolution required for conflicts in guild {guild_id}.")
+            db_service = self.game_manager.db_service # Assuming db_service is on game_manager
+            if not db_service:
+                print(f"TurnProcessingService: CRITICAL - DBService not available. Cannot save pending manual conflicts for guild {guild_id}.")
+                # Handle this case: maybe all affected actions fail, or log extensively.
+                # For now, players will get a generic "GM review" message but conflict won't be saved to DB.
 
-                for char_id_manual in involved_char_ids_in_pending:
-                    if char_id_manual in turn_feedback_reports:
-                        turn_feedback_reports[char_id_manual].append(
-                            f"Your action is part of a conflict (ID: {conflict_id_manual}) that requires Game Master review. It will be processed once resolved."
+            for conflict_detail in analysis_result.get("pending_conflict_details", []):
+                # Assuming conflict_detail now contains necessary data due to ConflictResolver enhancements:
+                # conflict_detail = {
+                #     'conflict_type_id': 'some_conflict_rule_type',
+                #     'involved_actions': [{'character_id': 'player1', 'action_data': {...}}, ...],
+                #     'description': 'A summary of the conflict for GM'
+                # }
+                conflict_type_id = conflict_detail.get('conflict_type_id', 'unknown_manual_conflict')
+                involved_actions_data = conflict_detail.get('involved_actions', [])
+                conflict_description = conflict_detail.get('description', 'A conflict requires GM attention.')
+
+                involved_player_ids = list(set(act_ctx['character_id'] for act_ctx in involved_actions_data))
+
+                conflict_data_to_store = {
+                    "conflict_type_id": conflict_type_id,
+                    "involved_player_ids": involved_player_ids,
+                    "involved_actions_details": involved_actions_data, # Storing the actions themselves
+                    "description_for_gm": conflict_description,
+                    "resolution_options": conflict_detail.get("manual_resolution_options") # If provided by ConflictResolver
+                }
+
+                if db_service:
+                    try:
+                        new_conflict_db_entry = PendingConflict(
+                            guild_id=guild_id,
+                            conflict_data_json=json.dumps(conflict_data_to_store), # Serialize to JSON string
+                            status='pending_gm_resolution'
                         )
-                all_processed_action_results.append(pending_conflict)
+                        await db_service.add_entity(new_conflict_db_entry) # Assumes a generic add_entity method
+                        conflict_db_id = new_conflict_db_entry.id
+                        log_message = f"Manual conflict (Type: {conflict_type_id}, DB ID: {conflict_db_id}) detected and saved. Involved players: {involved_player_ids}. GM intervention required."
+                        feedback_message_for_player = f"Your action is part of a conflict (Ref: {conflict_db_id[-8:]}) that requires Game Master review. It will be processed once resolved."
+                    except Exception as e:
+                        log_message = f"Manual conflict (Type: {conflict_type_id}) detected but FAILED TO SAVE to DB. Error: {e}. Involved players: {involved_player_ids}."
+                        feedback_message_for_player = f"Your action is part of a conflict that requires Game Master review, but there was an issue logging the details. Please inform your GM."
+                        traceback.print_exc()
+                else: # No DB service
+                    log_message = f"Manual conflict (Type: {conflict_type_id}) detected but DBService not available to save. Involved players: {involved_player_ids}."
+                    feedback_message_for_player = "Your action is part of a conflict that requires Game Master review. It will be processed once resolved (logging to DB failed)."
+
+                print(f"TurnProcessingService: {log_message}")
+                await self.game_log_manager.log_event(guild_id, "manual_conflict_detected", log_message, conflict_data_to_store)
+
+                for char_id_manual in involved_player_ids:
+                    if char_id_manual in turn_feedback_reports:
+                        turn_feedback_reports[char_id_manual].append(feedback_message_for_player)
+
+                # Add the raw conflict_detail to results for now, as it's what ConflictResolver produced.
+                # This might be redundant if a DB ID is now the primary reference.
+                all_processed_action_results.append({
+                    "type": "manual_conflict_deferred",
+                    "conflict_data": conflict_detail, # Original data from ConflictResolver
+                    "db_id": getattr(new_conflict_db_entry, 'id', None) if 'new_conflict_db_entry' in locals() else None
+                })
+
 
         # --- 3. Action Execution Phase ---
+        # Actions that were part of a manual conflict should have been filtered out
+        # by ConflictResolver from the 'actions_to_execute' list.
         actions_to_execute = analysis_result.get("actions_to_execute", [])
         print(f"TurnProcessingService: Executing {len(actions_to_execute)} non-conflicting/resolved actions.")
         await self.game_log_manager.log_event(guild_id, "action_execution_start", f"Executing {len(actions_to_execute)} actions.", {"count": len(actions_to_execute)})
@@ -260,66 +341,214 @@ class TurnProcessingService:
 
             try:
                 # ** Refined Action Dispatch Logic **
-                if intent_type == "MOVE":
-                    # Entity extraction: NLU should provide entities.
-                    # Example: {"intent_type": "MOVE", "entities": [{"type": "location_name", "value": "the forest", "id": "loc_forest_id"}]}
-                    target_destination_entity = next((e for e in action_data.get("entities", []) if e.get("type") in ["location_name", "location_id", "portal_id"]), None)
-                    if target_destination_entity:
-                        # Conceptual call to a new method on CharacterActionProcessor
-                        # This method would encapsulate logic from CommandRouter/CAP.process_action for 'move'
-                        action_execution_result = await self.character_action_processor.handle_move_action(
-                            character=acting_char,
-                            destination_entity=target_destination_entity,
-                            guild_id=guild_id
-                            # Context/callback for messages not directly passed from here for now
-                        )
-                    else:
-                        action_execution_result = {"success": False, "message": "You decided to move but didn't specify a valid destination.", "state_changed": False}
+                normalized_intent_type = intent_type.upper() # Normalize intent for consistent matching
+
+                # Example: Applying transaction logic to the 'MOVE' intent
+                if normalized_intent_type == "MOVE":
+                    transaction_begun = False
+                    db_service = self.game_manager.db_service # Get DBService instance
+                    try:
+                        if db_service:
+                            await db_service.begin_transaction()
+                            transaction_begun = True
+
+                        target_destination_entity = next((e for e in action_data.get("entities", []) if e.get("type") in ["location_name", "location_id", "portal_id"]), None)
+                        if target_destination_entity:
+                            action_execution_result = await self.character_action_processor.handle_move_action(
+                                character=acting_char,
+                                destination_entity=target_destination_entity,
+                                guild_id=guild_id
+                            )
+                        else:
+                            action_execution_result = {"success": False, "message": "You decided to move but didn't specify a valid destination.", "state_changed": False}
+
+                        if transaction_begun and db_service:
+                            if action_execution_result.get("success", False) and action_execution_result.get("state_changed", False):
+                                await db_service.commit_transaction()
+                                print(f"TurnProcessingService: Action {action_id_log} (MOVE) for {char_id_acting} committed.") # Using print for now, replace with logging
+                            elif action_execution_result.get("state_changed", False): # Failed but state_changed was true
+                                await db_service.rollback_transaction()
+                                print(f"TurnProcessingService: Action {action_id_log} (MOVE) for {char_id_acting} rolled back due to failure with state change.")
+                            else: # No state change, or no success and no state change
+                                await db_service.rollback_transaction()
+                                print(f"TurnProcessingService: Action {action_id_log} (MOVE) for {char_id_acting} was read-only or failed without state change; transaction ended (rolled back).")
+
+                    except Exception as e_action_move:
+                        print(f"TurnProcessingService: Exception during MOVE action {action_id_log} for {char_id_acting}: {e_action_move}") # Replace with logging
+                        traceback.print_exc()
+                        if transaction_begun and db_service:
+                            await db_service.rollback_transaction()
+                            print(f"TurnProcessingService: Action {action_id_log} (MOVE) for {char_id_acting} rolled back due to exception.")
+                        action_execution_result = {"success": False, "message": f"An internal error occurred while moving: {e_action_move}", "state_changed": False, "error": True}
+
+                # --- Template for other action handlers ---
+                # elif intent_type == "SOME_OTHER_ACTION":
+                #     transaction_begun = False
+                #     db_service = self.game_manager.db_service
+                #     try:
+                #         if db_service:
+                #             await db_service.begin_transaction()
+                #             transaction_begun = True
+                #
+                #         # *** ACTION HANDLER CALL ***
+                #         # action_execution_result = await self.some_other_handler.process(...)
+                #
+                #         if transaction_begun and db_service:
+                #             if action_execution_result.get("success") and action_execution_result.get("state_changed"):
+                #                 await db_service.commit_transaction()
+                #                 print(f"TPS: Action {action_id_log} ({intent_type}) for {char_id_acting} committed.")
+                #             elif action_execution_result.get("state_changed"):
+                #                 await db_service.rollback_transaction()
+                #                 print(f"TPS: Action {action_id_log} ({intent_type}) for {char_id_acting} rolled back (failure with state change).")
+                #             else:
+                #                 await db_service.rollback_transaction()
+                #                 print(f"TPS: Action {action_id_log} ({intent_type}) for {char_id_acting} transaction ended (read-only/no state change).")
+                #     except Exception as e_action_other:
+                #         print(f"TPS: Exception during {intent_type} action {action_id_log} for {char_id_acting}: {e_action_other}")
+                #         traceback.print_exc()
+                #         if transaction_begun and db_service:
+                #             await db_service.rollback_transaction()
+                #             print(f"TPS: Action {action_id_log} ({intent_type}) for {char_id_acting} rolled back due to exception.")
+                #         action_execution_result = {"success": False, "message": f"Internal error: {e_action_other}", "state_changed": False, "error": True}
+                # --- End Template ---
 
                 elif intent_type == "SKILL_USE":
-                    # Example: {"intent_type": "SKILL_USE", "skill_id": "lockpicking", "entities": [{"type": "target_object", "value": "chest", "id": "chest_001"}]}
-                    # Or: {"intent_type": "SKILL_USE", "entities": [{"type": "skill_name", "value": "persuasion"}, {"type": "target_npc", "id": "npc_guard_002"}]}
-                    skill_id = action_data.get("skill_id")
-                    if not skill_id: # Try to get from entities if not top-level
-                        skill_entity = next((e for e in action_data.get("entities", []) if e.get("type") == "skill_name"), None)
-                        if skill_entity: skill_id = skill_entity.get("value")
+                    transaction_begun = False
+                    db_service = self.game_manager.db_service
+                    try:
+                        if db_service: await db_service.begin_transaction(); transaction_begun = True
+                        skill_id = action_data.get("skill_id")
+                        if not skill_id: skill_entity = next((e for e in action_data.get("entities", []) if e.get("type") == "skill_name"), None); \
+                                         if skill_entity: skill_id = skill_entity.get("value")
+                        target_entity = next((e for e in action_data.get("entities", []) if e.get("type") not in ["skill_name"]), None)
+                        if skill_id:
+                            action_execution_result = await self.character_action_processor.handle_skill_use_action(
+                                character=acting_char, skill_id=skill_id, target_entity=target_entity,
+                                action_params=action_data, guild_id=guild_id)
+                        else: action_execution_result = {"success": False, "message": "Skill unclear.", "state_changed": False}
+                        if transaction_begun and db_service:
+                            if action_execution_result.get("success") and action_execution_result.get("state_changed"): await db_service.commit_transaction(); print(f"TPS: SKILL_USE {action_id_log} committed.")
+                            elif action_execution_result.get("state_changed"): await db_service.rollback_transaction(); print(f"TPS: SKILL_USE {action_id_log} rolled back (fail with state change).")
+                            else: await db_service.rollback_transaction(); print(f"TPS: SKILL_USE {action_id_log} transaction ended.")
+                    except Exception as e_action_skill:
+                        print(f"TPS: Exception SKILL_USE {action_id_log}: {e_action_skill}"); traceback.print_exc()
+                        if transaction_begun and db_service: await db_service.rollback_transaction(); print(f"TPS: SKILL_USE {action_id_log} rolled back by exception.")
+                        action_execution_result = {"success": False, "message": f"Internal error: {e_action_skill}", "state_changed": False, "error": True}
 
-                    target_entity = next((e for e in action_data.get("entities", []) if e.get("type") not in ["skill_name"]), None) # Simplistic target extraction
+                elif intent_type == "PICKUP_ITEM" or intent_type == "PICKUP":
+                    transaction_begun = False
+                    db_service = self.game_manager.db_service
+                    try:
+                        if db_service: await db_service.begin_transaction(); transaction_begun = True
+                        item_entity = next((e for e in action_data.get("entities", []) if e.get("type") in ["item_name", "item_id"]), None)
+                        if item_entity:
+                            action_execution_result = await self.character_action_processor.handle_pickup_item_action(
+                                character=acting_char, item_entity=item_entity, guild_id=guild_id)
+                        else: action_execution_result = {"success": False, "message": "Item unclear for pickup.", "state_changed": False}
+                        if transaction_begun and db_service:
+                            if action_execution_result.get("success") and action_execution_result.get("state_changed"): await db_service.commit_transaction(); print(f"TPS: PICKUP {action_id_log} committed.")
+                            elif action_execution_result.get("state_changed"): await db_service.rollback_transaction(); print(f"TPS: PICKUP {action_id_log} rolled back (fail with state change).")
+                            else: await db_service.rollback_transaction(); print(f"TPS: PICKUP {action_id_log} transaction ended.")
+                    except Exception as e_action_pickup:
+                        print(f"TPS: Exception PICKUP {action_id_log}: {e_action_pickup}"); traceback.print_exc()
+                        if transaction_begun and db_service: await db_service.rollback_transaction(); print(f"TPS: PICKUP {action_id_log} rolled back by exception.")
+                        action_execution_result = {"success": False, "message": f"Internal error: {e_action_pickup}", "state_changed": False, "error": True}
 
-                    if skill_id:
-                        # Conceptual call
-                        action_execution_result = await self.character_action_processor.handle_skill_use_action(
-                            character=acting_char,
-                            skill_id=skill_id,
-                            target_entity=target_entity, # This could be an item, NPC, or None
-                            action_params=action_data, # Pass full action_data for extra params like difficulty, specific tool, etc.
-                            guild_id=guild_id
-                        )
-                    else:
-                        action_execution_result = {"success": False, "message": "You tried to use a skill, but the skill was unclear.", "state_changed": False}
+                elif intent_type == "EXPLORE" or intent_type == "LOOK_AROUND" or intent_type == "SEARCH_AREA" or intent_type == "SEARCH":
+                    transaction_begun = False
+                    db_service = self.game_manager.db_service
+                    try:
+                        if db_service: await db_service.begin_transaction(); transaction_begun = True
+                        action_execution_result = await self.character_action_processor.handle_explore_action(
+                            character=acting_char, guild_id=guild_id, action_params=action_data)
+                        if transaction_begun and db_service: # Explore is usually read-only or changes non-DB state locally first
+                            if action_execution_result.get("success") and action_execution_result.get("state_changed"): await db_service.commit_transaction(); print(f"TPS: EXPLORE {action_id_log} committed.")
+                            else: await db_service.rollback_transaction(); print(f"TPS: EXPLORE {action_id_log} transaction ended (read-only or no state change).")
+                    except Exception as e_action_explore:
+                        print(f"TPS: Exception EXPLORE {action_id_log}: {e_action_explore}"); traceback.print_exc()
+                        if transaction_begun and db_service: await db_service.rollback_transaction(); print(f"TPS: EXPLORE {action_id_log} rolled back by exception.")
+                        action_execution_result = {"success": False, "message": f"Internal error: {e_action_explore}", "state_changed": False, "error": True}
 
-                elif intent_type == "PICKUP_ITEM" or intent_type == "PICKUP": # NLU might use "PICKUP" or "PICKUP_ITEM"
-                    # Example: {"intent_type": "PICKUP_ITEM", "entities": [{"type": "item_name", "value": "sword", "id": "item_sword_003"}]}
-                    item_entity = next((e for e in action_data.get("entities", []) if e.get("type") in ["item_name", "item_id"]), None)
-                    if item_entity:
-                        # Conceptual call
-                        action_execution_result = await self.character_action_processor.handle_pickup_item_action(
-                            character=acting_char,
-                            item_entity=item_entity,
-                            guild_id=guild_id
-                        )
-                    else:
-                        action_execution_result = {"success": False, "message": "You tried to pick something up, but it was unclear what.", "state_changed": False}
+                elif intent_type in ["INTERACT_OBJECT", "USE_SKILL_ON_OBJECT", "MOVE_TO_INTERACTIVE_FEATURE", "USE_ITEM_ON_OBJECT"]:
+                    transaction_begun = False
+                    db_service = self.game_manager.db_service
+                    try:
+                        if db_service: await db_service.begin_transaction(); transaction_begun = True
+                        if not rules_config: action_execution_result = {"success": False, "message": "Game rules not available for interaction.", "state_changed": False}
+                        else:
+                            action_execution_result = await self.location_interaction_service.process_interaction(
+                                guild_id=guild_id, character_id=acting_char.id,
+                                action_data=action_data, rules_config=rules_config)
+                        if transaction_begun and db_service:
+                            if action_execution_result.get("success") and action_execution_result.get("state_changed"): await db_service.commit_transaction(); print(f"TPS: LIS Interaction {action_id_log} committed.")
+                            elif action_execution_result.get("state_changed"): await db_service.rollback_transaction(); print(f"TPS: LIS Interaction {action_id_log} rolled back (fail with state change).")
+                            else: await db_service.rollback_transaction(); print(f"TPS: LIS Interaction {action_id_log} transaction ended.")
+                    except Exception as e_action_lis:
+                        print(f"TPS: Exception LIS Interaction {action_id_log}: {e_action_lis}"); traceback.print_exc()
+                        if transaction_begun and db_service: await db_service.rollback_transaction(); print(f"TPS: LIS Interaction {action_id_log} rolled back by exception.")
+                        action_execution_result = {"success": False, "message": f"Internal error: {e_action_lis}", "state_changed": False, "error": True}
 
-                elif intent_type == "EXPLORE" or intent_type == "LOOK_AROUND":
-                     action_execution_result = await self.character_action_processor.handle_explore_action(
-                        character=acting_char,
-                        guild_id=guild_id,
-                        action_params=action_data # For specific focus, if any
-                     )
+                elif normalized_intent_type == "ATTACK":
+                    transaction_begun = False
+                    db_service = self.game_manager.db_service
+                    try:
+                        if db_service: await db_service.begin_transaction(); transaction_begun = True
+                        # Placeholder: Dispatch to CharacterActionProcessor.handle_attack_action
+                        # action_execution_result = await self.character_action_processor.handle_attack_action(
+                        #     character=acting_char, action_data=action_data, guild_id=guild_id,
+                        #     combat_manager=self.combat_manager, rules_config=rules_config
+                        # )
+                        action_execution_result = {"success": False, "message": f"Attack action placeholder for {acting_char.id}.", "state_changed": False} # Placeholder
+                        if transaction_begun and db_service:
+                            if action_execution_result.get("success") and action_execution_result.get("state_changed"): await db_service.commit_transaction(); print(f"TPS: ATTACK {action_id_log} committed.")
+                            else: await db_service.rollback_transaction(); print(f"TPS: ATTACK {action_id_log} transaction ended/rolled back.")
+                    except Exception as e_action_attack:
+                        print(f"TPS: Exception ATTACK {action_id_log}: {e_action_attack}"); traceback.print_exc()
+                        if transaction_begun and db_service: await db_service.rollback_transaction(); print(f"TPS: ATTACK {action_id_log} rolled back by exception.")
+                        action_execution_result = {"success": False, "message": f"Internal error: {e_action_attack}", "state_changed": False, "error": True}
+
+                elif normalized_intent_type == "TALK":
+                    transaction_begun = False
+                    db_service = self.game_manager.db_service
+                    try:
+                        if db_service: await db_service.begin_transaction(); transaction_begun = True
+                        # Placeholder: Dispatch to CharacterActionProcessor.handle_talk_action
+                        # action_execution_result = await self.character_action_processor.handle_talk_action(
+                        #     character=acting_char, action_data=action_data, guild_id=guild_id,
+                        #     dialogue_manager=self.game_manager.dialogue_manager # Assuming dialogue_manager is on game_manager
+                        # )
+                        action_execution_result = {"success": False, "message": f"Talk action placeholder for {acting_char.id}.", "state_changed": False} # Placeholder
+                        if transaction_begun and db_service:
+                            if action_execution_result.get("success") and action_execution_result.get("state_changed"): await db_service.commit_transaction(); print(f"TPS: TALK {action_id_log} committed.")
+                            else: await db_service.rollback_transaction(); print(f"TPS: TALK {action_id_log} transaction ended/rolled back.")
+                    except Exception as e_action_talk:
+                        print(f"TPS: Exception TALK {action_id_log}: {e_action_talk}"); traceback.print_exc()
+                        if transaction_begun and db_service: await db_service.rollback_transaction(); print(f"TPS: TALK {action_id_log} rolled back by exception.")
+                        action_execution_result = {"success": False, "message": f"Internal error: {e_action_talk}", "state_changed": False, "error": True}
+
+                elif normalized_intent_type == "USE_ITEM": # General item usage not on an object
+                    transaction_begun = False
+                    db_service = self.game_manager.db_service
+                    try:
+                        if db_service: await db_service.begin_transaction(); transaction_begun = True
+                        # This would call ItemManager.use_item, which needs item_template_id and target_entity (optional)
+                        # These should be extracted from action_data.entities by CharacterActionProcessor
+                        # Placeholder: Dispatch to CharacterActionProcessor.handle_nlu_use_item_action
+                        # action_execution_result = await self.character_action_processor.handle_nlu_use_item_action(
+                        #     character=acting_char, action_data=action_data, guild_id=guild_id,
+                        #     item_manager=self.game_manager.item_manager, rules_config=rules_config
+                        # )
+                        action_execution_result = {"success": False, "message": f"Use Item (general) action placeholder for {acting_char.id}.", "state_changed": False} # Placeholder
+                        if transaction_begun and db_service:
+                            if action_execution_result.get("success") and action_execution_result.get("state_changed"): await db_service.commit_transaction(); print(f"TPS: USE_ITEM {action_id_log} committed.")
+                            else: await db_service.rollback_transaction(); print(f"TPS: USE_ITEM {action_id_log} transaction ended/rolled back.")
+                    except Exception as e_action_use_item:
+                        print(f"TPS: Exception USE_ITEM {action_id_log}: {e_action_use_item}"); traceback.print_exc()
+                        if transaction_begun and db_service: await db_service.rollback_transaction(); print(f"TPS: USE_ITEM {action_id_log} rolled back by exception.")
+                        action_execution_result = {"success": False, "message": f"Internal error: {e_action_use_item}", "state_changed": False, "error": True}
 
                 else:
-                    # Fallback for other intent types not yet specifically dispatched
+                    # Fallback for other intent types not yet specifically dispatched - NO TRANSACTION
                     await self.game_log_manager.log_event(
                         guild_id=guild_id,
                         event_type="action_dispatch_unhandled",

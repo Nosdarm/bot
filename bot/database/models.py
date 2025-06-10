@@ -407,3 +407,13 @@ class MobileGroup(Base):
     __tablename__ = 'mobile_groups'
     id = Column(String, primary_key=True)
     placeholder = Column(Text, nullable=True)
+
+class PendingConflict(Base):
+    __tablename__ = 'pending_conflicts'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, nullable=False, index=True)
+    conflict_data_json = Column(JSON, nullable=False) # Stores details of the conflict, involved actions, players
+    status = Column(String, nullable=False, default='pending_gm_resolution', index=True) # e.g., 'pending_gm_resolution', 'resolved'
+    resolution_data_json = Column(JSON, nullable=True) # Stores how the GM resolved it, what outcome
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    resolved_at = Column(TIMESTAMP(timezone=True), nullable=True)
