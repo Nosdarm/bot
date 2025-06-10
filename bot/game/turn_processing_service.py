@@ -418,8 +418,10 @@ class TurnProcessingService:
                     try:
                         if db_service: await db_service.begin_transaction(); transaction_begun = True
                         skill_id = action_data.get("skill_id")
-                        if not skill_id: skill_entity = next((e for e in action_data.get("entities", []) if e.get("type") == "skill_name"), None); \
-                                         if skill_entity: skill_id = skill_entity.get("value")
+                        if not skill_id:
+                            skill_entity = next((e for e in action_data.get("entities", []) if e.get("type") == "skill_name"), None)
+                            if skill_entity:
+                                skill_id = skill_entity.get("value")
                         target_entity = next((e for e in action_data.get("entities", []) if e.get("type") not in ["skill_name"]), None)
                         if skill_id:
                             action_execution_result = await self.character_action_processor.handle_skill_use_action(
