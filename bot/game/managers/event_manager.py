@@ -840,9 +840,9 @@ class EventManager:
         try:
             # Execute SQL SELECT FROM events WHERE guild_id = ? AND is_active = 1
             sql = '''
-            SELECT id, template_id, name, is_active, channel_id,
+            SELECT id, template_id, name_i18n, is_active, channel_id,
                    current_stage_id, players, state_variables,
-                   stages_data, end_message_template, guild_id
+                   stages_data, end_message_template_i18n, guild_id
             FROM events WHERE guild_id = $1 AND is_active = TRUE
             ''' # Changed placeholder and is_active condition
             rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed to db_service
@@ -904,10 +904,51 @@ class EventManager:
                  data['is_active'] = bool(data.get('is_active', 0)) if data.get('is_active') is not None else True # Default True if None/missing
                  data['channel_id'] = int(data.get('channel_id')) if data.get('channel_id') is not None else None # Store channel_id as int or None
                  data['template_id'] = str(data.get('template_id')) if data.get('template_id') is not None else None
-                 data['name'] = str(data.get('name')) if data.get('name') is not None else 'Событие' # Ensure string name
-                 data['current_stage_id'] = str(data.get('current_stage_id')) if data.get('current_stage_id') is not None else 'start' # Ensure string stage ID
-                 data['end_message_template'] = str(data.get('end_message_template')) if data.get('end_message_template') is not None else 'Событие завершилось.' # Ensure string template
 
+                 # --- NAME_I18N HANDLING START ---
+                 name_i18n_json = data.get('name_i18n')
+                 name_i18n_dict = {}
+                 if isinstance(name_i18n_json, str):
+                     try:
+                         name_i18n_dict = json.loads(name_i18n_json or '{}')
+                     except json.JSONDecodeError:
+                         print(f"EventManager: Warning: Failed to parse name_i18n for event {event_id}. Data: {name_i18n_json}")
+                 elif isinstance(name_i18n_json, dict):
+                     name_i18n_dict = name_i18n_json
+
+                 data['name_i18n'] = name_i18n_dict
+
+                 default_lang_for_name = 'en'
+                 plain_name = name_i18n_dict.get(default_lang_for_name)
+                 if not plain_name and name_i18n_dict:
+                     plain_name = next(iter(name_i18n_dict.values()), None)
+                 if not plain_name:
+                     plain_name = f"Event {event_id[:8]}"
+                 data['name'] = str(plain_name)
+                 # --- NAME_I18N HANDLING END ---
+
+                 data['current_stage_id'] = str(data.get('current_stage_id')) if data.get('current_stage_id') is not None else 'start' # Ensure string stage ID
+
+                 # --- END_MESSAGE_TEMPLATE_I18N HANDLING START ---
+                 end_message_i18n_json = data.get('end_message_template_i18n')
+                 end_message_i18n_dict = {}
+                 if isinstance(end_message_i18n_json, str):
+                     try:
+                         end_message_i18n_dict = json.loads(end_message_i18n_json or '{}')
+                     except json.JSONDecodeError:
+                         print(f"EventManager: Warning: Failed to parse end_message_template_i18n for event {event_id}. Data: {end_message_i18n_json}")
+                 elif isinstance(end_message_i18n_json, dict):
+                     end_message_i18n_dict = end_message_i18n_json
+
+                 data['end_message_template_i18n'] = end_message_i18n_dict
+
+                 plain_end_message = end_message_i18n_dict.get(default_lang_for_name) # Using same default_lang
+                 if not plain_end_message and end_message_i18n_dict:
+                     plain_end_message = next(iter(end_message_i18n_dict.values()), None)
+                 if not plain_end_message:
+                     plain_end_message = "Событие завершилось." # Default fallback
+                 data['end_message_template'] = str(plain_end_message)
+                 # --- END_MESSAGE_TEMPLATE_I18N HANDLING END ---
 
                  # Update data dict with validated/converted values
                  data['id'] = event_id
@@ -1015,20 +1056,20 @@ class EventManager:
                  # Use correct column names based on schema (added guild_id)
                  upsert_sql = '''
                  INSERT INTO events
-                 (id, template_id, name, is_active, channel_id,
+                 (id, template_id, name_i18n, is_active, channel_id,
                   current_stage_id, players, state_variables,
-                  stages_data, end_message_template, guild_id)
+                  stages_data, end_message_template_i18n, guild_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                  ON CONFLICT (id) DO UPDATE SET
                     template_id = EXCLUDED.template_id,
-                    name = EXCLUDED.name,
+                    name_i18n = EXCLUDED.name_i18n,
                     is_active = EXCLUDED.is_active,
                     channel_id = EXCLUDED.channel_id,
                     current_stage_id = EXCLUDED.current_stage_id,
                     players = EXCLUDED.players,
                     state_variables = EXCLUDED.state_variables,
                     stages_data = EXCLUDED.stages_data,
-                    end_message_template = EXCLUDED.end_message_template,
+                    end_message_template_i18n = EXCLUDED.end_message_template_i18n,
                     guild_id = EXCLUDED.guild_id
                  ''' # PostgreSQL UPSERT
                  data_to_upsert = []
@@ -1043,20 +1084,20 @@ class EventManager:
                  # Use correct column names based on schema (added guild_id)
                  upsert_sql = '''
                  INSERT INTO events
-                 (id, template_id, name, is_active, channel_id,
+                 (id, template_id, name_i18n, is_active, channel_id,
                   current_stage_id, players, state_variables,
-                  stages_data, end_message_template, guild_id)
+                  stages_data, end_message_template_i18n, guild_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                  ON CONFLICT (id) DO UPDATE SET
                     template_id = EXCLUDED.template_id,
-                    name = EXCLUDED.name,
+                    name_i18n = EXCLUDED.name_i18n,
                     is_active = EXCLUDED.is_active,
                     channel_id = EXCLUDED.channel_id,
                     current_stage_id = EXCLUDED.current_stage_id,
                     players = EXCLUDED.players,
                     state_variables = EXCLUDED.state_variables,
                     stages_data = EXCLUDED.stages_data,
-                    end_message_template = EXCLUDED.end_message_template,
+                    end_message_template_i18n = EXCLUDED.end_message_template_i18n,
                     guild_id = EXCLUDED.guild_id
                  ''' # PostgreSQL UPSERT
                  data_to_upsert = []
@@ -1074,42 +1115,45 @@ class EventManager:
                                continue
 
                            template_id = getattr(ev, 'template_id', None)
-                           name = getattr(ev, 'name', 'Событие')
+                           name_i18n = getattr(ev, 'name_i18n', {}) # Expect dict
                            is_active = getattr(ev, 'is_active', True)
                            channel_id = getattr(ev, 'channel_id', None)
                            current_stage_id = getattr(ev, 'current_stage_id', 'start')
                            players = getattr(ev, 'players', [])
                            state_variables = getattr(ev, 'state_variables', {})
                            stages_data = getattr(ev, 'stages_data', {})
-                           end_message_template = getattr(ev, 'end_message_template', 'Событие завершилось.')
+                           end_message_template_i18n = getattr(ev, 'end_message_template_i18n', {}) # Expect dict
 
                            # Ensure data types are suitable for JSON dumping / DB columns
+                           if not isinstance(name_i18n, dict): name_i18n = {}
                            if not isinstance(players, list): players = []
                            if not isinstance(state_variables, dict): state_variables = {}
                            if not isinstance(stages_data, dict): stages_data = {}
+                           if not isinstance(end_message_template_i18n, dict): end_message_template_i18n = {}
 
+                           name_i18n_json = json.dumps(name_i18n)
                            players_json = json.dumps(players)
                            state_variables_json = json.dumps(state_variables)
                            stages_data_json = json.dumps(stages_data)
-
+                           end_message_template_i18n_json = json.dumps(end_message_template_i18n)
 
                            data_to_upsert.append((
                                str(event_id),
                                str(template_id) if template_id is not None else None, # Ensure str or None
-                               str(name),
+                               name_i18n_json, # Pass JSON string
                                is_active, # Pass boolean directly
                                int(channel_id) if channel_id is not None else None, # Ensure int or None
                                str(current_stage_id), # Ensure string
                                players_json,
                                state_variables_json,
                                stages_data_json,
-                               str(end_message_template), # Ensure string
+                               end_message_template_i18n_json, # Pass JSON string
                                guild_id_str, # Ensure guild_id string
                            ))
                            upserted_event_ids.add(str(event_id)) # Track ID
 
                       except Exception as e:
-                           print(f"EventManager: Error preparing data for event {getattr(ev, 'id', 'N/A')} ('{getattr(ev, 'name', 'N/A')}', guild {getattr(ev, 'guild_id', 'N/A')}) for upsert: {e}")
+                           print(f"EventManager: Error preparing data for event {getattr(ev, 'id', 'N/A')} ('{getattr(ev, 'name_i18n', {}).get('en', 'N/A')}', guild {getattr(ev, 'guild_id', 'N/A')}) for upsert: {e}")
                            import traceback
                            print(traceback.format_exc())
                            # This event won't be saved but remains in _dirty_events
@@ -1279,78 +1323,74 @@ class EventManager:
             event_data = event.to_dict()
 
             # Prepare data for DB columns based on 'events' table schema used in save_state
-            # id, template_id, name, is_active, channel_id, current_stage_id,
-            # players, state_variables, stages_data, end_message_template, guild_id
+            # id, template_id, name_i18n, is_active, channel_id, current_stage_id,
+            # players, state_variables, stages_data, end_message_template_i18n, guild_id
 
             db_id = event_data.get('id')
             db_template_id = event_data.get('template_id')
+            db_name_i18n = event_data.get('name_i18n', {"en": "Unnamed Event"}) # Expect dict
+            if not isinstance(db_name_i18n, dict): db_name_i18n = {}
 
-            # name column stores name_i18n as JSON
-            db_name_i18n = event_data.get('name_i18n', {"en": "Unnamed Event"})
 
-            db_is_active = getattr(event, 'is_active', True) # Event model doesn't list it, EventManager uses it
+            db_is_active = getattr(event, 'is_active', True)
             db_channel_id = event_data.get('channel_id')
             db_current_stage_id = event_data.get('current_stage_id', 'start')
 
-            # 'players' in DB is a list of player IDs. Event model has 'involved_entities'.
             involved_entities = event_data.get('involved_entities', {})
             db_players_list = involved_entities.get('players', [])
-            if not isinstance(db_players_list, list):
-                db_players_list = []
+            if not isinstance(db_players_list, list): db_players_list = []
 
             db_stages_data = event_data.get('stages_data', {})
-            db_end_message_template = getattr(event, 'end_message_template', 'Событие завершилось.')
+            db_end_message_template_i18n = event_data.get('end_message_template_i18n', {}) # Expect dict
+            if not isinstance(db_end_message_template_i18n, dict): db_end_message_template_i18n = {}
+
 
             # Collect remaining fields from event_data into state_variables, merging with explicit state_variables
             managed_fields = {
                 'id', '_id', 'template_id', 'name_i18n', 'is_active', 'channel_id',
-                'current_stage_id', 'players', 'stages_data', 'end_message_template',
-                'guild_id', 'involved_entities', 'name' # legacy name
+                'current_stage_id', 'players', 'stages_data', 'end_message_template_i18n',
+                'guild_id', 'involved_entities', 'name', 'end_message_template' # legacy fields
             }
-            # Start with explicit state_variables from the event object if any
             current_state_vars = event_data.get('state_variables', {})
             if not isinstance(current_state_vars, dict): current_state_vars = {}
 
             additional_state_data = {
                 k: v for k, v in event_data.items() if k not in managed_fields and k != 'state_variables'
             }
-            # Merge additional data into current_state_vars. additional_state_data takes precedence.
             final_state_vars = {**current_state_vars, **additional_state_data}
-            # Location ID from event.to_dict() will go into state_variables if not directly mapped
             if 'location_id' in event_data and 'location_id' not in managed_fields:
                 final_state_vars['location_id'] = event_data['location_id']
-
 
             db_params = (
                 db_id,
                 db_template_id,
                 json.dumps(db_name_i18n),
-                db_is_active, # Pass boolean directly
+                db_is_active,
                 db_channel_id,
                 db_current_stage_id,
                 json.dumps(db_players_list),
                 json.dumps(final_state_vars),
                 json.dumps(db_stages_data),
-                db_end_message_template,
+                json.dumps(db_end_message_template_i18n),
                 guild_id_str
             )
 
             upsert_sql = '''
             INSERT INTO events (
-                id, template_id, name, is_active, channel_id,
+                id, template_id, name_i18n, is_active, channel_id,
                 current_stage_id, players, state_variables, stages_data,
-                end_message_template, guild_id
+                end_message_template_i18n, guild_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (id) DO UPDATE SET
                 template_id = EXCLUDED.template_id,
-                name = EXCLUDED.name,
+                name_i18n = EXCLUDED.name_i18n,
                 is_active = EXCLUDED.is_active,
                 channel_id = EXCLUDED.channel_id,
                 current_stage_id = EXCLUDED.current_stage_id,
                 players = EXCLUDED.players,
                 state_variables = EXCLUDED.state_variables,
                 stages_data = EXCLUDED.stages_data,
-                end_message_template = EXCLUDED.end_message_template,
+                end_message_template_i18n = EXCLUDED.end_message_template_i18n,
                 guild_id = EXCLUDED.guild_id
             ''' # PostgreSQL UPSERT
             # 11 columns, 11 placeholders.
