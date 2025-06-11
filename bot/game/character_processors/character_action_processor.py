@@ -298,37 +298,52 @@ class CharacterActionProcessor:
                 logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing OpenAIService): {specific_error_result}")
                 return specific_error_result
 
+            # Determine lang_code first as it might be needed in both target and non-target branches
+            lang_code = getattr(character, 'selected_language', None)
+            if not lang_code or not isinstance(lang_code, str):
+                logging.warning(f"CharacterActionProcessor.handle_explore_action: Character {character.id} has no valid 'selected_language'. Defaulting to 'ru'.")
+                lang_code = 'ru'
+            else:
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Using character's selected language: {lang_code}")
+
             target_name = action_params.get('target')
             logging.debug(f"CharacterActionProcessor.handle_explore_action: Checking for target. Target from action_params: '{target_name}'")
 
             if target_name:
                 logging.info(f"CharacterActionProcessor.handle_explore_action: Processing 'look at target': {target_name} for character {character.id}.")
 
-                # Placeholder for future logic to find and describe the target:
-                # - Check items in location_template_data or (ideally) location_instance.state.get('inventory', [])
-                # - Check NPCs in location_template_data or (ideally) location_instance.state.get('npcs', []) or via NpcManager
-                # - Check interactive features/elements described in location_template_data
+                exits_dict = location_template_data.get('exits', {})
+                found_exit_id = None
+                found_exit_target = None
+                for exit_id, exit_target_id in exits_dict.items():
+                    if exit_id.lower() == target_name.lower():
+                        found_exit_id = exit_id
+                        found_exit_target = exit_target_id
+                        break
 
-                # For now, return a stubbed success message.
-                stub_target_message = f"Вы внимательно смотрите на '{target_name}'. Детальное описание этой цели еще не реализовано."
-                logging.debug(f"CharacterActionProcessor.handle_explore_action: Target specified, returning stub description for '{target_name}'.")
-                return {
-                    'success': True,
-                    'message': stub_target_message,
-                    'data': {} # No specific data like exits for a targeted look yet
-                }
+                if found_exit_id:
+                    # TODO: Optionally, try to get a localized name for found_exit_target if LocationManager allows fetching template names by ID.
+                    # For now, use its ID.
+                    target_message = f"Вы смотрите на выход '{found_exit_id}'. Он ведет к локации с ID '{found_exit_target}'."
+                    logging.info(f"CharacterActionProcessor.handle_explore_action: Target '{target_name}' identified as an exit leading to '{found_exit_target}'.")
+                    return {
+                        'success': True,
+                        'message': target_message,
+                        'data': {}
+                    }
+                else:
+                    # Placeholder for checking other static features if the template structure is extended in the future.
+                    # For now, if it's not an exit, it's not a recognized static target.
+                    logging.info(f"CharacterActionProcessor.handle_explore_action: Target '{target_name}' not found as an exit or other known static feature.")
+                    return {
+                        'success': False,
+                        'message': f"Объект '{target_name}' не найден среди известных статических элементов или выходов этой локации.",
+                        'data': {}
+                    }
             else:
                 logging.debug(f"CharacterActionProcessor.handle_explore_action: No target specified. Proceeding with general location description.")
                 # Existing logic for "look around" (getting location name, description, exits, and returning success) follows here.
                 # Basic description generation from location_template_data (dictionary)
-                lang_code = getattr(character, 'selected_language', None)
-                if not lang_code or not isinstance(lang_code, str):
-                    logging.warning(f"CharacterActionProcessor.handle_explore_action: Character {character.id} has no valid 'selected_language'. Defaulting to 'ru'.")
-                    lang_code = 'ru'
-                else:
-                    logging.debug(f"CharacterActionProcessor.handle_explore_action: Using character's selected language: {lang_code}")
-                # logging.debug(f"CharacterActionProcessor.handle_explore_action: Using language code: {lang_code} for i18n lookups.") # This is now covered by the else case above
-
                 location_name = location_template_data.get('name_i18n', {}).get(lang_code, location_template_data.get('name_i18n', {}).get('en', "Неизвестное место"))
                 logging.debug(f"CharacterActionProcessor.handle_explore_action: Fetched location_name: '{location_name}'")
 
