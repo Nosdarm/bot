@@ -1,6 +1,6 @@
 # bot/ai/prompt_context_collector.py
 import json
-from typing import TYPE_CHECKING, Dict, Any, List, Optional
+from typing import TYPE_CHECKING, Dict, Any, List, Optional, Union
 from bot.ai.ai_data_models import GameTerm, ScalingParameter, GenerationContext
 
 if TYPE_CHECKING:
