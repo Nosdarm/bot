@@ -1436,7 +1436,7 @@ class NpcManager:
         try:
             # Updated query for new generated_npcs schema
             sql_generated_npcs = '''
-            SELECT id, placeholder
+            SELECT id, name_i18n, description_i18n, backstory_i18n, persona_i18n, effective_stats_json
             FROM generated_npcs
             ''' # Removed WHERE guild_id = $1 as column is gone
             rows_generated = await self._db_service.adapter.fetchall(sql_generated_npcs) # No params needed now
@@ -1478,55 +1478,46 @@ class NpcManager:
                 model_data_gen['id'] = npc_id_gen
                 # model_data_gen['guild_id'] = guild_id_str # Cannot set guild_id from this table anymore
 
-                # All other i18n and JSON fields are gone from generated_npcs.
-                # We only have 'id' and 'placeholder'.
-                # The NPC object will be very minimal.
-                placeholder_text = data_gen_db.get('placeholder', f"Generated NPC {npc_id_gen}")
-                model_data_gen['name'] = placeholder_text # Use placeholder as name
-                model_data_gen['name_i18n'] = {"en": placeholder_text, "ru": placeholder_text}
+                # --- I18N and JSON Field Processing ---
+                name_i18n_json = data_gen_db.get('name_i18n')
+                model_data_gen['name_i18n'] = json.loads(name_i18n_json or '{}') if isinstance(name_i18n_json, str) else (name_i18n_json if isinstance(name_i18n_json, dict) else {})
+
+                description_i18n_json = data_gen_db.get('description_i18n')
+                model_data_gen['description_i18n'] = json.loads(description_i18n_json or '{}') if isinstance(description_i18n_json, str) else (description_i18n_json if isinstance(description_i18n_json, dict) else {})
+
+                backstory_i18n_json = data_gen_db.get('backstory_i18n')
+                model_data_gen['backstory_i18n'] = json.loads(backstory_i18n_json or '{}') if isinstance(backstory_i18n_json, str) else (backstory_i18n_json if isinstance(backstory_i18n_json, dict) else {})
+
+                persona_i18n_json = data_gen_db.get('persona_i18n')
+                model_data_gen['persona_i18n'] = json.loads(persona_i18n_json or '{}') if isinstance(persona_i18n_json, str) else (persona_i18n_json if isinstance(persona_i18n_json, dict) else {})
+
+                effective_stats_json_str = data_gen_db.get('effective_stats_json')
+                model_data_gen['stats'] = json.loads(effective_stats_json_str or '{}') if isinstance(effective_stats_json_str, str) else (effective_stats_json_str if isinstance(effective_stats_json_str, dict) else {})
+
+                # Derive plain 'name'
+                plain_name = model_data_gen['name_i18n'].get(selected_lang, # selected_lang from outer scope
+                                                            next(iter(model_data_gen['name_i18n'].values()), None))
+                model_data_gen['name'] = plain_name or f"NPC {npc_id_gen[:8]}"
 
                 # Fill with defaults for other required NPC fields
-                model_data_gen['stats'] = {"max_health": 10, "strength": 5} # Minimal stats
-                model_data_gen['inventory'] = []
-                model_data_gen['archetype'] = "generated_placeholder"
-                model_data_gen['description_i18n'] = {"en": placeholder_text}
-                model_data_gen['persona_i18n'] = {}
-                model_data_gen['backstory_i18n'] = {}
-                model_data_gen['traits'] = []
-                model_data_gen['desires'] = []
-                model_data_gen['motives'] = []
-                model_data_gen['health'] = float(model_data_gen['stats'].get('max_health', 10.0))
-                model_data_gen['max_health'] = float(model_data_gen['stats'].get('max_health', 10.0))
-                model_data_gen['is_alive'] = model_data_gen['health'] > 0
-                model_data_gen['status_effects'] = []
-                model_data_gen['action_queue'] = []
-                model_data_gen['state_variables'] = {}
-                model_data_gen['is_temporary'] = True # Generated NPCs might be temporary
-                model_data_gen['template_id'] = "generated_placeholder_template"
-                # Ensure guild_id is set for the NPC object, even if not from this table.
-                # This is problematic if generated NPCs are meant to be global.
-                # For now, assign to the current guild to satisfy NPC model if it requires guild_id.
-                model_data_gen['guild_id'] = guild_id_str
-
-
-                # Fill in other NPC model fields with defaults if not provided by generated_npcs schema
-                model_data_gen.setdefault('description_i18n', model_data_gen.get('personality_i18n', {})) # Use personality if description is missing
-                model_data_gen.setdefault('persona_i18n', model_data_gen.get('personality_i18n', {}))
+                model_data_gen.setdefault('inventory', [])
+                model_data_gen.setdefault('archetype', "generated_default")
                 model_data_gen.setdefault('traits', [])
                 model_data_gen.setdefault('desires', [])
-                model_data_gen.setdefault('motives', []) # Motives from motivation_i18n if needed
-                model_data_gen.setdefault('health', float(model_data_gen['stats'].get('max_health', 50.0)))
-                model_data_gen.setdefault('max_health', float(model_data_gen['stats'].get('max_health', 50.0)))
+                model_data_gen.setdefault('motives', [])
+                model_data_gen.setdefault('health', float(model_data_gen['stats'].get('max_health', 10.0)))
+                model_data_gen.setdefault('max_health', float(model_data_gen['stats'].get('max_health', 10.0)))
                 model_data_gen.setdefault('is_alive', model_data_gen['health'] > 0)
                 model_data_gen.setdefault('status_effects', [])
                 model_data_gen.setdefault('action_queue', [])
                 model_data_gen.setdefault('state_variables', {})
-                model_data_gen.setdefault('faction_affiliations', model_data_gen.get('faction_affiliations_data',[]))
-                model_data_gen.setdefault('relationships', model_data_gen.get('relationships_data',{}))
+                model_data_gen.setdefault('is_temporary', True)
+                model_data_gen.setdefault('template_id', "generated_template")
+                model_data_gen['guild_id'] = guild_id_str # Assign current guild_id context
 
 
                 npc_gen = NPC.from_dict(model_data_gen)
-                setattr(npc_gen, 'is_ai_generated', True) # Mark as generated
+                setattr(npc_gen, 'is_ai_generated', True)
 
                 guild_npcs_cache[npc_gen.id] = npc_gen
                 if getattr(npc_gen, 'current_action', None) is not None or getattr(npc_gen, 'action_queue', []):
@@ -1754,18 +1745,24 @@ class NpcManager:
                 target_table = 'npcs'
 
             if target_table == 'generated_npcs':
-                # generated_npcs table now only has id and placeholder
                 db_params = (
-                    str(npc_id), # id
-                    # Use English name as placeholder, or a default if not available
-                    npc_data.get('name_i18n', {}).get('en', f"Generated NPC {str(npc_id)[:8]}")
+                    str(npc_id),
+                    json.dumps(npc_data.get('name_i18n', {})),
+                    json.dumps(npc_data.get('description_i18n', {})),
+                    json.dumps(npc_data.get('backstory_i18n', {})),
+                    json.dumps(npc_data.get('persona_i18n', {})),
+                    json.dumps(npc_data.get('stats', {})) # Assuming effective_stats_json comes from npc.stats
                 )
                 upsert_sql = """
-                INSERT INTO generated_npcs (id, placeholder)
-                VALUES ($1, $2)
+                INSERT INTO generated_npcs (id, name_i18n, description_i18n, backstory_i18n, persona_i18n, effective_stats_json)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 ON CONFLICT (id) DO UPDATE SET
-                    placeholder = EXCLUDED.placeholder
-                """ # PostgreSQL UPSERT for generated_npcs (simplified)
+                    name_i18n = EXCLUDED.name_i18n,
+                    description_i18n = EXCLUDED.description_i18n,
+                    backstory_i18n = EXCLUDED.backstory_i18n,
+                    persona_i18n = EXCLUDED.persona_i18n,
+                    effective_stats_json = EXCLUDED.effective_stats_json
+                """
             else: # target_table is 'npcs'
                 db_params = (
                     str(npc_id), # id

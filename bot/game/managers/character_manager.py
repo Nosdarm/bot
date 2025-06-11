@@ -433,10 +433,10 @@ class CharacterManager:
 
 
         # Преобразуем в JSON для сохранения в DB
-        # Note: The 'name' column in DB will store name_i18n JSON.
+        # Note: The 'name_i18n' column in DB will store name_i18n JSON.
         sql = """
         INSERT INTO players (
-            id, discord_id, name, guild_id, current_location_id, stats, inventory,
+            id, discord_id, name_i18n, guild_id, current_location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
             hp, max_health, is_alive, status_effects, level, xp, unspent_xp,
             selected_language, collected_actions_json,
@@ -449,7 +449,7 @@ class CharacterManager:
         db_params = (
             data['id'],
             str(data['discord_id']), # Changed from discord_user_id
-            json.dumps(data['name_i18n']), # Store name_i18n dict as JSON in 'name' column
+            json.dumps(data['name_i18n']), # Store name_i18n dict as JSON in 'name_i18n' column
             data['guild_id'], # <-- Параметр guild_id_str
             data['current_location_id'],
             json.dumps(data['stats']),
@@ -577,7 +577,7 @@ class CharacterManager:
              # PostgreSQL UPSERT syntax
              upsert_sql = '''
              INSERT INTO players (
-                id, discord_id, name, guild_id, current_location_id,
+                id, discord_id, name_i18n, guild_id, current_location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, xp, unspent_xp, active_quests, known_spells,
@@ -586,7 +586,7 @@ class CharacterManager:
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
              ON CONFLICT (id) DO UPDATE SET
                 discord_id = EXCLUDED.discord_id,
-                name = EXCLUDED.name,
+                name_i18n = EXCLUDED.name_i18n,
                 guild_id = EXCLUDED.guild_id,
                 current_location_id = EXCLUDED.current_location_id,
                 stats = EXCLUDED.stats,
@@ -786,9 +786,9 @@ class CharacterManager:
         try:
             # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
             # Ensure all new columns are selected.
-            # 'name' column stores name_i18n. Other new columns: skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
+            # 'name_i18n' column stores name_i18n. Other new columns: skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
             sql = '''
-            SELECT id, discord_id, name, guild_id, current_location_id, stats, inventory,
+            SELECT id, discord_id, name_i18n, guild_id, current_location_id, stats, inventory,
                    current_action, action_queue, party_id, state_variables, hp, max_health,
                    is_alive, status_effects, race, mp, attack, defense, level, xp AS experience, unspent_xp,
                    collected_actions_json, selected_language, current_game_status, current_party_id,
@@ -849,12 +849,27 @@ class CharacterManager:
                           print(f"CharacterManager: Warning: Invalid discord_user_id format for character {char_id} in guild {guild_id_str}: {discord_user_id_raw}. Skipping mapping.")
 
                 # --- Load and Parse JSON fields ---
-                # Original name column now stores name_i18n
-                data['name_i18n'] = json.loads(data.get('name') or '{}') if isinstance(data.get('name'), (str, bytes)) else {}
-                # The plain 'name' field in data for Character.from_dict can be derived or set to a default lang from name_i18n
-                default_lang_for_name = data.get('selected_language', 'en')
-                data['name'] = data['name_i18n'].get(default_lang_for_name, list(data['name_i18n'].values())[0] if data['name_i18n'] else char_id)
+                # --- NAME_I18N HANDLING START ---
+                name_i18n_json = data.get('name_i18n') # This is the new column from SQL
+                name_i18n_dict = {}
+                if isinstance(name_i18n_json, str):
+                    try:
+                        name_i18n_dict = json.loads(name_i18n_json or '{}')
+                    except json.JSONDecodeError:
+                        print(f"CharacterManager: Warning: Failed to parse name_i18n for character {char_id}. Data: {name_i18n_json}")
+                elif isinstance(name_i18n_json, dict): # If it's already a dict (e.g. from testing mocks)
+                    name_i18n_dict = name_i18n_json
 
+                data['name_i18n'] = name_i18n_dict # Store the parsed dict for Character.from_dict
+
+                default_lang_for_name = data.get('selected_language', 'en') # Use character's selected lang or 'en'
+                plain_name = name_i18n_dict.get(default_lang_for_name)
+                if not plain_name and name_i18n_dict: # Fallback to first available language
+                    plain_name = next(iter(name_i18n_dict.values()), None)
+                if not plain_name: # Ultimate fallback
+                    plain_name = f"Player {char_id[:8]}"
+                data['name'] = str(plain_name)
+                # --- NAME_I18N HANDLING END ---
 
                 data['stats'] = json.loads(data.get('stats') or '{}') if isinstance(data.get('stats'), (str, bytes)) else {}
                 data['inventory'] = json.loads(data.get('inventory') or '[]') if isinstance(data.get('inventory'), (str, bytes)) else []
@@ -1814,7 +1829,7 @@ class CharacterManager:
             # Column names must match the 'players' table schema.
             upsert_sql = '''
             INSERT INTO players (
-                id, discord_id, name, guild_id, current_location_id,
+                id, discord_id, name_i18n, guild_id, current_location_id,
                 stats, inventory, current_action, action_queue, party_id,
                 state_variables, hp, max_health, is_alive, status_effects,
                 level, xp, unspent_xp, active_quests, known_spells,
@@ -1823,7 +1838,7 @@ class CharacterManager:
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
             ON CONFLICT (id) DO UPDATE SET
                 discord_id = EXCLUDED.discord_id,
-                name = EXCLUDED.name,
+                name_i18n = EXCLUDED.name_i18n,
                 guild_id = EXCLUDED.guild_id,
                 current_location_id = EXCLUDED.current_location_id, # Update current_location_id
                 stats = EXCLUDED.stats,
