@@ -85,7 +85,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
                         # 'send_to_command_channel': interaction.followup.send # For ephemeral button responses
                     }
 
-                    move_result = await cap.process_action(
+                    move_result = await cap.process_tick(
                         character_id=char_id, # Use the character ID passed to the callback
                         action_type="move",
                         action_data=move_action_data,
