@@ -3,6 +3,7 @@ from discord import Interaction, app_commands
 from discord.ext import commands
 from typing import Optional, TYPE_CHECKING, List, Dict, Any
 import functools # For partial
+import logging
 from discord.ui import View, Button # Corrected import
 from discord import ButtonStyle # Corrected import
 
@@ -40,8 +41,9 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
-        else: print(f"ExplorationCog.cmd_look: Fetched player_char (ID: {player_char.id}), location_id: {player_char.location_id}, type: {type(player_char.location_id)}")
+        else: logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Fetched player_char (ID: {player_char.id}), location_id: {player_char.location_id}")
 
+        logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Before handle_explore_action. Target: {target}, Action Data: {action_data}")
         # The action_data dictionary ({'target': target} or {}) is suitable for action_params
         result = await char_action_proc.handle_explore_action(
             character=player_char,
@@ -49,14 +51,18 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             action_params=action_data, # action_data already contains {'target': target} or is empty
             context_channel_id=interaction.channel_id
         )
+        logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - After handle_explore_action. Result: {result}")
 
+        logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Checking result success. Result valid: {bool(result)}, Success flag: {result.get('success') if result else 'N/A'}")
         # Send the message from the result
         if result and result.get("success"):
             message_content = result.get("message", "You look around.")
             exits_data = result.get("data", {}).get("exits", [])
+            logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Result success. Message: {message_content}, Exits data: {exits_data}")
 
             view = None
             if exits_data:
+                logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Exits data found, creating View. Exits: {exits_data}")
                 view = View(timeout=300.0) # Increased timeout
 
                 async def button_callback(interaction: discord.Interaction, target_loc_id: str, char_id: str, gm: "GameManager", cap: "CharacterActionProcessor"):
@@ -177,11 +183,14 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
                     view.add_item(button)
 
             if view is not None and isinstance(view, discord.ui.View) and view.children:
+                logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Sending success message. View attached: {bool(view and view.children)}")
                 await interaction.followup.send(message_content, view=view, ephemeral=False)
             else:
+                logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Sending success message. View attached: {bool(view and view.children)}") # view will be None or have no children
                 await interaction.followup.send(message_content, ephemeral=False)
         else:
             error_message = result.get("message", "You can't seem to see anything clearly right now.") if result else "An unexpected error occurred while looking around."
+            logging.error(f"ExplorationCog.cmd_look: Error condition - User: {interaction.user.id}, Guild: {interaction.guild_id}, Channel: {interaction.channel_id}. Error message: '{error_message}'. Result from handle_explore_action: {result}", exc_info=True)
             await interaction.followup.send(error_message, ephemeral=True)
 
     @app_commands.command(name="move", description="Переместиться в другую локацию.")
