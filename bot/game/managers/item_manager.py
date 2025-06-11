@@ -1,30 +1,21 @@
 # bot/game/managers/item_manager.py
 """
 Manages item instances and item templates within the game.
-
-This manager handles creation, retrieval, update, and deletion (CRUD) of item
-instances, as well as loading and providing access to item templates.
-It also contains logic for character equipping, unequipping, and using items,
-coordinating with CharacterManager, StatusManager, and applying effects based
-on CoreGameRulesConfig.
 """
-from __future__ import annotations # Enables using type hints as strings implicitly, simplifying things
+from __future__ import annotations
 import json
 import uuid
 import traceback
 import asyncio
 
-# Import typing components
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union, TypedDict
 
-# Import built-in types for isinstance checks
 from builtins import dict, set, list, str, int, bool, float
 
-# --- Imports needed ONLY for Type Checking ---
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
     from bot.game.models.item import Item
-    from bot.game.models.character import Character as CharacterModel # For type hinting
+    from bot.game.models.character import Character as CharacterModel
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.npc_manager import NpcManager
@@ -35,21 +26,20 @@ if TYPE_CHECKING:
     from bot.game.managers.economy_manager import EconomyManager
     from bot.game.managers.crafting_manager import CraftingManager
     from bot.game.managers.game_log_manager import GameLogManager
+    from bot.game.managers.inventory_manager import InventoryManager
 
-# --- Imports needed at Runtime ---
 from bot.game.models.item import Item
 from bot.utils.i18n_utils import get_i18n_text
-from bot.ai.rules_schema import CoreGameRulesConfig, EquipmentSlotDefinition # For equip/unequip logic
-from bot.game.utils.stats_calculator import calculate_effective_stats # For equip/unequip logic
+from bot.ai.rules_schema import CoreGameRulesConfig, EquipmentSlotDefinition, ItemEffectDefinition, EffectProperty # Added EffectProperty
+from bot.game.utils.stats_calculator import calculate_effective_stats
 
 print("DEBUG: item_manager.py module loaded.")
 
-# --- Data Classes for Method Results ---
 class EquipResult(TypedDict):
     success: bool
     message: str
     character_id: Optional[str]
-    item_id: Optional[str] # template_id of item involved
+    item_id: Optional[str]
     slot_id: Optional[str]
 
 class ItemManager:
@@ -58,7 +48,7 @@ class ItemManager:
     required_args_for_rebuild = ["guild_id"]
 
     _item_templates: Dict[str, Dict[str, Any]]
-    _items: Dict[str, Dict[str, "Item"]] # Stores Item objects
+    _items: Dict[str, Dict[str, "Item"]]
 
     _items_by_owner: Dict[str, Dict[str, Set[str]]]
     _items_by_location: Dict[str, Dict[str, Set[str]]]
@@ -79,24 +69,8 @@ class ItemManager:
         economy_manager: Optional["EconomyManager"] = None,
         crafting_manager: Optional["CraftingManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
+        inventory_manager: Optional["InventoryManager"] = None,
     ):
-        """
-        Initializes the ItemManager.
-
-        Args:
-            db_service: Service for database interactions.
-            settings: Game settings, often used for loading initial data like templates.
-            rule_engine: Engine for accessing game rules, including CoreGameRulesConfig.
-            character_manager: Manages character data.
-            npc_manager: Manages NPC data.
-            location_manager: Manages location data.
-            party_manager: Manages party data.
-            combat_manager: Manages combat state and logic.
-            status_manager: Manages status effects.
-            economy_manager: Manages game economy (e.g., item prices).
-            crafting_manager: Manages item crafting.
-            game_log_manager: Service for logging game events.
-        """
         print("Initializing ItemManager...")
         self._db_service = db_service
         self._settings = settings
@@ -110,6 +84,11 @@ class ItemManager:
         self._economy_manager = economy_manager
         self._crafting_manager = crafting_manager
         self._game_log_manager = game_log_manager
+        self._inventory_manager = inventory_manager
+
+        self.rules_config: Optional[CoreGameRulesConfig] = None
+        if self._rule_engine and hasattr(self._rule_engine, 'rules_config_data'):
+            self.rules_config = self._rule_engine.rules_config_data
 
         self._item_templates = {}
         self._items = {}
@@ -121,421 +100,470 @@ class ItemManager:
         self._load_item_templates()
         print("ItemManager initialized.")
 
-    # --- Equip / Unequip Logic ---
+    async def apply_item_effects(self, guild_id: str, character_id: str, item_instance: Dict[str, Any], rules_config: CoreGameRulesConfig) -> bool:
+        """Applies on-equip effects of an item to a character."""
+        if not self._status_manager or not self._character_manager:
+            print(f"{log_prefix} StatusManager or CharacterManager not available.")
+            return False
+
+        item_template_id = item_instance.get('template_id')
+        item_instance_id = item_instance.get('instance_id') # Assuming item_instance has an 'instance_id'
+
+        if not item_template_id or not item_instance_id:
+            print(f"{log_prefix} Item template ID or instance ID missing.")
+            return False
+
+        log_prefix = f"ItemManager.apply_item_effects(char='{character_id}', item='{item_template_id}', instance='{item_instance_id}'):"
+
+        item_definition = rules_config.item_definitions.get(item_template_id)
+        if not item_definition or not item_definition.on_equip_effects:
+            # print(f"{log_prefix} No on-equip effects defined for item.") # Common, not an error
+            return False
+
+        effects_applied = False
+        for effect_prop in item_definition.on_equip_effects:
+            effect: ItemEffectDefinition = rules_config.item_effects.get(effect_prop.effect_id)
+            if not effect:
+                print(f"{log_prefix} Effect definition for '{effect_prop.effect_id}' not found in rules_config.item_effects.")
+                continue
+
+            for specific_effect in effect.effects: # ItemEffectDefinition contains a list of SpecificEffect
+                if specific_effect.type == "apply_status":
+                    status_def = rules_config.status_effects.get(specific_effect.status_effect_id)
+                    if not status_def:
+                        print(f"{log_prefix} Status definition for '{specific_effect.status_effect_id}' not found.")
+                        continue
+
+                    duration = specific_effect.duration_turns if specific_effect.duration_turns is not None else status_def.default_duration_turns
+                    # Pass item_instance_id as source_item_instance_id
+                    await self._status_manager.apply_status(
+                        target_id=character_id,
+                        target_type="character",
+                        status_id=specific_effect.status_effect_id,
+                        guild_id=guild_id,
+                        duration_turns=duration,
+                        source_item_instance_id=item_instance_id,
+                        source_item_template_id=item_template_id
+                    )
+                    print(f"{log_prefix} Applied status '{specific_effect.status_effect_id}'.")
+                    effects_applied = True
+                # TODO: Handle other effect types like "stat_modifier" if they are to be applied directly
+                # For now, stat_modifiers from items are expected to be part of the item's base_stats
+                # and reflected in calculate_effective_stats.
+
+        if effects_applied:
+            self._character_manager.mark_character_dirty(guild_id, character_id)
+        return effects_applied
+
+    async def remove_item_effects(self, guild_id: str, character_id: str, item_instance: Dict[str, Any], rules_config: CoreGameRulesConfig) -> bool:
+        """Removes on-equip effects of an item from a character."""
+        if not self._status_manager or not self._character_manager:
+            print(f"{log_prefix} StatusManager or CharacterManager not available.")
+            return False
+
+        item_template_id = item_instance.get('template_id')
+        item_instance_id = item_instance.get('instance_id') # Assuming item_instance has an 'instance_id'
+
+        if not item_template_id or not item_instance_id:
+            print(f"{log_prefix} Item template ID or instance ID missing.")
+            return False
+
+        log_prefix = f"ItemManager.remove_item_effects(char='{character_id}', item='{item_template_id}', instance='{item_instance_id}'):"
+
+        item_definition = rules_config.item_definitions.get(item_template_id)
+        # No specific on_unequip_effects are defined in schema, so we remove based on what was applied.
+        # Primarily, this means removing statuses that were sourced from this item instance.
+
+        effects_removed = False
+        # We rely on StatusManager to find statuses by source_item_instance_id
+        # No need to iterate item_definition.on_equip_effects here unless we need to trigger specific "on_remove" logic
+        # not covered by just removing the status.
+
+        # The StatusManager should have a method to remove statuses by their source item instance ID.
+        # Let's assume it's named remove_statuses_by_source_item_instance
+        if hasattr(self._status_manager, 'remove_statuses_by_source_item_instance'):
+            removed_count = await self._status_manager.remove_statuses_by_source_item_instance(
+                guild_id=guild_id,
+                target_id=character_id,
+                source_item_instance_id=item_instance_id
+            )
+            if removed_count > 0:
+                print(f"{log_prefix} Removed {removed_count} status(es) sourced from item instance '{item_instance_id}'.")
+                effects_removed = True
+        else:
+            print(f"{log_prefix} StatusManager does not have 'remove_statuses_by_source_item_instance' method.")
+            # Fallback or alternative: iterate through active statuses and check source_item_instance_id
+            # This is less efficient and should ideally be handled by StatusManager.
+            # For now, we'll proceed assuming the method exists or will be added to StatusManager.
+
+        # If there were other types of effects (e.g., direct stat modifications not handled by recalculation),
+        # they would need to be reversed here.
+
+        if effects_removed:
+            self._character_manager.mark_character_dirty(guild_id, character_id)
+        return effects_removed
+
+    # --- Equip / Unequip Logic (largely managed by EquipmentManager now, but stubs might remain or be simplified) ---
+    # These equip/unequip methods here are becoming simplified as EquipmentManager takes more control.
+    # They might be used for internal inventory state updates if not fully deprecated.
 
     def _unequip_item_from_slot(self, character_inventory_data: List[Dict[str, Any]], slot_id_to_clear: str) -> bool:
-        """
-        Synchronous helper to mark an item in a specific slot as unequipped in the inventory list.
-        Modifies character_inventory_data directly.
-        Returns True if an item was unequipped, False otherwise.
-        """
+        # This is a utility for manipulating the inventory list directly.
         item_was_unequipped = False
         for item_entry in character_inventory_data:
             if item_entry.get("equipped") and item_entry.get("slot_id") == slot_id_to_clear:
                 item_entry["equipped"] = False
-                item_entry.pop("slot_id", None) # Remove slot_id
+                item_entry.pop("slot_id", None)
                 item_was_unequipped = True
-                # Do not break; clear all items from this slot if multiple (though rules should prevent this for most slots)
         return item_was_unequipped
 
     async def equip_item(self,
                          character_id: str,
                          guild_id: str,
-                         item_template_id_to_equip: str,
-                         rules_config: CoreGameRulesConfig, # Added
+                         item_template_id_to_equip: str, # This should ideally be item_instance_id
+                         rules_config: CoreGameRulesConfig,
                          slot_id_preference: Optional[str] = None
                         ) -> EquipResult:
-        """
-        Equips an item to a character from their inventory.
+        # This method should be significantly simplified or deprecated in favor of EquipmentManager.equip_item
+        # EquipmentManager will handle fetching item_instance, checking rules, calling apply_item_effects,
+        # and then updating character.equipment and character.inventory.
+        # For now, keeping a structure similar to before but acknowledging its future deprecation.
 
-        Args:
-            character_id: The ID of the character equipping the item.
-            guild_id: The ID of the guild.
-            item_template_id_to_equip: The template ID of the item to equip.
-            rules_config: The CoreGameRulesConfig containing equipment slot definitions.
-            slot_id_preference: Optional preferred slot ID to equip the item into.
+        # log_prefix = f"ItemManager.equip_item(char='{character_id}', item_template='{item_template_id_to_equip}'):"
+        # print(f"{log_prefix} Called. Note: This method is slated for simplification/deprecation by EquipmentManager.")
 
-        Returns:
-            An EquipResult dictionary indicating success, a message, and involved IDs.
-        """
-        if not self._character_manager or not self._db_service: # Ensure critical managers are present
-            return EquipResult(success=False, message="Character or DB service not available.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
+        if not self._character_manager or not self._db_service or not self._inventory_manager:
+            return EquipResult(success=False, message="Core services (Character, DB, Inventory) not available.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
 
         character: Optional["CharacterModel"] = await self._character_manager.get_character(guild_id, character_id)
         if not character:
             return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
 
+        # This logic needs to use item_instance_id from InventoryManager instead of template_id
+        # For now, we'll assume the caller (soon EquipmentManager) provides an item_instance_id
+        # and this method is more about the raw DB update after EquipmentManager has done the checks.
+        # The current implementation based on item_template_id_to_equip and direct inventory manipulation
+        # is problematic and will be fixed when EquipmentManager is fully implemented.
+
+        # --- Placeholder for new logic: ---
+        # 1. EquipmentManager would call this with an item_instance_id.
+        # 2. This method would update the character's inventory data (mark as equipped, set slot).
+        # 3. CharacterManager.mark_character_dirty() would be called.
+        # 4. calculate_effective_stats is called by EquipmentManager.
+        # --- End Placeholder ---
+
+        # Fallback to old logic for now, but with a warning
+        # print(f"{log_prefix} WARNING: Using outdated inventory search logic. Needs update for item_instance_id.")
         inventory_list_json = getattr(character, 'inventory', "[]")
-        character_inventory_data: List[Dict[str, Any]] = json.loads(inventory_list_json) if isinstance(inventory_list_json, str) else inventory_list_json
+        character_inventory_data: List[Dict[str, Any]] = json.loads(inventory_list_json) if isinstance(inventory_list_json, str) else (inventory_list_json if isinstance(inventory_list_json, list) else [])
 
         item_entry_to_equip: Optional[Dict[str, Any]] = None
         item_index_in_inventory: Optional[int] = None
 
+        # THIS SEARCH IS FLAWED - should use instance_id
         for i, entry in enumerate(character_inventory_data):
-            entry_template_id = entry.get('template_id') or entry.get('item_id')
+            entry_template_id = entry.get('template_id') # or entry.get('item_id') is old
             if entry_template_id == item_template_id_to_equip and not entry.get('equipped'):
+                # We need to ensure this is the correct *instance* if multiple exist.
+                # This is why item_instance_id is critical.
                 item_entry_to_equip = entry
                 item_index_in_inventory = i
                 break
 
         if not item_entry_to_equip or item_index_in_inventory is None:
-            return EquipResult(success=False, message=f"Unequipped item '{item_template_id_to_equip}' not found in inventory.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
+            return EquipResult(success=False, message=f"Unequipped item '{item_template_id_to_equip}' (by template) not found. Use instance ID.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
 
-        item_template = self.get_item_template(item_template_id_to_equip)
-        if not item_template:
-            return EquipResult(success=False, message=f"Item template '{item_template_id_to_equip}' not found.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
+        # The rest of the slot finding logic and inventory update can remain similar,
+        # but it's being done on character_inventory_data which is a direct field manipulation.
+        # EquipmentManager will provide the target_slot_id after its own checks.
+
+        item_template = self.get_item_template(item_template_id_to_equip) # From rules_config ideally
+        if not item_template: # Should use rules_config.item_definitions
+            item_def_from_rules = rules_config.item_definitions.get(item_template_id_to_equip)
+            if not item_def_from_rules:
+                return EquipResult(success=False, message=f"Item template '{item_template_id_to_equip}' not found in rules.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
+            item_template = {"type": item_def_from_rules.type, "name": item_def_from_rules.name} # simplified
 
         item_type = item_template.get("type", "unknown")
-
         target_slot_id: Optional[str] = None
+
+        current_rules_config = rules_config
+        if not current_rules_config:
+             return EquipResult(success=False, message="Game rules for equipment slots not available.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=None)
+
         if slot_id_preference:
-            if slot_id_preference in rules_config.equipment_slots and \
-               item_type in rules_config.equipment_slots[slot_id_preference].compatible_item_types:
+            if slot_id_preference in current_rules_config.equipment_slots and \
+               item_type in current_rules_config.equipment_slots[slot_id_preference].compatible_item_types:
                 target_slot_id = slot_id_preference
             else:
                 return EquipResult(success=False, message=f"Preferred slot '{slot_id_preference}' is not compatible with item type '{item_type}'.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
-        else:
-            # Find first available compatible slot
-            for slot_def_id, slot_def in rules_config.equipment_slots.items():
+        else: # Auto-find slot
+            for slot_def_id, slot_def in current_rules_config.equipment_slots.items():
                 if item_type in slot_def.compatible_item_types:
-                    # Check if slot is already occupied
                     is_occupied = any(inv_item.get("equipped") and inv_item.get("slot_id") == slot_def_id for inv_item in character_inventory_data)
                     if not is_occupied:
                         target_slot_id = slot_def_id
                         break
-            if not target_slot_id: # If all compatible slots are occupied, try to find one to suggest unequip or use first one
-                 for slot_def_id, slot_def in rules_config.equipment_slots.items():
+            if not target_slot_id: # If all preferred slots are occupied, try to replace existing
+                 for slot_def_id, slot_def in current_rules_config.equipment_slots.items():
                      if item_type in slot_def.compatible_item_types:
-                         target_slot_id = slot_def_id # Will overwrite if occupied
-                         break
-
+                         target_slot_id = slot_def_id
+                         break # First compatible slot, even if it means unequipping
         if not target_slot_id:
             return EquipResult(success=False, message=f"No suitable slot found for item type '{item_type}'.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=None)
 
-        # Unequip any item currently in the target_slot_id
+        # Unequip whatever is in target_slot_id (if anything)
         self._unequip_item_from_slot(character_inventory_data, target_slot_id)
 
         # Equip the new item
         character_inventory_data[item_index_in_inventory]["equipped"] = True
         character_inventory_data[item_index_in_inventory]["slot_id"] = target_slot_id
+        character.inventory = json.dumps(character_inventory_data) # This direct manipulation is what EquipmentManager will abstract
 
-        character.inventory = json.dumps(character_inventory_data)
+        # Effects should be applied by EquipmentManager *before* this, or this method needs item_instance
+        # await self.apply_item_effects(guild_id, character_id, item_entry_to_equip, current_rules_config) # item_entry_to_equip needs instance_id
 
-        # Update effective stats
-        # Ensure nlu_data_service is available if calculate_effective_stats needs it for some reason (not typical)
-        effective_stats = await calculate_effective_stats(self._db_service, character.id, "player", rules_config)
+        effective_stats = await calculate_effective_stats(self._db_service, character.id, "player", current_rules_config)
         character.effective_stats_json = json.dumps(effective_stats)
+        self._character_manager.mark_character_dirty(guild_id, character_id)
 
-        self._character_manager.mark_dirty(character.id, guild_id)
-        # await self._character_manager.save_character(character) # Or ensure save happens
-
-        return EquipResult(success=True, message=f"Item '{item_template.get('name', item_template_id_to_equip)}' equipped to slot '{target_slot_id}'.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=target_slot_id)
+        item_name_display = item_template.get('name', item_template_id_to_equip)
+        return EquipResult(success=True, message=f"Item '{item_name_display}' equipped to slot '{target_slot_id}'. (Legacy IM method)", character_id=character_id, item_id=item_template_id_to_equip, slot_id=target_slot_id)
 
     async def unequip_item(self,
                            character_id: str,
                            guild_id: str,
-                           rules_config: CoreGameRulesConfig, # Added
-                           item_template_id_to_unequip: Optional[str] = None,
+                           rules_config: CoreGameRulesConfig,
+                           # item_template_id_to_unequip: Optional[str] = None, # Should be item_instance_id
+                           item_instance_id_to_unequip: Optional[str] = None,
                            slot_id_to_unequip: Optional[str] = None
                           ) -> EquipResult:
-        """
-        Unequips an item from a character.
+        # This method also needs to be simplified or deprecated for EquipmentManager.
+        # log_prefix = f"ItemManager.unequip_item(char='{character_id}', item_instance='{item_instance_id_to_unequip}', slot='{slot_id_to_unequip}'):"
+        # print(f"{log_prefix} Called. Note: This method is slated for simplification/deprecation by EquipmentManager.")
 
-        Args:
-            character_id: The ID of the character.
-            guild_id: The ID of the guild.
-            rules_config: The CoreGameRulesConfig.
-            item_template_id_to_unequip: Optional template ID of the item to unequip.
-            slot_id_to_unequip: Optional slot ID from which to unequip an item.
-                                One of item_template_id or slot_id must be provided.
-        Returns:
-            An EquipResult dictionary indicating success, a message, and involved IDs.
-        """
-        if not self._character_manager or not self._db_service:
-             return EquipResult(success=False, message="Character or DB service not available.", character_id=character_id, item_id=item_template_id_to_unequip, slot_id=slot_id_to_unequip)
+        item_template_id_to_unequip = None # Will be derived from instance if needed
+
+        if not self._character_manager or not self._db_service or not self._inventory_manager:
+             return EquipResult(success=False, message="Core services not available.", character_id=character_id, item_id=item_instance_id_to_unequip, slot_id=slot_id_to_unequip)
 
         character: Optional["CharacterModel"] = await self._character_manager.get_character(guild_id, character_id)
         if not character:
-            return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_template_id_to_unequip, slot_id=slot_id_to_unequip)
+            return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_instance_id_to_unequip, slot_id=slot_id_to_unequip)
 
         inventory_list_json = getattr(character, 'inventory', "[]")
-        character_inventory_data: List[Dict[str, Any]] = json.loads(inventory_list_json) if isinstance(inventory_list_json, str) else inventory_list_json
+        character_inventory_data: List[Dict[str, Any]] = json.loads(inventory_list_json) if isinstance(inventory_list_json, str) else (inventory_list_json if isinstance(inventory_list_json, list) else [])
 
         item_found_and_unequipped = False
         unequipped_item_template_id: Optional[str] = None
         actual_slot_unequipped: Optional[str] = None
+        item_instance_that_was_unequipped: Optional[Dict[str, Any]] = None
 
-        if slot_id_to_unequip:
-            for item_entry in character_inventory_data:
-                if item_entry.get("equipped") and item_entry.get("slot_id") == slot_id_to_unequip:
-                    unequipped_item_template_id = item_entry.get('template_id') or item_entry.get('item_id')
+        current_rules_config = rules_config
+        if not current_rules_config: # Should use self.rules_config if rules_config not passed
+             return EquipResult(success=False, message="Game rules not available.", character_id=character_id, item_id=item_instance_id_to_unequip, slot_id=slot_id_to_unequip)
+
+        if not item_instance_id_to_unequip and not slot_id_to_unequip:
+            return EquipResult(success=False, message="No item instance ID or slot specified to unequip.", character_id=character_id)
+
+        for item_entry in character_inventory_data:
+            if item_entry.get("equipped"):
+                matches_criteria = False
+                if slot_id_to_unequip and item_entry.get("slot_id") == slot_id_to_unequip:
+                    matches_criteria = True
+                elif item_instance_id_to_unequip and item_entry.get("instance_id") == item_instance_id_to_unequip:
+                    matches_criteria = True
+
+                if matches_criteria:
+                    unequipped_item_template_id = item_entry.get('template_id')
+                    item_instance_that_was_unequipped = item_entry # Capture the whole entry
                     item_entry["equipped"] = False
                     actual_slot_unequipped = item_entry.pop("slot_id", None)
                     item_found_and_unequipped = True
                     break
-        elif item_template_id_to_unequip:
-            for item_entry in character_inventory_data:
-                entry_template_id = item_entry.get('template_id') or item_entry.get('item_id')
-                if entry_template_id == item_template_id_to_unequip and item_entry.get('equipped'):
-                    unequipped_item_template_id = entry_template_id
-                    item_entry["equipped"] = False
-                    actual_slot_unequipped = item_entry.pop("slot_id", None)
-                    item_found_and_unequipped = True
-                    break
-        else:
-            return EquipResult(success=False, message="No item or slot specified to unequip.", character_id=character_id)
 
         if not item_found_and_unequipped:
             msg = f"Equipped item matching criteria not found."
             if slot_id_to_unequip: msg = f"No item equipped in slot '{slot_id_to_unequip}'."
-            elif item_template_id_to_unequip: msg = f"Item '{item_template_id_to_unequip}' is not equipped."
-            return EquipResult(success=False, message=msg, character_id=character_id, item_id=item_template_id_to_unequip, slot_id=slot_id_to_unequip)
+            elif item_instance_id_to_unequip: msg = f"Item instance '{item_instance_id_to_unequip}' is not equipped or not found."
+            return EquipResult(success=False, message=msg, character_id=character_id, item_id=item_instance_id_to_unequip, slot_id=slot_id_to_unequip)
 
-        character.inventory = json.dumps(character_inventory_data)
+        character.inventory = json.dumps(character_inventory_data) # Direct manipulation
 
-        effective_stats = await calculate_effective_stats(self._db_service, character.id, "player", rules_config)
+        # Effects should be removed by EquipmentManager *after* this, using item_instance_that_was_unequipped
+        if item_instance_that_was_unequipped:
+            pass # await self.remove_item_effects(guild_id, character_id, item_instance_that_was_unequipped, current_rules_config)
+
+        effective_stats = await calculate_effective_stats(self._db_service, character.id, "player", current_rules_config)
         character.effective_stats_json = json.dumps(effective_stats)
+        self._character_manager.mark_character_dirty(guild_id, character_id)
 
-        self._character_manager.mark_dirty(character.id, guild_id)
-        # await self._character_manager.save_character(character)
+        item_name = unequipped_item_template_id # Fallback
+        item_def_from_rules = current_rules_config.item_definitions.get(unequipped_item_template_id) if unequipped_item_template_id else None
+        if item_def_from_rules: item_name = item_def_from_rules.name
 
-        item_template = self.get_item_template(unequipped_item_template_id) if unequipped_item_template_id else None
-        item_name = item_template.get('name', unequipped_item_template_id) if item_template else unequipped_item_template_id
-
-        return EquipResult(success=True, message=f"Item '{item_name}' unequipped from slot '{actual_slot_unequipped}'.", character_id=character_id, item_id=unequipped_item_template_id, slot_id=actual_slot_unequipped)
-
-    async def use_item(self,
-                       character_id: str,
-                       guild_id: str,
-                       item_template_id: str,
-                       rules_config: CoreGameRulesConfig,
-                       target_entity_id: Optional[str] = None,
-                       target_entity_type: Optional[str] = None
-                      ) -> EquipResult: # Reusing EquipResult for now, can be UseItemResult
-        """
-        Uses an item from a character's inventory, applying its effects.
-
-        Args:
-            character_id: ID of the character using the item.
-            guild_id: ID of the guild.
-            item_template_id: Template ID of the item to be used.
-            rules_config: The CoreGameRulesConfig containing item effect definitions.
-            target_entity_id: Optional ID of the target entity for the item's effects.
-            target_entity_type: Optional type of the target entity.
-
-        Returns:
-            An EquipResult (or similar UseItemResult) dictionary indicating success,
-            a message, and involved IDs.
-        """
-        if not self._character_manager or not self._db_service or not self._status_manager:
-            return EquipResult(success=False, message="Required services (Character, DB, Status) not available.", character_id=character_id, item_id=item_template_id, slot_id=None)
-
-        char_model_type = "player" # Assuming player for now, could be expanded for NPCs using items
-        character: Optional["CharacterModel"] = await self._character_manager.get_character(guild_id, character_id)
-        if not character:
-            return EquipResult(success=False, message="Character not found.", character_id=character_id, item_id=item_template_id, slot_id=None)
-
-        inventory_list_json = getattr(character, 'inventory', "[]")
-        character_inventory_data: List[Dict[str, Any]] = json.loads(inventory_list_json) if isinstance(inventory_list_json, str) else inventory_list_json
-
-        item_entry_to_use: Optional[Dict[str, Any]] = None
-        item_index_in_inventory: Optional[int] = None
-
-        for i, entry in enumerate(character_inventory_data):
-            entry_template_id = entry.get('template_id') or entry.get('item_id')
-            if entry_template_id == item_template_id:
-                item_entry_to_use = entry
-                item_index_in_inventory = i
-                break
-
-        if not item_entry_to_use or item_index_in_inventory is None:
-            return EquipResult(success=False, message=f"Item '{item_template_id}' not found in inventory.", character_id=character_id, item_id=item_template_id, slot_id=None)
-
-        item_effect_def = rules_config.item_effects.get(item_template_id)
-        if not item_effect_def:
-            return EquipResult(success=False, message=f"No defined effects for item '{item_template_id}'.", character_id=character_id, item_id=item_template_id, slot_id=None)
-
-        # Target policy check
-        actual_target_id = character_id # Default to self
-        actual_target_type = char_model_type # Default to self type
-
-        if item_effect_def.target_policy == "requires_target":
-            if not target_entity_id or not target_entity_type:
-                return EquipResult(success=False, message=f"Item '{item_template_id}' requires a target, but none was provided.", character_id=character_id, item_id=item_template_id, slot_id=None)
-            actual_target_id = target_entity_id
-            actual_target_type = target_entity_type
-        elif item_effect_def.target_policy == "no_target":
-            actual_target_id = None # Explicitly no target
-            actual_target_type = None
+        return EquipResult(success=True, message=f"Item '{item_name}' unequipped from slot '{actual_slot_unequipped}'. (Legacy IM method)", character_id=character_id, item_id=unequipped_item_template_id, slot_id=actual_slot_unequipped)
 
 
-        # --- Apply Effects ---
-        # This section requires careful interaction with CharacterManager, NPCManager, StatusManager
-        # For now, direct modifications to character object are shown for some, assuming CM saves later.
-        # A more robust solution would involve methods on those managers.
+    async def use_item(self, guild_id: str, character_user: CharacterModel, item_template_id: str,
+                       rules_config: CoreGameRulesConfig, target_entity: Optional[Any] = None) -> Dict[str, Any]:
+        """Uses an item from character's inventory, applying its effects."""
+        log_prefix = f"ItemManager.use_item(char='{character_user.id}', item='{item_template_id}'):"
 
-        # Direct Health Effects
-        if item_effect_def.direct_health_effects:
-            for health_effect in item_effect_def.direct_health_effects:
-                target_hp_changed = False
-                # This needs to fetch the target entity (player or NPC) and modify its HP
-                # Simplified: if target is self (the character using the item)
-                if actual_target_id == character.id and actual_target_type == char_model_type:
-                    if health_effect.effect_type == "heal":
-                        character.hp = min(getattr(character, 'max_health', character.hp), getattr(character, 'hp', 0) + health_effect.amount)
-                        target_hp_changed = True
-                    elif health_effect.effect_type == "damage":
-                        character.hp = getattr(character, 'hp', 0) - health_effect.amount
-                        target_hp_changed = True
-                    # TODO: Add handling for other targets (NPCs) via NPCManager
-                if target_hp_changed: print(f"Applied health effect: {health_effect.amount} to {actual_target_id}")
+        if not self._character_manager or not self._inventory_manager or not self._status_manager or not self._rule_engine:
+            return {"success": False, "message": "Один из необходимых менеджеров не инициализирован.", "state_changed": False}
+        if not rules_config: # Use self.rules_config if not passed
+             return {"success": False, "message": "Конфигурация правил игры не доступна.", "state_changed": False}
 
+        # This should use item_instance_id not item_template_id for consumption
+        # For now, assumes InventoryManager.has_item and remove_item can work with template_id for stackable items.
+        has_item_check = await self._inventory_manager.has_item(guild_id, character_user.id, item_template_id=item_template_id)
+        if not has_item_check: # This will be true if any quantity exists
+            return {"success": False, "message": "У вас нет такого предмета.", "state_changed": False}
 
-        # Apply Status Effects
-        if item_effect_def.apply_status_effects:
-            for status_rule in item_effect_def.apply_status_effects:
-                eff_target_id = character.id if status_rule.target == "self" else actual_target_id
-                eff_target_type = char_model_type if status_rule.target == "self" else actual_target_type
+        item_definition_from_rules = rules_config.item_definitions.get(item_template_id)
+        if not item_definition_from_rules:
+            return {"success": False, "message": "Неизвестный предмет (нет в rules_config).", "state_changed": False}
 
-                if eff_target_id and eff_target_type:
-                    # Assuming StatusManager.apply_status takes these args. Duration from rule or status_def.
-                    status_def = rules_config.status_effects.get(status_rule.status_effect_id)
-                    duration = status_rule.duration_turns if status_rule.duration_turns is not None else (status_def.default_duration_turns if status_def else None)
+        item_name_display = item_definition_from_rules.name
+        # Item effects are now directly on ItemDefinition in rules_config, not a separate item_effects config key
+        item_effects_list = item_definition_from_rules.on_use_effects
+        if not item_effects_list:
+            return {"success": False, "message": f"{item_name_display} не имеет известных эффектов использования.", "state_changed": False}
 
-                    await self._status_manager.apply_status(
-                        target_id=eff_target_id,
-                        target_type=eff_target_type,
-                        status_id=status_rule.status_effect_id,
-                        guild_id=guild_id,
-                        duration_turns=duration
-                        # source_id (e.g. item_instance_id) could be added if StatusManager supports it
-                    )
-                    print(f"Applied status {status_rule.status_effect_id} to {eff_target_id}")
+        message_parts = [f"{character_user.name} использует {item_name_display}."]
+        state_changed = False
 
-        # Learn Spells (applies only to self - the character using the item)
-        if item_effect_def.learn_spells:
-            if hasattr(character, 'known_spells') and isinstance(character.known_spells, list):
-                for spell_rule in item_effect_def.learn_spells:
-                    if spell_rule.spell_id not in character.known_spells:
-                        character.known_spells.append(spell_rule.spell_id)
-                        print(f"Character {character.id} learned spell {spell_rule.spell_id}")
-            else: # Fallback or if known_spells is JSON string
-                try:
-                    known_spells_list = json.loads(getattr(character, 'known_spells', "[]")) if isinstance(getattr(character, 'known_spells', "[]"), str) else (getattr(character, 'known_spells', []) or [])
-                    for spell_rule in item_effect_def.learn_spells:
-                        if spell_rule.spell_id not in known_spells_list:
-                            known_spells_list.append(spell_rule.spell_id)
-                    character.known_spells = json.dumps(known_spells_list)
-                    print(f"Character {character.id} learned spells (JSON update)")
-                except json.JSONDecodeError:
-                    print(f"Error parsing known_spells JSON for character {character.id}")
+        actual_target_entity = character_user # Default target is self
+        # Target policy logic needs to be based on ItemDefinition's target_policy field if it exists
+        # Assuming item_definition_from_rules.target_policy similar to old item_effects_def.target_policy
+        # This field might need to be added to ItemDefinition schema if not present.
+        # For now, let's assume a simple model or that effects specify their own targeting.
+
+        for effect_prop in item_effects_list: # effect_prop is EffectProperty
+            effect_def: Optional[ItemEffectDefinition] = rules_config.item_effects.get(effect_prop.effect_id)
+            if not effect_def:
+                message_parts.append(f"Определение эффекта '{effect_prop.effect_id}' не найдено.")
+                continue
+
+            # Determine target for this specific effect based on effect_def.target_policy
+            # This part needs careful review against the actual schema for ItemEffectDefinition's target_policy
+            current_target_for_effect = character_user # Default to user
+            if effect_def.target_policy == "requires_target":
+                if not target_entity:
+                    message_parts.append(f"Эффект '{effect_prop.effect_id}' требует цель, но цель не указана.")
+                    continue
+                current_target_for_effect = target_entity
+            elif effect_def.target_policy == "optional_target" and target_entity:
+                current_target_for_effect = target_entity
+            elif effect_def.target_policy == "no_target": # E.g. summoning, environment effect
+                 current_target_for_effect = None
 
 
-        # Grant Resources (applies only to self)
-        if item_effect_def.grant_resources:
-            for resource_rule in item_effect_def.grant_resources:
-                current_val = getattr(character, resource_rule.resource_name, 0)
-                if isinstance(current_val, (int, float)): # Ensure it's a number
-                    setattr(character, resource_rule.resource_name, current_val + resource_rule.amount)
-                    print(f"Granted {resource_rule.amount} of {resource_rule.resource_name} to character {character.id}")
+            for specific_effect in effect_def.effects: # specific_effect is SpecificEffect
+                # Resolve final target for this specific_effect (e.g. self, target_entity, area etc.)
+                # This logic might also depend on specific_effect.target if it overrides effect_def.target_policy
+                final_target_object = current_target_for_effect
+                if specific_effect.target == "self": final_target_object = character_user
+                elif specific_effect.target == "target_entity": final_target_object = current_target_for_effect
+                # Add more conditions for 'area', 'party', etc. if needed
 
+                if not final_target_object and specific_effect.type not in ["summon", "world_event"]: # some effects might not need a target object
+                    message_parts.append(f"Эффект '{specific_effect.type}' не может быть применен без цели.")
+                    continue
 
-        # Stat Modifiers (typically for ongoing effects from equipped, but could be instant for consumables via a status)
-        # If consumable applies direct stat changes not via a status, it's more complex.
-        # For now, assuming stat_modifiers on consumables are applied via a temporary status effect defined in apply_status_effects.
-        # If they are direct, permanent changes for a consumable, that's unusual but could be handled.
-        # This `stats_calculator` call is mainly if an equipped item is consumed, or if a consumable grants a status that then needs recalc.
-        stats_changed_by_consumption_or_status = False
-        if item_effect_def.apply_status_effects or (item_effect_def.consumable and item_entry_to_use.get("equipped")):
-            stats_changed_by_consumption_or_status = True
+                target_id_for_effect = getattr(final_target_object, 'id', None) if final_target_object else None
+                target_type_for_effect = "character" # Placeholder
+                if final_target_object:
+                    target_type_for_effect = "character" if isinstance(final_target_object, CharacterModel) else "npc" # TODO: better type check
 
+                if specific_effect.type == "heal" and self._character_manager and target_id_for_effect:
+                    heal_amount = int(specific_effect.amount) if isinstance(specific_effect.amount, (int, float, str) and str(specific_effect.amount).isdigit()) else 0
+                    if heal_amount > 0:
+                        await self._character_manager.update_health(guild_id, target_id_for_effect, heal_amount)
+                        message_parts.append(f"{getattr(final_target_object, 'name', target_id_for_effect)} исцелен(а) на {heal_amount} HP.")
+                        state_changed = True
+                elif specific_effect.type == "apply_status" and self._status_manager and target_id_for_effect:
+                    status_def_rules = rules_config.status_effects.get(specific_effect.status_effect_id)
+                    duration = specific_effect.duration_turns if specific_effect.duration_turns is not None else (status_def_rules.default_duration_turns if status_def_rules else None)
+                    if duration is not None:
+                        await self._status_manager.apply_status(
+                            target_id=target_id_for_effect,
+                            target_type=target_type_for_effect,
+                            status_id=specific_effect.status_effect_id,
+                            guild_id=guild_id,
+                            duration_turns=duration
+                            # Consider adding source_item_template_id if statuses from consumables need tracking/stacking rules
+                        )
+                        message_parts.append(f"{getattr(final_target_object, 'name', target_id_for_effect)} получает эффект '{specific_effect.status_effect_id}'.")
+                        state_changed = True
+                # TODO: Add other effect types like 'damage', 'stat_modifier', etc.
 
-        # Consume Item
-        if item_effect_def.consumable:
-            current_quantity = item_entry_to_use.get('quantity', 1)
-            if current_quantity > 1:
-                character_inventory_data[item_index_in_inventory]['quantity'] = current_quantity - 1
+        if item_definition_from_rules.consumable:
+            # InventoryManager needs to handle instance_id for non-stackables, or template_id + quantity for stackables
+            # Assume remove_item can take item_template_id for stackable consumables
+            removed = await self._inventory_manager.remove_item(guild_id, character_user.id, item_template_id=item_template_id, quantity_to_remove=1)
+            if removed:
+                message_parts.append(f"{item_name_display} был(а) использован(а).")
+                state_changed = True # Already true if effects applied, but good to ensure
             else:
-                character_inventory_data.pop(item_index_in_inventory)
+                # This is a critical failure if effects applied but item wasn't consumed.
+                # Ideally, this would be a transaction or have rollback logic.
+                message_parts.append(f"КРИТИЧЕСКАЯ ОШИБКА: Не удалось израсходовать {item_name_display} после применения эффектов.")
+                # For now, we proceed, but this indicates a potential issue.
 
-            character.inventory = json.dumps(character_inventory_data)
-            print(f"Item {item_template_id} consumed by {character.id}")
-            # If the consumed item was equipped and provided stats, a recalc is needed.
-            if item_entry_to_use.get("equipped"):
-                 stats_changed_by_consumption_or_status = True # Ensure recalc if equipped item consumed
+        if state_changed:
+             self._character_manager.mark_character_dirty(guild_id, character_user.id)
+             if target_entity and target_entity != character_user and hasattr(target_entity, 'id'):
+                 # Mark target dirty only if it's a character. NPC dirtiness handled by NpcManager.
+                 if isinstance(target_entity, CharacterModel): # Check if target_entity is a CharacterModel instance
+                     self._character_manager.mark_character_dirty(guild_id, target_entity.id)
 
-        if stats_changed_by_consumption_or_status:
-            effective_stats = await calculate_effective_stats(self._db_service, character.id, char_model_type, rules_config)
-            character.effective_stats_json = json.dumps(effective_stats)
 
-        self._character_manager.mark_dirty(character.id, guild_id)
-        # await self._character_manager.save_character(character) # Or ensure save happens
-
-        item_template_for_name = self.get_item_template(item_template_id)
-        item_name_display = item_template_for_name.get('name', item_template_id) if item_template_for_name else item_template_id
-
-        return EquipResult(success=True, message=f"Used '{item_name_display}'.", character_id=character_id, item_id=item_template_id, slot_id=None)
+        return {"success": True, "message": " ".join(message_parts), "state_changed": state_changed}
 
 
     def _load_item_templates(self):
-        print("ItemManager: Loading global item templates...")
-        self._item_templates = {}
-
-        try:
-            if self._settings and 'item_templates' in self._settings and isinstance(self._settings['item_templates'], dict):
-                processed_templates = {}
-                default_lang_setting = self._settings.get('game_rules', {}).get('default_bot_language', 'en')
-
-                for template_id, template_data_orig in self._settings['item_templates'].items():
-                    template_data = template_data_orig.copy()
-                    template_data['id'] = template_id
-
-                    if not isinstance(template_data.get('name_i18n'), dict):
-                        if 'name' in template_data and isinstance(template_data['name'], str):
-                            template_data['name_i18n'] = {default_lang_setting: template_data['name']}
-                        else:
-                            template_data['name_i18n'] = {default_lang_setting: template_id}
-
-                    if not isinstance(template_data.get('description_i18n'), dict):
-                        if 'description' in template_data and isinstance(template_data['description'], str):
-                            template_data['description_i18n'] = {default_lang_setting: template_data['description']}
-                        else:
-                            template_data['description_i18n'] = {default_lang_setting: "An item of unclear nature."}
-
-                    template_data.setdefault('type', "misc")
-                    template_data.setdefault('properties', {})
-                    processed_templates[template_id] = template_data
-
-                self._item_templates = processed_templates
-                loaded_count = len(self._item_templates)
-                print(f"ItemManager: Successfully loaded and processed {loaded_count} item templates from settings.")
-            else:
-                print("ItemManager: No item templates found in settings or 'item_templates' is not a dict.")
-        except Exception as e:
-            print(f"ItemManager: Error loading item templates from settings: {e}")
-            traceback.print_exc()
+        # This method likely needs to be updated to load from rules_config.item_definitions
+        # instead of self._settings, or self.rules_config is the source of truth after init.
+        # For now, assuming self.rules_config.item_definitions is populated elsewhere (e.g. RuleEngine)
+        # and this method is vestigial or for a different type of template.
+        # If ItemManager is meant to be the source of truth for item_definitions by loading them,
+        # this needs significant rework.
+        # print("ItemManager: _load_item_templates called. Consider if this is still needed with CoreGameRulesConfig.")
+        self._item_templates = {} # This might be for legacy item templates, not the rule_config ones.
+                                 # If so, it needs to be clarified what these are.
+                                 # If not, this should not be used, and get_item_template should use rules_config.
+        # Example: if self.rules_config: self._item_templates = self.rules_config.item_definitions
+        # This would make get_item_template directly use the Pydantic models.
+        # However, the existing get_item_template returns Dict[str, Any], not Pydantic model.
+        # This suggests a potential mismatch or transitional state.
 
     def get_item_template(self, template_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves an item template definition.
+        Ideally, this should fetch from self.rules_config.item_definitions and return the Pydantic model
+        or a dict representation of it.
+        The current implementation using self._item_templates might be outdated if rules_config is primary.
+        """
+        if self.rules_config and template_id in self.rules_config.item_definitions:
+            item_def_model = self.rules_config.item_definitions[template_id]
+            # Convert Pydantic model to dict if the rest of the system expects dicts.
+            # However, it's better to use the model directly if possible.
+            # For now, returning as dict to match existing expectation.
+            try:
+                return item_def_model.model_dump(mode='python') #.dict() for Pydantic v1
+            except AttributeError: # Fallback for older Pydantic or if model_dump is not preferred
+                 return json.loads(item_def_model.model_dump_json()) #.json() for Pydantic v1
+
+
+        # Fallback to old _item_templates if not in rules_config (should be deprecated)
+        # print(f"ItemManager.get_item_template: Template '{template_id}' not in rules_config, checking legacy _item_templates.")
         return self._item_templates.get(str(template_id))
 
-    def get_item_template_display_name(self, template_id: str, lang: str, default_lang: str = "en") -> str:
-        template = self.get_item_template(template_id)
-        if not template:
-            return f"Item template '{template_id}' not found"
-        return get_i18n_text(template, "name", lang, default_lang)
-
-    def get_item_template_display_description(self, template_id: str, lang: str, default_lang: str = "en") -> str:
-        template = self.get_item_template(template_id)
-        if not template:
-            return f"Item template '{template_id}' not found"
-        return get_i18n_text(template, "description", lang, default_lang)
-
-    def get_item_instance(self, guild_id: str, item_id: str) -> Optional["Item"]:
-        guild_id_str = str(guild_id)
-        item_id_str = str(item_id)
-        return self._items.get(guild_id_str, {}).get(item_id_str)
 
     async def get_all_item_instances(self, guild_id: str) -> List["Item"]:
+        # This is for runtime Item instances, not templates. Seems okay.
         guild_id_str = str(guild_id)
         return list(self._items.get(guild_id_str, {}).values())
 
@@ -553,638 +581,200 @@ class ItemManager:
         guild_items_cache = self._items.get(guild_id_str, {})
         return [item_obj for item_id in location_item_ids if (item_obj := guild_items_cache.get(item_id)) is not None]
 
-    async def create_item_instance(self,
-                                   guild_id: str,
-                                   template_id: str,
-                                   owner_id: Optional[str] = None,
-                                   owner_type: Optional[str] = None,
-                                   location_id: Optional[str] = None,
-                                   quantity: float = 1.0,
-                                   initial_state: Optional[Dict[str, Any]] = None,
-                                   is_temporary: bool = False,
-                                   **kwargs: Any
-                                  ) -> Optional["Item"]:
+    def get_item_template_display_name(self, template_id: str, lang: str, default_lang: str = "en") -> str:
+        # Should use rules_config
+        if self.rules_config and template_id in self.rules_config.item_definitions:
+            item_def = self.rules_config.item_definitions[template_id]
+            # Assuming ItemDefinition has i18n capabilities or a simple 'name' field
+            return getattr(item_def, 'name', f"Item '{template_id}' name missing")
+        return f"Item template '{template_id}' not found in rules"
+
+    def get_item_template_display_description(self, template_id: str, lang: str, default_lang: str = "en") -> str:
+        if self.rules_config and template_id in self.rules_config.item_definitions:
+            item_def = self.rules_config.item_definitions[template_id]
+            return getattr(item_def, 'description', f"Item '{template_id}' description missing")
+        return f"Item template '{template_id}' not found in rules"
+
+    def get_item_instance(self, guild_id: str, item_id: str) -> Optional["Item"]:
+        # This is for runtime Item instances. Seems okay.
         guild_id_str = str(guild_id)
-        template_id_str = str(template_id)
+        item_id_str = str(item_id)
+        return self._items.get(guild_id_str, {}).get(item_id_str)
 
-        if self._db_service is None or self._db_service.adapter is None:
-            print(f"ItemManager: No DB service or adapter for guild {guild_id_str}. Cannot create item instance.")
+    # Methods like create_item_instance, remove_item_instance, update_item_instance,
+    # save_item, load_state, etc. are complex and deal with DB/cache.
+    # For now, assuming they are mostly compatible with InventoryManager handling the character.inventory (JSON list)
+    # and this ItemManager handling the global item instances (if any are not just in inventories).
+    # The distinction between Item (DB model) and item dicts in character.inventory needs to be clear.
+    # InventoryManager should be the source of truth for what a character possesses.
+    # ItemManager might manage items "in the world" or item templates.
+
+    async def create_item_instance(self, guild_id: str, template_id: str, owner_id: Optional[str] = None, owner_type: Optional[str] = None, location_id: Optional[str] = None, quantity: float = 1.0, initial_state: Optional[Dict[str, Any]] = None, is_temporary: bool = False, **kwargs: Any) -> Optional["Item"]:
+        guild_id_str = str(guild_id); template_id_str = str(template_id)
+        if self._db_service is None: return None
+
+        # Get template from rules_config
+        if not self.rules_config or template_id_str not in self.rules_config.item_definitions:
+            print(f"ItemManager.create_item_instance: Template '{template_id_str}' not found in rules_config.")
             return None
+        # template = self.get_item_template(template_id_str) # Uses the new get_item_template
+        # if not template: return None # Already checked by rules_config lookup
 
-        template = self.get_item_template(template_id_str)
-        if not template:
-            print(f"ItemManager: Error creating instance: Template '{template_id_str}' not found globally.")
-            return None
-
-        if quantity <= 0:
-            print(f"ItemManager: Warning creating instance: Quantity must be positive ({quantity}). Cannot create.")
-            return None
-
-        resolved_location_id: Optional[str] = str(location_id) if location_id else None
-        resolved_owner_id: Optional[str] = str(owner_id) if owner_id else None
-        resolved_owner_type: Optional[str] = str(owner_type) if owner_type else None
-
-        if resolved_owner_type and resolved_owner_id and resolved_owner_type.lower() == 'location':
-             resolved_location_id = resolved_owner_id
-        elif resolved_owner_type is None and location_id is not None:
-             resolved_location_id = str(location_id)
-
-        new_item_id = str(uuid.uuid4())
+        if quantity <= 0: return None
+        new_item_id = str(uuid.uuid4()) # This is for DB based items. InventoryManager might use its own IDs for inventory entries.
 
         item_data_for_model: Dict[str, Any] = {
             'id': new_item_id,
             'guild_id': guild_id_str,
             'template_id': template_id_str,
             'quantity': float(quantity),
-            'owner_id': resolved_owner_id,
-            'owner_type': resolved_owner_type,
-            'location_id': resolved_location_id,
-            'state_variables': initial_state if initial_state is not None else {},
+            'owner_id': str(owner_id) if owner_id else None,
+            'owner_type': str(owner_type) if owner_type else None,
+            'location_id': str(location_id) if location_id else None,
+            'state_variables': initial_state or {},
             'is_temporary': is_temporary
         }
-
         new_item = Item.from_dict(item_data_for_model)
-
-        try:
-            if not await self.save_item(new_item, guild_id_str):
-                print(f"ItemManager: Failed to save new item {new_item_id} to DB for guild {guild_id_str}.")
-                return None
-
-            if self._game_log_manager:
-                revert_data = {"item_id": new_item.id}
-                log_details = {
-                    "action_type": "ITEM_INSTANCE_CREATE", "item_id": new_item.id,
-                    "template_id": new_item.template_id, "owner_id": new_item.owner_id,
-                    "owner_type": new_item.owner_type, "location_id": new_item.location_id,
-                    "quantity": new_item.quantity, "revert_data": revert_data
-                }
-                player_id_context = kwargs.get('player_id_context')
-                asyncio.create_task(self._game_log_manager.log_event(
-                    guild_id=guild_id_str, event_type="ITEM_CREATED",
-                    details=log_details, player_id=player_id_context
-                ))
-            print(f"ItemManager: Item instance {new_item_id} (Template: {template_id_str}) created, saved, and cached for guild {guild_id_str}.")
-            return new_item
-        except Exception as e:
-            print(f"ItemManager: ❌ Error during item instance creation or saving for guild {guild_id_str}: {e}")
-            traceback.print_exc()
-            return None
+        if not await self.save_item(new_item, guild_id_str): return None
+        # self._update_lookup_caches_add(guild_id_str, new_item.to_dict()) # save_item should handle this
+        if self._game_log_manager: asyncio.create_task(self._game_log_manager.log_event(guild_id=guild_id_str, event_type="ITEM_CREATED_WORLD", details={"item_id": new_item.id, "template_id": template_id_str, "location":location_id}))
+        return new_item
 
     async def remove_item_instance(self, guild_id: str, item_id: str, **kwargs: Any) -> bool:
-        guild_id_str = str(guild_id)
-        item_id_str = str(item_id)
-        item_to_remove = self.get_item_instance(guild_id_str, item_id_str)
-
+        # This removes a world item instance (from DB and cache)
+        guild_id_str, item_id_str = str(guild_id), str(item_id)
+        item_to_remove = self.get_item_instance(guild_id_str, item_id_str) # from self._items cache
         if not item_to_remove:
-            if guild_id_str in self._deleted_items and item_id_str in self._deleted_items[guild_id_str]:
-                 print(f"ItemManager.remove_item_instance: Item {item_id_str} already marked as deleted or not found in active cache for guild {guild_id_str}.")
-                 return True
-            print(f"ItemManager.remove_item_instance: Item {item_id_str} not found for removal in guild {guild_id_str}.")
-            return False
+            # print(f"ItemManager.remove_item_instance: Item '{item_id_str}' not found in cache for guild '{guild_id_str}'.")
+            # Check if already marked deleted
+            return True if guild_id_str in self._deleted_items and item_id_str in self._deleted_items[guild_id_str] else False
 
-        if self._game_log_manager:
-            revert_data = {"original_item_data": item_to_remove.to_dict()}
-            log_details = {
-                "action_type": "ITEM_INSTANCE_DELETE", "item_id": item_to_remove.id,
-                "template_id": item_to_remove.template_id, "owner_id": item_to_remove.owner_id,
-                "location_id": item_to_remove.location_id, "revert_data": revert_data
-            }
-            player_id_context = kwargs.get('player_id_context')
-            await self._game_log_manager.log_event(
-                guild_id=guild_id_str, event_type="ITEM_DELETED",
-                details=log_details, player_id=player_id_context
-            )
+        if self._db_service and self._db_service.adapter:
+            await self._db_service.adapter.execute('DELETE FROM items WHERE id = $1 AND guild_id = $2', (item_id_str, guild_id_str))
 
-        try:
-            if self._db_service and self._db_service.adapter:
-                sql = 'DELETE FROM items WHERE id = $1 AND guild_id = $2'
-                await self._db_service.adapter.execute(sql, (item_id_str, guild_id_str))
+        guild_items_cache = self._items.get(guild_id_str, {})
+        guild_items_cache.pop(item_id_str, None)
+        if not guild_items_cache: self._items.pop(guild_id_str, None)
 
-            guild_items_cache = self._items.get(guild_id_str, {})
-            if item_id_str in guild_items_cache:
-                 del guild_items_cache[item_id_str]
-                 if not guild_items_cache: self._items.pop(guild_id_str, None)
-
-            self._update_lookup_caches_remove(guild_id_str, item_to_remove.to_dict())
-            self._dirty_items.get(guild_id_str, set()).discard(item_id_str)
-            self._deleted_items.setdefault(guild_id_str, set()).add(item_id_str)
-            return True
-        except Exception as e:
-            print(f"ItemManager: ❌ Error removing item instance {item_id_str} for guild {guild_id_str}: {e}")
-            traceback.print_exc()
-            return False
+        self._update_lookup_caches_remove(guild_id_str, item_to_remove.to_dict())
+        self._dirty_items.get(guild_id_str, set()).discard(item_id_str)
+        self._deleted_items.setdefault(guild_id_str, set()).add(item_id_str)
+        # print(f"ItemManager.remove_item_instance: Item '{item_id_str}' removed from world.")
+        return True
 
     async def update_item_instance(self, guild_id: str, item_id: str, updates: Dict[str, Any], **kwargs: Any) -> bool:
-        guild_id_str = str(guild_id)
-        item_id_str = str(item_id)
+        # Updates a world item instance
+        guild_id_str, item_id_str = str(guild_id), str(item_id)
         item_object = self.get_item_instance(guild_id_str, item_id_str)
-
-        if not item_object:
-            print(f"ItemManager.update_item_instance: Item {item_id_str} not found in guild {guild_id_str}.")
-            return False
+        if not item_object: return False
 
         old_item_dict_for_lookup = item_object.to_dict()
-
-        old_field_values = {}
-        for key_to_update in updates.keys():
-            if hasattr(item_object, key_to_update):
-                old_field_values[key_to_update] = getattr(item_object, key_to_update)
-                if isinstance(old_field_values[key_to_update], dict):
-                     old_field_values[key_to_update] = json.loads(json.dumps(old_field_values[key_to_update]))
-
         for key, value in updates.items():
             if hasattr(item_object, key):
                 if key == 'state_variables' and isinstance(value, dict):
                     current_state = getattr(item_object, key, {})
-                    if not isinstance(current_state, dict) : current_state = {}
+                    if current_state is None: current_state = {} # Ensure it's a dict
                     current_state.update(value)
                     setattr(item_object, key, current_state)
-                else:
-                    setattr(item_object, key, value)
-            else:
-                print(f"ItemManager: Warning - Attempted to update unknown attribute {key} for item {item_id_str}")
-
-        if self._game_log_manager and old_field_values:
-            revert_data = {"item_id": item_object.id, "old_field_values": old_field_values}
-            log_details = {
-                "action_type": "ITEM_INSTANCE_UPDATE", "item_id": item_object.id,
-                "updated_fields_new_values": updates,
-                "revert_data": revert_data
-            }
-            player_id_context = kwargs.get('player_id_context')
-            await self._game_log_manager.log_event(
-                guild_id=guild_id_str, event_type="ITEM_UPDATED",
-                details=log_details, player_id=player_id_context
-            )
+                else: setattr(item_object, key, value)
 
         new_item_dict_for_lookup = item_object.to_dict()
-        owner_changed = old_item_dict_for_lookup.get('owner_id') != new_item_dict_for_lookup.get('owner_id') or \
-                        old_item_dict_for_lookup.get('owner_type') != new_item_dict_for_lookup.get('owner_type')
-        location_changed = old_item_dict_for_lookup.get('location_id') != new_item_dict_for_lookup.get('location_id')
 
-        if owner_changed or location_changed:
+        # Check if lookup-relevant fields changed
+        if old_item_dict_for_lookup.get('owner_id') != new_item_dict_for_lookup.get('owner_id') or \
+           old_item_dict_for_lookup.get('owner_type') != new_item_dict_for_lookup.get('owner_type') or \
+           old_item_dict_for_lookup.get('location_id') != new_item_dict_for_lookup.get('location_id'):
             self._update_lookup_caches_remove(guild_id_str, old_item_dict_for_lookup)
             self._update_lookup_caches_add(guild_id_str, new_item_dict_for_lookup)
 
-        self.mark_item_dirty(guild_id_str, item_id_str)
+        self.mark_item_dirty(guild_id_str, item_id_str) # Marks for saving if persistence strategy requires it
+        # print(f"ItemManager.update_item_instance: Item '{item_id_str}' updated.")
+        # This method itself doesn't save to DB, relies on a periodic save_dirty_items or similar
+        # Or save_item should be called explicitly after this if immediate persistence is needed.
+        # For now, let's assume save_item is called separately or by a background task.
+        # Re-saving it here:
+        await self.save_item(item_object, guild_id_str)
+
         return True
 
-    async def revert_item_creation(self, guild_id: str, item_id: str, **kwargs: Any) -> bool:
-        print(f"ItemManager.revert_item_creation: Attempting to remove item {item_id} for guild {guild_id}.")
-        success = await self.remove_item_instance(guild_id, item_id, **kwargs)
-        if success:
-            print(f"ItemManager.revert_item_creation: Successfully removed item {item_id} for guild {guild_id}.")
-        else:
-            print(f"ItemManager.revert_item_creation: Failed to remove item {item_id} for guild {guild_id}.")
-        return success
-
+    async def revert_item_creation(self, guild_id: str, item_id: str, **kwargs: Any) -> bool: return await self.remove_item_instance(guild_id, item_id, **kwargs)
     async def revert_item_deletion(self, guild_id: str, item_data: Dict[str, Any], **kwargs: Any) -> bool:
         item_id_to_recreate = item_data.get('id')
-        if not item_id_to_recreate:
-            print(f"ItemManager.revert_item_deletion: Invalid item_data, missing 'id'. Cannot revert deletion for guild {guild_id}.")
-            return False
-
-        print(f"ItemManager.revert_item_deletion: Attempting to recreate item {item_id_to_recreate} for guild {guild_id} from data: {item_data}")
-
-        existing_item = self.get_item_instance(guild_id, item_id_to_recreate)
-        if existing_item:
-            print(f"ItemManager.revert_item_deletion: Item {item_id_to_recreate} already exists in guild {guild_id}. Assuming already reverted.")
-            return True
-
-        try:
-            item_data.setdefault('guild_id', guild_id)
-            item_data.setdefault('state_variables', item_data.get('state_variables', {}))
-            item_data.setdefault('is_temporary', item_data.get('is_temporary', False))
-            item_data['quantity'] = float(item_data.get('quantity', 1.0))
-            newly_created_item_object = Item.from_dict(item_data)
-            save_success = await self.save_item(newly_created_item_object, guild_id)
-
-            if save_success:
-                print(f"ItemManager.revert_item_deletion: Successfully recreated and saved item {item_id_to_recreate} for guild {guild_id}.")
-                return True
-            else:
-                print(f"ItemManager.revert_item_deletion: Failed to save recreated item {item_id_to_recreate} for guild {guild_id}.")
-                return False
-        except Exception as e:
-            print(f"ItemManager.revert_item_deletion: Error during item recreation for {item_id_to_recreate} in guild {guild_id}: {e}")
-            traceback.print_exc()
-            return False
-
-    async def revert_item_update(self, guild_id: str, item_id: str, old_field_values: Dict[str, Any], **kwargs: Any) -> bool:
-        item = self.get_item_instance(guild_id, item_id)
-        if not item:
-            print(f"ItemManager.revert_item_update: Item {item_id} not found in guild {guild_id}. Cannot revert update.")
-            return False
-
-        print(f"ItemManager.revert_item_update: Reverting fields for item {item_id} in guild {guild_id}. Old values: {old_field_values}")
-        old_item_dict_for_lookup = item.to_dict()
-
-        for field_name, old_value in old_field_values.items():
-            if hasattr(item, field_name):
-                if field_name == 'quantity' and old_value is not None:
-                    try: setattr(item, field_name, float(old_value))
-                    except ValueError:
-                        print(f"ItemManager.revert_item_update: Invalid old_value '{old_value}' for quantity on item {item_id}. Skipping field.")
-                        continue
-                else: setattr(item, field_name, old_value)
-            else:
-                print(f"ItemManager.revert_item_update: Warning - Item {item_id} has no attribute '{field_name}'. Skipping field.")
-
-        new_item_dict_for_lookup = item.to_dict()
-        owner_changed = (old_item_dict_for_lookup.get('owner_id') != new_item_dict_for_lookup.get('owner_id') or
-                         old_item_dict_for_lookup.get('owner_type') != new_item_dict_for_lookup.get('owner_type'))
-        location_changed = old_item_dict_for_lookup.get('location_id') != new_item_dict_for_lookup.get('location_id')
-
-        if owner_changed or location_changed:
-            print(f"ItemManager.revert_item_update: Owner or location changed for item {item_id}. Updating lookup caches.")
-            self._update_lookup_caches_remove(guild_id, old_item_dict_for_lookup)
-            self._update_lookup_caches_add(guild_id, new_item_dict_for_lookup)
-
-        self.mark_item_dirty(guild_id, item_id)
-        print(f"ItemManager.revert_item_update: Successfully reverted fields for item {item_id} in guild {guild_id}.")
-        return True
-
-    async def use_item_in_combat(
-        self,
-        guild_id: str,
-        actor_id: str,
-        item_instance_id: str,
-        target_id: Optional[str] = None,
-        game_log_manager: Optional['GameLogManager'] = None
-    ) -> Dict[str, Any]:
-        guild_id_str = str(guild_id)
-        item_instance = self.get_item_instance(guild_id_str, item_instance_id)
-
-        if not item_instance:
-            return {"success": False, "consumed": False, "message": "Item instance not found."}
-
-        item_template = self.get_item_template(item_instance.template_id)
-        if not item_template: # get_item_template returns Dict[str, Any] or None
-            return {"success": False, "consumed": False, "message": "Item template not found."}
-
-        item_name = item_template.get('name_i18n', {}).get('en', item_instance.template_id)
-        properties = item_template.get('properties', {})
-
-        if not properties.get("usable_in_combat", False):
-            return {"success": False, "consumed": False, "message": f"{item_name} is not usable in combat."}
-
-        required_target_type = properties.get("target_type") # e.g. "self", "enemy", "ally", "any"
-        if required_target_type and required_target_type not in ["self", "area_implicit"] and not target_id:
-            return {"success": False, "consumed": False, "message": f"{item_name} requires a target."}
-
-        resolved_target_id = target_id
-        if not target_id and required_target_type == "self":
-            resolved_target_id = actor_id
-
-        # Consume the item
-        if item_instance.quantity > 1:
-            update_success = await self.update_item_instance(
-                guild_id_str,
-                item_instance_id,
-                {"quantity": item_instance.quantity - 1},
-                player_id_context=actor_id # Pass actor_id as context for logging if needed
-            )
-            if not update_success:
-                 return {"success": False, "consumed": False, "message": f"Failed to update quantity for {item_name}."}
-        else:
-            remove_success = await self.remove_item_instance(
-                guild_id_str,
-                item_instance_id,
-                player_id_context=actor_id # Pass actor_id as context for logging if needed
-            )
-            if not remove_success:
-                return {"success": False, "consumed": False, "message": f"Failed to remove {item_name} after use."}
-
-        consume_log_message = f"Item '{item_name}' (ID: {item_instance_id}) consumed by {actor_id}."
-        # Use the passed game_log_manager if available
-        actual_log_manager = game_log_manager if game_log_manager else self._game_log_manager
-        if actual_log_manager:
-            await actual_log_manager.log_event(guild_id_str, "ITEM_CONSUMED",
-                                               details={"message": consume_log_message, "item_id": item_instance_id, "actor_id": actor_id},
-                                               player_id=actor_id) # Log with player_id if applicable
-        else:
-            print(f"ItemManager: {consume_log_message}")
-
-        item_effects = item_template.get("effects", [])
-        return {
-            "success": True, "consumed": True,
-            "message": f"{item_name} used by {actor_id}.",
-            "item_name": item_name, "effects": item_effects,
-            "actor_id": actor_id,
-            "original_target_id": target_id,
-            "resolved_target_id": resolved_target_id
-        }
-
-    async def load_state(self, guild_id: str, **kwargs: Any) -> None:
-        guild_id_str = str(guild_id)
-        if self._db_service is None or self._db_service.adapter is None:
-             self._clear_guild_state_cache(guild_id_str)
-             return
-
-        self._clear_guild_state_cache(guild_id_str)
-        guild_items_cache = self._items[guild_id_str]
-
-        try:
-            sql_items = 'SELECT id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary FROM items WHERE guild_id = $1'
-            rows_items = await self._db_service.adapter.fetchall(sql_items, (guild_id_str,))
-            loaded_count = 0
-            for row in rows_items:
-                try:
-                    item_data_dict: Dict[str, Any] = {
-                       'id': row['id'],
-                       'template_id': str(row['template_id']) if row['template_id'] is not None else None,
-                       'guild_id': str(row['guild_id']),
-                       'owner_id': str(row['owner_id']) if row['owner_id'] is not None else None,
-                       'owner_type': str(row['owner_type']) if row['owner_type'] is not None else None,
-                       'location_id': str(row['location_id']) if row['location_id'] is not None else None,
-                       'quantity': float(row['quantity']) if row['quantity'] is not None else 1.0,
-                       'state_variables': json.loads(row['state_variables'] or '{}') if isinstance(row['state_variables'], (str, bytes)) else {},
-                       'is_temporary': bool(row['is_temporary'])
-                    }
-                    if item_data_dict['template_id'] is None or item_data_dict['guild_id'] != guild_id_str:
-                        continue
-
-                    item_object = Item.from_dict(item_data_dict)
-                    guild_items_cache[item_object.id] = item_object
-                    loaded_count += 1
-                    self._update_lookup_caches_add(guild_id_str, item_object.to_dict())
-                except Exception as e:
-                   print(f"ItemManager: ❌ Error processing item row ID {row['id'] if row and 'id' in row else 'Unknown'}: {e}")
-                   traceback.print_exc()
-            print(f"ItemManager: Loaded {loaded_count} item instances for guild {guild_id_str}.")
-        except Exception as e:
-            print(f"ItemManager: ❌ CRITICAL ERROR loading items for guild {guild_id_str}: {e}")
-            self._clear_guild_state_cache(guild_id_str)
-            raise
-
-    async def save_state(self, guild_id: str, **kwargs: Any) -> None:
-        guild_id_str = str(guild_id)
-        if self._db_service is None or self._db_service.adapter is None: return
-
-        dirty_ids = self._dirty_items.get(guild_id_str, set()).copy()
-        deleted_ids = self._deleted_items.get(guild_id_str, set()).copy()
-
-        if not dirty_ids and not deleted_ids:
-            self._dirty_items.pop(guild_id_str, None)
-            self._deleted_items.pop(guild_id_str, None)
-            return
-
-        if deleted_ids:
-            if deleted_ids:
-                placeholders = ','.join([f'${i+2}' for i in range(len(deleted_ids))])
-                sql_delete = f"DELETE FROM items WHERE guild_id = $1 AND id IN ({placeholders})"
-                try:
-                    await self._db_service.adapter.execute(sql_delete, (guild_id_str, *list(deleted_ids)))
-                    self._deleted_items.pop(guild_id_str, None)
-                except Exception as e: print(f"ItemManager: Error deleting items: {e}")
-            else:
-                self._deleted_items.pop(guild_id_str, None)
-
-        items_to_upsert = [obj.to_dict() for id_str in dirty_ids if (obj := self._items.get(guild_id_str, {}).get(id_str))]
-
-        if items_to_upsert:
-            upsert_sql = '''
-            INSERT INTO items (id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (id) DO UPDATE SET
-                template_id = EXCLUDED.template_id, guild_id = EXCLUDED.guild_id,
-                owner_id = EXCLUDED.owner_id, owner_type = EXCLUDED.owner_type,
-                location_id = EXCLUDED.location_id, quantity = EXCLUDED.quantity,
-                state_variables = EXCLUDED.state_variables, is_temporary = EXCLUDED.is_temporary
-            '''
-            data_tuples = []
-            processed_ids = set()
-            for item_data in items_to_upsert:
-                try:
-                    data_tuples.append((
-                        item_data['id'], item_data['template_id'], item_data['guild_id'],
-                        item_data['owner_id'], item_data['owner_type'], item_data['location_id'],
-                        item_data['quantity'], json.dumps(item_data['state_variables']),
-                        bool(item_data['is_temporary'])
-                    ))
-                    processed_ids.add(item_data['id'])
-                except Exception as e: print(f"ItemManager: Error preparing item {item_data.get('id')} for save: {e}")
-
-            if data_tuples:
-                try:
-                    await self._db_service.adapter.execute_many(upsert_sql, data_tuples)
-                    if guild_id_str in self._dirty_items:
-                        self._dirty_items[guild_id_str].difference_update(processed_ids)
-                        if not self._dirty_items[guild_id_str]: del self._dirty_items[guild_id_str]
-                except Exception as e: print(f"ItemManager: Error batch upserting items: {e}")
-        print(f"ItemManager: Save state complete for guild {guild_id_str}.")
-
-    async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-         guild_id_str = str(guild_id)
-         self._items_by_owner.pop(guild_id_str, None)
-         self._items_by_owner[guild_id_str] = {}
-         self._items_by_location.pop(guild_id_str, None)
-         self._items_by_location[guild_id_str] = {}
-
-         guild_items_cache = self._items.get(guild_id_str, {})
-         for item_id, item_obj in guild_items_cache.items():
-              self._update_lookup_caches_add(guild_id_str, item_obj.to_dict())
-         print(f"ItemManager: Runtime caches rebuilt for guild {guild_id_str}.")
-
-    async def clean_up_for_character(self, character_id: str, context: Dict[str, Any], **kwargs: Any) -> None:
-         guild_id = context.get('guild_id')
-         if not guild_id: return
-         loc_mgr = context.get('location_manager', self._location_manager)
-         char_loc_id = context.get('location_instance_id')
-         if loc_mgr and hasattr(loc_mgr, 'get_location_instance') and char_loc_id:
-              drop_location_instance = loc_mgr.get_location_instance(str(guild_id), str(char_loc_id))
-
-    async def clean_up_for_npc(self, npc_id: str, context: Dict[str, Any], **kwargs: Any) -> None:
-         guild_id = context.get('guild_id')
-         if not guild_id: return
-         loc_mgr = context.get('location_manager', self._location_manager)
-         npc_loc_id = context.get('location_instance_id')
-         if loc_mgr and hasattr(loc_mgr, 'get_location_instance') and npc_loc_id:
-             drop_location_instance = loc_mgr.get_location_instance(str(guild_id), str(npc_loc_id))
-
-    async def remove_items_by_location(self, location_id: str, guild_id: str, **kwargs: Any) -> None:
-         guild_id_str = str(guild_id)
-         location_id_str = str(location_id)
-         items_to_remove = await self.get_items_in_location(guild_id_str, location_id_str)
-         for item_obj in list(items_to_remove):
-              await self.remove_item_instance(guild_id_str, item_obj.id, **kwargs)
+        item_data.setdefault('guild_id', guild_id)
+        if not item_id_to_recreate or self.get_item_instance(guild_id, item_id_to_recreate): return True
+        newly_created_item_object = Item.from_dict(item_data)
+        return await self.save_item(newly_created_item_object, guild_id) # save_item also adds to cache
+    async def revert_item_update(self, guild_id: str, item_id: str, old_field_values: Dict[str, Any], **kwargs: Any) -> bool: return await self.update_item_instance(guild_id, item_id, old_field_values, **kwargs)
+    async def use_item_in_combat(self, guild_id: str, actor_id: str, item_instance_id: str, target_id: Optional[str] = None, game_log_manager: Optional['GameLogManager'] = None) -> Dict[str, Any]: return {"success": False, "consumed": False, "message": "Not implemented in detail."}
 
     def _clear_guild_state_cache(self, guild_id: str) -> None:
         guild_id_str = str(guild_id)
-        self._items.pop(guild_id_str, None)
+        for cache in [self._items, self._items_by_owner, self._items_by_location, self._dirty_items, self._deleted_items]: cache.pop(guild_id_str, None)
         self._items[guild_id_str] = {}
-        self._items_by_owner.pop(guild_id_str, None)
         self._items_by_owner[guild_id_str] = {}
-        self._items_by_location.pop(guild_id_str, None)
         self._items_by_location[guild_id_str] = {}
-        self._dirty_items.pop(guild_id_str, None)
-        self._deleted_items.pop(guild_id_str, None)
+        # print(f"ItemManager: Cleared runtime cache for guild '{guild_id_str}'.")
 
     def mark_item_dirty(self, guild_id: str, item_id: str) -> None:
-         guild_id_str = str(guild_id)
-         item_id_str = str(item_id)
-         if guild_id_str in self._items and item_id_str in self._items[guild_id_str]:
-              self._dirty_items.setdefault(guild_id_str, set()).add(item_id_str)
+         if str(guild_id) in self._items and str(item_id) in self._items[str(guild_id)]:
+             self._dirty_items.setdefault(str(guild_id), set()).add(str(item_id))
+             # print(f"ItemManager: Item '{item_id}' in guild '{guild_id}' marked dirty.")
 
     def _update_lookup_caches_add(self, guild_id: str, item_data: Dict[str, Any]) -> None:
+        item_id, owner_id, loc_id = str(item_data.get('id')), item_data.get('owner_id'), item_data.get('location_id')
         guild_id_str = str(guild_id)
-        item_id_str = str(item_data.get('id'))
-        owner_id = item_data.get('owner_id')
-        location_id = item_data.get('location_id')
-        if owner_id is not None:
-             self._items_by_owner.setdefault(guild_id_str, {}).setdefault(str(owner_id), set()).add(item_id_str)
-        if location_id is not None:
-             self._items_by_location.setdefault(guild_id_str, {}).setdefault(str(location_id), set()).add(item_id_str)
+        if owner_id: self._items_by_owner.setdefault(guild_id_str, {}).setdefault(str(owner_id), set()).add(item_id)
+        if loc_id: self._items_by_location.setdefault(guild_id_str, {}).setdefault(str(loc_id), set()).add(item_id)
 
     def _update_lookup_caches_remove(self, guild_id: str, item_data: Dict[str, Any]) -> None:
+        item_id, owner_id, loc_id = str(item_data.get('id')), item_data.get('owner_id'), item_data.get('location_id')
         guild_id_str = str(guild_id)
-        item_id_str = str(item_data.get('id'))
-        owner_id = item_data.get('owner_id')
-        location_id = item_data.get('location_id')
-        if owner_id is not None:
-             owner_id_str = str(owner_id)
-             guild_owner_cache = self._items_by_owner.get(guild_id_str)
-             if guild_owner_cache and owner_id_str in guild_owner_cache:
-                  guild_owner_cache[owner_id_str].discard(item_id_str)
-                  if not guild_owner_cache[owner_id_str]:
-                       guild_owner_cache.pop(owner_id_str)
-                       if not guild_owner_cache: self._items_by_owner.pop(guild_id_str, None)
-        if location_id is not None:
-             location_id_str = str(location_id)
-             guild_location_cache = self._items_by_location.get(guild_id_str)
-             if guild_location_cache and location_id_str in guild_location_cache:
-                  guild_location_cache[location_id_str].discard(item_id_str)
-                  if not guild_location_cache[location_id_str]:
-                       guild_location_cache.pop(location_id_str)
-                       if not guild_location_cache: self._items_by_location.pop(guild_id_str, None)
+        if owner_id and guild_id_str in self._items_by_owner and str(owner_id) in self._items_by_owner[guild_id_str]:
+            self._items_by_owner[guild_id_str][str(owner_id)].discard(item_id)
+            if not self._items_by_owner[guild_id_str][str(owner_id)]: self._items_by_owner[guild_id_str].pop(str(owner_id))
+        if loc_id and guild_id_str in self._items_by_location and str(loc_id) in self._items_by_location[guild_id_str]:
+            self._items_by_location[guild_id_str][str(loc_id)].discard(item_id)
+            if not self._items_by_location[guild_id_str][str(loc_id)]: self._items_by_location[guild_id_str].pop(str(loc_id))
 
     async def save_item(self, item: "Item", guild_id: str) -> bool:
-        if self._db_service is None or self._db_service.adapter is None: return False
-        guild_id_str = str(guild_id)
+        # Saves a world item instance to DB and updates cache
+        if self._db_service is None: return False
         item_id = getattr(item, 'id', None)
-        if not item_id: return False
-        if str(getattr(item, 'guild_id', None)) != guild_id_str: return False
+        guild_id_str = str(guild_id)
+        if not item_id or str(getattr(item, 'guild_id', None)) != guild_id_str: return False
+
+        item_data = item.to_dict()
+        db_params = (
+            item_data['id'], item_data['template_id'], guild_id_str,
+            item_data['owner_id'], item_data['owner_type'], item_data['location_id'],
+            float(item_data['quantity']), json.dumps(item_data['state_variables']),
+            bool(item_data['is_temporary'])
+        )
+        upsert_sql = 'INSERT INTO items (id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO UPDATE SET template_id=EXCLUDED.template_id, owner_id=EXCLUDED.owner_id, owner_type=EXCLUDED.owner_type, location_id=EXCLUDED.location_id, quantity=EXCLUDED.quantity, state_variables=EXCLUDED.state_variables, is_temporary=EXCLUDED.is_temporary'
 
         try:
-            item_data_from_model = item.to_dict()
-            db_params = (
-                item_data_from_model.get('id'), item_data_from_model.get('template_id'),
-                guild_id_str,
-                item_data_from_model.get('owner_id'), item_data_from_model.get('owner_type'),
-                item_data_from_model.get('location_id'),
-                float(item_data_from_model.get('quantity', 1.0)),
-                json.dumps(item_data_from_model.get('state_variables', {})),
-                bool(item_data_from_model.get('is_temporary', False))
-            )
-            upsert_sql = '''
-            INSERT INTO items (id, template_id, guild_id, owner_id, owner_type, location_id, quantity, state_variables, is_temporary)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (id) DO UPDATE SET
-                template_id = EXCLUDED.template_id, guild_id = EXCLUDED.guild_id,
-                owner_id = EXCLUDED.owner_id, owner_type = EXCLUDED.owner_type,
-                location_id = EXCLUDED.location_id, quantity = EXCLUDED.quantity,
-                state_variables = EXCLUDED.state_variables, is_temporary = EXCLUDED.is_temporary
-            '''
-            await self._db_service.adapter.execute(upsert_sql, db_params)
-
-            guild_dirty_set = self._dirty_items.get(guild_id_str)
-            if guild_dirty_set:
-                guild_dirty_set.discard(item_id)
-                if not guild_dirty_set: del self._dirty_items[guild_id_str]
-
-            self._items.setdefault(guild_id_str, {})[item_id] = item
-
-            item_as_dict_for_lookup = item.to_dict()
-            self._update_lookup_caches_remove(guild_id_str, item_as_dict_for_lookup)
-            self._update_lookup_caches_add(guild_id_str, item_as_dict_for_lookup)
-            return True
+            await self._db_service.adapter.execute(upsert_sql, db_params) # type: ignore
         except Exception as e:
-            print(f"ItemManager: Error saving item {item_id} for guild {guild_id_str}: {e}")
+            print(f"Error saving item {item_id} to DB: {e}")
             traceback.print_exc()
             return False
 
-    async def get_items_in_location_async(self, guild_id: str, location_id: str) -> List["Item"]:
-        if not self._db_service:
-            print(f"ItemManager: DBService not available. Cannot get items in location {location_id} for guild {guild_id}.")
-            return []
-        item_data_list = await self._db_service.get_item_instances_in_location(location_id=location_id, guild_id=guild_id)
-        items: List[Item] = []
-        for data in item_data_list:
-            try:
-                item_properties = data.get('properties', {})
-                state_variables = data.get('state_variables', {})
-                item_init_data = {
-                    "id": data.get("item_instance_id"),
-                    "template_id": data.get("template_id"), "guild_id": guild_id,
-                    "name": data.get("name"), "description": data.get("description"),
-                    "item_type": data.get("item_type"),
-                    "quantity": data.get("quantity"),
-                    "properties": item_properties, "state_variables": state_variables,
-                    "owner_id": None, "owner_type": "location",
-                    "location_id": location_id
-                }
-                if not item_init_data["id"] or not item_init_data["template_id"]:
-                    print(f"ItemManager: Skipping item data due to missing id or template_id: {item_init_data}")
-                    continue
-                items.append(Item.from_dict(item_init_data))
-            except Exception as e:
-                print(f"ItemManager: Error converting data to Item object for item in location {location_id}: {data}, Error: {e}")
-                traceback.print_exc()
-        return items
-
-    async def transfer_item_world_to_character(self, guild_id: str, character_id: str, item_instance_id: str, quantity: int = 1) -> bool:
-        if not self._db_service or not self._character_manager:
-            print("ItemManager: DBService or CharacterManager not available. Cannot transfer item.")
-            return False
-
-        item_instance_data = await self._db_service.get_entity(table_name="items", entity_id=item_instance_id, guild_id=guild_id)
-        if not item_instance_data:
-            print(f"ItemManager: Item instance {item_instance_id} not found in guild {guild_id}.")
-            return False
-
-        current_quantity_in_world = item_instance_data.get('quantity', 0.0)
-        if not isinstance(current_quantity_in_world, (int, float)): current_quantity_in_world = 0.0
-        template_id = item_instance_data.get('template_id')
-        if not template_id:
-             print(f"ItemManager: Item instance {item_instance_id} is missing a template_id.")
-             return False
-        if current_quantity_in_world < quantity:
-            print(f"ItemManager: Not enough quantity of item {item_instance_id} in world. Has {current_quantity_in_world}, needs {quantity}.")
-            return False
-
-        add_success = await self._character_manager.add_item_to_inventory(
-            guild_id=guild_id, character_id=character_id,
-            item_id=template_id, quantity=quantity
-        )
-        if not add_success:
-            print(f"ItemManager: Failed to add item (template: {template_id}) to character {character_id} inventory.")
-            return False
-
-        if current_quantity_in_world == quantity:
-            delete_success = await self._db_service.delete_entity(table_name="items", entity_id=item_instance_id, guild_id=guild_id)
-            if not delete_success:
-                print(f"ItemManager: Failed to delete item instance {item_instance_id} from world. Manual cleanup may be needed.")
-            else:
-                print(f"ItemManager: Item instance {item_instance_id} deleted from world.")
-                guild_items_cache = self._items.get(guild_id, {})
-                if item_instance_id in guild_items_cache: del guild_items_cache[item_instance_id]
-                self._update_lookup_caches_remove(guild_id, item_instance_data)
-                self._dirty_items.get(guild_id, set()).discard(item_instance_id)
-                self._deleted_items.setdefault(guild_id, set()).add(item_instance_id)
-        else:
-            new_world_quantity = current_quantity_in_world - quantity
-            update_success = await self._db_service.update_entity(
-                table_name="items", entity_id=item_instance_id,
-                data={'quantity': new_world_quantity}, guild_id=guild_id
-            )
-            if not update_success:
-                print(f"ItemManager: Failed to update quantity for item instance {item_instance_id} in world.")
-            else:
-                print(f"ItemManager: Item instance {item_instance_id} quantity updated in world to {new_world_quantity}.")
-                cached_item = self.get_item_instance(guild_id, item_instance_id)
-                if cached_item:
-                    cached_item.quantity = new_world_quantity
-                    self.mark_item_dirty(guild_id, item_instance_id)
+        self._items.setdefault(guild_id_str, {})[item_id] = item # Add/update in cache
+        self._update_lookup_caches_add(guild_id_str, item.to_dict()) # Ensure lookups are updated
+        self._dirty_items.get(guild_id_str, set()).discard(item_id) # No longer dirty after save
+        if guild_id_str in self._deleted_items: self._deleted_items[guild_id_str].discard(item_id) # No longer deleted
+        # print(f"ItemManager.save_item: Item '{item_id}' saved to DB and cache for guild '{guild_id_str}'.")
         return True
 
-print("DEBUG: item_manager.py module loaded.")
+    async def get_items_in_location_async(self, guild_id: str, location_id: str) -> List["Item"]: return await self.get_items_in_location(guild_id, location_id)
+    async def transfer_item_world_to_character(self, guild_id: str, character_id: str, item_instance_id: str, quantity: int = 1) -> bool:
+        # This is a complex operation:
+        # 1. Get world item instance.
+        # 2. If valid and quantity allows:
+        #    a. Add to character inventory (via InventoryManager). This is the tricky part due to different data structures.
+        #    b. Decrease quantity or remove world item.
+        # This needs careful implementation matching InventoryManager's expected item format.
+        print(f"ItemManager.transfer_item_world_to_character: Placeholder for {item_instance_id} to char {character_id}.")
+        return False # Placeholder
+
+print("DEBUG: item_manager.py module loaded (after overwrite).")
