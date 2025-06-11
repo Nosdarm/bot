@@ -450,7 +450,7 @@ class GameManager:
         self._party_action_processor = PartyActionProcessor(party_manager=self.party_manager, send_callback_factory=self._get_discord_send_callback, rule_engine=self.rule_engine, location_manager=self.location_manager, character_manager=self.character_manager, npc_manager=self.npc_manager, time_manager=self.time_manager, combat_manager=self.combat_manager, event_stage_processor=self._event_stage_processor)
         if self.party_manager is None: self._party_action_processor = None
 
-        self.conflict_resolver = ConflictResolver(rule_engine=self.rule_engine, rules_config_data=self._rules_config_cache, notification_service="PlaceholderNotificationService", db_service=self.db_service, game_log_manager=self.game_log_manager) # Changed
+        self.conflict_resolver = ConflictResolver(rule_engine=self.rule_engine, notification_service="PlaceholderNotificationService", db_service=self.db_service, game_log_manager=self.game_log_manager) # Changed
         if self.character_manager and self.party_manager and self._party_action_processor:
             self._party_command_handler = PartyCommandHandler(character_manager=self.character_manager, party_manager=self.party_manager, party_action_processor=self._party_action_processor, settings=self._settings, npc_manager=self.npc_manager)
         else: self._party_command_handler = None
