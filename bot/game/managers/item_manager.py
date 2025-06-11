@@ -434,70 +434,168 @@ class ItemManager:
         message_parts = [f"{character_user.name} использует {item_name_display}."]
         state_changed = False
 
-        actual_target_entity = character_user # Default target is self
-        # Target policy logic needs to be based on ItemDefinition's target_policy field if it exists
-        # Assuming item_definition_from_rules.target_policy similar to old item_effects_def.target_policy
-        # This field might need to be added to ItemDefinition schema if not present.
-        # For now, let's assume a simple model or that effects specify their own targeting.
-
+        # Outer loop for each EffectProperty in on_use_effects
         for effect_prop in item_effects_list: # effect_prop is EffectProperty
             effect_def: Optional[ItemEffectDefinition] = rules_config.item_effects.get(effect_prop.effect_id)
             if not effect_def:
                 message_parts.append(f"Определение эффекта '{effect_prop.effect_id}' не найдено.")
                 continue
 
-            # Determine target for this specific effect based on effect_def.target_policy
-            # This part needs careful review against the actual schema for ItemEffectDefinition's target_policy
-            current_target_for_effect = character_user # Default to user
+            # Determine the default target for this entire ItemEffectDefinition group
+            default_target_for_effect_group: Optional[Union[CharacterModel, Any]] = character_user
             if effect_def.target_policy == "requires_target":
                 if not target_entity:
                     message_parts.append(f"Эффект '{effect_prop.effect_id}' требует цель, но цель не указана.")
-                    continue
-                current_target_for_effect = target_entity
+                    continue # Skip this ItemEffectDefinition
+                default_target_for_effect_group = target_entity
             elif effect_def.target_policy == "optional_target" and target_entity:
-                current_target_for_effect = target_entity
+                default_target_for_effect_group = target_entity
             elif effect_def.target_policy == "no_target": # E.g. summoning, environment effect
-                 current_target_for_effect = None
+                 default_target_for_effect_group = None
 
+            # Process direct_health_effects
+            if effect_def.direct_health_effects:
+                for dhe in effect_def.direct_health_effects:
+                    target_obj_for_health = default_target_for_effect_group
+                    if not target_obj_for_health:
+                        message_parts.append(f"Эффект здоровья '{dhe.effect_type}' не может быть применен без цели.")
+                        continue
 
-            for specific_effect in effect_def.effects: # specific_effect is SpecificEffect
-                # Resolve final target for this specific_effect (e.g. self, target_entity, area etc.)
-                # This logic might also depend on specific_effect.target if it overrides effect_def.target_policy
-                final_target_object = current_target_for_effect
-                if specific_effect.target == "self": final_target_object = character_user
-                elif specific_effect.target == "target_entity": final_target_object = current_target_for_effect
-                # Add more conditions for 'area', 'party', etc. if needed
+                    target_id = getattr(target_obj_for_health, 'id', None)
+                    target_name = getattr(target_obj_for_health, 'name', target_id)
+                    # Assuming CharacterModel and NPC model have 'hp' and 'max_health' attributes
+                    current_hp = getattr(target_obj_for_health, 'hp', None)
+                    max_hp = getattr(target_obj_for_health, 'max_health', None)
 
-                if not final_target_object and specific_effect.type not in ["summon", "world_event"]: # some effects might not need a target object
-                    message_parts.append(f"Эффект '{specific_effect.type}' не может быть применен без цели.")
-                    continue
+                    if current_hp is None or max_hp is None:
+                        message_parts.append(f"Не удалось получить информацию о здоровье для {target_name}.")
+                        continue
 
-                target_id_for_effect = getattr(final_target_object, 'id', None) if final_target_object else None
-                target_type_for_effect = "character" # Placeholder
-                if final_target_object:
-                    target_type_for_effect = "character" if isinstance(final_target_object, CharacterModel) else "npc" # TODO: better type check
-
-                if specific_effect.type == "heal" and self._character_manager and target_id_for_effect:
-                    heal_amount = int(specific_effect.amount) if isinstance(specific_effect.amount, (int, float, str) and str(specific_effect.amount).isdigit()) else 0
-                    if heal_amount > 0:
-                        await self._character_manager.update_health(guild_id, target_id_for_effect, heal_amount)
-                        message_parts.append(f"{getattr(final_target_object, 'name', target_id_for_effect)} исцелен(а) на {heal_amount} HP.")
+                    if dhe.effect_type == "heal":
+                        if current_hp < max_hp:
+                            heal_amount = dhe.amount
+                            new_hp = min(current_hp + heal_amount, max_hp)
+                            setattr(target_obj_for_health, 'hp', new_hp)
+                            message_parts.append(f"{target_name} исцелен(а) на {new_hp - current_hp} HP (стало {new_hp}/{max_hp}).")
+                            state_changed = True
+                        else:
+                            message_parts.append(f"{target_name} уже имеет полное здоровье.")
+                    elif dhe.effect_type == "damage":
+                        damage_amount = dhe.amount
+                        new_hp = current_hp - damage_amount
+                        setattr(target_obj_for_health, 'hp', new_hp) # update_health might be better for death checks
+                        message_parts.append(f"{target_name} получает {damage_amount} урона (стало {new_hp}/{max_hp}).")
+                        # TODO: Call a method like character_manager.update_health(guild_id, target_id, -damage_amount)
+                        # to properly handle damage and potential death.
                         state_changed = True
-                elif specific_effect.type == "apply_status" and self._status_manager and target_id_for_effect:
-                    status_def_rules = rules_config.status_effects.get(specific_effect.status_effect_id)
-                    duration = specific_effect.duration_turns if specific_effect.duration_turns is not None else (status_def_rules.default_duration_turns if status_def_rules else None)
-                    if duration is not None:
-                        await self._status_manager.apply_status(
-                            target_id=target_id_for_effect,
-                            target_type=target_type_for_effect,
-                            status_id=specific_effect.status_effect_id,
-                            guild_id=guild_id,
-                            duration_turns=duration
-                            # Consider adding source_item_template_id if statuses from consumables need tracking/stacking rules
-                        )
-                        message_parts.append(f"{getattr(final_target_object, 'name', target_id_for_effect)} получает эффект '{specific_effect.status_effect_id}'.")
+                    # Add more DirectHealthEffect types if necessary
+
+            # Process apply_status_effects
+            if effect_def.apply_status_effects:
+                for aser in effect_def.apply_status_effects:
+                    final_target_for_status = None
+                    if aser.target == "self":
+                        final_target_for_status = default_target_for_effect_group
+                    elif aser.target == "target_entity":
+                        if target_entity:
+                            final_target_for_status = target_entity
+                        else:
+                            message_parts.append(f"Статус эффект '{aser.status_effect_id}' требует конкретную цель, но она не указана.")
+                            continue # Skip this status effect
+                    else: # Default to the main target of the effect group
+                        final_target_for_status = default_target_for_effect_group
+
+                    if not final_target_for_status:
+                        message_parts.append(f"Не удалось определить цель для статуса '{aser.status_effect_id}'.")
+                        continue
+
+                    target_id = getattr(final_target_for_status, 'id', None)
+                    target_name = getattr(final_target_for_status, 'name', target_id)
+
+                    # Determine type for StatusManager
+                    entity_type_for_status = "player" if hasattr(final_target_for_status, 'discord_id') else "npc"
+
+                    if self._status_manager and target_id:
+                        status_def_rules = rules_config.status_effects.get(aser.status_effect_id)
+                        duration = aser.duration_turns
+                        if duration is None and status_def_rules: # Fallback to default duration from StatusEffectDefinition
+                            duration = status_def_rules.default_duration_turns
+
+                        if duration is not None: # Ensure there is a duration to apply
+                            await self._status_manager.apply_status(
+                                target_id=target_id,
+                                target_type=entity_type_for_status,
+                                status_id=aser.status_effect_id,
+                                guild_id=guild_id,
+                                duration_turns=duration
+                            )
+                            message_parts.append(f"{target_name} получает эффект '{aser.status_effect_id}'.")
+                            state_changed = True
+                        else:
+                            message_parts.append(f"Не удалось определить длительность для статуса '{aser.status_effect_id}'.")
+                    else:
+                        message_parts.append(f"StatusManager не доступен или цель некорректна для применения статуса '{aser.status_effect_id}'.")
+
+            # Process learn_spells (applies to character_user only)
+            if effect_def.learn_spells:
+                for lsr in effect_def.learn_spells:
+                    if self._character_manager:
+                        # Assuming CharacterManager has a method like learn_spell
+                        if hasattr(self._character_manager, 'learn_spell'):
+                            # success = await self._character_manager.learn_spell(guild_id, character_user.id, lsr.spell_id)
+                            # if success:
+                            #     message_parts.append(f"{character_user.name} выучил(а) заклинание '{lsr.spell_id}'.")
+                            #     state_changed = True
+                            # else:
+                            #     message_parts.append(f"{character_user.name} не смог(ла) выучить заклинание '{lsr.spell_id}'.")
+                            print(f"PLACEHOLDER: Character {character_user.id} attempts to learn spell {lsr.spell_id}. Call CharacterManager.learn_spell.")
+                            message_parts.append(f"{character_user.name} пытается выучить заклинание '{lsr.spell_id}'.") # Example message
+                            state_changed = True # Assume learning changes state for now
+                        else:
+                            print(f"CharacterManager does not have 'learn_spell' method. Spell '{lsr.spell_id}' not learned by {character_user.id}.")
+                            message_parts.append(f"Функция изучения заклинаний не доступна для '{lsr.spell_id}'.")
+                    else:
+                        message_parts.append("CharacterManager не доступен для изучения заклинаний.")
+
+            # Process grant_resources
+            if effect_def.grant_resources:
+                for grr in effect_def.grant_resources:
+                    target_obj_for_resource = default_target_for_effect_group
+                    if not target_obj_for_resource:
+                        message_parts.append(f"Ресурс '{grr.resource_name}' не может быть выдан без цели.")
+                        continue
+
+                    target_id = getattr(target_obj_for_resource, 'id', None)
+                    target_name = getattr(target_obj_for_resource, 'name', target_id)
+
+                    if grr.resource_name == "gold" and hasattr(target_obj_for_resource, 'gold'):
+                        current_gold = getattr(target_obj_for_resource, 'gold', 0)
+                        setattr(target_obj_for_resource, 'gold', current_gold + grr.amount)
+                        message_parts.append(f"{target_name} получает {grr.amount} золота.")
                         state_changed = True
-                # TODO: Add other effect types like 'damage', 'stat_modifier', etc.
+                    elif grr.resource_name == "xp" and hasattr(target_obj_for_resource, 'xp'):
+                        current_xp = getattr(target_obj_for_resource, 'xp', 0)
+                        setattr(target_obj_for_resource, 'xp', current_xp + grr.amount)
+                        # May also need to update unspent_xp or call a level-up check
+                        message_parts.append(f"{target_name} получает {grr.amount} опыта.")
+                        state_changed = True
+                    elif grr.resource_name == "mp" and hasattr(target_obj_for_resource, 'mp') and hasattr(target_obj_for_resource, 'max_mp'):
+                        current_mp = getattr(target_obj_for_resource, 'mp', 0)
+                        max_mp = getattr(target_obj_for_resource, 'max_mp', current_mp) # Assume max_mp if not present
+                        new_mp = min(current_mp + grr.amount, max_mp)
+                        setattr(target_obj_for_resource, 'mp', new_mp)
+                        message_parts.append(f"{target_name} восстанавливает {new_mp - current_mp} MP.")
+                        state_changed = True
+                    else:
+                        # Placeholder for other resource types
+                        print(f"PLACEHOLDER: Grant resource '{grr.resource_name}' (amount: {grr.amount}) to {target_name} ({target_id}). Implement specific logic.")
+                        message_parts.append(f"{target_name} получает {grr.amount} ресурса '{grr.resource_name}'.")
+                        state_changed = True # Assume state changes for unknown resources for now
+
+            # TODO: Handle effect_def.stat_modifiers if they are meant to be temporary "on_use" effects
+            # This would require a mechanism to apply and possibly time out these direct modifiers
+            # if they are not channeled through status effects. For now, assuming stat_modifiers on ItemEffectDefinition
+            # are primarily for passive/equipped effects handled by calculate_effective_stats.
 
         if item_definition_from_rules.consumable:
             # InventoryManager needs to handle instance_id for non-stackables, or template_id + quantity for stackables
@@ -513,11 +611,54 @@ class ItemManager:
                 # For now, we proceed, but this indicates a potential issue.
 
         if state_changed:
-             self._character_manager.mark_character_dirty(guild_id, character_user.id)
-             if target_entity and target_entity != character_user and hasattr(target_entity, 'id'):
-                 # Mark target dirty only if it's a character. NPC dirtiness handled by NpcManager.
-                 if isinstance(target_entity, CharacterModel): # Check if target_entity is a CharacterModel instance
-                     self._character_manager.mark_character_dirty(guild_id, target_entity.id)
+            # Update effective stats for the user
+            if self._db_service and self.rules_config:
+                try:
+                    new_stats_user = await calculate_effective_stats(self._db_service, character_user.id, "player", self.rules_config)
+                    character_user.effective_stats_json = json.dumps(new_stats_user)
+                    # print(f"{log_prefix} Updated effective_stats_json for user {character_user.id}")
+                except Exception as e:
+                    print(f"{log_prefix} Error calculating/updating effective stats for user {character_user.id}: {e}")
+
+            self._character_manager.mark_character_dirty(guild_id, character_user.id)
+
+            # Update effective stats for the target if it exists, is different, and was affected
+            if target_entity and hasattr(target_entity, 'id') and target_entity.id != character_user.id:
+                target_entity_obj = None
+                target_entity_type = None
+
+                # Determine target type and fetch full object if necessary
+                # (Assuming target_entity passed in might not be the full DB model instance from the right manager)
+                if hasattr(target_entity, 'discord_id'): # Heuristic for Player object (CharacterModel)
+                    target_entity_obj = await self._character_manager.get_character(guild_id, target_entity.id)
+                    target_entity_type = "player"
+                elif hasattr(target_entity, 'template_id'): # Heuristic for NPC object (assuming it has template_id)
+                    # Need to ensure NpcManager is available and has get_npc method
+                    if self._npc_manager:
+                        target_entity_obj = await self._npc_manager.get_npc(guild_id, target_entity.id)
+                        target_entity_type = "npc"
+                    else:
+                        print(f"{log_prefix} NpcManager not available to fetch target NPC {target_entity.id}")
+
+                if target_entity_obj and target_entity_type and self._db_service and self.rules_config:
+                    try:
+                        new_stats_target = await calculate_effective_stats(self._db_service, target_entity_obj.id, target_entity_type, self.rules_config)
+                        target_entity_obj.effective_stats_json = json.dumps(new_stats_target)
+                        # print(f"{log_prefix} Updated effective_stats_json for target {target_entity_type} {target_entity_obj.id}")
+
+                        if target_entity_type == "player":
+                            self._character_manager.mark_character_dirty(guild_id, target_entity_obj.id)
+                        elif target_entity_type == "npc" and self._npc_manager:
+                            if hasattr(self._npc_manager, 'mark_npc_dirty'):
+                                self._npc_manager.mark_npc_dirty(guild_id, target_entity_obj.id)
+                            else:
+                                print(f"{log_prefix} NpcManager does not have mark_npc_dirty method for {target_entity_obj.id}")
+                                # Potentially save directly if NpcManager handles persistence differently
+                                # await self._npc_manager.save_npc(guild_id, target_entity_obj) # Example if save_npc exists
+                    except Exception as e:
+                        print(f"{log_prefix} Error calculating/updating effective stats for target {target_entity_type} {target_entity_obj.id}: {e}")
+                elif target_entity_obj is None and hasattr(target_entity, 'id'):
+                    print(f"{log_prefix} Could not fully identify or fetch target entity {target_entity.id} for stat update.")
 
 
         return {"success": True, "message": " ".join(message_parts), "state_changed": state_changed}

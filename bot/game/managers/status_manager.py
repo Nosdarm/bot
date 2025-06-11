@@ -14,6 +14,7 @@ from bot.game.models.status_effect import StatusEffect
 # Импорт адаптера БД
 # from bot.database.postgres_adapter import PostgresAdapter # Replaced with DBService
 from bot.services.db_service import DBService
+from bot.game.utils.stats_calculator import calculate_effective_stats
 # Импорт утилиты для i18n
 from bot.utils.i18n_utils import get_i18n_text
 
@@ -294,6 +295,33 @@ class StatusManager:
             # This allows recalculation of stats or other on-apply logic if needed.
             # Example: self._character_manager.notify_status_applied(guild_id, target_id, status_effect_obj)
 
+            # --- BEGIN: Calculate effective stats after applying status ---
+            entity_for_stats = None
+            if target_type == "character" and self._character_manager: # "character" is used in ItemManager
+                entity_for_stats = await self._character_manager.get_character(guild_id_str, target_id)
+            elif target_type == "player" and self._character_manager: # "player" is also possible
+                entity_for_stats = await self._character_manager.get_character(guild_id_str, target_id)
+            elif target_type == "npc" and self._npc_manager:
+                entity_for_stats = await self._npc_manager.get_npc(guild_id_str, target_id)
+
+            if entity_for_stats and self._db_service and self.rules_config:
+                try:
+                    actual_target_type_for_calc = "player" if target_type in ["character", "player"] else "npc"
+                    new_stats = await calculate_effective_stats(self._db_service, target_id, actual_target_type_for_calc, self.rules_config)
+                    entity_for_stats.effective_stats_json = json.dumps(new_stats)
+                    # print(f"{log_prefix} Updated effective_stats_json for {actual_target_type_for_calc} {target_id}")
+                    if actual_target_type_for_calc == "player" and self._character_manager:
+                        self._character_manager.mark_character_dirty(guild_id_str, target_id)
+                    elif actual_target_type_for_calc == "npc" and self._npc_manager:
+                        if hasattr(self._npc_manager, 'mark_npc_dirty'):
+                            self._npc_manager.mark_npc_dirty(guild_id_str, target_id)
+                        else:
+                            print(f"{log_prefix} NpcManager missing mark_npc_dirty method for {target_id}.")
+                            # Consider await self._npc_manager.save_npc(guild_id_str, entity_for_stats) if applicable
+                except Exception as e_stats:
+                    print(f"{log_prefix} Error calculating/updating effective stats for {target_type} {target_id}: {e_stats}")
+            # --- END: Calculate effective stats ---
+
             return status_effect_obj
 
         except Exception as e:
@@ -341,6 +369,36 @@ class StatusManager:
             # print(f"{log_prefix} Successfully processed removal.")
             # TODO: Notify target entity's manager about status removal for stat recalculation etc.
             # Example: if eff: self._character_manager.notify_status_removed(guild_id, eff.target_id, eff)
+
+            # --- BEGIN: Calculate effective stats after removing status ---
+            if eff: # Check if status effect object was found and details are available
+                entity_for_stats = None
+                eff_target_type = eff.target_type
+                eff_target_id = eff.target_id
+
+                if eff_target_type == "character" and self._character_manager: # "character" used in ItemManager
+                    entity_for_stats = await self._character_manager.get_character(guild_id_str, eff_target_id)
+                elif eff_target_type == "player" and self._character_manager: # "player" also possible
+                     entity_for_stats = await self._character_manager.get_character(guild_id_str, eff_target_id)
+                elif eff_target_type == "npc" and self._npc_manager:
+                    entity_for_stats = await self._npc_manager.get_npc(guild_id_str, eff_target_id)
+
+                if entity_for_stats and self._db_service and self.rules_config:
+                    try:
+                        actual_target_type_for_calc = "player" if eff_target_type in ["character", "player"] else "npc"
+                        new_stats = await calculate_effective_stats(self._db_service, eff_target_id, actual_target_type_for_calc, self.rules_config)
+                        entity_for_stats.effective_stats_json = json.dumps(new_stats)
+                        # print(f"{log_prefix} Updated effective_stats_json for {actual_target_type_for_calc} {eff_target_id}")
+                        if actual_target_type_for_calc == "player" and self._character_manager:
+                            self._character_manager.mark_character_dirty(guild_id_str, eff_target_id)
+                        elif actual_target_type_for_calc == "npc" and self._npc_manager:
+                            if hasattr(self._npc_manager, 'mark_npc_dirty'):
+                                self._npc_manager.mark_npc_dirty(guild_id_str, eff_target_id)
+                            else:
+                                print(f"{log_prefix} NpcManager missing mark_npc_dirty method for {eff_target_id}.")
+                    except Exception as e_stats:
+                        print(f"{log_prefix} Error calculating/updating effective stats for {eff_target_type} {eff_target_id}: {e_stats}")
+            # --- END: Calculate effective stats ---
             return True
 
         except Exception as e:
@@ -380,6 +438,20 @@ class StatusManager:
 
         if removed_count > 0:
             print(f"{log_prefix} Successfully removed {removed_count} status(es).")
+            # --- BEGIN: Calculate effective stats after removing multiple statuses ---
+            # Need target_type. Assuming all removed statuses for a target_id have the same target_type.
+            # This logic relies on remove_status_effect (called above) to handle individual recalculations
+            # if that's preferred. If a single recalc is better, it should be done here.
+            # For now, individual calls in remove_status_effect will handle it.
+            # If target_type was passed or reliably determined, a single call could be:
+            # determined_target_type = "player" # Example, needs to be properly set
+            # entity_for_stats = await self._character_manager.get_character(guild_id_str, target_id_str) # or npc
+            # if entity_for_stats and self._db_service and self.rules_config:
+            #     new_stats = await calculate_effective_stats(self._db_service, target_id_str, determined_target_type, self.rules_config)
+            #     entity_for_stats.effective_stats_json = json.dumps(new_stats)
+            #     if determined_target_type == "player": self._character_manager.mark_character_dirty(guild_id_str, target_id_str)
+            #     else: self._npc_manager.mark_npc_dirty(guild_id_str, target_id_str) # (check for method)
+            # --- END: Calculate effective stats ---
         # else:
             # print(f"{log_prefix} No statuses found matching the source item instance ID.")
 
