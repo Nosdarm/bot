@@ -182,7 +182,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
                 await interaction.followup.send(message_content, ephemeral=False)
         else:
             error_message = result.get("message", "You can't seem to see anything clearly right now.") if result else "An unexpected error occurred while looking around."
-            await interaction.followup.send(error_message, view=None, ephemeral=True) # view=None for clarity
+            await interaction.followup.send(error_message, ephemeral=True) # view=None for clarity
 
     @app_commands.command(name="move", description="Переместиться в другую локацию.")
     @app_commands.describe(destination="Название выхода или ID локации назначения.")
