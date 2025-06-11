@@ -268,17 +268,42 @@ class CharacterActionProcessor:
     async def handle_explore_action(self, character: Character, guild_id: str, action_params: Dict[str, Any], context_channel_id: Optional[int] = None) -> Dict[str, Any]:
         logging.debug(f"CharacterActionProcessor.handle_explore_action: Entered. Character ID: {character.id}, Guild ID: {guild_id}, Action Params: {action_params}, Context Channel ID: {context_channel_id}")
         try:
-            # Placeholder logic for now
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Processing exploration steps...")
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Attempting to fetch location data for location ID: {character.location_id}")
-            # Actual logic to fetch location, check for events, generate description, etc. would go here.
-            # For now, we'll assume it might try to generate a description.
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Attempting to generate description...")
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: Checking _location_manager. Available: {bool(self._location_manager)}")
+            if not self._location_manager:
+                logging.warning(f"CharacterActionProcessor.handle_explore_action: LocationManager (self._location_manager) is not available. Cannot proceed with exploration logic.")
+                specific_error_result = {'success': False, 'message': 'Exploration failed: Location service unavailable.', 'data': {}}
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing LocationManager): {specific_error_result}")
+                return specific_error_result
 
-            # If actual logic were here, it would have its own return paths with logging.
-            # Since it's a stub, we return a default error.
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: LocationManager found. Attempting to get location_details for location_id: {character.location_id} in guild_id: {guild_id}")
+            location_details = await self._location_manager.get_location_details(guild_id, str(character.location_id))
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: Received location_details: {location_details}")
+            if not location_details:
+                logging.warning(f"CharacterActionProcessor.handle_explore_action: Failed to retrieve location_details for location_id: {character.location_id}.")
+                specific_error_result = {'success': False, 'message': f'Exploration failed: Could not find details for your current location (ID: {character.location_id}).', 'data': {}}
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing location_details): {specific_error_result}")
+                return specific_error_result
+
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: Checking _event_manager. Available: {bool(self._event_manager)}")
+            if not self._event_manager:
+                logging.warning(f"CharacterActionProcessor.handle_explore_action: EventManager (self._event_manager) is not available. Cannot check for location events.")
+                specific_error_result = {'success': False, 'message': 'Exploration failed: Event service unavailable.', 'data': {}}
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing EventManager): {specific_error_result}")
+                return specific_error_result
+
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: Checking _openai_service. Available: {bool(self._openai_service and self._openai_service.is_available())}")
+            if not self._openai_service or not self._openai_service.is_available():
+                logging.warning(f"CharacterActionProcessor.handle_explore_action: OpenAIService (self._openai_service) is not available or not configured. Cannot generate AI description.")
+                specific_error_result = {'success': False, 'message': 'Exploration failed: AI description service unavailable.', 'data': {}}
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing OpenAIService): {specific_error_result}")
+                return specific_error_result
+
+            # Placeholder for actual exploration logic using location_details, event_manager, openai_service etc.
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: All checks passed. Proceeding with main exploration logic (currently a stub).")
+
+            # The existing default_error_result for when no specific logic is hit
             default_error_result = {'success': False, 'message': 'Exploration resulted in an unspecified error or is not fully implemented.', 'data': {}}
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning: {default_error_result}")
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (default fallback): {default_error_result}")
             return default_error_result
         except Exception as e:
             logging.error(f"CharacterActionProcessor.handle_explore_action: Exception caught. Character ID: {character.id}, Guild ID: {guild_id}, Action Params: {action_params}. Error: {e}", exc_info=True)
