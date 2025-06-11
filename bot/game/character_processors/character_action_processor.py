@@ -275,13 +275,13 @@ class CharacterActionProcessor:
                 logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing LocationManager): {specific_error_result}")
                 return specific_error_result
 
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: LocationManager found. Attempting to get location_instance for instance_id: {character.location_id} in guild_id: {guild_id}")
-            location_instance = self._location_manager.get_location_instance(guild_id, str(character.location_id))
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Received location_instance: {location_instance}")
-            if not location_instance:
-                logging.warning(f"CharacterActionProcessor.handle_explore_action: Failed to retrieve location_instance for id: {character.location_id}.")
-                specific_error_result = {'success': False, 'message': f'Exploration failed: Could not find data for your current location instance (ID: {character.location_id}). Ensure this ID is a valid location instance ID.', 'data': {}}
-                logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing location_instance): {specific_error_result}")
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: LocationManager found. Attempting to get location_static for template_id: {character.location_id}")
+            location_template_data = self._location_manager.get_location_static(str(character.location_id))
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: Received location_template_data: {location_template_data}")
+            if not location_template_data:
+                logging.warning(f"CharacterActionProcessor.handle_explore_action: Failed to retrieve location_template_data for template_id: {character.location_id}.")
+                specific_error_result = {'success': False, 'message': f'Exploration failed: Could not find template data for your current location (ID: {character.location_id}).', 'data': {}}
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing location_template_data): {specific_error_result}")
                 return specific_error_result
 
             logging.debug(f"CharacterActionProcessor.handle_explore_action: Checking _event_manager. Available: {bool(self._event_manager)}")
@@ -298,46 +298,74 @@ class CharacterActionProcessor:
                 logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing OpenAIService): {specific_error_result}")
                 return specific_error_result
 
-            # Basic description generation from location_instance
-            lang_code = 'ru' # Or determine from character preferences / guild settings
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Using language code: {lang_code} for i18n lookups.")
+            target_name = action_params.get('target')
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: Checking for target. Target from action_params: '{target_name}'")
 
-            location_name = location_instance.name_i18n.get(lang_code, location_instance.name_i18n.get('en', "Неизвестное место"))
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Fetched location_name: '{location_name}'")
+            if target_name:
+                logging.info(f"CharacterActionProcessor.handle_explore_action: Processing 'look at target': {target_name} for character {character.id}.")
 
-            location_description = location_instance.descriptions_i18n.get(lang_code, location_instance.descriptions_i18n.get('en', "Описание отсутствует."))
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Fetched location_description: '{location_description[:100]}...' (truncated if long)")
+                # Placeholder for future logic to find and describe the target:
+                # - Check items in location_template_data or (ideally) location_instance.state.get('inventory', [])
+                # - Check NPCs in location_template_data or (ideally) location_instance.state.get('npcs', []) or via NpcManager
+                # - Check interactive features/elements described in location_template_data
 
-            message_parts = [f"**{location_name}**"]
-            if location_description:
-                message_parts.append(location_description)
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Generated message parts after description: {message_parts}")
-
-            # Basic exit listing
-            exits_data_for_return = []
-            if hasattr(location_instance, 'exits') and isinstance(location_instance.exits, dict) and location_instance.exits:
-                logging.debug(f"CharacterActionProcessor.handle_explore_action: Processing exits: {location_instance.exits}")
-                exit_names = []
-                for exit_name, exit_target_id in location_instance.exits.items():
-                    exit_names.append(str(exit_name))
-                    exits_data_for_return.append({'name': str(exit_name), 'target_location_id': str(exit_target_id)})
-                if exit_names:
-                    message_parts.append("\n\nВыходы: " + ", ".join(exit_names))
+                # For now, return a stubbed success message.
+                stub_target_message = f"Вы внимательно смотрите на '{target_name}'. Детальное описание этой цели еще не реализовано."
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Target specified, returning stub description for '{target_name}'.")
+                return {
+                    'success': True,
+                    'message': stub_target_message,
+                    'data': {} # No specific data like exits for a targeted look yet
+                }
             else:
-                logging.debug(f"CharacterActionProcessor.handle_explore_action: No exits found or exits attribute is missing/empty on location_instance: {getattr(location_instance, 'exits', 'N/A')}")
-                message_parts.append("\n\nВыходов нет.")
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: No target specified. Proceeding with general location description.")
+                # Existing logic for "look around" (getting location name, description, exits, and returning success) follows here.
+                # Basic description generation from location_template_data (dictionary)
+                lang_code = getattr(character, 'selected_language', None)
+                if not lang_code or not isinstance(lang_code, str):
+                    logging.warning(f"CharacterActionProcessor.handle_explore_action: Character {character.id} has no valid 'selected_language'. Defaulting to 'ru'.")
+                    lang_code = 'ru'
+                else:
+                    logging.debug(f"CharacterActionProcessor.handle_explore_action: Using character's selected language: {lang_code}")
+                # logging.debug(f"CharacterActionProcessor.handle_explore_action: Using language code: {lang_code} for i18n lookups.") # This is now covered by the else case above
 
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Updated message parts after exits: {message_parts}, Exits data for return: {exits_data_for_return}")
+                location_name = location_template_data.get('name_i18n', {}).get(lang_code, location_template_data.get('name_i18n', {}).get('en', "Неизвестное место"))
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Fetched location_name: '{location_name}'")
 
-            # Construct and return success result
-            final_message = "".join(message_parts)
-            success_result = {
-                'success': True,
-                'message': final_message,
-                'data': {'exits': exits_data_for_return}
-            }
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning success: {success_result}")
-            return success_result
+                location_description = location_template_data.get('descriptions_i18n', {}).get(lang_code, location_template_data.get('descriptions_i18n', {}).get('en', "Описание отсутствует."))
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Fetched location_description: '{location_description[:100]}...' (truncated if long)")
+
+                message_parts = [f"**{location_name}**"]
+                if location_description:
+                    message_parts.append(location_description)
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Generated message parts after description: {message_parts}")
+
+                # Basic exit listing from location_template_data (dictionary)
+                exits_data_for_return = []
+                exits_dict = location_template_data.get('exits', {})
+                if isinstance(exits_dict, dict) and exits_dict:
+                    logging.debug(f"CharacterActionProcessor.handle_explore_action: Processing exits: {exits_dict}")
+                    exit_names = []
+                    for exit_name, exit_target_id in exits_dict.items():
+                        exit_names.append(str(exit_name))
+                        exits_data_for_return.append({'name': str(exit_name), 'target_location_id': str(exit_target_id)})
+                    if exit_names:
+                        message_parts.append("\n\nВыходы: " + ", ".join(exit_names))
+                else:
+                    logging.debug(f"CharacterActionProcessor.handle_explore_action: No exits found or 'exits' key is missing/empty in location_template_data: {location_template_data.get('exits', 'N/A')}")
+                    message_parts.append("\n\nВыходов нет.")
+
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Updated message parts after exits: {message_parts}, Exits data for return: {exits_data_for_return}")
+
+                # Construct and return success result
+                final_message = "".join(message_parts)
+                success_result = {
+                    'success': True,
+                    'message': final_message,
+                    'data': {'exits': exits_data_for_return}
+                }
+                logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning success: {success_result}")
+                return success_result
         except Exception as e:
             logging.error(f"CharacterActionProcessor.handle_explore_action: Exception caught. Character ID: {character.id}, Guild ID: {guild_id}, Action Params: {action_params}. Error: {e}", exc_info=True)
             exception_result = {'success': False, 'message': f'An unexpected server error occurred during exploration: {e}', 'data': {}}
