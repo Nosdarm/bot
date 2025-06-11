@@ -228,22 +228,29 @@ class DBService:
 
     # --- Item Definition Management (using 'item_templates' table) ---
 
-    async def create_item_definition( # Renamed from create_item_template
-        self, item_id: str, name: str, description: str,
+    async def create_item_definition(
+        self, item_id: str, name: str, description: str, # name and description are now plain strings
         item_type: str, effects: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         """Creates a new item definition in 'item_templates'."""
         properties_data = {'effects': effects} if effects else {}
-        # PostgresAdapter uses $1, $2 placeholders.
+
+        # Prepare i18n JSON for name and description
+        # Assuming 'en' and 'ru' are desired default languages for now.
+        # A more robust solution might get default languages from settings.
+        name_i18n_json = json.dumps({"en": name, "ru": name})
+        description_i18n_json = json.dumps({"en": description, "ru": description})
+
         sql = """
-            INSERT INTO item_templates (id, name, description, type, properties)
+            INSERT INTO item_templates (id, name_i18n, description_i18n, type, properties)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id;
-        """ # Added RETURNING id
-        params = (item_id, name, description, item_type, json.dumps(properties_data))
+        """
+        # Parameters match the new SQL query structure
+        params = (item_id, name_i18n_json, description_i18n_json, item_type, json.dumps(properties_data))
         inserted_id = await self.adapter.execute_insert(sql, params)
         if inserted_id:
-            return await self.get_item_definition(item_id) # Fetch using original item_id
+            return await self.get_item_definition(item_id)
         return None
 
     async def get_item_definition(self, item_id: str) -> Optional[Dict[str, Any]]: # Renamed from get_item_template
