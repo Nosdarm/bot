@@ -2,7 +2,7 @@ import asyncio
 import unittest
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, call # Import call for checking multiple calls
+from unittest.mock import AsyncMock, MagicMock, call, patch # Import call for checking multiple calls
 from typing import Dict, List, Any, Optional, Tuple, TypedDict
 
 # Assuming NLUDataService is in bot.services.nlu_data_service
