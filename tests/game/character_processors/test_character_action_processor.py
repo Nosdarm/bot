@@ -63,7 +63,7 @@ class MockCharacter(CharacterModel):
         self.inventory_json = json.dumps(value)
 
     @property
-    def equipment(self) -> Dict[str, Any]]: # This should be Dict[str, Dict[str,Any]] if items are dicts
+    def equipment(self) -> Dict[str, Any]: # This should be Dict[str, Dict[str,Any]] if items are dicts
         return self._equipment_dict
 
     @equipment.setter
