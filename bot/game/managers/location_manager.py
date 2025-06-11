@@ -353,4 +353,4 @@ class LocationManager:
 
 # --- Конец класса LocationManager ---
 
-[end of bot/game/managers/location_manager.py]
+

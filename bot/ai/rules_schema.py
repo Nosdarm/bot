@@ -7,7 +7,7 @@ value ranges, etc. They are typically loaded from a configuration source (e.g., 
 and passed to the validator during its initialization.
 """
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 class StatRange(BaseModel):
     """
