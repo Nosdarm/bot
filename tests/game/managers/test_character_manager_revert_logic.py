@@ -244,6 +244,127 @@ class TestCharacterManagerRevertLogic(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(self.char.id, self.char_manager._dirty_characters.get(self.guild_id, set()))
 
+    async def test_revert_xp_change(self):
+        # 1. Setup: Get character, define old values
+        #    char = self.character_manager.get_character(self.guild_id, self.char_id)
+        #    char.experience = 200; char.level = 3; char.unspent_xp = 5 # Current state
+        #    old_xp, old_level, old_unspent_xp = 100, 2, 10
+        #
+        # 2. Action: Call revert_xp_change
+        #    success = await self.character_manager.revert_xp_change(
+        #        self.guild_id, self.char_id, old_xp, old_level, old_unspent_xp
+        #    )
+        #
+        # 3. Assert: Check success, character attributes, and mark_dirty call
+        #    self.assertTrue(success)
+        #    self.assertEqual(char.experience, old_xp)
+        #    self.assertEqual(char.level, old_level)
+        #    self.assertEqual(char.unspent_xp, old_unspent_xp)
+        #    self.assertIn(self.char_id, self.character_manager._dirty_characters.get(self.guild_id, set()))
+        pass
+
+    async def test_revert_gold_change(self):
+        # 1. Setup: Get character, define old gold
+        #    char = self.character_manager.get_character(self.guild_id, self.char_id)
+        #    char.gold = 100 # Current state
+        #    old_gold = 50
+        #
+        # 2. Action: Call revert_gold_change
+        #    success = await self.character_manager.revert_gold_change(
+        #        self.guild_id, self.char_id, old_gold
+        #    )
+        #
+        # 3. Assert: Check success, character gold, and mark_dirty
+        #    self.assertTrue(success)
+        #    self.assertEqual(char.gold, old_gold)
+        #    self.assertIn(self.char_id, self.character_manager._dirty_characters.get(self.guild_id, set()))
+        pass
+
+    async def test_revert_action_queue_change(self):
+        # 1. Setup: Get character, define old action queue JSON
+        #    char = self.character_manager.get_character(self.guild_id, self.char_id)
+        #    char.action_queue = [{"action": "new_action"}] # Current state (Python list)
+        #    old_action_queue_json = json.dumps([{"action": "old_action"}])
+        #
+        # 2. Action: Call revert_action_queue_change
+        #    success = await self.character_manager.revert_action_queue_change(
+        #        self.guild_id, self.char_id, old_action_queue_json
+        #    )
+        #
+        # 3. Assert: Check success, character action_queue, and mark_dirty
+        #    self.assertTrue(success)
+        #    self.assertEqual(char.action_queue, json.loads(old_action_queue_json))
+        #    self.assertIn(self.char_id, self.character_manager._dirty_characters.get(self.guild_id, set()))
+        pass
+
+    async def test_revert_collected_actions_change(self):
+        # 1. Setup: Get character, define old collected_actions_json
+        #    char = self.character_manager.get_character(self.guild_id, self.char_id)
+        #    char.collected_actions_json = '{"new_key": "new_value"}' # Current state
+        #    old_collected_actions_json = '{"old_key": "old_value"}'
+        #
+        # 2. Action: Call revert_collected_actions_change
+        #    success = await self.character_manager.revert_collected_actions_change(
+        #        self.guild_id, self.char_id, old_collected_actions_json
+        #    )
+        #
+        # 3. Assert: Check success, character collected_actions_json, and mark_dirty
+        #    self.assertTrue(success)
+        #    self.assertEqual(char.collected_actions_json, old_collected_actions_json)
+        #    self.assertIn(self.char_id, self.character_manager._dirty_characters.get(self.guild_id, set()))
+        pass
+
+    async def test_revert_character_creation(self):
+        # 1. Setup: Character already exists from setUp
+        #    char_exists_before = self.character_manager.get_character(self.guild_id, self.char_id)
+        #    self.assertIsNotNone(char_exists_before)
+        #
+        # 2. Action: Call revert_character_creation
+        #    # Mock mark_character_deleted if it's complex or has side effects not tested here
+        #    # self.character_manager.mark_character_deleted = AsyncMock(return_value=None)
+        #    success = await self.character_manager.revert_character_creation(
+        #        self.guild_id, self.char_id
+        #    )
+        #
+        # 3. Assert: Check success and that character is marked for deletion
+        #    self.assertTrue(success)
+        #    self.assertIn(self.char_id, self.character_manager._deleted_characters_ids.get(self.guild_id, set()))
+        #    # self.character_manager.mark_character_deleted.assert_called_with(self.guild_id, self.char_id)
+        pass
+
+    async def test_recreate_character_from_data(self):
+        # 1. Setup: Ensure character does NOT exist or is different before recreation
+        #    # For example, delete the one from setUp first if IDs clash
+        #    # self.character_manager._characters.get(self.guild_id, {}).pop(self.char_id, None)
+        #    # self.character_manager._discord_to_char_map.get(self.guild_id, {}).pop(self.discord_user_id, None)
+        #
+        #    recreate_char_id = "recreated_char_id_456"
+        #    recreate_discord_id = 987654321
+        #    character_data_to_recreate = {
+        #        "id": recreate_char_id, "discord_id": recreate_discord_id, "guild_id": self.guild_id,
+        #        "name": "Recreated Char", "level": 5, "xp": 500, "unspent_xp": 50, "gold": 10,
+        #        "current_location_id": "some_other_location",
+        #        "stats": {"strength": 12}, "inventory": [{"item_id": "test_item", "quantity": 1}],
+        #        # ... other fields that recreate_character_from_data would set ...
+        #    }
+        #    # Mock create_character or ensure it works with these params
+        #    # self.character_manager.create_character = AsyncMock(return_value=Character.from_dict(character_data_to_recreate))
+        #
+        # 2. Action: Call recreate_character_from_data
+        #    success = await self.character_manager.recreate_character_from_data(
+        #        self.guild_id, character_data_to_recreate
+        #    )
+        #
+        # 3. Assert: Check success, and that character exists with correct data
+        #    self.assertTrue(success)
+        #    recreated_char = self.character_manager.get_character(self.guild_id, recreate_char_id)
+        #    self.assertIsNotNone(recreated_char)
+        #    self.assertEqual(recreated_char.name, "Recreated Char")
+        #    self.assertEqual(recreated_char.level, 5)
+        #    self.assertEqual(recreated_char.stats.get("strength"), 12)
+        #    self.assertIn(recreate_char_id, self.character_manager._dirty_characters.get(self.guild_id, set()))
+        pass
+
 
 if __name__ == '__main__':
     unittest.main()

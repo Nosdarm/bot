@@ -918,4 +918,44 @@ class ItemManager:
         print(f"ItemManager.transfer_item_world_to_character: Placeholder for {item_instance_id} to char {character_id}.")
         return False # Placeholder
 
+    async def revert_item_owner_change(self, guild_id: str, item_id: str, old_owner_id: Optional[str], old_owner_type: Optional[str], old_location_id_if_unowned: Optional[str], **kwargs: Any) -> bool:
+        """Reverts the owner and location of an item instance."""
+        item = self.get_item_instance(guild_id, item_id)
+        if not item:
+            print(f"ItemManager.revert_item_owner_change: Item {item_id} not found in guild {guild_id}.")
+            return False
+
+        item.owner_id = old_owner_id
+        item.owner_type = old_owner_type
+        if not old_owner_id: # If item became unowned, set its location
+            item.location_id = old_location_id_if_unowned
+        else: # If item became owned, it should not have a world location
+            item.location_id = None
+
+        self.mark_item_dirty(guild_id, item_id)
+        # Need to save it for the change to persist, mark_item_dirty might not be enough
+        # depending on how persistence is handled. Calling save_item explicitly.
+        await self.save_item(item, guild_id)
+        print(f"ItemManager.revert_item_owner_change: Reverted owner/location for item {item_id} in guild {guild_id}.")
+        return True
+
+    async def revert_item_quantity_change(self, guild_id: str, item_id: str, old_quantity: float, **kwargs: Any) -> bool:
+        """Reverts the quantity of an item instance."""
+        item = self.get_item_instance(guild_id, item_id)
+        if not item:
+            print(f"ItemManager.revert_item_quantity_change: Item {item_id} not found in guild {guild_id}.")
+            return False
+
+        if old_quantity <= 0:
+            # If old quantity was zero or less, reverting means removing the item instance
+            print(f"ItemManager.revert_item_quantity_change: Old quantity for item {item_id} is {old_quantity}. Removing item instance.")
+            return await self.remove_item_instance(guild_id, item_id, **kwargs)
+
+        item.quantity = old_quantity
+        self.mark_item_dirty(guild_id, item_id)
+        # Calling save_item explicitly to ensure change persistence.
+        await self.save_item(item, guild_id)
+        print(f"ItemManager.revert_item_quantity_change: Reverted quantity for item {item_id} to {old_quantity} in guild {guild_id}.")
+        return True
+
 print("DEBUG: item_manager.py module loaded (after overwrite).")

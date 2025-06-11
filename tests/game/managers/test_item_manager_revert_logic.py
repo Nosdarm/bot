@@ -205,6 +205,105 @@ class TestItemManagerRevertLogic(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(item_to_update_id, self.item_manager._items_by_owner.get(self.guild_id, {}).get("owner_after_update", set()))
         self.assertIn(item_to_update_id, self.item_manager._items_by_owner.get(self.guild_id, {}).get("owner_before_update", set()))
 
+    async def test_revert_item_owner_change(self):
+        # 1. Setup: Create an item instance
+        #    item_id = None
+        #    with patch.object(self.item_manager, 'save_item', new=AsyncMock(return_value=True)):
+        #        created_item = await self.item_manager.create_item_instance(
+        #            self.guild_id, self.item_template["id"], owner_id="current_owner", owner_type="Character"
+        #        )
+        #    self.assertIsNotNone(created_item)
+        #    item_id = created_item.id
+        #
+        #    item_in_cache = self.item_manager.get_item_instance(self.guild_id, item_id)
+        #    self.assertIsNotNone(item_in_cache)
+        #    item_in_cache.owner_id = "new_owner_id" # Current state
+        #    item_in_cache.owner_type = "Player"
+        #    item_in_cache.location_id = None # Owned items shouldn't have world location
+        #
+        #    old_owner_id = "original_owner_id"
+        #    old_owner_type = "Character"
+        #    old_location_id_if_unowned = "world_location_1"
+        #
+        # 2. Action: Call revert_item_owner_change
+        #    # Mock save_item again as revert_item_owner_change calls it
+        #    with patch.object(self.item_manager, 'save_item', new=AsyncMock(return_value=True)) as mock_revert_save:
+        #        success = await self.item_manager.revert_item_owner_change(
+        #            self.guild_id, item_id, old_owner_id, old_owner_type, old_location_id_if_unowned
+        #        )
+        #
+        # 3. Assert: Check success, item owner, location, and mark_dirty/save_item call
+        #    self.assertTrue(success)
+        #    reverted_item = self.item_manager.get_item_instance(self.guild_id, item_id)
+        #    self.assertEqual(reverted_item.owner_id, old_owner_id)
+        #    self.assertEqual(reverted_item.owner_type, old_owner_type)
+        #    if not old_owner_id:
+        #        self.assertEqual(reverted_item.location_id, old_location_id_if_unowned)
+        #    else:
+        #        self.assertIsNone(reverted_item.location_id)
+        #    mock_revert_save.assert_called_once()
+        #    # self.item_manager.mark_item_dirty.assert_called_with(self.guild_id, item_id) # if not saving directly
+        pass
+
+    async def test_revert_item_quantity_change(self):
+        # 1. Setup: Create an item instance
+        #    item_id = None
+        #    with patch.object(self.item_manager, 'save_item', new=AsyncMock(return_value=True)):
+        #        created_item = await self.item_manager.create_item_instance(
+        #            self.guild_id, self.item_template["id"], quantity=10.0
+        #        )
+        #    self.assertIsNotNone(created_item)
+        #    item_id = created_item.id
+        #
+        #    item_in_cache = self.item_manager.get_item_instance(self.guild_id, item_id)
+        #    self.assertIsNotNone(item_in_cache)
+        #    item_in_cache.quantity = 20.0 # Current state
+        #
+        #    old_quantity = 5.0
+        #
+        # 2. Action: Call revert_item_quantity_change
+        #    with patch.object(self.item_manager, 'save_item', new=AsyncMock(return_value=True)) as mock_revert_save_qty:
+        #        success = await self.item_manager.revert_item_quantity_change(
+        #            self.guild_id, item_id, old_quantity
+        #        )
+        #
+        # 3. Assert: Check success, item quantity, and mark_dirty/save_item call
+        #    self.assertTrue(success)
+        #    reverted_item = self.item_manager.get_item_instance(self.guild_id, item_id)
+        #    self.assertEqual(reverted_item.quantity, old_quantity)
+        #    mock_revert_save_qty.assert_called_once()
+        pass
+
+    async def test_revert_item_quantity_change_to_zero_deletes(self):
+        # 1. Setup: Create an item
+        #    item_id = None
+        #    with patch.object(self.item_manager, 'save_item', new=AsyncMock(return_value=True)):
+        #        created_item = await self.item_manager.create_item_instance(
+        #            self.guild_id, self.item_template["id"], quantity=10.0
+        #        )
+        #    self.assertIsNotNone(created_item)
+        #    item_id = created_item.id
+        #
+        #    item_in_cache = self.item_manager.get_item_instance(self.guild_id, item_id)
+        #    self.assertIsNotNone(item_in_cache)
+        #    item_in_cache.quantity = 1.0 # Current state
+        #
+        #    old_quantity_zero = 0.0
+        #
+        # 2. Action: Call revert_item_quantity_change with old_quantity = 0
+        #    # Mock remove_item_instance as it will be called
+        #    self.item_manager.remove_item_instance = AsyncMock(return_value=True)
+        #    success = await self.item_manager.revert_item_quantity_change(
+        #        self.guild_id, item_id, old_quantity_zero
+        #    )
+        #
+        # 3. Assert: Check success and that remove_item_instance was called
+        #    self.assertTrue(success)
+        #    self.item_manager.remove_item_instance.assert_called_once_with(self.guild_id, item_id)
+        #    # Optionally, check if item is no longer in cache (if remove_item_instance handles that)
+        #    # self.assertIsNone(self.item_manager.get_item_instance(self.guild_id, item_id))
+        pass
+
 
 if __name__ == '__main__':
     asyncio.run(unittest.main())

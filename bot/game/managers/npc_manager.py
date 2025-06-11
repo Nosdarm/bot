@@ -1913,6 +1913,265 @@ class NpcManager:
             traceback.print_exc()
             return None
 
+    async def revert_npc_spawn(self, guild_id: str, npc_id: str, **kwargs: Any) -> bool:
+        """Reverts the spawning of an NPC by removing them."""
+        npc = self.get_npc(guild_id, npc_id)
+        if not npc:
+            print(f"NpcManager.revert_npc_spawn: NPC {npc_id} not found in guild {guild_id}. Assumed already removed or never existed.")
+            return True # Or False if strict "was found then removed" is required
+
+        # remove_npc handles marking for deletion and cache removal
+        removed_id = await self.remove_npc(guild_id, npc_id, **kwargs)
+        if removed_id:
+            print(f"NpcManager.revert_npc_spawn: NPC {npc_id} in guild {guild_id} marked for deletion to revert spawn.")
+            return True
+        else:
+            print(f"NpcManager.revert_npc_spawn: Failed to remove NPC {npc_id} in guild {guild_id} during spawn revert.")
+            return False
+
+    async def recreate_npc_from_data(self, guild_id: str, npc_data: Dict[str, Any], **kwargs: Any) -> bool:
+        """Recreates an NPC from provided data."""
+        npc_template_id = npc_data.get('template_id', npc_data.get('archetype'))
+        if not npc_template_id:
+            print(f"NpcManager.recreate_npc_from_data: Missing template_id or archetype in npc_data for guild {guild_id}.")
+            return False
+
+        # Create NPC using the base create_npc method.
+        # create_npc returns ID on success, or dict for moderation, or None on failure.
+        # For recreate, we expect it to be a direct creation, not moderation path.
+        # This might require ensuring npc_template_id doesn't trigger AI, or handling the dict response.
+        # For now, assume create_npc will return an ID or None if it's a non-AI template.
+
+        # If npc_data itself is from an AI-generated source that was previously approved,
+        # the create_npc path might need to be adjusted or a different method used.
+        # This simplified version assumes create_npc can handle the template_id directly.
+
+        # Let's assume create_npc will use the npc_template_id to fetch archetype data if available
+        # and then layer kwargs over it. We need to pass relevant fields from npc_data into kwargs
+        # for create_npc, or set them after creation.
+
+        creation_kwargs = npc_data.copy() # Start with all data
+        creation_kwargs.update(kwargs) # Add original kwargs
+
+        # The create_npc method has a specific signature.
+        # We should call it with its expected args, and then update the NPC object.
+
+        created_npc_id_or_moderation_info = await self.create_npc(
+            guild_id=guild_id,
+            npc_template_id=str(npc_template_id), # Ensure it's a string
+            location_id=npc_data.get('location_id'),
+            **creation_kwargs # Pass all other data from npc_data and original kwargs
+        )
+
+        if isinstance(created_npc_id_or_moderation_info, dict):
+            print(f"NpcManager.recreate_npc_from_data: NPC creation for template {npc_template_id} resulted in moderation request. Cannot directly recreate in this state.")
+            return False
+
+        if not created_npc_id_or_moderation_info:
+            print(f"NpcManager.recreate_npc_from_data: Failed to create NPC using create_npc for template {npc_template_id} in guild {guild_id}.")
+            return False
+
+        new_npc_id = created_npc_id_or_moderation_info
+        recreated_npc = self.get_npc(guild_id, new_npc_id)
+
+        if not recreated_npc:
+            print(f"NpcManager.recreate_npc_from_data: NPC {new_npc_id} created but could not be fetched from cache for guild {guild_id}.")
+            return False
+
+        # Now, apply all other fields from npc_data to the recreated_npc object
+        # This ensures all details from the original npc_data are restored.
+        # This is similar to CharacterManager's recreate method.
+
+        # Core attributes
+        if 'name' in npc_data: recreated_npc.name = npc_data['name'] # Model should handle i18n from this if needed
+        if 'name_i18n' in npc_data: recreated_npc.name_i18n = npc_data['name_i18n']
+        if 'description_i18n' in npc_data: recreated_npc.description_i18n = npc_data['description_i18n']
+        if 'backstory_i18n' in npc_data: recreated_npc.backstory_i18n = npc_data['backstory_i18n']
+        if 'persona_i18n' in npc_data: recreated_npc.persona_i18n = npc_data['persona_i18n']
+
+        # Stats and Health
+        if 'stats' in npc_data and isinstance(npc_data['stats'], dict):
+            recreated_npc.stats = npc_data['stats'].copy()
+        if 'health' in npc_data: recreated_npc.health = float(npc_data['health'])
+        if 'max_health' in npc_data: recreated_npc.max_health = float(npc_data['max_health'])
+        if 'is_alive' in npc_data: recreated_npc.is_alive = bool(npc_data['is_alive'])
+
+        # Inventory, actions, party
+        if 'inventory' in npc_data and isinstance(npc_data['inventory'], list):
+            recreated_npc.inventory = npc_data['inventory'][:]
+        if 'current_action' in npc_data: # Can be None
+            recreated_npc.current_action = npc_data['current_action']
+        if 'action_queue' in npc_data and isinstance(npc_data['action_queue'], list):
+            recreated_npc.action_queue = npc_data['action_queue'][:]
+        if 'party_id' in npc_data: # Can be None
+            recreated_npc.party_id = npc_data['party_id']
+
+        # Other attributes
+        if 'state_variables' in npc_data and isinstance(npc_data['state_variables'], dict):
+            recreated_npc.state_variables = npc_data['state_variables'].copy()
+        if 'status_effects' in npc_data and isinstance(npc_data['status_effects'], list):
+            recreated_npc.status_effects = npc_data['status_effects'][:]
+        if 'is_temporary' in npc_data: recreated_npc.is_temporary = bool(npc_data['is_temporary'])
+        if 'archetype' in npc_data: recreated_npc.archetype = npc_data['archetype']
+        if 'traits' in npc_data and isinstance(npc_data['traits'], list):
+            recreated_npc.traits = npc_data['traits'][:]
+        if 'desires' in npc_data and isinstance(npc_data['desires'], list):
+            recreated_npc.desires = npc_data['desires'][:]
+        if 'motives' in npc_data and isinstance(npc_data['motives'], list):
+            recreated_npc.motives = npc_data['motives'][:]
+        if hasattr(npc_data, 'is_ai_generated'): # If this flag was part of the data
+            recreated_npc.is_ai_generated = npc_data.is_ai_generated
+
+
+        self.mark_npc_dirty(guild_id, new_npc_id)
+        print(f"NpcManager.recreate_npc_from_data: NPC {new_npc_id} recreated from data in guild {guild_id}.")
+        return True
+
+    async def revert_npc_location_change(self, guild_id: str, npc_id: str, old_location_id: Optional[str], **kwargs: Any) -> bool:
+        """Reverts an NPC's location to a previous one."""
+        npc = self.get_npc(guild_id, npc_id)
+        if not npc:
+            print(f"NpcManager.revert_npc_location_change: NPC {npc_id} not found in guild {guild_id}.")
+            return False
+
+        npc.location_id = old_location_id
+        self.mark_npc_dirty(guild_id, npc_id)
+        print(f"NpcManager.revert_npc_location_change: Reverted location for NPC {npc_id} to {old_location_id} in guild {guild_id}.")
+        return True
+
+    async def revert_npc_hp_change(self, guild_id: str, npc_id: str, old_hp: float, old_is_alive: bool, **kwargs: Any) -> bool:
+        """Reverts an NPC's HP and is_alive status."""
+        npc = self.get_npc(guild_id, npc_id)
+        if not npc:
+            print(f"NpcManager.revert_npc_hp_change: NPC {npc_id} not found in guild {guild_id}.")
+            return False
+
+        npc.health = old_hp
+        npc.is_alive = old_is_alive
+        self.mark_npc_dirty(guild_id, npc_id)
+        print(f"NpcManager.revert_npc_hp_change: Reverted HP for NPC {npc_id} to {old_hp}, is_alive to {old_is_alive} in guild {guild_id}.")
+        return True
+
+    async def revert_npc_stat_changes(self, guild_id: str, npc_id: str, stat_changes: List[Dict[str, Any]], **kwargs: Any) -> bool:
+        """Reverts multiple stat changes for an NPC."""
+        npc = self.get_npc(guild_id, npc_id)
+        if not npc:
+            print(f"NpcManager.revert_npc_stat_changes: NPC {npc_id} not found in guild {guild_id}.")
+            return False
+
+        # Assuming direct attributes for simple stats like 'health', 'max_health', 'is_alive'
+        # and a 'stats' dictionary for game-specific stats like 'strength', 'dexterity'.
+        direct_attributes = ["health", "max_health", "is_alive"] # Add other direct attributes if any
+
+        for change in stat_changes:
+            stat_name = change.get("stat")
+            old_value = change.get("old_value")
+
+            if stat_name is None: # old_value can be None (e.g. if a stat was removed)
+                print(f"NpcManager.revert_npc_stat_changes: Invalid stat change entry for NPC {npc_id} (missing stat_name): {change}. Skipping.")
+                continue
+
+            if stat_name in direct_attributes:
+                setattr(npc, stat_name, old_value)
+            elif stat_name.startswith("stats."): # For nested stats like "stats.strength"
+                actual_stat_name = stat_name.split("stats.", 1)[1]
+                if not hasattr(npc, 'stats') or npc.stats is None:
+                    npc.stats = {} # Initialize if missing
+                elif not isinstance(npc.stats, dict):
+                    print(f"NpcManager.revert_npc_stat_changes: NPC {npc_id} stats attribute is not a dict. Initializing.")
+                    npc.stats = {}
+                npc.stats[actual_stat_name] = old_value
+            else: # Assume it's a key in the main 'stats' dictionary
+                if not hasattr(npc, 'stats') or npc.stats is None:
+                    npc.stats = {}
+                elif not isinstance(npc.stats, dict):
+                    print(f"NpcManager.revert_npc_stat_changes: NPC {npc_id} stats attribute is not a dict. Initializing.")
+                    npc.stats = {}
+                npc.stats[stat_name] = old_value
+
+        self.mark_npc_dirty(guild_id, npc_id)
+        print(f"NpcManager.revert_npc_stat_changes: Reverted stat changes for NPC {npc_id} in guild {guild_id}.")
+        return True
+
+    async def revert_npc_inventory_changes(self, guild_id: str, npc_id: str, inventory_changes: List[Dict[str, Any]], **kwargs: Any) -> bool:
+        """Reverts changes to an NPC's inventory."""
+        npc = self.get_npc(guild_id, npc_id)
+        if not npc:
+            print(f"NpcManager.revert_npc_inventory_changes: NPC {npc_id} not found in guild {guild_id}.")
+            return False
+
+        if not hasattr(npc, 'inventory') or npc.inventory is None:
+            npc.inventory = [] # Initialize if missing
+        elif not isinstance(npc.inventory, list):
+            print(f"NpcManager.revert_npc_inventory_changes: NPC {npc_id} inventory attribute is not a list. Initializing.")
+            npc.inventory = []
+
+        # NPC inventory is a list of item_instance_ids.
+        # `inventory_changes` should reflect this: item_id is item_instance_id.
+        # action: "added" means item_instance_id was added to list. Revert is remove.
+        # action: "removed" means item_instance_id was removed. Revert is add.
+        # quantity is usually 1 for unique instance IDs.
+
+        for change in inventory_changes:
+            original_action = change.get("action") # "added" or "removed"
+            item_instance_id = change.get("item_id") # This is the item_instance_id
+            # quantity = change.get("quantity", 1) # Typically 1 for instance IDs
+
+            if not item_instance_id:
+                print(f"NpcManager.revert_npc_inventory_changes: Invalid inventory change for NPC {npc_id} (missing item_id): {change}. Skipping.")
+                continue
+
+            if original_action == "added": # To revert "added", we remove the item instance ID
+                if item_instance_id in npc.inventory:
+                    npc.inventory.remove(item_instance_id)
+                else:
+                    print(f"NpcManager.revert_npc_inventory_changes: NPC {npc_id} trying to revert 'added' item {item_instance_id}, but not found in inventory.")
+            elif original_action == "removed": # To revert "removed", we add the item instance ID back
+                if item_instance_id not in npc.inventory:
+                    npc.inventory.append(item_instance_id)
+                else:
+                     print(f"NpcManager.revert_npc_inventory_changes: NPC {npc_id} trying to revert 'removed' item {item_instance_id}, but already found in inventory.")
+            else:
+                print(f"NpcManager.revert_npc_inventory_changes: Unknown original_action '{original_action}' for item {item_instance_id} on NPC {npc_id}. Skipping.")
+                continue
+
+        self.mark_npc_dirty(guild_id, npc_id)
+        print(f"NpcManager.revert_npc_inventory_changes: Reverted inventory changes for NPC {npc_id} in guild {guild_id}.")
+        return True
+
+    async def revert_npc_party_change(self, guild_id: str, npc_id: str, old_party_id: Optional[str], **kwargs: Any) -> bool:
+        """Reverts an NPC's party assignment."""
+        npc = self.get_npc(guild_id, npc_id)
+        if not npc:
+            print(f"NpcManager.revert_npc_party_change: NPC {npc_id} not found in guild {guild_id}.")
+            return False
+
+        npc.party_id = old_party_id
+        self.mark_npc_dirty(guild_id, npc_id)
+        print(f"NpcManager.revert_npc_party_change: Reverted party ID for NPC {npc_id} to {old_party_id} in guild {guild_id}.")
+        return True
+
+    async def revert_npc_state_variables_change(self, guild_id: str, npc_id: str, old_state_variables_json: str, **kwargs: Any) -> bool:
+        """Reverts an NPC's state_variables to a previous JSON state."""
+        npc = self.get_npc(guild_id, npc_id)
+        if not npc:
+            print(f"NpcManager.revert_npc_state_variables_change: NPC {npc_id} not found in guild {guild_id}.")
+            return False
+
+        try:
+            old_state_variables = json.loads(old_state_variables_json)
+            if not isinstance(old_state_variables, dict):
+                print(f"NpcManager.revert_npc_state_variables_change: Invalid format for old_state_variables_json for NPC {npc_id}. Expected a dict.")
+                return False
+            npc.state_variables = old_state_variables
+        except json.JSONDecodeError:
+            print(f"NpcManager.revert_npc_state_variables_change: Failed to parse old_state_variables_json for NPC {npc_id}.")
+            return False
+
+        self.mark_npc_dirty(guild_id, npc_id)
+        print(f"NpcManager.revert_npc_state_variables_change: Reverted state_variables for NPC {npc_id} in guild {guild_id}.")
+        return True
+
 # --- Конец класса NpcManager ---
 
 print("DEBUG: npc_manager.py module loaded.")
