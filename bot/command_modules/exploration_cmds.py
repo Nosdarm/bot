@@ -95,7 +95,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
                     if move_result and move_result.get("success"):
                         # Attempt to fetch new location description
                         # This requires the character object to be updated or re-fetched
-                        updated_char = gm.character_manager.get_character_by_id(char_id, str(interaction.guild_id))
+                        updated_char = gm.character_manager.get_character(guild_id=str(interaction.guild_id), character_id=char_id)
                         if updated_char:
                             new_look_action_data = {} # Look at the new location
                             new_look_result = await cap.handle_explore_action(
