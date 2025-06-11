@@ -76,12 +76,19 @@ class AIResponseValidator:
             issues: The list to append ValidationIssue objects to.
             target_languages: A list of language codes for which translations are required.
         """
-        for lang_code in target_languages:
+        # Ensure "ru" and "en" are prioritized or used as fallbacks.
+        # The GenerationContext.target_languages already defaults to ["en", "ru"]
+        # so this explicit addition might be redundant if context is always well-formed.
+        # However, to be safe as per subtask requirement:
+        required_langs = set(target_languages)
+        required_langs.update(["ru", "en"]) # Ensure ru and en are checked
+
+        for lang_code in required_langs:
             if lang_code not in i18n_dict:
                 issues.append(ValidationIssue(
                     field=field_name,
                     issue_type="missing_translation",
-                    message=f"{entity_id_info}: Field '{field_name}' is missing translation for language '{lang_code}'.",
+                    message=f"{entity_id_info}: Field '{field_name}' is missing required translation for language '{lang_code}'.",
                     severity="error"
                 ))
             elif not isinstance(i18n_dict.get(lang_code), str) or not (i18n_dict.get(lang_code) or "").strip():
@@ -220,13 +227,37 @@ class AIResponseValidator:
 
         # --- Archetype Validation ---
         archetype = npc_data.get("archetype")
-        if archetype and isinstance(archetype, str):
-            valid_archetypes = game_terms.get("archetype_ids", self.rules.character_stats_rules.get_valid_archetypes()) # Assuming a method or direct access
-            if archetype not in valid_archetypes:
-                 issues.append(ValidationIssue(field="archetype", issue_type="invalid_reference", message=f"{entity_info}: Archetype '{archetype}' is not in the list of known archetypes.", severity="warning")) # Warning or error
-        elif 'archetype' in npc_data : # exists but not string
-             issues.append(ValidationIssue(field="archetype", issue_type="invalid_type", message=f"{entity_info}: Archetype field must be a string.", severity="error"))
+        if archetype is not None: # Only validate if archetype field is present
+            if isinstance(archetype, str) and archetype.strip():
+                # Assuming self.rules.character_stats_rules.stat_ranges_by_role is the source of truth for defined roles/archetypes
+                # Or, game_terms.get("archetype_ids") if populated by PromptContextCollector
+                valid_archetypes = game_terms.get("archetype_ids")
+                if valid_archetypes is None and self.rules.character_stats_rules and hasattr(self.rules.character_stats_rules, 'stat_ranges_by_role'):
+                    valid_archetypes = set(self.rules.character_stats_rules.stat_ranges_by_role.keys())
 
+                if valid_archetypes is not None: # Ensure we have a set of archetypes to check against
+                    if archetype not in valid_archetypes:
+                        issues.append(ValidationIssue(
+                            field="archetype",
+                            issue_type="invalid_reference",
+                            message=f"{entity_info}: Archetype '{archetype}' is not recognized. Valid archetypes: {', '.join(list(valid_archetypes)[:5])}{'...' if len(valid_archetypes) > 5 else ''}.", # Show some examples
+                            severity="warning" # Could be "error" if strict adherence is required
+                        ))
+                else: # Cannot determine valid archetypes
+                    issues.append(ValidationIssue(
+                        field="archetype",
+                        issue_type="validation_skipped",
+                        message=f"{entity_info}: Cannot validate archetype '{archetype}' as no valid archetype list could be determined from rules or game_terms ('archetype_ids').",
+                        severity="info"
+                    ))
+            else: # Archetype is present but not a non-empty string
+                issues.append(ValidationIssue(
+                    field="archetype",
+                    issue_type="invalid_type_or_empty",
+                    message=f"{entity_info}: Archetype field must be a non-empty string if provided. Got: '{archetype}'.",
+                    severity="error"
+                ))
+        # else: Archetype is not provided, which might be acceptable.
 
         # --- Stat Validation ---
         stats_data = npc_data.get('stats')
@@ -321,6 +352,31 @@ class AIResponseValidator:
                     quantity = item_entry.get("quantity")
                     if quantity is not None and (not isinstance(quantity, int) or quantity <= 0):
                         issues.append(ValidationIssue(field=f"inventory[{i}].quantity", issue_type="invalid_value", message=f"{entity_info}: Inventory item '{item_template_id}' quantity '{quantity}' must be a positive integer.", severity="error"))
+                    elif quantity is None: # Quantity might be optional, defaulting to 1
+                        item_entry["quantity"] = 1 # Auto-correction: Assume 1 if quantity is missing
+                        issues.append(ValidationIssue(
+                            field=f"inventory[{i}].quantity", issue_type="auto_correction",
+                            message=f"{entity_info}: Inventory item '{item_template_id}' quantity missing. Defaulted to 1.",
+                            severity="warning", recommended_fix="Ensure quantity is provided if not 1."
+                        ))
+
+        # Soft check for ability/spell appropriateness based on archetype (if archetype is known and valid)
+        if role_key and archetype and (valid_archetypes is not None and archetype in valid_archetypes) : # role_key is derived from archetype here
+            # This requires archetypes to define typical ability/spell categories or tags in rules.
+            # Example: self.rules.character_stats_rules.archetype_ability_categories.get(archetype) -> {"wizard_spells", "defensive_abilities"}
+            # This is a conceptual check and depends heavily on how rules are structured.
+            # For now, let's assume a placeholder check or skip if rule structure isn't available.
+            # Placeholder:
+            # typical_ability_categories = self.rules.character_stats_rules.get_archetype_ability_categories(archetype) # Fictional method
+            # if typical_ability_categories:
+            #     for ability_id in npc_data.get("abilities", []):
+            #         ability_info = game_terms.get_ability_info(ability_id) # Fictional method to get ability details (e.g., category)
+            #         if ability_info and ability_info.category not in typical_ability_categories:
+            #             issues.append(ValidationIssue(
+            #                 field="abilities", issue_type="appropriateness_warning",
+            #                 message=f"{entity_info}: Ability '{ability_id}' (category: {ability_info.category}) seems unusual for archetype '{archetype}'. Typical: {typical_ability_categories}",
+            #                 severity="warning" ))
+            pass # Skipping detailed appropriateness check for now due to lack of defined rule structure for it.
 
 
         # --- Faction Affiliation Validation ---
@@ -405,9 +461,31 @@ class AIResponseValidator:
 
         # --- Suggested Level ---
         suggested_level = quest_data.get("suggested_level")
-        if suggested_level is not None and (not isinstance(suggested_level, int) or suggested_level < 0):
-            issues.append(ValidationIssue(field="suggested_level", issue_type="invalid_value", message=f"{entity_info}: suggested_level '{suggested_level}' must be a non-negative integer.", severity="error"))
+        min_quest_level = 1 # Default min
+        max_quest_level = 100 # Default max (e.g. from general game settings or quest rules)
 
+        if self.rules.general_settings: # Assuming GeneralSettings has these if defined
+            min_quest_level = getattr(self.rules.general_settings, 'min_quest_level', min_quest_level)
+            max_quest_level = getattr(self.rules.general_settings, 'max_character_level', max_quest_level) # Max quest level often tied to max char level
+
+        if suggested_level is not None:
+            if not isinstance(suggested_level, int):
+                issues.append(ValidationIssue(field="suggested_level", issue_type="invalid_type", message=f"{entity_info}: suggested_level '{suggested_level}' must be an integer.", severity="error"))
+            elif not (min_quest_level <= suggested_level <= max_quest_level):
+                original_level = suggested_level
+                # Auto-correct if slightly out, error if drastically out (e.g. > max_quest_level + 5 or < 1)
+                # For now, simple clamping:
+                corrected_level = max(min_quest_level, min(original_level, max_quest_level))
+                if corrected_level != original_level:
+                    quest_data["suggested_level"] = corrected_level # Auto-correction
+                    issues.append(ValidationIssue(
+                        field="suggested_level", issue_type="auto_correction",
+                        message=f"AUTO-CORRECT: {entity_info}: suggested_level {original_level} was out of defined range ({min_quest_level}-{max_quest_level}). Clamped to {corrected_level}.",
+                        severity="warning", recommended_fix=f"Ensure suggested_level is between {min_quest_level} and {max_quest_level}."
+                    ))
+                else: # Value was invalid (e.g. negative) but clamping didn't change it (e.g. corrected to 1 from -5)
+                     issues.append(ValidationIssue(field="suggested_level", issue_type="invalid_value", message=f"{entity_info}: suggested_level {original_level} is outside the acceptable range ({min_quest_level}-{max_quest_level}).", severity="error"))
+        # else: suggested_level is optional or not provided, might be fine.
 
         # --- Referential Integrity ---
         quest_giver_id = quest_data.get("quest_giver_id")
@@ -464,9 +542,32 @@ class AIResponseValidator:
                         if target_id is not None: # Optional field
                             if not isinstance(target_id, str):
                                 issues.append(ValidationIssue(field=f"stages[{s_idx}].objectives[{o_idx}].target_id", issue_type="invalid_type", message=f"{obj_info}: Objective target_id '{target_id}' must be a string.", severity="error"))
-                            # Further validation of target_id based on obj_type might be needed (e.g. if type is "kill", target_id should be an NPC id)
-                            # For now, just ensuring it's a string if present. Example:
-                            # if obj_type == "kill" and target_id not in known_npc_ids: ...
+                            else:
+                                # Validate target_id against game_terms based on objective type
+                                target_valid = True
+                                expected_term_set_key = None
+                                if obj_type == "kill" or obj_type == "interact_npc" or obj_type == "escort_npc": # Assuming "interact_npc", "escort_npc" types
+                                    expected_term_set_key = "npc_ids"
+                                elif obj_type == "collect" or obj_type == "craft": # Assuming "craft" might refer to item template
+                                    expected_term_set_key = "item_template_ids"
+                                elif obj_type == "goto" or obj_type == "explore_location": # Assuming "explore_location" type
+                                    expected_term_set_key = "location_ids"
+                                # Add more obj_type to term_set_key mappings as needed
+
+                                if expected_term_set_key:
+                                    term_set = game_terms.get(expected_term_set_key, set())
+                                    if not term_set: # If the set itself is missing from game_terms
+                                        issues.append(ValidationIssue(
+                                            field=f"stages[{s_idx}].objectives[{o_idx}].target_id", issue_type="validation_skipped",
+                                            message=f"{obj_info}: Cannot validate target_id '{target_id}' for type '{obj_type}'. Missing '{expected_term_set_key}' in game_terms.",
+                                            severity="info" ))
+                                    elif target_id not in term_set:
+                                        target_valid = False
+                                        issues.append(ValidationIssue(
+                                            field=f"stages[{s_idx}].objectives[{o_idx}].target_id", issue_type="invalid_reference",
+                                            message=f"{obj_info}: target_id '{target_id}' for objective type '{obj_type}' not found in known '{expected_term_set_key}'.",
+                                            severity="warning" # Warning, as it might be a newly generated ID not yet in terms
+                                        ))
 
                         skill_check = obj_data.get("skill_check")
                         if skill_check is not None and self._check_is_dict(skill_check, f"stages[{s_idx}].objectives[{o_idx}].skill_check", obj_info, issues):
@@ -647,6 +748,53 @@ class AIResponseValidator:
                  issues.append(ValidationIssue(field="properties_i18n.damage", issue_type="missing_recommended_field", message=f"{entity_info}: Weapon type item is missing 'damage' in properties_i18n.", severity="warning"))
             if item_type == 'potion' and not any(k.startswith("effect") for k in item_data.get("properties_i18n", {})):
                  issues.append(ValidationIssue(field="properties_i18n", issue_type="missing_recommended_field", message=f"{entity_info}: Potion type item is missing an 'effect' in properties_i18n.", severity="warning"))
+
+        # --- Numerical Properties Validation ---
+        # Assume a predefined list of known numeric properties or derive from item_rules schema if available
+        # For now, using a placeholder list. This should ideally come from GameRules.
+        known_numeric_properties = ["damage_bonus", "weight", "armor_value", "attack_speed_modifier", "healing_amount", "duration_seconds"]
+        if isinstance(properties_i18n, dict):
+            for prop_key, prop_value_i18n in properties_i18n.items():
+                if prop_key in known_numeric_properties:
+                    # For numeric properties, we might expect the value to be consistent across languages,
+                    # or the i18n dict might just have one entry (e.g., "en": "10.5" or "en": 10.5)
+                    # Let's assume for numeric properties, the value is directly parseable from the default/main language.
+                    main_lang_value_str = None
+                    if isinstance(prop_value_i18n, dict):
+                        main_lang_value_str = prop_value_i18n.get(generation_context.main_language, prop_value_i18n.get("en"))
+                    elif isinstance(prop_value_i18n, (str, int, float)): # If it's not an i18n dict but a direct value
+                        main_lang_value_str = str(prop_value_i18n)
+
+                    if main_lang_value_str is not None:
+                        try:
+                            float(main_lang_value_str) # Attempt to convert to float
+                        except ValueError:
+                            issues.append(ValidationIssue(
+                                field=f"properties_i18n.{prop_key}", issue_type="invalid_type",
+                                message=f"{entity_info}: Numeric property '{prop_key}' has non-numeric value '{main_lang_value_str}'.",
+                                severity="error"
+                            ))
+                    # else: Property value not available in main/default language or not a direct value, can't validate numeric type easily.
+
+        # --- Requirements Validation ---
+        requirements_data = item_data.get("requirements")
+        if isinstance(requirements_data, dict):
+            known_stat_ids = game_terms.get("stat_ids", set())
+            known_skill_ids = game_terms.get("skill_ids", set()) # Assuming skill_ids are in game_terms
+
+            for req_key, req_value in requirements_data.items():
+                if req_key == "level":
+                    if not isinstance(req_value, int) or req_value <= 0:
+                        issues.append(ValidationIssue(field="requirements.level", issue_type="invalid_value", message=f"{entity_info}: Level requirement '{req_value}' must be a positive integer.", severity="error"))
+                elif req_key in known_stat_ids: # e.g. "strength": 12
+                    if not isinstance(req_value, int) or req_value <= 0:
+                        issues.append(ValidationIssue(field=f"requirements.{req_key}", issue_type="invalid_value", message=f"{entity_info}: Stat requirement '{req_key}: {req_value}' must be a positive integer.", severity="error"))
+                elif req_key in known_skill_ids: # e.g. "mining": 25
+                    if not isinstance(req_value, int) or req_value <= 0:
+                        issues.append(ValidationIssue(field=f"requirements.{req_key}", issue_type="invalid_value", message=f"{entity_info}: Skill requirement '{req_key}: {req_value}' must be a positive integer.", severity="error"))
+                # else: could be a custom requirement key, not validated here unless rules define all possible keys.
+        elif requirements_data is not None: # If 'requirements' exists but is not a dict
+            issues.append(ValidationIssue(field="requirements", issue_type="invalid_type", message=f"{entity_info}: 'requirements' field must be a dictionary.", severity="error"))
 
 
         status_str = self._calculate_entity_status(issues)

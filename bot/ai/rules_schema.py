@@ -184,6 +184,13 @@ class ItemEffectDefinition(BaseModel):
     consumable: bool = Field(False, description="If true, the item is consumed after a single use.")
     target_policy: str = Field(default="self", description="Defines targeting rules: 'self', 'requires_target', 'no_target'.") # 'area_around_self', 'area_at_target'
 
+class EffectProperty(BaseModel):
+    effect_id: str = Field(..., description="The ID of the effect to apply, typically a key from CoreGameRulesConfig.item_effects.")
+    # Add other potential fields if context suggests, e.g.:
+    potency_modifier: float = Field(default=1.0, description="Modifier for the strength of this effect instance.")
+    duration_modifier: float = Field(default=1.0, description="Modifier for the duration of this effect instance.")
+    target_override: Optional[str] = Field(default=None, description="Override targeting policy for this specific effect instance.")
+
 class DirectHealthEffect(BaseModel):
     amount: int = Field(..., description="Amount of health to change (positive for heal, negative for damage).")
     effect_type: str = Field(..., description="Type of health effect, e.g., 'heal', 'damage'.") # Could also be 'temp_hp'
