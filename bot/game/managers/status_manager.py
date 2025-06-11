@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from bot.game.managers.party_manager import PartyManager # Нужен для получения целевых групп (если статусы на группу)
     # from bot.game.managers.location_manager import LocationManager # Если статусы привязаны к локациям
     # from bot.game.event_processors.event_stage_processor import EventStageProcessor # Если статусы привязаны к стадиям событий
+    from bot.ai.rules_schema import CoreGameRulesConfig
+
 
 # Define send callback type (нужен для отправки уведомлений о статусах)
 # SendToChannelCallback определен в GameManager, но его можно определить и здесь, если нужно.
@@ -40,19 +42,13 @@ class StatusManager:
     Отвечает за наложение, снятие, обновление длительности и применение эффектов статусов.
     Централизованно обрабатывается в мировом тике.
     """
-    # Добавляем required_args для совместимости с PersistenceManager
-    # NOTE: Если статус-эффекты пер-гильдийные, эти поля должны быть ["guild_id"]
-    # Исходя из логов, статус-эффекты, вероятно, привязаны к сущностям, у которых есть guild_id.
-    # StatusManager.save_state должен работать по guild_id, если PersistentManager вызывает его per-guild.
-    # В схеме БД таблица statuses имеет guild_id.
-    # Значит, StatusManager должен работать per-guild.
-    required_args_for_load = ["guild_id"] # load_all_statuses должен принимать guild_id
-    required_args_for_save = ["guild_id"] # save_all_statuses должен принимать guild_id
-    required_args_for_rebuild = ["guild_id"] # rebuild_runtime_caches должен принимать guild_id
+    required_args_for_load = ["guild_id"]
+    required_args_for_save = ["guild_id"]
+    required_args_for_rebuild = ["guild_id"]
 
 
     def __init__(self,
-                 db_service: Optional[DBService] = None, # Changed from db_adapter
+                 db_service: Optional[DBService] = None,
                  settings: Optional[Dict[str, Any]] = None,
 
                  rule_engine: Optional['RuleEngine'] = None,
@@ -61,11 +57,9 @@ class StatusManager:
                  npc_manager: Optional['NpcManager'] = None,
                  combat_manager: Optional['CombatManager'] = None,
                  party_manager: Optional['PartyManager'] = None,
-                 # event_manager: Optional['EventManager'] = None,
-                 # event_stage_processor: Optional['EventStageProcessor'] = None,
                  ):
         print("Initializing StatusManager...")
-        self._db_service = db_service # Changed from _db_adapter
+        self._db_service = db_service
         self._settings = settings
         self._rule_engine = rule_engine
         self._time_manager = time_manager
@@ -73,113 +67,107 @@ class StatusManager:
         self._npc_manager = npc_manager
         self._combat_manager = combat_manager
         self._party_manager = party_manager
-        # self._event_manager = event_manager
-        # self._event_stage_processor = event_stage_processor
 
-        # --- Внутренние кеши ---
-        # NOTE: Кеш статус-эффектов должен быть пер-гильдийным: {guild_id: {status_effect_id: StatusEffect_object}}
-        self._status_effects: Dict[str, Dict[str, StatusEffect]] = {} # <-- ИСПРАВЛЕНО: Пер-гильдийный кеш статусов
+        self.rules_config: Optional[CoreGameRulesConfig] = None
+        if self._rule_engine and hasattr(self._rule_engine, 'rules_config_data'):
+            self.rules_config = self._rule_engine.rules_config_data
 
-        # NOTE: Шаблоны статусов обычно глобальные и не зависят от гильдии
+
+        self._status_effects: Dict[str, Dict[str, StatusEffect]] = {}
+
         self._status_templates: Dict[str, Dict[str, Any]] = {}
 
-        # Кеши для персистентности - тоже пер-гильдийные
-        self._dirty_status_effects: Dict[str, Set[str]] = {} # {guild_id: set(status_effect_ids)}
-        self._deleted_status_effects_ids: Dict[str, Set[str]] = {} # {guild_id: set(status_effect_ids)}
+        self._dirty_status_effects: Dict[str, Set[str]] = {}
+        self._deleted_status_effects_ids: Dict[str, Set[str]] = {}
 
-        # TODO: Возможно, добавить кеш {target_id: Set[status_effect_id]} для быстрого поиска статусов на сущности
-        # Этот кеш также должен быть пер-гильдийным: {guild_id: {target_id: Set[status_effect_id]}}
-        # self._status_effects_by_target: Dict[str, Dict[str, Set[str]]] = {}
-
-
-        # Загрузить статические шаблоны статусов
         self._load_status_templates()
 
         print("StatusManager initialized.")
 
     def _load_status_templates(self):
-        """(Пример) Загружает статические шаблоны статус-эффектов из settings."""
+        """Загружает статические шаблоны статус-эффектов из rules_config или settings."""
         print("StatusManager: Loading status templates...")
-        self._status_templates = {}
+        self._status_templates = {} # Legacy, prefer rules_config
+
+        if self.rules_config and self.rules_config.status_effects:
+            for status_id, status_def in self.rules_config.status_effects.items():
+                # Convert Pydantic model to dict to match legacy _status_templates format if needed
+                # Or adapt get_status_template to work directly with Pydantic models
+                try:
+                    self._status_templates[status_id] = status_def.model_dump(mode='python')
+                except AttributeError: # Pydantic v1
+                    self._status_templates[status_id] = status_def.dict()
+
+            print(f"StatusManager: Loaded {len(self.rules_config.status_effects)} status templates from CoreGameRulesConfig.")
+            return
+
+        # Fallback to settings if rules_config is not available or empty
+        print("StatusManager: CoreGameRulesConfig.status_effects not found or empty. Falling back to settings for status templates.")
         try:
             if self._settings is None:
                 print("StatusManager: Error: Settings object is None. Cannot load status templates.")
                 return
-            if not isinstance(self._settings, dict):
-                print(f"StatusManager: Error: Settings object is not a dictionary (type: {type(self._settings)}). Cannot load status templates.")
-                return
-
+            # ... (rest of the settings-based loading logic from previous version) ...
             raw_templates = self._settings.get('status_templates')
             if raw_templates is None:
-                print("StatusManager: 'status_templates' key not found in settings. Cannot load status templates.")
-                if not self._settings: # Check if the dict is empty
-                    print("StatusManager: Further info: The settings object is an empty dictionary.")
+                print("StatusManager: 'status_templates' key not found in settings.")
                 return
-            if not isinstance(raw_templates, dict):
-                print(f"StatusManager: 'status_templates' in settings is not a dictionary (type: {type(raw_templates)}). Cannot load status templates.")
-                return
-            # If raw_templates is an empty dict, it will be handled by the loop not running or specific checks if needed.
-            # The original code had a `if not raw_templates:` check here, which is now covered by the None check and type check.
-            # If it's an empty dict, it's valid but contains no templates.
+            # ... (processing as before)
             processed_templates = {}
             for template_id, template_data in raw_templates.items():
                 if not isinstance(template_data, dict):
                     print(f"StatusManager: Warning: Template data for '{template_id}' is not a dictionary. Skipping.")
                     continue
-
-                # Process name_i18n
                 if not isinstance(template_data.get('name_i18n'), dict):
                     if 'name' in template_data and isinstance(template_data['name'], str):
                         template_data['name_i18n'] = {"en": template_data['name']}
                     else:
                         template_data['name_i18n'] = {"en": template_id}
-                    template_data.pop('name', None) # Remove old name field
-
-                # Process description_i18n
+                    template_data.pop('name', None)
                 if not isinstance(template_data.get('description_i18n'), dict):
                     if 'description' in template_data and isinstance(template_data['description'], str):
                         template_data['description_i18n'] = {"en": template_data['description']}
                     else:
                         template_data['description_i18n'] = {"en": "No description."}
-                    template_data.pop('description', None) # Remove old description field
-
+                    template_data.pop('description', None)
                 processed_templates[template_id] = template_data
+            self._status_templates = processed_templates # Overwrite with settings-loaded ones
+            print(f"StatusManager: Loaded and processed {len(self._status_templates)} status templates from settings.")
 
-            self._status_templates = processed_templates
-            print(f"StatusManager: Loaded and processed {len(self._status_templates)} status templates.")
         except Exception as e:
-            print(f"StatusManager: Error loading status templates: {e}")
+            print(f"StatusManager: Error loading status templates from settings: {e}")
             traceback.print_exc()
 
-    async def get_status_template(self, status_type: str) -> Optional[Dict[str, Any]]: # Changed to async
+    def get_status_template(self, status_type: str) -> Optional[Dict[str, Any]]: # Made async in previous, but templates are sync
         """Получить статический шаблон статуса по его типу (глобально)."""
+        # Prioritize rules_config if available
+        if self.rules_config and self.rules_config.status_effects and status_type in self.rules_config.status_effects:
+            status_def_model = self.rules_config.status_effects[status_type]
+            try:
+                return status_def_model.model_dump(mode='python')
+            except AttributeError: # Pydantic v1
+                return status_def_model.dict()
+        # Fallback to legacy _status_templates (loaded from settings)
         return self._status_templates.get(status_type)
 
-    # ИСПРАВЛЕНИЕ: get_status_name должен принимать status_instance или status_type
-    # И, возможно, template_id, если имя берется оттуда.
-    # В CharacterViewService вызывается get_status_display_name с status_instance=status_instance
+
     def get_status_display_name(self, status_instance: StatusEffect, lang: str = "en", default_lang: str = "en") -> str:
-         """Получить отображаемое имя статус-эффекта по его объекту."""
          if not isinstance(status_instance, StatusEffect):
               return "Неизвестный статус"
 
          tpl = self.get_status_template(status_instance.status_type)
 
-         display_name = status_instance.status_type # Fallback to type
+         display_name = status_instance.status_type
          if tpl:
-             display_name = get_i18n_text(tpl, "name", lang, default_lang)
+             display_name = get_i18n_text(tpl, "name", lang, default_lang) # tpl is dict here
 
          desc_parts = [display_name]
          if status_instance.duration is not None:
-             # TODO: Форматирование длительности (например, минуты/секунды)
-             desc_parts.append(f"({status_instance.duration:.1f} ост.)") # Осталось длительности
-
-         # TODO: Добавить отображение стаков, если есть (status_instance.stacks)
+             desc_parts.append(f"({status_instance.duration:.1f} ост.)")
 
          return " ".join(desc_parts)
 
     def get_status_display_description(self, status_instance: StatusEffect, lang: str = "en", default_lang: str = "en") -> str:
-        """Получить локализованное описание статус-эффекта."""
         if not isinstance(status_instance, StatusEffect):
             return "Описание недоступно."
 
@@ -190,710 +178,470 @@ class StatusManager:
         return "Описание недоступно."
 
 
-    # ИСПРАВЛЕНИЕ: get_status_effect должен принимать guild_id.
     def get_status_effect(self, guild_id: str, status_effect_id: str) -> Optional[StatusEffect]:
-        """Получить объект статус-эффекта по его ID для определенной гильдии."""
         guild_id_str = str(guild_id)
-        # Получаем из пер-гильдийного кеша
         guild_statuses = self._status_effects.get(guild_id_str)
         if guild_statuses:
              return guild_statuses.get(status_effect_id)
-        return None # Гильдия или статус-эффект не найдены
+        return None
 
-
-    # TODO: Реализовать get_status_effects_on_target(guild_id, target_id, target_type) для получения всех статусов на сущности
-
-    # TODO: Реализовать get_status_effect_instance(status_effect_id) - возможно, просто синоним get_status_effect, но без guild_id?
-    # Если ID статус-эффекта глобально уникален, то guild_id не нужен в этой специфической функции.
-    # Если ID уникален per-guild, то эта функция должна принимать guild_id.
-    # В схеме БД statuses.id PRIMARY KEY, что подразумевает глобальную уникальность ID экземпляра статуса.
-    # Значит, get_status_effect_instance должен искать по глобальному кешу или по всем пер-гильдийным кешам.
-    # Для простоты, пока сделаем, что get_status_effect - основной метод для получения по ID+guild_id.
-    # get_status_effect_instance, если он нужен, должен работать по guild_id.
-
-    # TODO: Add a public method like get_statuses_on_target_by_type(self, guild_id: str, target_id: str, target_type: str, status_type_filter: str) -> List[StatusEffect]
-    # This would allow RuleEngine and other modules to query statuses by type without accessing _status_effects directly.
-    # It should iterate self._status_effects.get(guild_id, {}).values() and filter by target_id, target_type, and status_type_filter.
-
-    # ИСПРАВЛЕНИЕ: add_status_effect_to_entity должен принимать guild_id и **kwargs.
-    async def add_status_effect_to_entity(self,
-                                          target_id: str,
-                                          target_type: str,
-                                          status_type: str,
-                                          guild_id: str, # <-- ДОБАВЛЕН guild_id
-                                          duration: Optional[Any] = None, # Any, т.к. может прийти str ('permanent') или число
-                                          source_id: Optional[str] = None,
-                                          **kwargs: Any # Принимаем весь контекст
-                                         ) -> Optional[str]:
+    async def apply_status(self,
+                           target_id: str,
+                           target_type: str, # "character" or "npc"
+                           status_id: str, # This is status_type/template_id from rules_config.status_effects
+                           guild_id: str,
+                           duration_turns: Optional[float] = None, # Duration in game turns
+                           source_id: Optional[str] = None, # E.g., ability_id, trap_id, used for source_item_template_id by ItemManager
+                           source_item_instance_id: Optional[str] = None, # Specific item instance ID
+                           initial_state_variables: Optional[Dict[str, Any]] = None,
+                           **kwargs: Any
+                          ) -> Optional[StatusEffect]: # Return StatusEffect object or None
         """
-        Налагает новый статус-эффект на сущность для определенной гильдии.
-        Сохраняет его в БД и добавляет в кеш активных статусов.
+        Applies a new status effect to an entity. Replaces add_status_effect_to_entity.
+        Uses status_id (template ID from rules_config.status_effects).
+        Stores source_item_instance_id in state_variables.
         """
         guild_id_str = str(guild_id)
-        print(f"StatusManager: Adding status '{status_type}' to {target_type} {target_id} for guild {guild_id_str}...")
+        log_prefix = f"StatusManager.apply_status(target='{target_type} {target_id}', status_id='{status_id}', guild='{guild_id_str}'):"
 
-        if self._db_service is None: # Changed from _db_adapter
-             print(f"StatusManager: Error adding status for guild {guild_id_str}: Database service is not available.") # Changed message
+        if self._db_service is None:
+             print(f"{log_prefix} Error: Database service is not available.")
              return None
 
-        # TODO: Валидация target_id существует ли сущность (через Character/NPC/Party Manager из kwargs)
-        # target_entity = None
-        # if target_type == 'Character':
-        #     char_mgr = kwargs.get('character_manager', self._character_manager)
-        #     if char_mgr: target_entity = char_mgr.get_character(guild_id_str, target_id)
-        # ... и т.д. для NPC, Party
+        status_template = self.get_status_template(status_id) # Fetches from rules_config or legacy
+        if not status_template:
+            print(f"{log_prefix} Error: Status template '{status_id}' not found.")
+            return None
 
-        # TODO: Валидация status_type существует ли шаблон статуса (через get_status_template)
+        # Resolve duration: use provided, then template default, then None (permanent)
+        resolved_duration: Optional[float] = duration_turns
+        if resolved_duration is None: # If not provided directly
+            # Check for default_duration_turns in the Pydantic model via rules_config
+            if self.rules_config and self.rules_config.status_effects and status_id in self.rules_config.status_effects:
+                resolved_duration = self.rules_config.status_effects[status_id].default_duration_turns
+            elif 'default_duration_turns' in status_template: # Fallback to dict template
+                resolved_duration = status_template['default_duration_turns']
 
-        # Обработка длительности (число или 'permanent')
-        resolved_duration: Optional[float] = None
-        if duration is not None:
-            if isinstance(duration, (int, float)):
-                resolved_duration = float(duration)
-            elif isinstance(duration, str) and duration.lower() == 'permanent':
-                resolved_duration = None # Null in DB for permanent
-            else:
-                 print(f"StatusManager: Warning: Bad duration format for status '{status_type}' on {target_type} {target_id}: '{duration}'. Expected number or 'permanent'.")
-                 # Решите, что делать: игнорировать длительность, сделать временным по умолчанию, рейзить ошибку.
-                 # Пока сделаем временным по умолчанию (например, 1 тик?), или просто null?
-                 # Оставим None, что означает постоянный, если формат неправильный - небезопасно.
-                 # Давайте сделаем duration обязательным и числовым или 'permanent'.
-                 # Сейчас просто логируем и оставляем resolved_duration как None (постоянный).
+        # Ensure resolved_duration is float if not None
+        if resolved_duration is not None:
+            try:
+                resolved_duration = float(resolved_duration)
+            except (ValueError, TypeError):
+                print(f"{log_prefix} Warning: Invalid duration format '{resolved_duration}'. Setting to permanent.")
+                resolved_duration = None
 
 
-        rule_engine = kwargs.get('rule_engine', self._rule_engine)
+        applied_at_time: Optional[float] = None
         time_mgr = kwargs.get('time_manager', self._time_manager)
-
-        applied_at = None
         if time_mgr and hasattr(time_mgr, 'get_current_game_time'):
-            # Используем пер-гильдийное время
-            applied_at = time_mgr.get_current_game_time(guild_id_str) # Убедитесь в сигнатуре TimeManager
+            applied_at_time = time_mgr.get_current_game_time(guild_id_str)
+
+
+        current_state_vars = initial_state_variables.copy() if initial_state_variables else {}
+        if source_item_instance_id:
+            current_state_vars['source_item_instance_id'] = source_item_instance_id
+        # source_id (template_id) is already a main field.
+
+        # TODO: Stacking Logic
+        # Check if a status of this type already exists on the target.
+        # Based on rules_config.status_effects[status_id].stacking_policy (e.g., "refresh", "stack", "ignore", "intensify")
+        # This is a simplified placeholder for stacking.
+        existing_statuses_of_type = [
+            se for se_id, se in self._status_effects.get(guild_id_str, {}).items()
+            if se.target_id == target_id and se.target_type == target_type and se.status_type == status_id
+        ]
+        if existing_statuses_of_type:
+            # print(f"{log_prefix} Found existing status of type '{status_id}' on target.")
+            # Apply stacking rules here. For now, let's assume "refresh" or "ignore" if not stackable.
+            # This needs to be driven by status_template.stacking_policy from rules_config
+            pass # Add detailed stacking logic later. For now, it will just add another instance.
 
 
         try:
-            new_id = str(uuid.uuid4())
-
-            data: Dict[str, Any] = { # Явная аннотация словаря
-                'id': new_id,
-                'status_type': status_type,
+            new_effect_id = str(uuid.uuid4())
+            status_data: Dict[str, Any] = {
+                'id': new_effect_id,
+                'status_type': status_id, # This is the template ID
                 'target_id': target_id,
                 'target_type': target_type,
-                'duration': resolved_duration, # None для постоянного
-                'applied_at': applied_at, # None если time_manager недоступен?
-                'source_id': source_id,
+                'duration': resolved_duration,
+                'applied_at': applied_at_time,
+                'source_id': source_id, # Used for item_template_id, ability_id etc.
                 'guild_id': guild_id_str,
-                'state_variables': kwargs.get('state_variables', {}), # Allow passing initial state_variables
+                'state_variables': current_state_vars,
             }
 
-            # TODO: Возможно, вызвать RuleEngine для "on_apply" эффектов
-            # if rule_engine and hasattr(rule_engine, 'apply_status_on_apply'):
-            #      target_entity = # Получить целевую сущность из менеджера через kwargs
-            #      if target_entity:
-            #           await rule_engine.apply_status_on_apply(
-            #               status_effect_data=data, # Или объект StatusEffect?
-            #               target_entity=target_entity,
-            #               **kwargs # Передаем контекст
-            #           )
+            status_effect_obj = StatusEffect.from_dict(status_data)
 
-            eff = StatusEffect.from_dict(data)
-
-            # --- Сохранение в БД ---
-            # No direct save here if we use granular save_status_effect later.
-            # However, the original code saved here, then marked dirty.
-            # For consistency with granular saving, we'd ideally just create the object,
-            # add to cache, mark dirty, and let the caller decide to save it via save_status_effect.
-            # Let's keep the save for now as it's existing behavior, but granular save can also be called.
-            if self._db_service: # Changed from _db_adapter
+            if self._db_service:
                  sql = '''
                      INSERT INTO statuses (id, status_type, target_id, target_type, duration_turns, applied_at, source_id, state_variables, guild_id)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                  '''
                  params = (
-                     eff.id, eff.status_type, eff.target_id, eff.target_type,
-                     eff.duration, eff.applied_at, eff.source_id, # eff.duration is used for duration_turns column
-                     json.dumps(eff.state_variables),
-                     eff.guild_id
+                     status_effect_obj.id, status_effect_obj.status_type, status_effect_obj.target_id, status_effect_obj.target_type,
+                     status_effect_obj.duration, status_effect_obj.applied_at, status_effect_obj.source_id,
+                     json.dumps(status_effect_obj.state_variables),
+                     status_effect_obj.guild_id
                  )
-                 await self._db_service.adapter.execute(sql, params) # Changed from _db_adapter
-                 print(f"StatusManager: Status {eff.id} (type: {eff.status_type}) added and directly saved to DB for target {eff.target_id} in guild {guild_id_str}.")
-            else:
-                 print(f"StatusManager: No DB service. Simulating save for status {eff.id} for guild {guild_id_str}.") # Changed message
+                 await self._db_service.adapter.execute(sql, params)
 
-            self._status_effects.setdefault(guild_id_str, {})[eff.id] = eff
-            self.mark_status_effect_dirty(guild_id_str, eff.id) # Use the new helper
+            self._status_effects.setdefault(guild_id_str, {})[status_effect_obj.id] = status_effect_obj
+            self.mark_status_effect_dirty(guild_id_str, status_effect_obj.id)
 
-            print(f"StatusManager: Status {eff.id} added to cache for guild {guild_id_str}.")
-            return eff # Return the StatusEffect object
+            print(f"{log_prefix} Status effect '{status_effect_obj.id}' (type: {status_id}) applied successfully.")
+            # TODO: Notify target entity's manager (CharacterManager, NpcManager) about the new status effect.
+            # This allows recalculation of stats or other on-apply logic if needed.
+            # Example: self._character_manager.notify_status_applied(guild_id, target_id, status_effect_obj)
+
+            return status_effect_obj
 
         except Exception as e:
-            print(f"StatusManager: ❌ Error adding status effect '{status_type}' for target {target_id} in guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # rollback уже в execute
+            print(f"{log_prefix} ❌ Error applying status: {e}")
+            traceback.print_exc()
             return None
 
-    # ИСПРАВЛЕНИЕ: remove_status_effect должен принимать guild_id.
-    async def remove_status_effect(self, status_effect_id: str, guild_id: str, **kwargs: Any) -> Optional[str]:
-        """
-        Удаляет статус-эффект по ID из кеша и БД для определенной гильдии.
-        """
+    # add_status_effect_to_entity is now replaced by apply_status
+    # async def add_status_effect_to_entity(...): ... (Keep old one commented or remove if sure)
+
+
+    async def remove_status_effect(self, status_effect_id: str, guild_id: str, **kwargs: Any) -> bool: # Changed return to bool
         guild_id_str = str(guild_id)
         status_effect_id_str = str(status_effect_id)
-        print(f"StatusManager: Removing status {status_effect_id_str} for guild {guild_id_str}...")
+        log_prefix = f"StatusManager.remove_status_effect(id='{status_effect_id_str}', guild='{guild_id_str}'):"
 
-        # Получаем объект статус-эффекта из пер-гильдийного кеша
         eff = self.get_status_effect(guild_id_str, status_effect_id_str)
         if not eff:
-            print(f"StatusManager: Warning: Attempted to remove non-existent or inactive status {status_effect_id_str} for guild {guild_id_str} (not found in cache).")
-             # TODO: Если не нашли в кеше, но он в _deleted_status_effects_ids для этой гильдии, просто логируем.
-            # Если его нет нигде, логируем Warning.
-            pass # Продолжаем попытку удаления из БД, на случай если он там есть, но нет в кеше.
+            # print(f"{log_prefix} Warning: Status not found in cache. Attempting DB delete if marked previously.")
+            # If it was already marked for deletion and removed from cache, DB operation might still be pending.
+            # If it's in _deleted_status_effects_ids, this call is redundant for cache, but confirms DB.
+            pass
 
-
-        # TODO: Возможно, вызвать RuleEngine для "on_remove" эффектов
-        # if rule_engine and hasattr(rule_engine, 'apply_status_on_remove'):
-        #     target_entity = # Получить целевую сущность из менеджера через kwargs или eff.target_id
-        #     if target_entity and eff:
-        #          await rule_engine.apply_status_on_remove(
-        #              status_effect=eff,
-        #              target_entity=target_entity,
-        #              **kwargs # Передаем контекст
-        #          )
-
+        # TODO: "on_remove" effects from RuleEngine
+        # target_entity = ...
+        # if rule_engine and eff and target_entity:
+        #    await rule_engine.trigger_status_on_remove_effects(eff, target_entity, **kwargs)
 
         try:
-            # --- Удаляем из БД ---
-            if self._db_service: # Changed from _db_adapter
-                # ИСПРАВЛЕНИЕ: Добавляем фильтр по guild_id в SQL DELETE
+            if self._db_service:
                 sql = 'DELETE FROM statuses WHERE id = ? AND guild_id = ?'
-                await self._db_service.adapter.execute(sql, (status_effect_id_str, guild_id_str)) # Changed from _db_adapter
-                # execute уже коммитит
-                print(f"StatusManager: Status {status_effect_id_str} deleted from DB for guild {guild_id_str}.")
-            else:
-                print(f"StatusManager: No DB service. Simulating delete from DB for status {status_effect_id_str} for guild {guild_id_str}.") # Changed message
+                await self._db_service.adapter.execute(sql, (status_effect_id_str, guild_id_str))
 
-            # --- Удаляем из кеша ---
-            # Удаляем из пер-гильдийного кеша
             guild_statuses_cache = self._status_effects.get(guild_id_str)
-            if guild_statuses_cache: # Проверяем, что кеш для гильдии существует
-                 guild_statuses_cache.pop(status_effect_id_str, None) # Удаляем по ID
-                 # Если после удаления кеш для гильдии опустел, можно удалить и сам ключ гильдии из self._status_effects
+            if guild_statuses_cache:
+                 if guild_statuses_cache.pop(status_effect_id_str, None):
+                    # print(f"{log_prefix} Removed from active cache.")
+                    pass
                  if not guild_statuses_cache:
                       self._status_effects.pop(guild_id_str, None)
 
-            # TODO: Удалить из пер-гильдийного кеша {target_id: Set[status_effect_id]} если он используется
-            # if self._status_effects_by_target.get(guild_id_str) and eff:
-            #     target_statuses = self._status_effects_by_target[guild_id_str].get(eff.target_id)
-            #     if target_statuses and status_effect_id_str in target_statuses:
-            #          target_statuses.discard(status_effect_id_str)
-            #          if not target_statuses:
-            #               self._status_effects_by_target[guild_id_str].pop(eff.target_id)
-            #               if not self._status_effects_by_target[guild_id_str]:
-            #                    self._status_effects_by_target.pop(guild_id_str, None)
+            self._dirty_status_effects.get(guild_id_str, set()).discard(status_effect_id_str)
+            self._deleted_status_effects_ids.setdefault(guild_id_str, set()).add(status_effect_id_str) # Ensure it's marked for deletion confirmation
 
-
-            # TODO: Пометить целевую сущность dirty, чтобы удалить ID статуса из ее списка status_effects
-            # Это должно делаться в clean_up_for_* методах менеджеров сущностей,
-            # которые вызываются здесь в remove_status_effect.
-
-            # Удаляем из пер-гильдийных персистентных кешей
-            self._dirty_status_effects.get(guild_id_str, set()).discard(status_effect_id_str) # Удаляем из dirty
-            self._deleted_status_effects_ids.setdefault(guild_id_str, set()).add(status_effect_id_str) # Добавляем в deleted
-
-            print(f"StatusManager: Status {status_effect_id_str} removed from cache and marked for deletion for guild {guild_id_str}.")
-
-            return status_effect_id_str
+            # print(f"{log_prefix} Successfully processed removal.")
+            # TODO: Notify target entity's manager about status removal for stat recalculation etc.
+            # Example: if eff: self._character_manager.notify_status_removed(guild_id, eff.target_id, eff)
+            return True
 
         except Exception as e:
-            print(f"StatusManager: ❌ Error removing status {status_effect_id_str} for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # rollback уже в execute
+            print(f"{log_prefix} ❌ Error removing status: {e}")
+            traceback.print_exc()
+            return False
 
-
-    # Метод обработки тика (используется WorldSimulationProcessor)
-    # ИСПРАВЛЕНИЕ: Добавляем guild_id и **kwargs к сигнатуре
-    async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None:
+    async def remove_statuses_by_source_item_instance(self, guild_id: str, target_id: str, source_item_instance_id: str, **kwargs: Any) -> int:
         """
-        Обрабатывает тик игрового времени для статус-эффектов определенной гильдии.
-        Обновляет длительность активных статусов, применяет периодические эффекты и удаляет истекшие.
-        Принимает game_time_delta и менеджеры/сервисы через kwargs.
+        Removes all status effects from a target that were sourced by a specific item instance.
+        Checks state_variables['source_item_instance_id'].
+        Returns the count of removed status effects.
         """
-        # print(f"StatusManager: Processing tick for guild {guild_id} with delta: {game_time_delta}") # Debug print
-
         guild_id_str = str(guild_id)
+        target_id_str = str(target_id)
+        log_prefix = f"StatusManager.remove_statuses_by_source_item(target='{target_id_str}', item_instance='{source_item_instance_id}', guild='{guild_id_str}'):"
 
-        # Получаем пер-гильдийный кеш статусов
+        removed_count = 0
+        if guild_id_str not in self._status_effects:
+            # print(f"{log_prefix} No statuses cached for this guild.")
+            return 0
+
+        # Iterate over a copy of status IDs for safe removal from the cache during iteration
+        status_ids_to_check = list(self._status_effects.get(guild_id_str, {}).keys())
+
+        for status_effect_id in status_ids_to_check:
+            status_effect = self.get_status_effect(guild_id_str, status_effect_id) # Get from cache again, in case it was removed by another call
+
+            if status_effect and \
+               status_effect.target_id == target_id_str and \
+               isinstance(status_effect.state_variables, dict) and \
+               status_effect.state_variables.get('source_item_instance_id') == source_item_instance_id:
+
+                # print(f"{log_prefix} Found matching status '{status_effect.id}' (type: {status_effect.status_type}). Attempting removal.")
+                if await self.remove_status_effect(status_effect.id, guild_id_str, **kwargs):
+                    removed_count += 1
+
+        if removed_count > 0:
+            print(f"{log_prefix} Successfully removed {removed_count} status(es).")
+        # else:
+            # print(f"{log_prefix} No statuses found matching the source item instance ID.")
+
+        return removed_count
+
+    async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None:
+        guild_id_str = str(guild_id)
         guild_statuses_cache = self._status_effects.get(guild_id_str, {})
-
         if not guild_statuses_cache:
-             # print(f"StatusManager: No active statuses in cache for guild {guild_id_str} to process.") # Too noisy
-             return # Нет статусов для этой гильдии в кеше
-
+             return
 
         rule_engine = kwargs.get('rule_engine', self._rule_engine)
         char_mgr = kwargs.get('character_manager', self._character_manager)
         npc_mgr  = kwargs.get('npc_manager', self._npc_manager)
-        # TODO: Получить другие менеджеры, если нужны для apply_status_periodic_effects (PartyManager?)
 
+        to_remove_ids: List[str] = []
 
-        to_remove_ids: List[str] = [] # Список ID статусов для удаления после итерации
-
-        # Проходим по всем активным статус-эффектам в кеше ДЛЯ ЭТОЙ ГИЛЬДИИ
-        # Итерируем по копии values(), т.к. статус может быть помечен на удаление
         for eff_id, eff in list(guild_statuses_cache.items()):
-            # eff - это объект StatusEffect
             if not isinstance(eff, StatusEffect):
                  print(f"StatusManager: Warning: Invalid object in cache for guild {guild_id_str}, ID {eff_id}. Expected StatusEffect, got {type(eff).__name__}. Marking for removal.")
                  to_remove_ids.append(eff_id)
                  continue
 
             try:
-                # 1. Обновление длительности (если не постоянный)
-                if eff.duration is not None: # Если длительность задана (не постоянный статус)
+                if eff.duration is not None:
                     if not isinstance(eff.duration, (int, float)):
                          print(f"StatusManager: Warning: Invalid duration type for status {eff_id} ('{eff.status_type}') in guild {guild_id_str}: {eff.duration}. Expected number. Marking for removal.")
                          to_remove_ids.append(eff_id)
-                         continue # Пропускаем этот статус
+                         continue
 
-                    eff.duration -= game_time_delta # Уменьшаем оставшуюся длительность
-                    self._dirty_status_effects.setdefault(guild_id_str, set()).add(eff_id) # Помечаем как измененный
+                    eff.duration -= game_time_delta
+                    self.mark_status_effect_dirty(guild_id_str, eff_id)
 
-                    if eff.duration <= 0: # Если длительность истекла
-                        # print(f"StatusManager: Status {eff_id} ('{eff.status_type}') for {eff.target_type} {eff.target_id} in guild {guild_id_str} duration ended.") # Debug
-                        to_remove_ids.append(eff_id) # Маркируем для удаления
-                        continue # Переходим к следующему статусу, не применяя периодический эффект (он уже закончился)
+                    if eff.duration <= 0:
+                        to_remove_ids.append(eff_id)
+                        continue
 
+                # Periodic effects (RuleEngine call)
+                # This part needs to be adapted if rules_config is the primary source for effect details
+                status_template_dict = self.get_status_template(eff.status_type) # Fetches dict form
 
-                # 2. Применение периодических эффектов (если есть и статус не истек)
-                tpl = self.get_status_template(eff.status_type)
-
-                # RuleEngine.apply_status_periodic_effects должен быть асинхронным и принимать status_effect, target_entity, game_time_delta, context
-                if tpl and rule_engine and hasattr(rule_engine, 'apply_status_periodic_effects'):
-                    # Нужно получить целевую сущность по target_id и target_type
+                if status_template_dict and rule_engine and hasattr(rule_engine, 'apply_status_periodic_effects'):
                     target_entity = None
                     if eff.target_type == 'Character' and char_mgr:
-                         target_entity = char_mgr.get_character(guild_id_str, eff.target_id) # Получаем персонажа по guild_id
-
+                         target_entity = await char_mgr.get_character(guild_id_str, eff.target_id)
                     elif eff.target_type == 'NPC' and npc_mgr:
-                         target_entity = npc_mgr.get_npc(guild_id_str, eff.target_id) # Получаем NPC по guild_id
+                         target_entity = await npc_mgr.get_npc(guild_id_str, eff.target_id)
 
-                    # TODO: Получить целевую сущность для Party, Location и т.д. если статусы могут быть на них
-                    # elif eff.target_type == 'Party' and party_mgr:
-                    #     target_entity = party_mgr.get_party(guild_id_str, eff.target_id)
-                    # elif eff.target_type == 'Location' and loc_manager:
-                    #     target_entity = loc_manager.get_location(guild_id_str, eff.target_id)
-
-                    if target_entity: # Если целевая сущность найдена
-                        # print(f"StatusManager: Applying periodic effect for status {eff_id} on {eff.target_type} {eff.target_id} in guild {guild_id_str}...") # Debug
+                    if target_entity:
                         await rule_engine.apply_status_periodic_effects(
-                            status_effect=eff, # Передаем объект статус-эффекта
-                            target_entity=target_entity, # Передаем объект целевой сущности
+                            status_effect=eff,
+                            target_entity=target_entity,
                             game_time_delta=game_time_delta,
-                            **kwargs # Передаем ВСЕ менеджеры/сервисы из process_tick (контекст WSP)
+                            rules_config=self.rules_config, # Pass rules_config
+                            **kwargs
                         )
-                        # Результат apply_status_periodic_effects может включать изменение состояния сущности,
-                        # менеджер сущности должен пометить ее dirty.
-                    # else:
-                        # print(f"StatusManager: Warning: Target entity {eff.target_type} {eff.target_id} for status {eff_id} not found in guild {guild_id_str}. Cannot apply periodic effect.") # Не всегда ошибка, сущность может быть удалена
-
-                # else:
-                    # print(f"StatusManager: Warning: RuleEngine or 'apply_status_periodic_effects' not available for status type '{eff.status_type}' or template not found for status {eff_id} in guild {guild_id_str}.") # Слишком шумно?
-
-
             except Exception as e:
                 print(f"StatusManager: ❌ Error in tick processing for status {eff_id} ('{eff.status_type}') on {eff.target_type} {eff.target_id} for guild {guild_id_str}: {e}")
-                import traceback
-                print(traceback.format_exc())
-                to_remove_ids.append(eff_id) # Маркируем на удаление при ошибке обработки
+                traceback.print_exc()
+                to_remove_ids.append(eff_id)
+
+        for status_id_to_remove in set(to_remove_ids):
+             await self.remove_status_effect(status_id_to_remove, guild_id_str, **kwargs)
 
 
-        # --- Удаление истекших статусов ---
-        # Проходим по списку ID статусов, которые нужно удалить
-        for status_id_to_remove in set(to_remove_ids): # Используем set для уникальности
-             # remove_status_effect принимает status_id, guild_id и context
-             # context содержит менеджеры и т.д.
-             await self.remove_status_effect(status_id_to_remove, guild_id_str, **kwargs) # Удаляем, передавая guild_id и контекст
-
-
-        # print(f"StatusManager: Tick processing finished for guild {guild_id_str}.")
-
-
-    # --- Методы персистентности (Используются PersistenceManager'ом) ---
-
-    # ИСПРАВЛЕНИЕ: save_state должен принимать guild_id и **kwargs
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
-        """
-        Сохраняет состояние StatusManager (активные статус-эффекты) для определенной гильдии в БД.
-        """
         print(f"StatusManager: Saving state for guild {guild_id}...")
-        if self._db_service is None: # Changed from _db_adapter
-             print(f"StatusManager: Database service is not available. Skipping save for guild {guild_id}.") # Changed message
+        if self._db_service is None:
+             print(f"StatusManager: Database service is not available. Skipping save for guild {guild_id}.")
              return
 
         guild_id_str = str(guild_id)
-
         try:
-            # Получаем пер-гильдийные персистентные кеши
-            dirty_status_ids_for_guild_set = self._dirty_status_effects.get(guild_id_str, set()).copy() # Рабочая копия Set
-            deleted_status_ids_for_guild_set = self._deleted_status_effects_ids.get(guild_id_str, set()).copy() # Рабочая копия Set
+            dirty_ids_set = self._dirty_status_effects.get(guild_id_str, set()).copy()
+            deleted_ids_set = self._deleted_status_effects_ids.get(guild_id_str, set()).copy()
 
-            if not dirty_status_ids_for_guild_set and not deleted_status_ids_for_guild_set:
-                 # ИСПРАВЛЕНИЕ: Если нечего сохранять/удалять, очищаем пер-гильдийные dirty/deleted сеты
+            if not dirty_ids_set and not deleted_ids_set:
                  self._dirty_status_effects.pop(guild_id_str, None)
                  self._deleted_status_effects_ids.pop(guild_id_str, None)
-                 # print(f"StatusManager: No dirty or deleted statuses to save for guild {guild_id_str}.") # Debug
                  return
 
-            print(f"StatusManager: Saving {len(dirty_status_ids_for_guild_set)} dirty and {len(deleted_status_ids_for_guild_set)} deleted statuses for guild {guild_id_str}.")
+            if deleted_ids_set:
+                ids_to_delete_db = list(deleted_ids_set)
+                placeholders = ','.join(['?'] * len(ids_to_delete_db))
+                sql_del = f"DELETE FROM statuses WHERE id IN ({placeholders}) AND guild_id = ?"
+                params_del = tuple(ids_to_delete_db) + (guild_id_str,)
+                await self._db_service.adapter.execute(sql_del, params_del)
+                self._deleted_status_effects_ids.pop(guild_id_str, None) # Clear after successful DB operation
 
-            # --- Удаляем помеченные для удаления статус-эффекты для этой гильдии ---
-            if deleted_status_ids_for_guild_set:
-                ids_to_delete = list(deleted_status_ids_for_guild_set)
-                placeholders = ','.join(['?'] * len(ids_to_delete))
-                # ИСПРАВЛЕНИЕ: Добавляем фильтр по guild_id в SQL DELETE
-                sql_del = f"DELETE FROM statuses WHERE id IN ({placeholders}) AND guild_id = ?" # Filter by guild_id LAST
-                # Параметры: сначала ID'ы, затем guild_id
-                params_del = tuple(ids_to_delete) + (guild_id_str,)
-
-                await self._db_service.adapter.execute(sql_del, params_del) # Changed from _db_adapter
-                # execute уже коммитит
-                print(f"StatusManager: Deleted {len(ids_to_delete)} statuses from DB for guild {guild_id_str}.")
-                # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
-                self._deleted_status_effects_ids.pop(guild_id_str, None)
-
-
-            # --- Обновляем или вставляем измененные статус-эффекты для этой гильдии ---
-            # Получаем пер-гильдийный кеш статусов
             guild_statuses_cache = self._status_effects.get(guild_id_str, {})
+            statuses_to_save_db: List[StatusEffect] = []
+            upserted_in_db_ids: Set[str] = set()
 
-            # Фильтруем dirty_status_ids на те, что все еще существуют в пер-гильдийном кеше
-            statuses_to_save: List[StatusEffect] = []
-            upserted_status_ids: Set[str] = set() # Track IDs successfully prepared
-
-            for sid in list(dirty_status_ids_for_guild_set):
-                 eff = guild_statuses_cache.get(sid) # Получаем из кеша гильдии
+            for sid in list(dirty_ids_set): # Iterate copy
+                 eff = guild_statuses_cache.get(sid)
                  if eff and isinstance(eff, StatusEffect) and getattr(eff, 'guild_id', None) == guild_id_str:
-                      statuses_to_save.append(eff)
-                 else:
-                      # Если статус не найден в кеше или не принадлежит гильдии - удаляем из dirty set
-                      print(f"StatusManager: Warning: Dirty status {sid} not found in cache or mismatched guild ({getattr(eff, 'guild_id', 'N/A')} vs {guild_id_str}). Removing from dirty set.")
+                      # Filter out statuses that might have been marked dirty then deleted before save
+                      if sid not in deleted_ids_set: # Only save if not also marked for deletion
+                          statuses_to_save_db.append(eff)
+                 else: # Not in cache or wrong guild, remove from dirty
                       self._dirty_status_effects.get(guild_id_str, set()).discard(sid)
 
-
-            if statuses_to_save:
+            if statuses_to_save_db:
                 sql_upsert = '''
                     INSERT OR REPLACE INTO statuses
                     (id, status_type, target_id, target_type, duration_turns, applied_at, source_id, state_variables, guild_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 '''
-                data_to_upsert = []
-                for eff in statuses_to_save:
-                    if not isinstance(eff, StatusEffect) or not eff.id or not eff.status_type or not eff.target_id or not eff.target_type or not eff.guild_id:
-                        print(f"StatusManager: Warning: Skipping upsert for invalid StatusEffect object: {eff}. Missing mandatory attributes.")
-                        continue
-
-                    sv_json = json.dumps(getattr(eff, 'state_variables', {}))
-
-                    data_to_upsert.append((
-                        eff.id, eff.status_type, eff.target_id, eff.target_type,
-                        eff.duration, eff.applied_at, eff.source_id, # eff.duration is used for duration_turns column
-                        sv_json,
-                        eff.guild_id
+                data_to_upsert_db = []
+                for eff_to_save in statuses_to_save_db:
+                    sv_json = json.dumps(getattr(eff_to_save, 'state_variables', {}))
+                    data_to_upsert_db.append((
+                        eff_to_save.id, eff_to_save.status_type, eff_to_save.target_id, eff_to_save.target_type,
+                        eff_to_save.duration, eff_to_save.applied_at, eff_to_save.source_id,
+                        sv_json, eff_to_save.guild_id
                     ))
-                    upserted_status_ids.add(eff.id)
+                    upserted_in_db_ids.add(eff_to_save.id)
 
-                if data_to_upsert:
-                     await self._db_service.adapter.execute_many(sql_upsert, data_to_upsert) # Changed from _db_adapter
-                     print(f"StatusManager: Successfully upserted {len(data_to_upsert)} statuses for guild {guild_id_str}.")
-                     if guild_id_str in self._dirty_status_effects: # Check if key exists before difference_update
-                        self._dirty_status_effects[guild_id_str].difference_update(upserted_status_ids)
-                        if not self._dirty_status_effects[guild_id_str]: # If set is empty after update
+                if data_to_upsert_db:
+                     await self._db_service.adapter.execute_many(sql_upsert, data_to_upsert_db)
+                     if guild_id_str in self._dirty_status_effects:
+                        self._dirty_status_effects[guild_id_str].difference_update(upserted_in_db_ids)
+                        if not self._dirty_status_effects[guild_id_str]:
                             self._dirty_status_effects.pop(guild_id_str)
 
+            # Clean up any remaining empty sets in dirty_status_effects
+            if guild_id_str in self._dirty_status_effects and not self._dirty_status_effects[guild_id_str]:
+                self._dirty_status_effects.pop(guild_id_str)
 
             print(f"StatusManager: Successfully saved state for guild {guild_id_str}.")
-
         except Exception as e:
             print(f"StatusManager: ❌ Error during saving state for guild {guild_id_str}: {e}")
             traceback.print_exc()
 
 
-    # ИСПРАВЛЕНИЕ: load_state должен принимать guild_id и **kwargs
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
-        """
-        Загружает состояние StatusManager (активные статус-эффекты) для определенной гильдии из БД в кеш.
-        """
         print(f"StatusManager: Loading state for guild {guild_id}...")
         guild_id_str = str(guild_id)
 
-        if self._db_service is None: # Changed from _db_adapter
-             print(f"StatusManager: Database service is not available. Loading placeholder state or leaving default for guild {guild_id_str}.") # Changed message
-             # Очищаем или инициализируем кеши для этой гильдии
-             self._status_effects.pop(guild_id_str, None)
+        if self._db_service is None:
+             print(f"StatusManager: Database service not available. Loading placeholder state for guild {guild_id_str}.")
              self._status_effects[guild_id_str] = {}
              self._dirty_status_effects.pop(guild_id_str, None)
              self._deleted_status_effects_ids.pop(guild_id_str, None)
-             # TODO: Очистить/инициализировать пер-гильдийный кеш по цели, если используется
-             # self._status_effects_by_target.pop(guild_id_str, None)
-             # self._status_effects_by_target[guild_id_str] = {}
-
-             print(f"StatusManager: State is default after load (no DB adapter) for guild {guild_id_str}. Status Effects = 0.")
              return
 
         try:
-            # Очищаем кеши ДЛЯ ЭТОЙ ГИЛЬДИИ перед загрузкой
-            self._status_effects.pop(guild_id_str, None)
-            self._status_effects[guild_id_str] = {} # Создаем пустой кеш для этой гильдии
-
+            self._status_effects[guild_id_str] = {}
             self._dirty_status_effects.pop(guild_id_str, None)
             self._deleted_status_effects_ids.pop(guild_id_str, None)
-            # TODO: Очистить/инициализировать пер-гильдийный кеш по цели, если используется
-            # self._status_effects_by_target.pop(guild_id_str, None)
-            # self._status_effects_by_target[guild_id_str] = {}
 
-
-            # Выбираем ВСЕ статус-эффекты ТОЛЬКО для этой гильдии
-            # TODO: Убедитесь, что SELECT соответствует ВСЕМ колонкам таблицы statuses, включая guild_id
             sql_statuses = '''
                 SELECT id, status_type, target_id, target_type, duration_turns, applied_at, source_id, state_variables, guild_id
                 FROM statuses WHERE guild_id = $1
             '''
-            rows_statuses = await self._db_service.adapter.fetchall(sql_statuses, (guild_id_str,)) # Changed from _db_adapter
+            rows_statuses = await self._db_service.adapter.fetchall(sql_statuses, (guild_id_str,))
 
             if rows_statuses:
-                 print(f"StatusManager: Found {len(rows_statuses)} statuses in DB for guild {guild_id_str}.")
-
-                 # Получаем текущее игровое время для этой гильдии (нужно для расчета истекшей длительности при загрузке)
-                 # Время должно быть загружено TimeManager'ом перед StatusManager'ом или передано в kwargs.
-                 time_mgr = kwargs.get('time_manager', self._time_manager) # TimeManager из контекста
+                 time_mgr = kwargs.get('time_manager', self._time_manager)
                  current_game_time_for_guild = None
                  if time_mgr and hasattr(time_mgr, 'get_current_game_time'):
-                      current_game_time_for_guild = time_mgr.get_current_game_time(guild_id_str) # Убедитесь в сигнатуре TimeManager
+                      current_game_time_for_guild = time_mgr.get_current_game_time(guild_id_str)
 
                  loaded_count = 0
                  for row in rows_statuses:
                       try:
-                           # Создаем словарь данных статуса из строки БД
                            row_dict = dict(row)
+                           status_id_db = row_dict.get('id')
+                           if status_id_db is None: continue
 
-                           # TODO: Убедитесь, что все нужные поля присутствуют и имеют правильные типы (особенно после json.loads)
-                           status_id = row_dict.get('id')
-                           if status_id is None:
-                                print(f"StatusManager: Warning: Skipping status row with missing ID for guild {guild_id_str}: {row_dict}.")
-                                continue # Пропускаем строку без ID
-
-                           # Преобразуем JSON и булевы
                            row_dict['state_variables'] = json.loads(row_dict.get('state_variables') or '{}') if isinstance(row_dict.get('state_variables'), (str, bytes)) else {}
-                           # is_active уже фильтруется в SQL, но его можно загрузить, если нужно.
-                           # row_dict['is_active'] = bool(row_dict.get('is_active', 0))
-
-                           # duration_turns и applied_at могут быть NULL в БД (None в Python) или REAL (float)
                            row_dict['duration'] = float(row_dict.pop('duration_turns')) if row_dict.get('duration_turns') is not None else None
                            row_dict['applied_at'] = float(row_dict['applied_at']) if row_dict['applied_at'] is not None else None
 
-                           # Загружаем guild_id
-                           loaded_row_guild_id = row_dict.get('guild_id')
-                           if loaded_row_guild_id is None or str(loaded_row_guild_id) != guild_id_str:
-                                print(f"StatusManager: Warning: Skipping status {status_id} with mismatched guild_id ({loaded_row_guild_id}) for guild {guild_id_str}. Data: {row_dict}.")
-                                continue # Пропускаем строку с неправильной гильдией
+                           if str(row_dict.get('guild_id')) != guild_id_str: continue
 
-                           # Создаем объект StatusEffect из данных
                            status_instance = StatusEffect.from_dict(row_dict)
 
-                           # Проверка на истекшую длительность при загрузке (для временных статусов)
-                           # Если время игры доступно
                            if status_instance.duration is not None and status_instance.applied_at is not None and current_game_time_for_guild is not None:
                                 elapsed = current_game_time_for_guild - status_instance.applied_at
                                 if elapsed > 0:
-                                    status_instance.duration -= elapsed # Обновляем длительность
+                                    status_instance.duration -= elapsed
                                     if status_instance.duration <= 0:
-                                        # Если длительность истекла при загрузке - помечаем для удаления
                                         self._deleted_status_effects_ids.setdefault(guild_id_str, set()).add(status_instance.id)
-                                        # print(f"StatusManager: Status {status_instance.id} for guild {guild_id_str} expired upon loading. Marked for deletion.") # Debug
-                                        continue # Пропускаем добавление в кеш
+                                        continue
 
-                           # Если статус не истек при загрузке - добавляем в кеш
                            self._status_effects.setdefault(guild_id_str, {})[status_instance.id] = status_instance
                            loaded_count += 1
-
-                           # TODO: Добавить в пер-гильдийный кеш по цели, если используется
-                           # self._status_effects_by_target.setdefault(guild_id_str, {}).setdefault(status_instance.target_id, set()).add(status_instance.id)
-
-
-                      except (json.JSONDecodeError, ValueError, TypeError) as e:
-                           print(f"StatusManager: ❌ Error decoding or converting status data from DB for ID {row.get('id', 'Unknown')} for guild {guild_id_str}: {e}. Skipping status.")
-                           import traceback
-                           print(traceback.format_exc())
-                      except Exception as e: # Ловим другие ошибки при обработке строки
-                           print(f"StatusManager: ❌ Error processing status row for ID {row.get('id', 'Unknown')} for guild {guild_id_str}: {e}. Skipping status.")
-                           import traceback
-                           print(traceback.format_exc())
-
-
-                 print(f"StatusManager: Successfully loaded {loaded_count} active statuses into cache for guild {guild_id_str}. {len(rows_statuses) - loaded_count} expired or failed to load.")
-
+                      except Exception as e_row:
+                           print(f"StatusManager: ❌ Error processing status row ID {row.get('id', 'Unknown')} for guild {guild_id_str}: {e_row}")
+                 print(f"StatusManager: Loaded {loaded_count} statuses for guild {guild_id_str}.")
             else:
-                 print(f"StatusManager: No active statuses found in DB for guild {guild_id_str}.")
+                 print(f"StatusManager: No statuses found in DB for guild {guild_id_str}.")
+        except Exception as e_load:
+            print(f"StatusManager: ❌ CRITICAL ERROR loading state for guild {guild_id_str}: {e_load}")
+            traceback.print_exc()
 
 
-        except Exception as e:
-            print(f"StatusManager: ❌ CRITICAL ERROR during loading state for guild {guild_id_str} from DB: {e}")
-            import traceback
-            print(traceback.format_exc())
-            print(f"StatusManager: Loading failed for guild {guild_id_str}. State for this guild might be incomplete.")
-            # Оставляем кеши для этой гильдии в том состоянии, в котором они оказались (скорее всего пустые или частично заполненные)
-
-
-    # --- Метод перестройки кешей (обычно простая заглушка для StatusManager) ---
-    # ИСПРАВЛЕНИЕ: Добавляем guild_id и **kwargs
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-         """
-         Перестраивает внутренние кеши StatusManager после загрузки для определенной гильдии.
-         """
-         print(f"StatusManager: Simulating rebuilding runtime caches for guild {guild_id}.")
-         # TODO: Если используется _status_effects_by_target, его нужно перестроить здесь
-         # based on the loaded statuses in self._status_effects[guild_id].
-         # guild_id_str = str(guild_id)
-         # self._status_effects_by_target.pop(guild_id_str, None)
-         # self._status_effects_by_target[guild_id_str] = {}
-         # if guild_id_str in self._status_effects:
-         #      for status_id, status_instance in self._status_effects[guild_id_str].items():
-         #           if isinstance(status_instance, StatusEffect) and status_instance.target_id:
-         #                self._status_effects_by_target[guild_id_str].setdefault(status_instance.target_id, set()).add(status_id)
+         print(f"StatusManager: Rebuilding runtime caches for guild {guild_id} (No specific action needed for StatusManager unless more complex caches are added).")
 
-         print(f"StatusManager: Runtime caches rebuilt for guild {guild_id}.")
 
-    
     async def clean_up_for_character(self, character_id: str, context: Dict[str, Any], **kwargs: Any) -> None:
-         """Удаляет все статус-эффекты с персонажа."""
          guild_id = context.get('guild_id')
-         if guild_id is None:
-              print(f"StatusManager: Error in clean_up_for_character: Missing guild_id in context for character {character_id}.")
-              return
+         if guild_id is None: return
          guild_id_str = str(guild_id)
-          # Получаем все статусы на этой цели для этой гильдии
-         # Requires get_status_effects_on_target method, or iterate cache
          statuses_on_target_ids = [ sid for sid, s in self._status_effects.get(guild_id_str, {}).items()
                                    if isinstance(s, StatusEffect) and s.target_id == character_id and s.target_type == 'Character']
-         for status_id in statuses_on_target_ids:
-              await self.remove_status_effect(status_id, guild_id_str, **context) # Удаляем каждый статус
-
-    # TODO: Добавьте remove_status_effects_by_event_id(event_id, guild_id, context)
+         for status_id_to_remove in statuses_on_target_ids:
+              await self.remove_status_effect(status_id_to_remove, guild_id_str, **context)
 
     async def save_status_effect(self, status_effect: "StatusEffect", guild_id: str) -> bool:
-        """
-        Saves a single status effect to the database using an UPSERT operation.
-        """
-        if self._db_service is None: # Changed from _db_adapter
-            print(f"StatusManager: Error: DB service missing for guild {guild_id}. Cannot save status effect {getattr(status_effect, 'id', 'N/A')}.") # Changed message
-            return False
-
+        if self._db_service is None: return False
         guild_id_str = str(guild_id)
         effect_id = getattr(status_effect, 'id', None)
-
-        if not effect_id:
-            print(f"StatusManager: Error: StatusEffect object is missing an 'id'. Cannot save.")
-            return False
-
-        # Ensure the status_effect's internal guild_id (if exists on the object, though not typical for this model)
-        # matches the provided guild_id. For StatusEffect, guild_id is usually contextual.
-        # However, the DB table 'statuses' has a guild_id column, so we must save it.
-        # We'll use the provided guild_id for the DB operation.
-
+        if not effect_id: return False
         try:
             effect_data = status_effect.to_dict()
-
-            # Prepare data for DB columns based on 'statuses' table schema
-            # Columns: id, status_type, target_id, target_type, duration, applied_at,
-            #          source_id, state_variables, guild_id
-
-            db_id = effect_data.get('id')
-            db_status_type = effect_data.get('status_type')
-            db_target_id = effect_data.get('target_id')
-            db_target_type = effect_data.get('target_type')
-            db_duration_turns = effect_data.get('duration') # This will be mapped to duration_turns
-            db_applied_at = effect_data.get('applied_at') # Can be None or float
-            db_source_id = effect_data.get('source_id') # Can be None
-
-            db_state_variables = effect_data.get('state_variables', {})
-            if not isinstance(db_state_variables, dict):
-                db_state_variables = {}
-
-            # guild_id comes from the method argument
-            db_guild_id = guild_id_str
-
             db_params = (
-                db_id,
-                db_status_type,
-                db_target_id,
-                db_target_type,
-                db_duration_turns, # Use db_duration_turns here
-                db_applied_at,
-                db_source_id,
-                json.dumps(db_state_variables),
-                db_guild_id
+                effect_data.get('id'), effect_data.get('status_type'), effect_data.get('target_id'), effect_data.get('target_type'),
+                effect_data.get('duration'), effect_data.get('applied_at'), effect_data.get('source_id'),
+                json.dumps(effect_data.get('state_variables', {})), guild_id_str # Use guild_id_str here
             )
-
             upsert_sql = '''
             INSERT OR REPLACE INTO statuses (
                 id, status_type, target_id, target_type, duration_turns,
                 applied_at, source_id, state_variables, guild_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             '''
-            # 9 columns, 9 placeholders.
-
-            await self._db_service.adapter.execute(upsert_sql, db_params) # Changed from _db_adapter
-            print(f"StatusManager: Successfully saved status effect {db_id} for guild {guild_id_str}.")
-
-            # If this status effect was marked as dirty, clean it from the dirty set for this guild
-            if guild_id_str in self._dirty_status_effects and db_id in self._dirty_status_effects[guild_id_str]:
-                self._dirty_status_effects[guild_id_str].discard(db_id)
-                if not self._dirty_status_effects[guild_id_str]: # If set becomes empty
-                    del self._dirty_status_effects[guild_id_str]
-
-            # Also, ensure the in-memory cache (_status_effects) is updated/contains this object instance
-            # The StatusManager cache _status_effects stores StatusEffect objects directly.
-            # So, if the passed status_effect object is the one from the cache, it's already up-to-date.
-            # If it's a new instance or a copy, we should ensure the cache has the saved version.
-            self._status_effects.setdefault(guild_id_str, {})[db_id] = status_effect
-
+            await self._db_service.adapter.execute(upsert_sql, db_params)
+            if guild_id_str in self._dirty_status_effects and effect_id in self._dirty_status_effects[guild_id_str]:
+                self._dirty_status_effects[guild_id_str].discard(effect_id)
+                if not self._dirty_status_effects[guild_id_str]: del self._dirty_status_effects[guild_id_str]
+            self._status_effects.setdefault(guild_id_str, {})[effect_id] = status_effect
             return True
-
         except Exception as e:
             print(f"StatusManager: Error saving status effect {effect_id} for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
             return False
 
     async def remove_status_effects_by_type(self, target_id: str, target_type: str, status_type_to_remove: str, guild_id: str, context: Dict[str, Any]) -> int:
-        """
-        Removes all status effect instances of a specific type from a target entity.
-        Returns the count of removed status effects.
-        """
         guild_id_str = str(guild_id)
-        target_id_str = str(target_id)
         removed_count = 0
-
-        if guild_id_str not in self._status_effects:
-            return 0 # No statuses for this guild
-
-        # Iterate over a copy of items for safe removal
+        if guild_id_str not in self._status_effects: return 0
         statuses_to_check = list(self._status_effects.get(guild_id_str, {}).values())
-
-        for status_effect in statuses_to_check:
-            if isinstance(status_effect, StatusEffect) and \
-               status_effect.target_id == target_id_str and \
-               status_effect.target_type == target_type and \
-               status_effect.status_type == status_type_to_remove:
-
-                print(f"StatusManager: Removing status '{status_effect.id}' (type: {status_type_to_remove}) from {target_type} {target_id_str} in guild {guild_id_str}.")
-                removed_id = await self.remove_status_effect(status_effect.id, guild_id_str, **context)
-                if removed_id:
+        for status_effect_instance in statuses_to_check:
+            if isinstance(status_effect_instance, StatusEffect) and \
+               status_effect_instance.target_id == target_id and \
+               status_effect_instance.target_type == target_type and \
+               status_effect_instance.status_type == status_type_to_remove:
+                if await self.remove_status_effect(status_effect_instance.id, guild_id_str, **context):
                     removed_count += 1
-
-        if removed_count > 0:
-            print(f"StatusManager: Removed {removed_count} instances of status type '{status_type_to_remove}' from {target_type} {target_id_str} in guild {guild_id_str}.")
         return removed_count
+
+    def mark_status_effect_dirty(self, guild_id: str, status_effect_id: str) -> None:
+        """Helper to mark a status effect as dirty for the given guild."""
+        guild_id_str = str(guild_id)
+        status_effect_id_str = str(status_effect_id)
+        # Ensure the status effect actually exists in the cache for this guild before marking dirty
+        if guild_id_str in self._status_effects and status_effect_id_str in self._status_effects[guild_id_str]:
+            self._dirty_status_effects.setdefault(guild_id_str, set()).add(status_effect_id_str)
+        # else:
+            # print(f"StatusManager.mark_status_effect_dirty: Attempted to mark non-cached status {status_effect_id_str} for guild {guild_id_str}.")
+
 
 # Конец класса StatusManager
