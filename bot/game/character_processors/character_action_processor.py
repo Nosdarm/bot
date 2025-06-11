@@ -275,12 +275,12 @@ class CharacterActionProcessor:
                 logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing LocationManager): {specific_error_result}")
                 return specific_error_result
 
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: LocationManager found. Attempting to get location_details for location_id: {character.location_id} in guild_id: {guild_id}")
-            location_details = await self._location_manager.get_location_details(guild_id, str(character.location_id))
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: Received location_details: {location_details}")
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: LocationManager found. Attempting to get location_static for location_id: {character.location_id}")
+            location_details = self._location_manager.get_location_static(str(character.location_id))
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: Received static location data: {location_details}")
             if not location_details:
-                logging.warning(f"CharacterActionProcessor.handle_explore_action: Failed to retrieve location_details for location_id: {character.location_id}.")
-                specific_error_result = {'success': False, 'message': f'Exploration failed: Could not find details for your current location (ID: {character.location_id}).', 'data': {}}
+                logging.warning(f"CharacterActionProcessor.handle_explore_action: Failed to retrieve static location data for template_id: {character.location_id}.")
+                specific_error_result = {'success': False, 'message': f'Exploration failed: Could not find static data for location template (ID: {character.location_id}).', 'data': {}}
                 logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing location_details): {specific_error_result}")
                 return specific_error_result
 
