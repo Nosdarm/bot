@@ -2152,6 +2152,196 @@ class CharacterManager:
         print(f"CharacterManager.revert_inventory_changes: Reverted inventory changes for character {character_id}.")
         return True
 
+    async def revert_xp_change(self, guild_id: str, character_id: str, old_xp: int, old_level: int, old_unspent_xp: int, **kwargs: Any) -> bool:
+        """Reverts changes to a character's experience points, level, and unspent XP."""
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_xp_change: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        char.experience = old_xp
+        char.level = old_level
+        char.unspent_xp = old_unspent_xp
+
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_xp_change: Reverted XP, level, and unspent XP for character {character_id}.")
+        return True
+
+    async def revert_gold_change(self, guild_id: str, character_id: str, old_gold: int, **kwargs: Any) -> bool:
+        """Reverts changes to a character's gold."""
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_gold_change: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        # Assuming 'gold' is a direct attribute or a key in 'state_variables' or 'stats'
+        # For this example, let's assume it's a direct attribute.
+        # If it's in char.stats, it would be char.stats['gold'] = old_gold
+        # If it's in char.state_variables, it would be char.state_variables['gold'] = old_gold
+        if hasattr(char, 'gold'):
+            char.gold = old_gold
+        else:
+            # If gold is stored elsewhere, e.g. state_variables
+            # This part needs to be adapted based on where 'gold' is actually stored.
+            # For now, we'll print a warning if 'gold' attribute doesn't exist directly.
+            print(f"CharacterManager.revert_gold_change: Character {character_id} does not have a direct 'gold' attribute. Gold not reverted if stored differently.")
+            # If gold is managed by ItemManager (e.g. as an item), this logic would be different.
+            # Assuming direct attribute for now.
+            return False # Or handle based on actual gold storage
+
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_gold_change: Reverted gold for character {character_id} to {old_gold}.")
+        return True
+
+    async def revert_action_queue_change(self, guild_id: str, character_id: str, old_action_queue_json: str, **kwargs: Any) -> bool:
+        """Reverts changes to a character's action queue."""
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_action_queue_change: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        try:
+            old_action_queue = json.loads(old_action_queue_json)
+            if not isinstance(old_action_queue, list):
+                print(f"CharacterManager.revert_action_queue_change: Invalid format for old_action_queue_json for character {character_id}. Expected a list.")
+                return False
+            char.action_queue = old_action_queue
+        except json.JSONDecodeError:
+            print(f"CharacterManager.revert_action_queue_change: Failed to parse old_action_queue_json for character {character_id}.")
+            return False
+
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_action_queue_change: Reverted action queue for character {character_id}.")
+        return True
+
+    async def revert_collected_actions_change(self, guild_id: str, character_id: str, old_collected_actions_json: str, **kwargs: Any) -> bool:
+        """Reverts changes to a character's collected_actions_json."""
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            print(f"CharacterManager.revert_collected_actions_change: Character {character_id} not found in guild {guild_id}.")
+            return False
+
+        # collected_actions_json can be None or a JSON string.
+        # The attribute on the model is `collected_actions_json`
+        char.collected_actions_json = old_collected_actions_json
+
+        self.mark_character_dirty(guild_id, character_id)
+        print(f"CharacterManager.revert_collected_actions_change: Reverted collected_actions_json for character {character_id}.")
+        return True
+
+    async def revert_character_creation(self, guild_id: str, character_id: str, **kwargs: Any) -> bool:
+        """Reverts the creation of a character by marking them for deletion."""
+        char = self.get_character(guild_id, character_id)
+        if not char:
+            # If character not found, it might have already been deleted or never existed.
+            # Consider this a success for revert purposes if the goal is for the character not to exist.
+            print(f"CharacterManager.revert_character_creation: Character {character_id} not found in guild {guild_id}. Assumed already deleted or never existed.")
+            return True
+            # Or return False if strict "was found then deleted" is required:
+            # print(f"CharacterManager.revert_character_creation: Character {character_id} not found in guild {guild_id}.")
+            # return False
+
+        self.mark_character_deleted(guild_id, character_id)
+        # mark_character_deleted already prints a message.
+        print(f"CharacterManager.revert_character_creation: Marked character {character_id} for deletion in guild {guild_id}.")
+        return True
+
+    async def recreate_character_from_data(self, guild_id: str, character_data: Dict[str, Any], **kwargs: Any) -> bool:
+        """
+        Recreates a character from provided data.
+        This is essentially a wrapper around create_character, ensuring all necessary data is passed.
+        """
+        discord_id = character_data.get('discord_id')
+        name = character_data.get('name') # Or name_i18n handling
+
+        if discord_id is None or name is None:
+            print(f"CharacterManager.recreate_character_from_data: Missing discord_id or name in character_data for guild {guild_id}.")
+            return False
+
+        # Extract other relevant fields from character_data
+        initial_location_id = character_data.get('current_location_id')
+        level = character_data.get('level', 1)
+        experience = character_data.get('experience', 0) # 'xp' in DB, 'experience' in model
+        unspent_xp = character_data.get('unspent_xp', 0)
+        # ... and other fields like stats, inventory, hp, etc. from character_data
+        # These would need to be passed to create_character or set afterwards.
+
+        # For simplicity, assuming create_character can handle these or they are set post-creation.
+        # The create_character method as of now has specific params.
+        # We might need to update the character object *after* creation if create_character doesn't take all these.
+
+        try:
+            # Call create_character with the core identifiable information
+            new_char = await self.create_character(
+                discord_id=int(discord_id),
+                name=str(name), # Ensure name is string
+                guild_id=guild_id,
+                initial_location_id=initial_location_id, # Pass this
+                level=int(level),
+                experience=int(experience),
+                unspent_xp=int(unspent_xp),
+                # Pass other relevant fields from character_data if create_character supports them
+                # e.g., character_class=character_data.get('character_class')
+                **kwargs # Pass along any other context
+            )
+
+            if not new_char:
+                print(f"CharacterManager.recreate_character_from_data: Failed to create character using create_character for guild {guild_id}, discord_id {discord_id}.")
+                return False
+
+            # Now, update other fields from character_data onto new_char
+            # This part is crucial and needs to be comprehensive.
+
+            if 'stats' in character_data and isinstance(character_data['stats'], dict):
+                new_char.stats = character_data['stats']
+            if 'inventory' in character_data and isinstance(character_data['inventory'], list):
+                new_char.inventory = character_data['inventory']
+            if 'current_action' in character_data: # Can be None
+                new_char.current_action = character_data['current_action']
+            if 'action_queue' in character_data and isinstance(character_data['action_queue'], list):
+                new_char.action_queue = character_data['action_queue']
+            if 'party_id' in character_data: # Can be None
+                new_char.party_id = character_data.get('party_id')
+                new_char.current_party_id = character_data.get('current_party_id', character_data.get('party_id')) # Also set current_party_id
+            if 'state_variables' in character_data and isinstance(character_data['state_variables'], dict):
+                new_char.state_variables = character_data['state_variables']
+            if 'hp' in character_data:
+                new_char.hp = float(character_data['hp'])
+            if 'max_health' in character_data:
+                new_char.max_health = float(character_data['max_health'])
+            if 'is_alive' in character_data:
+                new_char.is_alive = bool(character_data['is_alive'])
+            if 'status_effects' in character_data and isinstance(character_data['status_effects'], list):
+                new_char.status_effects = character_data['status_effects']
+            if 'selected_language' in character_data:
+                new_char.selected_language = character_data['selected_language']
+            if 'collected_actions_json' in character_data: # Can be None
+                new_char.collected_actions_json = character_data['collected_actions_json']
+            if 'skills_data' in character_data and isinstance(character_data['skills_data'], list): # from_dict expects skills_data
+                new_char.skills_data = character_data['skills_data']
+            if 'abilities_data' in character_data and isinstance(character_data['abilities_data'], list):
+                new_char.abilities_data = character_data['abilities_data']
+            if 'spells_data' in character_data and isinstance(character_data['spells_data'], list):
+                new_char.spells_data = character_data['spells_data']
+            if 'character_class' in character_data:
+                new_char.character_class = character_data['character_class']
+            if 'flags' in character_data and isinstance(character_data['flags'], dict): # from_dict expects flags
+                new_char.flags = character_data['flags']
+
+            # After setting all fields, mark as dirty to ensure they are saved.
+            self.mark_character_dirty(guild_id, new_char.id)
+            print(f"CharacterManager.recreate_character_from_data: Character {new_char.id} (Discord: {discord_id}) recreated and updated in guild {guild_id}.")
+            return True
+
+        except Exception as e:
+            print(f"CharacterManager.recreate_character_from_data: Error recreating character for discord_id {discord_id} in guild {guild_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            # Attempt to clean up if partially created - this is tricky.
+            # If new_char was created but subsequent updates failed, it might be left in an inconsistent state.
+            # For now, rely on the error being caught and handled by the caller.
+            return False
+
 # --- Конец класса CharacterManager ---
 
 

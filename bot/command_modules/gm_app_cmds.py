@@ -7,12 +7,13 @@ from bot.command_modules.game_setup_cmds import is_master_or_admin_check
 import json # For parsing parameters_json
 from typing import TYPE_CHECKING, Optional, Dict, Any # For type hints
 
+from bot.game.managers.undo_manager import UndoManager # Make it a runtime import
+
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot # For type hinting self.bot
     from bot.game.managers.game_manager import GameManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.party_manager import PartyManager
-    from bot.game.managers.undo_manager import UndoManager
     # from bot.game.conflict_resolver import ConflictResolver (already on GameManager)
 
 class GMAppCog(commands.Cog, name="GM App Commands"):
@@ -317,6 +318,41 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             await interaction.followup.send(message, ephemeral=True)
         else:
             await interaction.followup.send(f"**Мастер:** Не удалось отменить события до записи лога '{log_id_target}'. Проверьте логи.", ephemeral=True)
+
+    @app_commands.command(name="master_undo_event", description="ГМ: Отменить конкретное событие по его ID из лога.")
+    @app_commands.describe(log_id="ID записи лога для отмены.")
+    async def cmd_master_undo_event(self, interaction: Interaction, log_id: str):
+        if not await is_master_or_admin_check(interaction):
+            await interaction.response.send_message("**Мастер:** Только Мастера Игры могут использовать эту команду.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        if not interaction.guild_id:
+            await interaction.followup.send("**Мастер:** Эту команду можно использовать только на сервере.", ephemeral=True)
+            return
+        guild_id_str = str(interaction.guild_id)
+
+        game_mngr: GameManager = self.bot.game_manager
+        if not game_mngr:
+            await interaction.followup.send("**Мастер:** GameManager недоступен.", ephemeral=True)
+            return
+
+        undo_manager: Optional[UndoManager] = getattr(game_mngr, 'undo_manager', None)
+        if not undo_manager:
+            await interaction.followup.send("**Мастер:** UndoManager недоступен.", ephemeral=True)
+            return
+
+        if not log_id:
+            await interaction.followup.send("**Мастер:** ID лога не указан.", ephemeral=True)
+            return
+
+        success = await undo_manager.undo_specific_log_entry(guild_id_str, log_id)
+
+        if success:
+            await interaction.followup.send(f"**Мастер:** Событие с ID лога '{log_id}' было успешно отменено и удалено из истории.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"**Мастер:** Не удалось отменить событие с ID лога '{log_id}'. Проверьте серверные логи для деталей. Возможно, лог не найден или тип события не подлежит отмене.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

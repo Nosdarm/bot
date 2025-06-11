@@ -167,3 +167,25 @@ class GameLogManager:
         except Exception as e:
             print(f"GameLogManager: Failed to delete log {log_id} from DB for guild {guild_id}. Error: {e}")
             return False
+
+    async def get_log_by_id(self, log_id: str, guild_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches a single log entry by its ID and guild ID."""
+        if self._db_service is None or self._db_service.adapter is None:
+            print(f"GameLogManager: DB service or adapter not available. Cannot fetch log {log_id} for guild {guild_id}.")
+            return None
+
+        sql = """
+            SELECT id, timestamp, guild_id, player_id, party_id, event_type,
+                   message_key, message_params, location_id, involved_entities_ids,
+                   details, channel_id
+            FROM game_logs
+            WHERE id = $1 AND guild_id = $2
+        """
+        try:
+            row = await self._db_service.adapter.fetchone(sql, (log_id, guild_id))
+            if row:
+                return dict(row) # Convert row object (e.g., aiosqlite.Row) to dict
+            return None
+        except Exception as e:
+            print(f"GameLogManager: Failed to fetch log {log_id} from DB for guild {guild_id}. Error: {e}")
+            return None

@@ -351,6 +351,127 @@ class LocationManager:
         print(f"{log_prefix} Added new stack/instance(s) of '{final_item_template_id}' (total qty: {final_quantity}) to location.")
         return True
 
+    async def revert_location_state_variable_change(self, guild_id: str, location_id: str, variable_name: str, old_value: Any, **kwargs: Any) -> bool:
+        """Reverts a specific state variable of a location instance."""
+        location = self.get_location_instance(guild_id, location_id)
+        if not location:
+            print(f"LocationManager.revert_location_state_variable_change: Location {location_id} not found in guild {guild_id}.")
+            return False
+
+        if not isinstance(location.state, dict):
+            location.state = {} # Should not happen if model is consistent
+
+        location.state[variable_name] = old_value
+        self.mark_location_instance_dirty(guild_id, location_id)
+        # Consider calling save_state or a specific save_location_instance if immediate persistence needed
+        print(f"LocationManager.revert_location_state_variable_change: Reverted state variable '{variable_name}' for location {location_id} in guild {guild_id}.")
+        return True
+
+    async def revert_location_inventory_change(
+        self, guild_id: str, location_id: str,
+        item_template_id: str, # Template ID of the item affected
+        item_instance_id: Optional[str], # Instance ID, if applicable (e.g., for non-stackable or specific instance removal)
+        change_action: str, # "added" (item was added to loc, revert is remove) or "removed" (item was removed from loc, revert is add back)
+        quantity_changed: int,
+        original_item_data: Optional[Dict[str, Any]], # Full data of the item if it was "removed" and needs to be "added" back
+        **kwargs: Any
+    ) -> bool:
+        """Reverts a change in a location's inventory."""
+        location = self.get_location_instance(guild_id, location_id)
+        if not location:
+            print(f"LocationManager.revert_location_inventory_change: Location {location_id} not found in guild {guild_id}.")
+            return False
+
+        if not isinstance(location.state, dict): location.state = {}
+        if not isinstance(location.state.get('inventory'), list): location.state['inventory'] = []
+
+        location_inventory: List[Dict[str, Any]] = location.state['inventory']
+
+        if change_action == "added": # Item was originally added to location, so revert by removing it
+            item_found_to_remove = False
+            # Try to remove by instance_id first if provided and unique
+            if item_instance_id:
+                for i, item_entry in enumerate(location_inventory):
+                    if item_entry.get("instance_id") == item_instance_id:
+                        current_qty = item_entry.get('quantity', 0)
+                        if current_qty > quantity_changed:
+                            item_entry['quantity'] = current_qty - quantity_changed
+                        else:
+                            location_inventory.pop(i)
+                        item_found_to_remove = True
+                        break
+
+            if not item_found_to_remove: # Fallback to template_id if instance_id not found or not provided
+                for i, item_entry in enumerate(location_inventory):
+                    entry_tpl_id = item_entry.get('template_id', item_entry.get('item_id'))
+                    if entry_tpl_id == item_template_id:
+                        current_qty = item_entry.get('quantity', 0)
+                        if current_qty > quantity_changed:
+                            item_entry['quantity'] = current_qty - quantity_changed
+                        else:
+                            location_inventory.pop(i) # Remove the whole stack if qty <= 0
+                        item_found_to_remove = True
+                        break
+
+            if not item_found_to_remove:
+                print(f"LocationManager.revert_location_inventory_change: Item (template: {item_template_id}, instance: {item_instance_id}) to revert 'added' action not found in location {location_id}.")
+                # return False # Or True if "already gone" is acceptable for revert
+
+        elif change_action == "removed": # Item was originally removed from location, so revert by adding it back
+            if original_item_data:
+                # If full data is provided, add it back. This is the safest way.
+                # Need to decide if it merges with existing stacks or adds as new.
+                # For simplicity, let's use add_item_to_location which handles stacking.
+                await self.add_item_to_location(
+                    guild_id, location_id,
+                    item_template_id=original_item_data.get('template_id', item_template_id),
+                    quantity=original_item_data.get('quantity', quantity_changed),
+                    dropped_item_data=original_item_data # Pass full data for potential merging/state restoration
+                )
+            else:
+                # If no original_item_data, create a new basic item entry. This might lose specific instance data.
+                print(f"LocationManager.revert_location_inventory_change: Warning - No original_item_data for 'removed' action on item {item_template_id} in location {location_id}. Adding basic item.")
+                await self.add_item_to_location(guild_id, location_id, item_template_id, quantity_changed)
+        else:
+            print(f"LocationManager.revert_location_inventory_change: Unknown change_action '{change_action}' for location {location_id}.")
+            return False
+
+        self.mark_location_instance_dirty(guild_id, location_id)
+        print(f"LocationManager.revert_location_inventory_change: Reverted inventory change (action: {change_action}, item: {item_template_id}) for location {location_id}.")
+        return True
+
+    async def revert_location_exit_change(self, guild_id: str, location_id: str, exit_direction: str, old_target_location_id: Optional[str], **kwargs: Any) -> bool:
+        """Reverts an exit in a location to its old target location ID."""
+        location = self.get_location_instance(guild_id, location_id)
+        if not location:
+            print(f"LocationManager.revert_location_exit_change: Location {location_id} not found in guild {guild_id}.")
+            return False
+
+        if not isinstance(location.exits, dict):
+            location.exits = {} # Should not happen
+
+        if old_target_location_id is None:
+            if exit_direction in location.exits:
+                location.exits.pop(exit_direction)
+        else:
+            location.exits[exit_direction] = old_target_location_id
+
+        self.mark_location_instance_dirty(guild_id, location_id)
+        print(f"LocationManager.revert_location_exit_change: Reverted exit '{exit_direction}' for location {location_id} to '{old_target_location_id}'.")
+        return True
+
+    async def revert_location_activation_status(self, guild_id: str, location_id: str, old_is_active_status: bool, **kwargs: Any) -> bool:
+        """Reverts the is_active status of a location instance."""
+        location = self.get_location_instance(guild_id, location_id)
+        if not location:
+            print(f"LocationManager.revert_location_activation_status: Location {location_id} not found in guild {guild_id}.")
+            return False
+
+        location.is_active = old_is_active_status
+        self.mark_location_instance_dirty(guild_id, location_id)
+        print(f"LocationManager.revert_location_activation_status: Reverted is_active status for location {location_id} to {old_is_active_status}.")
+        return True
+
 # --- Конец класса LocationManager ---
 
 
