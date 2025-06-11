@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import MagicMock, patch, mock_open
 
 from bot.ai.prompt_context_collector import PromptContextCollector
