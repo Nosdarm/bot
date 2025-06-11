@@ -735,4 +735,4 @@ class CombatManager:
 
 print("DEBUG: combat_manager.py module loaded (with updated start_combat).")
 
-[end of bot/game/managers/combat_manager.py]
+
