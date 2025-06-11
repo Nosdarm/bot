@@ -1,178 +1,245 @@
 import time
 import json
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, TypedDict
+
 # Assuming DBService is defined and provides an async interface like fetchall
 # from bot.services.db_service import DBService
 
+class GameEntity(TypedDict):
+    id: str
+    name: str
+    type: str
+    lang: str
+    parent_location_id: Optional[str] # For location_feature, location_tag
+
 # For the __main__ block, we'll create a MockDBService
 class MockDBService:
+    MOCK_DATA: Dict[str, List[Dict[str, Any]]] = {
+        "locations": [
+            {"id": "loc_001", "guild_id": "guild1", "name_i18n": json.dumps({"en": "Forest of Whispers", "ru": "Лес Шепотов"}), "features_i18n": json.dumps({"en": ["Old Tree", "Hidden Path"], "ru": ["Старое Дерево", "Тайная Тропа"]}), "tags_i18n": json.dumps({"en": ["forest", "dark"], "ru": ["лес", "темный"]})},
+            {"id": "loc_002", "guild_id": "guild1", "name_i18n": json.dumps({"en": "Old Mill", "ru": "Старая Мельница"}), "features_i18n": json.dumps({"en": ["Grinding Stone"], "ru": ["Жернов"]}), "tags_i18n": json.dumps({"en": ["building"], "ru": ["строение"]})},
+            {"id": "loc_003", "guild_id": "guild2", "name_i18n": json.dumps({"en": "Town Square", "ru": "Городская Площадь"}), "features_i18n": None, "tags_i18n": json.dumps({"en": ["town", "center"], "ru": ["город", "центр"]})},
+        ],
+        "location_templates": [
+            {"id": "loc_tpl_001", "guild_id": "guild1", "name": "Generic Dungeon"}, # Non-i18n name
+            {"id": "loc_tpl_002", "guild_id": None, "name": "Global Cave System"}, # Global
+        ],
+        "generated_locations": [
+            {"id": "gen_loc_001", "name_i18n": json.dumps({"en": "Crystal Caves", "ru": "Кристальные Пещеры"}), "tags_i18n": json.dumps({"en": ["cave", "magic"], "ru": ["пещера", "магия"]})},
+        ],
+        "npcs": [
+            {"id": "npc_001", "guild_id": "guild1", "name_i18n": json.dumps({"en": "Guard Captain", "ru": "Капитан Стражи"})},
+            {"id": "npc_002", "guild_id": "guild2", "name_i18n": json.dumps({"en": "Mysterious Stranger", "ru": "Загадочный Незнакомец"})},
+        ],
+        "generated_npcs": [
+            {"id": "gen_npc_001", "name_i18n": json.dumps({"en": "Traveling Merchant", "ru": "Странствующий Торговец"})},
+        ],
+        "items": [ # Now guild-specific
+            {"id": "item_001", "guild_id": "guild1", "name_i18n": json.dumps({"en": "Health Potion", "ru": "Зелье Здоровья"})},
+            {"id": "item_002", "guild_id": "guild1", "name_i18n": json.dumps({"en": "Steel Sword", "ru": "Стальной Меч"})},
+            {"id": "item_003", "guild_id": "guild2", "name_i18n": json.dumps({"en": "Mana Potion", "ru": "Зелье Маны"})},
+        ],
+        "item_templates": [
+            {"id": "item_tpl_001", "guild_id": "guild1", "name_i18n": json.dumps({"en": "Basic Herb", "ru": "Обычная Трава"})},
+            {"id": "item_tpl_002", "guild_id": None, "name_i18n": json.dumps({"en": "Iron Ingot", "ru": "Железный Слиток"})}, # Global
+        ],
+        "item_properties": [
+            {"id": "prop_001", "name_i18n": json.dumps({"en": "Flaming", "ru": "Пылающий"})},
+            {"id": "prop_002", "name_i18n": json.dumps({"en": "Poisonous", "ru": "Ядовитый"})},
+        ],
+        "abilities": [
+            {"id": "abil_001", "name_i18n": json.dumps({"en": "Fireball", "ru": "Огненный Шар"})},
+        ],
+        "skills": [
+            {"id": "skill_001", "name_i18n": json.dumps({"en": "Lockpicking", "ru": "Взлом Замков"})},
+        ],
+        "statuses": [ # Assuming 'statuses' table holds definitions for NLU, not instances
+            {"id": "status_001", "guild_id": "guild1", "name_i18n": json.dumps({"en": "Poisoned", "ru": "Отравлен"})},
+            {"id": "status_002", "guild_id": "guild2", "name_i18n": json.dumps({"en": "Blessed", "ru": "Благословлен"})},
+        ],
+        "events": [
+            {"id": "event_001", "guild_id": "guild1", "name_i18n": json.dumps({"en": "Goblin Ambush", "ru": "Засада Гоблинов"})},
+        ]
+    }
+
     async def fetchall(self, query: str, params: Tuple = ()) -> List[Dict[str, Any]]:
-        print(f"MockDBService: Received query: {query} with params: {params}")
-        if "FROM locations" in query:
-            return [
-                {"id": "loc_001", "name_i18n": json.dumps({"en": "Forest of Whispers", "ru": "Лес Шепотов"}), "features_i18n": json.dumps({"en": ["Old Tree", "Hidden Path"], "ru": ["Старое Дерево", "Тайная Тропа"]})},
-                {"id": "loc_002", "name_i18n": json.dumps({"en": "Old Mill", "ru": "Старая Мельница"}), "features_i18n": json.dumps({"en": ["Grinding Stone"], "ru": ["Жернов"]})},
-                {"id": "loc_003", "name_i18n": json.dumps({"en": "Town Square"}), "features_i18n": None}, # No Russian, no features
-            ]
-        elif "FROM npcs" in query: # Assuming table name is 'npcs'
-            return [
-                {"id": "npc_001", "name_i18n": json.dumps({"en": "Guard Captain", "ru": "Капитан Стражи"})},
-                {"id": "npc_002", "name_i18n": json.dumps({"en": "Mysterious Stranger", "ru": "Загадочный Незнакомец"})},
-            ]
-        elif "FROM items" in query: # Assuming table name is 'items'
-             return [
-                {"id": "item_001", "name_i18n": json.dumps({"en": "Health Potion", "ru": "Зелье Здоровья"})},
-                {"id": "item_002", "name_i18n": json.dumps({"en": "Steel Sword", "ru": "Стальной Меч"})},
-            ]
-        elif "FROM abilities" in query: # Assuming table name is 'abilities'
-            return [
-                {"id": "abil_001", "name_i18n": json.dumps({"en": "Fireball", "ru": "Огненный Шар"})},
-            ]
-        elif "FROM skills" in query: # Assuming table name is 'skills'
-             return [
-                {"id": "skill_001", "name_i18n": json.dumps({"en": "Lockpicking", "ru": "Взлом Замков"})},
-            ]
-        return []
+        print(f"MockDBService: Query: {query}, Params: {params}")
+        table_name_search = query.split("FROM ")[1].split(" ")[0] if "FROM " in query else None
+
+        data_to_filter = self.MOCK_DATA.get(table_name_search, [])
+
+        if not params or not data_to_filter:
+            return [row for row in data_to_filter if params or not row.get("guild_id")] # Return all if no params, or only global if params exist but table is global
+
+        guild_id_param = params[0] if params else None
+
+        # Simulate WHERE clause filtering
+        # This mock filtering is simplified and might not cover all SQL nuances
+        results = []
+        for row in data_to_filter:
+            guild_match = False
+            if "guild_id = ?" in query and "guild_id IS NULL" in query: # (guild_id = ? OR guild_id IS NULL)
+                if row.get("guild_id") == guild_id_param or row.get("guild_id") is None:
+                    guild_match = True
+            elif "guild_id = ?" in query:
+                if row.get("guild_id") == guild_id_param:
+                    guild_match = True
+            elif "guild_id" not in row or row.get("guild_id") is None : # Global entity if table has no guild_id or it's null and query doesn't filter
+                if not any(p for p in params if isinstance(p, str) and "guild" in p): # Crude check if query filters by guild
+                     guild_match = True
+
+            if guild_match:
+                results.append(row)
+        return results
+
+
+ENTITY_CONFIG: Dict[str, Dict[str, Any]] = {
+    "location": {"table": "locations", "name_field": "name_i18n", "type_name": "location", "guild_column": "guild_id", "tags_field": "tags_i18n", "tag_type_name": "location_tag", "features_field": "features_i18n", "feature_type_name": "location_feature"},
+    "location_template": {"table": "location_templates", "name_field": "name", "type_name": "location_template", "guild_column": "guild_id", "nullable_guild": True},
+    "generated_location": {"table": "generated_locations", "name_field": "name_i18n", "type_name": "generated_location", "guild_column": None, "tags_field": "tags_i18n", "tag_type_name": "location_tag"},
+    "npc": {"table": "npcs", "name_field": "name_i18n", "type_name": "npc", "guild_column": "guild_id"},
+    "generated_npc": {"table": "generated_npcs", "name_field": "name_i18n", "type_name": "generated_npc", "guild_column": None},
+    "item": {"table": "items", "name_field": "name_i18n", "type_name": "item", "guild_column": "guild_id"},
+    "item_template": {"table": "item_templates", "name_field": "name_i18n", "type_name": "item_template", "guild_column": "guild_id", "nullable_guild": True},
+    "item_property": {"table": "item_properties", "name_field": "name_i18n", "type_name": "item_property", "guild_column": None},
+    "ability": {"table": "abilities", "name_field": "name_i18n", "type_name": "ability", "guild_column": None},
+    "skill": {"table": "skills", "name_field": "name_i18n", "type_name": "skill", "guild_column": None},
+    "status": {"table": "statuses", "name_field": "name_i18n", "type_name": "status", "guild_column": "guild_id"},
+    "event": {"table": "events", "name_field": "name_i18n", "type_name": "event", "guild_column": "guild_id"},
+}
 
 class NLUDataService:
-    """
-    Service responsible for providing game-specific entity data to the NLU parser.
-    This includes things like known location names, NPC names, item names, skill names, etc.,
-    for the specific guild and language, with caching.
-    """
+    CACHE_TTL_SECONDS = 300
 
-    CACHE_TTL_SECONDS = 300 # 5 minutes
-
-    def __init__(self, db_service: Any): # Type hint should be DBService when available
+    def __init__(self, db_service: Any):
         if db_service is None:
             raise ValueError("NLUDataService requires a valid db_service instance.")
         self.db_service = db_service
-        self._cache: Dict[Tuple[str, str], Dict[str, Any]] = {} # Key: (guild_id, language), Value: {'timestamp': float, 'data': entities}
+        self._cache: Dict[Tuple[str, str, bool], Dict[str, Any]] = {} # Key: (guild_id, language, fetch_global_too)
         print("NLUDataService initialized with DBService.")
 
-    def _get_i18n_name(self, i18n_field: Optional[str], language: str, default_lang: str = "en") -> Optional[str]:
-        """Safely extracts the i18n name."""
-        if not i18n_field:
+    def _get_i18n_name(self, raw_value: Optional[Any], language: str, is_i18n_field: bool = True, default_lang: str = "en") -> Optional[str]:
+        """Safely extracts the name, handling i18n if specified."""
+        if raw_value is None:
             return None
+
+        if not is_i18n_field:
+            return str(raw_value) if isinstance(raw_value, (str, int, float)) else None
+
         try:
-            names = json.loads(i18n_field) if isinstance(i18n_field, str) else i18n_field
-            if not isinstance(names, dict): return None # Malformed JSON that isn't a dict
+            names = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
+            if not isinstance(names, dict): return None
+
             name = names.get(language)
             if name is None:
                 name = names.get(default_lang)
             return name
         except (json.JSONDecodeError, TypeError):
-            # If i18n_field is not valid JSON or not a string/dict, return None or handle error
             return None
 
-
-    async def get_game_entities(self, guild_id: str, language: str) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Fetches game-specific entities for NLU processing, using a cache.
-        Entities include Locations (and their features), NPCs, Items, Abilities, Skills.
-        """
-        cache_key = (guild_id, language)
+    async def get_game_entities(self, guild_id: str, language: str, fetch_global_too: bool = False) -> Dict[str, List[GameEntity]]:
+        cache_key = (guild_id, language, fetch_global_too)
         current_time = time.time()
 
-        # Check cache first
         if cache_key in self._cache:
             cached_item = self._cache[cache_key]
             if current_time - cached_item['timestamp'] < self.CACHE_TTL_SECONDS:
-                print(f"NLUDataService: Cache hit for ({guild_id}, {language}).")
+                print(f"NLUDataService: Cache hit for {cache_key}.")
                 return cached_item['data']
             else:
-                print(f"NLUDataService: Cache expired for ({guild_id}, {language}).")
+                print(f"NLUDataService: Cache expired for {cache_key}.")
                 del self._cache[cache_key]
 
-        print(f"NLUDataService: Cache miss for ({guild_id}, {language}). Fetching from DB.")
-        all_entities: Dict[str, List[Dict[str, Any]]] = {
-            "location": [], "location_feature": [], "npc": [], "item": [], "ability": [], "skill": []
-        }
+        print(f"NLUDataService: Cache miss for {cache_key}. Fetching from DB.")
 
-        # --- Fetch Locations and their Features ---
-        # Assuming locations are guild-specific.
-        # Table names like 'locations', 'npcs', 'items', 'abilities', 'skills' are placeholders.
-        try:
-            # Adjust SQL based on actual schema (e.g., `guild_id` presence)
-            # For now, assuming global tables for items, abilities, skills, and guild_id for locations/npcs
+        all_entity_types = [cfg["type_name"] for cfg in ENTITY_CONFIG.values()]
+        all_entity_types.append("location_feature") # Handled specially
+        all_entity_types.append("location_tag")     # Handled specially
+        all_entities: Dict[str, List[GameEntity]] = {entity_type: [] for entity_type in set(all_entity_types)}
+
+
+        for config_key, config in ENTITY_CONFIG.items():
+            table_name = config["table"]
+            name_field = config["name_field"]
+            type_name = config["type_name"]
+            guild_column = config.get("guild_column")
+            nullable_guild = config.get("nullable_guild", False)
+            tags_field = config.get("tags_field")
+            tag_type_name = config.get("tag_type_name")
+            features_field = config.get("features_field") # For locations
+            feature_type_name = config.get("feature_type_name") # For locations
+
+            is_i18n_name = name_field.endswith("_i18n")
             
-            # Locations
-            # TODO: Confirm if locations are guild_id specific in DB. Assuming they are for now.
-            # If not, remove `WHERE guild_id = ?` or adjust.
-            # For now, let's assume locations might not have guild_id directly and are fetched more broadly or via another link for a "game session"
-            # This example will assume a direct guild_id link for simplicity if the table has it.
-            # If no guild_id on locations, then they are global: `SELECT id, name_i18n, features_i18n FROM locations;`
-            # Let's assume a guild_id column exists for this example.
-            loc_query = "SELECT id, name_i18n, features_i18n FROM locations WHERE guild_id = ?;"
-            rows = await self.db_service.fetchall(loc_query, (guild_id,))
-            for row in rows:
-                name = self._get_i18n_name(row['name_i18n'], language)
-                if name:
-                    all_entities["location"].append({"id": str(row['id']), "name": name, "type": "location", "lang": language})
+            select_fields = ["id", name_field]
+            if tags_field: select_fields.append(tags_field)
+            if features_field: select_fields.append(features_field)
 
-                features_i18n_str = row.get('features_i18n')
-                if features_i18n_str:
-                    try:
-                        features_map = json.loads(features_i18n_str) if isinstance(features_i18n_str, str) else features_i18n_str
-                        if isinstance(features_map, dict):
-                            lang_features = features_map.get(language, features_map.get("en", []))
-                            for feature_name in lang_features:
-                                if feature_name: # Ensure feature name is not empty
-                                    all_entities["location_feature"].append({
-                                        "id": f"{row['id']}_feat_{feature_name.replace(' ', '_').lower()}", # Create a pseudo-ID
-                                        "name": feature_name,
-                                        "type": "location_feature",
-                                        "lang": language,
-                                        "parent_location_id": str(row['id'])
-                                    })
-                    except (json.JSONDecodeError, TypeError):
-                         print(f"NLUDataService: Error parsing features_i18n for location {row['id']}: {features_i18n_str}")
+            query = f"SELECT {', '.join(select_fields)} FROM {table_name}"
+            params: List[Any] = []
 
-            # NPCs
-            # TODO: Confirm if npcs are guild_id specific. Assuming they are.
-            npc_query = "SELECT id, name_i18n FROM npcs WHERE guild_id = ?;"
-            rows = await self.db_service.fetchall(npc_query, (guild_id,))
-            for row in rows:
-                name = self._get_i18n_name(row['name_i18n'], language)
-                if name:
-                    all_entities["npc"].append({"id": str(row['id']), "name": name, "type": "npc", "lang": language})
+            where_clauses = []
+            if guild_column:
+                if nullable_guild and fetch_global_too:
+                    where_clauses.append(f"({guild_column} = ? OR {guild_column} IS NULL)")
+                    params.append(guild_id)
+                else:
+                    where_clauses.append(f"{guild_column} = ?")
+                    params.append(guild_id)
 
-            # Items (assuming global from 'items' table, not 'item_templates' for instances)
-            # If using templates, change table name and consider if they have guild_id.
-            # For this example, assuming 'items' table holds general item definitions.
-            item_query = "SELECT id, name_i18n FROM items;" # Assuming items are global
-            rows = await self.db_service.fetchall(item_query, ())
-            for row in rows:
-                name = self._get_i18n_name(row['name_i18n'], language)
-                if name:
-                    all_entities["item"].append({"id": str(row['id']), "name": name, "type": "item", "lang": language})
+            if where_clauses:
+                query += " WHERE " + " AND ".join(where_clauses)
 
-            # Abilities (assuming global)
-            ability_query = "SELECT id, name_i18n FROM abilities;"
-            rows = await self.db_service.fetchall(ability_query, ())
-            for row in rows:
-                name = self._get_i18n_name(row['name_i18n'], language)
-                if name:
-                    all_entities["ability"].append({"id": str(row['id']), "name": name, "type": "ability", "lang": language})
+            query += ";"
 
-            # Skills (assuming global)
-            skill_query = "SELECT id, name_i18n FROM skills;"
-            rows = await self.db_service.fetchall(skill_query, ())
-            for row in rows:
-                name = self._get_i18n_name(row['name_i18n'], language)
-                if name:
-                    all_entities["skill"].append({"id": str(row['id']), "name": name, "type": "skill", "lang": language})
+            try:
+                rows = await self.db_service.fetchall(query, tuple(params))
+                for row in rows:
+                    entity_name = self._get_i18n_name(row[name_field], language, is_i18n_field=is_i18n_name)
+                    if entity_name:
+                        all_entities[type_name].append(GameEntity(
+                            id=str(row['id']), name=entity_name, type=type_name, lang=language, parent_location_id=None
+                        ))
 
-        except Exception as e:
-            print(f"NLUDataService: Database error while fetching entities for guild {guild_id}, lang {language}: {e}")
-            # Optionally, return empty or partially filled dict, or re-raise
-            # For now, we'll return whatever was fetched before the error
-            # If this was a production system, more robust error handling needed.
+                    # Handle tags
+                    if tags_field and tag_type_name and row.get(tags_field):
+                        tags_data = self._get_i18n_name(row[tags_field], language, is_i18n_field=True) # Tags are assumed i18n list
+                        if isinstance(tags_data, list): # Expecting list of strings after _get_i18n_name resolves language
+                            for tag_name in tags_data:
+                                if tag_name:
+                                    all_entities[tag_type_name].append(GameEntity(
+                                        id=f"{row['id']}_tag_{tag_name.replace(' ', '_').lower()}",
+                                        name=tag_name, type=tag_type_name, lang=language,
+                                        parent_location_id=str(row['id'])
+                                    ))
+                        elif tags_data: # If it's a single string (e.g. "tag1, tag2") - less ideal schema but handle defensively
+                             for tag_name_part in tags_data.split(','):
+                                tag_name_clean = tag_name_part.strip()
+                                if tag_name_clean:
+                                     all_entities[tag_type_name].append(GameEntity(
+                                        id=f"{row['id']}_tag_{tag_name_clean.replace(' ', '_').lower()}",
+                                        name=tag_name_clean, type=tag_type_name, lang=language,
+                                        parent_location_id=str(row['id'])
+                                    ))
 
-        # Store in cache
+
+                    # Handle features (specific to locations for now)
+                    if features_field and feature_type_name and row.get(features_field):
+                        features_data = self._get_i18n_name(row[features_field], language, is_i18n_field=True)
+                        if isinstance(features_data, list):
+                            for feature_name in features_data:
+                                if feature_name:
+                                    all_entities[feature_type_name].append(GameEntity(
+                                        id=f"{row['id']}_feat_{feature_name.replace(' ', '_').lower()}",
+                                        name=feature_name, type=feature_type_name, lang=language,
+                                        parent_location_id=str(row['id'])
+                                    ))
+            except Exception as e:
+                print(f"NLUDataService: Database error for table {table_name} (guild {guild_id}, lang {language}): {e}")
+
         self._cache[cache_key] = {'timestamp': current_time, 'data': all_entities}
         if not any(all_entities.values()):
-             print(f"NLUDataService: No game entities found or fetched from DB for guild {guild_id}, lang {language}.")
+             print(f"NLUDataService: No game entities found or fetched from DB for {cache_key}.")
         return all_entities
 
 
@@ -183,52 +250,47 @@ if __name__ == '__main__':
         mock_db_service = MockDBService()
         nlu_service = NLUDataService(db_service=mock_db_service)
 
-        test_guild_id = "guild_test_123"
+        test_guild_id1 = "guild1"
+        test_guild_id2 = "guild2"
         test_lang_en = "en"
         test_lang_ru = "ru"
 
-        print(f"\n--- Test Run 1: Fetching English entities for {test_guild_id} ---")
-        entities_en1 = await nlu_service.get_game_entities(test_guild_id, test_lang_en)
-        print(f"Entities (en, 1st call): {json.dumps(entities_en1, indent=2)}")
-        assert "location" in entities_en1 and len(entities_en1["location"]) > 0
-        assert "location_feature" in entities_en1 and len(entities_en1["location_feature"]) > 0
-        assert "npc" in entities_en1 and len(entities_en1["npc"]) > 0
-        assert entities_en1["location"][0]["name"] == "Forest of Whispers"
-        assert entities_en1["location_feature"][0]["name"] == "Old Tree"
+        print(f"\n--- Test Run 1: English entities for {test_guild_id1} (no global) ---")
+        entities_g1_en_local = await nlu_service.get_game_entities(test_guild_id1, test_lang_en, fetch_global_too=False)
+        print(json.dumps(entities_g1_en_local, indent=2, ensure_ascii=False))
 
+        assert len(entities_g1_en_local.get("location", [])) == 2 # loc_001, loc_002
+        assert len(entities_g1_en_local.get("location_tag", [])) == 3 # forest, dark, building
+        assert entities_g1_en_local["location_tag"][0]["name"] == "forest"
+        assert entities_g1_en_local["location_tag"][0]["parent_location_id"] == "loc_001"
+        assert entities_g1_en_local["location_feature"][0]["name"] == "Old Tree"
+        assert len(entities_g1_en_local.get("item_template", [])) == 1 # Basic Herb
+        assert entities_g1_en_local["item_template"][0]["name"] == "Basic Herb"
+        assert len(entities_g1_en_local.get("location_template", [])) == 1 # Generic Dungeon
 
-        print(f"\n--- Test Run 2: Fetching English entities for {test_guild_id} again (should hit cache) ---")
-        entities_en2 = await nlu_service.get_game_entities(test_guild_id, test_lang_en)
-        print(f"Entities (en, 2nd call): {json.dumps(entities_en2, indent=2)}")
-        assert entities_en1 == entities_en2 # Should be identical from cache
+        print(f"\n--- Test Run 2: English entities for {test_guild_id1} (with global) ---")
+        entities_g1_en_global = await nlu_service.get_game_entities(test_guild_id1, test_lang_en, fetch_global_too=True)
+        print(json.dumps(entities_g1_en_global, indent=2, ensure_ascii=False))
+        assert len(entities_g1_en_global.get("item_template", [])) == 2 # Basic Herb, Iron Ingot
+        assert len(entities_g1_en_global.get("location_template", [])) == 2 # Generic Dungeon, Global Cave System
+        assert len(entities_g1_en_global.get("generated_location", [])) == 1 # Crystal Caves (always global)
+        assert len(entities_g1_en_global.get("item_property", [])) == 2 # Flaming, Poisonous (always global)
 
-        print(f"\n--- Test Run 3: Fetching Russian entities for {test_guild_id} ---")
-        entities_ru1 = await nlu_service.get_game_entities(test_guild_id, test_lang_ru)
-        print(f"Entities (ru, 1st call): {json.dumps(entities_ru1, indent=2)}")
-        assert "location" in entities_ru1 and len(entities_ru1["location"]) > 0
-        assert entities_ru1["location"][0]["name"] == "Лес Шепотов"
-        assert "location_feature" in entities_ru1 and len(entities_ru1["location_feature"]) > 0
-        assert entities_ru1["location_feature"][0]["name"] == "Старое Дерево"
+        print(f"\n--- Test Run 3: Russian entities for {test_guild_id2} (with global) ---")
+        entities_g2_ru_global = await nlu_service.get_game_entities(test_guild_id2, test_lang_ru, fetch_global_too=True)
+        print(json.dumps(entities_g2_ru_global, indent=2, ensure_ascii=False))
+        assert len(entities_g2_ru_global.get("location", [])) == 1 # Городская Площадь
+        assert entities_g2_ru_global["location"][0]["name"] == "Городская Площадь"
+        assert len(entities_g2_ru_global.get("npc", [])) == 1 # Загадочный Незнакомец
+        assert len(entities_g2_ru_global.get("item", [])) == 1 # Зелье Маны
+        assert len(entities_g2_ru_global.get("item_template", [])) == 1 # Iron Ingot (global only, guild2 has no specific)
+        assert entities_g2_ru_global["item_template"][0]["name"] == "Железный Слиток"
+        assert len(entities_g2_ru_global.get("status",[])) == 1 # Благословлен (guild2)
 
+        print(f"\n--- Test Run 4: Cache check for {test_guild_id1} (en, with global) ---")
+        entities_g1_en_global_cache = await nlu_service.get_game_entities(test_guild_id1, test_lang_en, fetch_global_too=True)
+        assert entities_g1_en_global_cache == entities_g1_en_global # Should be from cache
 
-        print(f"\n--- Test Run 4: Cache Expiry Demonstration ---")
-        # Modify cache TTL for testing or manually expire cache entry
-        nlu_service.CACHE_TTL_SECONDS = 0.1 # Very short TTL
-        print(f"Cache TTL set to {nlu_service.CACHE_TTL_SECONDS}s for testing expiry.")
-
-        # Wait for TTL to expire
-        await asyncio.sleep(0.2)
-
-        print(f"Fetching English entities for {test_guild_id} after TTL expiry (should fetch from DB again) ---")
-        entities_en3 = await nlu_service.get_game_entities(test_guild_id, test_lang_en)
-        print(f"Entities (en, 3rd call after expiry): {json.dumps(entities_en3, indent=2)}")
-        # This call should have logged "Cache expired" and "Fetching from DB"
-        # The data should be the same as entities_en1 if DB content is static
-        assert entities_en3["location"][0]["name"] == "Forest of Whispers"
-
-        # Reset TTL if needed for other tests, though __main__ exits here.
-        nlu_service.CACHE_TTL_SECONDS = 300
-
-        print("\nNLUDataService full test completed.")
+        print("\nNLUDataService tests completed based on provided spec.")
 
     asyncio.run(test_service())

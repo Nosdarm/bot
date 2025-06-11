@@ -265,7 +265,7 @@ class RPGBot(commands.Bot):
                 text=message.content,
                 language=player_language,
                 guild_id=str(message.guild.id),
-                game_terms_db=nlu_data_svc
+                nlu_data_service=nlu_data_svc
             )
 
             if parsed_action:
