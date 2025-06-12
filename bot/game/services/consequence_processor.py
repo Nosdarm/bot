@@ -261,6 +261,56 @@ class ConsequenceProcessor:
                     else:
                         print(f"Warning: Missing function_name for CUSTOM_FUNCTION: {cons}")
 
+                elif action_type == "AWARD_XP":
+                    char_id = cons.get('character_id', current_target_id)
+                    xp_amount_val = cons.get('amount')
+                    source_type = cons.get('source_type', "quest") # Default to "quest" if not specified
+                    source_id = cons.get('source_id') # Optional
+
+                    if not char_id:
+                        print(f"Warning: Missing character_id for AWARD_XP: {cons}")
+                    elif xp_amount_val is None:
+                        print(f"Warning: Missing amount for AWARD_XP: {cons}")
+                    else:
+                        try:
+                            xp_amount = int(xp_amount_val)
+                            if xp_amount <= 0:
+                                print(f"Info: AWARD_XP amount is zero or negative ({xp_amount}). Skipping for char {char_id}.")
+                            elif not self._character_manager:
+                                print(f"Warning: CharacterManager not available. Cannot award XP for AWARD_XP: {cons}")
+                            elif not self._rule_engine:
+                                print(f"Warning: RuleEngine not available. Cannot award XP for AWARD_XP: {cons}")
+                            else:
+                                character_obj = self._character_manager.get_character(guild_id, char_id)
+                                if character_obj:
+                                    actual_event_context = event_context if event_context else {}
+                                    await self._rule_engine.award_experience(
+                                        character=character_obj,
+                                        amount=xp_amount,
+                                        source_type=source_type,
+                                        guild_id=guild_id,
+                                        source_id=source_id,
+                                        **actual_event_context # Pass event_context for potential notification_service
+                                    )
+                                    log_message_xp = f"AWARD_XP: Awarded {xp_amount} XP to character {char_id} (Source: {source_type}, ID: {source_id})."
+                                    print(f"ConsequenceProcessor: {log_message_xp}")
+                                    if self._game_log_manager:
+                                        await self._game_log_manager.log_event(
+                                            guild_id=guild_id,
+                                            event_type="CONSEQUENCE_XP_AWARDED",
+                                            message=log_message_xp,
+                                            related_entities=[{"id": char_id, "type": "Character"}],
+                                            metadata=cons
+                                        )
+                                else:
+                                    print(f"Warning: Character {char_id} not found for AWARD_XP: {cons}")
+                        except ValueError:
+                            print(f"Warning: Invalid amount '{xp_amount_val}' for AWARD_XP (must be an integer): {cons}")
+                        except Exception as e_xp:
+                            print(f"Error processing AWARD_XP consequence: {cons}")
+                            print(f"Exception: {e_xp}")
+                            traceback.print_exc()
+
                 # Add more consequence types here
                 # elif action_type == "START_DIALOGUE":
                 #     # Requires DialogueManager

@@ -1912,61 +1912,120 @@ class RuleEngine:
     async def award_experience(self, character: "Character", amount: int, source_type: str, guild_id: str, source_id: Optional[str] = None,  **kwargs: Any) -> None:
         char_id = getattr(character, 'id', 'UnknownCharacter')
         current_xp = getattr(character, 'experience', 0)
+        if not isinstance(current_xp, int): current_xp = 0 # Ensure current_xp is an int
 
-        # Placeholder: could use xp_awards from rules to scale 'amount' based on source_type
-        # For example:
-        # xp_awards_config = self._rules_data.get("experience_rules", {}).get("xp_awards", {})
-        # if source_type == "combat" and source_id: # source_id could be CR of monster
-        #    amount = int(amount * xp_awards_config.get("combat",{}).get("cr_scaling_factor", 1.0))
+        actual_xp_to_award = amount
 
-        if amount <= 0: # No XP to award or invalid amount
-            # print(f"RuleEngine: No XP awarded to character {char_id} (Amount: {amount}).")
+        experience_rules = self._rules_data.get("experience_rules", {})
+        xp_awards_rules = experience_rules.get("xp_awards", {})
+
+        if source_type == "combat":
+            combat_xp_rules = xp_awards_rules.get("combat", {})
+            base_xp_per_kill = combat_xp_rules.get("base_xp_per_kill", 0)
+            xp_per_npc_cr = combat_xp_rules.get("xp_per_npc_cr", {})
+
+            if source_id and isinstance(source_id, str) and source_id in xp_per_npc_cr:
+                actual_xp_to_award = xp_per_npc_cr[source_id]
+            elif base_xp_per_kill > 0 : # Fallback to base_xp_per_kill if CR specific not found or source_id not for CR
+                actual_xp_to_award = base_xp_per_kill
+            # If amount was passed as pre-calculated (e.g. from CombatManager),
+            # and no specific rule matched here to override it, 'amount' remains actual_xp_to_award.
+            # The problem description says "amount passed to this function might be the total for the party"
+            # and then "assume amount is the final XP for this character".
+            # If actual_xp_to_award is still the original 'amount', it means it's pre-split.
+            # If it was overridden by CR or base_kill, that's the new individual amount.
+
+        elif source_type == "quest":
+            quest_multiplier = xp_awards_rules.get("quest_completion_xp_multiplier", 1.0)
+            actual_xp_to_award = int(amount * quest_multiplier)
+
+        if actual_xp_to_award <= 0:
+            # print(f"RuleEngine: No actual XP to award to character {char_id} (Calculated: {actual_xp_to_award}, Source: {source_type}).")
             return
 
-        character.experience = current_xp + amount
-        print(f"RuleEngine: Awarded {amount} XP to character {char_id} (Source: {source_type}). Total XP: {character.experience}")
+        character.experience = current_xp + actual_xp_to_award
+
+        log_message = f"Awarded {actual_xp_to_award} XP to character {character.name} ({char_id}) from {source_type}."
+        if source_id:
+            log_message += f" (Source ID: {source_id})."
+        log_message += f" Total XP now: {character.experience}."
+
+        print(f"RuleEngine: {log_message}")
+
+        if self._game_log_manager:
+            await self._game_log_manager.log_event(
+                guild_id=guild_id,
+                event_type="XP_AWARDED",
+                message=log_message,
+                related_entities=[{"id": char_id, "type": "Character"}],
+                metadata={"xp_awarded": actual_xp_to_award, "source_type": source_type, "source_id": source_id, "new_total_xp": character.experience}
+            )
 
         leveled_up = await self.check_for_level_up(character, guild_id, **kwargs)
-        # check_for_level_up will mark dirty if level up occurs. If no level up, but XP changed, mark dirty here.
-        if not leveled_up and self._character_manager:
+
+        if self._character_manager: # Mark dirty if XP changed, regardless of level up
             self._character_manager.mark_character_dirty(guild_id, char_id)
 
 
     async def check_for_level_up(self, character: "Character", guild_id: str, **kwargs: Any) -> bool:
         char_id = getattr(character, 'id', 'UnknownCharacter')
-        xp_rules = self._rules_data.get("experience_rules", {})
-        xp_to_level_config = xp_rules.get("xp_to_level_up", {})
-        xp_table = xp_to_level_config.get("values", {}) # This should be like {"2": 1000, "3": 3000, ...}
+        char_name = getattr(character, 'name', char_id)
+
+        experience_rules = self._rules_data.get("experience_rules", {})
+        # xp_to_level_up is now a direct map like: {"1": 0, "2": 1000, ...}
+        xp_table = experience_rules.get("xp_to_level_up", {})
 
         general_settings = self._rules_data.get("general_settings", {})
         max_level = general_settings.get("max_character_level", 20)
 
-        if not hasattr(character, 'level'): character.level = 1
-        if not hasattr(character, 'experience'): character.experience = 0
+        unspent_xp_gain_on_level_up = experience_rules.get("level_up_unspent_xp_gain", 0)
+
+        if not hasattr(character, 'level') or not isinstance(character.level, int): character.level = 1
+        if not hasattr(character, 'experience') or not isinstance(character.experience, int): character.experience = 0
+        if not hasattr(character, 'unspent_xp') or not isinstance(character.unspent_xp, int): character.unspent_xp = 0
+
 
         leveled_up_this_check = False
 
-        while getattr(character, 'level', 1) < max_level:
-            current_level = getattr(character, 'level', 1)
-            next_level_str = str(current_level + 1) # XP table is often indexed by the level to reach
-
+        while character.level < max_level:
+            next_level_str = str(character.level + 1)
             xp_needed_for_next = xp_table.get(next_level_str)
-            # The GAME_RULES_STRUCTURE implies xp_table stores total XP to reach a level.
-            # Example: Level 1 needs 0 XP. To reach Level 2, needs 1000 TOTAL XP. To reach Level 3, needs 3000 TOTAL XP.
 
             if xp_needed_for_next is None:
-                print(f"RuleEngine: XP requirement for level {next_level_str} not found in rules. Cannot level up {char_id} further this way.")
+                print(f"RuleEngine: XP requirement for level {next_level_str} not found in rules for character {char_name} ({char_id}). Cannot level up further.")
                 break
 
-            if character.experience >= xp_needed_for_next:
-                character.level = current_level + 1
-                # No XP subtraction if table is total XP needed. If it were XP *from previous level*, then subtract.
+            if not isinstance(xp_needed_for_next, int): # Ensure it's an integer
+                try:
+                    xp_needed_for_next = int(xp_needed_for_next)
+                except ValueError:
+                    print(f"RuleEngine: Invalid XP requirement '{xp_needed_for_next}' for level {next_level_str}. Cannot level up {char_name} ({char_id}).")
+                    break
 
-                print(f"RuleEngine: Character {char_id} leveled up to level {character.level}!")
+            if character.experience >= xp_needed_for_next:
+                previous_level = character.level
+                character.level += 1
+                character.unspent_xp += unspent_xp_gain_on_level_up
                 leveled_up_this_check = True
 
-                # Placeholder: Apply actual level up benefits (stats, skills, abilities)
-                # This would likely call another method: await self.apply_level_up_benefits(character, guild_id, **kwargs)
+                level_up_message = f"Character {char_name} ({char_id}) leveled up from {previous_level} to {character.level}! Gained {unspent_xp_gain_on_level_up} unspent XP. Total unspent XP: {character.unspent_xp}."
+                print(f"RuleEngine: {level_up_message}")
+
+                if self._game_log_manager:
+                    await self._game_log_manager.log_event(
+                        guild_id=guild_id,
+                        event_type="LEVEL_UP",
+                        message=level_up_message,
+                        related_entities=[{"id": char_id, "type": "Character"}],
+                        metadata={"old_level": previous_level, "new_level": character.level, "unspent_xp_gained": unspent_xp_gain_on_level_up, "total_unspent_xp": character.unspent_xp}
+                    )
+
+                notification_service = kwargs.get("notification_service")
+                if notification_service and hasattr(notification_service, 'send_notification') and hasattr(character, 'discord_user_id') and character.discord_user_id:
+                    try:
+                        await notification_service.send_notification(character.discord_user_id, f"Congratulations, {char_name}! You've reached level {character.level}!")
+                    except Exception as e:
+                        print(f"RuleEngine: Failed to send level up notification to {char_name} ({char_id}): {e}")
 
                 if self._character_manager: # Mark dirty for each level gained
                     self._character_manager.mark_character_dirty(guild_id, char_id)
@@ -1975,7 +2034,7 @@ class RuleEngine:
                 break
         
         if leveled_up_this_check:
-            print(f"RuleEngine: Character {char_id} finished level up checks. Current level: {character.level}, XP: {character.experience}")
+            print(f"RuleEngine: Character {char_name} ({char_id}) finished level up checks. Current level: {character.level}, XP: {character.experience}, Unspent XP: {character.unspent_xp}")
 
         return leveled_up_this_check
 

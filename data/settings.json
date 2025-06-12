@@ -635,34 +635,35 @@
     },
     "experience_rules": {
       "xp_to_level_up": {
-        "type": "table",
-        "values": {
-          "1": 0,
-          "2": 1000,
-          "3": 3000,
-          "4": 6000,
-          "5": 10000
-        }
+        "1": 0, "2": 1000, "3": 3000, "4": 6000, "5": 10000,
+        "6": 15000, "7": 21000, "8": 28000, "9": 36000, "10": 45000,
+        "11": 55000, "12": 66000, "13": 78000, "14": 91000, "15": 105000,
+        "16": 120000, "17": 136000, "18": 153000, "19": 171000, "20": 190000
       },
       "xp_awards": {
         "combat": {
-          "base_xp_per_cr": 100,
-          "cr_scaling_factor": 1.2,
-          "party_bonus_factor": 1.0
+          "base_xp_per_kill": 25,
+          "xp_per_npc_cr": {
+            "0.25": 25, "0.5": 50, "1": 100, "2": 200, "3": 300, "4": 400, "5": 500
+          },
+          "participant_distribution_rule": "even_split"
         },
-        "quest": {
-          "base_xp_per_difficulty": 200,
-          "story_quest_multiplier": 1.5
-        },
+        "quest_completion_xp_multiplier": 1.0,
         "skill_use": {
           "xp_per_successful_check": 5,
           "difficulty_multiplier": 1.1
         }
       },
+      "level_up_unspent_xp_gain": 5,
       "party_xp_distribution": {
         "method": "even_split",
         "level_range_penalty": 0.8
       }
+    },
+    "character_development_rules": {
+      "stat_increase_cost": 10,
+      "skill_learn_cost": 5,
+      "skill_improve_cost": 2
     },
     "character_stats_rules": {
       "attributes": {
