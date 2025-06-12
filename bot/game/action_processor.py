@@ -11,6 +11,7 @@ from bot.game.models.game_state import GameState
 from bot.game.managers.character_manager import CharacterManager
 from bot.game.managers.location_manager import LocationManager
 from bot.game.managers.event_manager import EventManager
+from bot.game.managers.game_log_manager import GameLogManager
 
 # Import other managers if needed (e.g. for action_type = "combat")
 # from bot.game.managers.npc_manager import NpcManager
@@ -33,6 +34,7 @@ class ActionProcessor:
                       event_manager: Optional[EventManager],
                       rule_engine: Optional[RuleEngine],
                       openai_service: Optional[OpenAIService],
+                      game_log_manager: Optional[GameLogManager], # Added
                       ctx_channel_id: int,
                       discord_user_id: int,
                       action_type: str,
@@ -264,6 +266,40 @@ class ActionProcessor:
 
             mech_summary = check_result.get("description", "Проверка выполнена.")
             state_changed = check_result.get("is_critical_failure", False)  # Crit fail might change state
+
+            # --- Logging Skill Check ---
+            if game_log_manager:
+                log_details_skill_check = {
+                    "skill_name": skill_name,
+                    "complexity": complexity,
+                    "base_dc": base_dc,
+                    "modifiers_applied": final_modifiers,
+                    "roll_result": check_result.get("roll"),
+                    "total_with_bonus": check_result.get("total_value"),
+                    "dc_target": check_result.get("dc"),
+                    "is_success": check_result.get("is_success"),
+                    "is_critical_success": check_result.get("is_critical_success"),
+                    "is_critical_failure": check_result.get("is_critical_failure"),
+                    "description_generated": description, # The AI generated description of the outcome
+                    "target_description_input": action_data.get("target_description", "чего-то")
+                }
+                log_message_params_skill_check = {
+                    "player_id": character.id,
+                    "skill_name": skill_name,
+                    "outcome": "success" if check_result.get("is_success") else "failure"
+                }
+                await game_log_manager.log_event(
+                    guild_id=str(game_state.server_id),
+                    player_id=character.id,
+                    party_id=getattr(character, 'current_party_id', None),
+                    location_id=location.id,
+                    event_type="SKILL_CHECK_ACTION",
+                    message_key="log.action.skill_check",
+                    message_params=log_message_params_skill_check,
+                    involved_entities_ids=None,
+                    details=log_details_skill_check,
+                    channel_id=str(output_channel_id)
+                )
 
             return {"success": True, "message": f"_{mech_summary}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed}
 

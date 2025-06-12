@@ -328,6 +328,53 @@ Last encountered error: {last_retryable_exception}
             await self.connect()
         print("PostgresAdapter: Database initialization checks complete. Schema is managed by Alembic.")
 
+    async def begin_transaction(self) -> None:
+        """Begins a new transaction on the SQLAlchemy session."""
+        if not self.db:
+            # Attempt to connect if session is not active. This might be needed if begin_transaction
+            # can be called before other methods that establish self.db.
+            await self.connect()
+            if not self.db: # Still no session after connect attempt
+                raise ConnectionError("SQLAlchemy session is not established, cannot begin transaction.")
+        try:
+            # SQLAlchemy AsyncSession typically uses await self.db.begin() or similar
+            # For now, assuming self.db is an AsyncSession, begin a transaction if not already in one.
+            # AsyncSession might manage transactions differently, often per operation or via begin_nested.
+            # A simple explicit begin might not be standard for all uses.
+            # However, if a block of operations needs to be atomic, an explicit transaction is good.
+            # Let's assume begin() starts a top-level transaction if one isn't active.
+            # await self.db.begin() # This starts a new transaction or sub-transaction
+            # For asyncpg, transactions are usually managed on a specific connection.
+            # The SQLAlchemy AsyncSession handles this abstraction.
+            # If a transaction is already active, this might create a savepoint.
+            # For now, we'll assume this is the intended way to ensure a transaction context.
+            # If self.db.in_transaction check is available:
+            # if not self.db.in_transaction:
+            #    await self.db.begin()
+            # print("PostgresAdapter: Began SQLAlchemy session transaction (or savepoint).")
+            # Simpler for now: ensure a connection is ready. The transaction is often managed by `with session.begin():`
+            # For explicit calls, this is more complex.
+            # For now, this method primarily ensures connection. Actual transaction start might be implicit with first operation
+            # or needs to be handled by how `self.db` operations are grouped.
+            # Awaiting more specific transaction block patterns in DBService.
+            # For this step, let's make it a no-op that ensures connection,
+            # assuming transactions will be handled by `with self.db.begin():` in higher layers if needed,
+            # or that individual `commit/rollback` calls are sufficient.
+            # To make it work as expected by DBService:
+            if not self.db.in_transaction(): # Check if already in a transaction
+                 self._current_transaction = await self.db.begin()
+                 print("PostgresAdapter: Began new SQLAlchemy session transaction.")
+            else:
+                 # If already in a transaction, create a savepoint (nested transaction)
+                 self._current_transaction = await self.db.begin_nested()
+                 print("PostgresAdapter: Began nested SQLAlchemy session transaction (savepoint).")
+
+        except Exception as e:
+            print(f"PostgresAdapter: ❌ Error beginning SQLAlchemy session transaction: {e}")
+            traceback.print_exc()
+            raise
+
+
     async def save_pending_conflict(self, conflict_id: str, guild_id: str, conflict_data: str) -> None:
         if not isinstance(conflict_data, str):
              raise TypeError("conflict_data must be a JSON string.")
@@ -414,5 +461,61 @@ Last encountered error: {last_retryable_exception}
             ON CONFLICT(location_id) DO NOTHING;
         """
         await self.execute(sql, (location_id, guild_id, user_id))
+
+    async def upsert_location(self, location_data: Dict[str, Any]) -> bool:
+        """
+        Inserts a new location or updates an existing one based on ID.
+        location_data should be a dictionary matching Location model fields.
+        """
+        if not location_data.get('id') or not location_data.get('guild_id'):
+            print("PostgresAdapter: Error: Location data must include 'id' and 'guild_id' for upsert.")
+            return False
+
+        # Ensure all JSON fields are dumped to strings for the query
+        data_for_sql = {}
+        for key, value in location_data.items():
+            if isinstance(value, dict) or isinstance(value, list):
+                data_for_sql[key] = json.dumps(value)
+            else:
+                data_for_sql[key] = value
+
+        # Ensure boolean is_active is correctly represented if not present or None
+        if 'is_active' not in data_for_sql or data_for_sql['is_active'] is None:
+            data_for_sql['is_active'] = True # Default to True
+
+        # Define all columns that can be inserted/updated
+        # Order must match the VALUES clause and the EXCLUDED part of ON CONFLICT
+        # Ensure all fields from Location.to_dict() are covered here.
+        # 'static_name' was present in Location.to_dict(), ensure it's handled.
+        # 'static_connections' was present in Location.to_dict().
+        # 'inventory' was present in Location.to_dict().
+        columns = [
+            'id', 'guild_id', 'template_id', 'name_i18n', 'descriptions_i18n',
+            'details_i18n', 'tags_i18n', 'atmosphere_i18n', 'features_i18n',
+            'exits', 'state_variables', 'is_active', 'channel_id', 'image_url',
+            'static_name', 'static_connections', 'inventory'
+        ]
+
+        # Prepare values in the correct order, using None for missing optional fields
+        values_tuple = tuple(data_for_sql.get(col) for col in columns)
+
+        # Construct SET clause for ON CONFLICT
+        set_clauses = [f"{col} = EXCLUDED.{col}" for col in columns if col != 'id']
+
+        sql = f"""
+            INSERT INTO locations ({', '.join(columns)})
+            VALUES ({', '.join([f'${i+1}' for i in range(len(columns))])})
+            ON CONFLICT (id) DO UPDATE SET
+                {', '.join(set_clauses)};
+        """
+        try:
+            status = await self.execute(sql, values_tuple)
+            # Successful execution might return "INSERT 0 1" or "UPDATE 1"
+            print(f"PostgresAdapter: Upserted location {location_data.get('id')}. Status: {status}")
+            return True # Assuming success if no exception for now
+        except Exception as e:
+            print(f"PostgresAdapter: ❌ Error upserting location {location_data.get('id')}: {e}")
+            traceback.print_exc()
+            return False
 
 print(f"DEBUG: Finished loading postgres_adapter.py from: {__file__}")

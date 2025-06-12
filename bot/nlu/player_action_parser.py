@@ -1,17 +1,56 @@
 # bot/nlu/player_action_parser.py
 import re
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Optional, List, Dict, Any # Tuple removed, Union added later if needed for return type
+import spacy
+from spacy.matcher import PhraseMatcher # Import PhraseMatcher
+# Forward declare NLUDataService if not importing directly at top level for main parser logic
+# from bot.services.nlu_data_service import NLUDataService
+from bot.game.managers.game_log_manager import GameLogManager
 
-# --- Keyword Dictionaries ---
 
+# --- SpaCy Model Loading ---
+NLP_EN = None
+NLP_RU = None
+
+def load_spacy_model_en():
+    global NLP_EN
+    if NLP_EN is None:
+        try:
+            NLP_EN = spacy.load('en_core_web_sm')
+        except OSError:
+            print("Downloading en_core_web_sm model...")
+            try:
+                spacy.cli.download('en_core_web_sm')
+                NLP_EN = spacy.load('en_core_web_sm')
+            except Exception as e:
+                print(f"Failed to download/load en_core_web_sm: {e}")
+                NLP_EN = None
+    return NLP_EN
+
+def load_spacy_model_ru():
+    global NLP_RU
+    if NLP_RU is None:
+        try:
+            NLP_RU = spacy.load('ru_core_news_sm')
+        except OSError:
+            print("Downloading ru_core_news_sm model...")
+            try:
+                spacy.cli.download('ru_core_news_sm')
+                NLP_RU = spacy.load('ru_core_news_sm')
+            except Exception as e:
+                print(f"Failed to download/load ru_core_news_sm: {e}")
+                NLP_RU = None
+    return NLP_RU
+
+# --- Keyword Dictionaries (can be used by SpaCy logic later or alongside) ---
 INTENT_KEYWORDS_EN = {
     "move": ["move", "go", "walk", "head", "proceed", "travel"],
     "look": ["look", "examine", "inspect", "view", "observe", "scan", "check"],
     "attack": ["attack", "fight", "hit", "strike", "assault"],
     "talk": ["talk", "speak", "chat", "ask", "converse"],
-    "use_skill": ["use skill", "cast skill", "activate skill"], # More specific to avoid clash with "use item"
+    "use_skill": ["use skill", "cast skill", "activate skill"],
     "pickup": ["pickup", "take", "get", "collect", "grab"],
-    "use_item": ["use", "apply", "consume", "equip"], # "use" is broad, order of checking might matter
+    "use_item": ["use", "apply", "consume", "equip"],
     "search": ["search", "explore", "look for", "find"],
 }
 
@@ -22,478 +61,196 @@ INTENT_KEYWORDS_RU = {
     "talk": ["говори", "поговори", "спроси", "болтай", "общайся", "разговаривай", "спросить"],
     "use_skill": ["используй умение", "примени умение", "активируй умение", "кастуй умение"],
     "pickup": ["подбери", "возьми", "собери", "хватай", "получи", "взять"],
-    "use_item": ["используй", "примени", "съешь", "надень", "экипируй", "использовать"], # "используй" is broad
+    "use_item": ["используй", "примени", "съешь", "надень", "экипируй", "использовать"],
     "search": ["ищи", "обыщи", "исследуй", "найди", "поищи", "искать"],
 }
 
-# --- Regular Expression Patterns for Entities ---
-# These are simplified and might need refinement.
-# Using re.IGNORECASE for flexibility.
-
-# English patterns
+# (Old PATTERNS_EN, PATTERNS_RU, and _find_matching_db_entity can be removed if not used by new logic)
+# For now, they are kept as they are not in the direct path of parse_player_action's SpaCy logic.
+# If they are confirmed unused after full SpaCy implementation, they can be cleaned up.
 PATTERNS_EN = {
     "move_to_location": re.compile(r"(?:move|go|walk|head|travel)\s+(?:to\s+)?(.+)", re.IGNORECASE),
     "move_direction": re.compile(r"(?:move|go|walk|head|travel)\s+(north|south|east|west|up|down|forward|backward|left|right)", re.IGNORECASE),
     "attack_target": re.compile(r"(?:attack|fight|hit|strike)\s+(.+)", re.IGNORECASE),
-    "talk_to_npc": re.compile(r"(?:talk|speak|chat|ask)\s+(?:to\s+|with\s+)?(.+)", re.IGNORECASE),
-    "pickup_item": re.compile(r"(?:pickup|take|get|collect|grab)\s+(.+)", re.IGNORECASE),
-    "use_item_simple": re.compile(r"(?:use|apply|consume|equip)\s+(.+?)(?:\s+on\s+(.+))?$", re.IGNORECASE), # Supports "use item" and "use item on target"
-    "use_skill_simple": re.compile(r"(?:use skill|cast skill|activate skill)\s+(.+?)(?:\s+on\s+(.+))?$", re.IGNORECASE),
-    "search_location": re.compile(r"(?:search|explore|look for)\s+(?:in|at|around|for\s+)?(.+)", re.IGNORECASE), # "search for item" might be ambiguous with "pickup"
-    "look_at_target": re.compile(r"(?:look|examine|inspect|view|observe|scan|check)\s+(?:at\s+)?(.+)", re.IGNORECASE),
+    # ... (other patterns can be kept or removed as needed)
 }
-
-# Russian patterns
 PATTERNS_RU = {
-    "move_to_location": re.compile(r"(?:иди|двигайся|переместись|отправляйся)\s+(?:в\s+|на\s+)?(.+)", re.IGNORECASE),
-    "move_direction": re.compile(r"(?:иди|двигайся)\s+(север|юг|восток|запад|вверх|вниз|вперед|назад|влево|вправо)", re.IGNORECASE),
-    "attack_target": re.compile(r"(?:атакуй|дерись|ударь|бей)\s+(.+)", re.IGNORECASE),
-    "talk_to_npc": re.compile(r"(?:говори|поговори|спроси)\s+(?:с\s+)?(.+)", re.IGNORECASE),
-    "pickup_item": re.compile(r"(?:подбери|возьми|собери|хватай)\s+(.+)", re.IGNORECASE),
-    "use_item_simple": re.compile(r"(?:используй|примени|съешь|надень)\s+(.+?)(?:\s+(?:на|в)\s+(.+))?$", re.IGNORECASE),
-    "use_skill_simple": re.compile(r"(?:используй умение|примени умение|активируй умение)\s+(.+?)(?:\s+(?:на|в)\s+(.+))?$", re.IGNORECASE),
-    "search_location": re.compile(r"(?:ищи|обыщи|исследуй|поищи)\s+(?:в\s+|на\s+|за\s+)?(.+)", re.IGNORECASE),
-    "look_at_target": re.compile(r"(?:смотри|осмотри|глянь|исследуй|проверь)\s+(?:на\s+)?(.+)", re.IGNORECASE),
+     "move_to_location": re.compile(r"(?:иди|двигайся|переместись|отправляйся)\s+(?:в\s+|на\s+)?(.+)", re.IGNORECASE),
+    # ...
 }
-
-# Helper function to find matching entity from DB list
 def _find_matching_db_entity(text_entity_name: str, db_entities: List[Dict[str, Any]], entity_type_name: str) -> Optional[Dict[str, str]]:
-    if not db_entities:
-        return None
-    
+    if not db_entities: return None
     text_entity_name_lower = text_entity_name.lower()
     for db_entity in db_entities:
-        # db_entity is of type NLUEntity (TypedDict)
         if db_entity['name'].lower() == text_entity_name_lower:
             return {"type": entity_type_name, "id": db_entity['id'], "name": db_entity['name']}
     return None
 
 
-async def parse_player_action(text: str, language: str, guild_id: str, game_terms_db: Any = None) -> Optional[Tuple[str, List[Dict[str, str]]]]:
-    """
-    Parses player input text to identify an intent and extract entities.
+async def parse_player_action(
+    text: str,
+    language: str,
+    guild_id: str,
+    game_log_manager: Optional[GameLogManager] = None,
+    nlu_data_service: Optional['NLUDataService'] = None
+) -> Optional[Dict[str, Any]]:
+    raw_input_text = text
 
-    Args:
-        text (str): The raw input text from the player.
-        language (str): The language of the input text ("en", "ru").
-        guild_id (str): The ID of the guild where the action is performed. Used to fetch guild-specific game terms.
-        game_terms_db (Any): Instance of NLUDataService or similar for fetching game-specific terms.
+    action_data: Dict[str, Any] = {
+        'intent': None,
+        'entities': [],
+        'original_text': raw_input_text,
+        'processed_tokens': []
+    }
 
-    Returns:
-        Optional[Tuple[str, List[Dict[str, str]]]]: A tuple containing the intent string
-        and a list of extracted entity dictionaries (e.g., {"type": "location_name", "value": "forest"}),
-        or None if no intent is recognized.
-    """
-    text = text.lower().strip()
-    if not text:
+    nlp = None
+    if language == "en":
+        nlp = load_spacy_model_en()
+    elif language == "ru":
+        nlp = load_spacy_model_ru()
+
+    if not nlp:
+        if game_log_manager:
+            await game_log_manager.log_event(guild_id, "NLU_ERROR", {"error": f"SpaCy model not loaded for language: {language}"})
         return None
 
-    keywords_map = INTENT_KEYWORDS_EN if language == "en" else INTENT_KEYWORDS_RU
-    patterns_map = PATTERNS_EN if language == "en" else PATTERNS_RU
+    doc = nlp(text)
+    action_data['processed_tokens'] = [{"text": t.text, "lemma": t.lemma_, "pos": t.pos_} for t in doc]
 
-    db_game_entities: Dict[str, List[Dict[str, Any]]] = {}
-    if game_terms_db:
-        try:
-            # NLUDataService.get_game_entities is async
-            db_game_entities = await game_terms_db.get_game_entities(guild_id=guild_id, language=language)
-        except Exception as e:
-            print(f"NLU Parser: Error fetching game entities from DB: {e}")
-            # Continue without db_entities, or handle error more strictly
+    # --- 1. Entity Recognition ---
+    recognized_entities: List[Dict[str, Any]] = []
+    game_entities: Dict[str, List[Dict[str, Any]]] = {}
 
-    # --- Regex-based matching (more specific patterns first) ---
+    if nlu_data_service:
+        game_entities = await nlu_data_service.get_game_entities(guild_id, language)
 
-    # Move to location or direction
-    match_move_to_loc = patterns_map["move_to_location"].match(text)
-    if match_move_to_loc:
-        potential_loc_name = match_move_to_loc.group(1).strip()
-        if db_game_entities.get("location"):
-            db_loc = _find_matching_db_entity(potential_loc_name, db_game_entities["location"], "location")
-            if db_loc:
-                return "move", [db_loc]
-        # Fallback to raw name if not found in DB or DB not available
-        return "move", [{"type": "location_name", "value": potential_loc_name}]
+    matcher = PhraseMatcher(nlp.vocab, attr="LOWER")
+    entity_map: Dict[str, Dict[str, Any]] = {}
 
-    match_move_direction = patterns_map["move_direction"].match(text)
-    if match_move_direction:
-        return "move", [{"type": "direction", "value": match_move_direction.group(1).strip()}]
+    for entity_type, entities_list in game_entities.items():
+        for entity_data in entities_list:
+            patterns = [nlp.make_doc(entity_data['name'])]
+            match_id = f"{entity_type.upper()}_{entity_data['id']}"
+            matcher.add(match_id, patterns)
+            entity_map[match_id] = entity_data
 
-    # Attack target
-    match = patterns_map["attack_target"].match(text)
-    if match:
-        potential_target_name = match.group(1).strip()
-        if db_game_entities.get("npc"): # Assuming targets are NPCs for now
-            db_npc = _find_matching_db_entity(potential_target_name, db_game_entities["npc"], "npc") # type becomes "npc"
-            if db_npc:
-                # Standardize to target_name for generic processing later, but add original type and id
-                return "attack", [{"type": "target_name", "id": db_npc["id"], "name": db_npc["name"], "original_type": "npc"}]
-        # Fallback
-        return "attack", [{"type": "target_name", "value": potential_target_name}]
+    matches = matcher(doc)
+    for match_id, start, end in matches:
+        matched_entity_data = entity_map[nlp.vocab.strings[match_id]]
+        recognized_entities.append({
+            "id": matched_entity_data['id'],
+            "name": doc[start:end].text,
+            "type": matched_entity_data['type'],
+            "lang": matched_entity_data['lang']
+        })
+    action_data['entities'] = recognized_entities
 
-    # Talk to NPC
-    match = patterns_map["talk_to_npc"].match(text)
-    if match:
-        potential_npc_name = match.group(1).strip()
-        if db_game_entities.get("npc"):
-            db_npc = _find_matching_db_entity(potential_npc_name, db_game_entities["npc"], "npc")
-            if db_npc:
-                return "talk", [db_npc]
-        return "talk", [{"type": "npc_name", "value": potential_npc_name}]
+    # --- Old Regex/Keyword logic has been removed ---
 
-    # Pickup item
-    match = patterns_map["pickup_item"].match(text)
-    if match:
-        potential_item_name = match.group(1).strip()
-        if db_game_entities.get("item"):
-            db_item = _find_matching_db_entity(potential_item_name, db_game_entities["item"], "item")
-            if db_item:
-                return "pickup", [db_item]
-        return "pickup", [{"type": "item_name", "value": potential_item_name}]
+    # --- 2. Intent Classification (Rule-Based) ---
+    lemmatized_tokens = [token.lemma_.lower() for token in doc]
+    current_keywords = INTENT_KEYWORDS_EN if language == "en" else INTENT_KEYWORDS_RU
 
-    # Use item [on target]
-    match = patterns_map["use_item_simple"].match(text)
-    if match:
-        item_text_name = match.group(1).strip()
-        target_text_name = match.group(2).strip() if match.group(2) else None
-        entities = []
-        
-        # Match item
-        item_entity = None
-        if db_game_entities.get("item"):
-            item_entity = _find_matching_db_entity(item_text_name, db_game_entities["item"], "item")
-        
-        if item_entity:
-            entities.append(item_entity)
-        else:
-            entities.append({"type": "item_name", "value": item_text_name}) # Fallback for item
+    def has_keyword(lemmas: List[str], intent_key: str) -> bool:
+        return any(lemma in current_keywords.get(intent_key, []) for lemma in lemmas)
 
-        # Match target if exists
-        if target_text_name:
-            target_entity = None
-            npc_data_list = db_game_entities.get("npc") # Get NPC list once
-            if npc_data_list:
-                target_entity = _find_matching_db_entity(target_text_name, npc_data_list, "npc")
+    if has_keyword(lemmatized_tokens, "use_item") or has_keyword(lemmatized_tokens, "use_skill"):
+        item_entity = next((e for e in recognized_entities if e['type'] == 'item'), None)
+        skill_entity = next((e for e in recognized_entities if e['type'] == 'skill'), None)
+        if skill_entity: action_data['intent'] = "use_skill"
+        elif item_entity: action_data['intent'] = "use_item"
 
-            if target_entity:
-                # Standardize to target_name for generic processing, but add original type and id
-                entities.append({"type": "target_name", "id": target_entity["id"], "name": target_entity["name"], "original_type": "npc"})
-            else:
-                entities.append({"type": "target_name", "value": target_text_name}) # Fallback for target
-        
-        if entities: # Should always have at least item
-            return "use_item", entities
-        
-    # Use skill [on target] - Skills not fetched from DB in this iteration yet, but structure is similar
-    match = patterns_map["use_skill_simple"].match(text)
-    if match:
-        skill_text_name = match.group(1).strip()
-        target_text_name = match.group(2).strip() if match.group(2) else None
-        entities = []
-
-        # Match skill (if db_game_entities['skill'] was populated)
-        skill_entity = None
-        if db_game_entities.get("skill"):
-            skill_entity = _find_matching_db_entity(skill_text_name, db_game_entities["skill"], "skill")
-        
-        if skill_entity:
-            entities.append(skill_entity)
-        else:
-            entities.append({"type": "skill_name", "value": skill_text_name}) # Fallback
-
-        if target_text_name:
-            target_entity = None
-            if db_game_entities.get("npc"): # Assuming targets are NPCs
-                target_entity = _find_matching_db_entity(target_text_name, db_game_entities["npc"], "npc")
-            
-            if target_entity:
-                entities.append({"type": "target_name", "id": target_entity["id"], "name": target_entity["name"], "original_type": "npc"})
-            else:
-                entities.append({"type": "target_name", "value": target_text_name})
-        
-        if entities:
-            return "use_skill", entities
-
-    # Search (generic, could be location or for item)
-    match = patterns_map["search_location"].match(text)
-    if match:
-        potential_search_term = match.group(1).strip()
-        # Try to match against locations first
-        if db_game_entities.get("location"):
-            db_loc = _find_matching_db_entity(potential_search_term, db_game_entities["location"], "location")
-            if db_loc: # If it's a known location name
-                return "search", [db_loc] # Entity type is "location"
-        # Try to match against items
-        if db_game_entities.get("item"):
-            db_item = _find_matching_db_entity(potential_search_term, db_game_entities["item"], "item")
-            if db_item: # If it's a known item name
-                 return "search", [db_item] # Entity type is "item"
-        # Fallback if not a known location or item
-        return "search", [{"type": "search_target", "value": potential_search_term}]
-
-
-    # Look at target (could be item, NPC, location feature)
-    match = patterns_map["look_at_target"].match(text)
-    if match:
-        potential_target_name = match.group(1).strip()
-        # Order of checking matters: NPCs, then Items, then Locations as a broader category
-        if db_game_entities.get("npc"):
-            db_npc = _find_matching_db_entity(potential_target_name, db_game_entities["npc"], "npc")
-            if db_npc:
-                return "look", [db_npc]
-        if db_game_entities.get("item"):
-            db_item = _find_matching_db_entity(potential_target_name, db_game_entities["item"], "item")
-            if db_item:
-                return "look", [db_item]
-        if db_game_entities.get("location"): # Could be a specific feature in a location
-            db_loc = _find_matching_db_entity(potential_target_name, db_game_entities["location"], "location")
-            if db_loc:
-                return "look", [db_loc]
-        # Fallback
-        return "look", [{"type": "target_name", "value": potential_target_name}]
+    if not action_data['intent'] and has_keyword(lemmatized_tokens, "attack"):
+        if any(e['type'] == 'npc' for e in recognized_entities): action_data['intent'] = "attack"
     
-    # --- Keyword-based intent recognition (fallback or for simple commands) ---
-    # This part is for commands that might not have complex entities captured by regex above,
-    if match:
-        return "move", [{"type": "direction", "value": match.group(1).strip()}]
+    if not action_data['intent'] and has_keyword(lemmatized_tokens, "talk"):
+        if any(e['type'] == 'npc' for e in recognized_entities): action_data['intent'] = "talk"
 
-    # Attack target
-    match = patterns_map["attack_target"].match(text)
-    if match:
-        return "attack", [{"type": "target_name", "value": match.group(1).strip()}]
+    if not action_data['intent'] and has_keyword(lemmatized_tokens, "pickup"):
+        if any(e['type'] == 'item' for e in recognized_entities): action_data['intent'] = "pickup"
 
-    # Talk to NPC
-    match = patterns_map["talk_to_npc"].match(text)
-    if match:
-        return "talk", [{"type": "npc_name", "value": match.group(1).strip()}]
+    if not action_data['intent'] and has_keyword(lemmatized_tokens, "move"):
+        action_data['intent'] = "move"
+        for token in doc:
+            if token.lemma_.lower() in ["north", "south", "east", "west", "up", "down", "север", "юг", "восток", "запад", "вверх", "вниз"]:
+                if not any(e['type'] == 'direction' and e['name'] == token.lemma_.lower() for e in action_data['entities']):
+                    action_data['entities'].append({"id": None, "name": token.lemma_.lower(), "type": "direction", "lang": language})
+                break
 
-    # Pickup item
-    match = patterns_map["pickup_item"].match(text)
-    if match:
-        return "pickup", [{"type": "item_name", "value": match.group(1).strip()}]
-
-    # Use item [on target]
-    match = patterns_map["use_item_simple"].match(text)
-    if match:
-        item_name = match.group(1).strip()
-        target_name = match.group(2).strip() if match.group(2) else None
-        entities = [{"type": "item_name", "value": item_name}]
-        if target_name:
-            entities.append({"type": "target_name", "value": target_name})
-        return "use_item", entities
+    if not action_data['intent'] and has_keyword(lemmatized_tokens, "look"):
+        action_data['intent'] = "look"
         
-    # Use skill [on target]
-    match = patterns_map["use_skill_simple"].match(text)
-    if match:
-        skill_name = match.group(1).strip()
-        target_name = match.group(2).strip() if match.group(2) else None
-        entities = [{"type": "skill_name", "value": skill_name}] # Assuming "skill_name" type
-        if target_name:
-            entities.append({"type": "target_name", "value": target_name})
-        return "use_skill", entities
+    if not action_data['intent'] and has_keyword(lemmatized_tokens, "search"):
+        action_data['intent'] = "search"
 
-    # Search (generic, could be location or for item)
-    match = patterns_map["search_location"].match(text) # "search for item" might be better handled by keyword based or specific regex
-    if match:
-        # This is very generic. "search the chest" vs "search for clues"
-        # For now, assume it's a general area/object being searched.
-        return "search", [{"type": "search_target", "value": match.group(1).strip()}]
+    # --- Logging ---
+    if game_log_manager:
+        log_details = {
+            "raw_text": raw_input_text, "language": language,
+            "parsed_intent": action_data['intent'], "parsed_entities": action_data['entities'],
+            "processed_tokens": action_data['processed_tokens'],
+            "recognition_successful": bool(action_data['intent']),
+            "parser_type": "spacy_custom_rules"
+        }
+        log_message_params = {
+            "intent": action_data['intent'] if action_data['intent'] else "None",
+            "entities_count": len(action_data['entities'])
+        }
+        await game_log_manager.log_event(
+            guild_id=guild_id, event_type="NLU_RESULT", details=log_details,
+            player_id=None, message_key="log.nlu.result_spacy_custom",
+            message_params=log_message_params
+        )
 
-
-    # Look at target (could be item, NPC, location feature)
-    match = patterns_map["look_at_target"].match(text)
-    if match:
-        return "look", [{"type": "target_name", "value": match.group(1).strip()}]
-
-
-    # --- Keyword-based intent recognition (fallback or for simple commands) ---
-    # This part is for commands that might not have complex entities captured by regex above,
-    # or if regex fails. Order can be important.
-    
-    # Iterate through intents and their keywords
-    # The order of intents in INTENT_KEYWORDS might matter if keywords overlap significantly.
-    # For example, "use" is a very common verb.
-    
-    # A more robust way might be to check based on the length of the keyword match (longer first)
-    # or have primary vs secondary keywords.
-
-    # For now, simple iteration.
-    # This might misclassify if a "use item" command didn't match regex and "use" is a look keyword.
-    # This is why specific regex for "use item" and "use skill" is better.
-    
-    # Check "look" first as it's often parameterless ("look around")
-    for keyword in keywords_map.get("look", []):
-        if text == keyword: # Exact match for simple "look"
-             return "look", [] # No entity, just general look around
-
-    # Check other intents
-    # We need a more careful approach if regex above didn't catch them.
-    # For commands like "move" (without args), "inventory", etc.
-    
-    # Example: if "move" was typed alone, regexes for "move to" or "move direction" would fail.
-    # This needs to be handled.
-
-    # General keyword check (less precise, better for commands without arguments)
-    # This is a simplified fallback.
-    # Consider the order of INTENT_KEYWORDS for keyword matching if there's ambiguity.
-    # For example, "use" is in "use_item", but if it's also a keyword for another intent.
-
-    for intent, kws in keywords_map.items():
-        for keyword in kws:
-            # Check if the text *starts with* the keyword, allowing for simple entities not caught by regex.
-            # This is a basic form of entity extraction if no regex matched.
-            if text.startswith(keyword):
-                # Simplistic entity extraction: the rest of the string
-                potential_entity = text[len(keyword):].strip()
-                entities = []
-
-                # This is very naive. Regex above is preferred.
-                # This part is more for single-word commands or very simple ones.
-                if not potential_entity and intent in ["look", "search"]: # Parameterless look/search
-                    return intent, []
-                
-                # Avoid re-classifying if already handled by regex with entities
-                # This basic keyword check is primarily for commands that *don't* have entities
-                # or very simple ones not caught by specific regex.
-                # Example: "inventory" (if it were an intent here), "help", etc.
-
-                # If we reached here, it means the regexes for entities didn't match.
-                # So, if `potential_entity` exists, it's an unmatched entity for this keyword.
-                # This is too simplistic for most cases.
-                # For now, we'll prioritize regex matches above.
-                # This keyword loop is mostly for commands that are *just* the keyword.
-                if not potential_entity: # Command is just the keyword
-                    # Example: "look" (already handled), "attack" (no target specified yet)
-                    # This could be ambiguous. "attack" alone might be valid to initiate combat mode.
-                    if intent in ["attack", "move"]: # e.g. "attack" to enter combat mode, "move" to see directions
-                         return intent, [] # No specific entity from this simple keyword match
-                    # Other intents might require entities.
-
-                # Let's make this keyword part primarily for commands that are *just* the keyword itself.
-                if text == keyword:
-                    if intent in ["look", "search", "attack", "move"]: # Intents that can be parameterless
-                        return intent, []
-                    # For other intents, they likely need an entity, which regex should have caught.
-                    # If not, this basic keyword match isn't enough.
-                    
-    return None # No intent recognized
+    if action_data['intent']:
+        return action_data
+    return None
 
 if __name__ == '__main__':
-    # Basic Test Cases
-    test_phrases_en = [
-        "go north",
-        "move to the forest",
-        "look",
-        "examine the chest",
-        "attack the goblin",
-        "fight dragon",
-        "talk to Faelan",
-        "speak with the merchant",
-        "pickup the sword",
-        "get healing potion",
-        "use healing potion",
-        "use sword on goblin",
-        "use skill fireball on goblin",
-        "activate skill stealth",
-        "search the room",
-        "explore cave",
-        "unknown command",
-        "use teleport scroll to the capital", # More complex "use"
-        "look at the map",
-        "search the old barrel", # Search non-DB entity
-        "look at the strange painting", # Look at non-DB entity
-        "use unknown_item", # Use non-DB item
-        "use skill unknown_skill" # Use non-DB skill
-    ]
+    from bot.services.nlu_data_service import NLUDataService
 
-    test_phrases_ru = [
-        "иди на север",
-        "переместись в лес",
-        "смотри",
-        "осмотри сундук",
-        "атакуй гоблина",
-        "дерись с драконом",
-        "поговори с Фаэланом",
-        "поговорить с торговцем", # Infinitive form
-        "подбери меч",
-        "возьми зелье лечения",
-        "используй зелье лечения",
-        "используй меч на гоблине",
-        "используй умение огненный шар на гоблине",
-        "активируй умение скрытность",
-        "обыщи комнату",
-        "исследуй пещеру",
-        "неизвестная команда",
-        "использовать свиток телепорта в столицу",
-        "смотри на карту",
-        "обыщи старую бочку", # Search non-DB entity (RU)
-        "осмотри странную картину", # Look at non-DB entity (RU)
-        "используй неизвестный предмет", # Use non-DB item (RU)
-        "используй умение неизвестное умение" # Use non-DB skill (RU)
-    ]
-
-    # Basic Test Cases (guild_id will be dummy for these tests, game_terms_db will be None)
     dummy_guild_id = "test_guild"
-    # Mock NLUDataService for testing if needed, or pass None to test fallback
-    class MockNLUDataService:
-        async def get_game_entities(self, guild_id: str, language: str) -> Dict[str, List[Dict[str, Any]]]:
-            # Return some dummy data matching NLUEntity structure
-            if language == "en":
-                return {
-                    "location": [{"id": "loc_forest", "name": "Forest", "type": "location", "lang": "en"},
-                                 {"id": "loc_cave", "name": "Cave", "type": "location", "lang": "en"}],
-                    "npc": [{"id": "npc_goblin", "name": "Goblin", "type": "npc", "lang": "en"},
-                            {"id": "npc_faelan", "name": "Faelan", "type": "npc", "lang": "en"}],
-                    "item": [{"id": "item_sword", "name": "Sword", "type": "item", "lang": "en"},
-                             {"id": "item_potion", "name": "Healing Potion", "type": "item", "lang": "en"}],
-                    "skill": [{"id": "skill_fireball", "name": "Fireball", "type": "skill", "lang": "en"}]
-                }
-            elif language == "ru":
-                 return {
-                    "location": [{"id": "loc_forest", "name": "Лес", "type": "location", "lang": "ru"},
-                                 {"id": "loc_cave", "name": "Пещера", "type": "location", "lang": "ru"}],
-                    "npc": [{"id": "npc_goblin", "name": "Гоблин", "type": "npc", "lang": "ru"},
-                            {"id": "npc_faelan", "name": "Фаэлан", "type": "npc", "lang": "ru"}],
-                    "item": [{"id": "item_sword", "name": "Меч", "type": "item", "lang": "ru"},
-                             {"id": "item_potion", "name": "Зелье лечения", "type": "item", "lang": "ru"}],
-                    "skill": [{"id": "skill_fireball", "name": "Огненный шар", "type": "skill", "lang": "ru"}]
-                }
-            return {}
-
-    mock_nlu_db = MockNLUDataService()
-    # To test without DB entities, set mock_nlu_db = None
+    nlu_data_service_instance = NLUDataService()
 
     async def run_tests():
-        print("--- English Tests ---")
+        print("--- English Tests (SpaCy Custom Rules) ---")
+        test_phrases_en = [
+            "go north", "move to the Forest", "look", "examine the Sword",
+            "attack Faelan", "talk to the Mock Guard", "pickup the Healing Potion",
+            "use Sword on Faelan", "use skill Fireball on Mock Guard", "search Forest",
+            "search for Old Tree in Forest", "use non_existent_item", "gibberish command"
+        ]
         for phrase in test_phrases_en:
-            result = await parse_player_action(phrase, "en", dummy_guild_id, mock_nlu_db)
-            print(f"Input: '{phrase}' -> Parsed: {result}")
+            result = await parse_player_action(phrase, "en", dummy_guild_id, nlu_data_service=nlu_data_service_instance)
+            print(f"\nInput (en): '{phrase}'")
+            if result:
+                print(f"  Intent: {result['intent']}")
+                print(f"  Entities: {result['entities']}")
+            else:
+                print("  No intent found.")
 
-        print("\n--- Russian Tests ---")
+        print("\n--- Russian Tests (SpaCy Custom Rules) ---")
+        test_phrases_ru = [
+            "иди на север", "переместись в Лес", "смотри", "осмотри Меч",
+            "атакуй Фаэлан", "поговори с Макетный Страж", "подбери Зелье лечения",
+            "используй Меч на Фаэлан", "используй умение Огненный шар на Макетный Страж",
+            "ищи в Лес", "ищи Старое Дерево в Лес"
+        ]
         for phrase in test_phrases_ru:
-            result = await parse_player_action(phrase, "ru", dummy_guild_id, mock_nlu_db)
-            print(f"Input: '{phrase}' -> Parsed: {result}")
+            result = await parse_player_action(phrase, "ru", dummy_guild_id, nlu_data_service=nlu_data_service_instance)
+            print(f"\nInput (ru): '{phrase}'")
+            if result:
+                print(f"  Intent: {result['intent']}")
+                print(f"  Entities: {result['entities']}")
+            else:
+                print("  No intent found.")
 
-        # Test specific cases
-        print("\n--- Specific Tests ---")
-        print(f"Input: 'use Sword' (en) -> Parsed: {await parse_player_action('use Sword', 'en', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'используй Меч' (ru) -> Parsed: {await parse_player_action('используй Меч', 'ru', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'look around' (en) -> Parsed: {await parse_player_action('look around', 'en', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'оглядись' (ru) -> Parsed: {await parse_player_action('оглядись', 'ru', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'attack Goblin' (en) -> Parsed: {await parse_player_action('attack Goblin', 'en', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'атакуй Гоблина' (ru) -> Parsed: {await parse_player_action('атакуй Гоблина', 'ru', dummy_guild_id, mock_nlu_db)}") # Assuming Goblina is not in mock DB
-        print(f"Input: 'go to Forest' (en) -> Parsed: {await parse_player_action('go to Forest', 'en', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'иди в Лес' (ru) -> Parsed: {await parse_player_action('иди в Лес', 'ru', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'go' (en) -> Parsed: {await parse_player_action('go', 'en', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'иди' (ru) -> Parsed: {await parse_player_action('иди', 'ru', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'talk to UnknownNPC' (en) -> Parsed: {await parse_player_action('talk to UnknownNPC', 'en', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'pickup NonExistentItem' (en) -> Parsed: {await parse_player_action('pickup NonExistentItem', 'en', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'use Healing Potion on Goblin' (en) -> Parsed: {await parse_player_action('use Healing Potion on Goblin', 'en', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'use skill Fireball on Goblin' (en) -> Parsed: {await parse_player_action('use skill Fireball on Goblin', 'en', dummy_guild_id, mock_nlu_db)}")
-        print(f"Input: 'search Forest' (en) -> Parsed: {await parse_player_action('search Forest', 'en', dummy_guild_id, mock_nlu_db)}") # Search a known location
-        print(f"Input: 'search for Sword' (en) -> Parsed: {await parse_player_action('search for Sword', 'en', dummy_guild_id, mock_nlu_db)}") # Search a known item
-        print(f"Input: 'look at Sword' (en) -> Parsed: {await parse_player_action('look at Sword', 'en', dummy_guild_id, mock_nlu_db)}") # Look at known item
-
+        print("\n--- Testing SpaCy Model Loading (only if models are not already downloaded by a previous run) ---")
+        print("Ensuring English model is loaded (may show download if first time):")
+        load_spacy_model_en()
+        print("Ensuring Russian model is loaded (may show download if first time):")
+        load_spacy_model_ru()
+        print("Model loading check complete.")
 
     import asyncio
     asyncio.run(run_tests())
-
-

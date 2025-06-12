@@ -1,6 +1,7 @@
 import json
 import uuid
 import time
+import asyncio
 import traceback # Keep for potential future use, though not explicitly used in current methods
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union
 
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.services.openai_service import OpenAIService
     from bot.ai.ai_response_validator import AIResponseValidator # Added validator
+    from bot.services.notification_service import NotificationService # Added import
     # from typing import Union # For updated return type # Already added above
 
     # The import for 'Quest' model is removed as per instruction 10, assuming dicts are used.
@@ -44,7 +46,8 @@ class QuestManager:
         # New parameters
         multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None,
         openai_service: Optional["OpenAIService"] = None,
-        ai_validator: Optional["AIResponseValidator"] = None # Added validator
+        ai_validator: Optional["AIResponseValidator"] = None, # Added validator
+        notification_service: Optional["NotificationService"] = None # New
     ):
         self._db_service = db_service # Changed
         self._settings = settings if settings else {} # Ensure settings is a dict
@@ -59,6 +62,7 @@ class QuestManager:
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
         self._ai_validator = ai_validator # Store validator
+        self._notification_service = notification_service # Store notification service
 
         # guild_id -> character_id -> quest_id -> quest_data
         self._active_quests: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -248,12 +252,53 @@ class QuestManager:
                         request_id, guild_id_str, str(user_id), content_type, data_json
                     )
                     print(f"QuestManager: AI-generated quest data for '{quest_concept}' saved for moderation. Request ID: {request_id}")
+
+                    # --- Update Player Status & Send Master Notification ---
+                    if self._character_manager and hasattr(self._character_manager, 'get_character_by_discord_id') and self._status_manager:
+                        player_char = await self._character_manager.get_character_by_discord_id(guild_id_str, str(user_id))
+                        if player_char:
+                            status_context = {
+                                "guild_id": guild_id_str,
+                                "source_entity_id": "system",
+                                "time_manager": kwargs.get("time_manager")
+                            }
+                            await self._status_manager.add_status_effect_to_entity(
+                                target_id=player_char.id,
+                                target_type="Character",
+                                status_type="common.awaiting_moderation",
+                                duration=31536000, # 1 year
+                                context=status_context
+                            )
+                            print(f"QuestManager: Applied 'awaiting_moderation' status to character {player_char.id} for user {user_id}.")
+                        else:
+                            print(f"QuestManager: Warning - Player character not found for user_id {user_id} in guild {guild_id_str}. Cannot apply status.")
+                    else:
+                        print("QuestManager: Warning - CharacterManager or StatusManager not available/suitable. Skipping player status update.")
+
+                    if self._notification_service:
+                        content_summary = {
+                            "name": ai_generated_quest_data.get("name_i18n", {}).get(self._default_lang, quest_concept),
+                            "description_snippet": (ai_generated_quest_data.get("description_i18n", {}).get(self._default_lang, "")[:75] + "...") if ai_generated_quest_data.get("description_i18n", {}).get(self._default_lang) else "N/A",
+                            "level_suggestion": ai_generated_quest_data.get("level_suggestion", "N/A")
+                        }
+                        moderation_link = "Use /approve, /reject, /edit commands with the Request ID."
+                        await self._notification_service.send_moderation_request_alert(
+                            guild_id=guild_id_str,
+                            request_id=request_id,
+                            content_type=content_type,
+                            user_id=str(user_id),
+                            content_summary=content_summary,
+                            moderation_interface_link=moderation_link
+                        )
+                    else:
+                        print("QuestManager: Warning - NotificationService not available. Skipping master notification.")
+
                     return {"status": "pending_moderation", "request_id": request_id}
                 else:
                     print(f"QuestManager: ERROR - DB service or adapter not available. Cannot save quest for moderation.") # Changed
                     return None # Or handle differently, e.g., proceed without moderation if allowed by policy
             except Exception as e_mod_save:
-                print(f"QuestManager: ERROR saving AI quest content for moderation: {e_mod_save}")
+                print(f"QuestManager: ERROR saving AI quest content for moderation or in post-save steps: {e_mod_save}")
                 traceback.print_exc()
                 return None # Failed to save for moderation
 
@@ -319,6 +364,22 @@ class QuestManager:
         
         self._active_quests[guild_id_str][character_id_str][quest_id] = new_quest_data
         self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+
+        # Logging for non-AI quest start
+        if self._game_log_manager and template_data_from_campaign: # Only log if not AI path (AI path logged during moderation save)
+            revert_data = {"quest_id": new_quest_data['id'], "character_id": character_id_str}
+            log_details = {
+                "action_type": "QUEST_START",
+                "quest_id": new_quest_data['id'],
+                "template_id": new_quest_data['template_id'],
+                "revert_data": revert_data
+            }
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="QUEST_STARTED",
+                details=log_details,
+                player_id=character_id_str
+            ))
         
         # Handle consequences for non-AI path
         if self._consequence_processor and template_data_from_campaign: # Ensure this runs only for campaign quests now
@@ -477,8 +538,30 @@ class QuestManager:
             print(f"Error: Active quest '{quest_id_str}' not found for character '{character_id_str}'.")
             return False
 
+        old_quest_data_copy = quest_data.copy() # Capture state before modification
+
         quest_data["status"] = "failed"
         quest_data["failure_time"] = time.time()
+
+        if self._game_log_manager:
+            revert_data = {
+                "quest_id": quest_id_str,
+                "character_id": character_id_str,
+                "old_status": "active", # Assuming it was active before failing
+                "old_quest_data": old_quest_data_copy
+            }
+            log_details = {
+                "action_type": "QUEST_STATUS_CHANGE",
+                "quest_id": quest_id_str,
+                "new_status": "failed",
+                "revert_data": revert_data
+            }
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="QUEST_FAILED",
+                details=log_details,
+                player_id=character_id_str
+            ))
         
         template = self.get_quest_template(guild_id_str, quest_data["template_id"])
 
@@ -500,6 +583,191 @@ class QuestManager:
             
         self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
         # print(f"Quest '{quest_id_str}' failed for character '{character_id_str}'.")
+        return True
+
+    def complete_quest(self, guild_id: str, character_id: str, quest_id: str) -> bool: # Added self, made method non-async based on usage
+        """Marks a quest as completed if all objectives are met."""
+        guild_id_str = str(guild_id)
+        character_id_str = str(character_id)
+        quest_id_str = str(quest_id)
+
+        quest_data = self._active_quests.get(guild_id_str, {}).get(character_id_str, {}).get(quest_id_str)
+        if not quest_data:
+            print(f"Error: Active quest '{quest_id_str}' not found for character '{character_id_str}'.")
+            return False
+
+        if not self._are_all_objectives_complete(quest_data):
+            print(f"Quest '{quest_id_str}' cannot be completed: Not all objectives met.")
+            return False
+
+        old_quest_data_copy = quest_data.copy() # Capture state before modification
+
+        quest_data["status"] = "completed"
+        quest_data["completion_time"] = time.time()
+
+        if self._game_log_manager:
+            revert_data = {
+                "quest_id": quest_id_str,
+                "character_id": character_id_str,
+                "old_status": "active", # Assuming it was active before completion
+                "old_quest_data": old_quest_data_copy
+            }
+            log_details = {
+                "action_type": "QUEST_STATUS_CHANGE",
+                "quest_id": quest_id_str,
+                "new_status": "completed",
+                "revert_data": revert_data
+            }
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="QUEST_COMPLETED",
+                details=log_details,
+                player_id=character_id_str
+            ))
+
+        template = self.get_quest_template(guild_id_str, quest_data["template_id"])
+
+        if self._consequence_processor and template:
+            context = self._build_consequence_context(guild_id_str, character_id_str, quest_data)
+            consequences_value = template.get("consequences", {}).get("on_complete", [])
+            consequences_to_process: List[Dict[str, Any]] = []
+            if isinstance(consequences_value, dict):
+                consequences_to_process = [consequences_value]
+            elif isinstance(consequences_value, list):
+                consequences_to_process = consequences_value
+
+            if consequences_to_process:
+                self._consequence_processor.process_consequences(consequences_to_process, context)
+
+        self._completed_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, []).append(quest_id_str)
+        del self._active_quests[guild_id_str][character_id_str][quest_id_str]
+        if not self._active_quests[guild_id_str][character_id_str]:
+            del self._active_quests[guild_id_str][character_id_str]
+
+        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+        return True
+
+    async def revert_quest_start(self, guild_id: str, character_id: str, quest_id: str, **kwargs: Any) -> bool:
+        """Reverts the start of a quest for a character."""
+        guild_id_str = str(guild_id)
+        character_id_str = str(character_id)
+        quest_id_str = str(quest_id)
+
+        char_active_quests = self._active_quests.get(guild_id_str, {}).get(character_id_str, {})
+
+        if quest_id_str in char_active_quests:
+            del char_active_quests[quest_id_str]
+            # If the character's quest dict becomes empty, remove the character entry
+            if not char_active_quests:
+                if guild_id_str in self._active_quests and character_id_str in self._active_quests[guild_id_str]:
+                    del self._active_quests[guild_id_str][character_id_str]
+                # If the guild's active quest dict becomes empty, remove the guild entry
+                if guild_id_str in self._active_quests and not self._active_quests[guild_id_str]:
+                    del self._active_quests[guild_id_str]
+
+            self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+            print(f"QuestManager.revert_quest_start: Successfully reverted start of quest {quest_id_str} for character {character_id_str} in guild {guild_id_str}.")
+            return True
+        else:
+            print(f"QuestManager.revert_quest_start: Warning: Quest {quest_id_str} not found active for character {character_id_str} in guild {guild_id_str}. Cannot revert start.")
+            return False
+
+    async def revert_quest_status_change(self, guild_id: str, character_id: str, quest_id: str, old_status: str, old_quest_data: Dict[str, Any], **kwargs: Any) -> bool:
+        """Reverts a quest's status to a previous state."""
+        guild_id_str = str(guild_id)
+        character_id_str = str(character_id)
+        quest_id_str = str(quest_id)
+
+        char_active_quests = self._active_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, {})
+        char_completed_quests = self._completed_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, [])
+
+        # current_quest_data = char_active_quests.get(quest_id_str) # Not needed with current logic flow
+        is_currently_completed = quest_id_str in char_completed_quests
+        # is_currently_failed = ... (if you have a separate failed list)
+
+        if old_status == "active": # Reverting to 'active' (e.g., from completed/failed)
+            if is_currently_completed:
+                char_completed_quests[:] = [qid for qid in char_completed_quests if qid != quest_id_str]
+            # if is_currently_failed:
+            #     # remove from failed list
+            #     pass
+
+            # Restore the full quest data as it was when active
+            char_active_quests[quest_id_str] = old_quest_data.copy() # Store a copy
+            char_active_quests[quest_id_str]['status'] = old_status # Ensure status is correctly set
+            print(f"QuestManager.revert_quest_status_change: Quest {quest_id_str} for char {character_id_str} restored to active state from old data.")
+
+        elif quest_id_str in char_active_quests : # Reverting status of an already active quest to something else (e.g. active -> failed)
+            char_active_quests[quest_id_str]['status'] = old_status
+            # Potentially update other fields from old_quest_data if needed for this transition
+            # For example, if reverting from a specific stage back to 'active' but before objectives were done:
+            # char_active_quests[quest_id_str]['progress'] = old_quest_data.get('progress', {})
+            # char_active_quests[quest_id_str]['current_stage_id'] = old_quest_data.get('current_stage_id', 'start')
+            print(f"QuestManager.revert_quest_status_change: Quest {quest_id_str} for char {character_id_str} status changed to {old_status}.")
+
+            # If the new old_status is not 'active', it should be removed from active_quests
+            # and potentially added to completed_quests or a failed_quests list.
+            if old_status == "completed":
+                if quest_id_str not in char_completed_quests:
+                    char_completed_quests.append(quest_id_str)
+                del char_active_quests[quest_id_str] # Remove from active
+            elif old_status == "failed":
+                # Add to a failed list if one exists, then remove from active
+                # For now, just remove from active if changed to failed
+                del char_active_quests[quest_id_str]
+                print(f"QuestManager.revert_quest_status_change: Quest {quest_id_str} for char {character_id_str} moved to '{old_status}' and removed from active list.")
+
+
+        else: # Quest not in active_quests and old_status is not 'active'
+            print(f"QuestManager.revert_quest_status_change: Warning: Active quest {quest_id_str} not found for character {character_id_str} in guild {guild_id_str} to revert status to {old_status}.")
+            # If the quest is not in active list (e.g. it was completed/failed and removed),
+            # and we are reverting to a non-active status, this might be an issue or imply
+            # the quest should be moved to a different list (e.g. failed list if old_status is 'failed').
+            # This block handles if the quest should be, for example, 'failed' and it's not in active list.
+            if old_status == "completed":
+                if quest_id_str not in char_completed_quests:
+                    char_completed_quests.append(quest_id_str)
+                # Ensure it's not in active if it was somehow there
+                if quest_id_str in char_active_quests: del char_active_quests[quest_id_str]
+            elif old_status == "failed":
+                # Add to failed list if exists, ensure not in active/completed
+                if quest_id_str in char_active_quests: del char_active_quests[quest_id_str]
+                if quest_id_str in char_completed_quests:
+                    char_completed_quests[:] = [qid for qid in char_completed_quests if qid != quest_id_str]
+                # print(f"Quest {quest_id_str} for char {character_id_str} marked as '{old_status}' (was not active).")
+            else: # Unknown non-active old_status
+                print(f"QuestManager.revert_quest_status_change: Quest {quest_id_str} not active and old_status is '{old_status}'. No specific list to move to.")
+                return False
+
+
+        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+        print(f"QuestManager.revert_quest_status_change: Successfully reverted quest {quest_id_str} status to '{old_status}' for character {character_id_str} in guild {guild_id_str}.")
+        return True
+
+    async def revert_quest_progress_update(self, guild_id: str, character_id: str, quest_id: str, objective_id: str, old_progress: Any, **kwargs: Any) -> bool:
+        """Reverts the progress of a specific quest objective."""
+        guild_id_str = str(guild_id)
+        character_id_str = str(character_id)
+        quest_id_str = str(quest_id)
+        objective_id_str = str(objective_id)
+
+        quest_data = self._active_quests.get(guild_id_str, {}).get(character_id_str, {}).get(quest_id_str)
+
+        if not quest_data:
+            print(f"QuestManager.revert_quest_progress_update: Error: Active quest '{quest_id_str}' not found for character '{character_id_str}'. Cannot revert progress.")
+            return False
+
+        if quest_data.get("status") != "active":
+            print(f"QuestManager.revert_quest_progress_update: Warning: Quest '{quest_id_str}' for character '{character_id_str}' is not active (status: {quest_data.get('status')}). Cannot revert progress for objective {objective_id_str}.")
+            return False
+
+        if not isinstance(quest_data.get('progress'), dict):
+            quest_data['progress'] = {} # Initialize if not a dict
+
+        quest_data['progress'][objective_id_str] = old_progress
+
+        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+        print(f"QuestManager.revert_quest_progress_update: Successfully reverted progress for objective '{objective_id_str}' in quest '{quest_id_str}' to '{old_progress}' for character {character_id_str}.")
         return True
 
     # Instruction 12: load_state and save_state consistent with dict structure
@@ -756,13 +1024,36 @@ class QuestManager:
             new_progress = progress_update 
             
         quest_data.setdefault("progress", {})[objective_id_str] = new_progress
-        # print(f"Progress for objective '{objective_id_str}' in quest '{quest_id_str}' updated to {new_progress}.")
+        old_progress_value = quest_data.get("progress", {}).get(objective_id_str) # Capture before update
+
+        quest_data.setdefault("progress", {})[objective_id_str] = new_progress
+
+        if self._game_log_manager:
+            revert_data = {
+                "quest_id": quest_id_str,
+                "character_id": character_id_str,
+                "objective_id": objective_id_str,
+                "old_progress": old_progress_value
+            }
+            log_details = {
+                "action_type": "QUEST_PROGRESS_UPDATE",
+                "quest_id": quest_id_str,
+                "objective_id": objective_id_str,
+                "new_progress": new_progress,
+                "revert_data": revert_data
+            }
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="QUEST_PROGRESS_UPDATED",
+                details=log_details,
+                player_id=character_id_str
+            ))
+
         self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
 
         # Check for quest completion
         if self._are_all_objectives_complete(quest_data):
-            self.complete_quest(guild_id_str, character_id_str, quest_id_str)
-            # complete_quest handles consequences and state changes
+            self.complete_quest(guild_id_str, character_id_str, quest_id_str) # This is now synchronous
 
         return True
 
@@ -893,7 +1184,6 @@ class QuestManager:
         """
         Starts a new quest for a character using already validated and approved moderated data.
         This now also saves the quest to the generated_quests table.
-        This now also saves the quest to the generated_quests table.
         """
         from bot.game.models.quest import Quest # Local import for Quest model
         guild_id_str = str(guild_id)
@@ -901,42 +1191,44 @@ class QuestManager:
 
         print(f"QuestManager: Starting quest from moderated data for character {character_id_str} in guild {guild_id_str}.")
 
-        if not self._character_manager or not self._character_manager.get_character(guild_id_str, character_id_str):
+        if not self._character_manager or not await self._character_manager.get_character(guild_id_str, character_id_str): # ensure get_character is awaited if async
             print(f"Error: Character '{character_id_str}' not found in guild '{guild_id_str}'. Cannot start quest from moderated data.")
             return None
 
-        # Create a Quest object from the moderated data
-        # Ensure quest_data (which is validated AI output) has all necessary fields for Quest.from_dict
-        # or that Quest.from_dict has suitable defaults.
-        quest_data['guild_id'] = guild_id_str # Ensure guild_id is in the data for the model
-        quest_data['is_ai_generated'] = True   # Mark as AI-generated
-
-        # If 'id' is not in quest_data or is a placeholder, Quest.from_dict will generate one.
-        # If 'title_i18n' is in quest_data, Quest.from_dict will map it to name_i18n.
+        quest_data['guild_id'] = guild_id_str
+        quest_data['is_ai_generated'] = True
         quest_obj = Quest.from_dict(quest_data)
 
-        # Save the AI-generated quest to the 'generated_quests' table
         save_success = await self.save_generated_quest(quest_obj)
         if not save_success:
             print(f"QuestManager: Failed to save generated quest {quest_obj.id} to DB. Aborting start.")
             return None
 
-        # Add to _all_quests cache (if not already there due to loading, though saving implies new)
         self._all_quests.setdefault(guild_id_str, {})[quest_obj.id] = quest_obj
-
-        # Now, handle starting the quest for the character (active quests)
-        # Convert Quest object to dict for storing in _active_quests, to match existing structure.
         active_quest_data = quest_obj.to_dict()
-        # Ensure character_id and start_time are set for the active quest instance
         active_quest_data["character_id"] = character_id_str
         active_quest_data["start_time"] = time.time()
-        active_quest_data["status"] = "active" # Ensure it's active
-        # Ensure progress is initialized for the active instance if not already
+        active_quest_data["status"] = "active"
         active_quest_data.setdefault("progress", {})
 
-
         self._active_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, {})[quest_obj.id] = active_quest_data
-        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str) # Mark character's quests dirty
+        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+
+        # Logging for AI quest start (after moderation)
+        if self._game_log_manager:
+            revert_data = {"quest_id": active_quest_data['id'], "character_id": character_id_str}
+            log_details = {
+                "action_type": "QUEST_START",
+                "quest_id": active_quest_data['id'],
+                "template_id": active_quest_data.get('template_id', 'AI_GENERATED'),
+                "revert_data": revert_data
+            }
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="QUEST_STARTED",
+                details=log_details,
+                player_id=character_id_str
+            ))
 
         print(f"Quest '{quest_obj.name}' (ID: {quest_obj.id}) started from moderated data for char {character_id_str}.")
 

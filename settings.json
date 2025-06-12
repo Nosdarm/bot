@@ -1,0 +1,7 @@
+{
+    "discord_token": "DUMMY_TOKEN_FOR_TESTING_DO_NOT_USE",
+    "openai_api_key": "DUMMY_OPENAI_KEY",
+    "discord_command_prefix": "!",
+    "test_guild_ids": [],
+    "bot_admins": []
+}

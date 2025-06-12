@@ -316,7 +316,7 @@ class GameManager:
         except Exception as e: self.openai_service = None; print(f"GameManager: Warn: Failed OpenAIService init ({e})")
 
         self.event_manager = EventManager(db_service=self.db_service, settings=self._settings.get('event_settings', {}), openai_service=self.openai_service) # Changed
-        self.character_manager = CharacterManager(db_service=self.db_service, settings=self._settings.get('character_settings', {}), location_manager=self.location_manager, rule_engine=self.rule_engine) # Changed
+        self.character_manager = CharacterManager(db_service=self.db_service, settings=self._settings, location_manager=self.location_manager, rule_engine=self.rule_engine) # Changed
         print("GameManager: Core managers and OpenAI service initialized.")
 
     async def _initialize_dependent_managers(self):
@@ -422,18 +422,35 @@ class GameManager:
         from bot.game.managers.persistence_manager import PersistenceManager
         from bot.game.world_processors.world_simulation_processor import WorldSimulationProcessor
         from bot.game.command_router import CommandRouter
+        from bot.game.managers.undo_manager import UndoManager # Ensure import here if not at top
         # TurnProcessingService is imported at the top level
 
         self._on_enter_action_executor = OnEnterActionExecutor(npc_manager=self.npc_manager, item_manager=self.item_manager, combat_manager=self.combat_manager, status_manager=self.status_manager)
         self._stage_description_generator = StageDescriptionGenerator(openai_service=self.openai_service)
         self._event_stage_processor = EventStageProcessor(on_enter_action_executor=self._on_enter_action_executor, stage_description_generator=self._stage_description_generator, character_manager=self.character_manager, loc_manager=self.location_manager, rule_engine=self.rule_engine, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, party_manager=self.party_manager)
         self._event_action_processor = EventActionProcessor(event_stage_processor=self._event_stage_processor, event_manager=self.event_manager, character_manager=self.character_manager, loc_manager=self.location_manager, rule_engine=self.rule_engine, openai_service=self.openai_service, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, send_callback_factory=self._get_discord_send_callback, dialogue_manager=self.dialogue_manager, crafting_manager=self.crafting_manager, on_enter_action_executor=self._on_enter_action_executor, stage_description_generator=self._stage_description_generator)
-        self._character_action_processor = CharacterActionProcessor(character_manager=self.character_manager, send_callback_factory=self._get_discord_send_callback, item_manager=self.item_manager, location_manager=self.location_manager, rule_engine=self.rule_engine, time_manager=self.time_manager, combat_manager=self.combat_manager, status_manager=self.status_manager, party_manager=self.party_manager, npc_manager=self.npc_manager, event_stage_processor=self._event_stage_processor, event_action_processor=self._event_action_processor)
+        self._character_action_processor = CharacterActionProcessor(
+            character_manager=self.character_manager,
+            send_callback_factory=self._get_discord_send_callback,
+            item_manager=self.item_manager,
+            location_manager=self.location_manager,
+            rule_engine=self.rule_engine,
+            time_manager=self.time_manager,
+            combat_manager=self.combat_manager,
+            status_manager=self.status_manager,
+            party_manager=self.party_manager,
+            npc_manager=self.npc_manager,
+            event_stage_processor=self._event_stage_processor,
+            event_action_processor=self._event_action_processor,
+            game_log_manager=self.game_log_manager,
+            openai_service=self.openai_service,
+            event_manager=self.event_manager
+        )
         self._character_view_service = CharacterViewService(character_manager=self.character_manager, item_manager=self.item_manager, location_manager=self.location_manager, rule_engine=self.rule_engine, status_manager=self.status_manager, party_manager=self.party_manager)
         self._party_action_processor = PartyActionProcessor(party_manager=self.party_manager, send_callback_factory=self._get_discord_send_callback, rule_engine=self.rule_engine, location_manager=self.location_manager, character_manager=self.character_manager, npc_manager=self.npc_manager, time_manager=self.time_manager, combat_manager=self.combat_manager, event_stage_processor=self._event_stage_processor)
         if self.party_manager is None: self._party_action_processor = None
 
-        self.conflict_resolver = ConflictResolver(rule_engine=self.rule_engine, rules_config_data=self._rules_config_cache, notification_service="PlaceholderNotificationService", db_service=self.db_service, game_log_manager=self.game_log_manager) # Changed
+        self.conflict_resolver = ConflictResolver(rule_engine=self.rule_engine, notification_service="PlaceholderNotificationService", db_service=self.db_service, game_log_manager=self.game_log_manager) # Changed
         if self.character_manager and self.party_manager and self._party_action_processor:
             self._party_command_handler = PartyCommandHandler(character_manager=self.character_manager, party_manager=self.party_manager, party_action_processor=self._party_action_processor, settings=self._settings, npc_manager=self.npc_manager)
         else: self._party_command_handler = None
@@ -441,6 +458,23 @@ class GameManager:
         if self.db_service: # Changed
             self._persistence_manager = PersistenceManager(db_service=self.db_service, event_manager=self.event_manager, character_manager=self.character_manager, location_manager=self.location_manager, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, crafting_manager=self.crafting_manager, economy_manager=self.economy_manager, party_manager=self.party_manager) # Changed
         else: self._persistence_manager = None
+
+        # Initialize UndoManager after its dependencies are ready
+        if self.db_service and self.game_log_manager and self.character_manager and self.item_manager and self.quest_manager and self.party_manager:
+            self.undo_manager = UndoManager(
+                db_service=self.db_service,
+                game_log_manager=self.game_log_manager,
+                character_manager=self.character_manager,
+                item_manager=self.item_manager,
+                quest_manager=self.quest_manager,
+                party_manager=self.party_manager
+                # settings=self._settings # Pass settings if UndoManager needs them
+            )
+            print("GameManager: UndoManager initialized.")
+        else:
+            print("GameManager: CRITICAL - UndoManager could not be initialized due to missing dependencies.")
+            self.undo_manager = None
+
 
         self._world_simulation_processor = WorldSimulationProcessor(event_manager=self.event_manager, character_manager=self.character_manager, location_manager=self.location_manager, rule_engine=self.rule_engine, openai_service=self.openai_service, event_stage_processor=self._event_stage_processor, event_action_processor=self._event_action_processor, persistence_manager=self._persistence_manager, settings=self._settings, send_callback_factory=self._get_discord_send_callback, character_action_processor=self._character_action_processor, party_action_processor=self._party_action_processor, npc_manager=self.npc_manager, combat_manager=self.combat_manager, item_manager=self.item_manager, time_manager=self.time_manager, status_manager=self.status_manager, crafting_manager=self.crafting_manager, economy_manager=self.economy_manager, dialogue_manager=self.dialogue_manager, quest_manager=self.quest_manager, relationship_manager=self.relationship_manager, game_log_manager=self.game_log_manager, multilingual_prompt_generator=self.multilingual_prompt_generator)
 
@@ -458,7 +492,7 @@ class GameManager:
             else: await self.campaign_loader.load_and_populate_items()
 
         if self._persistence_manager:
-            load_context_kwargs = {k: getattr(self, k, None) for k in ['rule_engine', 'time_manager', 'location_manager', 'event_manager', 'character_manager', 'item_manager', 'status_manager', 'combat_manager', 'crafting_manager', 'economy_manager', 'npc_manager', 'party_manager', 'openai_service', 'quest_manager', 'relationship_manager', 'dialogue_manager', 'game_log_manager', 'lore_manager', 'campaign_loader', 'consequence_processor', '_on_enter_action_executor', '_stage_description_generator', '_event_stage_processor', '_event_action_processor', '_character_action_processor', '_character_view_service', '_party_action_processor', '_persistence_manager', '_world_simulation_processor', 'conflict_resolver', 'db_service', 'nlu_data_service', 'ability_manager', 'spell_manager', 'prompt_context_collector', 'multilingual_prompt_generator']} # Removed _db_adapter
+            load_context_kwargs = {k: getattr(self, k, None) for k in ['rule_engine', 'time_manager', 'location_manager', 'event_manager', 'character_manager', 'item_manager', 'status_manager', 'combat_manager', 'crafting_manager', 'economy_manager', 'npc_manager', 'party_manager', 'openai_service', 'quest_manager', 'relationship_manager', 'dialogue_manager', 'game_log_manager', 'lore_manager', 'campaign_loader', 'consequence_processor', '_on_enter_action_executor', '_stage_description_generator', '_event_stage_processor', '_event_action_processor', '_character_action_processor', '_character_view_service', '_party_action_processor', '_persistence_manager', '_world_simulation_processor', 'conflict_resolver', 'db_service', 'nlu_data_service', 'ability_manager', 'spell_manager', 'prompt_context_collector', 'multilingual_prompt_generator', 'undo_manager']} # Added undo_manager to context
             load_context_kwargs.update({'send_callback_factory': self._get_discord_send_callback, 'settings': self._settings, 'discord_client': self._discord_client})
             await self._persistence_manager.load_game_state(guild_ids=self._active_guild_ids, **load_context_kwargs)
         print("GameManager: Initial data and game state loaded.")
@@ -1062,11 +1096,12 @@ class GameManager:
         This might involve just creating the character or setting up an initial session state.
         For now, it primarily delegates to CharacterManager.create_character.
         """
+        print(f"GameManager: Attempting to start new character session for user {user_id} in guild {guild_id} with name {character_name}.")
         if not self.character_manager:
             print("GameManager: CharacterManager not available. Cannot start new character session.")
             return None
 
-        print(f"GameManager: Starting new character session for user {user_id} in guild {guild_id} with name {character_name}")
+        # print(f"GameManager: Starting new character session for user {user_id} in guild {guild_id} with name {character_name}") # Original log, now covered by the one above
         try:
             # import traceback # Already imported at the top of the file
             character = await self.character_manager.create_character(
@@ -1077,9 +1112,13 @@ class GameManager:
                 # are handled by CharacterManager.create_character using its defaults or settings.
             )
             if character:
-                print(f"GameManager: Successfully created character {character.id} for user {user_id}.")
+                # Safely access attributes for logging
+                char_id_log = getattr(character, 'id', "N/A")
+                char_name_log = getattr(character, 'name', "N/A")
+                char_loc_id_log = getattr(character, 'location_id', "N/A") # or current_location_id depending on model
+                print(f"GameManager: Successfully started new character session. Character ID: {char_id_log}, Name: {char_name_log}, Location ID: {char_loc_id_log}.")
             else:
-                print(f"GameManager: Failed to create character for user {user_id}.")
+                print(f"GameManager: Failed to start new character session for user {user_id}, character creation failed.")
             return character
         except Exception as e:
             print(f"GameManager: Error in start_new_character_session for user {user_id}: {e}")

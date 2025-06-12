@@ -28,6 +28,23 @@ class DBService:
         """Initializes the database schema by running migrations."""
         await self.adapter.initialize_database()
 
+    async def get_global_state_value(self, key: str) -> Optional[str]:
+        """Fetches a single value from the global_state table."""
+        # global_state table has 'key' and 'value' columns.
+        if not self.adapter:
+            print("DBService: Adapter not available for get_global_state_value.")
+            return None
+        sql = "SELECT value FROM global_state WHERE key = $1"
+        try:
+            row = await self.adapter.fetchone(sql, (key,))
+            if row and row.get('value') is not None:
+                return str(row['value'])
+        except Exception as e:
+            print(f"DBService: Error fetching global state for key '{key}': {e}")
+            # import traceback # Already imported
+            traceback.print_exc()
+        return None
+
     # _row_to_dict and _rows_to_dicts are no longer needed as PostgresAdapter
     # methods fetchone() and fetchall() return dicts directly.
 
@@ -211,22 +228,29 @@ class DBService:
 
     # --- Item Definition Management (using 'item_templates' table) ---
 
-    async def create_item_definition( # Renamed from create_item_template
-        self, item_id: str, name: str, description: str,
+    async def create_item_definition(
+        self, item_id: str, name: str, description: str, # name and description are now plain strings
         item_type: str, effects: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         """Creates a new item definition in 'item_templates'."""
         properties_data = {'effects': effects} if effects else {}
-        # PostgresAdapter uses $1, $2 placeholders.
+
+        # Prepare i18n JSON for name and description
+        # Assuming 'en' and 'ru' are desired default languages for now.
+        # A more robust solution might get default languages from settings.
+        name_i18n_json = json.dumps({"en": name, "ru": name})
+        description_i18n_json = json.dumps({"en": description, "ru": description})
+
         sql = """
-            INSERT INTO item_templates (id, name, description, type, properties)
+            INSERT INTO item_templates (id, name_i18n, description_i18n, type, properties)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id;
-        """ # Added RETURNING id
-        params = (item_id, name, description, item_type, json.dumps(properties_data))
+        """
+        # Parameters match the new SQL query structure
+        params = (item_id, name_i18n_json, description_i18n_json, item_type, json.dumps(properties_data))
         inserted_id = await self.adapter.execute_insert(sql, params)
         if inserted_id:
-            return await self.get_item_definition(item_id) # Fetch using original item_id
+            return await self.get_item_definition(item_id)
         return None
 
     async def get_item_definition(self, item_id: str) -> Optional[Dict[str, Any]]: # Renamed from get_item_template

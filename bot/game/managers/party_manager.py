@@ -1284,6 +1284,181 @@ class PartyManager:
         report_parts.append("End of Turn.")
         return "\n".join(report_parts)
 
+    async def revert_party_creation(self, guild_id: str, party_id: str, **kwargs: Any) -> bool:
+        """Reverts the creation of a party by removing it."""
+        party = self.get_party(guild_id, party_id)
+        if not party:
+            print(f"PartyManager.revert_party_creation: Party {party_id} not found in guild {guild_id}. Assumed already removed.")
+            return True # Or False if strict "was found then removed" is required
+
+        removed_id = await self.remove_party(party_id, guild_id, **kwargs)
+        if removed_id:
+            print(f"PartyManager.revert_party_creation: Party {party_id} in guild {guild_id} removed to revert creation.")
+            return True
+        else:
+            print(f"PartyManager.revert_party_creation: Failed to remove party {party_id} in guild {guild_id} during creation revert.")
+            return False
+
+    async def recreate_party_from_data(self, guild_id: str, party_data: Dict[str, Any], **kwargs: Any) -> bool:
+        """Recreates a party from provided data."""
+        leader_id = party_data.get('leader_id')
+        # player_ids_list should be used for member_ids based on Party model and create_party
+        member_ids = party_data.get('player_ids_list', party_data.get('member_ids', []))
+
+        if not leader_id or not member_ids:
+            print(f"PartyManager.recreate_party_from_data: Missing leader_id or member_ids in party_data for guild {guild_id}.")
+            return False
+
+        # Call create_party with core identifiable information
+        # create_party returns a Party object or None
+        recreated_party_obj = await self.create_party(
+            leader_id=str(leader_id),
+            member_ids=[str(mid) for mid in member_ids], # Ensure all member IDs are strings
+            guild_id=guild_id,
+            # Pass other relevant fields from party_data if create_party supports them directly
+            name=party_data.get('name', f"Party of {leader_id}"), # create_party takes name
+            current_location_id=party_data.get('current_location_id'), # create_party takes current_location_id
+            initial_state_variables=party_data.get('state_variables', {}), # create_party takes initial_state_variables
+            **kwargs # Pass along any other context
+        )
+
+        if not recreated_party_obj:
+            print(f"PartyManager.recreate_party_from_data: Failed to create party using create_party for guild {guild_id}, leader {leader_id}.")
+            return False
+
+        # The party object is already in cache and marked dirty by create_party.
+        # Now, update other fields from party_data onto the recreated_party_obj
+
+        # name_i18n is handled by Party.from_dict if 'name' is passed to create_party and i18n is generated there.
+        # If party_data has a specific name_i18n, set it:
+        if 'name_i18n' in party_data and isinstance(party_data['name_i18n'], dict):
+            recreated_party_obj.name_i18n = party_data['name_i18n']
+            # If 'name' was based on leader_id, ensure the primary lang in name_i18n reflects the actual name
+            # This depends on how Party model handles name vs name_i18n consistency.
+
+        if 'turn_status' in party_data:
+            recreated_party_obj.turn_status = party_data['turn_status']
+        if 'current_action' in party_data: # Can be None
+            recreated_party_obj.current_action = party_data['current_action']
+
+        # state_variables were set by initial_state_variables in create_party.
+        # If party_data has a more complete 'state_variables' (e.g. with action_queue), update it.
+        if 'state_variables' in party_data and isinstance(party_data['state_variables'], dict):
+            recreated_party_obj.state_variables.update(party_data['state_variables'])
+
+
+        # Ensure it's marked dirty again if any post-creation updates were made
+        self.mark_party_dirty(guild_id, recreated_party_obj.id)
+        print(f"PartyManager.recreate_party_from_data: Party {recreated_party_obj.id} (Leader: {leader_id}) recreated and updated in guild {guild_id}.")
+        return True
+
+    async def revert_party_member_add(self, guild_id: str, party_id: str, member_id: str, **kwargs: Any) -> bool:
+        """Reverts the addition of a member to a party by removing them."""
+        party = self.get_party(guild_id, party_id)
+        if not party:
+            print(f"PartyManager.revert_party_member_add: Party {party_id} not found in guild {guild_id}.")
+            return False # Or True if "member already not there" is success for revert
+
+        # Use existing remove_member_from_party, passing context from kwargs
+        context = kwargs
+        removed_successfully = await self.remove_member_from_party(party_id, member_id, guild_id, context)
+
+        if removed_successfully:
+            print(f"PartyManager.revert_party_member_add: Member {member_id} removed from party {party_id} in guild {guild_id} to revert add.")
+        else:
+            # This could happen if member was not found, or if party didn't exist (caught above).
+            # remove_member_from_party already prints messages for these cases.
+            print(f"PartyManager.revert_party_member_add: Failed to remove member {member_id} from party {party_id} (or member was not in party).")
+        return removed_successfully
+
+
+    async def revert_party_member_remove(self, guild_id: str, party_id: str, member_id: str, old_leader_id_if_changed: Optional[str], **kwargs: Any) -> bool:
+        """Reverts the removal of a member from a party by adding them back. Also handles leader reversion if applicable."""
+        party = self.get_party(guild_id, party_id)
+        if not party:
+            print(f"PartyManager.revert_party_member_remove: Party {party_id} not found in guild {guild_id}. Cannot add member back.")
+            return False
+
+        # Use existing add_member_to_party, passing context from kwargs
+        context = kwargs
+        added_successfully = await self.add_member_to_party(party_id, member_id, guild_id, context)
+
+        if not added_successfully:
+            print(f"PartyManager.revert_party_member_remove: Failed to add member {member_id} back to party {party_id} in guild {guild_id}.")
+            return False
+
+        print(f"PartyManager.revert_party_member_remove: Member {member_id} added back to party {party_id} in guild {guild_id}.")
+
+        if old_leader_id_if_changed:
+            if hasattr(party, 'leader_id') and member_id in party.player_ids_list: # Ensure member is part of list before making leader
+                party.leader_id = old_leader_id_if_changed
+                self.mark_party_dirty(guild_id, party_id)
+                print(f"PartyManager.revert_party_member_remove: Party {party_id} leader reverted to {old_leader_id_if_changed}.")
+            else:
+                print(f"PartyManager.revert_party_member_remove: Could not revert leader for party {party_id} to {old_leader_id_if_changed} (member not in party or leader_id attr missing).")
+                # This might be an issue if leader reversion fails but member add succeeded.
+                # For now, consider overall success if member was added.
+
+        return True # Primary action (add member) was successful
+
+    async def revert_party_leader_change(self, guild_id: str, party_id: str, old_leader_id: str, **kwargs: Any) -> bool:
+        """Reverts the leader of a party to a previous leader."""
+        party = self.get_party(guild_id, party_id)
+        if not party:
+            print(f"PartyManager.revert_party_leader_change: Party {party_id} not found in guild {guild_id}.")
+            return False
+
+        if not hasattr(party, 'leader_id'):
+            print(f"PartyManager.revert_party_leader_change: Party {party_id} does not have 'leader_id' attribute.")
+            return False
+
+        # Ensure the old leader is still a member of the party
+        if not hasattr(party, 'player_ids_list') or old_leader_id not in party.player_ids_list:
+            print(f"PartyManager.revert_party_leader_change: Cannot revert leader for party {party_id} to {old_leader_id} as they are not in the party's member list.")
+            return False
+
+        party.leader_id = old_leader_id
+        self.mark_party_dirty(guild_id, party_id)
+        print(f"PartyManager.revert_party_leader_change: Reverted leader for party {party_id} to {old_leader_id} in guild {guild_id}.")
+        return True
+
+    async def revert_party_location_change(self, guild_id: str, party_id: str, old_location_id: Optional[str], **kwargs: Any) -> bool:
+        """Reverts the location of a party."""
+        party = self.get_party(guild_id, party_id)
+        if not party:
+            print(f"PartyManager.revert_party_location_change: Party {party_id} not found in guild {guild_id}.")
+            return False
+
+        if not hasattr(party, 'current_location_id'):
+            # This case should ideally not happen if the model is consistent.
+            # If it means the location was previously None, and old_location_id is also None, it's a no-op.
+            # If old_location_id is not None, we are setting it.
+            print(f"PartyManager.revert_party_location_change: Party {party_id} missing 'current_location_id' attribute. Setting to {old_location_id}.")
+            # setattr(party, 'current_location_id', old_location_id) # Dynamically add if allowed by model
+            # For now, assume Party model always has current_location_id, possibly None.
+            # If it's missing, it's a model inconsistency.
+
+        party.current_location_id = old_location_id
+        self.mark_party_dirty(guild_id, party_id)
+        print(f"PartyManager.revert_party_location_change: Reverted location for party {party_id} to {old_location_id} in guild {guild_id}.")
+        return True
+
+    async def revert_party_turn_status_change(self, guild_id: str, party_id: str, old_turn_status: str, **kwargs: Any) -> bool:
+        """Reverts the turn_status of a party."""
+        party = self.get_party(guild_id, party_id)
+        if not party:
+            print(f"PartyManager.revert_party_turn_status_change: Party {party_id} not found in guild {guild_id}.")
+            return False
+
+        if not hasattr(party, 'turn_status'):
+            print(f"PartyManager.revert_party_turn_status_change: Party {party_id} does not have 'turn_status' attribute.")
+            return False # Cannot revert if attribute doesn't exist
+
+        party.turn_status = old_turn_status
+        self.mark_party_dirty(guild_id, party_id)
+        print(f"PartyManager.revert_party_turn_status_change: Reverted turn_status for party {party_id} to '{old_turn_status}' in guild {guild_id}.")
+        return True
+
 # --- Конец класса PartyManager ---
 
     async def save_party(self, party: "Party", guild_id: str) -> bool:

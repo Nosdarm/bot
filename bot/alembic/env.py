@@ -2,11 +2,7 @@ import sys
 from os.path import abspath, dirname
 import asyncio
 
-# This adds the project root (directory containing 'bot') to sys.path
-# Ensure this path correction is correct for your project structure.
-# For example, if env.py is in 'migrations/' and 'bot' is in the parent directory,
-# this line might be needed:
-sys.path.insert(0, dirname(dirname(abspath(__file__))))
+# sys.path.insert(0, dirname(dirname(abspath(__file__)))) # Relying on prepend_sys_path in alembic.ini
 
 # --- BEGIN: Import models to populate metadata ---
 # You need to import the actual modules where your models are defined.
@@ -18,6 +14,15 @@ import bot.database.models # Assuming importing the package imports the relevant
 # import bot.database.models.user
 # import bot.database.models.item
 # ... import all other model modules ...
+
+# Explicitly import all model classes to ensure they are registered with Base.metadata
+from bot.database.models import (
+    Base, Player, Location, Timer, Event, Party, RulesConfig, GeneratedLocation,
+    ItemTemplate, LocationTemplate, NPC, GeneratedNpc, GeneratedFaction, GeneratedQuest,
+    Item, Inventory, Combat, GlobalState, GameLog, Relationship, PlayerNpcMemory,
+    Ability, Skill, Status, CraftingQueue, ItemProperty, Questline, QuestStep, MobileGroup,
+    PendingConflict # Added new model
+)
 
 # If your models are defined within the bot.database.models package,
 # ensure that __init__.py in that package imports the actual model modules
@@ -33,12 +38,13 @@ from sqlalchemy import engine_from_config, pool
 from sqlalchemy.ext.asyncio import create_async_engine
 from alembic import context
 
-# assuming 'Base' is defined in bot.database.models and has a 'metadata' attribute
-from bot.database.models import Base
-
-# this is the MetaData object that Alembic will use for comparison
+# Base is already imported above. Now assign its metadata.
+# All model classes imported above must have been defined for Base.metadata to be complete.
 target_metadata = Base.metadata
-print(f"DEBUG env.py: Tables in target_metadata: {list(target_metadata.tables.keys())}")
+
+# Debug print to check the tables detected by Alembic via Base.metadata
+print(f"DEBUG env.py: Tables in target_metadata before Alembic context: {list(target_metadata.tables.keys())}")
+sys.stdout.flush()
 
 # Ensure target_metadata is now populated. You could add a print here *before*
 # the function definitions if you want to verify it *outside* the function.

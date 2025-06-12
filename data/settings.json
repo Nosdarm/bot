@@ -1,4 +1,5 @@
 {
+  "default_start_location_id": "town_square",
   "main_bot_language": "ru",
   "npc_generation_ai_settings": {
     "max_tokens": 2000,
@@ -578,6 +579,55 @@
       }
     }
   },
+  "rules_config": {
+    "combat_rules": {
+      "initiative_formula": "dexterity_modifier + perception_modifier/2",
+      "surprise_round": {
+        "enabled": true,
+        "perception_dc_vs_stealth": true
+      },
+      "attack_roll_formula": "1d20 + attack_bonus + primary_stat_modifier + proficiency_bonus",
+      "damage_calculation": {
+        "base_damage": "weapon_dice_or_spell_damage",
+        "stat_modifier_applies": true,
+        "critical_hit_multiplier": 2.0,
+        "resistances": {
+          "physical": 0.5,
+          "fire": 0.75
+        },
+        "vulnerabilities": {
+          "bludgeoning": 1.5,
+          "cold": 2.0
+        },
+        "immunities": [
+          "poison_gas"
+        ],
+        "damage_types": [
+          "slashing",
+          "piercing",
+          "bludgeoning",
+          "fire",
+          "cold",
+          "lightning",
+          "acid",
+          "poison",
+          "necrotic",
+          "radiant",
+          "psychic",
+          "force",
+          "arcane"
+        ]
+      },
+      "armor_class_calculation": "base_ac_from_armor + dexterity_modifier (up_to_max) + shield_bonus + other_bonuses",
+      "death_and_dying": {
+        "dying_condition_at_zero_hp": true,
+        "death_saves_dc": 10,
+        "max_failures": 3,
+        "stabilize_on_successes": 3,
+        "death_on_massive_damage_threshold": 50
+      }
+    }
+  },
   "game_rules": {
     "general_settings": {
       "max_character_level": 20,
@@ -719,53 +769,6 @@
         "equipment_bonus",
         "situational_context"
       ]
-    },
-    "combat_rules": {
-      "initiative_formula": "dexterity_modifier + perception_modifier/2",
-      "surprise_round": {
-        "enabled": true,
-        "perception_dc_vs_stealth": true
-      },
-      "attack_roll_formula": "1d20 + attack_bonus + primary_stat_modifier + proficiency_bonus",
-      "damage_calculation": {
-        "base_damage": "weapon_dice_or_spell_damage",
-        "stat_modifier_applies": true,
-        "critical_hit_multiplier": 2.0,
-        "resistances": {
-          "physical": 0.5,
-          "fire": 0.75
-        },
-        "vulnerabilities": {
-          "bludgeoning": 1.5,
-          "cold": 2.0
-        },
-        "immunities": [
-          "poison_gas"
-        ],
-        "damage_types": [
-          "slashing",
-          "piercing",
-          "bludgeoning",
-          "fire",
-          "cold",
-          "lightning",
-          "acid",
-          "poison",
-          "necrotic",
-          "radiant",
-          "psychic",
-          "force",
-          "arcane"
-        ]
-      },
-      "armor_class_calculation": "base_ac_from_armor + dexterity_modifier (up_to_max) + shield_bonus + other_bonuses",
-      "death_and_dying": {
-        "dying_condition_at_zero_hp": true,
-        "death_saves_dc": 10,
-        "max_failures": 3,
-        "stabilize_on_successes": 3,
-        "death_on_massive_damage_threshold": 50
-      }
     },
     "status_effect_rules": {
       "stacking_rules": {

@@ -98,6 +98,9 @@ class NPC:
     # Guild ID
     guild_id: Optional[str] = None
 
+    # Role of the NPC in combat or social interactions (e.g., 'tank', 'healer', 'merchant', 'quest_giver')
+    role: Optional[str] = None
+
     # Relationships with other entities
     relationships: Dict[str, Any] = field(default_factory=dict)
 
@@ -195,6 +198,7 @@ class NPC:
 
             'visual_description_i18n': self.visual_description_i18n,
             'guild_id': self.guild_id,
+            'role': self.role, # Added role attribute
             'relationships': self.relationships, # Already existed
             'is_ai_generated': self.is_ai_generated,
             # 'ai_state': self.ai_state,
@@ -333,6 +337,7 @@ class NPC:
         visual_description_i18n = data.get('visual_description_i18n', {"en": "", "ru": ""}) or {"en": "", "ru": ""}
 
         guild_id_val = data.get('guild_id')
+        role_val = data.get('role') # Added role attribute, defaults to None if not found
         relationships_val = data.get('relationships', {}) or {} # Legacy relationships
         is_ai_generated_val = bool(data.get('is_ai_generated', False))
 
@@ -377,6 +382,7 @@ class NPC:
             # raw_ai_data=raw_ai_data,
 
             guild_id=guild_id_val, # Use the value extracted earlier
+            role=role_val, # Added role attribute
             relationships=relationships_val, # Use the value extracted earlier
             is_ai_generated=is_ai_generated_val,
             # TODO: Передайте другие поля в конструктор

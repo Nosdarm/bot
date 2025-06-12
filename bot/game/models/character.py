@@ -67,6 +67,7 @@ class Character:
 
 
     def __post_init__(self):
+        print(f"Character.__post_init__: Character {self.id} initialized. self.location_id: {self.location_id}, type: {type(self.location_id)}")
         # Ensure basic stats are present if not provided, especially health/max_health
         # This also helps bridge the gap if health/max_health were not in stats from older data.
         if 'hp' not in self.stats:
@@ -128,7 +129,7 @@ class Character:
             'name_i18n': data.get('name_i18n'),
             'guild_id': data.get('guild_id'),
             'selected_language': data.get('selected_language', "en"), # Default to "en"
-            'location_id': data.get('location_id'),
+            'location_id': data.get('current_location_id', data.get('location_id')),
             'stats': data.get('stats', {}),
             'inventory': data.get('inventory', []),
             'current_action': data.get('current_action'),
@@ -170,6 +171,7 @@ class Character:
              init_data['stats']['hp'] = init_data['hp']
         if 'max_health' not in init_data['stats'] and 'max_health' in init_data:
              init_data['stats']['max_health'] = init_data['max_health']
+        print(f"Character.from_dict: Initializing Character {init_data.get('id')}. location_id in init_data: {init_data.get('location_id')}, type: {type(init_data.get('location_id'))}")
         return cls(**init_data)
 
     def to_dict(self) -> Dict[str, Any]:
