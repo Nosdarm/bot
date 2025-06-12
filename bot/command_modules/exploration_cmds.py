@@ -34,6 +34,8 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
         if not game_mngr.character_manager: # Dependent manager check
             await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
             return
+
+        action_data = {"target": target} if target else {}
         
         player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
@@ -68,23 +70,23 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
 
                     # Define the context for process_move_action
                     move_context = {
-                            'guild_id': str(interaction.guild_id),
-                            'author_id': str(interaction.user.id), # For logging or checks within the action
-                            'channel_id': interaction.channel_id, # For notifications or context
-                            'game_manager': gm,
-                            'character_manager': gm.character_manager,
-                            'location_manager': gm.location_manager,
-                            'rule_engine': gm.rule_engine,
-                            'time_manager': gm.time_manager,
-                            'openai_service': gm.openai_service,
-                        }
+                        'guild_id': str(interaction.guild_id),
+                        'author_id': str(interaction.user.id), # For logging or checks within the action
+                        'channel_id': interaction.channel_id, # For notifications or context
+                        'game_manager': gm,
+                        'character_manager': gm.character_manager,
+                        'location_manager': gm.location_manager,
+                        'rule_engine': gm.rule_engine,
+                        'time_manager': gm.time_manager,
+                        'openai_service': gm.openai_service,
+                    }
 
-                        # Call process_move_action
-                        move_result = await cap.process_move_action(
-                            character_id=char_id,
-                            target_location_id=target_loc_id,
-                            context=move_context
-                        )
+                    # Call process_move_action
+                    move_result = await cap.process_move_action(
+                        character_id=char_id,
+                        target_location_id=target_loc_id,
+                        context=move_context
+                    )
 
                     response_message = "Вы не смогли переместиться." # Default if no message in result
                     if move_result and move_result.get("message"):

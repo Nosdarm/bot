@@ -232,8 +232,24 @@ class LocationManager:
         return None # Placeholder
 
     def get_default_location_id(self, guild_id: str) -> Optional[str]:
-        # ... (existing get_default_location_id logic - assuming it's correct) ...
-        return None # Placeholder
+        """Получить ID дефолтной начальной локации для данной гильдии."""
+        guild_id_str = str(guild_id)
+        guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
+        default_id = guild_settings.get('default_start_location_id')
+        if default_id is None:
+             default_id = self._settings.get('default_start_location_id')
+
+        if isinstance(default_id, (str, int)):
+             default_id_str = str(default_id)
+             if self.get_location_instance(guild_id_str, default_id_str):
+                 print(f"LocationManager: Found default start location instance ID '{default_id_str}' in settings for guild {guild_id_str}.")
+                 return default_id_str
+             else:
+                 print(f"LocationManager: Warning: Default start location instance ID '{default_id_str}' found in settings for guild {guild_id_str}, but no corresponding instance exists.")
+                 return None
+
+        print(f"LocationManager: Warning: Default start location setting ('default_start_location_id') not found or is invalid for guild {guild_id_str}.")
+        return None
 
     async def move_entity(self, guild_id: str, entity_id: str, entity_type: str, from_location_id: Optional[str], to_location_id: str, **kwargs: Any) -> bool:
         # ... (existing move_entity logic - assuming it's correct) ...
