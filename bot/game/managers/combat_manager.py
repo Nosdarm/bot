@@ -748,38 +748,100 @@ class CombatManager:
 
 
         # XP Awarding
-        if character_manager:
+        if character_manager and self._rule_engine and npc_manager:
             player_characters_in_combat = [p for p in combat.participants if p.entity_type == "Character"]
-            defeated_npcs = [p for p in combat.participants if p.entity_type == "NPC" and p.hp <= 0]
+            defeated_npcs_participants = [p for p in combat.participants if p.entity_type == "NPC" and p.hp <= 0]
 
             total_xp_yield = 0
             experience_rules = rules_data.get('experience_rules', {})
-            xp_per_npc_cr = experience_rules.get('xp_per_npc_cr', {}) # Example: {"1": 50, "2": 100}
+            combat_xp_rules = experience_rules.get('xp_awards', {}).get('combat', {})
+            xp_map_per_cr = combat_xp_rules.get('xp_per_npc_cr', {})
+            base_xp_per_kill_fallback = combat_xp_rules.get('base_xp_per_kill', 0)
 
-            for defeated_npc_participant in defeated_npcs:
-                npc_model = npc_manager.get_npc(guild_id_str, defeated_npc_participant.entity_id) if npc_manager else None
+            for defeated_npc_p_data in defeated_npcs_participants:
+                npc_model = npc_manager.get_npc(guild_id_str, defeated_npc_p_data.entity_id)
                 if npc_model:
-                    # npc_cr = getattr(npc_model, 'challenge_rating', 1) # Assuming NPC model has CR
-                    # Using effective stats might be more dynamic, e.g. npc_level from stats
-                    # For now, let's assume a simple fixed XP or CR-based from rules.
-                    # This part needs more definition on how NPC difficulty translates to XP.
-                    # Using a placeholder value if specific rules are not found.
-                    npc_xp_value = experience_rules.get('base_xp_per_kill', 25)
-                    # Example: if npc_cr in xp_per_npc_cr: npc_xp_value = xp_per_npc_cr[str(npc_cr)]
+                    npc_stats = getattr(npc_model, 'stats', {})
+                    if not isinstance(npc_stats, dict): npc_stats = {}
+
+                    # Try to get CR, could be string or number, ensure string for map lookup
+                    npc_cr_any_type = npc_stats.get('challenge_rating', npc_stats.get('cr'))
+                    npc_cr_str = str(npc_cr_any_type) if npc_cr_any_type is not None else None
+
+                    npc_xp_value = 0
+                    if npc_cr_str and npc_cr_str in xp_map_per_cr:
+                        npc_xp_value = xp_map_per_cr[npc_cr_str]
+                    elif isinstance(npc_cr_any_type, float) and str(int(npc_cr_any_type)) in xp_map_per_cr and npc_cr_any_type == int(npc_cr_any_type): # handle "1.0" vs "1"
+                        npc_xp_value = xp_map_per_cr[str(int(npc_cr_any_type))]
+                    else:
+                        npc_xp_value = base_xp_per_kill_fallback
+
                     total_xp_yield += npc_xp_value
-                    if game_log_manager: await game_log_manager.log_debug(f"NPC {npc_model.id} defeated, yielding {npc_xp_value} XP.", guild_id=guild_id_str, combat_id=combat_id)
+                    if game_log_manager:
+                        await game_log_manager.log_debug(
+                            f"NPC {npc_model.id} (CR: {npc_cr_str or 'N/A'}) defeated, base XP value: {npc_xp_value}. Total XP yield now: {total_xp_yield}",
+                            guild_id=guild_id_str, combat_id=combat_id
+                        )
 
             if total_xp_yield > 0:
-                winning_player_characters = [p.entity_id for p in player_characters_in_combat if p.entity_id in winning_entity_ids and p.hp > 0]
-                if winning_player_characters:
-                    xp_distribution_rule = experience_rules.get('xp_distribution_rule', "even_split")
-                    xp_per_winner = total_xp_yield // len(winning_player_characters) if xp_distribution_rule == "even_split" else total_xp_yield # Fallback
+                # Filter for player characters who are among the winners and are still alive (or considered eligible)
+                winning_player_character_ids = [
+                    p.entity_id for p in player_characters_in_combat
+                    if p.entity_id in winning_entity_ids and p.hp > 0 # Typically only alive winners get XP
+                ]
 
-                    for char_id in winning_player_characters:
-                        await character_manager.add_experience(guild_id_str, char_id, xp_per_winner)
-                        if game_log_manager: await game_log_manager.log_info(f"Character {char_id} awarded {xp_per_winner} XP.", guild_id=guild_id_str, combat_id=combat_id, character_id=char_id)
+                if winning_player_character_ids:
+                    # participant_distribution_rule from new settings
+                    participant_distribution_rule = combat_xp_rules.get('participant_distribution_rule', "even_split")
+
+                    xp_per_winner = 0
+                    if participant_distribution_rule == "even_split":
+                        xp_per_winner = total_xp_yield // len(winning_player_character_ids) if len(winning_player_character_ids) > 0 else 0
+                    else: # Add other rules like "solo_credit_highest_damage" or "full_to_all" if needed
+                        xp_per_winner = total_xp_yield # Fallback or other rule
+
+                    if xp_per_winner > 0:
+                        for char_id in winning_player_character_ids:
+                            character_obj = character_manager.get_character(guild_id_str, char_id)
+                            if character_obj:
+                                # Pass the full context, RuleEngine might need notification_service from it
+                                await self._rule_engine.award_experience(
+                                    character=character_obj,
+                                    amount=xp_per_winner,
+                                    source_type="combat",
+                                    guild_id=guild_id_str,
+                                    source_id="combat_encounter_rewards", # Generic, as CR calculation is done here
+                                    **context
+                                )
+                                # GameLogManager inside award_experience will log the XP award and level up
+                                if game_log_manager:
+                                     await game_log_manager.log_info(
+                                         f"Character {character_obj.name} ({char_id}) processed for {xp_per_winner} XP from combat {combat_id}.",
+                                         guild_id=guild_id_str, combat_id=combat_id, character_id=char_id
+                                     )
+                            else:
+                                if game_log_manager:
+                                    await game_log_manager.log_warning(f"Could not find character object for ID {char_id} to award XP.", guild_id=guild_id_str, combat_id=combat_id)
+                    else:
+                        if game_log_manager:
+                             await game_log_manager.log_info(f"Calculated XP per winner is {xp_per_winner}. No XP awarded from combat {combat_id}.", guild_id=guild_id_str, combat_id=combat_id)
                 else:
-                    if game_log_manager: await game_log_manager.log_warning("XP yield available but no eligible winning player characters found.", guild_id=guild_id_str, combat_id=combat_id)
+                    if game_log_manager:
+                        await game_log_manager.log_warning(f"Total XP yield was {total_xp_yield} from combat {combat_id}, but no eligible winning player characters found for distribution.", guild_id=guild_id_str, combat_id=combat_id)
+            else:
+                 if game_log_manager:
+                      await game_log_manager.log_info(f"No XP yield from defeated NPCs in combat {combat_id}.", guild_id=guild_id_str, combat_id=combat_id)
+        else:
+            if game_log_manager:
+                 missing_managers = [
+                     name for manager, name in [
+                         (character_manager, "CharacterManager"),
+                         (self._rule_engine, "RuleEngine"),
+                         (npc_manager, "NpcManager")
+                     ] if not manager
+                 ]
+                 await game_log_manager.log_warning(f"XP awarding skipped for combat {combat_id} due to missing managers: {', '.join(missing_managers)}.", guild_id=guild_id_str, combat_id=combat_id)
+
 
         # Loot Distribution
         if item_manager and inventory_manager: # Assuming InventoryManager handles adding items to characters/parties

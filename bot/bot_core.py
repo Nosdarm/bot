@@ -114,7 +114,8 @@ class RPGBot(commands.Bot):
             "bot.command_modules.gm_app_cmds",
             "bot.command_modules.inventory_cmds",
             "bot.command_modules.party_cmds",
-            "bot.command_modules.utility_cmds"
+            "bot.command_modules.utility_cmds",
+            "bot.command_modules.character_cmds" # Added new character development cog
         ]
         
         all_cogs_loaded_successfully = True
