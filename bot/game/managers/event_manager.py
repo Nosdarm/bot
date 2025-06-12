@@ -7,7 +7,7 @@ import traceback
 import asyncio
 # Импорт базовых типов
 # ИСПРАВЛЕНИЕ: Импортируем необходимые типы из typing
-from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awaitable, Union # Added Union
+from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awaitable, Union, Tuple # Added Union & Tuple
 
 # Импорт модели Event (для аннотаций и работы с объектами при runtime)
 from bot.game.models.event import Event # Прямой импорт
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from bot.game.event_processors.event_stage_processor import EventStageProcessor
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.services.openai_service import OpenAIService
+    from bot.game.ai.event_ai_generator import EventAIGenerator # Added import
     # Добавляем другие менеджеры/процессоры, которые могут быть в context kwargs
     # from bot.game.event_processors.event_action_processor import EventActionProcessor
     # from bot.game.character_processors.character_view_service import CharacterViewService
@@ -112,6 +113,17 @@ class EventManager:
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
         # self._event_action_processor = event_action_processor
+
+        if self._openai_service and self._multilingual_prompt_generator and self._settings:
+            self._event_ai_generator: Optional[EventAIGenerator] = EventAIGenerator(
+                openai_service=self._openai_service,
+                multilingual_prompt_generator=self._multilingual_prompt_generator,
+                settings=self._settings
+            )
+            print("EventManager: EventAIGenerator initialized.")
+        else:
+            self._event_ai_generator = None
+            print("EventManager: EventAIGenerator NOT initialized due to missing dependencies (OpenAI, PromptGen, or Settings).")
 
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
@@ -321,102 +333,27 @@ class EventManager:
 
 
             # --- Spawn NPC and Items defined in template ---
-            # Use managers from kwargs (passed by CommandRouter/WSP) or self
-            npc_mgr = kwargs.get('npc_manager', self._npc_manager) # type: Optional["NpcManager"]
-            item_mgr = kwargs.get('item_manager', self._item_manager) # type: Optional["ItemManager"]
+            spawn_context = {**kwargs, 'event_id': eid, 'npc_manager': self._npc_manager, 'item_manager': self._item_manager}
 
-            # Pass all kwargs (context) to spawn methods as well
-            spawn_context = {**kwargs, 'event_id': eid} # Add event_id to context
-
-            # Spawn NPC (template.get('npc_spawn_templates', []) is expected to be List[Dict])
-            temp_npcs_ids: List[str] = []
-            if npc_mgr and hasattr(npc_mgr, 'create_npc'): # Check manager and method
-                 for spawn_def in tpl.get('npc_spawn_templates', []):
-                      if not isinstance(spawn_def, dict): continue # Skip if not dict
-                      spawn_tpl_id = spawn_def.get('template_id')
-                      spawn_count = int(spawn_def.get('count', 1))
-                      spawn_loc_id = spawn_def.get('location_id', location_id) # Use spawn_def loc if present, else event loc
-                      spawn_is_temporary = bool(spawn_def.get('is_temporary', True))
-                      spawn_name = spawn_def.get('name') # Allow specifying name in spawn def
-
-                      if spawn_tpl_id:
-                           for _ in range(spawn_count):
-                                try:
-                                     # create_npc needs guild_id, template_id, location_id, name, is_temporary, owner_id, **kwargs
-                                     # Pass event_id as owner_id, and pass context
-                                     # Pass guild_id
-                                     nid = await npc_mgr.create_npc(
-                                         guild_id=guild_id_str, # Pass guild_id
-                                         npc_template_id=str(spawn_tpl_id), # Ensure string template_id
-                                         location_id=str(spawn_loc_id) if spawn_loc_id is not None else None, # Ensure string or None
-                                         name=str(spawn_name) if spawn_name is not None else None,
-                                         owner_id=eid, # Event is the owner
-                                         owner_type='Event', # Specify owner type
-                                         is_temporary=spawn_is_temporary,
-                                         **spawn_context # Pass context
-                                     )
-                                     if nid:
-                                         temp_npcs_ids.append(nid)
-                                except Exception as e:
-                                     print(f"EventManager: Error spawning NPC from template '{spawn_tpl_id}' for event {eid} in guild {guild_id_str}: {e}"); traceback.print_exc();
-
-            # Store created temporary NPC IDs in event state
+            temp_npcs_ids = await self._spawn_npcs_for_event(
+                event_template_data=tpl,
+                event_location_id=location_id, # Pass event's primary location_id
+                event_id=eid,
+                guild_id=guild_id_str,
+                spawn_context=spawn_context
+            )
             if temp_npcs_ids:
-                 event.state_variables.setdefault('__temp_npcs', []).extend(temp_npcs_ids) # Use a hidden key
+                event.state_variables.setdefault('__temp_npcs', []).extend(temp_npcs_ids)
 
-            # Spawn Items (template.get('item_spawn_templates', []) is expected to be List[Dict])
-            temp_items_ids: List[str] = []
-            if item_mgr and hasattr(item_mgr, 'create_item') and hasattr(item_mgr, 'move_item'): # Check manager and methods
-                 for spawn_def in tpl.get('item_spawn_templates', []):
-                      if not isinstance(spawn_def, dict): continue # Skip if not dict
-                      spawn_tpl_id = spawn_def.get('template_id')
-                      spawn_count = int(spawn_def.get('count', 1))
-                      spawn_owner_id = spawn_def.get('owner_id') # Can specify owner in spawn def
-                      spawn_owner_type = spawn_def.get('owner_type') # Can specify owner type in spawn def
-                      spawn_loc_id = spawn_def.get('location_id', location_id) # Use spawn_def loc if present, else event loc
-                      spawn_is_temporary = bool(spawn_def.get('is_temporary', True))
-                      spawn_initial_state = spawn_def.get('state_variables') # Allow initial state override
-
-                      if spawn_tpl_id:
-                           for _ in range(spawn_count):
-                                try:
-                                     # create_item needs guild_id, item_data (dict), **kwargs
-                                     # item_data should include template_id, is_temporary, state_variables
-                                     # item_data might include owner_id, owner_type, location_id if created with them directly
-                                     item_data_for_create = {
-                                         'template_id': str(spawn_tpl_id), # Ensure string template_id
-                                         'is_temporary': spawn_is_temporary,
-                                         'state_variables': spawn_initial_state if isinstance(spawn_initial_state, dict) else {}, # Initial state
-                                         # Owner/location are set by move_item AFTER creation
-                                         'owner_id': None, 'owner_type': None, 'location_id': None,
-                                         # TODO: Add quantity if items can stack?
-                                     }
-                                     # Pass guild_id
-                                     iid = await item_mgr.create_item(
-                                         guild_id=guild_id_str, # Pass guild_id
-                                         item_data=item_data_for_create,
-                                         **spawn_context # Pass context
-                                     )
-                                     if iid:
-                                         temp_items_ids.append(iid)
-                                         # Move the created item to the specified owner/location
-                                         # move_item needs guild_id, item_id, new_owner_id, new_location_id, new_owner_type, **kwargs
-                                         await item_mgr.move_item(
-                                             guild_id=guild_id_str, # Pass guild_id
-                                             item_id=iid,
-                                             new_owner_id=str(spawn_owner_id) if spawn_owner_id is not None else None, # Ensure string or None
-                                             new_location_id=str(spawn_loc_id) if spawn_loc_id is not None else None, # Ensure string or None
-                                             new_owner_type=str(spawn_owner_type) if spawn_owner_type is not None else None, # Ensure string or None
-                                             **spawn_context # Pass context
-                                         )
-
-                                except Exception as e:
-                                     print(f"EventManager: Error spawning item from template '{spawn_tpl_id}' for event {eid} in guild {guild_id_str}: {e}"); traceback.print_exc();
-
-            # Store created temporary Item IDs in event state
+            temp_items_ids = await self._spawn_items_for_event(
+                event_template_data=tpl,
+                event_location_id=location_id, # Pass event's primary location_id
+                event_id=eid,
+                guild_id=guild_id_str,
+                spawn_context=spawn_context
+            )
             if temp_items_ids:
-                 event.state_variables.setdefault('__temp_items', []).extend(temp_items_ids) # Use a hidden key
-
+                event.state_variables.setdefault('__temp_items', []).extend(temp_items_ids)
 
             # --- Save event to active cache and mark dirty ---
             # ИСПРАВЛЕНИЕ: Добавляем в per-guild кеш активных событий
@@ -448,6 +385,108 @@ class EventManager:
             # Requires tracking created entities/items during spawn loop
             return None
 
+    async def _spawn_npcs_for_event(
+        self,
+        event_template_data: Dict[str, Any],
+        event_location_id: Optional[str],
+        event_id: str, # Owner ID
+        guild_id: str,
+        spawn_context: Dict[str, Any] # Contains managers like NpcManager
+    ) -> List[str]:
+        """Helper to spawn NPCs for an event based on template definitions."""
+        spawned_npc_ids: List[str] = []
+        npc_mgr = spawn_context.get('npc_manager', self._npc_manager) # type: Optional["NpcManager"]
+
+        if not npc_mgr or not hasattr(npc_mgr, 'create_npc'):
+            print(f"EventManager ({guild_id}): NPCManager not available or create_npc method missing. Skipping NPC spawn for event {event_id}.")
+            return spawned_npc_ids
+
+        for spawn_def in event_template_data.get('npc_spawn_templates', []):
+            if not isinstance(spawn_def, dict): continue
+            spawn_tpl_id = spawn_def.get('template_id')
+            spawn_count = int(spawn_def.get('count', 1))
+            # Use specific spawn location from template, fallback to event's primary location
+            spawn_loc_id = spawn_def.get('location_id', event_location_id)
+            spawn_is_temporary = bool(spawn_def.get('is_temporary', True))
+            spawn_name = spawn_def.get('name')
+
+            if spawn_tpl_id:
+                for _ in range(spawn_count):
+                    try:
+                        nid = await npc_mgr.create_npc(
+                            guild_id=guild_id,
+                            npc_template_id=str(spawn_tpl_id),
+                            location_id=str(spawn_loc_id) if spawn_loc_id is not None else None,
+                            name=str(spawn_name) if spawn_name is not None else None,
+                            owner_id=event_id,
+                            owner_type='Event',
+                            is_temporary=spawn_is_temporary,
+                            **spawn_context
+                        )
+                        if nid:
+                            spawned_npc_ids.append(nid)
+                    except Exception as e:
+                        print(f"EventManager ({guild_id}): Error spawning NPC '{spawn_tpl_id}' for event {event_id}: {e}"); traceback.print_exc();
+        return spawned_npc_ids
+
+    async def _spawn_items_for_event(
+        self,
+        event_template_data: Dict[str, Any],
+        event_location_id: Optional[str], # Event's primary location
+        event_id: str, # For potential ownership if not otherwise specified
+        guild_id: str,
+        spawn_context: Dict[str, Any] # Contains managers like ItemManager
+    ) -> List[str]:
+        """Helper to spawn items for an event based on template definitions."""
+        spawned_item_ids: List[str] = []
+        item_mgr = spawn_context.get('item_manager', self._item_manager) # type: Optional["ItemManager"]
+
+        if not item_mgr or not hasattr(item_mgr, 'create_item') or not hasattr(item_mgr, 'move_item'):
+            print(f"EventManager ({guild_id}): ItemManager not available or methods missing. Skipping item spawn for event {event_id}.")
+            return spawned_item_ids
+
+        for spawn_def in event_template_data.get('item_spawn_templates', []):
+            if not isinstance(spawn_def, dict): continue
+            spawn_tpl_id = spawn_def.get('template_id')
+            spawn_count = int(spawn_def.get('count', 1))
+            # Item specific owner/location, fallback to event's context
+            spawn_owner_id = spawn_def.get('owner_id') # Explicit owner
+            spawn_owner_type = spawn_def.get('owner_type')
+            spawn_loc_id = spawn_def.get('location_id', event_location_id) # Explicit location, fallback to event loc
+            spawn_is_temporary = bool(spawn_def.get('is_temporary', True))
+            spawn_initial_state = spawn_def.get('state_variables')
+
+            if spawn_tpl_id:
+                for _ in range(spawn_count):
+                    try:
+                        item_data_for_create = {
+                            'template_id': str(spawn_tpl_id),
+                            'is_temporary': spawn_is_temporary,
+                            'state_variables': spawn_initial_state if isinstance(spawn_initial_state, dict) else {},
+                            'owner_id': None, 'owner_type': None, 'location_id': None, # Set by move_item
+                        }
+                        iid = await item_mgr.create_item(
+                            guild_id=guild_id,
+                            item_data=item_data_for_create,
+                            **spawn_context
+                        )
+                        if iid:
+                            spawned_item_ids.append(iid)
+                            # Default owner to event if not specified in spawn_def
+                            target_owner_id = spawn_owner_id if spawn_owner_id is not None else event_id
+                            target_owner_type = spawn_owner_type if spawn_owner_type is not None else 'Event'
+
+                            await item_mgr.move_item(
+                                guild_id=guild_id,
+                                item_id=iid,
+                                new_owner_id=str(target_owner_id) if target_owner_id is not None else None,
+                                new_location_id=str(spawn_loc_id) if spawn_loc_id is not None else None,
+                                new_owner_type=str(target_owner_type) if target_owner_type is not None else None,
+                                **spawn_context
+                            )
+                    except Exception as e:
+                        print(f"EventManager ({guild_id}): Error spawning item '{spawn_tpl_id}' for event {event_id}: {e}"); traceback.print_exc();
+        return spawned_item_ids
 
     # remove_active_event now needs guild_id and cleans up per-guild
     async def remove_active_event(self, guild_id: str, event_id: str, **kwargs: Any) -> Optional[str]: # Made async for cleanup calls
@@ -733,456 +772,272 @@ class EventManager:
             A dictionary containing the structured, multilingual event data from the AI,
             or None if generation fails.
         """
-        if not self._multilingual_prompt_generator:
-            print("EventManager ERROR: MultilingualPromptGenerator is not available.")
-            return None
-        if not self._openai_service:
-            print("EventManager ERROR: OpenAIService is not available.")
-            return None
-        if not self._settings: # Settings might be needed for AI parameters
-            print("EventManager ERROR: Settings are not available.")
+        if not self._event_ai_generator:
+            print("EventManager ERROR: EventAIGenerator is not available.")
             return None
 
-        print(f"EventManager: Generating AI details for event concept '{event_concept}' in guild {guild_id}.")
-
-        # Gather full context. The MultilingualPromptGenerator's methods typically handle this.
-        # A generic prompt type or a new specific one for events might be needed in the generator.
-        # For now, construct a task prompt and use the generator's _build_full_prompt_for_openai.
-
-        context_data = self._multilingual_prompt_generator.context_collector.get_full_context(
-            guild_id=guild_id
-            # Pass specific entity IDs from related_context if get_full_context can use them
+        return await self._event_ai_generator.generate_event_details_from_ai(
+            guild_id=guild_id,
+            event_concept=event_concept,
+            related_context=related_context
         )
-        # Augment general context with specific event_related_context if provided
-        if related_context:
-            context_data["event_specific_inputs"] = related_context
-
-        # Define the task for the AI
-        specific_task_prompt = f"""
-        Design details for a game event based on the following concept and context.
-        Event Concept: {event_concept}
-        Additional Event Context: {json.dumps(related_context) if related_context else "None provided."}
-
-        The event details should include:
-        - event_id (suggest a unique slug-like ID if this is a template, or state if it's an instance)
-        - title_i18n (multilingual, compelling title for the event)
-        - description_i18n (multilingual, detailed description of what is happening)
-        - type (e.g., "dynamic_encounter", "environmental_hazard", "social_interaction", "mini_quest_trigger")
-        - duration_description_i18n (multilingual, e.g., "lasts for a few hours", "ongoing until resolved")
-        - stages_i18n (optional, if a multi-stage event, an array of stage descriptions, multilingual)
-        - involved_entities_i18n (optional, descriptions of how specific NPCs, factions, or locations are involved, multilingual)
-        - potential_outcomes_i18n (multilingual, brief on possible results or player impacts)
-        - player_interaction_hooks_i18n (multilingual, how players can interact or what choices they might have)
-
-        Ensure all textual fields are in the specified multilingual JSON format ({{"en": "...", "ru": "..."}}).
-        Incorporate elements from the broader lore and world state context provided.
-        """
-
-        prompt_messages = self._multilingual_prompt_generator._build_full_prompt_for_openai(
-            specific_task_prompt=specific_task_prompt,
-            context_data=context_data
-        )
-
-        system_prompt = prompt_messages["system"]
-        user_prompt = prompt_messages["user"]
-
-        ai_settings = self._settings.get("event_generation_ai_settings", {})
-        max_tokens = ai_settings.get("max_tokens", 1800)
-        temperature = ai_settings.get("temperature", 0.7)
-
-        generated_data = await self._openai_service.generate_structured_multilingual_content(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            max_tokens=max_tokens,
-            temperature=temperature
-        )
-
-        if generated_data and "error" not in generated_data:
-            print(f"EventManager: Successfully generated AI details for event '{event_concept}'.")
-            # Further validation of event structure might be needed here.
-            return generated_data
-        else:
-            error_detail = generated_data.get("error") if generated_data else "Unknown error"
-            raw_text = generated_data.get("raw_text", "") if generated_data else ""
-            print(f"EventManager ERROR: Failed to generate AI details for event '{event_concept}'. Error: {error_detail}")
-            if raw_text:
-                print(f"EventManager: Raw response from AI was: {raw_text[:500]}...")
-            return None
 
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         """Загружает активные события и шаблоны для определенной гильдии из базы данных/настроек в кеш."""
         guild_id_str = str(guild_id)
         print(f"EventManager: Loading state for guild {guild_id_str} (events + templates)...")
 
-        if self._db_service is None or self._db_service.adapter is None: # Changed
-            print(f"EventManager: Warning: No DB service or adapter. Skipping event/template load for guild {guild_id_str}. It will work with empty caches.")
-            # TODO: In non-DB mode, load placeholder data
+        if self._db_service is None or self._db_service.adapter is None:
+            print(f"EventManager: Warning: No DB service or adapter. Skipping event/template load for guild {guild_id_str}.")
             return
 
-        # --- 1. Загрузка статических шаблонов (per-guild) ---
-        # Call the helper method
         self.load_static_templates(guild_id_str)
 
-
-        # --- 2. Загрузка активных событий (per-guild) ---
-        # Очищаем кеши событий ТОЛЬКО для этой гильдии перед загрузкой
-        self._active_events.pop(guild_id_str, None) # Remove old active events cache for this guild
-        self._active_events[guild_id_str] = {} # Create an empty cache for this guild
-
-        self._active_events_by_channel.pop(guild_id_str, None) # Remove old channel map cache
-        self._active_events_by_channel[guild_id_str] = {} # Create an empty channel map cache
-
-        # При загрузке, считаем, что все в DB "чистое", поэтому очищаем dirty/deleted для этой гильдии
+        self._active_events.pop(guild_id_str, None)
+        self._active_events[guild_id_str] = {}
+        self._active_events_by_channel.pop(guild_id_str, None)
+        self._active_events_by_channel[guild_id_str] = {}
         self._dirty_events.pop(guild_id_str, None)
         self._deleted_event_ids.pop(guild_id_str, None)
 
         rows = []
         try:
-            # Execute SQL SELECT FROM events WHERE guild_id = ? AND is_active = 1
             sql = '''
             SELECT id, template_id, name_i18n, is_active, channel_id,
                    current_stage_id, players, state_variables,
                    stages_data, end_message_template_i18n, guild_id
             FROM events WHERE guild_id = $1 AND is_active = TRUE
-            ''' # Changed placeholder and is_active condition
-            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed to db_service
+            '''
+            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,))
             print(f"EventManager: Found {len(rows)} active events in DB for guild {guild_id_str}.")
-
         except Exception as e:
             print(f"EventManager: ❌ CRITICAL ERROR executing DB fetchall for events for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # Clear event caches for this guild on critical error
+            traceback.print_exc()
             self._active_events.pop(guild_id_str, None)
             self._active_events_by_channel.pop(guild_id_str, None)
-            raise # Re-raise critical error
-
+            raise
 
         loaded_count = 0
-        # Get the cache dicts for this specific guild
         guild_events_cache = self._active_events[guild_id_str]
         guild_channel_map_cache = self._active_events_by_channel[guild_id_str]
 
-
-        for row in rows:
-             data = dict(row)
-             try:
-                 # Validate and parse data
-                 event_id_raw = data.get('id')
-                 loaded_guild_id_raw = data.get('guild_id') # Should match guild_id_str due to WHERE clause
-
-                 if event_id_raw is None or loaded_guild_id_raw is None or str(loaded_guild_id_raw) != guild_id_str:
-                     # This check is mostly redundant due to WHERE clause but safe.
-                     print(f"EventManager: Warning: Skipping event row with invalid ID ('{event_id_raw}') or mismatched guild ('{loaded_guild_id_raw}') during load for guild {guild_id_str}. Row: {row}.")
-                     continue
-
-                 event_id = str(event_id_raw)
-
-
-                 # Parse JSON fields, handle None/malformed data gracefully
-                 try:
-                     data['players'] = json.loads(data.get('players') or '[]') if isinstance(data.get('players'), (str, bytes)) else []
-                 except (json.JSONDecodeError, TypeError):
-                      print(f"EventManager: Warning: Failed to parse players for event {event_id} in guild {guild_id_str}. Setting to []. Data: {data.get('players')}")
-                      data['players'] = []
-                 else: # Ensure player IDs are strings
-                      data['players'] = [str(p) for p in data['players'] if p is not None]
-
-                 try:
-                     data['state_variables'] = json.loads(data.get('state_variables') or '{}') if isinstance(data.get('state_variables'), (str, bytes)) else {}
-                 except (json.JSONDecodeError, TypeError):
-                      print(f"EventManager: Warning: Failed to parse state_variables for event {event_id} in guild {guild_id_str}. Setting to {{}}. Data: {data.get('state_variables')}")
-                      data['state_variables'] = {}
-
-                 try:
-                     data['stages_data'] = json.loads(data.get('stages_data') or '{}') if isinstance(data.get('stages_data'), (str, bytes)) else {}
-                 except (json.JSONDecodeError, TypeError):
-                      print(f"EventManager: Warning: Failed to parse stages_data for event {event_id} in guild {guild_id_str}. Setting to {{}}. Data: {data.get('stages_data')}")
-                      data['stages_data'] = {}
-
-                 # Convert boolean/numeric/string types, handle potential None/malformed data
-                 data['is_active'] = bool(data.get('is_active', 0)) if data.get('is_active') is not None else True # Default True if None/missing
-                 data['channel_id'] = int(data.get('channel_id')) if data.get('channel_id') is not None else None # Store channel_id as int or None
-                 data['template_id'] = str(data.get('template_id')) if data.get('template_id') is not None else None
-
-                 # --- NAME_I18N HANDLING START ---
-                 name_i18n_json = data.get('name_i18n')
-                 name_i18n_dict = {}
-                 if isinstance(name_i18n_json, str):
-                     try:
-                         name_i18n_dict = json.loads(name_i18n_json or '{}')
-                     except json.JSONDecodeError:
-                         print(f"EventManager: Warning: Failed to parse name_i18n for event {event_id}. Data: {name_i18n_json}")
-                 elif isinstance(name_i18n_json, dict):
-                     name_i18n_dict = name_i18n_json
-
-                 data['name_i18n'] = name_i18n_dict
-
-                 default_lang_for_name = 'en'
-                 plain_name = name_i18n_dict.get(default_lang_for_name)
-                 if not plain_name and name_i18n_dict:
-                     plain_name = next(iter(name_i18n_dict.values()), None)
-                 if not plain_name:
-                     plain_name = f"Event {event_id[:8]}"
-                 data['name'] = str(plain_name)
-                 # --- NAME_I18N HANDLING END ---
-
-                 data['current_stage_id'] = str(data.get('current_stage_id')) if data.get('current_stage_id') is not None else 'start' # Ensure string stage ID
-
-                 # --- END_MESSAGE_TEMPLATE_I18N HANDLING START ---
-                 end_message_i18n_json = data.get('end_message_template_i18n')
-                 end_message_i18n_dict = {}
-                 if isinstance(end_message_i18n_json, str):
-                     try:
-                         end_message_i18n_dict = json.loads(end_message_i18n_json or '{}')
-                     except json.JSONDecodeError:
-                         print(f"EventManager: Warning: Failed to parse end_message_template_i18n for event {event_id}. Data: {end_message_i18n_json}")
-                 elif isinstance(end_message_i18n_json, dict):
-                     end_message_i18n_dict = end_message_i18n_json
-
-                 data['end_message_template_i18n'] = end_message_i18n_dict
-
-                 plain_end_message = end_message_i18n_dict.get(default_lang_for_name) # Using same default_lang
-                 if not plain_end_message and end_message_i18n_dict:
-                     plain_end_message = next(iter(end_message_i18n_dict.values()), None)
-                 if not plain_end_message:
-                     plain_end_message = "Событие завершилось." # Default fallback
-                 data['end_message_template'] = str(plain_end_message)
-                 # --- END_MESSAGE_TEMPLATE_I18N HANDLING END ---
-
-                 # Update data dict with validated/converted values
-                 data['id'] = event_id
-                 data['guild_id'] = guild_id_str # Ensure guild_id is string
-
-
-                 # Create Event object
-                 event = Event.from_dict(data) # Requires Event.from_dict method
-
-
-                 # Add Event object to the per-guild cache of active events
-                 if event.is_active: # Only add if truly active
-                     guild_events_cache[event.id] = event
-                     # Add to the per-guild channel map cache
-                     if event.channel_id is not None:
-                          # TODO: Handle conflict if multiple active events map to the same channel in this guild?
-                          # Current logic overwrites.
-                          if event.channel_id in guild_channel_map_cache:
-                               print(f"EventManager: Warning: Loading event {event.id} maps to channel {event.channel_id} which is already mapped to event {guild_channel_map_cache[event.channel_id]} in guild {guild_id_str}. Overwriting.")
-                          guild_channel_map_cache[event.channel_id] = event.id
-
-                     loaded_count += 1
-                 else:
-                      # Log or handle inactive events found in query if necessary.
-                      # The SQL WHERE clause "AND is_active = 1" should prevent loading inactive events anyway.
-                      # If an inactive event is loaded, it indicates a schema/query issue.
-                      print(f"EventManager: Warning: Loaded inactive event {event.id} for guild {guild_id_str}. SQL query might be incorrect.")
-
-
-             except Exception as e:
-                 print(f"EventManager: Error loading event {data.get('id', 'N/A')} for guild {guild_id_str}: {e}")
-                 import traceback
-                 print(traceback.format_exc())
-                 # Continue loop for other rows
-
+        for row_data in rows:
+            event = self._transform_db_row_to_event(row_data, guild_id_str)
+            if event:
+                if event.is_active:
+                    guild_events_cache[event.id] = event
+                    if event.channel_id is not None:
+                        if event.channel_id in guild_channel_map_cache:
+                            print(f"EventManager ({guild_id_str}): Warning: Loading event {event.id} maps to channel {event.channel_id} which is already mapped to event {guild_channel_map_cache[event.channel_id]}. Overwriting.")
+                        guild_channel_map_cache[event.channel_id] = event.id
+                    loaded_count += 1
+                else:
+                    print(f"EventManager ({guild_id_str}): Warning: Loaded inactive event {event.id}. SQL query might be incorrect or data inconsistency.")
 
         print(f"EventManager: Successfully loaded {loaded_count} active events into cache for guild {guild_id_str}.")
         print(f"EventManager: Load state complete for guild {guild_id_str}.")
 
+    def _transform_db_row_to_event(self, row_data: Dict[str, Any], guild_id_str: str) -> Optional[Event]:
+        """Transforms a database row into an Event object, handling parsing and validation."""
+        data = dict(row_data) # Work on a copy
+        try:
+            event_id_raw = data.get('id')
+            loaded_guild_id_raw = data.get('guild_id')
+
+            if event_id_raw is None or loaded_guild_id_raw is None or str(loaded_guild_id_raw) != guild_id_str:
+                print(f"EventManager ({guild_id_str}): Skipping event row with invalid ID ('{event_id_raw}') or mismatched guild ('{loaded_guild_id_raw}'). Row: {row_data}.")
+                return None
+
+            event_id = str(event_id_raw)
+
+            # Parse JSON fields
+            try: data['players'] = json.loads(data.get('players') or '[]') if isinstance(data.get('players'), (str, bytes)) else []
+            except (json.JSONDecodeError, TypeError): data['players'] = []; print(f"EventManager ({guild_id_str}): Warning: Failed to parse players for event {event_id}. Data: {data.get('players')}")
+            else: data['players'] = [str(p) for p in data['players'] if p is not None]
+
+            try: data['state_variables'] = json.loads(data.get('state_variables') or '{}') if isinstance(data.get('state_variables'), (str, bytes)) else {}
+            except (json.JSONDecodeError, TypeError): data['state_variables'] = {}; print(f"EventManager ({guild_id_str}): Warning: Failed to parse state_variables for event {event_id}. Data: {data.get('state_variables')}")
+
+            try: data['stages_data'] = json.loads(data.get('stages_data') or '{}') if isinstance(data.get('stages_data'), (str, bytes)) else {}
+            except (json.JSONDecodeError, TypeError): data['stages_data'] = {}; print(f"EventManager ({guild_id_str}): Warning: Failed to parse stages_data for event {event_id}. Data: {data.get('stages_data')}")
+
+            # Type conversions and defaults
+            data['is_active'] = bool(data.get('is_active', 0)) if data.get('is_active') is not None else True
+            data['channel_id'] = int(data.get('channel_id')) if data.get('channel_id') is not None else None
+            data['template_id'] = str(data.get('template_id')) if data.get('template_id') is not None else None
+            data['current_stage_id'] = str(data.get('current_stage_id')) if data.get('current_stage_id') is not None else 'start'
+
+            # name_i18n
+            name_i18n_json = data.get('name_i18n')
+            name_i18n_dict = {}
+            if isinstance(name_i18n_json, str):
+                try: name_i18n_dict = json.loads(name_i18n_json or '{}')
+                except json.JSONDecodeError: print(f"EventManager ({guild_id_str}): Warning: Failed to parse name_i18n for event {event_id}. Data: {name_i18n_json}")
+            elif isinstance(name_i18n_json, dict): name_i18n_dict = name_i18n_json
+            data['name_i18n'] = name_i18n_dict
+            plain_name = name_i18n_dict.get('en', name_i18n_dict.get(next(iter(name_i18n_dict), 'en'), f"Event {event_id[:8]}"))
+            data['name'] = str(plain_name)
+
+            # end_message_template_i18n
+            end_msg_i18n_json = data.get('end_message_template_i18n')
+            end_msg_i18n_dict = {}
+            if isinstance(end_msg_i18n_json, str):
+                try: end_msg_i18n_dict = json.loads(end_msg_i18n_json or '{}')
+                except json.JSONDecodeError: print(f"EventManager ({guild_id_str}): Warning: Failed to parse end_message_template_i18n for event {event_id}. Data: {end_msg_i18n_json}")
+            elif isinstance(end_msg_i18n_json, dict): end_msg_i18n_dict = end_msg_i18n_json
+            data['end_message_template_i18n'] = end_msg_i18n_dict
+            plain_end_msg = end_msg_i18n_dict.get('en', end_msg_i18n_dict.get(next(iter(end_msg_i18n_dict), 'en'), "Событие завершилось."))
+            data['end_message_template'] = str(plain_end_msg)
+
+            data['id'] = event_id
+            data['guild_id'] = guild_id_str
+
+            return Event.from_dict(data)
+
+        except Exception as e:
+            print(f"EventManager ({guild_id_str}): Error transforming DB row to event {data.get('id', 'N/A')}: {e}")
+            traceback.print_exc()
+            return None
+
+    def _prepare_event_for_db(self, event_object: Event) -> Optional[Tuple]:
+        """Converts an Event object into a tuple suitable for DB upsert."""
+        try:
+            event_id = getattr(event_object, 'id', None)
+            guild_id = getattr(event_object, 'guild_id', None)
+
+            if event_id is None or guild_id is None:
+                print(f"EventManager: Skipping DB preparation for event with missing ID ('{event_id}') or guild ID ('{guild_id}').")
+                return None
+
+            template_id = getattr(event_object, 'template_id', None)
+            name_i18n = getattr(event_object, 'name_i18n', {})
+            is_active = getattr(event_object, 'is_active', True)
+            channel_id = getattr(event_object, 'channel_id', None)
+            current_stage_id = getattr(event_object, 'current_stage_id', 'start')
+            players = getattr(event_object, 'players', [])
+            state_variables = getattr(event_object, 'state_variables', {})
+            stages_data = getattr(event_object, 'stages_data', {})
+            end_message_template_i18n = getattr(event_object, 'end_message_template_i18n', {})
+
+            # Ensure correct types for JSON dump
+            if not isinstance(name_i18n, dict): name_i18n = {}
+            if not isinstance(players, list): players = []
+            if not isinstance(state_variables, dict): state_variables = {}
+            if not isinstance(stages_data, dict): stages_data = {}
+            if not isinstance(end_message_template_i18n, dict): end_message_template_i18n = {}
+
+            return (
+                str(event_id),
+                str(template_id) if template_id is not None else None,
+                json.dumps(name_i18n),
+                is_active,
+                int(channel_id) if channel_id is not None else None,
+                str(current_stage_id),
+                json.dumps(players),
+                json.dumps(state_variables),
+                json.dumps(stages_data),
+                json.dumps(end_message_template_i18n),
+                str(guild_id),
+            )
+        except Exception as e:
+            event_id_str = getattr(event_object, 'id', 'N/A')
+            guild_id_str = getattr(event_object, 'guild_id', 'N/A')
+            print(f"EventManager ({guild_id_str}): Error preparing data for event {event_id_str} for DB: {e}")
+            traceback.print_exc()
+            return None
 
     # save_state - saves per-guild
     # required_args_for_save = ["guild_id"]
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         """Сохраняет активные/измененные события для определенной гильдии."""
         guild_id_str = str(guild_id)
-        print(f"EventManager: Saving events for guild {guild_id_str}...")
+        # print(f"EventManager: Saving events for guild {guild_id_str}...") # Reduced noise
 
-        if self._db_service is None or self._db_service.adapter is None: # Changed
-            print(f"EventManager: Warning: Cannot save events for guild {guild_id_str}, DB service or adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None:
+            print(f"EventManager ({guild_id_str}): Warning: Cannot save events, DB service or adapter missing.")
             return
 
-        # ИСПРАВЛЕНИЕ: Соберите dirty/deleted ID ИЗ per-guild кешей
-        # Get copies for safety
         dirty_event_ids_set = self._dirty_events.get(guild_id_str, set()).copy()
         deleted_event_ids_set = self._deleted_event_ids.get(guild_id_str, set()).copy()
 
-        # Filter active events by guild_id AND dirty status
         guild_events_cache = self._active_events.get(guild_id_str, {})
         events_to_save: List["Event"] = [
-             event for event_id, event in guild_events_cache.items()
-             if event_id in dirty_event_ids_set # Only save if marked dirty
-             and getattr(event, 'guild_id', None) == guild_id_str # Double check guild_id
-             # Note: This saves active events marked dirty. If an ended event (is_active=False)
-             # needs saving for history, it must still be in _active_events AND be marked dirty.
-             # If events are removed from _active_events upon ending (in end_event calling remove_active_event),
-             # then ended events are ONLY handled by the delete logic below.
-             # The current logic of remove_active_event removing from _active_events means only
-             # events that are STILL ACTIVE but marked dirty will be saved/upserted here.
-             # Events that END and are marked for deletion will be handled by the DELETE block.
+            event for event_id, event in guild_events_cache.items()
+            if event_id in dirty_event_ids_set and getattr(event, 'guild_id', None) == guild_id_str
         ]
 
         if not events_to_save and not deleted_event_ids_set:
-            # print(f"EventManager: No dirty or deleted events to save for guild {guild_id_str}.") # Too noisy
-            # ИСПРАВЛЕНИЕ: Если нечего сохранять/удалять, очищаем per-guild dirty/deleted сеты
             self._dirty_events.pop(guild_id_str, None)
             self._deleted_event_ids.pop(guild_id_str, None)
             return
 
-        print(f"EventManager: Saving {len(events_to_save)} dirty active, deleting {len(deleted_event_ids_set)} events for guild {guild_id_str}...")
-
+        # print(f"EventManager ({guild_id_str}): Saving {len(events_to_save)} dirty active, deleting {len(deleted_event_ids_set)} events...")
 
         try:
-            # 1. Удаляем помеченные для удаления события для этой гильдии
             if deleted_event_ids_set:
                 ids_to_delete = list(deleted_event_ids_set)
-                if ids_to_delete: # Ensure list is not empty
-                    placeholders_del = ','.join([f'${i+2}' for i in range(len(ids_to_delete))]) # $2, $3, ...
-                    # Ensure deleting only for this guild and these IDs
-                    sql_delete_batch = f"DELETE FROM events WHERE guild_id = $1 AND id IN ({placeholders_del})" # Changed placeholders
+                if ids_to_delete:
+                    placeholders_del = ','.join([f'${i+2}' for i in range(len(ids_to_delete))])
+                    sql_delete_batch = f"DELETE FROM events WHERE guild_id = $1 AND id IN ({placeholders_del})"
                     try:
-                         await self._db_service.adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete))); # Changed
-                         print(f"EventManager: Deleted {len(ids_to_delete)} events from DB for guild {guild_id_str}.")
-                         # ИСПРАВЛЕНИЕ: Очищаем per-guild deleted set after successful deletion
-                         self._deleted_event_ids.pop(guild_id_str, None)
+                        await self._db_service.adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete)))
+                        # print(f"EventManager ({guild_id_str}): Deleted {len(ids_to_delete)} events from DB.")
+                        self._deleted_event_ids.pop(guild_id_str, None)
                     except Exception as e:
-                        print(f"EventManager: Error deleting events for guild {guild_id_str}: {e}"); traceback.print_exc();
-                        # Do NOT clear deleted set on error
-            else: # If the set was empty for this guild
+                        print(f"EventManager ({guild_id_str}): Error deleting events: {e}"); traceback.print_exc()
+            else:
                 self._deleted_event_ids.pop(guild_id_str, None)
 
-
-            # 2. Сохраняем/обновляем измененные события для этого guild_id
             if events_to_save:
-                 print(f"EventManager: Upserting {len(events_to_save)} active events for guild {guild_id_str}...")
-                 # Use correct column names based on schema (added guild_id)
-                 upsert_sql = '''
-                 INSERT INTO events
-                 (id, template_id, name_i18n, is_active, channel_id,
-                  current_stage_id, players, state_variables,
-                  stages_data, end_message_template_i18n, guild_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                 ON CONFLICT (id) DO UPDATE SET
-                    template_id = EXCLUDED.template_id,
-                    name_i18n = EXCLUDED.name_i18n,
-                    is_active = EXCLUDED.is_active,
-                    channel_id = EXCLUDED.channel_id,
-                    current_stage_id = EXCLUDED.current_stage_id,
-                    players = EXCLUDED.players,
-                    state_variables = EXCLUDED.state_variables,
-                    stages_data = EXCLUDED.stages_data,
-                    end_message_template_i18n = EXCLUDED.end_message_template_i18n,
-                    guild_id = EXCLUDED.guild_id
-                 ''' # PostgreSQL UPSERT
-                 data_to_upsert = []
-                 upserted_event_ids: Set[str] = set() # Track IDs successfully prepared
-            else: # If the set was empty for this guild
-                self._deleted_event_ids.pop(guild_id_str, None)
+                # print(f"EventManager ({guild_id_str}): Upserting {len(events_to_save)} active events...")
+                upsert_sql = '''
+                INSERT INTO events
+                (id, template_id, name_i18n, is_active, channel_id,
+                 current_stage_id, players, state_variables,
+                 stages_data, end_message_template_i18n, guild_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (id) DO UPDATE SET
+                   template_id = EXCLUDED.template_id, name_i18n = EXCLUDED.name_i18n,
+                   is_active = EXCLUDED.is_active, channel_id = EXCLUDED.channel_id,
+                   current_stage_id = EXCLUDED.current_stage_id, players = EXCLUDED.players,
+                   state_variables = EXCLUDED.state_variables, stages_data = EXCLUDED.stages_data,
+                   end_message_template_i18n = EXCLUDED.end_message_template_i18n, guild_id = EXCLUDED.guild_id
+                '''
+                data_to_upsert = []
+                upserted_event_ids: Set[str] = set()
 
+                for ev_obj in events_to_save:
+                    prepared_data = self._prepare_event_for_db(ev_obj)
+                    if prepared_data:
+                        # Ensure guild_id in prepared_data matches current guild_id_str context
+                        if prepared_data[-1] != guild_id_str: # Last element is guild_id
+                            print(f"EventManager ({guild_id_str}): CRITICAL - Mismatch guild_id in prepared data for event {prepared_data[0]}. Expected {guild_id_str}, got {prepared_data[-1]}. Skipping.")
+                            continue
+                        data_to_upsert.append(prepared_data)
+                        upserted_event_ids.add(str(getattr(ev_obj, 'id')))
 
-            # 2. Сохраняем/обновляем измененные события для этого guild_id
-            if events_to_save:
-                 print(f"EventManager: Upserting {len(events_to_save)} active events for guild {guild_id_str}...")
-                 # Use correct column names based on schema (added guild_id)
-                 upsert_sql = '''
-                 INSERT INTO events
-                 (id, template_id, name_i18n, is_active, channel_id,
-                  current_stage_id, players, state_variables,
-                  stages_data, end_message_template_i18n, guild_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                 ON CONFLICT (id) DO UPDATE SET
-                    template_id = EXCLUDED.template_id,
-                    name_i18n = EXCLUDED.name_i18n,
-                    is_active = EXCLUDED.is_active,
-                    channel_id = EXCLUDED.channel_id,
-                    current_stage_id = EXCLUDED.current_stage_id,
-                    players = EXCLUDED.players,
-                    state_variables = EXCLUDED.state_variables,
-                    stages_data = EXCLUDED.stages_data,
-                    end_message_template_i18n = EXCLUDED.end_message_template_i18n,
-                    guild_id = EXCLUDED.guild_id
-                 ''' # PostgreSQL UPSERT
-                 data_to_upsert = []
-                 upserted_event_ids: Set[str] = set() # Track IDs successfully prepared
+                if data_to_upsert:
+                    if self._db_service and self._db_service.adapter:
+                        await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert)
+                        # print(f"EventManager ({guild_id_str}): Successfully upserted {len(data_to_upsert)} active events.")
+                        if guild_id_str in self._dirty_events:
+                            self._dirty_events[guild_id_str].difference_update(upserted_event_ids)
+                            if not self._dirty_events[guild_id_str]:
+                                del self._dirty_events[guild_id_str]
+                    else:
+                        print(f"EventManager ({guild_id_str}): Warning: DB service or adapter became None during event upsert batch.")
+            else: # No events_to_save, means dirty_event_ids_set was empty or all failed preparation
+                 if guild_id_str in self._dirty_events and not self._dirty_events[guild_id_str]: # If it became empty
+                      del self._dirty_events[guild_id_str]
+                 elif not dirty_event_ids_set: # If it was initially empty # This condition is wrong, it should be based on dirty_event_ids_set
+                      self._dirty_events.pop(guild_id_str, None)
 
-                 for ev in events_to_save:
-                      try:
-                           # Ensure event object has all required attributes
-                           event_id = getattr(ev, 'id', None)
-                           event_guild_id = getattr(ev, 'guild_id', None)
-
-                           # Double check required fields and guild ID match
-                           if event_id is None or str(event_guild_id) != guild_id_str:
-                               print(f"EventManager: Warning: Skipping upsert for event with invalid ID ('{event_id}') or mismatched guild ('{event_guild_id}') during save for guild {guild_id_str}. Expected guild {guild_id_str}.")
-                               continue
-
-                           template_id = getattr(ev, 'template_id', None)
-                           name_i18n = getattr(ev, 'name_i18n', {}) # Expect dict
-                           is_active = getattr(ev, 'is_active', True)
-                           channel_id = getattr(ev, 'channel_id', None)
-                           current_stage_id = getattr(ev, 'current_stage_id', 'start')
-                           players = getattr(ev, 'players', [])
-                           state_variables = getattr(ev, 'state_variables', {})
-                           stages_data = getattr(ev, 'stages_data', {})
-                           end_message_template_i18n = getattr(ev, 'end_message_template_i18n', {}) # Expect dict
-
-                           # Ensure data types are suitable for JSON dumping / DB columns
-                           if not isinstance(name_i18n, dict): name_i18n = {}
-                           if not isinstance(players, list): players = []
-                           if not isinstance(state_variables, dict): state_variables = {}
-                           if not isinstance(stages_data, dict): stages_data = {}
-                           if not isinstance(end_message_template_i18n, dict): end_message_template_i18n = {}
-
-                           name_i18n_json = json.dumps(name_i18n)
-                           players_json = json.dumps(players)
-                           state_variables_json = json.dumps(state_variables)
-                           stages_data_json = json.dumps(stages_data)
-                           end_message_template_i18n_json = json.dumps(end_message_template_i18n)
-
-                           data_to_upsert.append((
-                               str(event_id),
-                               str(template_id) if template_id is not None else None, # Ensure str or None
-                               name_i18n_json, # Pass JSON string
-                               is_active, # Pass boolean directly
-                               int(channel_id) if channel_id is not None else None, # Ensure int or None
-                               str(current_stage_id), # Ensure string
-                               players_json,
-                               state_variables_json,
-                               stages_data_json,
-                               end_message_template_i18n_json, # Pass JSON string
-                               guild_id_str, # Ensure guild_id string
-                           ))
-                           upserted_event_ids.add(str(event_id)) # Track ID
-
-                      except Exception as e:
-                           print(f"EventManager: Error preparing data for event {getattr(ev, 'id', 'N/A')} ('{getattr(ev, 'name_i18n', {}).get('en', 'N/A')}', guild {getattr(ev, 'guild_id', 'N/A')}) for upsert: {e}")
-                           import traceback
-                           print(traceback.format_exc())
-                           # This event won't be saved but remains in _dirty_events
-
-                 if data_to_upsert:
-                      if self._db_service is None or self._db_service.adapter is None: # Changed
-                           print(f"EventManager: Warning: DB service or adapter is None during event upsert batch for guild {guild_id_str}.")
-                      else:
-                           await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert) # Changed
-                           print(f"EventManager: Successfully upserted {len(data_to_upsert)} active events for guild {guild_id_str}.")
-                           # Only clear dirty flags for events that were successfully processed
-                           if guild_id_str in self._dirty_events:
-                                self._dirty_events[guild_id_str].difference_update(upserted_event_ids)
-                                # If set is empty after update, remove the guild key
-                                if not self._dirty_events[guild_id_str]:
-                                     del self._dirty_events[guild_id_str]
-
-                 # Note: Ended events (is_active=False) that were removed from _active_events
-                 # (by end_event calling remove_active_event) are NOT saved by this upsert block.
-                 # They are handled by the DELETE block.
 
         except Exception as e:
-            print(f"EventManager: ❌ Error during saving state for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # Do NOT clear dirty/deleted sets on error to allow retry.
-            # raise # Re-raise if critical
+            print(f"EventManager ({guild_id_str}): ❌ Error during saving state: {e}")
+            traceback.print_exc()
 
-        print(f"EventManager: Save state complete for guild {guild_id_str}.")
+        # print(f"EventManager ({guild_id_str}): Save state complete.")
 
 
     # rebuild_runtime_caches - rebuilds per-guild caches after loading

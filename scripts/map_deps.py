@@ -47,7 +47,7 @@ def find_project_imports(start_dir):
 
 if __name__ == "__main__":
     # Assumes the script is run from the project root and your main package is 'bot'
-    project_root = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     bot_package_dir = os.path.join(project_root, 'bot') # Adjust if your main package is named differently
 
     if not os.path.exists(bot_package_dir):
