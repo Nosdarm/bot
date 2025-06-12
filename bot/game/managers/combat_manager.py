@@ -848,7 +848,7 @@ class CombatManager:
             loot_rules = rules_data.get('loot_rules', {})
             all_dropped_loot = [] # List of item_ids or item objects
 
-            for defeated_npc_participant in defeated_npcs:
+            for defeated_npc_participant in defeated_npcs_participants:
                 # npc_model = npc_manager.get_npc(guild_id_str, defeated_npc_participant.entity_id) if npc_manager else None
                 # loot_table_id = getattr(npc_model, 'loot_table_id', None)
                 # RuleEngine might have: generated_loot = await rule_engine.resolve_loot_drop(defeated_npc_participant.entity_id, context)
