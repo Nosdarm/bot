@@ -1,216 +1,179 @@
+import asyncio
+import json
 import unittest
-import random # For potential mocking later if tests are flaky
+from unittest.mock import MagicMock, AsyncMock
 
 from bot.game.ai.npc_combat_ai import NpcCombatAI
-from bot.game.models.npc import NPC
-from bot.game.models.character import Character # Assuming Character model is in this path
+from bot.game.models.npc import NPC as NpcModel
+from bot.game.models.character import Character as CharacterModel
+from bot.game.models.combat import Combat, CombatParticipant
+from bot.ai.rules_schema import CoreGameRulesConfig, NpcBehaviorRules, TargetingRule, ActionSelectionRule
 
-class TestNpcCombatAI(unittest.TestCase):
+class TestNpcCombatAI(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
-        # NPC actor for most tests
-        self.npc_actor = NPC(
-            id="npc_1",
-            name_i18n={"en": "Test NPC"},
-            template_id="test_template",
-            guild_id="test_guild",
-            stats={"strength": 10, "dexterity": 10},
-            health=50,
-            max_health=50,
-            is_alive=True,
-            known_spells=["fireball_id"], # Assuming these are spell/ability IDs
-            known_abilities=["power_attack_id"],
-            role="dps"
+        self.mock_npc_self = NpcModel(id="npc_ai_1", name_i18n={"en": "AI NPC"}, guild_id="guild1", stats={"strength": 10, "dexterity": 12}, health=60, max_health=60)
+        setattr(self.mock_npc_self, 'available_actions', [
+            {"action_type": "attack", "name": "Basic Attack", "weapon_id": "claws"},
+            {"action_type": "spell", "name": "Mini Heal", "spell_id": "heal_self_lvl1", "target_type": "self", "hp_threshold_self": 0.5}
+        ])
+
+        self.npc_ai = NpcCombatAI(self.mock_npc_self)
+
+        self.mock_target_char1 = CharacterModel(id="char1", name="Hero", guild_id="guild1", hp=50, max_health=100, stats={"constitution": 10})
+        self.mock_target_char2 = CharacterModel(id="char2", name="Sidekick", guild_id="guild1", hp=30, max_health=80, stats={"constitution": 8})
+        self.mock_target_npc1 = NpcModel(id="npc_ally1", name_i18n={"en":"Friendly Goblin"}, guild_id="guild1", health=40, max_health=40, stats={"constitution": 9})
+
+
+        self.mock_combat_instance = Combat(
+            id="combat_test_1", guild_id="guild1", location_id="loc_test", is_active=True,
+            participants=[
+                CombatParticipant(entity_id="npc_ai_1", entity_type="NPC", hp=60, max_hp=60),
+                CombatParticipant(entity_id="char1", entity_type="Character", hp=50, max_hp=100),
+                CombatParticipant(entity_id="char2", entity_type="Character", hp=30, max_hp=80),
+                CombatParticipant(entity_id="npc_ally1", entity_type="NPC", hp=40, max_hp=40)
+            ],
+            turn_order=["npc_ai_1", "char1", "char2", "npc_ally1"], current_turn_index=0,
+            combat_log=[]
         )
 
-        # NPC with no special abilities
-        self.npc_no_specials = NPC(
-            id="npc_no_specials",
-            name_i18n={"en": "Basic NPC"},
-            template_id="basic_template",
-            guild_id="test_guild",
-            stats={"strength": 5},
-            health=30,
-            max_health=30,
-            is_alive=True,
-            known_spells=[],
-            known_abilities=[],
-            role="grunt"
+        self.rules_config = CoreGameRulesConfig(
+            base_stats={}, equipment_slots={}, checks={}, damage_types={},
+            item_definitions={}, status_effects={}, xp_rules=None, loot_tables={},
+            action_conflicts=[], location_interactions={},
+            npc_behavior_rules=NpcBehaviorRules(
+                targeting_rules=[
+                    TargetingRule(name="target_lowest_hp_absolute",
+                                  description="Target entity with the lowest current HP value.",
+                                  conditions=[],
+                                  priority=1,
+                                  target_evaluator_type="lowest_hp_absolute")
+                ],
+                action_selection_rules=[
+                    ActionSelectionRule(name="use_heal_if_low_hp",
+                                        description="Use self-heal if HP is below 50%",
+                                        conditions=[{"fact": "self_hp_percentage", "operator": "lessThan", "value": 0.5}],
+                                        action_preference=["heal_self_lvl1"],
+                                        priority=10),
+                    ActionSelectionRule(name="default_attack",
+                                        description="Default attack action.",
+                                        conditions=[],
+                                        action_preference=["Basic Attack"],
+                                        priority=1)
+                ],
+                scaling_rules=[]
+            )
         )
 
-        # Character targets
-        # Assuming Character constructor: id, name_i18n, guild_id, hp, max_health, is_alive, stats, state_variables
-        # discord_user_id is not a standard field in Character model based on previous context
-        self.char_healer_full_hp = Character(
-            id="char_1", name_i18n={"en": "Healer Full"}, guild_id="test_guild",
-            hp=100, max_health=100, is_alive=True, stats={"intelligence": 15},
-            state_variables={"role": "healer"}
+        self.mock_context = {
+            "guild_id": "guild1",
+            "rule_engine": AsyncMock(),
+            "rules_config": self.rules_config,
+            "character_manager": AsyncMock(),
+            "npc_manager": AsyncMock(),
+            "party_manager": AsyncMock(),
+            "relationship_manager": AsyncMock(),
+            "actor_effective_stats": {"strength": 10, "dexterity": 12, "current_hp": 60, "max_hp": 60},
+            "targets_effective_stats": {
+                "char1": {"constitution": 10, "current_hp": 50, "max_hp": 100, "_is_hostile_to_actor": True},
+                "char2": {"constitution": 8, "current_hp": 30, "max_hp": 80, "_is_hostile_to_actor": True},
+                "npc_ally1": {"constitution": 9, "current_hp": 40, "max_hp": 40, "_is_hostile_to_actor": False}
+            }
+        }
+
+        async def mock_is_hostile_side_effect(actor_entity, target_entity_obj, guild_id):
+            # This more closely matches the expected signature if RelationshipManager.is_hostile is used.
+            # For this test, we rely on a pre-populated "_is_hostile_to_actor" in targets_effective_stats.
+            target_stats = self.mock_context["targets_effective_stats"].get(target_entity_obj.id)
+            if target_stats:
+                return target_stats.get("_is_hostile_to_actor", False)
+            return False
+
+        if self.mock_context["relationship_manager"]:
+             # Assuming RelationshipManager might have a method like is_hostile(actor, target, guild_id)
+             # The AI code itself uses: relationship_manager.is_hostile(self.npc, target_entity_obj, context.get('guild_id'))
+             self.mock_context["relationship_manager"].is_hostile = AsyncMock(side_effect=mock_is_hostile_side_effect)
+
+
+    def test_no_valid_targets(self): # Changed to sync as get_npc_combat_action is sync
+        action = self.npc_ai.get_npc_combat_action(
+            combat_instance=self.mock_combat_instance,
+            potential_targets=[],
+            context=self.mock_context
         )
-        self.char_healer_injured = Character(
-            id="char_healer_inj", name_i18n={"en": "Healer Injured"}, guild_id="test_guild",
-            hp=80, max_health=100, is_alive=True, stats={"intelligence": 15},
-            state_variables={"role": "healer"} # HP is 80/100, so < max_hp
+        self.assertEqual(action["type"], "wait")
+        self.assertEqual(action["reason"], "no_valid_target")
+
+    def test_target_lowest_hp_amongst_hostiles(self): # Changed to sync
+        potential_targets_list = [self.mock_target_char1, self.mock_target_char2, self.mock_target_npc1]
+
+        # Mock combat_instance.get_participant_data to return HP for sorting
+        def get_hp_for_target(entity_id):
+            if entity_id == "char1": return MagicMock(hp=50)
+            if entity_id == "char2": return MagicMock(hp=30)
+            if entity_id == "npc_ally1": return MagicMock(hp=40)
+            return MagicMock(hp=0)
+        self.mock_combat_instance.get_participant_data = MagicMock(side_effect=get_hp_for_target)
+
+        action = self.npc_ai.get_npc_combat_action(
+            combat_instance=self.mock_combat_instance,
+            potential_targets=potential_targets_list,
+            context=self.mock_context
         )
-        self.char_mage_low_hp = Character(
-            id="char_2", name_i18n={"en": "Mage Low"}, guild_id="test_guild",
-            hp=30, max_health=100, is_alive=True, stats={"intelligence": 18},
-            state_variables={"role": "mage"} # HP is 30/100, so < max_hp
+        self.assertEqual(action["type"], "attack")
+        self.assertEqual(action["target_id"], "char2")
+
+    def test_action_selection_heal_if_low_hp(self): # Changed to sync
+        self.mock_context["actor_effective_stats"]["current_hp"] = 25
+        self.mock_combat_instance.get_participant_data("npc_ai_1").hp = 25
+
+        # Mock get_participant_data for target as well for sorting
+        self.mock_combat_instance.get_participant_data = MagicMock(side_effect=lambda entity_id: MagicMock(hp=50) if entity_id == "char1" else MagicMock(hp=25))
+
+
+        potential_targets_list = [self.mock_target_char1]
+        action = self.npc_ai.get_npc_combat_action(
+            combat_instance=self.mock_combat_instance,
+            potential_targets=potential_targets_list,
+            context=self.mock_context
         )
-        self.char_fighter_mid_hp = Character( # Corrected name for clarity
-            id="char_3", name_i18n={"en": "Fighter Mid"}, guild_id="test_guild",
-            hp=60, max_health=120, is_alive=True, stats={"strength": 16},
-            state_variables={"role": "fighter"}
+        self.assertEqual(action["type"], "cast_spell")
+        self.assertEqual(action["spell_id"], "heal_self_lvl1")
+        self.assertEqual(action["target_id"], "npc_ai_1")
+
+    def test_action_selection_default_attack(self): # Changed to sync
+        self.mock_context["actor_effective_stats"]["current_hp"] = 60
+        self.mock_combat_instance.get_participant_data("npc_ai_1").hp = 60
+
+        # Mock get_participant_data for target as well for sorting
+        self.mock_combat_instance.get_participant_data = MagicMock(side_effect=lambda entity_id: MagicMock(hp=50) if entity_id == "char1" else MagicMock(hp=60))
+
+        potential_targets_list = [self.mock_target_char1]
+        action = self.npc_ai.get_npc_combat_action(
+            combat_instance=self.mock_combat_instance,
+            potential_targets=potential_targets_list,
+            context=self.mock_context
         )
-        self.dead_char = Character(
-            id="char_dead", name_i18n={"en": "Dead"}, guild_id="test_guild",
-            hp=0, max_health=100, is_alive=False # Explicitly is_alive=False
+        self.assertEqual(action["type"], "attack")
+        self.assertEqual(action["weapon_id"], "claws")
+        self.assertEqual(action["target_id"], "char1")
+
+    def test_no_available_actions_defaults_to_basic_attack(self): # Changed to sync
+        setattr(self.mock_npc_self, 'available_actions', [])
+        npc_ai_no_actions = NpcCombatAI(self.mock_npc_self)
+
+        # Mock get_participant_data for target as well for sorting
+        self.mock_combat_instance.get_participant_data = MagicMock(return_value=MagicMock(hp=50))
+
+        potential_targets_list = [self.mock_target_char1]
+        action = npc_ai_no_actions.get_npc_combat_action(
+            combat_instance=self.mock_combat_instance,
+            potential_targets=potential_targets_list,
+            context=self.mock_context
         )
-
-        # NPC target
-        self.other_npc_target = NPC(
-            id="npc_2",
-            name_i18n={"en": "Other NPC"},
-            template_id="test_template_2",
-            guild_id="test_guild",
-            health=40, # Lower HP than char_fighter_mid_hp for one test
-            max_health=40,
-            is_alive=True,
-            role="tank"
-        )
-
-        self.dead_npc_target = NPC(
-            id="npc_dead",
-            name_i18n={"en": "Dead NPC"},
-            template_id="dead_template",
-            guild_id="test_guild",
-            health=0,
-            max_health=50,
-            is_alive=False, # Explicitly is_alive=False
-            role="grunt"
-        )
-
-
-    # --- Tests for select_target ---
-    def test_select_target_no_targets(self):
-        ai = NpcCombatAI(self.npc_actor)
-        targets = []
-        self.assertIsNone(ai.select_target(targets, {}))
-
-    def test_select_target_only_self(self):
-        ai = NpcCombatAI(self.npc_actor)
-        targets = [self.npc_actor]
-        self.assertIsNone(ai.select_target(targets, {}))
-
-    def test_select_target_dead_target(self):
-        ai = NpcCombatAI(self.npc_actor)
-        targets = [self.dead_char]
-        self.assertIsNone(ai.select_target(targets, {}))
-
-    def test_select_target_all_dead_targets(self):
-        ai = NpcCombatAI(self.npc_actor)
-        targets = [self.dead_char, self.dead_npc_target]
-        self.assertIsNone(ai.select_target(targets, {}))
-
-    def test_select_target_lowest_hp_low_difficulty(self):
-        ai = NpcCombatAI(self.npc_actor)
-        targets = [self.char_healer_full_hp, self.char_mage_low_hp, self.other_npc_target]
-        # Healer: 100hp, Mage: 30hp, Other NPC: 40hp
-        context = {"difficulty_level": 1}
-        selected = ai.select_target(targets, context)
-        self.assertEqual(selected, self.char_mage_low_hp)
-
-    def test_select_target_prioritizes_injured_healer_high_difficulty(self):
-        ai = NpcCombatAI(self.npc_actor)
-        # Mage: 30hp, Other NPC: 40hp, Injured Healer: 80hp (but is < max_hp)
-        targets = [self.char_healer_injured, self.char_mage_low_hp, self.other_npc_target]
-        context = {"difficulty_level": 3}
-        selected = ai.select_target(targets, context)
-        # AI should pick injured healer (role prio for Character, HP < max_hp)
-        self.assertEqual(selected, self.char_healer_injured)
-
-    def test_select_target_prioritizes_injured_mage_high_difficulty_healer_full(self):
-        ai = NpcCombatAI(self.npc_actor)
-        # Healer Full: 100hp, Mage Low: 30hp, Other NPC: 40hp
-        # Mage is injured (hp < max_hp) and has a priority role.
-        targets = [self.char_healer_full_hp, self.char_mage_low_hp, self.other_npc_target]
-        context = {"difficulty_level": 3}
-        selected = ai.select_target(targets, context)
-        self.assertEqual(selected, self.char_mage_low_hp)
-
-    def test_select_target_character_over_npc_high_difficulty_no_priority_role(self):
-        ai = NpcCombatAI(self.npc_actor)
-        # Fighter Mid HP: 60hp, Other NPC: 40hp. No priority roles injured.
-        # AI should prefer Character over NPC at high difficulty.
-        targets = [self.char_fighter_mid_hp, self.other_npc_target]
-        context = {"difficulty_level": 3}
-        selected = ai.select_target(targets, context)
-        self.assertEqual(selected, self.char_fighter_mid_hp)
-
-    def test_select_target_npc_if_only_option_high_difficulty(self):
-        ai = NpcCombatAI(self.npc_actor)
-        targets = [self.other_npc_target]
-        context = {"difficulty_level": 3}
-        selected = ai.select_target(targets, context)
-        self.assertEqual(selected, self.other_npc_target)
-
-    # --- Tests for select_action ---
-    def test_select_action_no_target(self):
-        ai = NpcCombatAI(self.npc_actor)
-        action = ai.select_action(target=None, combat_context={})
-        self.assertIsNotNone(action)
-        self.assertEqual(action.get("type"), "wait")
-        self.assertEqual(action.get("actor_id"), self.npc_actor.id)
-
-    def test_select_action_with_target_low_difficulty(self):
-        ai = NpcCombatAI(self.npc_actor)
-        context = {"difficulty_level": 1}
-        action = ai.select_action(target=self.char_mage_low_hp, combat_context=context)
-        self.assertIsNotNone(action)
-        self.assertEqual(action.get("type"), "attack")
-        self.assertEqual(action.get("target_id"), self.char_mage_low_hp.id)
-        self.assertEqual(action.get("actor_id"), self.npc_actor.id)
-
-    def test_select_action_with_target_high_difficulty_can_choose_special(self):
-        ai = NpcCombatAI(self.npc_actor) # This NPC has spells and abilities
-        context = {"difficulty_level": 3}
-        action_types = set()
-
-        # Mock random.random to control outcomes for deterministic testing of both branches
-        # Test spell/ability path
-        with unittest.mock.patch('random.random', return_value=0.4): # < 0.5, should pick special
-            action_special = ai.select_action(target=self.char_mage_low_hp, combat_context=context)
-            self.assertIsNotNone(action_special)
-            self.assertIn(action_special.get("type"), ["spell", "ability"])
-            if action_special.get("type") == "spell":
-                self.assertEqual(action_special.get("spell_id"), "fireball_id")
-            else: # ability
-                self.assertEqual(action_special.get("ability_id"), "power_attack_id")
-
-        # Test attack path
-        with unittest.mock.patch('random.random', return_value=0.6): # >= 0.5, should pick attack
-            action_attack = ai.select_action(target=self.char_mage_low_hp, combat_context=context)
-            self.assertIsNotNone(action_attack)
-            self.assertEqual(action_attack.get("type"), "attack")
-
-        # Original probabilistic check (can be flaky, kept for reference or if mocking is removed)
-        # for _ in range(50): # Run multiple times for probabilistic check
-        #     action = ai.select_action(target=self.char_mage_low_hp, combat_context=context)
-        #     self.assertIsNotNone(action)
-        #     action_types.add(action["type"])
-        # self.assertIn("attack", action_types)
-        # self.assertTrue("spell" in action_types or "ability" in action_types,
-        #                 f"Neither spell nor ability found in action types: {action_types}")
-
-
-    def test_select_action_high_difficulty_no_specials_defaults_to_attack(self):
-        ai = NpcCombatAI(self.npc_no_specials) # This NPC has no spells/abilities
-        context = {"difficulty_level": 3}
-        action = ai.select_action(target=self.char_mage_low_hp, combat_context=context)
-        self.assertIsNotNone(action)
-        self.assertEqual(action.get("type"), "attack")
-        self.assertEqual(action.get("target_id"), self.char_mage_low_hp.id)
-        self.assertEqual(action.get("actor_id"), self.npc_no_specials.id)
-
+        self.assertEqual(action["type"], "attack")
+        self.assertEqual(action.get("weapon_id", "default_npc_weapon"), "default_npc_weapon")
+        self.assertEqual(action["target_id"], "char1")
 
 if __name__ == '__main__':
     unittest.main()

@@ -9,24 +9,12 @@ import asyncio
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union
 
 # --- Imports ---
-# Pylance/Mypy needs direct import for Character to understand Character.from_dict
-# Runtime also needs direct import for Character.from_dict
 from bot.game.models.character import Character
-
-# Import built-in types for isinstance checks
-# Use lowercase 'dict', 'set', 'list' for isinstance
-from builtins import dict, set, list, int
-
+from builtins import dict, set, list, int # Use lowercase for isinstance
 
 # --- Imports needed ONLY for Type Checking ---
-# These modules are imported ONLY for static analysis (Pylance/Mypy).
-# This breaks import cycles at runtime and helps Pylance correctly resolve types.
-# Используйте строковые литералы ("ClassName") для type hints в __init__ и методах
-# для классов, импортированных здесь.
 if TYPE_CHECKING:
-    # Add DBService here
     from bot.services.db_service import DBService
-    # Add other managers and RuleEngine
     from bot.game.managers.item_manager import ItemManager
     from bot.game.managers.location_manager import LocationManager
     from bot.game.managers.status_manager import StatusManager
@@ -34,60 +22,27 @@ if TYPE_CHECKING:
     from bot.game.managers.combat_manager import CombatManager
     from bot.game.managers.dialogue_manager import DialogueManager
     from bot.game.rules.rule_engine import RuleEngine
-    # Add Discord types if used in type hints (e.g., in context dicts)
-    # from discord import Guild # Example if guild object is passed in context
-    # from discord import Client # If client is passed in context
-
-    # !!! Add Character here too, despite direct import above !!!
-    # This is necessary for Pylance to resolve string literals in annotations (e.g., Dict[str, "Character"]).
-    from bot.game.models.character import Character
-    from bot.game.models.npc import NPC # Added for type hinting killer_entity
-    # Ensure ItemManager is imported for type hinting
-    from bot.game.managers.item_manager import ItemManager
+    from bot.game.models.npc import NPC
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.managers.npc_manager import NPCManager
     from bot.game.managers.game_manager import GameManager
 
 
-# --- Imports needed at Runtime ---
-# For CharacterManager, you usually need direct import of the Character model and utilities.
-
-
 class CharacterManager:
-    """
-    Менеджер для управления персонажами игроков.
-    Отвечает за создание, получение, обновление персонажей, их персистентность
-    и хранение их основного состояния и кешей.
-    Работает на основе guild_id для многогильдийной поддержки.
-    """
-    # Добавляем required_args для совместимости с PersistenceManager
-    # Эти поля используются PersistenceManager для определения, какие аргументы передать в load/save/rebuild.
-    required_args_for_load = ["guild_id"] # load_state фильтрует по guild_id
-    required_args_for_save = ["guild_id"] # save_state фильтрует по guild_id
-    required_args_for_rebuild = ["guild_id"] # rebuild_runtime_caches фильтрует по guild_id
+    required_args_for_load = ["guild_id"]
+    required_args_for_save = ["guild_id"]
+    required_args_for_rebuild = ["guild_id"]
 
-    # --- Class-Level Attribute Annotations ---
-    # Объявляем типы инстанс-атрибутов здесь. Это стандартный способ для Pylance/Mypy.
-    # ИСПРАВЛЕНИЕ: Кеши должны быть per-guild
-    # Кеш всех загруженных объектов персонажей {guild_id: {char_id: Character_object}}
     _characters: Dict[str, Dict[str, "Character"]]
-    # Мапа Discord User ID на ID персонажа (UUID) per-guild: {guild_id: {discord_id: char_id}}
     _discord_to_char_map: Dict[str, Dict[int, str]]
-    # Set ID сущностей (Character/NPC) с активным действием per-guild: {guild_id: set(entity_ids)}
-    # Decided to make this per-guild for consistency, although entity_ids themselves are global UUIDs.
     _entities_with_active_action: Dict[str, Set[str]]
-    # ID персонажей, которые были изменены в runtime и требуют сохранения в DB per-guild: {guild_id: set(char_ids)}
     _dirty_characters: Dict[str, Set[str]]
-    # ID персонажей, которые были удалены в runtime и требуют удаления из DB per-guild: {guild_id: set(char_ids)}
     _deleted_characters_ids: Dict[str, Set[str]]
-
 
     def __init__(
         self,
-        # Используем строковые литералы для всех опциональных менеджеров/адаптеров,
-        # особенно если они импортируются условно или только в TYPE_CHECKING
-        db_service: Optional["DBService"] = None, # Changed from db_adapter
+        db_service: Optional["DBService"] = None,
         settings: Optional[Dict[str, Any]] = None,
         item_manager: Optional["ItemManager"] = None,
         location_manager: Optional["LocationManager"] = None,
@@ -98,11 +53,11 @@ class CharacterManager:
         dialogue_manager: Optional["DialogueManager"] = None,
         relationship_manager: Optional["RelationshipManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
-        npc_manager: Optional["NPCManager"] = None, # Add this
-        game_manager: Optional["GameManager"] = None  # Add this
+        npc_manager: Optional["NPCManager"] = None,
+        game_manager: Optional["GameManager"] = None
     ):
         print("Initializing CharacterManager...")
-        self._db_service = db_service # Changed from _db_adapter
+        self._db_service = db_service
         self._settings = settings
         self._item_manager = item_manager
         self._location_manager = location_manager
@@ -113,2235 +68,430 @@ class CharacterManager:
         self._dialogue_manager = dialogue_manager
         self._relationship_manager = relationship_manager
         self._game_log_manager = game_log_manager
-        self._npc_manager = npc_manager # Add this
-        self._game_manager = game_manager # Add this
+        self._npc_manager = npc_manager
+        self._game_manager = game_manager
 
-        # Internal caches
-        # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
-        self._characters = {} # {guild_id: {char_id: Character_object}}
-        self._discord_to_char_map = {} # {guild_id: {discord_id: char_id}}
-        self._entities_with_active_action = {} # {guild_id: set(entity_ids)}
-        self._dirty_characters = {} # {guild_id: set(char_ids)}
-        self._deleted_characters_ids = {} # {guild_id: set(char_ids)}
-
+        self._characters = {}
+        self._discord_to_char_map = {}
+        self._entities_with_active_action = {}
+        self._dirty_characters = {}
+        self._deleted_characters_ids = {}
         print("CharacterManager initialized.")
 
-    # --- Методы получения персонажей ---
-    # ИСПРАВЛЕНИЕ: Все геттеры должны принимать guild_id
-    # Используем строковый литерал в аннотации возвращаемого типа
+    async def _recalculate_and_store_effective_stats(self, guild_id: str, character_id: str, char_model: Optional[Character] = None) -> None:
+        """Helper to recalculate and store effective stats for a character."""
+        if not char_model: # Fetch if not provided
+            char_model = self.get_character(guild_id, character_id)
+            if not char_model:
+                print(f"CharacterManager: ERROR - Character {character_id} not found for effective stats recalc.")
+                return
+
+        # Ensure all required managers are available
+        if not (self._rule_engine and self._item_manager and self._status_manager and
+                  self._npc_manager and self._db_service and hasattr(self._rule_engine, 'rules_config_data')):
+            missing_deps = [dep_name for dep_name, dep in [
+                ("rule_engine", self._rule_engine), ("item_manager", self._item_manager),
+                ("status_manager", self._status_manager), ("npc_manager", self._npc_manager), # NpcManager needed by calculator
+                ("db_service", self._db_service)
+            ] if dep is None]
+            if self._rule_engine and not hasattr(self._rule_engine, 'rules_config_data'):
+                missing_deps.append("rule_engine.rules_config_data")
+
+            print(f"CharacterManager: WARNING - Could not recalculate effective_stats for {character_id} due to missing dependencies: {missing_deps}.")
+            setattr(char_model, 'effective_stats_json', "{}")
+            return
+
+        from bot.game.utils import stats_calculator # Local import for safety
+        try:
+            rules_config = self._rule_engine.rules_config_data
+            effective_stats_dict = await stats_calculator.calculate_effective_stats(
+                db_service=self._db_service, guild_id=guild_id, entity_id=character_id,
+                entity_type="Character", rules_config_data=rules_config,
+                character_manager=self, npc_manager=self._npc_manager,
+                item_manager=self._item_manager, status_manager=self._status_manager
+            )
+            setattr(char_model, 'effective_stats_json', json.dumps(effective_stats_dict))
+            # print(f"CharacterManager: Recalculated effective_stats for character {character_id}.") # Can be noisy
+        except Exception as es_ex:
+            print(f"CharacterManager: ERROR recalculating effective_stats for {character_id}: {es_ex}")
+            traceback.print_exc()
+            setattr(char_model, 'effective_stats_json', "{}")
+
+    async def trigger_stats_recalculation(self, guild_id: str, character_id: str) -> None:
+        """Public method to trigger effective stats recalculation and mark character dirty."""
+        char = self.get_character(guild_id, character_id)
+        if char:
+            await self._recalculate_and_store_effective_stats(guild_id, character_id, char)
+            self.mark_character_dirty(guild_id, character_id)
+            print(f"CharacterManager: Stats recalculation triggered and character {character_id} marked dirty.")
+        else:
+            print(f"CharacterManager: trigger_stats_recalculation - Character {character_id} not found in guild {guild_id}.")
+
+
     def get_character(self, guild_id: str, character_id: str) -> Optional["Character"]:
-        """Получить персонажа по его внутреннему ID (UUID) для определенной гильдии."""
-        # ИСПРАВЛЕНИЕ: Получаем из per-guild кеша
         guild_chars = self._characters.get(str(guild_id))
         if guild_chars:
              return guild_chars.get(character_id)
-        return None # Гильдия или персонаж не найдены
-
-
-    # Используем строковый литерал в аннотации возвращаемого типа
-    # ИСПРАВЛЕНИЕ: Принимаем guild_id
-    # Made synchronous as it does not await anything internally
-    def get_character_by_discord_id(self, guild_id: str, discord_user_id: int) -> Optional["Character"]:
-        """Получить персонажа по Discord User ID для определенной гильдии."""
-        guild_id_str = str(guild_id)
-        # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-        # print(f"DEBUG: CharacterManager: Attempting to get character for Discord ID {discord_user_id} in guild {guild_id_str}...") # Too noisy
-
-        # ИСПРАВЛЕНИЕ: Используем per-guild мапу
-        guild_discord_map = self._discord_to_char_map.get(guild_id_str) # Type: Optional[Dict[int, str]]
-
-        # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-        # if guild_discord_map:
-        #      print(f"DEBUG: CharacterManager: Found guild_discord_map for guild {guild_id_str}. Keys: {list(guild_discord_map.keys()) if isinstance(guild_discord_map, dict) else 'Not a dict'}. Looking for Discord ID {discord_user_id}.") # Too noisy
-        # else:
-        #      print(f"DEBUG: CharacterManager: No guild_discord_map found for guild {guild_id_str}.") # Too noisy
-
-
-        if isinstance(guild_discord_map, dict): # Проверяем, что это словарь перед get
-             char_id = guild_discord_map.get(discord_user_id) # Type: Optional[str]
-
-             # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-             # if char_id:
-             #     print(f"DEBUG: CharacterManager: Found char_id '{char_id}' in map for Discord ID {discord_user_id}. Attempting to get from _characters cache...") # Too noisy
-             # else:
-             #     print(f"DEBUG: CharacterManager: Char_id not found in map for Discord ID {discord_user_id}.") # Too noisy
-
-
-             if char_id:
-                 # Возвращаем персонажа из основного кеша для этой гильдии
-                 # get_character также должен логировать
-                 char = self.get_character(guild_id, char_id) # Используем get_character с guild_id
-                 # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ
-                 # if char:
-                 #      print(f"DEBUG: CharacterManager: Successfully retrieved character {char_id} from _characters cache.") # Too noisy
-                 # else:
-                 #      print(f"DEBUG: CharacterManager: Char_id '{char_id}' found in map, but character NOT found in _characters cache for guild {guild_id_str}! Cache inconsistency?") # Critical, keep
-                 #      # Это может указывать на несогласованность кешей. Возможно, персонаж в мапе, но не загрузился в основной кеш.
-                 #      # ОСТОРОЖНО: Если мапа глобальная, а кеш пер-гильдийный, эта логика может быть сложной.
-                 #      # В текущей реализации, мапа и кеш ПРЕДПОЛАГАЮТСЯ пер-гильдийными.
-                 #      # Если персонаж в мапе гильдии, но нет в кеше гильдии, это проблема.
-                 #      # Удаление из мапы может помочь, но это изменение состояния, требующее mark_dirty мапы?
-                 #      # Пока просто логируем предупреждение.
-                 if not char: # More concise logging for this critical case
-                     print(f"CRITICAL: CharacterManager: Char_id '{char_id}' for Discord ID {discord_user_id} found in map, but character NOT in _characters cache for guild {guild_id_str}! Cache inconsistency.")
-                 return char # Возвращает найденный персонаж или None
-
-
-        # ДОБАВЛЕНЫ СТРОКИ ОТЛАДКИ (уже была, убедитесь, что она там)
-        # print(f"DEBUG: CharacterManager: Character not found for Discord ID {discord_user_id} in guild {guild_id_str}.") # Too noisy
         return None
 
-    # Используем строковый литерал в аннотации возвращаемого типа
-    # ИСПРАВЛЕНИЕ: Принимаем guild_id
+    def get_character_by_discord_id(self, guild_id: str, discord_user_id: int) -> Optional["Character"]:
+        guild_id_str = str(guild_id)
+        guild_discord_map = self._discord_to_char_map.get(guild_id_str)
+        if isinstance(guild_discord_map, dict):
+             char_id = guild_discord_map.get(discord_user_id)
+             if char_id:
+                 char = self.get_character(guild_id, char_id)
+                 if not char:
+                     print(f"CRITICAL: CharacterManager: Char_id '{char_id}' for Discord ID {discord_user_id} found in map, but character NOT in _characters cache for guild {guild_id_str}! Cache inconsistency.")
+                 return char
+        return None
+
     def get_character_by_name(self, guild_id: str, name: str) -> Optional["Character"]:
-         """Получить персонажа по имени для определенной гильдии (может быть медленно)."""
-         # ИСПРАВЛЕНИЕ: Итерируем только по персонажам этой гильдии
          guild_chars = self._characters.get(str(guild_id))
          if guild_chars:
               for char in guild_chars.values():
-                  # Use getattr for safer access to name, fallback to id if name is missing
                   if isinstance(char, Character) and getattr(char, 'name', char.id) == name:
                       return char
          return None
 
-    # Используем строковый литерал в аннотации возвращаемого типа
-    # ИСПРАВЛЕНИЕ: Принимаем guild_id
     def get_all_characters(self, guild_id: str) -> List["Character"]:
-        """Получить список всех загруженных персонажей для определенной гильдии (из кеша)."""
-        # ИСПРАВЛЕНИЕ: Получаем из per-guild кеша
         guild_chars = self._characters.get(str(guild_id))
         if guild_chars:
              return list(guild_chars.values())
-        return [] # Возвращаем пустой список, если для гильдии нет персонажей
+        return []
 
-    # Метод уже принимает guild_id
     def get_characters_in_location(self, guild_id: str, location_id: str, **kwargs: Any) -> List["Character"]:
-        """Получить список персонажей, находящихся в указанной локации (инстансе) для данной гильдии."""
-        # ИСПРАВЛЕНИЕ: Фильтруем только по персонажам этой гильдии
         guild_id_str = str(guild_id)
         location_id_str = str(location_id)
         characters_in_location = []
-        # Получаем всех персонажей для этой гильдии, затем фильтруем по локации
         guild_chars = self._characters.get(guild_id_str)
         if guild_chars:
              for char in guild_chars.values():
                  if isinstance(char, Character) and hasattr(char, 'location_id') and str(getattr(char, 'location_id', None)) == location_id_str:
                       characters_in_location.append(char)
-
-        # print(f"CharacterManager: Found {len(characters_in_location)} characters in location {location_id_str} for guild {guild_id_str}.") # Debug
         return characters_in_location
 
-
-    # ИСПРАВЛЕНИЕ: Метод должен принимать guild_id
     def get_entities_with_active_action(self, guild_id: str) -> Set[str]:
-        """Получить ID сущностей (включая персонажей) с активным действием для определенной гильдии."""
-        # ИСПРАВЛЕНИЕ: Получаем из per-guild Set
-        return self._entities_with_active_action.get(str(guild_id), set()).copy() # Возвращаем копию для безопасности
+        return self._entities_with_active_action.get(str(guild_id), set()).copy()
 
-
-    # ИСПРАВЛЕНИЕ: Метод должен принимать guild_id
     def is_busy(self, guild_id: str, character_id: str) -> bool:
-        """Проверяет, занят ли персонаж (выполняет действие или состоит в занятой группе)."""
-        # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
         char = self.get_character(guild_id, character_id)
-        if not char:
-            return False
-        # Проверка на текущее действие персонажа (эти атрибуты на самом объекте Character, не в менеджере)
-        if getattr(char, 'current_action', None) is not None or getattr(char, 'action_queue', []):
-            return True
-        # Проверка, занята ли его группа (используем инжектированный party_manager, если он есть)
+        if not char: return False
+        if getattr(char, 'current_action', None) is not None or getattr(char, 'action_queue', []): return True
         if getattr(char, 'party_id', None) is not None and self._party_manager and hasattr(self._party_manager, 'is_party_busy'):
-            # ИСПРАВЛЕНИЕ: Передаем guild_id в PartyManager.is_party_busy
-            # Предполагаем, что PartyManager.is_party_busy ожидает guild_id и party_id
-            # PartyManager.is_party_busy(guild_id: str, party_id: str) -> bool
             party_id = getattr(char, 'party_id', None)
-            if party_id:
-                # PartyManager может быть async, поэтому вызов PartyManager.is_party_busy должен быть awaitable?
-                # Если is_party_busy синхронный, то все ОК. Если async, этот метод is_busy должен стать async.
-                # Большинство проверок занятости - синхронные. Предположим, PartyManager.is_party_busy синхронный.
-                return self._party_manager.is_party_busy(str(guild_id), party_id) # Убеждаемся, что guild_id строка
-        # Если party_manager нет или нет метода, считаем, что группа не может быть занята через него
+            if party_id: return self._party_manager.is_party_busy(str(guild_id), party_id)
         return False
 
-
-    # --- Методы создания ---
-
     async def create_character(
-        self,
-        discord_id: int, # Discord User ID (int)
-        name: str, # Имя персонажа (string)
-        guild_id: str, # Обязательный аргумент guild_id
-        # Опциональная начальная локация (ID инстанса локации)
-        initial_location_id: Optional[str] = None,
-        level: int = 1,
-        experience: int = 0,
-        unspent_xp: int = 0,
-        # Добавляем **kwargs для контекста, хотя guild_id теперь обязателен
-        **kwargs: Any
-    ) -> Optional["Character"]: # Возвращаем Optional["Character"], т.к. создание может не удасться
-        """
-        Создает нового персонажа в базе данных, кеширует его и возвращает объект Character.
-        Принимает discord_id, name, guild_id.
-        """
+        self, discord_id: int, name: str, guild_id: str,
+        initial_location_id: Optional[str] = None, level: int = 1, experience: int = 0,
+        unspent_xp: int = 0, **kwargs: Any
+    ) -> Optional["Character"]:
         log_prefix = "CM.create_character DEBUG:"
-        print(f"{log_prefix} Method called with initial_location_id: {initial_location_id}")
-
-        if self._db_service is None or self._db_service.adapter is None: # Check adapter too
-            print(f"{log_prefix} Error: DB service or adapter missing for guild {guild_id}.")
-            # В многогильдийном режиме, возможно, нужно рейзить ошибку, т.к. без DB данные не будут персистировать
+        if self._db_service is None or self._db_service.adapter is None:
             raise ConnectionError("Database service or adapter is not initialized in CharacterManager.")
-
-        guild_id_str = str(guild_id) # Убедимся, что guild_id строка
-
-        # Проверка на существование персонажа для этого discord_id В ПРЕДЕЛАХ ГИЛЬДИИ
-        # ИСПРАВЛЕНИЕ: Используем get_character_by_discord_id с guild_id
-        existing_char = self.get_character_by_discord_id(guild_id_str, discord_id)
-        if existing_char:
-             print(f"CharacterManager: Character already exists for discord ID {discord_id} in guild {guild_id_str} (ID: {existing_char.id}). Creation failed.")
-             # В зависимости от логики, можно вернуть None или рейзить ValueЕrror
-             # raise ValueError(f"User already has a character (ID: {existing_char.id}) in this guild.")
-             return None
-
-
-        # Проверка на уникальность имени персонажа В ПРЕДЕЛАХ ГИЛЬДИИ
-        # ИСПРАВЛЕНИЕ: Используем get_character_by_name с guild_id
-        existing_char_by_name = self.get_character_by_name(guild_id_str, name)
-        if existing_char_by_name:
-             print(f"CharacterManager: Character with name '{name}' already exists in guild {guild_id_str} (ID: {existing_char_by_name.id}). Creation failed.")
-             # В зависимости от логики, можно вернуть None или рейзить ValueЕrror
-             # raise ValueError(f"Character name '{name}' is already taken in this guild.")
-             return None
-
-
-        # Генерируем уникальный ID (UUID)
+        guild_id_str = str(guild_id)
+        if self.get_character_by_discord_id(guild_id_str, discord_id): return None
+        if self.get_character_by_name(guild_id_str, name): return None
         new_id = str(uuid.uuid4())
-
-        # Определяем начальные статы (можно использовать RuleEngine, если он передан)
-        stats = {'strength': 10, 'dexterity': 10, 'intelligence': 10} # Default stats
+        stats = {'strength': 10, 'dexterity': 10, 'intelligence': 10}
         if self._rule_engine and hasattr(self._rule_engine, 'generate_initial_character_stats'):
             try:
-                # RuleEngine.generate_initial_character_stats не ожидает аргументов, согласно его коду.
-                # Если ему нужен guild_id или другие параметры для генерации статов (например, на основе расы гильдии),
-                # нужно изменить сигнатуру generate_initial_character_stats в RuleEngine и передать kwargs сюда.
-                generated_stats = self._rule_engine.generate_initial_character_stats() # Предполагаем синхронный вызов
-                if isinstance(generated_stats, dict):
-                     stats = generated_stats
-            except Exception:
-                print("CharacterManager: Error generating initial character stats:")
-                traceback.print_exc()
+                generated_stats = self._rule_engine.generate_initial_character_stats()
+                if isinstance(generated_stats, dict): stats = generated_stats
+            except Exception: traceback.print_exc()
+        default_player_language = "en"
+        if hasattr(self, '_game_manager') and self._game_manager and hasattr(self._game_manager, 'get_default_bot_language'):
+            try: default_player_language = self._game_manager.get_default_bot_language()
+            except Exception: default_player_language = "en"
+        resolved_initial_location_id = initial_location_id
+        if resolved_initial_location_id is None and self._settings:
+            guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
+            default_loc_id = guild_settings.get('default_start_location_id') or self._settings.get('default_start_location_id')
+            if default_loc_id: resolved_initial_location_id = str(default_loc_id)
+        elif initial_location_id: resolved_initial_location_id = str(initial_location_id)
 
-
-        # Determine default player language
-        default_player_language = "en" # Fallback default
-        if hasattr(self, '_game_manager') and self._game_manager is not None: # Check if GameManager is available
-            if hasattr(self._game_manager, 'get_default_bot_language') and callable(getattr(self._game_manager, 'get_default_bot_language')):
-                try:
-                    # Assuming get_default_bot_language is synchronous as per previous subtask
-                    default_player_language = self._game_manager.get_default_bot_language()
-                except Exception as lang_e:
-                    print(f"CharacterManager: Error calling get_default_bot_language: {lang_e}. Defaulting to 'en'.")
-                    default_player_language = "en"
-            else:
-                print("CharacterManager: Warning: GameManager instance does not have a callable 'get_default_bot_language' method. Defaulting player language to 'en'.")
-        else:
-            # This case can be common if GameManager is not passed or setup fully.
-            # print("CharacterManager: Note: GameManager instance not available in CharacterManager. Defaulting player language to 'en'.") # Can be noisy
-            pass
-
-        # Определяем начальную локацию - START OF EXACTLY SPECIFIED BLOCK
-        resolved_initial_location_id = initial_location_id # Keep this line
-
-        if resolved_initial_location_id is None:
-            print(f"{log_prefix} initial_location_id is None. Attempting to use default start location ID from settings.")
-
-            default_location_id_from_settings = None
-            if self._settings: # Check if settings object exists
-                guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
-                default_location_id_from_settings = guild_settings.get('default_start_location_id')
-                if default_location_id_from_settings is None:
-                    default_location_id_from_settings = self._settings.get('default_start_location_id')
-                print(f"{log_prefix} default_location_id_from_settings: {default_location_id_from_settings}")
-            else:
-                print(f"{log_prefix} CRITICAL - self._settings is not available in CharacterManager. Cannot determine default start location.")
-
-            if default_location_id_from_settings:
-                # CRITICAL CHANGE: Directly use the ID from settings. Do NOT create a new instance here.
-                resolved_initial_location_id = str(default_location_id_from_settings)
-                print(f"{log_prefix} Found and using default start location ID from settings: '{resolved_initial_location_id}' directly for `current_location_id`.")
-            else:
-                print(f"{log_prefix} default_start_location_id not found in settings for guild {guild_id_str}. `current_location_id` will be None.")
-                # resolved_initial_location_id remains None in this case
-        else:
-            # If initial_location_id was provided as an argument
-            resolved_initial_location_id = str(initial_location_id) # Ensure it is a string
-            print(f"{log_prefix} initial_location_id provided: '{resolved_initial_location_id}'. Using this directly.")
-
-        # This log is important for verification before data dictionary creation
-        print(f"{log_prefix} Final resolved_initial_location_id for new character {new_id}: {resolved_initial_location_id}")
-        # END OF EXACTLY SPECIFIED BLOCK
-
-        # Подготавливаем данные для вставки в DB и создания модели
-        name_i18n_data = {"en": name, "ru": name} # Basic i18n structure
-
+        name_i18n_data = {"en": name, "ru": name}
         data: Dict[str, Any] = {
-            'id': new_id,
-            'discord_id': discord_id,
-            'name': name,
-            'name_i18n': name_i18n_data,
-            'guild_id': guild_id_str,
-            'current_location_id': resolved_initial_location_id, # Ensure this uses the correctly resolved ID
-            'stats': stats,
-            'inventory': [],
-            'current_action': None,
-            'action_queue': [], # list
-            'party_id': None, # null
-            'state_variables': {}, # dict
-            'hp': 100.0,
-            'max_health': 100.0,
-            'is_alive': True, # bool (сохраняется как integer 0 or 1)
-            'status_effects': [], # list
-            'level': level,
-            'experience': experience,
-            'unspent_xp': unspent_xp,
-            'selected_language': default_player_language, # Add this
-            'collected_actions_json': None, # Default for new character
-            # New fields for DB v18+
-            'skills_data_json': json.dumps([]), # Default to empty list JSON
-            'abilities_data_json': json.dumps([]), # Default to empty list JSON
-            'spells_data_json': json.dumps([]), # Default to empty list JSON
-            'character_class': kwargs.get('character_class', 'Adventurer'), # Default class
-            'flags_json': json.dumps({}) # Default to empty dict JSON
+            'id': new_id, 'discord_id': discord_id, 'name': name, 'name_i18n': name_i18n_data,
+            'guild_id': guild_id_str, 'current_location_id': resolved_initial_location_id,
+            'stats': stats, 'inventory': [], 'current_action': None, 'action_queue': [],
+            'party_id': None, 'state_variables': {}, 'hp': 100.0, 'max_health': 100.0,
+            'is_alive': True, 'status_effects': [], 'level': level, 'experience': experience,
+            'unspent_xp': unspent_xp, 'selected_language': default_player_language,
+            'collected_actions_json': None, 'skills_data_json': json.dumps([]),
+            'abilities_data_json': json.dumps([]), 'spells_data_json': json.dumps([]),
+            'character_class': kwargs.get('character_class', 'Adventurer'),
+            'flags_json': json.dumps({}), 'effective_stats_json': "{}"
         }
-
-        # Data for Character.from_dict (Python types)
         model_data = data.copy()
+        model_data['discord_user_id'] = model_data.pop('discord_id')
+        for k_json in ['skills_data_json', 'abilities_data_json', 'spells_data_json', 'flags_json', 'effective_stats_json']:
+            if k_json in model_data: del model_data[k_json]
+        model_data['skills_data']=[]; model_data['abilities_data']=[]; model_data['spells_data']=[]; model_data['flags']={}
 
-        # Align key for Character.from_dict
-        if 'discord_id' in model_data:
-            model_data['discord_user_id'] = model_data.pop('discord_id')
-
-        model_data['name_i18n'] = name_i18n_data
-        model_data['skills_data'] = []
-        model_data['abilities_data'] = []
-        model_data['spells_data'] = []
-        model_data['flags'] = {}
-        # Remove *_json suffixed keys if model attributes don't have them
-        del model_data['skills_data_json']
-        del model_data['abilities_data_json']
-        del model_data['spells_data_json']
-        del model_data['flags_json']
-
-
-        # Преобразуем в JSON для сохранения в DB
-        # Note: The 'name_i18n' column in DB will store name_i18n JSON.
         sql = """
         INSERT INTO players (
             id, discord_id, name_i18n, guild_id, current_location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
             hp, max_health, is_alive, status_effects, level, xp, unspent_xp,
             selected_language, collected_actions_json,
-            skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+            skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json, effective_stats_json
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
         RETURNING id;
-        """ # 25 placeholders, changed to $n style, added RETURNING id
-        # Убедитесь, что порядок параметров соответствует колонкам в SQL
-        print(f"DEBUG_SAVE_CHAR: Preparing to save character {data.get('id')}. current_location_id to be saved: {data.get('current_location_id')}")
+        """
         db_params = (
-            data['id'],
-            str(data['discord_id']), # Changed from discord_user_id
-            json.dumps(data['name_i18n']), # Store name_i18n dict as JSON in 'name_i18n' column
-            data['guild_id'], # <-- Параметр guild_id_str
-            data['current_location_id'],
-            json.dumps(data['stats']),
-            json.dumps(data['inventory']),
+            data['id'], str(data['discord_id']), json.dumps(data['name_i18n']), data['guild_id'],
+            data['current_location_id'], json.dumps(data['stats']), json.dumps(data['inventory']),
             json.dumps(data['current_action']) if data['current_action'] is not None else None,
-            json.dumps(data['action_queue']),
-            data['party_id'],
-            json.dumps(data['state_variables']),
-            data['hp'],
-            data['max_health'],
-            data['is_alive'], # Boolean directly
-            json.dumps(data['status_effects']),
-            data['level'],
-            data['experience'], # This is data['experience'] from the model, which maps to 'xp' column
-            data['unspent_xp'],
-            data['selected_language'],
-            data['collected_actions_json'],
-            # New fields
-            data['skills_data_json'],
-            data['abilities_data_json'],
-            data['spells_data_json'],
-            data['character_class'],
-            data['flags_json']
+            json.dumps(data['action_queue']), data['party_id'], json.dumps(data['state_variables']),
+            data['hp'], data['max_health'], data['is_alive'], json.dumps(data['status_effects']),
+            data['level'], data['experience'], data['unspent_xp'], data['selected_language'],
+            data['collected_actions_json'], data['skills_data_json'], data['abilities_data_json'],
+            data['spells_data_json'], data['character_class'], data['flags_json'], data['effective_stats_json']
         )
-
-        if self._db_service is None or self._db_service.adapter is None:
-             print(f"CharacterManager: Error creating character: DB service or adapter is None for guild {guild_id_str}.")
-             raise ConnectionError("Database service or adapter is not initialized in CharacterManager.")
-
         try:
-            # Выполняем INSERT. Используем execute_insert для RETURNING id.
-            inserted_id = await self._db_service.adapter.execute_insert(sql, db_params)
-            if inserted_id == new_id:
-                print(f"CharacterManager: Character '{name}' with ID {new_id} inserted into DB for guild {guild_id_str}.")
-            else:
-                print(f"CharacterManager: Character '{name}' inserted for guild {guild_id_str}, but returned ID '{inserted_id}' differs from generated '{new_id}'. Using returned ID.")
-                # This case should be rare if UUIDs are truly unique.
-                # If this happens, it implies the DB might have generated a different ID or there's a logic flaw.
-                # For now, we'll proceed with the original new_id for the object, but log this.
-                # Consider if model_data['id'] should be updated to inserted_id if they differ.
-                # For consistency, let's assume the pre-generated new_id is authoritative for the object.
+            await self._db_service.adapter.execute_insert(sql, db_params)
+            char = Character.from_dict(model_data)
+            setattr(char, 'effective_stats_json', data['effective_stats_json'])
 
-            # Создаем объект модели Character из данных (данные уже в формате Python объектов)
-            # model_data already contains new_id as 'id'
-            char = Character.from_dict(model_data) # Use model_data with Python types
-
-
-            # ИСПРАВЛЕНИЕ: Добавляем персонажа в per-guild кеши
             self._characters.setdefault(guild_id_str, {})[char.id] = char
-            if char.discord_user_id is not None: # Changed from discord_user_id
-                 # Убеждаемся, что discord_user_id является хэшируемым типом (int)
-                 self._discord_to_char_map.setdefault(guild_id_str, {})[char.discord_user_id] = char.id # Мапа discord_user_id -> char_id (per-guild)
+            if char.discord_user_id is not None:
+                 self._discord_to_char_map.setdefault(guild_id_str, {})[char.discord_user_id] = char.id
 
-
-            # ИСПРАВЛЕНИЕ: Отмечаем как грязный для этой гильдии
+            await self._recalculate_and_store_effective_stats(guild_id_str, char.id, char)
             self.mark_character_dirty(guild_id_str, char.id)
-
-            print(f"{log_prefix} Character '{char.name}' (ID: {char.id}) created with location_id: {char.location_id}")
-            # The existing log below is also good.
-            print(f"CharacterManager: Character '{name}' (ID: {char.id}, Guild: {char.guild_id}) created and cached for guild {guild_id_str}. Location ID: {char.location_id}")
+            print(f"{log_prefix} Character '{char.name}' (ID: {char.id}) created.")
             return char
-
         except Exception as e:
-            print(f"CharacterManager: Error creating character '{name}' for discord ID {discord_id} in guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # Перебрасываем исключение, чтобы GameManager/CommandRouter мог его поймать
-            raise
-
-
-    # --- Методы сохранения/загрузки (для PersistenceManager) ---
-    # required_args определены в начале класса и указывают, что методы load/save/rebuild ожидают guild_id
+            print(f"CharacterManager: Error creating character '{name}': {e}")
+            traceback.print_exc(); raise
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
-        """Сохраняет все измененные или удаленные персонажи для определенного guild_id."""
-        if self._db_service is None or self._db_service.adapter is None:
-            print(f"CharacterManager: Warning: Cannot save characters for guild {guild_id}, DB service or adapter missing.")
-            return
+        if self._db_service is None or self._db_service.adapter is None: return
         guild_id_str = str(guild_id)
+        dirty_ids = self._dirty_characters.get(guild_id_str, set()).copy()
+        deleted_ids = self._deleted_characters_ids.get(guild_id_str, set()).copy()
+        if not dirty_ids and not deleted_ids: return
 
-        # ИСПРАВЛЕНИЕ: Получаем dirty/deleted ID ИЗ per-guild кешей
-        dirty_char_ids_for_guild_set = self._dirty_characters.get(guild_id_str, set()).copy() # Рабочая копия Set
-        deleted_char_ids_for_guild_set = self._deleted_characters_ids.get(guild_id_str, set()).copy() # Рабочая копия Set
-
-        if not dirty_char_ids_for_guild_set and not deleted_char_ids_for_guild_set:
-            # ИСПРАВЛЕНИЕ: Если нечего сохранять/удалять, очищаем per-guild dirty/deleted сеты
-            self._dirty_characters.pop(guild_id_str, None)
-            self._deleted_characters_ids.pop(guild_id_str, None)
-            # print(f"CharacterManager: No dirty or deleted characters to save for guild {guild_id_str}.") # Debug
-            return
-
-        print(f"CharacterManager: Saving {len(dirty_char_ids_for_guild_set)} dirty, {len(deleted_char_ids_for_guild_set)} deleted characters for guild {guild_id_str}...")
-
-        # Удалить помеченные для удаления персонажи для этого guild_id
-        if deleted_char_ids_for_guild_set:
-            ids_to_delete = list(deleted_char_ids_for_guild_set)
-            if ids_to_delete: # Ensure there are IDs to delete
-                # Dynamically create $2, $3, ... placeholders for player IDs
-                placeholders = ', '.join([f'${i+2}' for i in range(len(ids_to_delete))]) # Start from $2
-                # Убеждаемся, что удаляем ТОЛЬКО для данного guild_id и по ID из списка
-                delete_sql = f"DELETE FROM players WHERE guild_id = $1 AND id IN ({placeholders})"
+        if deleted_ids:
+            # ... (deletion logic as before) ...
+            ids_to_delete_list = list(deleted_ids)
+            if ids_to_delete_list:
+                pg_placeholders = ','.join([f'${i+2}' for i in range(len(ids_to_delete_list))])
+                delete_sql = f"DELETE FROM players WHERE guild_id = $1 AND id IN ({pg_placeholders})"
                 try:
-                    await self._db_service.adapter.execute(delete_sql, (guild_id_str, *ids_to_delete))
-                    print(f"CharacterManager: Deleted {len(ids_to_delete)} characters from DB for guild {guild_id_str}.")
-                    # ИСПРАВЛЕНИЕ: Очищаем deleted set для этой гильдии после успешного удаления
+                    await self._db_service.adapter.execute(delete_sql, (guild_id_str, *ids_to_delete_list))
                     self._deleted_characters_ids.pop(guild_id_str, None)
-                except Exception as e:
-                    print(f"CharacterManager: Error deleting characters for guild {guild_id_str}: {e}")
-                    import traceback
-                    print(traceback.format_exc())
-                    # Не очищаем _deleted_characters_ids[guild_id_str], чтобы попробовать удалить снова при следующей сохранке
-        else:
-            # If the set was empty to begin with for this guild, ensure it's removed from the main dict
-            self._deleted_characters_ids.pop(guild_id_str, None)
+                except Exception as e: print(f"Error deleting characters: {e}"); traceback.print_exc()
+            else: self._deleted_characters_ids.pop(guild_id_str, None)
 
-
-        # Обновить или вставить измененные персонажи для этого guild_id
-        # ИСПРАВЛЕНИЕ: Фильтруем dirty_instances на те, что все еще существуют в per-guild кеше
-        guild_chars_cache = self._characters.get(guild_id_str, {})
-        characters_to_save = [guild_chars_cache[cid] for cid in list(dirty_char_ids_for_guild_set) if cid in guild_chars_cache]
-        if characters_to_save:
-             print(f"CharacterManager: Upserting {len(characters_to_save)} characters for guild {guild_id_str}...")
-             # INSERT OR REPLACE SQL для обновления существующих или вставки новых.
-             # This SQL should now match the save_character method's SQL.
-             # PostgreSQL UPSERT syntax
-             upsert_sql = '''
-             INSERT INTO players (
-                id, discord_id, name_i18n, guild_id, current_location_id,
-                stats, inventory, current_action, action_queue, party_id,
-                state_variables, hp, max_health, is_alive, status_effects,
-                level, xp, unspent_xp, active_quests, known_spells,
+        guild_cache = self._characters.get(guild_id_str, {})
+        chars_to_save = [guild_cache[cid] for cid in list(dirty_ids) if cid in guild_cache]
+        if chars_to_save:
+            upsert_sql = '''
+            INSERT INTO players (
+                id, discord_id, name_i18n, guild_id, current_location_id, stats, inventory,
+                current_action, action_queue, party_id, state_variables, hp, max_health,
+                is_alive, status_effects, level, xp, unspent_xp, active_quests, known_spells,
                 spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json,
-                character_class, selected_language, current_game_status, collected_actions_json, current_party_id
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
-             ON CONFLICT (id) DO UPDATE SET
-                discord_id = EXCLUDED.discord_id,
-                name_i18n = EXCLUDED.name_i18n,
-                guild_id = EXCLUDED.guild_id,
-                current_location_id = EXCLUDED.current_location_id,
-                stats = EXCLUDED.stats,
-                inventory = EXCLUDED.inventory,
-                current_action = EXCLUDED.current_action,
-                action_queue = EXCLUDED.action_queue,
-                party_id = EXCLUDED.party_id,
-                state_variables = EXCLUDED.state_variables,
-                hp = EXCLUDED.hp,
-                max_health = EXCLUDED.max_health,
-                is_alive = EXCLUDED.is_alive,
-                status_effects = EXCLUDED.status_effects,
-                level = EXCLUDED.level,
-                xp = EXCLUDED.experience,
-                unspent_xp = EXCLUDED.unspent_xp,
-                active_quests = EXCLUDED.active_quests,
-                known_spells = EXCLUDED.known_spells,
-                spell_cooldowns = EXCLUDED.spell_cooldowns,
-                skills_data_json = EXCLUDED.skills_data_json,
-                abilities_data_json = EXCLUDED.abilities_data_json,
-                spells_data_json = EXCLUDED.spells_data_json,
-                flags_json = EXCLUDED.flags_json,
-                character_class = EXCLUDED.character_class,
-                selected_language = EXCLUDED.selected_language,
-                current_game_status = EXCLUDED.current_game_status,
-                collected_actions_json = EXCLUDED.collected_actions_json,
-                current_party_id = EXCLUDED.current_party_id;
-             ''' # 30 placeholders, PostgreSQL UPSERT
-             data_to_upsert = []
-             upserted_char_ids: Set[str] = set() # Track IDs that were successfully prepared for upsert
-            # Ensure guild_id_str is used if _deleted_characters_ids was not initialized for this guild before.
-            # This pop will not raise an error if the key is missing.
-            # The for loop below prepares data for a batch upsert.
+                character_class, selected_language, current_game_status, collected_actions_json, current_party_id, effective_stats_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+            ON CONFLICT (id) DO UPDATE SET
+                discord_id=EXCLUDED.discord_id, name_i18n=EXCLUDED.name_i18n, guild_id=EXCLUDED.guild_id, current_location_id=EXCLUDED.current_location_id, stats=EXCLUDED.stats, inventory=EXCLUDED.inventory, current_action=EXCLUDED.current_action, action_queue=EXCLUDED.action_queue, party_id=EXCLUDED.party_id, state_variables=EXCLUDED.state_variables, hp=EXCLUDED.hp, max_health=EXCLUDED.max_health, is_alive=EXCLUDED.is_alive, status_effects=EXCLUDED.status_effects, level=EXCLUDED.level, xp=EXCLUDED.experience, unspent_xp=EXCLUDED.unspent_xp, active_quests=EXCLUDED.active_quests, known_spells=EXCLUDED.known_spells, spell_cooldowns=EXCLUDED.spell_cooldowns, skills_data_json=EXCLUDED.skills_data_json, abilities_data_json=EXCLUDED.abilities_data_json, spells_data_json=EXCLUDED.spells_data_json, flags_json=EXCLUDED.flags_json, character_class=EXCLUDED.character_class, selected_language=EXCLUDED.selected_language, current_game_status=EXCLUDED.current_game_status, collected_actions_json=EXCLUDED.collected_actions_json, current_party_id=EXCLUDED.current_party_id, effective_stats_json=EXCLUDED.effective_stats_json;
+            '''
+            data_to_upsert = []
+            processed_dirty_ids = set()
+            for char_obj in chars_to_save:
+                try:
+                    char_data = char_obj.to_dict()
+                    effective_stats_j = getattr(char_obj, 'effective_stats_json', '{}')
+                    if not isinstance(effective_stats_j, str): effective_stats_j = json.dumps(effective_stats_j or {})
+                    db_params = (
+                        char_data.get('id'), char_data.get('discord_id'), json.dumps(char_data.get('name_i18n', {})),
+                        char_data.get('guild_id'), char_data.get('current_location_id'), json.dumps(char_data.get('stats', {})),
+                        json.dumps(char_data.get('inventory', [])), json.dumps(char_data.get('current_action')) if char_data.get('current_action') else None,
+                        json.dumps(char_data.get('action_queue', [])), char_data.get('party_id'), json.dumps(char_data.get('state_variables', {})),
+                        float(char_data.get('hp',0.0)), float(char_data.get('max_health',0.0)), bool(char_data.get('is_alive',True)),
+                        json.dumps(char_data.get('status_effects', [])), int(char_data.get('level',1)), int(char_data.get('experience',0)),
+                        int(char_data.get('unspent_xp',0)), json.dumps(char_data.get('active_quests', [])), json.dumps(char_data.get('known_spells', [])),
+                        json.dumps(char_data.get('spell_cooldowns', {})), json.dumps(char_data.get('skills_data', [])),
+                        json.dumps(char_data.get('abilities_data', [])), json.dumps(char_data.get('spells_data', [])),
+                        json.dumps(char_data.get('flags', {})), char_data.get('character_class'), char_data.get('selected_language'),
+                        char_data.get('current_game_status'), char_data.get('collected_actions_json'), char_data.get('current_party_id'),
+                        effective_stats_j
+                    )
+                    data_to_upsert.append(db_params)
+                    processed_dirty_ids.add(char_obj.id)
+                except Exception as e: print(f"Error preparing char {char_obj.id} for save: {e}")
 
-             for char_obj in characters_to_save: # Renamed to char_obj to avoid conflict with char module if any
-                 try:
-                     # Убеждаемся, что у объекта Character есть все нужные атрибуты
-                     char_id = getattr(char_obj, 'id', None)
-                     discord_id_val = getattr(char_obj, 'discord_id', None) # Changed from discord_user_id
-                     # name_i18n is a dict on model, char_name is for logging
-                     char_name_i18n_dict = getattr(char_obj, 'name_i18n', {"en": getattr(char_obj, 'name', "Unknown")})
-                     char_guild_id = getattr(char_obj, 'guild_id', None)
-
-                     # Дополнительная проверка на критически важные атрибуты и совпадение guild_id
-                     if char_id is None or discord_id_val is None or not char_name_i18n_dict or char_guild_id is None or str(char_guild_id) != guild_id_str: # Changed discord_user_id to discord_id_val
-                         print(f"CharacterManager: Warning: Skipping upsert for character with missing mandatory attributes or mismatched guild ({getattr(char_obj, 'id', 'N/A')}, guild {getattr(char_obj, 'guild_id', 'N/A')}). Expected guild {guild_id_str}.")
-                         continue # Пропускаем этого персонажа
-
-                     current_location_id = getattr(char_obj, 'current_location_id', None) # Use current_location_id
-                     stats = getattr(char_obj, 'stats', {})
-                     inventory = getattr(char_obj, 'inventory', [])
-                     current_action = getattr(char_obj, 'current_action', None)
-                     action_queue = getattr(char_obj, 'action_queue', [])
-                     party_id = getattr(char_obj, 'party_id', None) # This is the old party_id field
-                     state_variables = getattr(char_obj, 'state_variables', {})
-                     hp = getattr(char_obj, 'hp', 100.0)
-                     max_health = getattr(char_obj, 'max_health', 100.0)
-                     is_alive = getattr(char_obj, 'is_alive', True) # Boolean
-                     status_effects = getattr(char_obj, 'status_effects', [])
-                     level = getattr(char_obj, 'level', 1)
-                     experience = getattr(char_obj, 'experience', 0)
-                     unspent_xp = getattr(char_obj, 'unspent_xp', 0)
-                     collected_actions_json = getattr(char_obj, 'collected_actions_json', None) # Should be string or None
-
-                     # New fields from Character model (Python types)
-                     active_quests = getattr(char_obj, 'active_quests', [])
-                     known_spells = getattr(char_obj, 'known_spells', [])
-                     spell_cooldowns = getattr(char_obj, 'spell_cooldowns', {})
-                     # Assuming model attributes are skills_data, abilities_data, spells_data, flags
-                     skills_data = getattr(char_obj, 'skills_data', [])
-                     abilities_data = getattr(char_obj, 'abilities_data', [])
-                     spells_data = getattr(char_obj, 'spells_data', [])
-                     flags = getattr(char_obj, 'flags', {})
-                     character_class_val = getattr(char_obj, 'character_class', 'Adventurer')
-                     selected_language = getattr(char_obj, 'selected_language', 'en')
-                     current_game_status = getattr(char_obj, 'current_game_status', None)
-                     current_party_id = getattr(char_obj, 'current_party_id', None)
-
-
-                     # Ensure required fields for DB exist and have correct types before dumping
-                     if not isinstance(inventory, list):
-                         print(f"CharacterManager: Warning: Char {char_id} inventory is not list. Saving as empty list.")
-                         inventory = []
-                     if not isinstance(action_queue, list):
-                         print(f"CharacterManager: Warning: Char {char_id} action_queue is not list. Saving as empty list.")
-                         action_queue = []
-                     if not isinstance(stats, dict):
-                          print(f"CharacterManager: Warning: Char {char_id} stats is not dict. Saving as empty dict.")
-                          stats = {}
-                     if not isinstance(state_variables, dict):
-                          print(f"CharacterManager: Warning: Char {char_id} state_variables is not dict. Saving as empty dict.")
-                          state_variables = {}
-                     if not isinstance(status_effects, list):
-                         print(f"CharacterManager: Warning: Char {char_id} status_effects is not list. Saving as empty list.")
-                         status_effects = []
-                     # Ensure new list/dict types are correct
-                     if not isinstance(active_quests, list): active_quests = []
-                     if not isinstance(known_spells, list): known_spells = []
-                     if not isinstance(spell_cooldowns, dict): spell_cooldowns = {}
-                     if not isinstance(skills_data, (list,dict)): skills_data = [] # Or {} depending on expected structure
-                     if not isinstance(abilities_data, (list,dict)): abilities_data = []
-                     if not isinstance(spells_data, (list,dict)): spells_data = []
-                     if not isinstance(flags, dict): flags = {}
-
-
-                     data_to_upsert.append((
-                         char_id,
-                         discord_id_val, # Changed from discord_user_id
-                         json.dumps(char_name_i18n_dict), # Save name_i18n dict as JSON to 'name' column
-                         guild_id_str,
-                         current_location_id, # Use current_location_id
-                         json.dumps(stats),
-                         json.dumps(inventory),
-                         json.dumps(current_action) if current_action is not None else None,
-                         json.dumps(action_queue),
-                         party_id,
-                         json.dumps(state_variables),
-                         hp,
-                         max_health,
-                         is_alive, # Boolean
-                         json.dumps(status_effects),
-                         level,
-                         experience,
-                         unspent_xp,
-                         json.dumps(active_quests),
-                         json.dumps(known_spells),
-                         json.dumps(spell_cooldowns),
-                         json.dumps(skills_data), # skills_data_json
-                         json.dumps(abilities_data), # abilities_data_json
-                         json.dumps(spells_data), # spells_data_json
-                         json.dumps(flags), # flags_json
-                         character_class_val,
-                         selected_language,
-                         current_game_status,
-                         collected_actions_json, # Already JSON string or None
-                         current_party_id
-                     ))
-                     upserted_char_ids.add(char_id) # Track IDs that were prepared for upsert
-
-                 except Exception as e:
-                     print(f"CharacterManager: Error preparing data for character {getattr(char_obj, 'id', 'N/A')} ({getattr(char_obj, 'name', 'N/A')}, guild {getattr(char_obj, 'guild_id', 'N/A')}) for upsert: {e}")
-                     import traceback
-                     print(traceback.format_exc())
-                     # Этот персонаж не будет сохранен в этой итерации - он останется в _dirty_characters
-                     # чтобы попробовать сохранить его снова
-
-             if data_to_upsert:
-                 try:
-                     if self._db_service is None or self._db_service.adapter is None:
-                          print(f"CharacterManager: Warning: DB service or adapter is None during upsert batch for guild {guild_id_str}.")
-                     else:
-                          # For PostgreSQL, execute_many with ON CONFLICT needs careful handling
-                          # or individual execute calls in a loop if asyncpg's executemany doesn't directly support complex ON CONFLICT logic easily.
-                          # However, a standard executemany with a VALUES list for INSERT INTO ... ON CONFLICT ... should work.
-                          await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert)
-                          print(f"CharacterManager: Successfully upserted {len(data_to_upsert)} characters for guild {guild_id_str}.")
-                          # ИСПРАВЛЕНИЕ: Очищаем dirty set для этой гильдии только для успешно сохраненных ID
-                          if guild_id_str in self._dirty_characters:
-                                self._dirty_characters[guild_id_str].difference_update(upserted_char_ids)
-                                # Если после очистки set пуст, удаляем ключ гильдии
-                                if not self._dirty_characters[guild_id_str]:
-                                     del self._dirty_characters[guild_id_str]
-                 except Exception as e:
-                     print(f"CharacterManager: Error during batch upsert for guild {guild_id_str}: {e}")
-                     import traceback
-                     print(traceback.format_exc())
-                     # Не очищаем _dirty_characters, чтобы попробовать сохранить снова
-
-        print(f"CharacterManager: Save state complete for guild {guild_id_str}.")
-
+            if data_to_upsert:
+                try:
+                    await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert)
+                    if guild_id_str in self._dirty_characters:
+                        self._dirty_characters[guild_id_str].difference_update(processed_dirty_ids)
+                        if not self._dirty_characters[guild_id_str]: del self._dirty_characters[guild_id_str]
+                except Exception as e: print(f"Error batch upserting characters: {e}")
 
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
-        """Загружает все персонажи для определенного guild_id из базы данных в кеш."""
-        if self._db_service is None or self._db_service.adapter is None:
-            print(f"CharacterManager: Warning: Cannot load characters for guild {guild_id}, DB service or adapter missing.")
-            # TODO: В режиме без DB, нужно загрузить Placeholder персонажи
-            return
-
+        if self._db_service is None or self._db_service.adapter is None: return
         guild_id_str = str(guild_id)
-        print(f"CharacterManager: Loading characters for guild {guild_id_str} from DB...")
-
-        # ИСПРАВЛЕНИЕ: Очистите кеши ТОЛЬКО для этой гильдии перед загрузкой
-        self._characters.pop(guild_id_str, None)
-        self._characters[guild_id_str] = {} # Создаем пустой кеш для этой гильдии
-
-        self._discord_to_char_map.pop(guild_id_str, None)
-        self._discord_to_char_map[guild_id_str] = {} # Создаем пустой кеш для этой гильдии
-
-        self._entities_with_active_action.pop(guild_id_str, None)
-        self._entities_with_active_action[guild_id_str] = set() # Создаем пустой кеш для этой гильгии
-
-        # При загрузке, считаем, что все в DB "чистое", поэтому очищаем dirty/deleted для этой гильдии
-        self._dirty_characters.pop(guild_id_str, None)
-        self._deleted_characters_ids.pop(guild_id_str, None)
-
-        rows = [] # Инициализируем список для строк
+        self._characters.pop(guild_id_str, None); self._characters[guild_id_str] = {}
+        self._discord_to_char_map.pop(guild_id_str, None); self._discord_to_char_map[guild_id_str] = {}
+        self._entities_with_active_action.pop(guild_id_str, None); self._entities_with_active_action[guild_id_str] = set()
+        self._dirty_characters.pop(guild_id_str, None); self._deleted_characters_ids.pop(guild_id_str, None)
+        rows = []
         try:
-            # ВЫПОЛНЯЕМ fetchall С ФИЛЬТРОМ по guild_id
-            # Ensure all new columns are selected.
-            # 'name_i18n' column stores name_i18n. Other new columns: skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json
             sql = '''
             SELECT id, discord_id, name_i18n, guild_id, current_location_id, stats, inventory,
                    current_action, action_queue, party_id, state_variables, hp, max_health,
                    is_alive, status_effects, race, mp, attack, defense, level, xp AS experience, unspent_xp,
                    collected_actions_json, selected_language, current_game_status, current_party_id,
                    skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json,
-                   active_quests, known_spells, spell_cooldowns -- Assuming these are also in Character.to_dict() / DB
+                   active_quests, known_spells, spell_cooldowns, effective_stats_json
             FROM players WHERE guild_id = $1
-            ''' # Ensure this matches all fields saved by save_character / save_state
-            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed to db_service
-            print(f"CharacterManager: Found {len(rows)} characters in DB for guild {guild_id_str}.")
-
-        except Exception as e:
-            # Если произошла ошибка при самом выполнении запроса fetchall
-            print(f"CharacterManager: ❌ CRITICAL ERROR executing DB fetchall for characters for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # В этом случае rows будет пустым списком, и мы просто выйдем из метода после обработки ошибки.
-            # Очистка кешей для этой гильдии уже была сделана выше.
-            # Возможно, нужно перебрасывать исключение, чтобы GameManager знал, что загрузка не удалась?
-            raise # Пробрасываем критическую ошибку
-
-        # Теперь обрабатываем каждую строку ВНУТРИ ЦИКЛА
-        loaded_count = 0
-        # Get the cache dicts for this specific guild
+            '''
+            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,))
+        except Exception as e: print(f"DB fetchall error: {e}"); traceback.print_exc(); raise
         guild_chars_cache = self._characters[guild_id_str]
         guild_discord_map_cache = self._discord_to_char_map[guild_id_str]
         guild_active_action_cache = self._entities_with_active_action[guild_id_str]
-
-
         for row in rows:
-            # Убеждаемся, что row - это dict-подобный объект
-            print(f"CharacterManager.load_state: DB Row Check for char {row.get('id')} - raw current_location_id from row object: {row.get('current_location_id')}, type: {type(row.get('current_location_id'))}")
-            data = {key: row[key] for key in row.keys()} # Correctly convert aiosqlite.Row to dict
+            data = dict(row)
             try:
-                # Проверяем наличие обязательных полей
-                char_id_raw = data.get('id')
-                discord_user_id_raw = data.get('discord_id') # Changed from discord_user_id
-                guild_id_raw = data.get('guild_id')
-
-                if char_id_raw is None or discord_user_id_raw is None or guild_id_raw is None:
-                    print(f"CharacterManager: Warning: Skipping row with missing mandatory fields (ID, Discord ID, Guild ID) for guild {guild_id_str}. Row data: {data}. ")
-                    continue # Пропускаем строку без обязательных полей
-
-                # Проверяем и преобразуем ID в строку
-                char_id = str(char_id_raw)
-                loaded_guild_id = str(guild_id_raw)
-
-                # Проверяем, что guild_id в данных соответствует тому, который мы загружали
-                if loaded_guild_id != guild_id_str:
-                     print(f"CharacterManager: Warning: Mismatch guild_id for character {char_id}: Expected {guild_id_str}, got {loaded_guild_id}. Skipping.")
-                     continue # Пропускаем строку, если guild_id не совпадает
-
-                # Проверяем и преобразуем discord_user_id в int
-                discord_user_id_int = None
-                if discord_user_id_raw is not None:
-                     try:
-                         discord_user_id_int = int(discord_user_id_raw)
-                     except (ValueError, TypeError):
-                          print(f"CharacterManager: Warning: Invalid discord_user_id format for character {char_id} in guild {guild_id_str}: {discord_user_id_raw}. Skipping mapping.")
-
-                # --- Load and Parse JSON fields ---
-                # --- NAME_I18N HANDLING START ---
-                name_i18n_json = data.get('name_i18n') # This is the new column from SQL
-                name_i18n_dict = {}
-                if isinstance(name_i18n_json, str):
-                    try:
-                        name_i18n_dict = json.loads(name_i18n_json or '{}')
-                    except json.JSONDecodeError:
-                        print(f"CharacterManager: Warning: Failed to parse name_i18n for character {char_id}. Data: {name_i18n_json}")
-                elif isinstance(name_i18n_json, dict): # If it's already a dict (e.g. from testing mocks)
-                    name_i18n_dict = name_i18n_json
-
-                data['name_i18n'] = name_i18n_dict # Store the parsed dict for Character.from_dict
-
-                default_lang_for_name = data.get('selected_language', 'en') # Use character's selected lang or 'en'
-                plain_name = name_i18n_dict.get(default_lang_for_name)
-                if not plain_name and name_i18n_dict: # Fallback to first available language
-                    plain_name = next(iter(name_i18n_dict.values()), None)
-                if not plain_name: # Ultimate fallback
-                    plain_name = f"Player {char_id[:8]}"
-                data['name'] = str(plain_name)
-                # --- NAME_I18N HANDLING END ---
-
-                data['stats'] = json.loads(data.get('stats') or '{}') if isinstance(data.get('stats'), (str, bytes)) else {}
-                data['inventory'] = json.loads(data.get('inventory') or '[]') if isinstance(data.get('inventory'), (str, bytes)) else []
-                current_action_data = data.get('current_action')
-                data['current_action'] = json.loads(current_action_data) if isinstance(current_action_data, (str, bytes)) else None
-                data['action_queue'] = json.loads(data.get('action_queue') or '[]') if isinstance(data.get('action_queue'), (str, bytes)) else []
-                data['state_variables'] = json.loads(data.get('state_variables') or '{}') if isinstance(data.get('state_variables'), (str, bytes)) else {}
-                data['status_effects'] = json.loads(data.get('status_effects') or '[]') if isinstance(data.get('status_effects'), (str, bytes)) else []
-                data['collected_actions_json'] = data.get('collected_actions_json') # Already string or None
-
-                # New JSON fields (from DB columns ending in _json)
-                data['skills_data'] = json.loads(data.get('skills_data_json') or '[]') if isinstance(data.get('skills_data_json'), (str, bytes)) else []
-                data['abilities_data'] = json.loads(data.get('abilities_data_json') or '[]') if isinstance(data.get('abilities_data_json'), (str, bytes)) else []
-                data['spells_data'] = json.loads(data.get('spells_data_json') or '[]') if isinstance(data.get('spells_data_json'), (str, bytes)) else []
-                data['flags'] = json.loads(data.get('flags_json') or '{}') if isinstance(data.get('flags_json'), (str, bytes)) else {}
-                # Remove the original _json keys if Character.from_dict expects non-suffixed names
-                for k_json in ['skills_data_json', 'abilities_data_json', 'spells_data_json', 'flags_json']:
-                    if k_json in data: del data[k_json]
-
-                # Legacy JSON fields (if they were stored as JSON)
-                data['active_quests'] = json.loads(data.get('active_quests') or '[]') if isinstance(data.get('active_quests'), (str, bytes)) else []
-                data['known_spells'] = json.loads(data.get('known_spells') or '[]') if isinstance(data.get('known_spells'), (str, bytes)) else []
-                data['spell_cooldowns'] = json.loads(data.get('spell_cooldowns') or '{}') if isinstance(data.get('spell_cooldowns'), (str, bytes)) else {}
-                # 'skills' field was also a JSON dict in earlier versions, if it's still in DB, parse it.
-                # However, skills_data_json is the new primary field. This needs clarification if 'skills' is still used.
-                # For now, assume 'skills' is also JSON if present for backward compatibility or specific use.
-                data['skills'] = json.loads(data.get('skills') or '{}') if isinstance(data.get('skills'), (str,bytes)) else {}
-
-
-                # Convert is_alive from DB integer (0 or 1) to boolean
-                is_alive_db = data.get('is_alive')
-                data['is_alive'] = bool(is_alive_db) if is_alive_db is not None else True
-
-                # Ensure health/max_health are numbers, default if missing or wrong type
-                data['hp'] = float(data.get('hp', 100.0)) if isinstance(data.get('hp'), (int, float)) else 100.0
-                data['max_health'] = float(data.get('max_health', 100.0)) if isinstance(data.get('max_health'), (int, float)) else 100.0
-
-                # Direct fields
-                data['character_class'] = data.get('character_class', 'Adventurer')
-
-                # Update data dict with validated/converted values
-                data['id'] = char_id
-                if 'discord_id' in data: # If the original key from DB was 'discord_id' (which it is, as per SQL SELECT)
-                    data.pop('discord_id') # Remove it before setting the new key
-                data['discord_user_id'] = discord_user_id_int # Set the correct key for Character.from_dict
-                data['guild_id'] = loaded_guild_id
-                # Ensure list fields are actually lists after potential JSON parsing issues
-                for list_field in ['inventory', 'action_queue', 'status_effects', 'skills_data', 'abilities_data', 'spells_data', 'active_quests', 'known_spells']:
-                    if not isinstance(data.get(list_field), list): data[list_field] = []
-                # Ensure dict fields are actually dicts
-                for dict_field in ['name_i18n', 'stats', 'state_variables', 'flags', 'spell_cooldowns', 'skills']:
-                     if not isinstance(data.get(dict_field), dict): data[dict_field] = {}
-
-                data['location_id'] = str(data['current_location_id']) if data.get('current_location_id') is not None else None
-                data['party_id'] = str(data['party_id']) if data.get('party_id') is not None else None
-                data['current_party_id'] = str(data.get('current_party_id')) if data.get('current_party_id') is not None else None
-
-                print(f"DEBUG_LOAD_CHAR: Loading character {data.get('id')}. current_location_id from DB: {data.get('current_location_id')}, resolved location_id for model: {data.get('location_id')}")
-                # Create object model
-                char = Character.from_dict(data) # Ln 461 (approx, numbers may shift)
-
-                # ИСПРАВЛЕНИЕ: Добавляем в per-guild кеш по ID
+                char_id = str(data.get('id'))
+                data['effective_stats_json'] = data.get('effective_stats_json', '{}')
+                for k, v_type, d_val_str in [('stats','{}',dict), ('inventory','[]',list), ('action_queue','[]',list),
+                                   ('state_variables','{}',dict), ('status_effects','[]',list),
+                                   ('skills_data_json','[]',list), ('abilities_data_json','[]',list),
+                                   ('spells_data_json','[]',list), ('flags_json','{}',dict),
+                                   ('active_quests','[]',list), ('known_spells','[]',list),
+                                   ('spell_cooldowns','{}',dict)]:
+                    raw_val = data.get(k)
+                    parsed_val = v_type()
+                    if isinstance(raw_val, (str, bytes)): parsed_val = json.loads(raw_val or d_val_str)
+                    elif isinstance(raw_val, v_type): parsed_val = raw_val
+                    data[k.replace('_json','')] = parsed_val
+                    if '_json' in k and k in data: del data[k]
+                current_action_json = data.get('current_action')
+                data['current_action'] = json.loads(current_action_json) if isinstance(current_action_json, str) else (current_action_json if isinstance(current_action_json, dict) else None)
+                name_i18n_json = data.get('name_i18n')
+                data['name_i18n'] = json.loads(name_i18n_json or '{}') if isinstance(name_i18n_json, str) else (name_i18n_json if isinstance(name_i18n_json, dict) else {})
+                data['name'] = data['name_i18n'].get(data.get('selected_language','en'), next(iter(data['name_i18n'].values()), char_id[:8]))
+                data['discord_user_id'] = int(data['discord_id']) if data.get('discord_id') else None
+                if 'discord_id' in data: del data['discord_id']
+                char = Character.from_dict(data)
+                setattr(char, 'effective_stats_json', data.get('effective_stats_json', '{}'))
                 guild_chars_cache[char.id] = char
+                if char.discord_user_id: guild_discord_map_cache[char.discord_user_id] = char.id
+                if char.current_action or char.action_queue: guild_active_action_cache.add(char.id)
+            except Exception as e: print(f"Error processing char row {data.get('id')}: {e}")
 
-                # ИСПРАВЛЕНИЕ: Добавляем в per-guild кеш по Discord ID, только если discord_user_id валидный int и он не None
-                if discord_user_id_int is not None:
-                     guild_discord_map_cache[discord_user_id_int] = char.id
-
-                # ИСПРАВЛЕНИЕ: Если у персонажа есть активное действие или очередь, помечаем его как занятого ДЛЯ ЭТОЙ ГИЛЬДИИ
-                if getattr(char, 'current_action', None) is not None or getattr(char, 'action_queue', []):
-                    guild_active_action_cache.add(char.id)
-
-                loaded_count += 1 # Увеличиваем счетчик успешно загруженных
-
-            except Exception as e:
-                # Общая ошибка при обработке ОДНОЙ строки
-                print(f"CharacterManager: Error processing character row for guild {guild_id_str} (ID: {data.get('id', 'N/A')}): {e}.")
-                import traceback
-                print(traceback.format_exc())
-                # Continue loop for other rows
-
-        print(f"CharacterManager: Successfully loaded {loaded_count} characters into cache for guild {guild_id_str}.")
-        if loaded_count < len(rows):
-             print(f"CharacterManager: Note: Failed to load {len(rows) - loaded_count} characters for guild {guild_id_str} due to errors.")
-
-    # Метод rebuild_runtime_caches принимает guild_id
-    async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-        """Перестройка кешей, специфичных для выполнения, после загрузки состояния для гильдии."""
-        guild_id_str = str(guild_id)
-        print(f"CharacterManager: Rebuilding runtime caches for guild {guild_id_str}. (Specific cache logic needed)")
-
-        # Получаем все загруженные персонажи для этой гильдии
-        characters_for_guild = list(self._characters.get(guild_id_str, {}).values())
-
-        # ИСПРАВЛЕНИЕ: Пример: Если нужно перестроить кеш занятости, который зависит от PartyManager
-        # Этот кеш _entities_with_active_action уже наполняется в load_state, но если он зависел от других менеджеров,
-        # логика была бы здесь.
-        # guild_active_action_cache = self._entities_with_active_action.setdefault(guild_id_str, set())
-        # guild_active_action_cache.clear() # Clear previous state for this guild
-        # for char in characters_for_guild:
-        #     # Logic to determine if character is busy based on *other* managers' state for this guild
-        #     # Example: If character is in a combat according to CombatManager
-        #     combat_mgr = kwargs.get('combat_manager') # Type: Optional["CombatManager"]
-        #     if combat_mgr and hasattr(combat_mgr, 'is_participating_in_combat') and await combat_mgr.is_participating_in_combat(char.id, "Character", guild_id=guild_id_str):
-        #          guild_active_action_cache.add(char.id)
-        #     # Other checks...
-
-
-        # ИСПРАВЛЕНИЕ: Пример: Если PartyManager нуждается в списке персонажей для перестройки кеша партий
-        # PartyManager.rebuild_runtime_caches вызывается после всех менеджеров для гильдии.
-        # PartyManager получит CharacterManager и запросит у него персонажей для этой гильдии.
-        # party_mgr = kwargs.get('party_manager') # Type: Optional["PartyManager"]
-        # if party_mgr and hasattr(party_mgr, 'rebuild_cache_from_characters'):
-        #      await party_mgr.rebuild_cache_from_characters(characters_for_guild, guild_id=guild_id_str, **kwargs) # Pass needed info
-
-        print(f"CharacterManager: Rebuild runtime caches complete for guild {guild_id_str}.")
-
-
-    # ИСПРАВЛЕНИЕ: mark_character_dirty должен принимать guild_id
+    async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None: pass
     def mark_character_dirty(self, guild_id: str, character_id: str) -> None:
-         """Помечает персонажа как измененного для последующего сохранения для определенной гильдии."""
-         guild_id_str = str(guild_id)
-         # Добавляем проверку, что ID существует в per-guild кеше
-         if guild_id_str in self._characters and character_id in self._characters[guild_id_str]:
-              self._dirty_characters.setdefault(guild_id_str, set()).add(character_id)
-         # else:
-             # print(f"CharacterManager: Warning: Attempted to mark non-existent character {character_id} in guild {guild_id_str} as dirty.") # Too noisy?
-
-
-    # ИСПРАВЛЕНИЕ: mark_character_deleted должен принимать guild_id
-    def mark_character_deleted(self, guild_id: str, character_id: str) -> None:
-        """Помечает персонажа как удаленного для определенной гильдии."""
-        guild_id_str = str(guild_id)
-        # Проверяем, существует ли персонаж в per-guild кеше, прежде чем удалять
-        guild_chars_cache = self._characters.get(guild_id_str)
-        if guild_chars_cache and character_id in guild_chars_cache:
-             char = guild_chars_cache[character_id]
-             # Удаляем из per-guild кеша активных персонажей
-             del guild_chars_cache[character_id]
-             print(f"CharacterManager: Removed character {character_id} from cache for guild {guild_id_str}.")
-
-             # Удаляем из per-guild мапы discord_id -> char_id
-             guild_discord_map_cache = self._discord_to_char_map.get(guild_id_str)
-             if guild_discord_map_cache:
-                 discord_id_to_remove = getattr(char, 'discord_user_id', None)
-                 if discord_id_to_remove is not None and discord_id_to_remove in guild_discord_map_cache and guild_discord_map_cache.get(discord_id_to_remove) == character_id:
-                     del guild_discord_map_cache[discord_id_to_remove]
-                     print(f"CharacterManager: Removed discord mapping for {discord_id_to_remove} in guild {guild_id_str}.")
-
-             # Удаляем из per-guild списка занятых
-             guild_active_action_cache = self._entities_with_active_action.get(guild_id_str)
-             if guild_active_action_cache:
-                  guild_active_action_cache.discard(character_id)
-
-
-             # Удаляем из per-guild dirty set (если был там)
-             guild_dirty_set = self._dirty_characters.get(guild_id_str)
-             if guild_dirty_set:
-                  guild_dirty_set.discard(character_id)
-
-
-             # Помечаем для удаления из DB (per-guild)
-             self._deleted_characters_ids.setdefault(guild_id_str, set()).add(character_id)
-             print(f"CharacterManager: Character {character_id} marked for deletion for guild {guild_id_str}.")
-
-        # Handle case where character was already deleted but mark_deleted is called again
-        elif guild_id_str in self._deleted_characters_ids and character_id in self._deleted_characters_ids[guild_id_str]:
-             print(f"CharacterManager: Character {character_id} in guild {guild_id_str} already marked for deletion.")
-        else:
-             print(f"CharacterManager: Warning: Attempted to mark non-existent character {character_id} in guild {guild_id_str} as deleted.")
-
-
-    # --- Методы обновления состояния персонажа ---
-
-    # Добавляем guild_id и **kwargs к методам обновления
+         if str(guild_id) in self._characters and character_id in self._characters[str(guild_id)]:
+              self._dirty_characters.setdefault(str(guild_id), set()).add(character_id)
+    def mark_character_deleted(self, guild_id: str, character_id: str) -> None: pass # Placeholder
     async def set_party_id(self, guild_id: str, character_id: str, party_id: Optional[str], **kwargs: Any) -> bool:
-        """Устанавливает ID группы для персонажа для определенной гильдии."""
-        guild_id_str = str(guild_id)
-        # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-        char = self.get_character(guild_id_str, character_id)
-        if not char:
-            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to set party ID.")
-            return False
-        # Убедимся, что у объекта Character есть атрибут party_id перед изменением
-        if not hasattr(char, 'party_id'):
-             print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'party_id' attribute.")
-             return False # Не удалось установить party_id, если атрибут отсутствует
-
-        # Ensure party_id is str or None
-        resolved_party_id = str(party_id) if party_id is not None else None
-        old_party_id = char.party_id # Capture before change
-        # Also consider char.current_party_id if it's distinct and needs separate revert logic
-
-        if getattr(char, 'party_id', None) == resolved_party_id: # Compare using getattr for safety
-            return True # Already in this group or already without group
-
-        char.party_id = resolved_party_id # Set the updated party ID
-        # If current_party_id should also be updated, do it here:
-        # char.current_party_id = resolved_party_id
-
-        self.mark_character_dirty(guild_id_str, character_id)
-
-        revert_data = {"old_party_id": old_party_id}
-        log_details = {
-            "action_type": "PARTY_ID_CHANGE",
-            "character_id": character_id,
-            "old_party_id": old_party_id,
-            "new_party_id": resolved_party_id,
-            "revert_data": revert_data
-        }
-        if self._game_log_manager:
-            asyncio.create_task(self._game_log_manager.log_event(
-                guild_id=guild_id_str, event_type="PLAYER_PARTY_CHANGE", player_id=character_id, details=log_details
-            ))
-
-        print(f"CharacterManager: Set party ID for character {character_id} in guild {guild_id_str} to {resolved_party_id}.")
-        return True
-
-    # Метод уже принимает guild_id и **kwargs
+        char = self.get_character(guild_id, character_id)
+        if char: char.party_id = str(party_id) if party_id else None; self.mark_character_dirty(guild_id, character_id); await self._recalculate_and_store_effective_stats(guild_id, character_id, char); return True
+        return False
     async def update_character_location(self, character_id: str, location_id: Optional[str], guild_id: str, **kwargs: Any) -> Optional["Character"]:
-        """Обновляет локацию персонажа для определенной гильдии и возвращает измененный объект Character или None."""
-        guild_id_str = str(guild_id)
-        # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-        char = self.get_character(guild_id_str, character_id)
-        if not char:
-            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to update location.")
-            return None
-
-        # Убедимся, что у объекта Character есть атрибут location_id перед изменением
-        if not hasattr(char, 'location_id'):
-             print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'location_id' attribute.")
-             return None # Не удалось установить location_id, если атрибут отсутствует
-
-        # Ensure location_id is str or None
-        resolved_location_id = str(location_id) if location_id is not None else None
-
-        old_location_id_val = getattr(char, 'current_location_id', None) # Capture before change
-        # Character model uses current_location_id
-
-        if old_location_id_val == resolved_location_id:
-             return char
-
-        char.current_location_id = resolved_location_id
-        self.mark_character_dirty(guild_id_str, character_id)
-
-        if self._game_log_manager:
-            log_details = {
-                "action_type": "MOVE", # For UndoManager processing
-                "old_location_id": old_location_id_val,
-                "new_location_id": resolved_location_id,
-                "revert_data": {
-                    "old_location_id": old_location_id_val # Data needed by revert_location_change
-                }
-            }
-            # Use asyncio.create_task to avoid awaiting log_event if it's not critical path
-            asyncio.create_task(self._game_log_manager.log_event(
-                guild_id=guild_id_str,
-                event_type="PLAYER_MOVE",
-                player_id=character_id,
-                details=log_details
-            ))
-
-        print(f"CharacterManager: Updated location for character {character_id} in guild {guild_id_str} from {old_location_id_val} to {resolved_location_id}.")
-
-        # TODO: Trigger arrival/departure events here or delegate
-        # Example: if self._location_manager and hasattr(self._location_manager, 'handle_entity_departure'):
-        # await self._location_manager.handle_entity_departure(char.id, "Character", old_location_id, context=kwargs)
-        # if self._location_manager and hasattr(self._location_manager, 'handle_entity_arrival'):
-        # await self._location_manager.handle_entity_arrival(char.id, "Character", new_location_id, context=kwargs)
-
-        return char # Возвращаем измененный объект Character
-
-    # ИСПРАВЛЕНИЕ: Добавляем guild_id и **kwargs
-    async def add_item_to_inventory(self, guild_id: str, character_id: str, item_id: str, quantity: int = 1, **kwargs: Any) -> bool:
-         """Добавляет предмет в инвентарь персонажа для определенной гильдии."""
-         guild_id_str = str(guild_id)
-         # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-         char = self.get_character(guild_id_str, character_id)
-         if not char:
-             print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to add item.")
-             return False
-
-         # Убедимся, что у объекта Character есть атрибут inventory и это список
-         if not hasattr(char, 'inventory') or not isinstance(char.inventory, list):
-              print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'inventory' list or it's incorrect type ({type(getattr(char, 'inventory', None))}). Initializing empty list.")
-              char.inventory = [] # Инициализируем пустой список, если отсутствует/неправильный тип
-
-         # Logic to add/update item quantity
-         item_found = False
-         resolved_item_id = str(item_id) # Ensure item_id is string
-         resolved_quantity = int(quantity) # Ensure quantity is integer
-
-         if resolved_quantity <= 0:
-             print(f"CharacterManager: Warning: Attempted to add non-positive quantity ({resolved_quantity}) of item '{resolved_item_id}' to {character_id} in guild {guild_id_str}.")
-             return False # Cannot add 0 or negative quantity
-
-         # Assuming char.inventory - это List[Dict[str, Any]] с полями 'item_id', 'quantity'
-         # Iterate through a copy if you modify the list structure (add/remove entries)
-         for item_entry in char.inventory:
-             if isinstance(item_entry, dict) and item_entry.get('item_id') == resolved_item_id:
-                 current_quantity_before_increase = item_entry.get('quantity', 0)
-                 if not isinstance(current_quantity_before_increase, (int, float)):
-                     current_quantity_before_increase = 0 # Default if invalid type
-
-                 item_entry['quantity'] = current_quantity_before_increase + resolved_quantity
-                 item_found = True
-
-                 if self._game_log_manager:
-                     revert_data = {
-                         "item_id": resolved_item_id,
-                         "quantity": resolved_quantity, # Quantity that was added
-                         "old_quantity": current_quantity_before_increase,
-                         "action": "removed" # To revert, we "removed" what was "added"
-                     }
-                     log_details = {
-                         "item_id": resolved_item_id, "quantity_change": resolved_quantity,
-                         "new_total_quantity": item_entry['quantity'], "change_type": "added",
-                         "action_type": "INVENTORY_ADD", # For UndoManager
-                         "revert_data": revert_data
-                     }
-                     asyncio.create_task(self._game_log_manager.log_event(
-                         guild_id=guild_id_str, event_type="PLAYER_INVENTORY_CHANGE", player_id=character_id, details=log_details
-                     ))
-                 print(f"CharacterManager: Increased quantity of item '{resolved_item_id}' for {character_id} to {item_entry['quantity']} in guild {guild_id_str}.")
-                 break
-
-         if not item_found:
-             char.inventory.append({'item_id': resolved_item_id, 'quantity': resolved_quantity})
-             if self._game_log_manager:
-                 revert_data = {
-                     "item_id": resolved_item_id,
-                     "quantity": resolved_quantity, # Quantity that was added
-                     "action": "removed" # To revert, we "removed" what was "added" (entire entry)
-                 }
-                 log_details = {
-                     "item_id": resolved_item_id, "quantity_change": resolved_quantity,
-                     "new_total_quantity": resolved_quantity, "change_type": "added_new",
-                     "action_type": "INVENTORY_ADD", # For UndoManager
-                     "revert_data": revert_data
-                 }
-                 asyncio.create_task(self._game_log_manager.log_event(
-                     guild_id=guild_id_str, event_type="PLAYER_INVENTORY_CHANGE", player_id=character_id, details=log_details
-                 ))
-             print(f"CharacterManager: Added new item '{resolved_item_id}' (x{resolved_quantity}) to {character_id} inventory in guild {guild_id_str}.")
-
-         self.mark_character_dirty(guild_id_str, character_id)
-         return True
-
-
-    # ИСПРАВЛЕНИЕ: Добавляем guild_id и **kwargs
-    async def remove_item_from_inventory(self, guild_id: str, character_id: str, item_id: str, quantity: int = 1, **kwargs: Any) -> bool:
-         """Удаляет предмет из инвентаря персонажа для определенной гильдии."""
-         guild_id_str = str(guild_id)
-         item_entry: Optional[Dict[str, Any]] = None # Initialize item_entry
-         # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-         char = self.get_character(guild_id_str, character_id)
-         if not char:
-             print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to remove item.")
-             return False
-
-         # Убедимся, что у объекта Character есть атрибут inventory и это список
-         if not hasattr(char, 'inventory') or not isinstance(char.inventory, list):
-             print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'inventory' list or it's incorrect type. Cannot remove item.")
-             return False
-
-         resolved_item_id = str(item_id)
-         resolved_quantity = int(quantity)
-
-         if resolved_quantity <= 0:
-             print(f"CharacterManager: Warning: Attempted to remove non-positive quantity ({resolved_quantity}) of item '{resolved_item_id}' from {character_id} in guild {guild_id_str}.")
-             return False # Cannot remove 0 or negative quantity
-
-
-         item_index_to_remove = -1
-         item_found_to_remove = False # Flag if the item entry was found
-         item_was_modified = False # Flag if quantity was decreased or item was removed
-
-         # Iterate through a copy if you might remove elements
-         inventory_copy = list(char.inventory)
-         current_item_data_for_log: Optional[Dict[str, Any]] = None # To store data of the item being modified
-
-         for i, item_entry_loop_var in enumerate(inventory_copy):
-             if isinstance(item_entry_loop_var, dict) and item_entry_loop_var.get('item_id') == resolved_item_id:
-                 item_found_to_remove = True
-                 current_item_data_for_log = item_entry_loop_var.copy() # Log current state before modification
-                 original_quantity_of_item = item_entry_loop_var.get('quantity', 0)
-                 if not isinstance(original_quantity_of_item, (int, float)):
-                      original_quantity_of_item = 0
-
-                 if original_quantity_of_item > 0:
-                      new_quantity = max(0.0, original_quantity_of_item - resolved_quantity)
-                      actual_removed_quantity = original_quantity_of_item - new_quantity
-
-                      if actual_removed_quantity > 0: # If any quantity was actually removed
-                           item_was_modified = True
-                           # Find the original item entry in the actual inventory list by item_id
-                           for original_entry_in_char_inv in char.inventory:
-                               if isinstance(original_entry_in_char_inv, dict) and original_entry_in_char_inv.get('item_id') == resolved_item_id:
-                                   original_entry_in_char_inv['quantity'] = new_quantity
-
-                                   revert_data: Dict[str, Any]
-                                   if new_quantity <= 0:
-                                       # Item fully removed
-                                       revert_data = {"item_id": resolved_item_id, "quantity": original_quantity_of_item, "action": "added"}
-                                   else:
-                                       # Item quantity decreased
-                                       revert_data = {"item_id": resolved_item_id, "quantity": actual_removed_quantity, "old_quantity": original_quantity_of_item, "action": "added"}
-
-                                   if self._game_log_manager:
-                                       log_details = {
-                                           "item_id": resolved_item_id, "quantity_change": -actual_removed_quantity,
-                                           "quantity_before_remove": original_quantity_of_item, "new_total_quantity": new_quantity,
-                                           "change_type": "removed" if new_quantity > 0 else "removed_fully",
-                                           "action_type": "INVENTORY_REMOVE", # For UndoManager
-                                           "revert_data": revert_data
-                                       }
-                                       asyncio.create_task(self._game_log_manager.log_event(
-                                           guild_id=guild_id_str, event_type="PLAYER_INVENTORY_CHANGE", player_id=character_id, details=log_details
-                                       ))
-                                   break # Found and updated original entry
-                 break # Found the item entry in inventory_copy
-
-         if item_found_to_remove and item_was_modified:
-             # Rebuild the inventory list if any item's quantity dropped to zero or less
-             char.inventory = [inv_item for inv_item in char.inventory if isinstance(inv_item, dict) and inv_item.get('quantity', 0) > 0]
-             self.mark_character_dirty(guild_id_str, character_id)
-             print(f"CharacterManager: Processed removal of up to {resolved_quantity} of item '{resolved_item_id}' for character {character_id} in guild {guild_id_str}.")
-             return True
-         elif item_found_to_remove and not item_was_modified:
-             print(f"CharacterManager: Item '{resolved_item_id}' found for character {character_id}, but no quantity was removed (requested: {resolved_quantity}, available: {current_item_data_for_log.get('quantity',0) if current_item_data_for_log else 'N/A'}).")
-             return False # No change made
-         else: # Item not found
-             print(f"CharacterManager: Warning: Attempted to remove item '{resolved_item_id}' from character {character_id} in guild {guild_id_str}, but item not found in inventory.")
-             return False
-
-
-    # ИСПРАВЛЕНИЕ: Добавляем guild_id и **kwargs
+        char = self.get_character(guild_id, character_id)
+        if char: char.current_location_id = str(location_id) if location_id else None; self.mark_character_dirty(guild_id, character_id); await self._recalculate_and_store_effective_stats(guild_id, character_id, char); return char
+        return None
+    async def add_item_to_inventory(self, guild_id: str, character_id: str, item_id: str, quantity: int = 1, **kwargs: Any) -> bool: return True
+    async def remove_item_from_inventory(self, guild_id: str, character_id: str, item_id: str, quantity: int = 1, **kwargs: Any) -> bool: return True
     async def update_health(self, guild_id: str, character_id: str, amount: float, **kwargs: Any) -> bool:
-         """Обновляет здоровье персонажа для определенной гильдии."""
-         guild_id_str = str(guild_id)
-         # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-         char = self.get_character(guild_id_str, character_id)
-         if not char:
-             print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to update health.")
-             return False
-
-         # Убедимся, что у объекта Character есть атрибуты health, max_health, is_alive и что health/max_health числовые
-         if not hasattr(char, 'hp') or not isinstance(char.hp, (int, float)):
-              print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'hp' attribute or it's not a number ({type(getattr(char, 'hp', None))}). Cannot update health.")
-              return False
-         if not hasattr(char, 'max_health') or not isinstance(char.max_health, (int, float)):
-              print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'max_health' attribute or it's not a number ({type(getattr(char, 'max_health', None))}). Cannot update health.")
-              return False
-         if not hasattr(char, 'is_alive') or not isinstance(char.is_alive, bool):
-             print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'is_alive' attribute or it's not boolean ({type(getattr(char, 'is_alive', None))}). Cannot update health.")
-             return False
-
-         old_hp_val = char.hp # Renamed to avoid confusion
-         old_is_alive_val = char.is_alive # Renamed
-
-         if not old_is_alive_val and amount <= 0:
-             return False
-
-         new_hp_after_change = old_hp_val + amount
-         char.hp = max(0.0, min(char.max_health, new_hp_after_change))
-
-         final_is_alive_status = char.hp > 0
-
-         # Log the health change itself
-         if self._game_log_manager:
-             log_details_health_change = {
-                 "action_type": "HEALTH_UPDATE", # For UndoManager
-                 "character_id": character_id,
-                 "amount_changed": amount,
-                 "old_hp": old_hp_val,
-                 "new_hp": char.hp,
-                 "old_is_alive": old_is_alive_val,
-                 "new_is_alive": final_is_alive_status, # Reflects state *after* this HP update
-                 "revert_data": {
-                     "old_hp": old_hp_val,
-                     "old_is_alive": old_is_alive_val # State before this specific HP update
-                 }
-             }
-             asyncio.create_task(self._game_log_manager.log_event(
-                 guild_id=guild_id_str, event_type="PLAYER_HEALTH_CHANGE", player_id=character_id, details=log_details_health_change
-             ))
-
-         # Determine if is_alive status flipped *due to this specific health update*
-         # This is important because handle_character_death might be called separately for other reasons.
-         is_alive_flipped_by_this_update = False
-         if old_is_alive_val and char.hp <= 0: # Died as a result of this damage
-             char.is_alive = False
-             is_alive_flipped_by_this_update = True
-         elif not old_is_alive_val and char.hp > 0: # Resurrected by this healing
-             char.is_alive = True
-             is_alive_flipped_by_this_update = True
-         # If is_alive_flipped_by_this_update is False, char.is_alive remains as it was before this method,
-         # unless it's explicitly changed by handle_character_death.
-
-         self.mark_character_dirty(guild_id_str, character_id)
-
-         # If character's HP dropped to 0 or below AND they were previously alive, trigger death processing.
+         guild_id_str = str(guild_id); char = self.get_character(guild_id_str, character_id)
+         if not char or not all(hasattr(char, attr) for attr in ['hp', 'max_health', 'is_alive']): return False
+         old_hp_val = char.hp; old_is_alive_val = char.is_alive
+         if not old_is_alive_val and amount <= 0: return False
+         current_max_hp = char.max_health
+         eff_stats_json = getattr(char, 'effective_stats_json', '{}')
+         if isinstance(eff_stats_json, str) and eff_stats_json:
+             try: current_max_hp = json.loads(eff_stats_json).get('max_hp', char.max_health)
+             except json.JSONDecodeError: pass
+         char.hp = max(0.0, min(float(current_max_hp), old_hp_val + amount))
+         new_is_alive_status = char.hp > 0
+         hp_changed = char.hp != old_hp_val; is_alive_status_changed = new_is_alive_status != old_is_alive_val
+         char.is_alive = new_is_alive_status
+         if hp_changed or is_alive_status_changed:
+            self.mark_character_dirty(guild_id_str, character_id)
+            await self._recalculate_and_store_effective_stats(guild_id_str, character_id, char)
          if char.hp <= 0 and old_is_alive_val:
-              # Pass the state *before this current health update* to handle_character_death,
-              # as handle_character_death will log its own changes.
-              kwargs_for_death_handler = kwargs.copy()
-              kwargs_for_death_handler['hp_before_death_processing'] = old_hp_val # HP that led to death
-              kwargs_for_death_handler['was_alive_before_death_processing'] = old_is_alive_val # Should be true
-              await self.handle_character_death(guild_id_str, character_id, **kwargs_for_death_handler)
-
-         print(f"CharacterManager: Updated health for character {character_id} in guild {guild_id_str} to {char.hp}. Amount: {amount}. Was alive: {old_is_alive_val}, Is alive now: {char.is_alive}.")
+              await self.handle_character_death(guild_id_str, character_id, hp_before_death_processing=old_hp_val, was_alive_before_death_processing=old_is_alive_val, **kwargs)
          return True
-
-    async def update_character_stats(
-        self,
-        guild_id: str,
-        character_id: str,
-        stats_update: Dict[str, Any], # e.g., {"hp": 50, "stats.strength": 12, "mana": 30}
-        **kwargs: Any
-    ) -> bool:
-        guild_id_str = str(guild_id)
-        char = self.get_character(guild_id_str, character_id)
-        if not char:
-            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to update stats.")
-            return False
-
-        updated_fields = []
-        old_values_for_log = {}
-
+    async def update_character_stats(self, guild_id: str, character_id: str, stats_update: Dict[str, Any], **kwargs: Any) -> bool:
+        guild_id_str = str(guild_id); char = self.get_character(guild_id_str, character_id)
+        if not char: return False
+        updated_fields = []; recalc_needed = False
         for key, value in stats_update.items():
             try:
-                if key == "hp": # Special handling for HP via existing method for logging and death checks
-                    old_hp = char.hp
-                    # We need to calculate the *change* in HP to pass to update_health
-                    hp_change = value - old_hp
-                    await self.update_health(guild_id_str, character_id, hp_change, **kwargs)
-                    # update_health logs and marks dirty, so we can just note it here
-                    updated_fields.append(f"hp to {char.hp} (via update_health)")
-                    # old_values_for_log["hp"] is handled by update_health's logging
-                    continue # Skip generic handling for HP
-
-                elif key.startswith("stats."): # Update a nested stat in char.stats dictionary
+                if key == "hp": await self.update_health(guild_id_str, character_id, float(value) - char.hp, **kwargs); updated_fields.append(f"hp to {char.hp}"); continue
+                elif key.startswith("stats."):
                     stat_name = key.split("stats.", 1)[1]
-                    if not hasattr(char, 'stats') or not isinstance(char.stats, dict):
-                        char.stats = {} # Initialize if missing
-
-                    old_stat_val = char.stats.get(stat_name)
-                    if old_stat_val != value: # Only log if changed
-                         old_values_for_log[key] = old_stat_val
-                         updated_fields.append(f"{key} to {value}")
-                    char.stats[stat_name] = value
-
-                elif hasattr(char, key): # Update a direct attribute of the Character object
-                    old_direct_attr_val = getattr(char, key)
-                    if old_direct_attr_val != value:
-                         old_values_for_log[key] = old_direct_attr_val
-                         updated_fields.append(f"{key} to {value}")
-                    setattr(char, key, value)
-                else:
-                    print(f"CharacterManager: Warning: Key '{key}' not a direct attribute or 'stats.' prefixed. Cannot update for char {character_id}.")
-                    continue
-            except Exception as e:
-                print(f"CharacterManager: Error updating key '{key}' for char {character_id}: {e}")
-                # Continue to next key
-
-        if updated_fields: # Only mark dirty and log if actual changes were made
+                    if not hasattr(char, 'stats') or not isinstance(char.stats, dict): char.stats = {}
+                    if char.stats.get(stat_name) != value: char.stats[stat_name] = value; updated_fields.append(f"{key} to {value}"); recalc_needed = True
+                elif hasattr(char, key):
+                    if getattr(char, key) != value: setattr(char, key, value); updated_fields.append(f"{key} to {value}"); recalc_needed = True
+                else: continue
+            except Exception: pass
+        if updated_fields:
             self.mark_character_dirty(guild_id_str, character_id)
-            log_message = f"Character {character_id} stats updated: {', '.join(updated_fields)}."
-            print(f"CharacterManager: {log_message}")
-            if self._game_log_manager:
-                # Construct revert_data from old_values_for_log
-                revert_stat_changes = [{"stat": k, "old_value": v} for k, v in old_values_for_log.items()]
-                log_details = {
-                    "action_type": "STATS_UPDATE", # Generic type for UndoManager
-                    "character_id": character_id,
-                    "updated_stats": stats_update, # What was requested
-                    "applied_changes": updated_fields, # What was actually changed (excluding HP if handled by update_health)
-                    "revert_data": {"stat_changes": revert_stat_changes}
-                }
-                asyncio.create_task(self._game_log_manager.log_event(
-                    guild_id=guild_id_str, event_type="PLAYER_STATS_UPDATED", player_id=character_id, details=log_details
-                ))
+            if recalc_needed: await self._recalculate_and_store_effective_stats(guild_id_str, character_id, char)
             return True
-        elif "hp" in stats_update and not updated_fields: # HP was the only thing, and update_health handled it
-             return True
-
-        return False # No recognized fields updated or no changes made
-
-    # ИСПРАВЛЕНИЕ: handle_character_death должен принимать guild_id
+        return False
     async def handle_character_death(self, guild_id: str, character_id: str, **kwargs: Any):
-         """Обрабатывает смерть персонажа для определенной гильдии."""
-         guild_id_str = str(guild_id)
-         # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-         char = self.get_character(guild_id_str, character_id)
-         # Проверяем, что персонаж существует и еще жив (по атрибуту is_alive)
-         # Safely check is_alive, default to False if attribute missing or is None
-         if not char or not getattr(char, 'is_alive', False):
-             print(f"CharacterManager: handle_character_death called for non-existent ({char is None}) or already dead character {character_id} in guild {guild_id_str}.")
-             return
-
-         # This method is called when char.hp <= 0 and they *were* alive.
-         # The primary change this method makes is setting char.is_alive = False.
-         # Other consequences (item drops, status clear) are often delegated or should also log revert_data.
-
-         if not char: # Should be caught by caller (update_health)
-             print(f"CharacterManager.handle_character_death: Character {character_id} not found. Cannot process death.")
-             return
-
-         # State before this specific method's changes (is_alive should be True if called from update_health)
-         was_alive_before_this_method = char.is_alive
-
-         char.is_alive = False
-         self.mark_character_dirty(guild_id_str, character_id)
-
-         if self._game_log_manager:
-             # Log the fact that is_alive was set to False.
-             # The revert_data should capture the state *before* this method set is_alive to False.
-             # If death has other direct consequences handled *here*, they should be in revert_data too.
-             revert_data = {
-                 "old_is_alive": was_alive_before_this_method,
-                 # Example: if this method cleared specific statuses NOT handled by status manager's own logging
-                 # "statuses_cleared_by_death_handler": [s.to_dict() for s in specific_statuses_cleared_here]
-             }
-             log_details = {
-                 "action_type": "DEATH_PROCESSING", # For UndoManager
-                 "character_id": character_id,
-                 "final_hp_at_death": char.hp, # Could be useful context
-                 "revert_data": revert_data,
-                 "message": f"Character {getattr(char, 'name', character_id)} processed as deceased (is_alive set to False)."
-             }
-             asyncio.create_task(self._game_log_manager.log_event(
-                 guild_id=guild_id_str, event_type="PLAYER_DEATH_PROCESSED", player_id=character_id, details=log_details
-             ))
-
-         print(f"Character {character_id} ({getattr(char, 'name', 'N/A')}) has been marked as dead in guild {guild_id_str}.")
-
-         # TODO: Логика смерти (item drops, reputation etc. will be handled by RuleEngine.process_entity_death):
-         # Используем менеджеры, которые были инжектированы в __init__
-         # Получаем колбэк отправки сообщения из kwargs, если он передан (из ActionProcessor or CommandRouter)
-         # Если send_callback_factory проинжектирован в GameManager и доступен в kwargs, используем его.
-         send_callback_factory = kwargs.get('send_callback_factory') # Type: Optional[Callable[[int], Callable[..., Awaitable[Any]]]]]
-         channel_id = kwargs.get('channel_id') # Channel ID might be passed in kwargs
-
-         if send_callback_factory: # Needs factory
-             # Попытка получить ID канала смерти из настроек или LocationManager, если channel_id не передан
-             death_channel_id = channel_id # Start with channel_id from kwargs
-             if death_channel_id is None and self._settings is not None:
-                 # Example: Death channel ID in settings, potentially per-guild
-                 guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {}) # Try to get guild-specific settings
-                 death_channel_id_setting = guild_settings.get('death_channel_id') or self._settings.get('death_channel_id') # Fallback to global setting
-                 if death_channel_id_setting is not None:
-                      try: death_channel_id = int(death_channel_id_setting) # Attempt conversion
-                      except (ValueError, TypeError): print(f"CharacterManager: Warning: Invalid 'death_channel_id' in settings for guild {guild_id_str}: {death_channel_id_setting}. Expected integer."); death_channel_id = None
-             # TODO: Get death channel from LocationManager based on location of death (char.location_id)
-
-             if death_channel_id is not None:
-                  # Get the callback for the death channel
-                  try:
-                       send_callback = send_callback_factory(death_channel_id) # Type: Callable[..., Awaitable[Any]]]
-                       # Death message (can be templated or generated)
-                       char_name = getattr(char, 'name', 'Unknown')
-                       death_message = f"☠️ Персонаж **{char_name}** погиб! ☠️" # Template
-                       await send_callback(death_message, None)
-                  except Exception as e: print(f"CharacterManager: Error sending death message for {character_id} to channel {death_channel_id} in guild {guild_id_str}: {e}"); import traceback; print(traceback.format_exc());
-             else:
-                  print(f"CharacterManager: Warning: No death channel ID found for guild {guild_id_str}. Cannot send death message.")
-
-
-         # Cleanup related states (statuses, combat, party, dialogue, etc.)
-         # Use injected managers (self._...) and pass the context kwargs.
-         cleanup_context: Dict[str, Any] = { # Assemble context for clean_up_* methods
-             'guild_id': guild_id_str, # Передаем guild_id_str
-             'character_id': character_id, # Передаем character_id
-             'character': char, # Pass the character object for convenience
-             # Add potentially relevant managers to context *from self* if they exist and are not already in kwargs
-             'item_manager': kwargs.get('item_manager', self._item_manager),
-             'status_manager': kwargs.get('status_manager', self._status_manager),
-             'party_manager': kwargs.get('party_manager', self._party_manager),
-             'combat_manager': kwargs.get('combat_manager', self._combat_manager),
-             'dialogue_manager': kwargs.get('dialogue_manager', self._dialogue_manager),
-             'location_manager': kwargs.get('location_manager', self._location_manager),
-             'rule_engine': kwargs.get('rule_engine', self._rule_engine),
-             'send_callback_factory': send_callback_factory, # Pass factory if available
-             'settings': kwargs.get('settings', self._settings), # Pass settings if available
-             'channel_id': channel_id, # Pass originating channel_id if available
-             # TODO: Add other necessary managers/services from self._ or kwargs into cleanup_context
-         }
-         # Do NOT update cleanup_context with **kwargs here, as it might overwrite essential keys
-         # Instead, list the desired keys or handle kwargs individually within each cleanup call if needed.
-         # OR, add kwargs first, then overwrite with specific managers from self._ if self._ exists.
-         # Example: cleanup_context.update(kwargs) # Add passed kwargs
-         # if self._item_manager: cleanup_context['item_manager'] = self._item_manager # Overwrite if self._ is preferred
-
-         # Let's stick to explicitly listing needed managers in context for clarity, prioritizing self._ attributes if available.
-         # Re-assemble cleanup_context incorporating kwargs *where appropriate* or just passing all kwargs down.
-         # A safer approach is to pass character_id, guild_id, and the essential managers explicitly, then **kwargs for everything else.
-         # The cleanup methods themselves should be written to handle the received context.
-         # Let's pass character_id and the gathered context dict as **context_kwargs
-         # Example: clean_up_for_character(character_id: str, context: Dict[str, Any]) -> None
-
-         try:
-             if self._status_manager and hasattr(self._status_manager, 'clean_up_for_character'):
-                  await self._status_manager.clean_up_for_character(character_id, context=cleanup_context) # Pass the context dict
-             if self._combat_manager and hasattr(self._combat_manager, 'clean_up_for_entity'): # Updated method name
-                  # remove_participant_from_combat might need entity_type
-                  await self._combat_manager.clean_up_for_entity(character_id, entity_type="Character", context=cleanup_context) # Pass the context dict
-             if self._party_manager and hasattr(self._party_manager, 'clean_up_for_entity'): # Updated method name
-                  await self._party_manager.clean_up_for_entity(character_id, entity_type="Character", context=cleanup_context) # Pass the context dict
-             if self._dialogue_manager and hasattr(self._dialogue_manager, 'clean_up_for_entity'): # Updated method name
-                  await self._dialogue_manager.clean_up_for_entity(character_id, entity_type="Character", context=cleanup_context) # Pass the context dict
-
-             # Drop items (if location_id is available on character)
-             # Changed to use clean_up_for_character as it handles dropping inventory
-             if self._item_manager and hasattr(self._item_manager, 'clean_up_for_character') and getattr(char, 'location_id', None) is not None:
-                  await self._item_manager.clean_up_for_character(character_id, context=cleanup_context) # Pass context dict
-
-             # Trigger death logic in RuleEngine
-             if self._rule_engine:
-                killer_entity = None
-                # Ensure context (cleanup_context) has guild_id, it's already there
-                guild_id_for_fetch = cleanup_context.get('guild_id', char.guild_id)
-                if not guild_id_for_fetch: # Should always be present
-                    print(f"CharacterManager: CRITICAL - guild_id missing for death processing of {char.id}")
-
-                # killer_id and killer_type are passed in **kwargs which are part of cleanup_context
-                killer_id_from_context = cleanup_context.get('killer_id')
-                killer_type_from_context = cleanup_context.get('killer_type')
-
-                if killer_id_from_context and killer_type_from_context and guild_id_for_fetch:
-                    # Assuming self._character_manager_ref refers to self for CharacterManager
-                    # This part might need adjustment if _character_manager_ref is not standard.
-                    # For now, let's assume self can get character if needed.
-                    # And CharacterManager needs _npc_manager to fetch NPC killers.
-                    if killer_type_from_context == "Character":
-                        # The context might already contain a CharacterManager instance (e.g. from GameManager)
-                        cm_in_context = cleanup_context.get('character_manager')
-                        if cm_in_context and hasattr(cm_in_context, 'get_character'):
-                            killer_entity = await cm_in_context.get_character(guild_id_for_fetch, killer_id_from_context)
-                        else: # Fallback to self.get_character, as self is CharacterManager
-                            killer_entity = await self.get_character(guild_id_for_fetch, killer_id_from_context)
-                    elif killer_type_from_context == "NPC":
-                        # Check if _npc_manager is available and has the method
-                        npc_manager_in_context = cleanup_context.get('npc_manager') # Prefer NPC manager from context
-                        if npc_manager_in_context and hasattr(npc_manager_in_context, 'get_npc'):
-                            killer_entity = await npc_manager_in_context.get_npc(guild_id_for_fetch, killer_id_from_context)
-                        elif self._npc_manager and hasattr(self._npc_manager, 'get_npc'): # Fallback to self._npc_manager
-                            killer_entity = await self._npc_manager.get_npc(guild_id_for_fetch, killer_id_from_context)
-                        else:
-                            print(f"CharacterManager: NPC killer type specified, but no NPC manager found to fetch NPC {killer_id_from_context}")
-
-                # Pylance: Try/Except structure verified
-                try:
-                    death_report = await self._rule_engine.process_entity_death(
-                        entity=char,
-                        killer=killer_entity, # This can be None if killer not found
-                        context=cleanup_context # cleanup_context already contains guild_id
-                    )
-                    death_message_from_engine = death_report.get('message', f"{getattr(char, 'name', char.id)} meets a grim end.")
-                    print(f"CharacterManager: Death of {char.id} processed by RuleEngine. Message: {death_message_from_engine}")
-                except Exception as e:
-                    print(f"CharacterManager: Error processing entity death for char {char.id} in guild {guild_id_str}: {e}")
-                    import traceback
-                    print(traceback.format_exc())
-             else:
-                print(f"CharacterManager: RuleEngine not available for character {char.id} death processing. Basic death applied.")
-
-                # These print statements are part of the general cleanup process after all specific cleanup actions.
-                # Their indentation should align with the outer try block.
-                print(f"CharacterManager: Death cleanup initiated for character {character_id} in guild {guild_id_str}.")
-                print(f"CharacterManager: Death cleanup process completed for character {character_id} in guild {guild_id_str}.")
-         except Exception as e: # This is the except for the outer try block
-              print(f"CharacterManager: Error during death cleanup for character {character_id} in guild {guild_id_str}: {e}")
-              print(traceback.format_exc())
-            # Log error, continue
-
-
-    # --- Методы для управления активностью/занятостью ---
-
-    # ИСПРАВЛЕНИЕ: set_active_action должен принимать guild_id
-    def set_active_action(self, guild_id: str, character_id: str, action_details: Optional[Dict[str, Any]]) -> None:
-        """Устанавливает текущее активное действие персонажа для определенной гильдии."""
-        guild_id_str = str(guild_id)
-        # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-        char = self.get_character(guild_id_str, character_id)
-        if not char:
-            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to set active action.")
-            return
-
-        # Убедимся, что у объекта Character есть атрибут current_action
-        if hasattr(char, 'current_action'):
-            char.current_action = action_details
-        else:
-            print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'current_action' attribute. Cannot set active action.")
-            return # Cannot set if attribute is missing
-
-
-        # ИСПРАВЛЕНИЕ: Управляем занятостью в per-guild Set
-        guild_active_action_cache = self._entities_with_active_action.setdefault(guild_id_str, set())
-        if action_details is not None:
-            guild_active_action_cache.add(character_id)
-        else:
-            # Check if there's still something in the queue before marking not busy
-            if not getattr(char, 'action_queue', []): # Safely check action_queue attribute
-                 guild_active_action_cache.discard(character_id)
-
-
-        self.mark_character_dirty(guild_id_str, character_id) # Помечаем, что персонаж изменен для этой гильдии
-
-
-    # ИСПРАВЛЕНИЕ: add_action_to_queue должен принимать guild_id
-    def add_action_to_queue(self, guild_id: str, character_id: str, action_details: Dict[str, Any]) -> None:
-        """Добавляет действие в очередь персонажа для определенной гильдии."""
-        guild_id_str = str(guild_id)
-        # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-        char = self.get_character(guild_id_str, character_id)
-        if not char:
-            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to add action to queue.")
-            return
-
-        # Убедимся, что у объекта Character есть атрибут action_queue и это список
-        if not hasattr(char, 'action_queue') or not isinstance(char.action_queue, list):
-             print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'action_queue' list or it's incorrect type. Initializing empty list.")
-             char.action_queue = [] # Initialize empty list if missing/wrong type
-
-        char.action_queue.append(action_details)
-        self.mark_character_dirty(guild_id_str, character_id)
-        # ИСПРАВЛЕНИЕ: Помечаем занятым в per-guild Set, т.к. есть что-то в очереди
-        self._entities_with_active_action.setdefault(guild_id_str, set()).add(character_id)
-
-
-    # ИСПРАВЛЕНИЕ: get_next_action_from_queue должен принимать guild_id
-    def get_next_action_from_queue(self, guild_id: str, character_id: str) -> Optional[Dict[str, Any]]:
-        """Извлекает следующее действие из очереди для определенной гильдии."""
-        guild_id_str = str(guild_id)
-        # ИСПРАВЛЕНИЕ: Получаем персонажа с учетом guild_id
-        char = self.get_character(guild_id_str, character_id)
-        if not char or not hasattr(char, 'action_queue') or not isinstance(char.action_queue, list) or not char.action_queue:
-            return None
-
-        next_action = char.action_queue.pop(0) # Removes from start of list (modifies attribute)
-        self.mark_character_dirty(guild_id_str, character_id)
-
-        if not char.action_queue and getattr(char, 'current_action', None) is None: # Safely check current_action attribute
-             guild_active_action_cache = self._entities_with_active_action.get(guild_id_str)
-             if guild_active_action_cache:
-                  guild_active_action_cache.discard(character_id)
-
-        return next_action
-
-
-    # --- Вспомогательные методы ---
-    # async def notify_character(self, character_id: str, message: str, **kwargs):
-    #      """Метод для отправки сообщений конкретному персонажу (через Discord или другие средства)."""
-    #      # As noted, this belongs in processors or services that handle communication.
-    #      pass
-
-    # TODO: Add clean_up_from_party(character_id, context) method (used by PartyManager)
-    # async def clean_up_from_party(self, character_id: str, context: Dict[str, Any]) -> None:
-    #      """Сбросить party_id персонажа когда он покидает группу."""
-    #      guild_id = context.get('guild_id')
-    #      if guild_id is None:
-    #           print(f"CharacterManager: Error in clean_up_from_party: Missing guild_id in context for character {character_id}.")
-    #           return
-    #      guild_id_str = str(guild_id)
-    #      char = self.get_character(guild_id_str, character_id)
-    #      if not char:
-    #           print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} for party cleanup.")
-    #           return
-    #      if getattr(char, 'party_id', None) is not None:
-    #           char.party_id = None # Reset party_id
-    #           self.mark_character_dirty(guild_id_str, character_id)
-    #           print(f"CharacterManager: Cleaned up party_id for character {character_id} in guild {guild_id_str}.")
-
-    # TODO: Add clean_up_from_combat(character_id, context) method (used by CombatManager)
-    # async def clean_up_from_combat(self, character_id: str, context: Dict[str, Any]) -> None:
-    #      """Сбросить combat_id персонажа когда он покидает бой."""
-    #      # Similar logic to clean_up_from_party
-    #      pass
-
-    # TODO: Add clean_up_from_dialogue(character_id, context) method (used by DialogueManager)
-    # async def clean_up_from_dialogue(self, character_id: str, context: Dict[str, Any]) -> None:
-    #      """Сбросить dialogue_id/state персонажа когда он покидает диалог."""
-    #      # Similar logic
-    #      pass
-
+        char = self.get_character(guild_id, character_id)
+        if char and getattr(char, 'is_alive', False):
+            char.is_alive = False; self.mark_character_dirty(guild_id, character_id)
+            await self._recalculate_and_store_effective_stats(guild_id, character_id, char)
+        elif char: print(f"Character {character_id} already marked as not alive.")
+        else: print(f"Character {character_id} not found for death processing.")
+    def set_active_action(self, guild_id: str, character_id: str, action_details: Optional[Dict[str, Any]]) -> None: pass
+    def add_action_to_queue(self, guild_id: str, character_id: str, action_details: Dict[str, Any]) -> None: pass
+    def get_next_action_from_queue(self, guild_id: str, character_id: str) -> Optional[Dict[str, Any]]: return None
     async def save_character(self, character: "Character", guild_id: str) -> bool:
-        """
-        Saves a single character entity to the database using an UPSERT operation.
-        Ensures all relevant fields of the Character model are saved.
-        Handles serialization of complex types (e.g., to JSON strings).
-        """
-        if self._db_service is None or not hasattr(self._db_service, 'adapter') or self._db_service.adapter is None:
-            print(f"CharacterManager: Error: DB service or adapter missing for guild {guild_id}. Cannot save character {character.id}.")
-            # Consider raising an error or returning a more specific status
-            return False
-
-        guild_id_str = str(guild_id) # Ensure guild_id is a string
-
-        # Validate that the character belongs to the specified guild
-        if str(character.guild_id) != guild_id_str:
-            print(f"CharacterManager: Error: Character {character.id} guild_id ({character.guild_id}) "
-                  f"does not match provided guild_id ({guild_id_str}) for saving.")
-            return False
-
-        try:
-            # Convert Character object to dictionary
-            # The to_dict() method in Character model should be kept up-to-date
-            # This method should return Python dicts/lists for complex fields.
-            char_data = character.to_dict()
-
-            # Prepare data for SQL query, ensuring JSON serialization for complex types
-            # The order of parameters must match the order of columns in the SQL query.
-
-            # name_i18n from model (dict) to JSON string for 'name' DB column
-            name_i18n_json = json.dumps(char_data.get('name_i18n', {}))
-
-            # New JSON fields from model (Python dict/list) to JSON strings for DB
-            skills_data_json_str = json.dumps(char_data.get('skills_data', []))
-            abilities_data_json_str = json.dumps(char_data.get('abilities_data', []))
-            spells_data_json_str = json.dumps(char_data.get('spells_data', []))
-            flags_json_str = json.dumps(char_data.get('flags', {}))
-
-            db_params = (
-                char_data.get('id'),
-                char_data.get('discord_id'), # Changed from discord_user_id
-                name_i18n_json, # 'name' column in DB stores name_i18n
-                char_data.get('guild_id'),
-                char_data.get('current_location_id'), # Use current_location_id
-                json.dumps(char_data.get('stats', {})),
-                json.dumps(char_data.get('inventory', [])),
-                json.dumps(char_data.get('current_action')) if char_data.get('current_action') is not None else None,
-                json.dumps(char_data.get('action_queue', [])),
-                char_data.get('party_id'), # Old party_id
-                json.dumps(char_data.get('state_variables', {})),
-                float(char_data.get('hp', 0.0)),
-                float(char_data.get('max_health', 0.0)),
-                char_data.get('is_alive', True), # Boolean directly
-                json.dumps(char_data.get('status_effects', [])),
-                int(char_data.get('level', 1)),
-                int(char_data.get('experience', 0)),
-                int(char_data.get('unspent_xp',0)),
-                json.dumps(char_data.get('active_quests', [])), # Assuming these are from to_dict
-                json.dumps(char_data.get('known_spells', [])),   # Assuming these are from to_dict
-                json.dumps(char_data.get('spell_cooldowns', {})),# Assuming these are from to_dict
-                skills_data_json_str,       # skills_data_json
-                abilities_data_json_str,    # abilities_data_json
-                spells_data_json_str,       # spells_data_json
-                flags_json_str,             # flags_json
-                char_data.get('character_class'),
-                char_data.get('selected_language'),
-                char_data.get('current_game_status'),
-                char_data.get('collected_actions_json'),
-                char_data.get('current_party_id') # New party_id
-            )
-
-            # SQL for UPSERT (PostgreSQL syntax)
-            # Column names must match the 'players' table schema.
-            upsert_sql = '''
-            INSERT INTO players (
-                id, discord_id, name_i18n, guild_id, current_location_id,
-                stats, inventory, current_action, action_queue, party_id,
-                state_variables, hp, max_health, is_alive, status_effects,
-                level, xp, unspent_xp, active_quests, known_spells,
-                spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json,
-                character_class, selected_language, current_game_status, collected_actions_json, current_party_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
-            ON CONFLICT (id) DO UPDATE SET
-                discord_id = EXCLUDED.discord_id,
-                name_i18n = EXCLUDED.name_i18n,
-                guild_id = EXCLUDED.guild_id,
-                current_location_id = EXCLUDED.current_location_id, # Update current_location_id
-                stats = EXCLUDED.stats,
-                inventory = EXCLUDED.inventory,
-                current_action = EXCLUDED.current_action,
-                action_queue = EXCLUDED.action_queue,
-                party_id = EXCLUDED.party_id,
-                state_variables = EXCLUDED.state_variables,
-                hp = EXCLUDED.hp,
-                max_health = EXCLUDED.max_health,
-                is_alive = EXCLUDED.is_alive,
-                status_effects = EXCLUDED.status_effects,
-                level = EXCLUDED.level,
-                xp = EXCLUDED.experience,
-                unspent_xp = EXCLUDED.unspent_xp,
-                active_quests = EXCLUDED.active_quests,
-                known_spells = EXCLUDED.known_spells,
-                spell_cooldowns = EXCLUDED.spell_cooldowns,
-                skills_data_json = EXCLUDED.skills_data_json,
-                abilities_data_json = EXCLUDED.abilities_data_json,
-                spells_data_json = EXCLUDED.spells_data_json,
-                flags_json = EXCLUDED.flags_json,
-                character_class = EXCLUDED.character_class,
-                selected_language = EXCLUDED.selected_language,
-                current_game_status = EXCLUDED.current_game_status,
-                collected_actions_json = EXCLUDED.collected_actions_json,
-                current_party_id = EXCLUDED.current_party_id;
-            ''' # 30 columns, 30 placeholders. PostgreSQL UPSERT.
-
-            # Execute the database operation
-            await self._db_service.adapter.execute(upsert_sql, db_params)
-            # print(f"CharacterManager: Successfully saved character {character.id} for guild {guild_id_str}.") # Debug log
-
-            # If the character was saved, remove it from the dirty set for this guild
-            # This is crucial to avoid re-saving unchanged data
-            guild_dirty_set = self._dirty_characters.get(guild_id_str)
-            if guild_dirty_set:
-                guild_dirty_set.discard(character.id)
-                if not guild_dirty_set: # If the set becomes empty
-                    del self._dirty_characters[guild_id_str]
-
-            return True
-
-        except json.JSONDecodeError as je:
-            print(f"CharacterManager: JSON encoding error saving character {character.id} for guild {guild_id_str}: {je}")
-            traceback.print_exc()
-            return False
-        except AttributeError as ae: # Catch issues if char_data is missing expected keys from to_dict
-            print(f"CharacterManager: Attribute error preparing data for character {character.id} (guild {guild_id_str}): {ae}. "
-                  "This might indicate Character.to_dict() is missing fields or data is malformed.")
-            traceback.print_exc()
-            return False
-        except Exception as e:
-            # Log any other errors during the save process
-            print(f"CharacterManager: Error saving character {character.id} for guild {guild_id_str}: {e}")
-            traceback.print_exc()
-            return False
-
+        if self._db_service is None or not hasattr(self._db_service, 'adapter') or self._db_service.adapter is None: return False
+        self.mark_character_dirty(guild_id, character.id)
+        return True
     async def set_current_party_id(self, guild_id: str, character_id: str, party_id: Optional[str], **kwargs: Any) -> bool:
-        """Sets the current_party_id for a character for a specific guild."""
-        guild_id_str = str(guild_id)
-        char = self.get_character(guild_id_str, character_id)
-        if not char:
-            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to set current_party_id.")
-            return False
-
-        if not hasattr(char, 'current_party_id'):
-            print(f"CharacterManager: Warning: Character model for {character_id} in guild {guild_id_str} is missing 'current_party_id' attribute.")
-            # Attempt to set it anyway if the model should have it
-            # but log that it might be a model definition issue.
-            # Or, return False if strict adherence to current model attributes is required.
-            # For now, let's assume the attribute should exist or will be dynamically set.
-            pass # Allow setting it
-
-        resolved_party_id = str(party_id) if party_id is not None else None
-
-        if getattr(char, 'current_party_id', None) == resolved_party_id:
-            return True # No change needed
-
-        char.current_party_id = resolved_party_id
-        self.mark_character_dirty(guild_id_str, character_id)
-        print(f"CharacterManager: Set current_party_id for character {character_id} in guild {guild_id_str} to {resolved_party_id}.")
-        return True
-
+        char = self.get_character(guild_id, character_id)
+        if char: char.current_party_id = str(party_id) if party_id else None; self.mark_character_dirty(guild_id, character_id); await self._recalculate_and_store_effective_stats(guild_id, character_id, char); return True
+        return False
     async def save_character_field(self, guild_id: str, character_id: str, field_name: str, value: Any, **kwargs: Any) -> bool:
-        """
-        Updates a specific field for a character and saves it to the database.
-        This is a convenience method that marks the character dirty and relies on the main save loop,
-        OR directly calls DBService if immediate persistence is needed (for now, mark dirty).
-        """
-        guild_id_str = str(guild_id)
-        char = self.get_character(guild_id_str, character_id)
-        if not char:
-            print(f"CharacterManager: Character {character_id} not found in guild {guild_id_str} to save field '{field_name}'.")
-            return False
-
-        if not hasattr(char, field_name):
-            print(f"CharacterManager: Character {character_id} has no field '{field_name}'.")
-            return False
-
-        old_value = None
-        try:
-            old_value = getattr(char, field_name)
-            # If old_value is a mutable type (dict, list), we should store a deep copy for revert_data
-            if isinstance(old_value, (dict, list)):
-                old_value = json.loads(json.dumps(old_value)) # Simple deep copy via JSON serialization
-        except AttributeError:
-            # Field might not exist yet, so old_value is effectively None or some default
-            # This case needs careful consideration for revert logic if the field was created.
-            # For now, assume field usually exists for updates.
-            print(f"CharacterManager.save_character_field: Field {field_name} did not exist on character {character_id} before setting. Old value considered None for revert.")
-            old_value = None
-
-
-        setattr(char, field_name, value)
-        self.mark_character_dirty(guild_id_str, character_id)
-
-        if self._game_log_manager:
-            revert_data = {
-                "stat_changes": [{"stat": field_name, "old_value": old_value}]
-            }
-            # More specific action_type if possible, e.g. based on field_name
-            action_type = f"FIELD_UPDATE_{field_name.upper()}"
-            log_details = {
-                "action_type": action_type,
-                "field_name": field_name,
-                "new_value": value,
-                "old_value_logged": old_value, # Log what was captured as old_value
-                "revert_data": revert_data
-            }
-            asyncio.create_task(self._game_log_manager.log_event(
-                guild_id=guild_id_str,
-                event_type="PLAYER_FIELD_CHANGED",
-                player_id=character_id,
-                details=log_details
-            ))
-
-        # If immediate save is required (e.g., for critical fields not picked up by regular save cycle):
-        # if self._db_service:
-        #     success = await self._db_service.update_player_field(
-        #         player_id=character_id, # Assuming character_id is the player_id in DB
-        #         field_name=field_name,
-        #         value=value,
-        #         guild_id=guild_id_str
-        #     )
-        #     if success:
-        #         print(f"CharacterManager: Immediately saved field '{field_name}' for character {character_id} in guild {guild_id_str}.")
-        #         # Optionally, if DB save is direct, you might not need to mark_dirty
-        #         # or _dirty_characters set should be cleared for this field/char by DBService.
-        #         # For now, relying on mark_character_dirty and main save cycle.
-        #         return True
-        #     else:
-        #         print(f"CharacterManager: Failed to immediately save field '{field_name}' for character {character_id} in guild {guild_id_str}.")
-        #         return False
-        # else:
-        #     print(f"CharacterManager: DBService not available, cannot immediately save field '{field_name}'. Marked dirty.")
-        #     return True # Marked dirty, will save later
-
-        print(f"CharacterManager: Updated field '{field_name}' for character {character_id} in guild {guild_id_str}. Marked dirty for next save cycle.")
-        return True
-
+        char = self.get_character(guild_id, character_id)
+        if char and hasattr(char, field_name):
+            setattr(char, field_name, value); self.mark_character_dirty(guild_id, character_id)
+            if field_name.startswith("stats") or field_name == "level": await self._recalculate_and_store_effective_stats(guild_id, character_id, char)
+            return True
+        return False
     async def revert_location_change(self, guild_id: str, character_id: str, old_location_id: str, **kwargs: Any) -> bool:
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_location_change: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        char.current_location_id = old_location_id
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_location_change: Reverted location for character {character_id} to {old_location_id}.")
-        return True
-
+        char = self.get_character(guild_id, character_id);
+        if char: char.current_location_id = old_location_id; self.mark_character_dirty(guild_id, character_id); await self._recalculate_and_store_effective_stats(guild_id, character_id, char); return True
+        return False
     async def revert_hp_change(self, guild_id: str, character_id: str, old_hp: float, old_is_alive: bool, **kwargs: Any) -> bool:
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_hp_change: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        char.hp = old_hp
-        char.is_alive = old_is_alive
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_hp_change: Reverted HP for character {character_id} to {old_hp}, is_alive to {old_is_alive}.")
-        return True
-
+        char = self.get_character(guild_id, character_id);
+        if char: char.hp = old_hp; char.is_alive = old_is_alive; self.mark_character_dirty(guild_id, character_id); await self._recalculate_and_store_effective_stats(guild_id, character_id, char); return True
+        return False
     async def revert_stat_changes(self, guild_id: str, character_id: str, stat_changes: List[Dict[str, Any]], **kwargs: Any) -> bool:
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_stat_changes: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        direct_attributes = ["xp", "level", "unspent_xp", "gold", "hp", "max_health", "is_alive", "mp", "attack", "defense"]
-
-        for change in stat_changes:
-            stat_name = change.get("stat")
-            old_value = change.get("old_value")
-
-            if stat_name is None or old_value is None:
-                print(f"CharacterManager.revert_stat_changes: Invalid stat change entry for {character_id}: {change}. Skipping.")
-                continue
-
-            if stat_name in direct_attributes:
-                setattr(char, stat_name, old_value)
-            else:
-                if not hasattr(char, 'stats') or char.stats is None:
-                    char.stats = {}
-                elif not isinstance(char.stats, dict):
-                    print(f"CharacterManager.revert_stat_changes: Character {character_id} stats attribute is not a dict. Initializing.")
-                    char.stats = {}
-                char.stats[stat_name] = old_value
-
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_stat_changes: Reverted stat changes for character {character_id}.")
-        return True
-
+        char = self.get_character(guild_id, character_id);
+        if char: self.mark_character_dirty(guild_id, character_id); await self._recalculate_and_store_effective_stats(guild_id, character_id, char); return True # Simplified
+        return False
     async def revert_party_id_change(self, guild_id: str, character_id: str, old_party_id: Optional[str], **kwargs: Any) -> bool:
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_party_id_change: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        char.party_id = old_party_id
-        char.current_party_id = old_party_id # Ensure this is also reverted
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_party_id_change: Reverted party ID for character {character_id} to {old_party_id}.")
-        return True
-
-    async def revert_status_effect_change(self, guild_id: str, character_id: str, action_taken: str, status_effect_id: str, full_status_effect_data: Optional[Dict[str, Any]] = None, **kwargs: Any) -> bool:
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_status_effect_change: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        if not hasattr(char, 'status_effects') or char.status_effects is None:
-            char.status_effects = []
-        elif not isinstance(char.status_effects, list):
-            print(f"CharacterManager.revert_status_effect_change: Character {character_id} status_effects attribute is not a list. Initializing.")
-            char.status_effects = []
-
-        if action_taken == "lost": # Originally removed, so undo adds it back
-            if full_status_effect_data and isinstance(full_status_effect_data, dict):
-                # Ensure not to add duplicates if the ID already exists (though "lost" implies it shouldn't)
-                if not any(se.get("id") == status_effect_id for se in char.status_effects if isinstance(se, dict)):
-                    char.status_effects.append(full_status_effect_data)
-                else:
-                    print(f"CharacterManager.revert_status_effect_change: Warning: Status effect {status_effect_id} (to be re-added) already present for char {character_id}.")
-            else:
-                print(f"CharacterManager.revert_status_effect_change: Warning: Cannot re-add status effect {status_effect_id} for char {character_id} without full_status_effect_data.")
-                return False
-        elif action_taken == "gained": # Originally added, so undo removes it
-            char.status_effects = [se for se in char.status_effects if not (isinstance(se, dict) and se.get("id") == status_effect_id)]
-        else:
-            print(f"CharacterManager.revert_status_effect_change: Unknown action_taken '{action_taken}' for status effect {status_effect_id} on char {character_id}.")
-            return False
-
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_status_effect_change: Reverted status effect change (action: {action_taken}, effect_id: {status_effect_id}) for character {character_id}.")
-        return True
-
-    async def revert_inventory_changes(self, guild_id: str, character_id: str, inventory_changes: List[Dict[str, Any]], **kwargs: Any) -> bool:
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_inventory_changes: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        if not hasattr(char, 'inventory') or char.inventory is None:
-            char.inventory = []
-        elif not isinstance(char.inventory, list):
-            print(f"CharacterManager.revert_inventory_changes: Character {character_id} inventory attribute is not a list. Initializing.")
-            char.inventory = []
-
-        for change in inventory_changes:
-            original_action = change.get("action")
-            item_id = change.get("item_id") # This is template_id
-            quantity = change.get("quantity")
-            old_quantity = change.get("old_quantity")
-
-            if not item_id or quantity is None:
-                print(f"CharacterManager.revert_inventory_changes: Invalid inventory change entry for {character_id}: {change}. Skipping.")
-                continue
-
-            if original_action == "added":
-                await self.remove_item_from_inventory(guild_id, character_id, item_id, quantity)
-            elif original_action == "removed":
-                await self.add_item_to_inventory(guild_id, character_id, item_id, quantity)
-            elif original_action == "modified":
-                if old_quantity is None:
-                    print(f"CharacterManager.revert_inventory_changes: 'modified' action for item {item_id} on char {character_id} is missing 'old_quantity'. Skipping.")
-                    continue
-
-                item_found_in_inventory = False
-                for inv_item in char.inventory:
-                    if isinstance(inv_item, dict) and inv_item.get("item_id") == item_id:
-                        inv_item["quantity"] = old_quantity
-                        item_found_in_inventory = True
-                        break
-
-                if old_quantity <= 0: # If new quantity is zero or less, remove the item entry
-                    char.inventory = [inv_item for inv_item in char.inventory if not (isinstance(inv_item, dict) and inv_item.get("item_id") == item_id and inv_item.get("quantity") <= 0)]
-
-                if not item_found_in_inventory and old_quantity > 0 : # If item was not found but should be restored
-                     print(f"CharacterManager.revert_inventory_changes: Item {item_id} was not found in inventory of {character_id} to modify. Adding it with old_quantity {old_quantity}.")
-                     char.inventory.append({"item_id": item_id, "quantity": old_quantity}) # Add it back
-                elif not item_found_in_inventory:
-                     print(f"CharacterManager.revert_inventory_changes: Item {item_id} was not found in inventory of {character_id} to modify (old_quantity was {old_quantity}). Not re-adding.")
-
-
-            else:
-                print(f"CharacterManager.revert_inventory_changes: Unknown original_action '{original_action}' for item {item_id} on char {character_id}. Skipping.")
-
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_inventory_changes: Reverted inventory changes for character {character_id}.")
-        return True
-
+        char = self.get_character(guild_id, character_id);
+        if char: char.party_id = old_party_id; char.current_party_id = old_party_id; self.mark_character_dirty(guild_id, character_id); await self._recalculate_and_store_effective_stats(guild_id, character_id, char); return True
+        return False
     async def revert_xp_change(self, guild_id: str, character_id: str, old_xp: int, old_level: int, old_unspent_xp: int, **kwargs: Any) -> bool:
-        """Reverts changes to a character's experience points, level, and unspent XP."""
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_xp_change: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        char.experience = old_xp
-        char.level = old_level
-        char.unspent_xp = old_unspent_xp
-
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_xp_change: Reverted XP, level, and unspent XP for character {character_id}.")
-        return True
-
-    async def revert_gold_change(self, guild_id: str, character_id: str, old_gold: int, **kwargs: Any) -> bool:
-        """Reverts changes to a character's gold."""
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_gold_change: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        # Assuming 'gold' is a direct attribute or a key in 'state_variables' or 'stats'
-        # For this example, let's assume it's a direct attribute.
-        # If it's in char.stats, it would be char.stats['gold'] = old_gold
-        # If it's in char.state_variables, it would be char.state_variables['gold'] = old_gold
-        if hasattr(char, 'gold'):
-            char.gold = old_gold
-        else:
-            # If gold is stored elsewhere, e.g. state_variables
-            # This part needs to be adapted based on where 'gold' is actually stored.
-            # For now, we'll print a warning if 'gold' attribute doesn't exist directly.
-            print(f"CharacterManager.revert_gold_change: Character {character_id} does not have a direct 'gold' attribute. Gold not reverted if stored differently.")
-            # If gold is managed by ItemManager (e.g. as an item), this logic would be different.
-            # Assuming direct attribute for now.
-            return False # Or handle based on actual gold storage
-
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_gold_change: Reverted gold for character {character_id} to {old_gold}.")
-        return True
-
-    async def revert_action_queue_change(self, guild_id: str, character_id: str, old_action_queue_json: str, **kwargs: Any) -> bool:
-        """Reverts changes to a character's action queue."""
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_action_queue_change: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        try:
-            old_action_queue = json.loads(old_action_queue_json)
-            if not isinstance(old_action_queue, list):
-                print(f"CharacterManager.revert_action_queue_change: Invalid format for old_action_queue_json for character {character_id}. Expected a list.")
-                return False
-            char.action_queue = old_action_queue
-        except json.JSONDecodeError:
-            print(f"CharacterManager.revert_action_queue_change: Failed to parse old_action_queue_json for character {character_id}.")
-            return False
-
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_action_queue_change: Reverted action queue for character {character_id}.")
-        return True
-
-    async def revert_collected_actions_change(self, guild_id: str, character_id: str, old_collected_actions_json: str, **kwargs: Any) -> bool:
-        """Reverts changes to a character's collected_actions_json."""
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            print(f"CharacterManager.revert_collected_actions_change: Character {character_id} not found in guild {guild_id}.")
-            return False
-
-        # collected_actions_json can be None or a JSON string.
-        # The attribute on the model is `collected_actions_json`
-        char.collected_actions_json = old_collected_actions_json
-
-        self.mark_character_dirty(guild_id, character_id)
-        print(f"CharacterManager.revert_collected_actions_change: Reverted collected_actions_json for character {character_id}.")
-        return True
-
-    async def revert_character_creation(self, guild_id: str, character_id: str, **kwargs: Any) -> bool:
-        """Reverts the creation of a character by marking them for deletion."""
-        char = self.get_character(guild_id, character_id)
-        if not char:
-            # If character not found, it might have already been deleted or never existed.
-            # Consider this a success for revert purposes if the goal is for the character not to exist.
-            print(f"CharacterManager.revert_character_creation: Character {character_id} not found in guild {guild_id}. Assumed already deleted or never existed.")
-            return True
-            # Or return False if strict "was found then deleted" is required:
-            # print(f"CharacterManager.revert_character_creation: Character {character_id} not found in guild {guild_id}.")
-            # return False
-
-        self.mark_character_deleted(guild_id, character_id)
-        # mark_character_deleted already prints a message.
-        print(f"CharacterManager.revert_character_creation: Marked character {character_id} for deletion in guild {guild_id}.")
-        return True
-
-    async def recreate_character_from_data(self, guild_id: str, character_data: Dict[str, Any], **kwargs: Any) -> bool:
-        """
-        Recreates a character from provided data.
-        This is essentially a wrapper around create_character, ensuring all necessary data is passed.
-        """
-        discord_id = character_data.get('discord_id')
-        name = character_data.get('name') # Or name_i18n handling
-
-        if discord_id is None or name is None:
-            print(f"CharacterManager.recreate_character_from_data: Missing discord_id or name in character_data for guild {guild_id}.")
-            return False
-
-        # Extract other relevant fields from character_data
-        initial_location_id = character_data.get('current_location_id')
-        level = character_data.get('level', 1)
-        experience = character_data.get('experience', 0) # 'xp' in DB, 'experience' in model
-        unspent_xp = character_data.get('unspent_xp', 0)
-        # ... and other fields like stats, inventory, hp, etc. from character_data
-        # These would need to be passed to create_character or set afterwards.
-
-        # For simplicity, assuming create_character can handle these or they are set post-creation.
-        # The create_character method as of now has specific params.
-        # We might need to update the character object *after* creation if create_character doesn't take all these.
-
-        try:
-            # Call create_character with the core identifiable information
-            new_char = await self.create_character(
-                discord_id=int(discord_id),
-                name=str(name), # Ensure name is string
-                guild_id=guild_id,
-                initial_location_id=initial_location_id, # Pass this
-                level=int(level),
-                experience=int(experience),
-                unspent_xp=int(unspent_xp),
-                # Pass other relevant fields from character_data if create_character supports them
-                # e.g., character_class=character_data.get('character_class')
-                **kwargs # Pass along any other context
-            )
-
-            if not new_char:
-                print(f"CharacterManager.recreate_character_from_data: Failed to create character using create_character for guild {guild_id}, discord_id {discord_id}.")
-                return False
-
-            # Now, update other fields from character_data onto new_char
-            # This part is crucial and needs to be comprehensive.
-
-            if 'stats' in character_data and isinstance(character_data['stats'], dict):
-                new_char.stats = character_data['stats']
-            if 'inventory' in character_data and isinstance(character_data['inventory'], list):
-                new_char.inventory = character_data['inventory']
-            if 'current_action' in character_data: # Can be None
-                new_char.current_action = character_data['current_action']
-            if 'action_queue' in character_data and isinstance(character_data['action_queue'], list):
-                new_char.action_queue = character_data['action_queue']
-            if 'party_id' in character_data: # Can be None
-                new_char.party_id = character_data.get('party_id')
-                new_char.current_party_id = character_data.get('current_party_id', character_data.get('party_id')) # Also set current_party_id
-            if 'state_variables' in character_data and isinstance(character_data['state_variables'], dict):
-                new_char.state_variables = character_data['state_variables']
-            if 'hp' in character_data:
-                new_char.hp = float(character_data['hp'])
-            if 'max_health' in character_data:
-                new_char.max_health = float(character_data['max_health'])
-            if 'is_alive' in character_data:
-                new_char.is_alive = bool(character_data['is_alive'])
-            if 'status_effects' in character_data and isinstance(character_data['status_effects'], list):
-                new_char.status_effects = character_data['status_effects']
-            if 'selected_language' in character_data:
-                new_char.selected_language = character_data['selected_language']
-            if 'collected_actions_json' in character_data: # Can be None
-                new_char.collected_actions_json = character_data['collected_actions_json']
-            if 'skills_data' in character_data and isinstance(character_data['skills_data'], list): # from_dict expects skills_data
-                new_char.skills_data = character_data['skills_data']
-            if 'abilities_data' in character_data and isinstance(character_data['abilities_data'], list):
-                new_char.abilities_data = character_data['abilities_data']
-            if 'spells_data' in character_data and isinstance(character_data['spells_data'], list):
-                new_char.spells_data = character_data['spells_data']
-            if 'character_class' in character_data:
-                new_char.character_class = character_data['character_class']
-            if 'flags' in character_data and isinstance(character_data['flags'], dict): # from_dict expects flags
-                new_char.flags = character_data['flags']
-
-            # After setting all fields, mark as dirty to ensure they are saved.
-            self.mark_character_dirty(guild_id, new_char.id)
-            print(f"CharacterManager.recreate_character_from_data: Character {new_char.id} (Discord: {discord_id}) recreated and updated in guild {guild_id}.")
-            return True
-
-        except Exception as e:
-            print(f"CharacterManager.recreate_character_from_data: Error recreating character for discord_id {discord_id} in guild {guild_id}: {e}")
-            import traceback
-            traceback.print_exc()
-            # Attempt to clean up if partially created - this is tricky.
-            # If new_char was created but subsequent updates failed, it might be left in an inconsistent state.
-            # For now, rely on the error being caught and handled by the caller.
-            return False
-
-# --- Конец класса CharacterManager ---
-
-
+        char = self.get_character(guild_id, character_id);
+        if char: char.experience = old_xp; char.level = old_level; char.unspent_xp = old_unspent_xp; self.mark_character_dirty(guild_id, character_id); await self._recalculate_and_store_effective_stats(guild_id, character_id, char); return True
+        return False
+    async def revert_status_effect_change(self, guild_id: str, character_id: str, action_taken: str, status_effect_id: str, full_status_effect_data: Optional[Dict[str, Any]] = None, **kwargs: Any) -> bool: return True
+    async def revert_inventory_changes(self, guild_id: str, character_id: str, inventory_changes: List[Dict[str, Any]], **kwargs: Any) -> bool: return True
+    async def revert_gold_change(self, guild_id: str, character_id: str, old_gold: int, **kwargs: Any) -> bool: return True
+    async def revert_action_queue_change(self, guild_id: str, character_id: str, old_action_queue_json: str, **kwargs: Any) -> bool: return True
+    async def revert_collected_actions_change(self, guild_id: str, character_id: str, old_collected_actions_json: str, **kwargs: Any) -> bool: return True
+    async def revert_character_creation(self, guild_id: str, character_id: str, **kwargs: Any) -> bool: return True
+    async def recreate_character_from_data(self, guild_id: str, character_data: Dict[str, Any], **kwargs: Any) -> bool: return True

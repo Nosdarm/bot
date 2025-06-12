@@ -143,8 +143,9 @@ class EquipmentManager:
         # item_instance_data must have 'instance_id' for effect tracking
         await self._item_manager.apply_item_effects(guild_id, character_id, item_instance_data, rules_config)
 
-        await self._character_manager.calculate_and_update_effective_stats(guild_id, character_id, rules_config)
-        self._character_manager.mark_character_dirty(guild_id, character_id)
+        # Trigger effective stats recalculation in CharacterManager
+        await self._character_manager.trigger_stats_recalculation(guild_id, character_id)
+        # mark_character_dirty is called within trigger_stats_recalculation
 
         print(f"{log_prefix} Item '{item_name}' equipped to slot '{target_slot_id}'.")
         return {"success": True, "message": f"'{item_name}' экипирован(а) в слот '{target_slot_id}'.", "state_changed": True}
@@ -195,11 +196,13 @@ class EquipmentManager:
                 character.equipment = json.dumps(character_equipment)
                 # Re-apply effects? This could be complex. For now, focus on not losing the item.
                 # await self._item_manager.apply_item_effects(guild_id, character_id, item_instance_data_to_unequip, rules_config) # Re-apply
-                self._character_manager.mark_character_dirty(guild_id, character_id) # Save the re-equip
+                # self._character_manager.mark_character_dirty(guild_id, character_id) # Save the re-equip # Already marked by trigger
+                await self._character_manager.trigger_stats_recalculation(guild_id, character_id) # Recalc even if re-equipped due to error
                 return {"success": False, "message": f"КРИТИЧЕСКАЯ ОШИБКА: Не удалось вернуть '{item_name}' в инвентарь после снятия."}
 
-        await self._character_manager.calculate_and_update_effective_stats(guild_id, character_id, rules_config)
-        self._character_manager.mark_character_dirty(guild_id, character_id)
+        # Trigger effective stats recalculation in CharacterManager
+        await self._character_manager.trigger_stats_recalculation(guild_id, character_id)
+        # mark_character_dirty is called within trigger_stats_recalculation
 
         print(f"{log_prefix} Item '{item_name}' unequipped from slot '{slot_id_to_unequip}'.")
         return {"success": True, "message": f"'{item_name}' снят(а) со слота '{slot_id_to_unequip}'." + ("" if is_internal_call else " и возвращен(а) в инвентарь."), "state_changed": True}
