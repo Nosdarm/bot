@@ -11,7 +11,8 @@ from bot.game.managers.character_manager import CharacterManager
 from bot.game.managers.item_manager import ItemManager
 from bot.game.managers.quest_manager import QuestManager
 from bot.game.managers.party_manager import PartyManager
-
+from bot.game.managers.npc_manager import NpcManager # Added
+from bot.game.managers.location_manager import LocationManager # Added
 class TestUndoManager(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):

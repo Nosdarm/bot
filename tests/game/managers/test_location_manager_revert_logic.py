@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch, AsyncMock
 import json # For JSON operations if needed
-
+import asyncio
 from bot.game.models.location import Location
 from bot.game.managers.location_manager import LocationManager
 # from bot.services.db_service import DBService # Mock if needed
