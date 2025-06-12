@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -167,7 +168,7 @@ class UndoManager:
 
         if revert_ok:
             if hasattr(self._game_log_manager, 'delete_log_entry'):
-                delete_ok = await self._game_log_manager.delete_log_entry(log_id_to_revert)
+                delete_ok = await self._game_log_manager.delete_log_entry(log_id_to_revert) 
                 if not delete_ok:
                     print(f"UndoManager Warning: Log entry {log_id_to_revert} successfully reverted but could not be deleted.")
                 else:
@@ -499,13 +500,13 @@ class UndoManager:
                 # This can be None if actions were cleared, so allow None
                 if old_collected_actions_json is not None or ('old_collected_actions_json' in revert_data):
                     revert_successful = await self._character_manager.revert_collected_actions_change(
-                        guild_id, player_id, old_collected_actions_json
+                        guild_id, player_id, old_collected_actions_json 
                     )
                 else:
                     print(f"UndoManager Error: Missing 'old_collected_actions_json' key in revert_data for PLAYER_COLLECTED_ACTIONS_CHANGED. Log ID: {log_entry.get('id')}")
             elif not self._character_manager: print("UndoManager Error: CharacterManager not available for PLAYER_COLLECTED_ACTIONS_CHANGED.")
             else: print(f"UndoManager Error: player_id missing for PLAYER_COLLECTED_ACTIONS_CHANGED. Log ID: {log_entry.get('id')}")
-
+        
         elif event_type == "PLAYER_CREATED":
             # player_id from log entry is the character_id to delete
             if self._character_manager and player_id:
@@ -554,7 +555,7 @@ class UndoManager:
                 )
             elif not self._npc_manager: print("UndoManager Error: NpcManager not available for NPC_HP_CHANGED.")
             else: print(f"UndoManager Error: Missing data for NPC_HP_CHANGED. Log ID: {log_entry.get('id')}")
-
+        
         elif event_type == "NPC_STATS_UPDATED":
             npc_id_stats_updated = details.get('npc_id')
             revert_data = details.get('revert_data', {})
@@ -601,7 +602,7 @@ class UndoManager:
                 )
             elif not self._npc_manager: print("UndoManager Error: NpcManager not available for NPC_STATE_VARIABLES_CHANGED.")
             else: print(f"UndoManager Error: Missing data for NPC_STATE_VARIABLES_CHANGED. Log ID: {log_entry.get('id')}")
-
+        
         elif event_type == "GM_NPC_RECREATED":
             npc_id_recreated = details.get('npc_id')
             if self._npc_manager and npc_id_recreated:
@@ -637,7 +638,7 @@ class UndoManager:
                 )
             elif not self._item_manager: print("UndoManager Error: ItemManager not available for ITEM_QUANTITY_CHANGED.")
             else: print(f"UndoManager Error: Missing data for ITEM_QUANTITY_CHANGED. Log ID: {log_entry.get('id')}")
-
+        
         # --- LocationManager Events ---
         elif event_type == "LOCATION_STATE_VARIABLE_CHANGED":
             location_id_state_var_changed = details.get('location_id', log_entry.get('location_id'))
@@ -667,14 +668,14 @@ class UndoManager:
                 # original_item_data is only strictly needed if change_action was 'removed'
                 if change_action == "removed" and original_item_data is None:
                     print(f"UndoManager Warning: Missing 'original_item_data' for LOCATION_INVENTORY_CHANGED (removed action). Revert might be incomplete. Log ID: {log_entry.get('id')}")
-
+                
                 revert_successful = await self._location_manager.revert_location_inventory_change(
                     guild_id, loc_id_inv_changed, item_template_id, item_instance_id,
                     change_action, quantity_changed, original_item_data
                 )
             elif not self._location_manager: print("UndoManager Error: LocationManager not available for LOCATION_INVENTORY_CHANGED.")
             else: print(f"UndoManager Error: Missing critical data for LOCATION_INVENTORY_CHANGED. Log ID: {log_entry.get('id')}")
-
+            
         elif event_type == "LOCATION_EXIT_CHANGED":
             loc_id_exit_changed = details.get('location_id', log_entry.get('location_id'))
             exit_direction = details.get('exit_direction')
@@ -718,7 +719,7 @@ class UndoManager:
                 )
             elif not self._party_manager: print("UndoManager Error: PartyManager not available for PARTY_MEMBER_ADDED.")
             else: print(f"UndoManager Error: Missing data for PARTY_MEMBER_ADDED. Log ID: {log_entry.get('id')}")
-
+            
         elif event_type == "PARTY_MEMBER_REMOVED":
             party_id_member_removed_from = details.get('party_id', party_id)
             member_id_removed = details.get('member_id', player_id)
@@ -774,7 +775,7 @@ class UndoManager:
                 revert_successful = await self._party_manager.revert_party_creation(guild_id, party_id_recreated)
             elif not self._party_manager: print("UndoManager Error: PartyManager not available for GM_PARTY_RECREATED revert.")
             else: print(f"UndoManager Error: Missing 'party_id' for GM_PARTY_RECREATED. Log ID: {log_entry.get('id')}")
-
+            
         # --- End of new event types ---
         else:
             print(f"UndoManager Warning: No revert logic defined for event type '{event_type}'. Log ID: {log_entry.get('id')}")
@@ -837,13 +838,13 @@ class UndoManager:
                 # This can be None if actions were cleared, so allow None
                 if old_collected_actions_json is not None or ('old_collected_actions_json' in revert_data):
                     revert_successful = await self._character_manager.revert_collected_actions_change(
-                        guild_id, player_id, old_collected_actions_json
+                        guild_id, player_id, old_collected_actions_json 
                     )
                 else:
                     print(f"UndoManager Error: Missing 'old_collected_actions_json' key in revert_data for PLAYER_COLLECTED_ACTIONS_CHANGED. Log ID: {log_entry.get('id')}")
             elif not self._character_manager: print("UndoManager Error: CharacterManager not available for PLAYER_COLLECTED_ACTIONS_CHANGED.")
             else: print(f"UndoManager Error: player_id missing for PLAYER_COLLECTED_ACTIONS_CHANGED. Log ID: {log_entry.get('id')}")
-
+        
         elif event_type == "PLAYER_CREATED":
             # player_id from log entry is the character_id to delete
             if self._character_manager and player_id:
@@ -892,7 +893,7 @@ class UndoManager:
                 )
             elif not self._npc_manager: print("UndoManager Error: NpcManager not available for NPC_HP_CHANGED.")
             else: print(f"UndoManager Error: Missing data for NPC_HP_CHANGED. Log ID: {log_entry.get('id')}")
-
+        
         elif event_type == "NPC_STATS_UPDATED":
             npc_id_stats_updated = details.get('npc_id')
             revert_data = details.get('revert_data', {})
@@ -939,7 +940,7 @@ class UndoManager:
                 )
             elif not self._npc_manager: print("UndoManager Error: NpcManager not available for NPC_STATE_VARIABLES_CHANGED.")
             else: print(f"UndoManager Error: Missing data for NPC_STATE_VARIABLES_CHANGED. Log ID: {log_entry.get('id')}")
-
+        
         elif event_type == "GM_NPC_RECREATED":
             npc_id_recreated = details.get('npc_id')
             if self._npc_manager and npc_id_recreated:
@@ -975,7 +976,7 @@ class UndoManager:
                 )
             elif not self._item_manager: print("UndoManager Error: ItemManager not available for ITEM_QUANTITY_CHANGED.")
             else: print(f"UndoManager Error: Missing data for ITEM_QUANTITY_CHANGED. Log ID: {log_entry.get('id')}")
-
+        
         # --- LocationManager Events ---
         elif event_type == "LOCATION_STATE_VARIABLE_CHANGED":
             location_id_state_var_changed = details.get('location_id', log_entry.get('location_id'))
@@ -1005,14 +1006,14 @@ class UndoManager:
                 # original_item_data is only strictly needed if change_action was 'removed'
                 if change_action == "removed" and original_item_data is None:
                     print(f"UndoManager Warning: Missing 'original_item_data' for LOCATION_INVENTORY_CHANGED (removed action). Revert might be incomplete. Log ID: {log_entry.get('id')}")
-
+                
                 revert_successful = await self._location_manager.revert_location_inventory_change(
                     guild_id, loc_id_inv_changed, item_template_id, item_instance_id,
                     change_action, quantity_changed, original_item_data
                 )
             elif not self._location_manager: print("UndoManager Error: LocationManager not available for LOCATION_INVENTORY_CHANGED.")
             else: print(f"UndoManager Error: Missing critical data for LOCATION_INVENTORY_CHANGED. Log ID: {log_entry.get('id')}")
-
+            
         elif event_type == "LOCATION_EXIT_CHANGED":
             loc_id_exit_changed = details.get('location_id', log_entry.get('location_id'))
             exit_direction = details.get('exit_direction')
@@ -1056,7 +1057,7 @@ class UndoManager:
                 )
             elif not self._party_manager: print("UndoManager Error: PartyManager not available for PARTY_MEMBER_ADDED.")
             else: print(f"UndoManager Error: Missing data for PARTY_MEMBER_ADDED. Log ID: {log_entry.get('id')}")
-
+            
         elif event_type == "PARTY_MEMBER_REMOVED":
             party_id_member_removed_from = details.get('party_id', party_id)
             member_id_removed = details.get('member_id', player_id)
@@ -1112,7 +1113,7 @@ class UndoManager:
                 revert_successful = await self._party_manager.revert_party_creation(guild_id, party_id_recreated)
             elif not self._party_manager: print("UndoManager Error: PartyManager not available for GM_PARTY_RECREATED revert.")
             else: print(f"UndoManager Error: Missing 'party_id' for GM_PARTY_RECREATED. Log ID: {log_entry.get('id')}")
-
+            
         # --- End of new event types ---
         else:
             print(f"UndoManager Warning: No revert logic defined for event type '{event_type}'. Log ID: {log_entry.get('id')}")
