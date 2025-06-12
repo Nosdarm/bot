@@ -609,6 +609,125 @@ class GameManager:
 
         return _send
 
+    async def _process_player_turns_for_tick(self, guild_id_str: str) -> None:
+        """Processes player turns for a specific guild during a world tick."""
+        if not self.turn_processing_service or not self.character_manager:
+            if not self.turn_processing_service: print(f"GameManager (Tick-{guild_id_str}): TurnProcessingService not available.")
+            if not self.character_manager: print(f"GameManager (Tick-{guild_id_str}): CharacterManager not available.")
+            print(f"GameManager (Tick-{guild_id_str}): Skipping player turn processing phase for this guild.")
+            return
+
+        try:
+            # Identify players ready for turn processing in this guild
+            all_chars_in_guild = self.character_manager.get_all_characters(guild_id_str)
+
+            players_with_actions: List[str] = []
+            if all_chars_in_guild:
+                for char_obj in all_chars_in_guild:
+                    if char_obj and char_obj.collected_actions_json:
+                        players_with_actions.append(char_obj.id)
+
+            if players_with_actions:
+                print(f"GameManager (Tick-{guild_id_str}): Found {len(players_with_actions)} players with actions. Processing turns...")
+                if self.game_log_manager:
+                    await self.game_log_manager.log_event(
+                        guild_id=guild_id_str,
+                        event_type="gm_turn_processing_batch_start",
+                        message=f"Starting turn processing for {len(players_with_actions)} players.",
+                        metadata={"player_ids": players_with_actions}
+                    )
+
+                turn_results = await self.turn_processing_service.process_player_turns(
+                    player_ids=players_with_actions,
+                    guild_id=guild_id_str
+                )
+
+                print(f"GameManager (Tick-{guild_id_str}): Turn processing completed. Status: {turn_results.get('status')}")
+                if self.game_log_manager:
+                     await self.game_log_manager.log_event(
+                        guild_id=guild_id_str,
+                        event_type="gm_turn_processing_batch_end",
+                        message=f"Turn processing finished. Status: {turn_results.get('status')}.",
+                        metadata={"results_summary": turn_results.get('status'), "num_players_processed": len(players_with_actions)}
+                    )
+
+                feedback_map = turn_results.get('feedback_per_player', {})
+                if feedback_map:
+                    for p_id, feedback_list in feedback_map.items():
+                        if feedback_list:
+                            feedback_summary = '; '.join(feedback_list)
+                            print(f"GameManager (Tick-{guild_id_str} Feedback for {p_id}): {feedback_summary}")
+                            if self.game_log_manager:
+                                await self.game_log_manager.log_event(
+                                    guild_id=guild_id_str,
+                                    event_type="player_turn_feedback_logged",
+                                    message=f"Raw feedback for player {p_id}: {feedback_summary}",
+                                    related_entities=[{"id": p_id, "type": "Character"}],
+                                    metadata={"feedback_list": feedback_list}
+                                )
+
+                            player_char_obj = await self.character_manager.get_character(guild_id_str, p_id)
+                            if player_char_obj and player_char_obj.discord_user_id:
+                                try:
+                                    discord_user_id_int = int(player_char_obj.discord_user_id)
+                                    discord_user = await self._discord_client.fetch_user(discord_user_id_int)
+                                    if discord_user:
+                                        dm_channel = discord_user.dm_channel or await discord_user.create_dm()
+                                        dm_report_title = "**Game Update / Your Turn Report:**"
+                                        full_dm_message = f"{dm_report_title}\n- " + "\n- ".join(feedback_list)
+                                        max_len = 1980
+                                        if len(full_dm_message) > max_len:
+                                            messages_to_send = []
+                                            current_part = dm_report_title + "\n"
+                                            for entry in feedback_list:
+                                                entry_line = "- " + entry + "\n"
+                                                if len(current_part) + len(entry_line) > max_len:
+                                                    messages_to_send.append(current_part)
+                                                    current_part = dm_report_title + " (continued)\n" + entry_line
+                                                else:
+                                                    current_part += entry_line
+                                            if current_part.strip() != dm_report_title + " (continued)":
+                                                messages_to_send.append(current_part)
+                                            for i, part_msg in enumerate(messages_to_send):
+                                                await dm_channel.send(part_msg)
+                                                if self.game_log_manager:
+                                                    await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_sent_part", f"Sent DM part {i+1}/{len(messages_to_send)} to {p_id}", metadata={"char_id": p_id})
+                                        elif full_dm_message.strip() and full_dm_message.strip() != dm_report_title:
+                                             await dm_channel.send(full_dm_message)
+                                             if self.game_log_manager:
+                                                await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_sent", f"Sent DM to {p_id}", metadata={"char_id": p_id})
+                                        print(f"GameManager (Tick-{guild_id_str}): Sent DM feedback to user {discord_user_id_int} for character {p_id}.")
+                                    else:
+                                        print(f"GameManager (Tick-{guild_id_str}): Could not fetch discord user for ID {discord_user_id_int} (character {p_id}).")
+                                        if self.game_log_manager:
+                                            await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_error", f"Discord user {discord_user_id_int} not found for char {p_id}.", metadata={"char_id": p_id})
+                                except discord.Forbidden:
+                                    print(f"GameManager (Tick-{guild_id_str}): Cannot send DM to user {player_char_obj.discord_user_id} (character {p_id}) - DMs might be disabled or bot blocked.")
+                                    if self.game_log_manager:
+                                        await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_forbidden", f"DM forbidden for char {p_id}.", metadata={"char_id": p_id})
+                                except Exception as dm_e:
+                                    print(f"GameManager (Tick-{guild_id_str}): Error sending DM feedback to character {p_id}: {dm_e}")
+                                    traceback.print_exc()
+                                    if self.game_log_manager:
+                                        await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_exception", f"Exception sending DM to {p_id}: {str(dm_e)}", metadata={"char_id": p_id, "error": str(dm_e)})
+                            elif player_char_obj:
+                                print(f"GameManager (Tick-{guild_id_str}): Character {p_id} found, but missing discord_user_id. Cannot send DM.")
+                                if self.game_log_manager:
+                                    await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_error", f"Char {p_id} missing discord_user_id.", metadata={"char_id": p_id})
+            # else:
+            #    print(f"GameManager (Tick-{guild_id_str}): No players with pending actions found for turn processing.")
+
+        except Exception as tps_e:
+            print(f"GameManager (Tick-{guild_id_str}): Error during TurnProcessingService call or subsequent handling: {tps_e}")
+            traceback.print_exc()
+            if self.game_log_manager:
+                await self.game_log_manager.log_event(
+                    guild_id=guild_id_str,
+                    event_type="gm_turn_processing_error",
+                    message=f"Error in turn processing logic: {str(tps_e)}",
+                    metadata={"error": traceback.format_exc()}
+                )
+
     async def _world_tick_loop(self) -> None:
         print(f"GameManager: Starting world tick loop with interval {self._tick_interval_seconds} seconds.")
         try:
@@ -641,7 +760,7 @@ class GameManager:
                             'party_action_processor': self._party_action_processor,
                             'persistence_manager': self._persistence_manager,
                             'conflict_resolver': self.conflict_resolver,
-                            'db_service': self.db_service, # Changed
+                            'db_service': self.db_service,
                             'nlu_data_service': self.nlu_data_service,
                             'prompt_context_collector': self.prompt_context_collector,
                             'multilingual_prompt_generator': self.multilingual_prompt_generator,
@@ -658,134 +777,8 @@ class GameManager:
                         traceback.print_exc()
 
                 # --- Player Turn Processing (after WSP tick) ---
-                if self.turn_processing_service and self.character_manager:
-                    for guild_id_str in self._active_guild_ids: # Assuming _active_guild_ids holds strings
-                        try:
-                            # Identify players ready for turn processing in this guild
-                            # get_all_characters is synchronous as per CharacterManager definition
-                            all_chars_in_guild = self.character_manager.get_all_characters(guild_id_str)
-
-                            players_with_actions: List[str] = []
-                            if all_chars_in_guild: # Ensure the list is not None or empty
-                                for char_obj in all_chars_in_guild:
-                                    if char_obj and char_obj.collected_actions_json: # Check if there are actions to process
-                                        players_with_actions.append(char_obj.id)
-
-                            if players_with_actions:
-                                print(f"GameManager (Tick): Found {len(players_with_actions)} players with actions in guild {guild_id_str}. Processing turns...")
-                                if self.game_log_manager:
-                                    await self.game_log_manager.log_event(
-                                        guild_id=guild_id_str,
-                                        event_type="gm_turn_processing_batch_start",
-                                        message=f"Starting turn processing for {len(players_with_actions)} players.",
-                                        metadata={"player_ids": players_with_actions}
-                                    )
-
-                                turn_results = await self.turn_processing_service.process_player_turns(
-                                    player_ids=players_with_actions,
-                                    guild_id=guild_id_str
-                                )
-
-                                # Log summary and feedback
-                                print(f"GameManager (Tick): Turn processing completed for guild {guild_id_str}. Status: {turn_results.get('status')}")
-                                if self.game_log_manager:
-                                     await self.game_log_manager.log_event(
-                                        guild_id=guild_id_str,
-                                        event_type="gm_turn_processing_batch_end",
-                                        message=f"Turn processing finished for guild {guild_id_str}. Status: {turn_results.get('status')}.",
-                                        metadata={"results_summary": turn_results.get('status'), "num_players_processed": len(players_with_actions)}
-                                    )
-
-                                feedback_map = turn_results.get('feedback_per_player', {})
-                                if feedback_map:
-                                    for p_id, feedback_list in feedback_map.items():
-                                        if feedback_list:
-                                            feedback_summary = '; '.join(feedback_list)
-                                            print(f"GameManager (Tick Feedback for {p_id} in {guild_id_str}): {feedback_summary}")
-                                            if self.game_log_manager:
-                                                await self.game_log_manager.log_event(
-                                                    guild_id=guild_id_str,
-                                                    event_type="player_turn_feedback_logged", # Renamed for clarity
-                                                    message=f"Raw feedback for player {p_id}: {feedback_summary}",
-                                                    related_entities=[{"id": p_id, "type": "Character"}],
-                                                    metadata={"feedback_list": feedback_list} # Log the list itself
-                                                )
-
-                                            # DM Delivery
-                                            player_char_obj = await self.character_manager.get_character(guild_id_str, p_id)
-                                            if player_char_obj and player_char_obj.discord_user_id:
-                                                try:
-                                                    # Ensure discord_user_id is an int
-                                                    discord_user_id_int = int(player_char_obj.discord_user_id)
-                                                    discord_user = await self._discord_client.fetch_user(discord_user_id_int)
-
-                                                    if discord_user:
-                                                        dm_channel = discord_user.dm_channel or await discord_user.create_dm()
-                                                        # Prepend a title to the feedback
-                                                        dm_report_title = "**Game Update / Your Turn Report:**"
-                                                        full_dm_message = f"{dm_report_title}\n- " + "\n- ".join(feedback_list)
-
-                                                        max_len = 1980 # Discord limit is 2000, leave some room for title and formatting
-
-                                                        if len(full_dm_message) > max_len:
-                                                            messages_to_send = []
-                                                            current_part = dm_report_title + "\n"
-                                                            for entry in feedback_list:
-                                                                entry_line = "- " + entry + "\n"
-                                                                if len(current_part) + len(entry_line) > max_len:
-                                                                    messages_to_send.append(current_part)
-                                                                    current_part = dm_report_title + " (continued)\n" + entry_line
-                                                                else:
-                                                                    current_part += entry_line
-                                                            if current_part.strip() != dm_report_title + " (continued)": # Add last part if it has content
-                                                                messages_to_send.append(current_part)
-
-                                                            for i, part_msg in enumerate(messages_to_send):
-                                                                await dm_channel.send(part_msg)
-                                                                if self.game_log_manager:
-                                                                    await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_sent_part", f"Sent DM part {i+1}/{len(messages_to_send)} to {p_id}", metadata={"char_id": p_id})
-                                                        elif full_dm_message.strip() and full_dm_message.strip() != dm_report_title: # Send only if not empty after join
-                                                             await dm_channel.send(full_dm_message)
-                                                             if self.game_log_manager:
-                                                                await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_sent", f"Sent DM to {p_id}", metadata={"char_id": p_id})
-
-                                                        print(f"GameManager (Tick): Sent DM feedback to user {discord_user_id_int} for character {p_id}.")
-                                                    else:
-                                                        print(f"GameManager (Tick): Could not fetch discord user for ID {discord_user_id_int} (character {p_id}).")
-                                                        if self.game_log_manager:
-                                                            await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_error", f"Discord user {discord_user_id_int} not found for char {p_id}.", metadata={"char_id": p_id})
-                                                except discord.Forbidden:
-                                                    print(f"GameManager (Tick): Cannot send DM to user {player_char_obj.discord_user_id} (character {p_id}) - DMs might be disabled or bot blocked.")
-                                                    if self.game_log_manager:
-                                                        await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_forbidden", f"DM forbidden for char {p_id}.", metadata={"char_id": p_id})
-                                                except Exception as dm_e:
-                                                    print(f"GameManager (Tick): Error sending DM feedback to character {p_id}: {dm_e}")
-                                                    traceback.print_exc()
-                                                    if self.game_log_manager:
-                                                        await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_exception", f"Exception sending DM to {p_id}: {str(dm_e)}", metadata={"char_id": p_id, "error": str(dm_e)})
-                                            elif player_char_obj: # Character found but no discord_user_id
-                                                print(f"GameManager (Tick): Character {p_id} found, but missing discord_user_id. Cannot send DM.")
-                                                if self.game_log_manager:
-                                                    await self.game_log_manager.log_event(guild_id_str, "player_turn_feedback_dm_error", f"Char {p_id} missing discord_user_id.", metadata={"char_id": p_id})
-                                            # else: Character object not found - this case should ideally be rare if players_with_actions had the ID
-                            # else:
-                            #    print(f"GameManager (Tick): No players with pending actions found in guild {guild_id_str} for turn processing.")
-
-                        except Exception as tps_e:
-                            print(f"GameManager (Tick): Error during TurnProcessingService call or subsequent handling for guild {guild_id_str}: {tps_e}")
-                            traceback.print_exc()
-                            if self.game_log_manager:
-                                await self.game_log_manager.log_event(
-                                    guild_id=guild_id_str,
-                                    event_type="gm_turn_processing_error",
-                                    message=f"Error in turn processing logic: {str(tps_e)}",
-                                    metadata={"error": traceback.format_exc()}
-                                )
-                # else:
-                #    if not self.turn_processing_service: print("GameManager (Tick): TurnProcessingService not available.")
-                #    if not self.character_manager: print("GameManager (Tick): CharacterManager not available.")
-                #    print("GameManager (Tick): Skipping player turn processing phase.")
-
+                for guild_id_str in self._active_guild_ids:
+                    await self._process_player_turns_for_tick(guild_id_str)
 
         except asyncio.CancelledError:
             print("GameManager: World tick loop cancelled.")
