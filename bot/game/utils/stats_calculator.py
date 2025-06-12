@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from bot.game.models.item import ItemTemplate # For item_manager.get_item_template
     from bot.game.models.status_effect import StatusEffectTemplate # For status_manager.get_status_template
     from bot.game.models.status_effect import StatusEffect as StatusEffectInstance # For active statuses
+    # This import was missing in the original file for the __main__ block, adding it here for completeness
+    # although the __main__ block itself is commented out.
+    from unittest.mock import MagicMock
+
 
 async def calculate_effective_stats(
     db_service: "DBService",
@@ -159,53 +163,49 @@ async def calculate_effective_stats(
         if mod_rule.bonus_type == "multiplier":
             stat_key = mod_rule.stat_name.lower()
             base_value_for_calc = stats_after_percentages.get(stat_key, 0.0) # Applied to (Base + Flats + Percentages)
-            # If multiple multipliers for the same stat, they stack: (value * item_multi_1) * status_multi_1
             stats_after_multipliers[stat_key] = stats_after_multipliers.get(stat_key, base_value_for_calc) * mod_rule.value
 
 
-    effective_stats = stats_after_multipliers # This is now the dictionary to finalize
+    effective_stats = stats_after_multipliers
 
     # --- Stage 4: Apply Caps ---
     for stat_id_key, stat_def in rules_config_data.base_stats.items():
         stat_key = stat_id_key.lower()
         if stat_key in effective_stats:
-            # Ensure value is float before min/max if it could be int from defaults
             current_value = float(effective_stats[stat_key])
             min_val = float(stat_def.min_value)
             max_val = float(stat_def.max_value)
-
             effective_stats[stat_key] = max(min_val, min(current_value, max_val))
-
-            # Round if the original base stat default was an integer (heuristic for integer-like stats)
             if isinstance(stat_def.default_value, int):
                  effective_stats[stat_key] = round(effective_stats[stat_key])
 
     # --- Stage 5: Calculate Derived Stats ---
     if rules_config_data.derived_stat_rules:
-        # Example: Max HP from Constitution
-        con_val = effective_stats.get("constitution", rules_config_data.base_stats.get("CONSTITUTION", MagicMock(default_value=10)).default_value)
+        # This import is here because MagicMock is only used in this section,
+        # which itself is only relevant if rules_config_data.derived_stat_rules exists.
+        # If this section were active, and MagicMock was needed for a default, it would be here.
+        # from unittest.mock import MagicMock # Moved to top TYPE_CHECKING for clarity, not needed at runtime here
+
+        con_val = effective_stats.get("constitution",
+                                     rules_config_data.base_stats.get("CONSTITUTION",
+                                                                      MagicMock(default_value=10) if TYPE_CHECKING else type('obj', (object,), {'default_value': 10})()
+                                                                     ).default_value
+                                    )
         hp_per_con = rules_config_data.derived_stat_rules.get('hp_per_constitution_point', 10.0)
         base_hp_offset = rules_config_data.derived_stat_rules.get('base_hp_offset', 0.0)
 
-        # Only set max_hp if it wasn't already modified by items/statuses (or if it's still at default)
-        # This logic might need adjustment based on whether derived stats should override or add to existing modified stats.
-        # For now, if max_hp came from base_stats default, recalculate it.
-        max_hp_base_default = rules_config_data.base_stats.get("MAX_HP", MagicMock(default_value=0)).default_value
+        max_hp_base_default_obj = rules_config_data.base_stats.get("MAX_HP")
+        max_hp_base_default = max_hp_base_default_obj.default_value if max_hp_base_default_obj else 0.0
+
         if effective_stats.get("max_hp") == max_hp_base_default :
              effective_stats['max_hp'] = round(float(con_val) * hp_per_con + base_hp_offset)
-
-        # Example: Attack Bonus from Strength or Dexterity (conceptual)
-        # str_val = effective_stats.get("strength", 10)
-        # dex_val = effective_stats.get("dexterity", 10)
-        # attack_bonus_base_stat = "strength" # This could be rule-driven (e.g. finesse weapons use DEX)
-        # primary_attack_stat_val = effective_stats.get(attack_bonus_base_stat, 10)
-        # effective_stats["attack_bonus"] = effective_stats.get("attack_bonus",0) + ((primary_attack_stat_val - 10) // 2) # D&D style modifier
 
     effective_stats['granted_abilities_skills'] = [gas.model_dump(mode='python') for gas in granted_abilities_skills]
     return effective_stats
 
 # --- Main Test Block (Commented out as per plan) ---
 # if __name__ == '__main__':
+#     from unittest.mock import MagicMock # Added import
 #     # ... (Test code would need significant mocking of managers) ...
-#     print("Stats Calculator module loaded. Run tests via unittest framework.")
+#     # print("Stats Calculator module loaded. Run tests via unittest framework.")
 print("Stats Calculator module loaded.")
