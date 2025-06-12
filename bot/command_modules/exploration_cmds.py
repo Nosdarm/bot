@@ -68,25 +68,8 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
                 async def button_callback(interaction: discord.Interaction, target_loc_id: str, char_id: str, gm: "GameManager", cap: "CharacterActionProcessor"):
                     await interaction.response.defer(ephemeral=True) # Acknowledge button press, visible only to user
 
-                    move_action_data = {"destination": target_loc_id, "is_interaction_button": True}
-
-                    # Prepare context similar to how cmd_move does, but simplified for button interaction
-                    # Note: Accessing managers directly from 'gm' (GameManager)
+                    # Define the context for process_move_action
                     move_context = {
-                        'guild_id': str(interaction.guild_id),
-                        'author_id': str(interaction.user.id), # This is the user who clicked the button
-                        'channel_id': interaction.channel_id, # Original channel
-                        'game_manager': gm,
-                        'character_manager': gm.character_manager,
-                        'location_manager': gm.location_manager,
-                        'rule_engine': gm.rule_engine,
-                        'time_manager': gm.time_manager,
-                        'openai_service': gm.openai_service,
-                        # 'send_to_command_channel': interaction.followup.send # For ephemeral button responses
-                    }
-
-                        # Define the context for process_move_action
-                        move_context = {
                             'guild_id': str(interaction.guild_id),
                             'author_id': str(interaction.user.id), # For logging or checks within the action
                             'channel_id': interaction.channel_id, # For notifications or context
@@ -151,7 +134,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
                                         btn_new.callback = callback_new
                                         new_view.add_item(btn_new)
                                 else: # no exits from new location
-                                     new_view = None # Pass None if no new exits
+                                    new_view = None # Pass None if no new exits
 
                                 await interaction.message.edit(content=new_message_content, view=new_view if new_view and new_view.children else None)
                                 await interaction.followup.send(f"Вы переместились. {response_message}", ephemeral=True)
