@@ -388,9 +388,101 @@ class CharacterActionProcessor:
             return exception_result
 
     async def handle_attack_action(self, character_attacker: Character, guild_id: str, action_data: Dict[str, Any], rules_config: "CoreGameRulesConfig") -> Dict[str, Any]:
-        # ... (ensure guild_id is used correctly)
-        # ... (existing method)
-        pass
+        if not self._combat_manager:
+            return {"success": False, "message": "Боевая система неактивна.", "state_changed": False}
+        if not self._rule_engine: # Rule engine is needed for context in combat manager
+            return {"success": False, "message": "Система правил неактивна.", "state_changed": False}
+
+        actor_id = character_attacker.id
+        actor_type = "Character" # Explicitly set for characters
+
+        # Determine target_id from action_data
+        # NLU should fill "entities" with target information.
+        # Example: entities: [{"type": "npc", "id": "npc_goblin_123", "name": "Гоблин"}]
+        target_id: Optional[str] = None
+        target_entity_data = next((e for e in action_data.get("entities", []) if e.get("type") in ["npc", "character", "player_character"]), None)
+        if target_entity_data and isinstance(target_entity_data.get("id"), str):
+            target_id = target_entity_data.get("id")
+        elif isinstance(action_data.get("target_id"), str): # Fallback if target_id is directly provided
+            target_id = action_data.get("target_id")
+
+        if not target_id:
+            return {"success": False, "message": "Не указана цель для атаки.", "state_changed": False}
+
+        # Check if attacker is in combat and get combat_id
+        combat_instance = self._combat_manager.get_combat_by_participant_id(guild_id, actor_id)
+        if not combat_instance:
+            # TODO: Future: Initiate combat if not already in one and target is hostile?
+            # For now, assume player must be in combat to attack.
+            return {"success": False, "message": "Вы не находитесь в бою, чтобы атаковать.", "state_changed": False}
+
+        combat_instance_id = combat_instance.id
+
+        # Prepare action_data for CombatManager
+        # CombatManager expects 'type', 'actor_id', 'target_ids', etc.
+        combat_action_data = {
+            "type": action_data.get("intent_type", "ATTACK").upper(), # Use original intent or default to ATTACK
+            "actor_id": actor_id,
+            "target_ids": [target_id], # Assuming single target for now, can be expanded
+            # Potentially add other details from action_data if needed by RuleEngine later,
+            # e.g., specific weapon used if not automatically derived from equipped items.
+            # "weapon_id": action_data.get("weapon_id")
+        }
+
+        # Assemble the full context for CombatManager
+        # This context needs all managers that CombatManager or subsequent systems (RuleEngine, StatsCalculator) might need.
+        context_for_combat_manager = {
+            "guild_id": guild_id,
+            "character_manager": self._character_manager,
+            "npc_manager": self._npc_manager,
+            "status_manager": self._status_manager,
+            "item_manager": self._item_manager,
+            "inventory_manager": self._inventory_manager,
+            "equipment_manager": self._equipment_manager,
+            "rule_engine": self._rule_engine,
+            "rules_config": rules_config, # This is CoreGameRulesConfig object
+            "game_log_manager": self._game_log_manager,
+            "combat_manager": self._combat_manager, # CombatManager itself might be needed in context by RuleEngine
+            "party_manager": self._party_manager,
+            # Add other managers if they become relevant for combat processing
+            # "relationship_manager": self._relationship_manager, (if available and needed)
+            # "quest_manager": self._quest_manager, (if available and needed)
+        }
+
+        # Call CombatManager's refactored method
+        # Note: CombatManager.handle_participant_action_complete doesn't directly return a user-facing message dict.
+        # It updates combat state. We might need a way to get feedback from it if direct messages are needed here.
+        # For now, we assume success if no exception, and the feedback will come via game state changes / combat logs.
+        try:
+            await self._combat_manager.handle_participant_action_complete(
+                combat_instance_id=combat_instance_id,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                action_data=combat_action_data,
+                **context_for_combat_manager # Pass context as kwargs
+            )
+            # The actual outcome (hit, miss, damage) will be appended to combat_instance.combat_log
+            # by the CombatManager and RuleEngine.
+            # We can return a generic success message here, or try to pull last log entry.
+            # For simplicity, let's return a generic message.
+            # More detailed feedback would come from observing the Combat object or dedicated feedback system.
+
+            # Mark character as having taken a significant action that might change state
+            self._character_manager.mark_character_dirty(guild_id, actor_id)
+
+            return {"success": True, "message": f"Вы атаковали {target_entity_data.get('name', target_id) if target_entity_data else target_id}. Результаты смотрите в логе боя.", "state_changed": True}
+
+        except Exception as e:
+            print(f"CAP.handle_attack_action: Error calling CombatManager: {e}")
+            traceback.print_exc()
+            # Ensure GameLogManager is available before trying to log
+            if self._game_log_manager:
+                 await self._game_log_manager.log_error(
+                    message=f"Error during attack action by {actor_id} on {target_id}: {e}",
+                    guild_id=guild_id, actor_id=actor_id, details=traceback.format_exc()
+                )
+            return {"success": False, "message": f"Произошла ошибка при выполнении атаки: {e}", "state_changed": False}
+
 
     async def handle_equip_item_action(self, character: Character, guild_id: str, action_data: Dict[str, Any], rules_config: "CoreGameRulesConfig") -> Dict[str, Any]:
         log_prefix = f"CAP.handle_equip_item_action(char='{character.id}', guild='{guild_id}'):"

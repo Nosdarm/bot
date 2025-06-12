@@ -10,168 +10,171 @@ class NpcCombatAI:
     def __init__(self, npc: NPC): # Type hint NPC directly
         self.npc = npc
 
-    def select_target(
+    def get_npc_combat_action(
         self,
+        combat_instance: Any, # Combat model
         potential_targets: List[Union[Character, NPC]],
-        combat_context: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Union[Character, NPC]]:
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
-        Selects a target from the list of potential targets.
-        Filters out self, dead targets.
-        Prioritizes based on lowest HP, with potential difficulty scaling.
+        Determines the NPC's combat action using RuleEngine principles.
         """
-        if combat_context is None:
-            combat_context = {}
+        # Extract necessary components from context
+        # rule_engine = context.get('rule_engine') # RuleEngine instance
+        rules_config = context.get('rules_config') # CoreGameRulesConfig object or dict
+        # character_manager = context.get('character_manager')
+        # npc_manager = context.get('npc_manager')
+        # party_manager = context.get('party_manager')
+        relationship_manager = context.get('relationship_manager')
+        # guild_id = context.get('guild_id')
+        actor_effective_stats = context.get('actor_effective_stats', {})
+        targets_effective_stats = context.get('targets_effective_stats', {})
 
-        difficulty_level = combat_context.get('difficulty_level', 1)
-
+        # --- 1. Target Selection ---
         valid_targets: List[Union[Character, NPC]] = []
-        for target in potential_targets:
-            # 1. Filter out self
-            if target is self.npc:
+        for target_entity_obj in potential_targets:
+            if target_entity_obj.id == self.npc.id: # Filter out self
                 continue
 
-            # 2. Filter out dead targets
-            # Assuming Character has 'hp' and 'is_alive' attribute/method
-            # Assuming NPC has 'health' and 'is_alive' attribute/method
-            # For now, we'll directly check health/hp.
-            # A more robust way would be target.is_alive() if available.
-            target_hp = float('-inf') # Default for sorting if hp attribute is missing
-            is_alive = False
-            if isinstance(target, Character):
-                target_hp = getattr(target, 'hp', 0)
-                is_alive = getattr(target, 'is_alive', target_hp > 0)
-                if callable(is_alive): # if is_alive is a method
-                    is_alive = is_alive()
-            elif isinstance(target, NPC):
-                target_hp = getattr(target, 'health', 0)
-                is_alive = getattr(target, 'is_alive', target_hp > 0)
-                if callable(is_alive): # if is_alive is a method
-                    is_alive = is_alive()
+            target_id = target_entity_obj.id
+            target_stats = targets_effective_stats.get(target_id, {})
 
-            if not is_alive:
+            # Check if target is alive using effective stats (assuming HP is there)
+            # Or use participant data from combat_instance if more reliable for current HP
+            target_participant_data = combat_instance.get_participant_data(target_id)
+            if not target_participant_data or target_participant_data.hp <= 0:
+                print(f"NPC AI: Target {target_id} is incapacitated or not in combat instance.")
                 continue
 
-            # 3. Filter out non-hostile targets (placeholder for future relationship checks)
-            # For now, all remaining targets are considered hostile.
-            # if combat_context and "relationships":
-            #    if not self.npc.is_hostile_towards(target, combat_context["relationships"]):
-            #        continue
+            # Hostility check
+            is_hostile = True # Default to hostile
+            if relationship_manager:
+                # Assuming a method like: relationship_manager.is_hostile(self.npc.id, target_id, guild_id)
+                # For now, simplified:
+                # if not relationship_manager.are_hostile(self.npc, target_entity_obj):
+                #     is_hostile = False
+                pass # Placeholder for actual relationship check
 
-            valid_targets.append(target)
+            if not is_hostile:
+                # print(f"NPC AI: Target {target_id} is not hostile. Skipping.")
+                continue
 
-        if not valid_targets:
-            return None
+            valid_targets.append(target_entity_obj)
 
-        # Prioritize targets:
-        # Simple heuristic: lowest current HP.
-        # NPCs might have 'health', Characters might have 'hp'.
-        # We'll try to access both, preferring 'hp' then 'health'.
-        # Default sort key:
-        sort_key = lambda t: getattr(t, 'hp', getattr(t, 'health', float('inf')))
+        # Apply targeting rules from rules_config
+        chosen_target: Optional[Union[Character, NPC]] = None
+        if valid_targets:
+            # Placeholder for npc_behavior_rules.targeting_rules
+            # Example: target_lowest_hp_percent
+            # This would involve iterating through valid_targets and using their effective_stats
+            # and current HP from combat_instance.participants
 
-        if difficulty_level >= 3:
-            # Higher difficulty logic
-            priority_targets: List[Union[Character, NPC]] = []
-            character_targets: List[Character] = []
-            npc_targets: List[NPC] = []
+            # Simple default: target first valid target (effectively random if not sorted)
+            # or sort by HP like old select_target
+            valid_targets.sort(key=lambda t: combat_instance.get_participant_data(t.id).hp if combat_instance.get_participant_data(t.id) else float('inf'))
+            chosen_target = valid_targets[0]
+            print(f"NPC AI: Chosen target {chosen_target.id} with HP {combat_instance.get_participant_data(chosen_target.id).hp if chosen_target else 'N/A'}")
 
-            for t in valid_targets:
-                if isinstance(t, Character):
-                    character_targets.append(t)
-                elif isinstance(t, NPC):
-                    npc_targets.append(t)
+        # --- 2. Action Selection ---
+        if not chosen_target:
+            # No valid target found, decide to wait or perform a self-action
+            # Placeholder for npc_behavior_rules.action_selection_rules (e.g., heal self)
+            print(f"NPC AI: No target found for {self.npc.id}. Action: wait.")
+            return {"type": "wait", "actor_id": self.npc.id, "reason": "no_valid_target"}
 
-            # Conceptual: Prioritize 'healer' or 'mage' roles among Characters if HP not full
-            # This requires Character model to have 'role' and 'max_hp' attributes.
-            # For now, this is highly conceptual.
-            for char_target in character_targets:
-                # target_role = getattr(char_target, 'role', None) # Character.role doesn't exist yet
-                # For demonstration, let's assume role might be in state_variables
-                target_role = getattr(char_target, 'state_variables', {}).get('role')
-                target_max_hp = getattr(char_target, 'max_hp', float('inf'))
-                current_hp = getattr(char_target, 'hp', 0)
+        # Retrieve NPC's available actions
+        # This is a CRITICAL assumption. NPC model needs 'available_actions'
+        # Format: [{"action_type": "attack", "weapon_id": "claws", ...}, {"action_type": "spell", "spell_id": "fireball", ...}]
+        npc_available_actions = getattr(self.npc, 'available_actions', [])
+        if not npc_available_actions:
+            # Default to a basic attack if no actions are defined
+            print(f"NPC AI: NPC {self.npc.id} has no available_actions defined. Defaulting to basic attack.")
+            npc_available_actions = [{"action_type": "attack", "name": "Basic Attack", "weapon_id": "default_npc_weapon"}]
 
-                if target_role in ['healer', 'mage'] and current_hp < target_max_hp : # and current_hp > 0
-                    # Comment: Full implementation needs clear role definition and access on Character model
-                    # Also, consider if NPC knows target is a healer/mage (e.g. via perception check)
-                    priority_targets.append(char_target)
+        # Filter actions based on usability (resources, cooldowns, range - using RuleEngine helpers if available)
+        # Placeholder for npc_behavior_rules.action_selection_rules
+        # Example: use_strongest_attack_if_available, heal_self_if_below_x_hp
 
-            if priority_targets:
-                # Sort priority targets by lowest HP
-                priority_targets.sort(key=lambda t: getattr(t, 'hp', getattr(t, 'health', float('inf'))))
-                return priority_targets[0]
+        # Consider NPC's own state (e.g., low HP from actor_effective_stats or combat_instance)
+        npc_current_hp = combat_instance.get_participant_data(self.npc.id).hp
+        npc_max_hp = combat_instance.get_participant_data(self.npc.id).max_hp # Assuming max_hp is on participant data
 
-            # If no specific priority role targets, prefer any Character then NPCs, then by HP
-            if character_targets:
-                character_targets.sort(key=lambda t: getattr(t, 'hp', float('inf')))
-                return character_targets[0]
-            elif npc_targets:
-                npc_targets.sort(key=lambda t: getattr(t, 'health', float('inf')))
-                return npc_targets[0]
-            # Fallback if lists were somehow empty despite valid_targets having content initially
-            # This shouldn't be reached if valid_targets was not empty.
+        # Simplistic action choice: first available action that's not self-healing if HP is high,
+        # or a healing action if available and HP is low.
+        # This needs to be driven by rules_config.npc_behavior_rules.action_selection_rules
 
-        # Default or low difficulty: sort all valid_targets by HP
-        valid_targets.sort(key=sort_key)
-        return valid_targets[0]
+        selected_action_dict = None
 
-    def select_action(
-        self,
-        target: Optional[Union[Character, NPC]], # Target chosen by select_target
-        combat_context: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Selects an action based on the target and combat context, with difficulty scaling.
-        """
-        if combat_context is None:
-            combat_context = {}
-        difficulty_level = combat_context.get('difficulty_level', 1)
+        # Placeholder for healing logic
+        # if npc_current_hp < (npc_max_hp * 0.3): # Example: heal if below 30% HP
+        #    for action in npc_available_actions:
+        #        if action.get("effect") == "heal_self": # Hypothetical action property
+        #            selected_action_dict = action
+        #            break
+        # if selected_action_dict:
+        #     return {
+        #         "type": selected_action_dict["action_type"],
+        #         "spell_id": selected_action_dict.get("spell_id"), # Or ability_id
+        #         "actor_id": self.npc.id,
+        #         "target_id": self.npc.id, # Target self for healing
+        #         "comment": "AI Heal Self"
+        #     }
 
-        if target is None:
-            # TODO: Consider self-heal or buff if difficulty is high and NPC needs it.
-            return {"type": "wait", "actor_id": self.npc.id, "reason": "no_target"}
-
-        # High difficulty: chance to use spells/abilities
-        if difficulty_level >= 3:
-            available_actions = []
-            if hasattr(self.npc, 'known_spells') and self.npc.known_spells:
-                for spell_id in self.npc.known_spells: # Assuming known_spells is List[str]
-                    # TODO: Check spell usability (mana, cooldowns, range, target requirements)
-                    # For now, just add them as potential actions
-                    available_actions.append({"type": "spell", "id": spell_id})
-
-            if hasattr(self.npc, 'known_abilities') and self.npc.known_abilities:
-                for ability_id in self.npc.known_abilities: # Assuming known_abilities is List[str]
-                    # TODO: Check ability usability (resources, cooldowns, range, target requirements)
-                    available_actions.append({"type": "ability", "id": ability_id})
-
-            if available_actions and random.random() < 0.5: # 50% chance to use a special action
-                chosen_special_action_info = random.choice(available_actions)
-                action_type = chosen_special_action_info["type"]
-                action_id_key = "spell_id" if action_type == "spell" else "ability_id"
-
-                # Comment: Full implementation needs detailed spell/ability objects, not just IDs,
-                # to check targeting, effects, and resource costs.
-                # Example: spell = self.npc.get_spell_details(chosen_special_action_info["id"])
-                # if spell.is_usable_on(target) and self.npc.has_mana(spell.cost): ...
-
-                return {
-                    "type": action_type,
-                    action_id_key: chosen_special_action_info["id"],
+        # Default to first attack-like action on the chosen target
+        for action in npc_available_actions:
+            if action.get("action_type") == "attack": # Simplistic: take the first attack action
+                selected_action_dict = {
+                    "type": "attack",
                     "actor_id": self.npc.id,
-                    "target_id": target.id, # Assuming all spells/abilities are targeted for now
-                    "comment": "Resource/cooldown checks not implemented yet"
+                    "target_id": chosen_target.id,
+                    "weapon_id": action.get("weapon_id", "default_npc_weapon"), # Ensure weapon_id is included
+                    "action_name": action.get("name", "Attack")
                 }
+                break
+            elif action.get("action_type") == "spell": # Or first spell
+                 selected_action_dict = {
+                    "type": "cast_spell", # Use "cast_spell" for consistency if that's what CombatManager expects
+                    "actor_id": self.npc.id,
+                    "target_id": chosen_target.id, # Assuming offensive spell
+                    "spell_id": action.get("spell_id"),
+                    "action_name": action.get("name", "Spell")
+                }
+                 break
 
-        # Default action: basic attack
-        # TODO: Future: Check if NPC has multiple weapons or attack types
-        return {
-            "type": "attack",
-            "actor_id": self.npc.id,
-            "target_id": target.id,
-            "weapon_id": "default_weapon",
-        }
+        if not selected_action_dict and npc_available_actions: # Fallback to first action if no attack/spell found
+            first_action = npc_available_actions[0]
+            action_type = first_action.get("action_type", "unknown_action")
+            base_return = {
+                "type": action_type,
+                "actor_id": self.npc.id,
+                "target_id": chosen_target.id, # Default to chosen target
+                "action_name": first_action.get("name", "Unknown Action")
+            }
+            if action_type == "attack": base_return["weapon_id"] = first_action.get("weapon_id")
+            elif action_type == "cast_spell": base_return["spell_id"] = first_action.get("spell_id")
+            elif action_type == "ability": base_return["ability_id"] = first_action.get("ability_id")
+            selected_action_dict = base_return
+
+        if not selected_action_dict:
+            # If absolutely no action could be formed (e.g. npc_available_actions was empty initially and not defaulted)
+            print(f"NPC AI: Could not determine an action for {self.npc.id}. Action: wait.")
+            return {"type": "wait", "actor_id": self.npc.id, "reason": "no_action_available"}
+
+        # --- 3. Stat/Behavior Scaling ---
+        # Placeholder for rules_config.npc_behavior_rules.scaling_rules
+        # This might adjust the chosen_action (e.g., use a stronger version) or NPC stats temporarily.
+        # Example: Check party_level from context if available.
+        # party_level = context.get('party_average_level')
+        # if party_level and party_level > getattr(self.npc, 'level', 10):
+        #     selected_action_dict["comment"] = "Scaled up due to high party level (not implemented)"
+
+        print(f"NPC AI: Action for {self.npc.id}: {selected_action_dict}")
+        return selected_action_dict
+
+    # select_target and select_action methods are now effectively replaced by get_npc_combat_action.
+    # They can be removed or kept as private helpers if parts of their logic are complex
+    # and deemed reusable by get_npc_combat_action in a more refined implementation.
+    # For this pass, we'll remove them to avoid confusion.
 
     def select_movement(
         self,

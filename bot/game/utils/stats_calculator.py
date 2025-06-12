@@ -14,8 +14,22 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 # from bot.services.db_service import DBService
 from bot.ai.rules_schema import CoreGameRulesConfig, StatModifierRule, GrantedAbilityOrSkill
 
+# Added imports for type hinting actual managers
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from bot.services.db_service import DBService
+    from bot.game.managers.character_manager import CharacterManager
+    from bot.game.managers.npc_manager import NpcManager
+    from bot.game.managers.item_manager import ItemManager
+    from bot.game.managers.status_manager import StatusManager
+    from bot.game.models.character import Character
+    from bot.game.models.npc import NPC as NpcModel
+    from bot.game.models.item import ItemTemplate
+    from bot.game.models.status_effect import StatusEffectTemplate
+
+
 # --- Helper: Mock DB Service and Data for __main__ testing ---
-class MockDBService:
+class MockDBService: # Keep for __main__ test
     """
     A mock database service to simulate fetching entity data.
     """
@@ -56,10 +70,15 @@ class MockDBService:
         return []
 
 async def calculate_effective_stats(
-    db_service: Any, # Should be DBService instance
+    db_service: "DBService",
+    guild_id: str, # Added guild_id
     entity_id: str,
-    entity_type: str, # "player" or "npc"
-    rules_config_data: CoreGameRulesConfig
+    entity_type: str, # "player" or "npc" - consider "Character" or "NPC" to match model names
+    rules_config_data: CoreGameRulesConfig,
+    character_manager: "CharacterManager",
+    npc_manager: "NpcManager",
+    item_manager: "ItemManager",
+    status_manager: "StatusManager"
 ) -> Dict[str, Any]:
     """Calculates effective stats for an entity.
 
@@ -95,42 +114,56 @@ async def calculate_effective_stats(
     effective_stats: Dict[str, Any] = {}
     granted_abilities_skills: List[GrantedAbilityOrSkill] = []
 
-    # 1. Fetch Base Data (Entity and its base stats/skills)
-    entity_data: Optional[Dict[str, Any]] = None
-    if entity_type == "player":
-        entity_data = await db_service.fetchone("SELECT * FROM players WHERE id = ?;", (entity_id,))
-    elif entity_type == "npc":
-        # Assuming NPC model has 'skills_data' instead of 'skills_data_json' like Player
-        entity_data = await db_service.fetchone("SELECT * FROM npcs WHERE id = ?;", (entity_id,))
+    # 1. Fetch Full Entity Object
+    entity: Optional[Union["Character", "NpcModel"]] = None
+    if entity_type.lower() == "character" or entity_type.lower() == "player": # Allow "player" for compatibility
+        entity = await character_manager.get_character(guild_id, entity_id)
+        entity_type = "Character" # Normalize
+    elif entity_type.lower() == "npc":
+        entity = await npc_manager.get_npc(guild_id, entity_id)
+        entity_type = "NPC" # Normalize
     else:
-        raise ValueError(f"Unknown entity_type: {entity_type}")
+        raise ValueError(f"Unknown entity_type: {entity_type}. Expected 'Character' or 'NPC'.")
 
-    if not entity_data:
-        # Or return an empty dict / raise specific error
-        print(f"Error: Entity {entity_id} of type {entity_type} not found.")
+    if not entity:
+        print(f"Error: Entity {entity_id} of type {entity_type} not found in guild {guild_id}.")
         return {}
 
     # Initialize with base stats defined in rules_config, applying defaults
     for stat_id, stat_def in rules_config_data.base_stats.items():
-        effective_stats[stat_id.lower()] = stat_def.default_value # Use lowercase for keys
+        effective_stats[stat_id.lower()] = stat_def.default_value
 
-    # Override with entity's stored base stats from JSON field
-    base_stats_json = entity_data.get("stats", "{}")
-    if base_stats_json:
-        base_stats_dict = json.loads(base_stats_json) if isinstance(base_stats_json, str) else base_stats_json
-        for stat_name, value in base_stats_dict.items():
-            effective_stats[stat_name.lower()] = value
+    # Override with entity's stored base stats
+    # Character model has 'stats' (dict), NPC model has 'stats' (dict)
+    base_stats_dict = getattr(entity, 'stats', {})
+    if isinstance(base_stats_dict, str): # Handle if stats are stored as JSON string
+        try: base_stats_dict = json.loads(base_stats_dict)
+        except json.JSONDecodeError: base_stats_dict = {}
+
+    for stat_name, value in base_stats_dict.items():
+        effective_stats[stat_name.lower()] = value
 
     # Initialize with base skills
-    skills_field_name = "skills_data_json" if entity_type == "player" else "skills_data"
-    base_skills_json = entity_data.get(skills_field_name, "{}")
-    if base_skills_json:
-        base_skills_dict = json.loads(base_skills_json) if isinstance(base_skills_json, str) else base_skills_json
-        for skill_name, value in base_skills_dict.items():
-            effective_stats[skill_name.lower()] = value # Add skills to effective_stats
+    # Character model has 'skills_data_json', NPC model has 'skills' (dict) or 'skills_data_json'
+    base_skills_source = {}
+    if entity_type == "Character":
+        skills_json = getattr(entity, 'skills_data_json', '{}')
+        if isinstance(skills_json, str):
+            try: base_skills_source = json.loads(skills_json)
+            except json.JSONDecodeError: base_skills_source = {}
+        elif isinstance(skills_json, dict): # If already a dict
+            base_skills_source = skills_json
+    elif entity_type == "NPC":
+        # NPC model might have 'skills' as a dict or 'skills_data_json'
+        skills_attr = getattr(entity, 'skills', getattr(entity, 'skills_data_json', {}))
+        if isinstance(skills_attr, str):
+            try: base_skills_source = json.loads(skills_attr)
+            except json.JSONDecodeError: base_skills_source = {}
+        elif isinstance(skills_attr, dict):
+            base_skills_source = skills_attr
 
-    # Store initial stats before item/status effects for multiplier calculations if needed
-    stats_before_multipliers = effective_stats.copy()
+    for skill_name, value in base_skills_source.items():
+        effective_stats[skill_name.lower()] = value
 
     # --- Helper to apply modifiers ---
     def apply_stat_modifiers_to_dict(current_stats: Dict[str, Any],
@@ -173,56 +206,78 @@ async def calculate_effective_stats(
                  current_stats[stat_key] += base_for_percentage * (mod_rule.value / 100.0)
 
 
-    # 2. Process Equipped Items
-    inventory_json = entity_data.get("inventory", "[]")
-    inventory_list = json.loads(inventory_json) if isinstance(inventory_json, str) else inventory_json
+    # Store initial stats (base + skills) before item/status effects for precise multiplier calculations
+    stats_after_base = effective_stats.copy()
 
-    # First pass for flat bonuses from items
-    for item_instance in inventory_list:
-        if item_instance.get("equipped"):
-            template_id = item_instance.get("template_id")
-            if template_id and template_id in rules_config_data.item_effects:
-                item_effect_def = rules_config_data.item_effects[template_id]
-                apply_stat_modifiers_to_dict(effective_stats, item_effect_def.stat_modifiers, is_multiplier_pass=False)
-                granted_abilities_skills.extend(item_effect_def.grants_abilities_or_skills)
+    # --- Item Effects ---
+    # Assumes entity model has 'inventory' (list of item instances/dicts) and 'equipment' (dict slot_id -> item_instance_id)
+    # Or, CharacterManager/NpcManager provides a way to get equipped items.
+    # For now, let's assume `entity.inventory` contains items with an `equipped` flag and `template_id`.
 
-    # Update stats_before_multipliers to include flat item bonuses
+    equipped_item_instances = []
+    if hasattr(entity, 'inventory'): # Character model might have this
+        raw_inventory = getattr(entity, 'inventory')
+        if isinstance(raw_inventory, str): # If inventory is JSON string
+            try: raw_inventory = json.loads(raw_inventory)
+            except json.JSONDecodeError: raw_inventory = []
+        if isinstance(raw_inventory, list):
+            equipped_item_instances = [item for item in raw_inventory if isinstance(item, dict) and item.get("equipped")]
+
+    # Collect all item modifiers first
+    all_item_stat_modifiers: List[StatModifierRule] = []
+    for item_instance_data in equipped_item_instances:
+        template_id = item_instance_data.get("template_id")
+        item_template: Optional["ItemTemplate"] = await item_manager.get_item_template(guild_id, template_id) if template_id else None
+        if item_template and hasattr(item_template, 'stat_modifiers') and isinstance(item_template.stat_modifiers, list):
+            all_item_stat_modifiers.extend(item_template.stat_modifiers)
+            # Collect granted abilities/skills from items
+            if hasattr(item_template, 'grants_abilities_or_skills') and isinstance(item_template.grants_abilities_or_skills, list):
+                granted_abilities_skills.extend(item_template.grants_abilities_or_skills)
+
+    # Apply flat item bonuses
+    apply_stat_modifiers_to_dict(effective_stats, all_item_stat_modifiers, is_multiplier_pass=False, base_for_percentage_calc=stats_after_base)
     stats_after_item_flats = effective_stats.copy()
-
-    # Second pass for multiplier bonuses from items
-    for item_instance in inventory_list:
-        if item_instance.get("equipped"):
-            template_id = item_instance.get("template_id")
-            if template_id and template_id in rules_config_data.item_effects:
-                item_effect_def = rules_config_data.item_effects[template_id]
-                # For multipliers, apply to the version of stats that already has flat bonuses.
-                # This requires careful state management if multipliers should not stack with each other but with the base.
-                # The current apply_stat_modifiers_to_dict will apply multiplier to effective_stats.
-                # To make multipliers apply to `stats_after_item_flats`, the function would need that as input.
-                # For simplicity here, item multipliers will apply to the current `effective_stats` which includes flat item bonuses.
-                apply_stat_modifiers_to_dict(effective_stats, item_effect_def.stat_modifiers, is_multiplier_pass=True)
-
-    # 3. Process Active Statuses
-    active_statuses_json = entity_data.get("status_effects", "[]")
-    active_statuses_list = json.loads(active_statuses_json) if isinstance(active_statuses_json, str) else active_statuses_json
-
-    # First pass for flat bonuses from statuses
-    for status_info in active_statuses_list: # status_info could be just an ID or a dict like {"id": "sef_blessed", ...}
-        status_id = status_info.get("id") if isinstance(status_info, dict) else status_info
-        if status_id and status_id in rules_config_data.status_effects:
-            status_effect_def = rules_config_data.status_effects[status_id]
-            apply_stat_modifiers_to_dict(effective_stats, status_effect_def.stat_modifiers, is_multiplier_pass=False)
-            granted_abilities_skills.extend(status_effect_def.grants_abilities_or_skills)
-
-    # Second pass for multiplier bonuses from statuses
-    for status_info in active_statuses_list:
-        status_id = status_info.get("id") if isinstance(status_info, dict) else status_info
-        if status_id and status_id in rules_config_data.status_effects:
-            status_effect_def = rules_config_data.status_effects[status_id]
-            apply_stat_modifiers_to_dict(effective_stats, status_effect_def.stat_modifiers, is_multiplier_pass=True)
+    # Apply multiplier item bonuses (using stats_after_item_flats as the base for multiplication if needed by rule)
+    apply_stat_modifiers_to_dict(effective_stats, all_item_stat_modifiers, is_multiplier_pass=True, base_for_multiplier_calc=stats_after_item_flats)
 
 
-    # 4. Final Calculations (e.g., min/max caps)
+    # --- Status Effects ---
+    active_status_effect_instances = await status_manager.get_active_statuses_for_entity(guild_id, entity_id, entity_type)
+
+    all_status_stat_modifiers: List[StatModifierRule] = []
+    for status_instance in active_status_effect_instances:
+        status_template: Optional["StatusEffectTemplate"] = await status_manager.get_status_template(guild_id, status_instance.template_id)
+        if status_template and hasattr(status_template, 'stat_modifiers') and isinstance(status_template.stat_modifiers, list):
+            all_status_stat_modifiers.extend(status_template.stat_modifiers)
+            # Collect granted abilities/skills from statuses
+            if hasattr(status_template, 'grants_abilities_or_skills') and isinstance(status_template.grants_abilities_or_skills, list):
+                granted_abilities_skills.extend(status_template.grants_abilities_or_skills)
+
+    # Apply flat status bonuses (base for percentage is after item flats and multipliers)
+    # This means status percentages apply to stats already modified by items.
+    stats_before_status_flats = effective_stats.copy() # Stats after all item effects
+    apply_stat_modifiers_to_dict(effective_stats, all_status_stat_modifiers, is_multiplier_pass=False, base_for_percentage_calc=stats_before_status_flats)
+    stats_after_status_flats = effective_stats.copy()
+    # Apply multiplier status bonuses
+    apply_stat_modifiers_to_dict(effective_stats, all_status_stat_modifiers, is_multiplier_pass=True, base_for_multiplier_calc=stats_after_status_flats)
+
+    # --- Derived Stats Calculation ---
+    # Example: Max HP from Constitution
+    # This should use rules from rules_config_data.derived_stat_rules or similar
+    if 'constitution' in effective_stats and rules_config_data.derived_stat_rules:
+        hp_per_con = rules_config_data.derived_stat_rules.get('hp_per_constitution_point', 10)
+        base_hp_offset = rules_config_data.derived_stat_rules.get('base_hp_offset', 0)
+        # Max HP might also be a base stat itself that gets modified, or purely derived.
+        # Assuming it can be derived if not directly set or modified by items/statuses above.
+        # If 'max_hp' was already calculated via items/statuses, this might override or add to it.
+        # For now, let's assume it's a derivation based on final CON unless already heavily modified.
+        # A common pattern: BaseHP + (CON_modifier * Level) + OtherBonuses
+        # Simple for now: CON * factor + offset
+        if 'max_hp' not in effective_stats or effective_stats.get('max_hp',0) == rules_config_data.base_stats.get("MAX_HP", StatModifierRule(stat_name="",bonus_type="",value=0)).default_value : # only if not modified by items/status
+             effective_stats['max_hp'] = round(effective_stats['constitution'] * hp_per_con + base_hp_offset)
+
+
+    # --- Apply Caps ---
     for stat_id, stat_def in rules_config_data.base_stats.items():
         stat_key = stat_id.lower()
         if stat_key in effective_stats:

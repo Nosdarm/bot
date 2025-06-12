@@ -295,32 +295,21 @@ class StatusManager:
             # This allows recalculation of stats or other on-apply logic if needed.
             # Example: self._character_manager.notify_status_applied(guild_id, target_id, status_effect_obj)
 
-            # --- BEGIN: Calculate effective stats after applying status ---
-            entity_for_stats = None
-            if target_type == "character" and self._character_manager: # "character" is used in ItemManager
-                entity_for_stats = await self._character_manager.get_character(guild_id_str, target_id)
-            elif target_type == "player" and self._character_manager: # "player" is also possible
-                entity_for_stats = await self._character_manager.get_character(guild_id_str, target_id)
-            elif target_type == "npc" and self._npc_manager:
-                entity_for_stats = await self._npc_manager.get_npc(guild_id_str, target_id)
-
-            if entity_for_stats and self._db_service and self.rules_config:
-                try:
-                    actual_target_type_for_calc = "player" if target_type in ["character", "player"] else "npc"
-                    new_stats = await calculate_effective_stats(self._db_service, target_id, actual_target_type_for_calc, self.rules_config)
-                    entity_for_stats.effective_stats_json = json.dumps(new_stats)
-                    # print(f"{log_prefix} Updated effective_stats_json for {actual_target_type_for_calc} {target_id}")
-                    if actual_target_type_for_calc == "player" and self._character_manager:
-                        self._character_manager.mark_character_dirty(guild_id_str, target_id)
-                    elif actual_target_type_for_calc == "npc" and self._npc_manager:
-                        if hasattr(self._npc_manager, 'mark_npc_dirty'):
-                            self._npc_manager.mark_npc_dirty(guild_id_str, target_id)
-                        else:
-                            print(f"{log_prefix} NpcManager missing mark_npc_dirty method for {target_id}.")
-                            # Consider await self._npc_manager.save_npc(guild_id_str, entity_for_stats) if applicable
-                except Exception as e_stats:
-                    print(f"{log_prefix} Error calculating/updating effective stats for {target_type} {target_id}: {e_stats}")
-            # --- END: Calculate effective stats ---
+            # --- Trigger effective stats recalculation after applying status ---
+            normalized_target_type = target_type.lower()
+            if normalized_target_type in ["character", "player"] and self._character_manager:
+                if hasattr(self._character_manager, 'trigger_stats_recalculation'):
+                    await self._character_manager.trigger_stats_recalculation(guild_id_str, target_id)
+                else:
+                    print(f"{log_prefix} CharacterManager missing trigger_stats_recalculation method.")
+            elif normalized_target_type == "npc" and self._npc_manager:
+                if hasattr(self._npc_manager, 'trigger_stats_recalculation'):
+                    await self._npc_manager.trigger_stats_recalculation(guild_id_str, target_id)
+                else:
+                    print(f"{log_prefix} NpcManager missing trigger_stats_recalculation method.")
+            else:
+                print(f"{log_prefix} Could not trigger stats recalculation for target_type '{target_type}'. Managers missing or type unknown.")
+            # --- END: Trigger effective stats recalculation ---
 
             return status_effect_obj
 
@@ -370,35 +359,23 @@ class StatusManager:
             # TODO: Notify target entity's manager about status removal for stat recalculation etc.
             # Example: if eff: self._character_manager.notify_status_removed(guild_id, eff.target_id, eff)
 
-            # --- BEGIN: Calculate effective stats after removing status ---
+            # --- Trigger effective stats recalculation after removing status ---
             if eff: # Check if status effect object was found and details are available
-                entity_for_stats = None
-                eff_target_type = eff.target_type
+                normalized_target_type = eff.target_type.lower()
                 eff_target_id = eff.target_id
-
-                if eff_target_type == "character" and self._character_manager: # "character" used in ItemManager
-                    entity_for_stats = await self._character_manager.get_character(guild_id_str, eff_target_id)
-                elif eff_target_type == "player" and self._character_manager: # "player" also possible
-                     entity_for_stats = await self._character_manager.get_character(guild_id_str, eff_target_id)
-                elif eff_target_type == "npc" and self._npc_manager:
-                    entity_for_stats = await self._npc_manager.get_npc(guild_id_str, eff_target_id)
-
-                if entity_for_stats and self._db_service and self.rules_config:
-                    try:
-                        actual_target_type_for_calc = "player" if eff_target_type in ["character", "player"] else "npc"
-                        new_stats = await calculate_effective_stats(self._db_service, eff_target_id, actual_target_type_for_calc, self.rules_config)
-                        entity_for_stats.effective_stats_json = json.dumps(new_stats)
-                        # print(f"{log_prefix} Updated effective_stats_json for {actual_target_type_for_calc} {eff_target_id}")
-                        if actual_target_type_for_calc == "player" and self._character_manager:
-                            self._character_manager.mark_character_dirty(guild_id_str, eff_target_id)
-                        elif actual_target_type_for_calc == "npc" and self._npc_manager:
-                            if hasattr(self._npc_manager, 'mark_npc_dirty'):
-                                self._npc_manager.mark_npc_dirty(guild_id_str, eff_target_id)
-                            else:
-                                print(f"{log_prefix} NpcManager missing mark_npc_dirty method for {eff_target_id}.")
-                    except Exception as e_stats:
-                        print(f"{log_prefix} Error calculating/updating effective stats for {eff_target_type} {eff_target_id}: {e_stats}")
-            # --- END: Calculate effective stats ---
+                if normalized_target_type in ["character", "player"] and self._character_manager:
+                    if hasattr(self._character_manager, 'trigger_stats_recalculation'):
+                        await self._character_manager.trigger_stats_recalculation(guild_id_str, eff_target_id)
+                    else:
+                        print(f"{log_prefix} CharacterManager missing trigger_stats_recalculation method.")
+                elif normalized_target_type == "npc" and self._npc_manager:
+                    if hasattr(self._npc_manager, 'trigger_stats_recalculation'):
+                        await self._npc_manager.trigger_stats_recalculation(guild_id_str, eff_target_id)
+                    else:
+                        print(f"{log_prefix} NpcManager missing trigger_stats_recalculation method.")
+                else:
+                    print(f"{log_prefix} Could not trigger stats recalculation for target_type '{eff.target_type}'. Managers missing or type unknown.")
+            # --- END: Trigger effective stats recalculation ---
             return True
 
         except Exception as e:
