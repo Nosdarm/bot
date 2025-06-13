@@ -100,14 +100,18 @@ class Character(Base):
 
 class Location(Base):
     __tablename__ = 'locations'
-    id = Column(String, primary_key=True)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     static_name = Column(String, nullable=True)
-    descriptions_i18n = Column(JSON, nullable=True)
+    name_i18n = Column(JSON, nullable=False)
+    descriptions_i18n = Column(JSON, nullable=False)
+    type_i18n = Column(JSON, nullable=False)
+    coordinates = Column(JSON, nullable=True)
     static_connections = Column(JSON, nullable=True)
     guild_id = Column(String, nullable=False)
     exits = Column(JSON, nullable=True)
     inventory = Column(JSON, nullable=True)
-    name_i18n = Column(JSON, nullable=True)
+    npc_ids = Column(JSON, nullable=True, default=lambda: [])
+    event_triggers = Column(JSON, nullable=True, default=lambda: [])
     template_id = Column(String, nullable=True)
     state_variables = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
