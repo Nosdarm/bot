@@ -164,13 +164,16 @@ class QuestManager:
     async def start_quest(self, guild_id: str, character_id: str, quest_template_id: str, **kwargs: Any) -> Optional[Union[Dict[str, Any], Dict[str, str]]]:
         guild_id_str = str(guild_id); character_id_str = str(character_id); quest_template_id_str = str(quest_template_id)
         if quest_template_id_str.startswith("AI:"):
-            quest_concept = quest_template_id_str.replace("AI:", "", 1); generation_context_data = kwargs.get("generation_context")
+            quest_concept = quest_template_id_str.replace("AI:", "", 1)
+            generation_context_data = kwargs.get("generation_context")
             if not isinstance(generation_context_data, GenerationContext): return {"status": "error", "message": "Missing generation context for AI quest."}
             ai_generated_quest_dict = await self.generate_quest_details_from_ai(guild_id_str, quest_concept, generation_context_data, triggering_entity_id=character_id_str)
             if ai_generated_quest_dict is None: return {"status": "error", "message": "AI quest generation failed."}
-            user_id = kwargs.get('user_id');
+            user_id = kwargs.get('user_id') # Removed trailing semicolon for consistency, though not strictly required by task
             if not user_id: return {"status": "error", "message": "User ID required for AI quest moderation."}
-            request_id = str(uuid.uuid4()); logger.info(f"AI-gen quest data for '{quest_concept}' (req_id: {request_id}) prepared for mod."); return {"status": "pending_moderation", "request_id": request_id, "quest_data_preview": ai_generated_quest_dict.get("name_i18n")}
+            request_id = str(uuid.uuid4()) # Define request_id on its own line
+            logger.info(f"AI-gen quest data for '{quest_concept}' (req_id: {request_id}) prepared for mod.")
+            return {"status": "pending_moderation", "request_id": request_id, "quest_data_preview": ai_generated_quest_dict.get("name_i18n")}
 
         template_data_from_campaign = self.get_quest_template(guild_id_str, quest_template_id_str)
         if not template_data_from_campaign: return {"status": "error", "message": "Quest template not found."}
@@ -227,8 +230,11 @@ class QuestManager:
                       suggested_level_val, stages_json_for_db, rewards_json, prerequisites_json,
                       consequences_json, quest_giver_npc_id, ai_prompt_context_json,
                       quest_giver_details_i18n_json, consequences_summary_i18n_json)
-            await self._db_service.adapter.execute(sql, params); return True
-        except Exception as e: logger.error(f"Error saving generated quest {quest.id}: {e}\n{traceback.format_exc()}"); return False
+            await self._db_service.adapter.execute(sql, params)
+            return True
+        except Exception as e:
+            logger.error(f"Error saving generated quest {quest.id}: {e}\n{traceback.format_exc()}")
+            return False
 
     async def start_quest_from_moderated_data(self, guild_id: str, character_id: str, quest_data_from_ai: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         guild_id_str = str(guild_id); character_id_str = str(character_id)
