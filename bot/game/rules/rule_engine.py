@@ -290,8 +290,8 @@ class RuleEngine:
             return {'type': 'idle', 'total_duration': None}
 
         living_participants_in_combat = [
-            p_obj for p_obj in combat.participants
-            if isinstance(p_obj, CombatParticipant) and p_obj.hp > 0 and p_obj.entity_id != npc.id
+            p for p in combat.participants
+            if isinstance(p, CombatParticipant) and p.hp > 0 and p.entity_id != npc.id
         ]
 
         if not living_participants_in_combat:
@@ -299,30 +299,75 @@ class RuleEngine:
 
         best_target = None
         highest_threat_score = -float('inf')
-        npc_combat_rules = self._rules_data.get("relationship_influence_rules", {}).get("npc_combat", {})
-        priority_factor_negative_rel = npc_combat_rules.get("target_priority", {}).get("prioritize_strong_negative_relationship_factor", 1.0)
-        depriority_factor_positive_rel = npc_combat_rules.get("target_priority", {}).get("deprioritize_strong_positive_relationship_factor", 1.0)
-        base_threat = 10
+        base_threat = 10.0 # Default threat
+
+        # Safe builtins for eval
+        safe_builtins = {"True": True, "False": False, "None": None, "abs": abs, "min": min, "max": max, "float": float, "int": int}
+        eval_globals = {"__builtins__": safe_builtins}
+
+        influence_rules = self._rules_data.get("relationship_influence_rules", [])
+        targeting_rules = [rule for rule in influence_rules if rule.get("influence_type") == "npc_targeting"]
 
         for p_target_obj in living_participants_in_combat:
-            current_threat = float(base_threat)
+            current_target_threat_adjustment = 0.0
             relationship_strength = 0.0
-            if self._relationship_manager: # Check if RelationshipManager is available
+            if self._relationship_manager:
                 relationship_strength = await self._relationship_manager.get_relationship_strength(
                     guild_id, npc.id, "NPC", p_target_obj.entity_id, p_target_obj.entity_type
                 )
-            if relationship_strength < 0:
-                current_threat *= (1 + (abs(relationship_strength) / 100.0) * (priority_factor_negative_rel -1))
-            elif relationship_strength > 0:
-                current_threat *= (1 - (relationship_strength / 100.0) * (1 - depriority_factor_positive_rel))
 
-            if current_threat > highest_threat_score:
-                highest_threat_score = current_threat
+            for rule in targeting_rules:
+                rule_condition_str = rule.get("condition")
+                # Eval context for rule condition
+                condition_eval_locals = {
+                    "npc": npc.to_dict() if npc else {}, # Provide NPC data
+                    "target_entity": p_target_obj.to_dict(), # Provide target data
+                    "current_strength": relationship_strength,
+                    "combat_context": combat.to_dict() # Provide combat context if needed
+                }
+                try:
+                    condition_met = eval(rule_condition_str, eval_globals, condition_eval_locals) if rule_condition_str else True
+                except Exception as e:
+                    print(f"RuleEngine: Error evaluating condition for targeting rule '{rule.get('name')}': {e}")
+                    condition_met = False
+
+                if condition_met:
+                    threshold_type = rule.get("threshold_type")
+                    threshold_value = rule.get("threshold_value")
+                    threshold_met = True
+                    if threshold_type and threshold_value is not None:
+                        if threshold_type == "min_strength" and relationship_strength < threshold_value:
+                            threshold_met = False
+                        elif threshold_type == "max_strength" and relationship_strength > threshold_value:
+                            threshold_met = False
+                        # Add other threshold types if necessary
+
+                    if threshold_met:
+                        bonus_malus_formula = rule.get("bonus_malus_formula")
+                        if bonus_malus_formula:
+                            # Eval context for bonus/malus formula
+                            formula_eval_locals = {
+                                "current_strength": relationship_strength,
+                                "base_threat": base_threat, # Can be used in formula
+                                # Add other relevant data like npc.stats.X, target.level etc.
+                                "npc_stats": getattr(npc, 'stats', {}),
+                                "target_stats": getattr(p_target_obj, 'stats', {}) # Assuming target might have stats
+                            }
+                            try:
+                                adjustment = float(eval(bonus_malus_formula, eval_globals, formula_eval_locals))
+                                current_target_threat_adjustment += adjustment
+                            except Exception as e:
+                                print(f"RuleEngine: Error evaluating bonus_malus_formula for targeting rule '{rule.get('name')}': {e}")
+
+            final_threat_for_target = base_threat + current_target_threat_adjustment
+            if final_threat_for_target > highest_threat_score:
+                highest_threat_score = final_threat_for_target
                 best_target = p_target_obj
 
         if best_target:
             return {'type': 'combat_attack', 'target_id': best_target.entity_id, 'target_type': best_target.entity_type, 'attack_type': 'basic_attack'}
-        return {'type': 'idle', 'total_duration': None}
+
+        return {'type': 'idle', 'total_duration': None} # Fallback if no suitable target or rule applies
 
     async def can_rest(self, npc: "NPC", **context: Dict[str, Any]) -> bool:
         cman: Optional["CombatManager"] = context.get('combat_manager')
@@ -370,35 +415,65 @@ class RuleEngine:
             print(f"RuleEngine: guild_id missing for NPC {npc.id}. Cannot choose action.")
             return {'type': 'idle', 'total_duration': None}
 
-        behavior_rules = self._rules_data.get("relationship_influence_rules", {}).get("npc_behavior", {})
-        dialogue_init_threshold = behavior_rules.get("dialogue_initiation_threshold", -25.0)
-        become_hostile_threshold = behavior_rules.get("become_hostile_threshold", -50.0)
+        # Safe builtins for eval
+        safe_builtins = {"True": True, "False": False, "None": None, "abs": abs, "min": min, "max": max, "float": float, "int": int}
+        eval_globals = {"__builtins__": safe_builtins}
+
+        influence_rules = self._rules_data.get("relationship_influence_rules", [])
 
         curr_loc = getattr(npc, 'location_id', None)
-        if cm and lm and curr_loc and self._relationship_manager: # Ensure RelationshipManager is available
+        if cm and lm and curr_loc and self._relationship_manager:
             chars_in_loc = cm.get_characters_in_location(str(curr_loc), context=context)
 
-            potential_targets_by_relationship: List[Tuple[Character, float]] = []
+            # Sort characters by some priority if multiple are present (e.g. proximity, history - not implemented here)
+            # For now, iterate and act on the first character that triggers a rule.
+
             for ch_candidate in chars_in_loc:
-                if isinstance(ch_candidate, Character) and ch_candidate.id != npc.id :
-                    strength = await self._relationship_manager.get_relationship_strength(
-                        guild_id, npc.id, "NPC", ch_candidate.id, "Character"
-                    )
-                    potential_targets_by_relationship.append((ch_candidate, strength))
+                if not (isinstance(ch_candidate, Character) and ch_candidate.id != npc.id):
+                    continue
 
-            for ch, strength in potential_targets_by_relationship:
-                if strength < become_hostile_threshold:
-                    print(f"RuleEngine: NPC {npc.id} relationship with Character {ch.id} is {strength:.2f} (below hostile threshold {become_hostile_threshold}). Initiating combat.")
-                    return {'type': 'initiate_combat', 'target_id': ch.id, 'target_type': 'Character'}
+                relationship_strength = await self._relationship_manager.get_relationship_strength(
+                    guild_id, npc.id, "NPC", ch_candidate.id, "Character"
+                )
 
-            if dm:
-                sorted_dialogue_targets = sorted(potential_targets_by_relationship, key=lambda x: x[1], reverse=True)
-                for ch, strength in sorted_dialogue_targets:
-                    if strength >= dialogue_init_threshold:
-                        if hasattr(dm, 'can_start_dialogue') and dm.can_start_dialogue(npc, ch, context=context):
-                            return {'type': 'ai_dialogue', 'target_id': ch.id, 'target_type': 'Character'}
+                # Check for hostility rules first
+                hostility_rules = [r for r in influence_rules if r.get("influence_type") == "npc_behavior_hostility"]
+                for rule in hostility_rules:
+                    condition_eval_locals = {"npc": npc.to_dict(), "target_entity": ch_candidate.to_dict(), "current_strength": relationship_strength}
+                    try:
+                        condition_met = eval(rule.get("condition", "True"), eval_globals, condition_eval_locals)
+                    except Exception as e:
+                        print(f"RuleEngine: Error evaluating condition for hostility rule '{rule.get('name')}': {e}"); condition_met = False
 
-        if curr_loc and lm: # Wandering
+                    if condition_met:
+                        threshold_type = rule.get("threshold_type") # e.g. "max_strength" (becomes hostile if strength IS BELOW this)
+                        threshold_value = rule.get("threshold_value")
+                        if threshold_type == "max_strength" and relationship_strength < threshold_value:
+                            print(f"RuleEngine: NPC {npc.id} relationship with Character {ch_candidate.id} is {relationship_strength:.2f} (below hostile threshold {threshold_value} from rule '{rule.get('name')}'). Initiating combat.")
+                            return {'type': 'initiate_combat', 'target_id': ch_candidate.id, 'target_type': 'Character'}
+                        # Add other threshold types like "min_strength" if a rule makes NPC hostile above a certain positive value (less common)
+
+
+                # Check for dialogue initiation rules if not hostile
+                if dm: # Ensure DialogueManager is available
+                    dialogue_rules = [r for r in influence_rules if r.get("influence_type") == "npc_behavior_dialogue_initiation"]
+                    for rule in dialogue_rules:
+                        condition_eval_locals = {"npc": npc.to_dict(), "target_entity": ch_candidate.to_dict(), "current_strength": relationship_strength}
+                        try:
+                            condition_met = eval(rule.get("condition", "True"), eval_globals, condition_eval_locals)
+                        except Exception as e:
+                            print(f"RuleEngine: Error evaluating condition for dialogue rule '{rule.get('name')}': {e}"); condition_met = False
+
+                        if condition_met:
+                            threshold_type = rule.get("threshold_type") # e.g. "min_strength"
+                            threshold_value = rule.get("threshold_value")
+                            if threshold_type == "min_strength" and relationship_strength >= threshold_value:
+                                if hasattr(dm, 'can_start_dialogue') and dm.can_start_dialogue(npc, ch_candidate, context=context):
+                                    print(f"RuleEngine: NPC {npc.id} relationship with Character {ch_candidate.id} is {relationship_strength:.2f} (above dialogue threshold {threshold_value} from rule '{rule.get('name')}'). Initiating dialogue.")
+                                    return {'type': 'ai_dialogue', 'target_id': ch_candidate.id, 'target_type': 'Character'}
+                                # Add other threshold types as needed
+
+        if curr_loc and lm: # Wandering behavior if no interaction occurs
             exits = lm.get_connected_locations(str(curr_loc))
             if exits:
                 dest_location_id = None
@@ -503,30 +578,75 @@ class RuleEngine:
             feedback_key_skill_check = None
             feedback_params_skill_check = {}
 
-            rules_ref = skill_check_def.get('relationship_bonus_rules_ref')
-            if rules_ref and self._relationship_manager and self._rules_data and npc_obj: # Check npc_obj
+            # Safe builtins for eval
+            safe_builtins = {"True": True, "False": False, "None": None, "abs": abs, "min": min, "max": max, "float": float, "int": int}
+            eval_globals = {"__builtins__": safe_builtins}
+
+            rules_ref_name = skill_check_def.get('relationship_bonus_rules_ref') # This is the name of the RelationshipInfluenceRule
+            if rules_ref_name and self._relationship_manager and self._rules_data and npc_obj:
                 rel_strength = await self._relationship_manager.get_relationship_strength(guild_id, character_id, "Character", npc_obj.id, "NPC")
-                bonus_rules = self._rules_data.get("relationship_influence_rules", {}).get(rules_ref, [])
-                for rule in sorted(bonus_rules, key=lambda x: x.get("threshold", 0.0), reverse=True):
-                    if rel_strength >= rule.get("threshold", float('inf')):
-                        relationship_bonus = float(rule.get("bonus", 0.0))
-                        if relationship_bonus > 0: feedback_key_skill_check = "feedback.relationship.dialogue_check_bonus"
-                        elif relationship_bonus < 0: feedback_key_skill_check = "feedback.relationship.dialogue_check_penalty"
-                        if feedback_key_skill_check:
-                             feedback_params_skill_check = {"npc_name": getattr(npc_obj, 'name', npc_obj.id), "bonus_amount_str": f"{'+' if relationship_bonus > 0 else ''}{relationship_bonus}"}
+
+                all_influence_rules = self._rules_data.get("relationship_influence_rules", [])
+                found_rule = None
+                for r_rule in all_influence_rules:
+                    if r_rule.get("name") == rules_ref_name and r_rule.get("influence_type") == "dialogue_skill_check": # Ensure correct type
+                        found_rule = r_rule
                         break
+
+                if found_rule:
+                    # Evaluate condition of the found rule
+                    rule_condition_str = found_rule.get("condition")
+                    condition_eval_locals = {
+                        "character": character_obj.to_dict(),
+                        "npc": npc_obj.to_dict(),
+                        "current_strength": rel_strength,
+                        "dialogue_data": dialogue_data # Make current dialogue state available
+                    }
+                    try:
+                        condition_met = eval(rule_condition_str, eval_globals, condition_eval_locals) if rule_condition_str else True
+                    except Exception as e:
+                        print(f"RuleEngine: Error evaluating condition for dialogue skill check rule '{found_rule.get('name')}': {e}"); condition_met = False
+
+                    if condition_met:
+                        threshold_type = found_rule.get("threshold_type")
+                        threshold_value = found_rule.get("threshold_value")
+                        threshold_met = True
+                        if threshold_type and threshold_value is not None:
+                            if threshold_type == "min_strength" and rel_strength < threshold_value: threshold_met = False
+                            elif threshold_type == "max_strength" and rel_strength > threshold_value: threshold_met = False
+                            # Add other threshold checks as needed
+
+                        if threshold_met:
+                            bonus_malus_formula = found_rule.get("bonus_malus_formula")
+                            if bonus_malus_formula:
+                                formula_eval_locals = {"current_strength": rel_strength, "character_stats": character_obj.stats, "npc_stats": npc_obj.stats}
+                                try:
+                                    relationship_bonus = float(eval(bonus_malus_formula, eval_globals, formula_eval_locals))
+                                except Exception as e:
+                                    print(f"RuleEngine: Error evaluating bonus_malus_formula for rule '{found_rule.get('name')}': {e}")
+
+                            feedback_key_skill_check = found_rule.get("effect_description_i18n_key")
+                            # Prepare params for i18n
+                            raw_params_map = found_rule.get("effect_params_mapping", {})
+                            for param_key, context_path_str in raw_params_map.items():
+                                # Resolve context_path_str against available data (char, npc, calculated bonus etc.)
+                                # Example: "npc.name" -> npc_obj.name, "calculated_bonus" -> relationship_bonus
+                                if context_path_str == "npc.name": feedback_params_skill_check[param_key] = getattr(npc_obj, 'name', npc_obj.id)
+                                elif context_path_str == "character.name": feedback_params_skill_check[param_key] = getattr(character_obj, 'name', character_obj.id)
+                                elif context_path_str == "calculated_bonus": feedback_params_skill_check[param_key] = f"{'+' if relationship_bonus >= 0 else ''}{relationship_bonus:.0f}" # Format as needed
+                                # Add more complex path resolution if needed, e.g. eval(context_path_str, globals, locals)
             
-            final_dc = int(base_dc - relationship_bonus)
+            final_dc = int(base_dc - relationship_bonus) # Bonus reduces DC, penalty increases it
 
             check_success, total_roll, d20_roll, crit_status = await self.resolve_skill_check(
-                character_obj, skill_type, final_dc, context=context # Pass context for resolve_skill_check's logging
+                character_obj, skill_type, final_dc, context=context
             )
             result['skill_check_result'] = {
                 "type": skill_type, "dc": final_dc, "roll": d20_roll,
                 "total": total_roll, "success": check_success, "crit_status": crit_status,
                 "relationship_bonus_applied": relationship_bonus,
-                "feedback_key": feedback_key_skill_check, # Added
-                "feedback_params": feedback_params_skill_check # Added
+                "feedback_key": feedback_key_skill_check,
+                "feedback_params": feedback_params_skill_check
             }
             next_node_id = skill_check_def['success_node_id'] if check_success else skill_check_def['failure_node_id']
         
@@ -567,64 +687,107 @@ class RuleEngine:
         available_options = []
         all_responses = stage_definition.get('player_responses', [])
 
+        # Safe builtins for eval
+        safe_builtins = {"True": True, "False": False, "None": None, "abs": abs, "min": min, "max": max, "float": float, "int": int, "str": str}
+        eval_globals = {"__builtins__": safe_builtins}
+
         npc_id = None
-        npc_type = "NPC" # Assume other participant is NPC for dialogue context
+        npc_type = "NPC"
+        npc_obj_dict = {} # For eval context
+        character_obj = await self._character_manager.get_character(guild_id, character_id) if self._character_manager else None
+        char_obj_dict = character_obj.to_dict() if character_obj else {}
+
         participants = dialogue_data.get('participants', [])
         for p_data_entry in participants:
             p_entity_id = p_data_entry.get('entity_id') if isinstance(p_data_entry, dict) else str(p_data_entry)
             if p_entity_id != character_id:
                 npc_id = p_entity_id
-                if isinstance(p_data_entry, dict):
-                    npc_type = p_data_entry.get('entity_type', "NPC")
+                if isinstance(p_data_entry, dict): npc_type = p_data_entry.get('entity_type', "NPC")
+                if self._npc_manager and npc_id:
+                    npc_instance = await self._npc_manager.get_npc(guild_id, npc_id)
+                    if npc_instance: npc_obj_dict = npc_instance.to_dict()
                 break
         
-        npc_name = npc_id # Fallback
-        if npc_id and self._npc_manager:
-            npc_obj = await self._npc_manager.get_npc(guild_id, npc_id)
-            if npc_obj:
-                npc_name = getattr(npc_obj, 'name', npc_id)
+        current_strength_with_npc = 0.0
+        if npc_id:
+            current_strength_with_npc = await self._relationship_manager.get_relationship_strength(
+                guild_id, character_id, "Character", npc_id, npc_type
+            )
 
+        influence_rules = self._rules_data.get("relationship_influence_rules", [])
+        dialogue_availability_rules = [
+            rule for rule in influence_rules if rule.get("influence_type") == "dialogue_option_availability"
+        ]
 
-        for option in all_responses:
-            option_copy = option.copy() # Work with a copy
+        for option_def in all_responses:
+            option_copy = option_def.copy()
             option_copy['is_available'] = True # Default to available
+            option_copy['failure_feedback_key'] = None
+            option_copy['failure_feedback_params'] = {}
 
-            req_rel = option_copy.get('requires_relationship')
-            if req_rel and isinstance(req_rel, dict):
-                target_entity_ref = req_rel.get('target_entity_ref')
-                target_entity_type = req_rel.get('target_entity_type') # Should be "NPC" or "Faction"
-                
-                actual_target_id = None
-                if target_entity_ref == "npc_id" and npc_id: # Special ref for "the NPC I'm talking to"
-                    actual_target_id = npc_id
-                elif target_entity_ref:
-                    # For other refs, e.g. a faction ID stored in dialogue_data or template
-                    # This part would need more robust resolution if refs can be complex
-                    actual_target_id = dialogue_data.get('state_variables', {}).get(target_entity_ref)
-                    if not actual_target_id: # Check dialogue_data itself
-                        actual_target_id = dialogue_data.get(target_entity_ref)
+            # An option might need to reference which rule(s) specifically control its availability,
+            # if not all "dialogue_option_availability" rules apply to all options.
+            # For now, assume rules are general or use their own 'condition' field to target options.
+            # Example: rule.condition could be "option_data.get('id') == 'specific_option_id'"
+            # This requires passing option_copy into rule condition evaluation context.
 
-                if actual_target_id and target_entity_type:
-                    current_strength = await self._relationship_manager.get_relationship_strength(
-                        guild_id, character_id, "Character", str(actual_target_id), target_entity_type
-                    )
+            for rule in dialogue_availability_rules:
+                rule_condition_str = rule.get("condition")
+                condition_eval_locals = {
+                    "character": char_obj_dict,
+                    "npc": npc_obj_dict,
+                    "current_strength": current_strength_with_npc, # Strength with the main NPC in dialogue
+                    "dialogue_data": dialogue_data,
+                    "option_data": option_copy # Make the current option being evaluated available
+                }
+                try:
+                    rule_applies = eval(rule_condition_str, eval_globals, condition_eval_locals) if rule_condition_str else True
+                except Exception as e:
+                    print(f"RuleEngine: Error evaluating condition for dialogue availability rule '{rule.get('name')}': {e}"); rule_applies = False
 
-                    min_strength = req_rel.get("min_strength")
-                    max_strength = req_rel.get("max_strength")
-                    prereq_met = True
-                    if min_strength is not None and current_strength < float(min_strength):
-                        prereq_met = False
-                    if max_strength is not None and current_strength > float(max_strength):
-                        prereq_met = False
+                if rule_applies:
+                    threshold_type = rule.get("threshold_type")
+                    threshold_value = rule.get("threshold_value")
+                    threshold_met = True # Assume met if no threshold defined in rule
 
-                    if not prereq_met:
-                        option_copy['is_available'] = False
-                        # Store failure text or key for NotificationService
-                        option_copy['failure_feedback_key'] = req_rel.get('failure_text_i18n_key', "feedback.relationship.dialogue_option_unavailable_poor")
-                        option_copy['failure_feedback_params'] = {"npc_name": npc_name or "this person"}
-                        # The actual failure_text_i18n from template could also be passed along if DialogueManager is to format it
-                        option_copy['failure_text_i18n_direct'] = req_rel.get('failure_text_i18n')
+                    threshold_condition_present = threshold_type and threshold_value is not None
 
+                    threshold_met = True # Default if no threshold defined in rule for it to apply
+                    if threshold_condition_present:
+                        # Evaluate actual threshold
+                        if threshold_type == "min_strength" and current_strength_with_npc < threshold_value: threshold_met = False
+                        elif threshold_type == "max_strength" and current_strength_with_npc > threshold_value: threshold_met = False
+                        # Add other types like "equal_to", "not_equal_to" if needed
+
+                    # Logic based on availability_flag and whether threshold was met
+                    if rule.get("availability_flag") is True:
+                        # This rule is meant to make an option AVAILABLE if conditions/thresholds are met.
+                        # If it has a threshold that is NOT met, then the option becomes UNAVAILABLE.
+                        if threshold_condition_present and not threshold_met:
+                            option_copy['is_available'] = False
+                            option_copy['failure_feedback_key'] = rule.get("failure_feedback_key")
+                            raw_params_map = rule.get("failure_feedback_params_mapping", {})
+                            for param_key, context_path_str in raw_params_map.items():
+                                if context_path_str == "npc.name": option_copy['failure_feedback_params'][param_key] = npc_obj_dict.get('name', npc_id)
+                                elif context_path_str == "character.name": option_copy['failure_feedback_params'][param_key] = char_obj_dict.get('name', character_id)
+                                elif context_path_str == "threshold_value": option_copy['failure_feedback_params'][param_key] = str(threshold_value)
+                                elif context_path_str == "current_strength": option_copy['failure_feedback_params'][param_key] = f"{current_strength_with_npc:.1f}"
+                            break # This rule (an enabling one with unmet threshold) blocks it.
+                        # If threshold_condition_present AND threshold_met, or if no threshold_condition_present,
+                        # this enabling rule doesn't make it unavailable. It remains available (its default state).
+
+                    elif rule.get("availability_flag") is False:
+                        # This rule is meant to make an option UNAVAILABLE if conditions/thresholds are met.
+                        if threshold_met: # If condition/threshold for *disabling* is met
+                            option_copy['is_available'] = False
+                            option_copy['failure_feedback_key'] = rule.get("failure_feedback_key")
+                            raw_params_map = rule.get("failure_feedback_params_mapping", {})
+                            for param_key, context_path_str in raw_params_map.items():
+                                if context_path_str == "npc.name": option_copy['failure_feedback_params'][param_key] = npc_obj_dict.get('name', npc_id)
+                                elif context_path_str == "character.name": option_copy['failure_feedback_params'][param_key] = char_obj_dict.get('name', character_id)
+                                elif context_path_str == "threshold_value": option_copy['failure_feedback_params'][param_key] = str(threshold_value)
+                                elif context_path_str == "current_strength": option_copy['failure_feedback_params'][param_key] = f"{current_strength_with_npc:.1f}"
+                            break # This rule (a disabling one with met threshold) blocks it.
 
             available_options.append(option_copy)
         
