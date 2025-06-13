@@ -141,7 +141,7 @@ class GameManager:
 
         data = None
         try:
-            data = await self.db_service.get_entity(table_name='rules_config', entity_id=DEFAULT_RULES_CONFIG_ID, id_field='id')
+            data = await self.db_service.get_entity(table_name='rules_config', entity_id=DEFAULT_RULES_CONFIG_ID, id_field='guild_id')
         except Exception as e:
             logger.error("GameManager: Error fetching rules_config from DB: %s", e, exc_info=True) # Changed
 
@@ -168,18 +168,22 @@ class GameManager:
             self._rules_config_cache = default_rules
             logger.info("GameManager: Default rules created and cached.") # Changed
 
-            rules_entity_data = {'id': DEFAULT_RULES_CONFIG_ID, 'config_data': json.dumps(self._rules_config_cache)}
+            rules_entity_data = {'guild_id': DEFAULT_RULES_CONFIG_ID, 'config_data': json.dumps(self._rules_config_cache)}
             try:
-                existing_config = await self.db_service.get_entity('rules_config', DEFAULT_RULES_CONFIG_ID, id_field='id')
+                existing_config = await self.db_service.get_entity('rules_config', DEFAULT_RULES_CONFIG_ID, id_field='guild_id')
                 if existing_config is not None:
-                    logger.info("GameManager: Attempting to update existing default rules in DB (ID: %s).", DEFAULT_RULES_CONFIG_ID) # Changed
-                    success = await self.db_service.update_entity('rules_config', DEFAULT_RULES_CONFIG_ID, {'config_data': json.dumps(self._rules_config_cache)}, id_field='id')
+                    logger.info("GameManager: Attempting to update existing default rules in DB (GuildID: %s).", DEFAULT_RULES_CONFIG_ID) # Changed
+                    success = await self.db_service.update_entity('rules_config', DEFAULT_RULES_CONFIG_ID, {'config_data': json.dumps(self._rules_config_cache)}, guild_id=DEFAULT_RULES_CONFIG_ID, id_field='guild_id')
                     if success: logger.info("GameManager: Successfully updated default rules in DB.") # Changed
                     else: logger.error("GameManager: Failed to update default rules in DB.") # Changed
                 else:
-                    logger.info("GameManager: Attempting to create new default rules in DB (ID: %s).", DEFAULT_RULES_CONFIG_ID) # Changed
-                    new_id = await self.db_service.create_entity('rules_config', rules_entity_data, id_field='id')
-                    if new_id is not None: logger.info("GameManager: Successfully created default rules in DB with ID %s.", new_id) # Changed
+                    logger.info("GameManager: Attempting to create new default rules in DB (GuildID: %s).", DEFAULT_RULES_CONFIG_ID) # Changed
+                    # For create_entity, the entity_id (DEFAULT_RULES_CONFIG_ID) is part of rules_entity_data if it's the PK.
+                    # If guild_id is the PK, rules_entity_data should contain it.
+                    # The id_field in create_entity refers to the field name that is the ID, not necessarily 'id'.
+                    # Assuming 'guild_id' is now the primary key or unique identifier for rules_config.
+                    new_id = await self.db_service.create_entity('rules_config', rules_entity_data, id_field='guild_id')
+                    if new_id is not None: logger.info("GameManager: Successfully created default rules in DB with GuildID %s.", new_id) # Changed
                     else: logger.error("GameManager: Failed to create default rules in DB.") # Changed
             except Exception as e:
                 logger.error("GameManager: Error during upsert of default rules to DB: %s", e, exc_info=True) # Changed
