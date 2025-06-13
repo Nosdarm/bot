@@ -16,6 +16,7 @@ from bot.api.routers import game_log as game_log_router
 from bot.api.routers import action as action_router
 from bot.api.routers import location as location_router
 from bot.api.routers import map as map_router
+from bot.api.routers import combat as combat_router
 # from bot.api.dependencies import create_db_and_tables # If you want to create tables on startup
 
 # Configure basic logging
@@ -123,6 +124,11 @@ app.include_router(
     map_router.router,
     prefix="/api/v1/guilds/{guild_id}/map",
     tags=["Map Management"]
+)
+app.include_router(
+    combat_router.router,
+    prefix="/api/v1/guilds/{guild_id}/combats",
+    tags=["Combat"]
 )
 
 @app.on_event("startup")

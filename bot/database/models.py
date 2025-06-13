@@ -307,14 +307,17 @@ class Inventory(Base):
 
 class Combat(Base):
     __tablename__ = 'combats'
-    id = Column(String, primary_key=True)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id = Column(String, nullable=False)
     location_id = Column(String, ForeignKey('locations.id'), nullable=False)
-    is_active = Column(Boolean, default=True)
-    participants = Column(JSON, nullable=True)
+    status = Column(String(50), nullable=False, default="pending", index=True)
+    participants = Column(JSON, nullable=False, default=lambda: [])
+    initial_positions = Column(JSON, nullable=True)
     current_round = Column(Integer, default=0)
-    combat_log = Column(Text, nullable=True)
+    combat_log = Column(Text, nullable=True) # Legacy text log
+    turn_log_structured = Column(JSON, nullable=True, default=lambda: []) # New structured log
     state_variables = Column(JSON, nullable=True)
+    combat_rules_snapshot = Column(JSON, nullable=True)
     channel_id = Column(String, nullable=True)
     event_id = Column(String, ForeignKey('events.id'), nullable=True)
     turn_order = Column(JSON, nullable=True)
