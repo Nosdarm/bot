@@ -236,6 +236,39 @@ class BaseStatDefinition(BaseModel):
     min_value: int = Field(default=1)
     max_value: int = Field(default=20) # Max for typical player stats, can be higher for monsters
 
+# --- Relationship Rules ---
+
+class RelationChangeInstruction(BaseModel):
+    entity1_ref: str = Field(..., description="Reference to the first entity involved in the relationship change (e.g., 'player_id', 'npc_id', 'faction_id_A').")
+    entity1_type_ref: str = Field(..., description="Type of the first entity (e.g., 'player_type', 'npc_type', 'faction_type_A').")
+    entity2_ref: str = Field(..., description="Reference to the second entity.")
+    entity2_type_ref: str = Field(..., description="Type of the second entity.")
+    relation_type: str = Field(..., description="Type of relationship (e.g., 'friendly', 'hostile', 'professional_respect').")
+    update_type: str = Field(..., description="How the relationship strength is updated. Enum: 'add', 'subtract', 'set', 'multiply'.")
+    magnitude_formula: str = Field(..., description="Formula to calculate the change magnitude (e.g., '10', 'event_data.get(\\'action_value\\', 0) * 0.5', 'current_strength * 0.1').")
+    description: Optional[str] = Field(None, description="Optional description of this specific instruction.")
+    name: Optional[str] = Field(None, description="Optional name for this instruction.")
+
+class RelationChangeRule(BaseModel):
+    name: str = Field(..., description="Unique name for the rule.")
+    event_type: str = Field(..., description="The event that triggers this rule (e.g., 'quest_completed').")
+    condition: Optional[str] = Field(None, description="A Python expression string to be evaluated against event_data (e.g., \"event_data.get('faction_id') == 'guild_of_mages'\").")
+    changes: List[RelationChangeInstruction] = Field(..., description="A list of relationship changes to apply if the rule is triggered.")
+    description: Optional[str] = Field(None, description="Optional description of the rule's purpose.")
+
+class RelationshipInfluenceRule(BaseModel):
+    name: str = Field(..., description="Unique name for this influence rule.")
+    influence_type: str = Field(..., description="Type of game mechanic this rule influences (e.g., 'dialogue_skill_check', 'npc_targeting', 'dialogue_option_availability', 'price_adjustment').")
+    condition: Optional[str] = Field(None, description="Optional condition for this rule to apply (e.g., \"target_entity_type == 'NPC'\"). Evaluated in context of the interaction.")
+    threshold_type: Optional[str] = Field(None, description="Type of relationship strength threshold (e.g., 'min_strength', 'max_strength').")
+    threshold_value: Optional[float] = Field(None, description="The value for the threshold_type.")
+    bonus_malus_formula: Optional[str] = Field(None, description="Formula for calculating bonus or malus (e.g., '5', '-2', '0.1 * current_strength').")
+    effect_description_i18n_key: Optional[str] = Field(None, description="I18n key for describing the effect to the player (e.g., 'feedback.relationship.dialogue_check_bonus').")
+    effect_params_mapping: Optional[Dict[str, str]] = Field(None, description="Maps rule context variables to i18n parameter names (e.g., {\"npc_name\": \"npc.name\", \"bonus_amount_str\": \"calculated_bonus\"}).")
+    availability_flag: Optional[bool] = Field(None, description="For dialogue options or similar features: True if this rule makes it available, False if it makes it unavailable.")
+    failure_feedback_key: Optional[str] = Field(None, description="For dialogue options if unavailable due to this rule, an i18n key for feedback.")
+    failure_feedback_params_mapping: Optional[Dict[str, str]] = Field(None, description="Parameters for the failure_feedback_key.")
+
 class CoreGameRulesConfig(BaseModel):
     """
     Defines the structure for core game mechanics rules, stored in the RulesConfig DB model.
@@ -253,3 +286,5 @@ class CoreGameRulesConfig(BaseModel):
     equipment_slots: Dict[str, EquipmentSlotDefinition] = Field(default_factory=dict, description="Defines available equipment slots on a character.")
     item_effects: Dict[str, ItemEffectDefinition] = Field(default_factory=dict, description="Reusable item effects, keyed by an effect ID or item template ID.")
     status_effects: Dict[str, StatusEffectDefinition] = Field(default_factory=dict, description="Definitions for status effects, keyed by status ID.")
+    relation_rules: List[RelationChangeRule] = Field(default_factory=list, description="Rules defining how relationships change based on game events.")
+    relationship_influence_rules: List[RelationshipInfluenceRule] = Field(default_factory=list, description="Rules defining how relationship strengths influence game mechanics.")

@@ -396,16 +396,19 @@ class RelationshipManager:
             print("RelationshipManager: Rule engine or rules data not available.")
             return updated_relationships
 
-        relation_change_rules = rule_engine._rules_data.get("relation_rules", {}) # Assuming structure from RuleConfig
-        if not relation_change_rules:
-            # Corrected key to relation_rules from relation_change_rules based on common patterns
-            # If this is still wrong, it might be 'relationship_rules' or similar.
-            # Trying 'relation_change_rules' first as per earlier assumption.
-            relation_change_rules = rule_engine._rules_data.get("relation_change_rules", {})
+        all_relation_change_rules = rule_engine._rules_data.get("relation_rules", []) # This is now a list
 
-        rules_for_event = relation_change_rules.get(event_type)
+        if not all_relation_change_rules:
+            # print(f"RelationshipManager: No relation_rules found in rule_engine._rules_data.")
+            return updated_relationships
 
-        if not rules_for_event:
+        # Filter rules for the current event_type
+        applicable_rules = [
+            rule for rule in all_relation_change_rules
+            if rule.get("event_type") == event_type
+        ]
+
+        if not applicable_rules:
             # print(f"RelationshipManager: No relationship change rules found for event type '{event_type}'.")
             return updated_relationships
 
@@ -419,11 +422,15 @@ class RelationshipManager:
         }
         # Provide event_data directly in the local scope for eval
         eval_globals = {"__builtins__": safe_builtins}
+        # Provide event_data directly in the local scope for eval
+        base_eval_locals = {"event_data": deepcopy(event_data)} # Use a copy to prevent modification by eval
 
 
-        for rule_definition in rules_for_event:
+        for rule_definition in applicable_rules: # Iterate through filtered rules
             condition_str = rule_definition.get("condition")
-            eval_locals = {"event_data": deepcopy(event_data)} # Use a copy to prevent modification by eval
+            # Create a fresh eval_locals for each rule to avoid interference, though deepcopy helps
+            eval_locals = {"event_data": deepcopy(base_eval_locals["event_data"])}
+
 
             try:
                 condition_met = eval(condition_str, eval_globals, eval_locals) if condition_str else True
@@ -447,11 +454,20 @@ class RelationshipManager:
                     # Assuming refs are direct keys in event_data
                     resolved_entity1_id = eval_locals['event_data'].get(entity1_ref)
                     resolved_entity2_id = eval_locals['event_data'].get(entity2_ref)
-                    resolved_entity1_type = eval_locals['event_data'].get(entity1_type_ref)
-                    resolved_entity2_type = eval_locals['event_data'].get(entity2_type_ref)
+
+                    # Resolve entity types: can be direct from event_data or a literal string in the rule
+                    if entity1_type_ref and entity1_type_ref.startswith("'") and entity1_type_ref.endswith("'"):
+                        resolved_entity1_type = entity1_type_ref[1:-1] # Use as literal
+                    else:
+                        resolved_entity1_type = eval_locals['event_data'].get(entity1_type_ref)
+
+                    if entity2_type_ref and entity2_type_ref.startswith("'") and entity2_type_ref.endswith("'"):
+                        resolved_entity2_type = entity2_type_ref[1:-1] # Use as literal
+                    else:
+                        resolved_entity2_type = eval_locals['event_data'].get(entity2_type_ref)
 
                     if not all([resolved_entity1_id, resolved_entity2_id, resolved_entity1_type, resolved_entity2_type]):
-                        print(f"RelationshipManager: Could not resolve all entity IDs/types from event_data for rule. Refs: e1_id='{entity1_ref}', e2_id='{entity2_ref}', e1_type='{entity1_type_ref}', e2_type='{entity2_type_ref}'. Skipping this change.")
+                        print(f"RelationshipManager: Could not resolve all entity IDs/types for rule '{rule_definition.get('name', 'Unnamed Rule')}'. Entity Refs: e1_id='{entity1_ref}', e2_id='{entity2_ref}', e1_type_ref='{entity1_type_ref}', e2_type_ref='{entity2_type_ref}'. Resolved Values: e1_val='{resolved_entity1_id}', e2_val='{resolved_entity2_id}', e1_type_val='{resolved_entity1_type}', e2_type_val='{resolved_entity2_type}'. Skipping this change.")
                         continue
 
                     # Ensure IDs are strings
@@ -463,10 +479,13 @@ class RelationshipManager:
                         continue
 
                     magnitude_formula = change_instruction.get("magnitude_formula", "0")
-                    magnitude_value = float(eval(magnitude_formula, eval_globals, eval_locals))
+                    # Add current_strength to eval_locals if formula needs it.
+                    # This requires fetching the relationship *before* evaluating magnitude.
+                    # For now, assume magnitude_formula primarily uses event_data.
+                    # If current_strength is needed, it will be fetched below.
 
-                    new_relationship_type_from_rule = change_instruction.get("relation_type", "neutral")
-                    update_type = change_instruction.get("update_type", "add") # "add", "subtract", "set", "multiply"
+                    new_relationship_type_from_rule = change_instruction.get("relation_type", "neutral") # Matches RelationChangeInstruction.relation_type
+                    update_type = change_instruction.get("update_type", "add") # Matches RelationChangeInstruction.update_type
 
                     # Find existing relationship of the target type to get base strength
                     # Normalizing order for lookup:
@@ -486,10 +505,20 @@ class RelationshipManager:
                     old_strength = current_relationship_of_target_type.strength if current_relationship_of_target_type else 0.0
                     old_type_for_log = current_relationship_of_target_type.relationship_type if current_relationship_of_target_type else "none"
 
+                    # Prepare eval_locals for magnitude_formula, potentially including current_strength
+                    magnitude_eval_locals = deepcopy(eval_locals) # Use a fresh copy for this specific eval
+                    magnitude_eval_locals["current_strength"] = old_strength
+                    # Add other potentially relevant context if formulas need them, e.g. entity1.name, entity2.stats.XYZ etc.
+                    # This would require fetching entity objects if not already in event_data.
+                    # For now, keeping it simple with event_data and current_strength.
+
+                    magnitude_value = float(eval(magnitude_formula, eval_globals, magnitude_eval_locals))
+
+
                     if update_type == "add": new_strength = old_strength + magnitude_value
                     elif update_type == "subtract": new_strength = old_strength - magnitude_value
                     elif update_type == "set": new_strength = magnitude_value
-                    elif update_type == "multiply": new_strength = old_strength * magnitude_value
+                    elif update_type == "multiply": new_strength = old_strength * magnitude_value # e.g. current_strength * 0.1
                     else:
                         print(f"RelationshipManager: Unknown update_type '{update_type}'. Defaulting to 'add'.")
                         new_strength = old_strength + magnitude_value
@@ -513,11 +542,15 @@ class RelationshipManager:
                     if updated_rel:
                         updated_relationships.append(updated_rel)
                         # Log the change
+                        rule_name_for_log = rule_definition.get('name', 'Unnamed Rule')
+                        change_instr_name_for_log = change_instruction.get('name')
+                        log_name_suffix = f" (Instruction: {change_instr_name_for_log})" if change_instr_name_for_log else ""
+
                         log_message = (
                             f"Relationship between {resolved_entity1_type} {resolved_entity1_id} and "
                             f"{resolved_entity2_type} {resolved_entity2_id} changed due to event '{event_type}'. "
                             f"Type: {old_type_for_log} -> {updated_rel.relationship_type}. "
-                            f"Strength: {old_strength:.2f} -> {updated_rel.strength:.2f} (Change: {magnitude_value:.2f} via {update_type}). Rule: {rule_definition.get('name', 'Unnamed Rule')}."
+                            f"Strength: {old_strength:.2f} -> {updated_rel.strength:.2f} (Change: {magnitude_value:.2f} via {update_type}). Rule: {rule_name_for_log}{log_name_suffix}."
                         )
                         if game_log_manager: # Check if game_log_manager is provided
                            await game_log_manager.log_event(guild_id_str, "RELATIONSHIP_CHANGE", {"message": log_message, "details": updated_rel.to_dict()})

@@ -1,0 +1,127 @@
+{
+  "relation_rules": [
+    {
+      "name": "QuestCompletedWithNpcPositive",
+      "event_type": "quest_completed",
+      "condition": "event_data.get('npc_id') is not None and event_data.get('outcome') == 'success'",
+      "changes": [
+        {
+          "entity1_ref": "player_id",
+          "entity1_type_ref": "player_type",
+          "entity2_ref": "npc_id",
+          "entity2_type_ref": "npc_type",
+          "relation_type": "friendly",
+          "update_type": "add",
+          "magnitude_formula": "event_data.get('quest_xp_reward', 50) * 0.1",
+          "description": "Player gains friendship with NPC based on quest XP."
+        },
+        {
+          "entity1_ref": "player_id",
+          "entity1_type_ref": "player_type",
+          "entity2_ref": "faction_id",
+          "entity2_type_ref": "faction_type",
+          "condition": "event_data.get('faction_id') is not None",
+          "relation_type": "reputation",
+          "update_type": "add",
+          "magnitude_formula": "event_data.get('quest_xp_reward', 50) * 0.05",
+          "description": "Player gains reputation with NPC's faction based on quest XP, if faction exists."
+        }
+      ],
+      "description": "Handles positive relationship changes when a player successfully completes a quest involving an NPC."
+    },
+    {
+      "name": "PlayerAttacksFactionMember",
+      "event_type": "combat_attack",
+      "condition": "event_data.get('attacker_type') == 'Player' and event_data.get('target_faction_id') is not None and event_data.get('target_faction_id') != event_data.get('attacker_faction_id')",
+      "changes": [
+        {
+          "entity1_ref": "attacker_id",
+          "entity1_type_ref": "attacker_type",
+          "entity2_ref": "target_faction_id",
+          "entity2_type_ref": "'faction'",
+          "relation_type": "hostile",
+          "update_type": "add",
+          "magnitude_formula": "15",
+          "description": "Player's faction standing with target's faction worsens significantly."
+        },
+        {
+          "entity1_ref": "attacker_id",
+          "entity1_type_ref": "attacker_type",
+          "entity2_ref": "target_id",
+          "entity2_type_ref": "target_type",
+          "relation_type": "personal_hostility",
+          "update_type": "add",
+          "magnitude_formula": "20",
+          "description": "Player develops personal hostility towards the attacked NPC."
+        }
+      ],
+      "description": "Handles negative relationship changes when a player attacks a member of another faction."
+    }
+  ],
+  "relationship_influence_rules": [
+    {
+      "name": "DialogueSkillCheckBonus_FriendlyNPC",
+      "influence_type": "dialogue_skill_check",
+      "condition": "npc is not None and character is not None",
+      "threshold_type": "min_strength",
+      "threshold_value": 20.0,
+      "bonus_malus_formula": "5 + (current_strength / 20)",
+      "effect_description_i18n_key": "feedback.relationship.dialogue_check_bonus",
+      "effect_params_mapping": {"npc_name": "npc.name", "bonus_amount_str": "calculated_bonus_str"}
+    },
+    {
+      "name": "DialogueSkillCheckPenalty_UnfriendlyNPC",
+      "influence_type": "dialogue_skill_check",
+      "condition": "npc is not None and character is not None",
+      "threshold_type": "max_strength",
+      "threshold_value": -20.0,
+      "bonus_malus_formula": "-5 + (current_strength / 10)",
+      "effect_description_i18n_key": "feedback.relationship.dialogue_check_penalty",
+      "effect_params_mapping": {"npc_name": "npc.name", "penalty_amount_str": "calculated_bonus_str"}
+    },
+    {
+      "name": "NPCTargeting_PrioritizeHostile",
+      "influence_type": "npc_targeting",
+      "condition": "True",
+      "threshold_type": "max_strength",
+      "threshold_value": -10.0,
+      "bonus_malus_formula": "(abs(current_strength) / 100.0) * 2.0",
+      "effect_description_i18n_key": null
+    },
+    {
+      "name": "NPCTargeting_DeprioritizeFriendly",
+      "influence_type": "npc_targeting",
+      "condition": "True",
+      "threshold_type": "min_strength",
+      "threshold_value": 10.0,
+      "bonus_malus_formula": "-(current_strength / 100.0) * 0.5",
+      "effect_description_i18n_key": null
+    },
+    {
+      "name": "DialogueOptionAvailability_NeedTrust",
+      "influence_type": "dialogue_option_availability",
+      "condition": "option_data.get('id') == 'specific_secret_option_id'",
+      "threshold_type": "min_strength",
+      "threshold_value": 50.0,
+      "availability_flag": true,
+      "failure_feedback_key": "feedback.relationship.dialogue_option_unavailable_poor",
+      "failure_feedback_params_mapping": {"npc_name": "npc.name"}
+    },
+    {
+      "name": "NPCBehavior_BecomeHostile",
+      "influence_type": "npc_behavior_hostility",
+      "condition": "True",
+      "threshold_type": "max_strength",
+      "threshold_value": -50.0,
+      "bonus_malus_formula": null
+    },
+    {
+      "name": "NPCBehavior_InitiateDialogueFriendly",
+      "influence_type": "npc_behavior_dialogue_initiation",
+      "condition": "True",
+      "threshold_type": "min_strength",
+      "threshold_value": 25.0,
+      "bonus_malus_formula": null
+    }
+  ]
+}
