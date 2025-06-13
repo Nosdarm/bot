@@ -73,9 +73,9 @@ async def get_guild_rules_config_endpoint( # Renamed to avoid conflict with mode
     summary="Update game rule configuration for the guild"
 )
 async def update_guild_rules_config_endpoint( # Renamed to avoid conflict
-    guild_id: str = Path(..., description="Guild ID from path prefix"),
-    config_update_payload: RuleConfigUpdate, # Request body
-    db: AsyncSession = Depends(get_db_session)
+    config_update_payload: RuleConfigUpdate, # Body parameter
+    guild_id: str = Path(..., description="Guild ID from path prefix"), # Path parameter
+    db: AsyncSession = Depends(get_db_session) # Parameter with default
 ):
     logger.info(f"Updating RulesConfig for guild {guild_id}")
     try:
