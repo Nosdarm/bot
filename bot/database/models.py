@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint, Float, TIMESTAMP
+from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -46,9 +46,57 @@ class Player(Base):
     spell_cooldowns = Column(JSON, nullable=True)
     inventory = Column(JSON, nullable=True)
     effective_stats_json = Column(JSON, nullable=True) # Verified already present
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
 
     location = relationship("Location")
     party = relationship("Party", foreign_keys=[current_party_id])
+    characters = relationship("Character", back_populates="player", cascade="all, delete-orphan")
+
+    __table_args__ = (UniqueConstraint('discord_id', 'guild_id', name='uq_player_discord_guild'),)
+
+
+class Character(Base):
+    __tablename__ = 'characters'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    player_id = Column(String, ForeignKey('players.id'), nullable=False, index=True)
+    guild_id = Column(String, nullable=False, index=True) # Denormalized for easier querying
+
+    name_i18n = Column(JSON, nullable=False)  # e.g., {"en": "Valerius", "ru": "Валериус"}
+    class_i18n = Column(JSON, nullable=True)   # e.g., {"en": "Warrior", "ru": "Воин"}
+    description_i18n = Column(JSON, nullable=True) # e.g., {"en": "A brave warrior.", "ru": "Храбрый воин."}
+
+    level = Column(Integer, default=1, nullable=False)
+    xp = Column(Integer, default=0, nullable=False)
+
+    stats = Column(JSON, nullable=True) # e.g., {"strength": 10, "dexterity": 8, "intelligence": 5}
+    current_hp = Column(Float, nullable=True)
+    max_hp = Column(Float, nullable=True)
+
+    abilities = Column(JSON, nullable=True) # Could be a list of IDs or more complex objects
+    inventory = Column(JSON, nullable=True) # Could be a list of item IDs or more complex objects
+
+    # Stores relationships with NPCs, e.g., {"npc_id_1": "friendly", "npc_id_2": "hostile"}
+    npc_relationships = Column(JSON, nullable=True)
+
+    # Indicates if this is the currently selected/active character for the player in this guild
+    is_active_char = Column(Boolean, default=False, nullable=False, index=True)
+
+    # Relationship to Player
+    player = relationship("Player", back_populates="characters")
+
+    __table_args__ = (
+        Index('idx_character_guild_player', 'guild_id', 'player_id'),
+        # Optional: A unique constraint to prevent a player from having multiple characters with the exact same name_i18n JSON object.
+        # This is tricky with JSON objects. A better approach might be a unique constraint on (player_id, name_en)
+        # if 'en' name is always required, or handle this at the application layer.
+        # For now, omitting DB-level name uniqueness beyond the primary key `id`.
+        # UniqueConstraint('player_id', 'name_i18n', name='uq_character_player_name'), # Example if desired
+    )
+
+    def __repr__(self):
+        return f"<Character(id='{self.id}', name_i18n='{self.name_i18n}', player_id='{self.player_id}', guild_id='{self.guild_id}')>"
+
 
 class Location(Base):
     __tablename__ = 'locations'
@@ -134,11 +182,31 @@ class Party(Base):
 
 class RulesConfig(Base):
     __tablename__ = 'rules_config'
-    id = Column(String, primary_key=True, default='main_config')
+    guild_id = Column(String, primary_key=True)
     config_data = Column(JSON)
 
-class GeneratedLocation(Base): __tablename__ = 'generated_locations'; id = Column(String, primary_key=True); name_i18n = Column(JSON, nullable=True); descriptions_i18n = Column(JSON, nullable=True); details_i18n = Column(JSON, nullable=True); tags_i18n = Column(JSON, nullable=True); atmosphere_i18n = Column(JSON, nullable=True); features_i18n = Column(JSON, nullable=True)
-class ItemTemplate(Base): __tablename__ = 'item_templates'; id = Column(String, primary_key=True); name_i18n = Column(JSON, nullable=False); description_i18n = Column(JSON, nullable=True); type = Column(String, nullable=True); properties = Column(JSON, nullable=True); guild_id = Column(String, nullable=True)
+class GeneratedLocation(Base):
+    __tablename__ = 'generated_locations'
+    id = Column(String, primary_key=True)
+    name_i18n = Column(JSON, nullable=True)
+    descriptions_i18n = Column(JSON, nullable=True)
+    details_i18n = Column(JSON, nullable=True)
+    tags_i18n = Column(JSON, nullable=True)
+    atmosphere_i18n = Column(JSON, nullable=True)
+    features_i18n = Column(JSON, nullable=True)
+    guild_id = Column(String, nullable=False)
+    __table_args__ = (Index('idx_generatedlocation_guild_id', 'guild_id'),)
+
+class ItemTemplate(Base):
+    __tablename__ = 'item_templates'
+    id = Column(String, primary_key=True)
+    name_i18n = Column(JSON, nullable=False)
+    description_i18n = Column(JSON, nullable=True)
+    type = Column(String, nullable=True)
+    properties = Column(JSON, nullable=True)
+    guild_id = Column(String, nullable=False)
+    __table_args__ = (Index('idx_itemtemplate_guild_id', 'guild_id'),)
+
 class LocationTemplate(Base): __tablename__ = 'location_templates'; id = Column(String, primary_key=True); name = Column(String, nullable=False); description = Column(Text, nullable=True); properties = Column(JSON, nullable=True); guild_id = Column(String, nullable=False)
 
 class NPC(Base):
@@ -186,15 +254,29 @@ class GeneratedNpc(Base):
     backstory_i18n = Column(JSON, nullable=True)
     persona_i18n = Column(JSON, nullable=True)
     effective_stats_json = Column(JSON, nullable=True) # Already present
+    guild_id = Column(String, nullable=False)
+    __table_args__ = (Index('idx_generatednpc_guild_id', 'guild_id'),)
 
-class GeneratedFaction(Base): __tablename__ = 'generated_factions'; id = Column(String, primary_key=True); placeholder = Column(Text, nullable=True)
-class GeneratedQuest(Base): __tablename__ = 'generated_quests'; id = Column(String, primary_key=True); placeholder = Column(Text, nullable=True)
+class GeneratedFaction(Base):
+    __tablename__ = 'generated_factions'
+    id = Column(String, primary_key=True)
+    guild_id = Column(String, nullable=False)
+    name_i18n = Column(JSON, nullable=True)
+    description_i18n = Column(JSON, nullable=True)
+    __table_args__ = (Index('idx_generatedfaction_guild_id', 'guild_id'),)
+
+class GeneratedQuest(Base):
+    __tablename__ = 'generated_quests'
+    id = Column(String, primary_key=True)
+    guild_id = Column(String, nullable=False)
+    name_i18n = Column(JSON, nullable=True)
+    __table_args__ = (Index('idx_generatedquest_guild_id', 'guild_id'),)
 
 class Item(Base):
     __tablename__ = 'items'
     id = Column(String, primary_key=True)
     template_id = Column(String, nullable=True)
-    guild_id = Column(String, nullable=True)
+    guild_id = Column(String, nullable=False)
     owner_id = Column(String, nullable=True)
     owner_type = Column(String, nullable=True)
     location_id = Column(String, ForeignKey('locations.id'), nullable=True)
@@ -207,6 +289,7 @@ class Item(Base):
     properties = Column(JSON, nullable=True)
     slot = Column(String, nullable=True)
     value = Column(Integer, nullable=True)
+    __table_args__ = (Index('idx_item_guild_id', 'guild_id'),)
 
 
 class Inventory(Base):
@@ -252,16 +335,58 @@ class GameLog(Base):
     message_params = Column(JSON, nullable=True)
     location_id = Column(String, ForeignKey('locations.id'), nullable=True)
     involved_entities_ids = Column(JSON, nullable=True)
-    details = Column(JSON, nullable=False)
+    description_i18n = Column(JSON, nullable=True)
+    consequences_data = Column(JSON, nullable=True)
+    details = Column(JSON, nullable=True)
     channel_id = Column(String, nullable=True)
     player = relationship("Player")
     party = relationship("Party")
     location = relationship("Location")
 
-class Relationship(Base): __tablename__ = 'relationships'; id = Column(String, primary_key=True); placeholder = Column(Text, nullable=True)
-class PlayerNpcMemory(Base): __tablename__ = 'player_npc_memory'; id = Column(String, primary_key=True); placeholder = Column(Text, nullable=True)
-class Ability(Base): __tablename__ = 'abilities'; id = Column(String, primary_key=True); name_i18n = Column(JSON, nullable=True); description_i18n = Column(JSON, nullable=True)
-class Skill(Base): __tablename__ = 'skills'; id = Column(String, primary_key=True); name_i18n = Column(JSON, nullable=True); description_i18n = Column(JSON, nullable=True)
+class Relationship(Base):
+    __tablename__ = 'relationships'
+    id = Column(String, primary_key=True)
+    guild_id = Column(String, nullable=False)
+    entity1_id = Column(String, nullable=False)
+    entity1_type = Column(String, nullable=False)
+    entity2_id = Column(String, nullable=False)
+    entity2_type = Column(String, nullable=False)
+    relationship_type_i18n = Column(JSON, nullable=True)
+    status_i18n = Column(JSON, nullable=True)
+    __table_args__ = (Index('idx_relationship_guild_id', 'guild_id'),)
+
+class PlayerNpcMemory(Base):
+    __tablename__ = 'player_npc_memory'
+    id = Column(String, primary_key=True)
+    guild_id = Column(String, nullable=False)
+    player_id = Column(String, ForeignKey('players.id'), nullable=False)
+    npc_id = Column(String, ForeignKey('npcs.id'), nullable=False)
+    memory_details_i18n = Column(JSON, nullable=True)
+    __table_args__ = (
+        Index('idx_playernpcmemory_guild_id', 'guild_id'),
+        Index('idx_playernpcmemory_player_id', 'player_id'),
+        Index('idx_playernpcmemory_npc_id', 'npc_id'),
+    )
+
+class Ability(Base):
+    __tablename__ = 'abilities'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name_i18n = Column(JSON, nullable=False)
+    description_i18n = Column(JSON, nullable=False)
+    guild_id = Column(String, nullable=False)
+    effect_i18n = Column(JSON, nullable=False)
+    cost = Column(JSON, nullable=True)
+    requirements = Column(JSON, nullable=True)
+    type_i18n = Column(JSON, nullable=False)
+    __table_args__ = (Index('idx_ability_guild_id', 'guild_id'),)
+
+class Skill(Base):
+    __tablename__ = 'skills'
+    id = Column(String, primary_key=True)
+    name_i18n = Column(JSON, nullable=True)
+    description_i18n = Column(JSON, nullable=True)
+    guild_id = Column(String, nullable=False)
+    __table_args__ = (Index('idx_skill_guild_id', 'guild_id'),)
 
 class Status(Base):
     __tablename__ = 'statuses'
@@ -288,10 +413,38 @@ class CraftingQueue(Base):
     state_variables = Column(JSON, nullable=True)
     __table_args__ = (PrimaryKeyConstraint('entity_id', 'entity_type', 'guild_id'),)
 
-class ItemProperty(Base): __tablename__ = 'item_properties'; id = Column(String, primary_key=True); name_i18n = Column(JSON, nullable=True); description_i18n = Column(JSON, nullable=True)
-class Questline(Base): __tablename__ = 'questlines'; id = Column(String, primary_key=True); placeholder = Column(Text, nullable=True)
-class QuestStep(Base): __tablename__ = 'quest_steps'; id = Column(String, primary_key=True); placeholder = Column(Text, nullable=True)
-class MobileGroup(Base): __tablename__ = 'mobile_groups'; id = Column(String, primary_key=True); placeholder = Column(Text, nullable=True)
+class ItemProperty(Base):
+    __tablename__ = 'item_properties'
+    id = Column(String, primary_key=True)
+    name_i18n = Column(JSON, nullable=True)
+    description_i18n = Column(JSON, nullable=True)
+    guild_id = Column(String, nullable=False)
+    __table_args__ = (Index('idx_itemproperty_guild_id', 'guild_id'),)
+
+class Questline(Base):
+    __tablename__ = 'questlines'
+    id = Column(String, primary_key=True)
+    guild_id = Column(String, nullable=False)
+    name_i18n = Column(JSON, nullable=True)
+    __table_args__ = (Index('idx_questline_guild_id', 'guild_id'),)
+
+class QuestStep(Base):
+    __tablename__ = 'quest_steps'
+    id = Column(String, primary_key=True)
+    guild_id = Column(String, nullable=False)
+    questline_id = Column(String, ForeignKey('questlines.id'), nullable=False)
+    step_details_i18n = Column(JSON, nullable=True)
+    __table_args__ = (
+        Index('idx_queststep_guild_id', 'guild_id'),
+        Index('idx_queststep_questline_id', 'questline_id'),
+    )
+
+class MobileGroup(Base):
+    __tablename__ = 'mobile_groups'
+    id = Column(String, primary_key=True)
+    guild_id = Column(String, nullable=False)
+    name_i18n = Column(JSON, nullable=True)
+    __table_args__ = (Index('idx_mobilegroup_guild_id', 'guild_id'),)
 
 class PendingConflict(Base):
     __tablename__ = 'pending_conflicts'
