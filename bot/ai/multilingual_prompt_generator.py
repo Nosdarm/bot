@@ -201,4 +201,4 @@ CRITICAL INSTRUCTIONS:
 """
         return self._build_full_prompt_for_openai(task_prompt, generation_context)
 
-[end of bot/ai/multilingual_prompt_generator.py]
+
