@@ -1,5 +1,6 @@
 import pytest
 import pytest_asyncio
+from typing import AsyncIterator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select
@@ -18,7 +19,7 @@ DEFAULT_LOCATION_EN_NAME = "Quiet Crossroads"
 # DEFAULT_START_LOCATION_STATIC_NAME_FORMAT = "internal_starting_crossroads_{}" # Used to form the static_name
 
 @pytest_asyncio.fixture(scope="function") # Changed from pytest.fixture to pytest_asyncio.fixture
-async def async_db_session() -> AsyncSession:
+async def async_db_session() -> AsyncIterator[AsyncSession]:
     """Fixture to create an async database session for each test, with table setup and teardown."""
     engine = create_async_engine(TEST_DATABASE_URL) # echo=True for debugging SQL
     async with engine.begin() as conn:
