@@ -23,8 +23,10 @@ if TYPE_CHECKING:
     from bot.game.models.npc import NPC
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.game_log_manager import GameLogManager
-    from bot.game.managers.npc_manager import NPCManager
-    from bot.game.managers.game_manager import GameManager
+    from bot.game.managers.npc_manager import NPCManager # Already present
+    from bot.game.managers.inventory_manager import InventoryManager # Added
+    from bot.game.managers.equipment_manager import EquipmentManager # Added
+    from bot.game.managers.game_manager import GameManager # Already present
 
 logger = logging.getLogger(__name__) # Added
 
@@ -53,22 +55,26 @@ class CharacterManager:
         relationship_manager: Optional["RelationshipManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
         npc_manager: Optional["NPCManager"] = None,
+        inventory_manager: Optional["InventoryManager"] = None, # Added
+        equipment_manager: Optional["EquipmentManager"] = None, # Added
         game_manager: Optional["GameManager"] = None
     ):
         logger.info("Initializing CharacterManager...") # Changed
         self._db_service = db_service
         self._settings = settings
-        self._item_manager = item_manager
-        self._location_manager = location_manager
-        self._rule_engine = rule_engine
-        self._status_manager = status_manager
-        self._party_manager = party_manager
-        self._combat_manager = combat_manager
-        self._dialogue_manager = dialogue_manager
-        self._relationship_manager = relationship_manager
-        self._game_log_manager = game_log_manager
-        self._npc_manager = npc_manager
-        self._game_manager = game_manager
+        self._item_manager = item_manager # Existing
+        self._location_manager = location_manager # Existing
+        self._rule_engine = rule_engine # Existing
+        self._status_manager = status_manager # Existing
+        self._party_manager = party_manager # Existing
+        self._combat_manager = combat_manager # Existing
+        self._dialogue_manager = dialogue_manager # Existing
+        self._relationship_manager = relationship_manager # Existing
+        self._game_log_manager = game_log_manager # Existing
+        self._npc_manager = npc_manager # Existing
+        self._inventory_manager = inventory_manager # Added
+        self._equipment_manager = equipment_manager # Added
+        self._game_manager = game_manager # Existing
 
         self._characters = {}
         self._discord_to_char_map = {}
