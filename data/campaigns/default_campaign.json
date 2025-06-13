@@ -76,9 +76,8 @@
         }
     },
     "quest_templates": [],
-    "npc_archetypes": [
-        {
-            "id": "goblin_grunt",
+    "npc_archetypes": {
+        "goblin_grunt": {
             "name_i18n": {
                 "en": "Goblin Grunt",
                 "ru": "[RU] Goblin Grunt"
@@ -93,23 +92,51 @@
             },
             "location_id": "cave_entrance",
             "archetype": "monster",
-            "stats": { "max_health": 25, "strength": 7, "dexterity": 12, "base_damage": "1d4", "perception": 10, "xp_value": 10, "armor_class": 8, "passive_perception": 10 },
-            "skills": { "short_blades": 1, "dodge": 2, "stealth": 3 },
-            "equipment_slots": { "main_hand": "rusty_dagger" },
-            "abilities": ["ability_sneak_attack_basic"],
-            "traits": ["cowardly", "greedy"],
-            "desires": ["find_shiny_things", "avoid_pain"],
-            "motives": ["survival", "petty_theft"],
+            "stats": {
+                "max_health": 25,
+                "strength": 7,
+                "dexterity": 12,
+                "base_damage": "1d4",
+                "perception": 10,
+                "xp_value": 10,
+                "armor_class": 8,
+                "passive_perception": 10
+            },
+            "skills": {
+                "short_blades": 1,
+                "dodge": 2,
+                "stealth": 3
+            },
+            "equipment_slots": {
+                "main_hand": "rusty_dagger"
+            },
+            "abilities": [
+                "ability_sneak_attack_basic"
+            ],
+            "traits": [
+                "cowardly",
+                "greedy"
+            ],
+            "desires": [
+                "find_shiny_things",
+                "avoid_pain"
+            ],
+            "motives": [
+                "survival",
+                "petty_theft"
+            ],
             "backstory_i18n": {
                 "en": "Exiled from a larger tribe for being too weak, now scrounges for survival.",
                 "ru": "[RU] Exiled from a larger tribe for being too weak, now scrounges for survival."
             },
             "faction": "goblin_clan_broken_spear",
-            "behavior_tags": ["hostile_if_cornered", "flees_if_outnumbered"],
+            "behavior_tags": [
+                "hostile_if_cornered",
+                "flees_if_outnumbered"
+            ],
             "loot_table_id": "goblin_grunt_loot"
         },
-        {
-            "id": "human_town_guard",
+        "human_town_guard": {
             "name_i18n": {
                 "en": "Town Guard",
                 "ru": "[RU] Town Guard"
@@ -124,23 +151,57 @@
             },
             "location_id": "town_square",
             "archetype": "townsfolk_guard",
-            "stats": { "max_health": 60, "strength": 12, "dexterity": 10, "base_damage": "1d8", "perception": 14, "xp_value": 25, "armor_class": 14, "passive_perception": 14, "charisma": 11 },
-            "skills": { "long_swords": 3, "block": 3, "awareness": 4, "persuasion": 1 },
-            "equipment_slots": { "main_hand": "sword_iron_short", "chest": "leather_jerkin", "shield": "wooden_shield" },
-            "abilities": ["ability_shield_bash", "ability_call_for_help"],
-            "traits": ["dutiful", "suspicious_of_outsiders"],
-            "desires": ["keep_peace", "get_paid"],
-            "motives": ["civic_duty", "self_preservation"],
+            "stats": {
+                "max_health": 60,
+                "strength": 12,
+                "dexterity": 10,
+                "base_damage": "1d8",
+                "perception": 14,
+                "xp_value": 25,
+                "armor_class": 14,
+                "passive_perception": 14,
+                "charisma": 11
+            },
+            "skills": {
+                "long_swords": 3,
+                "block": 3,
+                "awareness": 4,
+                "persuasion": 1
+            },
+            "equipment_slots": {
+                "main_hand": "sword_iron_short",
+                "chest": "leather_jerkin",
+                "shield": "wooden_shield"
+            },
+            "abilities": [
+                "ability_shield_bash",
+                "ability_call_for_help"
+            ],
+            "traits": [
+                "dutiful",
+                "suspicious_of_outsiders"
+            ],
+            "desires": [
+                "keep_peace",
+                "get_paid"
+            ],
+            "motives": [
+                "civic_duty",
+                "self_preservation"
+            ],
             "backstory_i18n": {
                 "en": "Joined the guard after their family farm was raided by bandits. Believes in order.",
                 "ru": "[RU] Joined the guard after their family farm was raided by bandits. Believes in order."
             },
             "faction": "town_of_เริ่มต้น",
-            "behavior_tags": ["patrols_area", "will_intervene_in_crimes", "can_be_talked_to"],
+            "behavior_tags": [
+                "patrols_area",
+                "will_intervene_in_crimes",
+                "can_be_talked_to"
+            ],
             "dialogue_template_id": "guard_generic_dialogue"
         },
-        {
-            "id": "alchemist_npc",
+        "alchemist_npc": {
             "name_i18n": {
                 "en": "Elara Meadowlight",
                 "ru": "[RU] Elara Meadowlight"
@@ -155,22 +216,51 @@
             },
             "location_id": "alchemist_shop",
             "archetype": "townsfolk_merchant",
-            "stats": { "max_health": 40, "strength": 8, "dexterity": 11, "intelligence": 15, "base_damage": "1d4", "perception": 12, "xp_value": 15, "armor_class": 10, "passive_perception": 12, "wisdom": 13 },
-            "skills": { "alchemy": 5, "herbalism": 4, "perception": 2 },
-            "equipment_slots": { "main_hand": "staff_wooden" },
-            "traits": ["inquisitive", "kindly"],
-            "desires": ["discover_new_potion", "help_sick"],
-            "motives": ["knowledge", "altruism"],
+            "stats": {
+                "max_health": 40,
+                "strength": 8,
+                "dexterity": 11,
+                "intelligence": 15,
+                "base_damage": "1d4",
+                "perception": 12,
+                "xp_value": 15,
+                "armor_class": 10,
+                "passive_perception": 12,
+                "wisdom": 13
+            },
+            "skills": {
+                "alchemy": 5,
+                "herbalism": 4,
+                "perception": 2
+            },
+            "equipment_slots": {
+                "main_hand": "staff_wooden"
+            },
+            "traits": [
+                "inquisitive",
+                "kindly"
+            ],
+            "desires": [
+                "discover_new_potion",
+                "help_sick"
+            ],
+            "motives": [
+                "knowledge",
+                "altruism"
+            ],
             "backstory_i18n": {
                 "en": "Came to town to study rare herbs found in the nearby forest. Set up shop to fund her research.",
                 "ru": "[RU] Came to town to study rare herbs found in the nearby forest. Set up shop to fund her research."
             },
             "faction": "town_of_เริ่มต้น",
-            "behavior_tags": ["sells_potions", "can_identify_items", "offers_alchemy_advice"],
+            "behavior_tags": [
+                "sells_potions",
+                "can_identify_items",
+                "offers_alchemy_advice"
+            ],
             "dialogue_template_id": "alchemist_generic_dialogue"
         },
-        {
-            "id": "tavern_barkeep_npc",
+        "tavern_barkeep_npc": {
             "name_i18n": {
                 "en": "Borin Stonebeard",
                 "ru": "[RU] Borin Stonebeard"
@@ -185,25 +275,56 @@
             },
             "location_id": "tavern",
             "archetype": "townsfolk_merchant",
-            "stats": { "max_health": 70, "strength": 14, "dexterity": 9, "constitution": 16, "base_damage": "1d6", "perception": 13, "xp_value": 20, "armor_class": 10, "passive_perception": 13 },
-            "skills": { "blunt_weapons": 2, "persuasion": 3, "brewing": 4 },
-            "equipment_slots": { "main_hand": "club_heavy_wooden" },
-            "traits": ["jovial", "gossipy"],
-            "desires": ["full_tavern", "hear_good_stories"],
-            "motives": ["profit", "social_connection"],
+            "stats": {
+                "max_health": 70,
+                "strength": 14,
+                "dexterity": 9,
+                "constitution": 16,
+                "base_damage": "1d6",
+                "perception": 13,
+                "xp_value": 20,
+                "armor_class": 10,
+                "passive_perception": 13
+            },
+            "skills": {
+                "blunt_weapons": 2,
+                "persuasion": 3,
+                "brewing": 4
+            },
+            "equipment_slots": {
+                "main_hand": "club_heavy_wooden"
+            },
+            "traits": [
+                "jovial",
+                "gossipy"
+            ],
+            "desires": [
+                "full_tavern",
+                "hear_good_stories"
+            ],
+            "motives": [
+                "profit",
+                "social_connection"
+            ],
             "backstory_i18n": {
                 "en": "A retired adventurer who decided that running a tavern was safer and more profitable. Still has a soft spot for fellow adventurers.",
                 "ru": "[RU] A retired adventurer who decided that running a tavern was safer and more profitable. Still has a soft spot for fellow adventurers."
             },
             "faction": "town_of_เริ่มต้น",
-            "behavior_tags": ["sells_food_drink", "shares_rumors", "hires_bards"],
+            "behavior_tags": [
+                "sells_food_drink",
+                "shares_rumors",
+                "hires_bards"
+            ],
             "dialogue_template_id": "barkeep_generic_dialogue"
         }
-    ],
+    },
     "dialogue_templates": [
         {
             "id": "generic_guard_talk",
-            "npc_archetype_ids": ["human_town_guard"],
+            "npc_archetype_ids": [
+                "human_town_guard"
+            ],
             "initial_greeting_i18n": {
                 "en": "Greetings. Anything to report?",
                 "ru": "[RU] Greetings. Anything to report?"
@@ -215,27 +336,33 @@
                         "ru": "[RU] The city is quiet today. Anything specific you need?"
                     },
                     "player_responses": [
-                        { 
+                        {
                             "text_i18n": {
                                 "en": "Just passing through.",
                                 "ru": "[RU] Just passing through."
-                            }, 
-                            "next_node_id": "end_generic" 
+                            },
+                            "next_node_id": "end_generic"
                         },
-                        { 
+                        {
                             "text_i18n": {
                                 "en": "Heard any rumors?",
                                 "ru": "[RU] Heard any rumors?"
-                            }, 
-                            "next_node_id": "rumors_node" 
+                            },
+                            "next_node_id": "rumors_node"
                         },
-                        { 
+                        {
                             "text_i18n": {
                                 "en": "I need help with something.",
                                 "ru": "[RU] I need help with something."
-                            }, 
-                            "next_node_id": "ask_for_help", 
-                            "conditions": [{"type": "faction_rank_lessthan", "faction_id": "town_guard", "rank": 1}] 
+                            },
+                            "next_node_id": "ask_for_help",
+                            "conditions": [
+                                {
+                                    "type": "faction_rank_lessthan",
+                                    "faction_id": "town_guard",
+                                    "rank": 1
+                                }
+                            ]
                         }
                     ]
                 },
@@ -244,14 +371,14 @@
                         "en": "They say the old well outside town is haunted these days.",
                         "ru": "[RU] They say the old well outside town is haunted these days."
                     },
-                    "player_responses": [ 
-                        { 
+                    "player_responses": [
+                        {
                             "text_i18n": {
                                 "en": "Interesting. Thanks.",
                                 "ru": "[RU] Interesting. Thanks."
-                            }, 
-                            "next_node_id": "end_generic" 
-                        } 
+                            },
+                            "next_node_id": "end_generic"
+                        }
                     ]
                 },
                 "ask_for_help": {
@@ -259,16 +386,21 @@
                         "en": "Help? What sort of help do you need?",
                         "ru": "[RU] Help? What sort of help do you need?"
                     },
-                    "player_responses": [ 
-                        { 
+                    "player_responses": [
+                        {
                             "text_i18n": {
                                 "en": "Nevermind for now.",
                                 "ru": "[RU] Nevermind for now."
-                            }, 
-                            "next_node_id": "end_generic" 
-                        } 
+                            },
+                            "next_node_id": "end_generic"
+                        }
                     ],
-                    "npc_actions": [{"type": "log_message", "message": "Player asked for help."}]
+                    "npc_actions": [
+                        {
+                            "type": "log_message",
+                            "message": "Player asked for help."
+                        }
+                    ]
                 },
                 "end_generic": {
                     "text_i18n": {
@@ -299,9 +431,15 @@
             "range": 30,
             "target_type": "single_enemy",
             "effects": [
-                { "type": "damage", "amount": "1d8", "damage_type": "fire" }
+                {
+                    "type": "damage",
+                    "amount": "1d8",
+                    "damage_type": "fire"
+                }
             ],
-            "requirements": { "min_intelligence": 10 },
+            "requirements": {
+                "min_intelligence": 10
+            },
             "icon": "🔥",
             "sfx_cast": "spell_fire_cast_01",
             "sfx_impact": "spell_fire_impact_01"
@@ -324,9 +462,14 @@
             "range": "touch",
             "target_type": "single_ally",
             "effects": [
-                { "type": "heal", "amount": "1d6+2" }
+                {
+                    "type": "heal",
+                    "amount": "1d6+2"
+                }
             ],
-            "requirements": { "min_wisdom": 10 },
+            "requirements": {
+                "min_wisdom": 10
+            },
             "icon": "✨",
             "sfx_cast": "spell_heal_cast_01",
             "sfx_impact": "spell_heal_impact_01"
@@ -349,7 +492,11 @@
             "range": "self",
             "target_type": "self",
             "effects": [
-                { "type": "apply_status_effect", "status_effect_id": "status_mage_armor", "duration": 3600 }
+                {
+                    "type": "apply_status_effect",
+                    "status_effect_id": "status_mage_armor",
+                    "duration": 3600
+                }
             ],
             "icon": "🛡️",
             "sfx_cast": "spell_buff_cast_01"
@@ -368,13 +515,28 @@
             },
             "type": "combat",
             "trigger_conditions": [
-                {"type": "enter_location_with_tag", "tag": "ambush_prone_road"},
-                {"type": "random_chance", "chance": 0.1}
+                {
+                    "type": "enter_location_with_tag",
+                    "tag": "ambush_prone_road"
+                },
+                {
+                    "type": "random_chance",
+                    "chance": 0.1
+                }
             ],
             "spawn_npcs": [
-                {"npc_archetype_id": "goblin_grunt", "count": "1d2+1", "spawn_point_tag": "roadside_bushes"}
+                {
+                    "npc_archetype_id": "goblin_grunt",
+                    "count": "1d2+1",
+                    "spawn_point_tag": "roadside_bushes"
+                }
             ],
-            "rewards": [{"type": "experience", "amount": 50}],
+            "rewards": [
+                {
+                    "type": "experience",
+                    "amount": 50
+                }
+            ],
             "one_time_only": false,
             "cooldown_after_trigger": 7200
         }
@@ -392,9 +554,16 @@
             },
             "type": "passive_stat_modifier",
             "effects": [
-                { "type": "modify_stat", "stat": "max_health", "modifier_type": "percentage_base", "amount": 0.10 }
+                {
+                    "type": "modify_stat",
+                    "stat": "max_health",
+                    "modifier_type": "percentage_base",
+                    "amount": 0.1
+                }
             ],
-            "requirements": { "level": 1 },
+            "requirements": {
+                "level": 1
+            },
             "icon": "❤️"
         },
         {
@@ -409,13 +578,25 @@
             },
             "type": "activated_combat",
             "activation_type": "action",
-            "resource_cost": { "stamina": 15 },
+            "resource_cost": {
+                "stamina": 15
+            },
             "cooldown": 0,
             "effects": [
-                { "type": "modify_outgoing_damage", "damage_multiplier": 1.5, "accuracy_penalty": -5 },
-                { "type": "play_sfx", "sfx_id": "sfx_power_attack_swing" }
+                {
+                    "type": "modify_outgoing_damage",
+                    "damage_multiplier": 1.5,
+                    "accuracy_penalty": -5
+                },
+                {
+                    "type": "play_sfx",
+                    "sfx_id": "sfx_power_attack_swing"
+                }
             ],
-            "requirements": { "min_strength": 13, "required_weapon_type": "melee" },
+            "requirements": {
+                "min_strength": 13,
+                "required_weapon_type": "melee"
+            },
             "icon": "⚔️",
             "sfx_on_activation": "sfx_power_attack_swing"
         },
@@ -431,9 +612,14 @@
             },
             "type": "innate_racial",
             "effects": [
-                { "type": "grant_flag", "flag": "darkvision" }
+                {
+                    "type": "grant_flag",
+                    "flag": "darkvision"
+                }
             ],
-            "acquisition_methods": ["racial_elf"]
+            "acquisition_methods": [
+                "racial_elf"
+            ]
         }
     ]
 }
