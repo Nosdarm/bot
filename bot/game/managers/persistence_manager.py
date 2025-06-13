@@ -1,37 +1,16 @@
 # bot/game/managers/persistence_manager.py
 
-print("DEBUG: persistence_manager.py module loaded.")
-
-# Импорт базовых типов
-from typing import Dict, Optional, Any, List, Set, Callable # Type hints
-# Импорт TYPE_CHECKING
-from typing import TYPE_CHECKING
-# ИСПРАВЛЕНИЕ: Импорт Union для Tuple | List
-from typing import Union, Tuple # Добавлен импорт Tuple
-
-# Импорт async (используется в методах ниже)
 import asyncio
-import traceback # Для вывода трассировки ошибок
+import traceback # Will be removed
+import logging # Added
+from typing import Dict, Optional, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union, Tuple
 
-# TODO: Импорт адаптера базы данных - используем наш конкретный SQLite адаптер
-# ИСПРАВЛЕНИЕ: Импортируем напрямую, так как используется в аннотациях БЕЗ строковых литералов
-from bot.services.db_service import DBService # Changed
+from bot.services.db_service import DBService
 
-
-# Импорт ВСЕХ менеджеров, которые этот менеджер будет координировать для сохранения/загрузки.
-# Используем ИМПОРТЫ В TYPE_CHECKING, чтобы избежать потенциальных циклических зависимостей,
-# если какие-то из этих менеджеров, в свою очередь, импортируют PersistenceManager.
-# Также это помогает Pylance с разрешением типов при использовании строковых литералов.
 if TYPE_CHECKING:
-    # TODO: Импорт адаптера базы данных (уже импортирован напрямую выше, нет необходимости здесь)
-    # from bot.database.sqlite_adapter import SqliteAdapter # Не нужно
-
-    # Обязательные менеджеры
     from bot.game.managers.event_manager import EventManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.location_manager import LocationManager
-
-    # Опциональные менеджеры
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.combat_manager import CombatManager
     from bot.game.managers.item_manager import ItemManager
@@ -40,73 +19,42 @@ if TYPE_CHECKING:
     from bot.game.managers.crafting_manager import CraftingManager
     from bot.game.managers.economy_manager import EconomyManager
     from bot.game.managers.party_manager import PartyManager
-    # TODO: Добавьте другие менеджеры, если они хранят персистентное состояние
     from bot.game.managers.quest_manager import QuestManager
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.managers.dialogue_manager import DialogueManager
-    from bot.game.managers.skill_manager import SkillManager # Added SkillManager
-    from bot.game.managers.spell_manager import SpellManager # Added SpellManager
+    from bot.game.managers.skill_manager import SkillManager
+    from bot.game.managers.spell_manager import SpellManager
 
-
-    # Определяем типы Callable для Type Checking, если они используются для аннотаций зависимостей-Callable
-    # Например, если PersistenceManager получает SendCallbackFactory как зависимость в __init__ (маловероятно, но возможно)
-    # SendCallbackFactory = Callable[[int], Callable[[str, Optional[Dict[str, Any]]], Awaitable[Any]]]
-
-
-# --- Импорты нужны при Runtime ---
-# Для PersistenceManager крайне редко требуются runtime импорты менеджеров/адаптеров,
-# т.к. он работает с инстансами, переданными через __init__.
-# Здесь импортируются только вещи, нужные для логики самого PM, не для аннотаций типов зависимостей.
-
+logger = logging.getLogger(__name__) # Added
+logger.debug("DEBUG: persistence_manager.py module loaded.") # Changed
 
 class PersistenceManager:
-    """
-    Координирует сохранение и загрузку состояния игры, делегируя работу
-    специализированным менеджерам.
-    Этот менеджер владеет ссылками на другие менеджеры, чье состояние он сохраняет/загружает.
-    """
     def __init__(self,
-                 # Принимаем зависимости, которые передает GameManager.
-                 # Используйте СТРОКОВЫЕ ЛИТЕРАЛЫ для аннотаций всех инжектированных зависимостей.
-                 # Исключение: db_adapter, так как он импортирован напрямую.
-
-                 # ОБЯЗАТЕЛЬНЫЕ зависимости
-                 event_manager: "EventManager", # Use string literal!
-                 character_manager: "CharacterManager", # Use string literal!
-                 location_manager: "LocationManager", # Use string literal!
-                 # ИСПРАВЛЕНИЕ: Убираем строковый литерал, т.к. SqliteAdapter импортирован напрямую
-                 db_service: Optional[DBService] = None, # Changed # Use direct type hint!
-
-                 # ОПЦИОНАЛЬНЫЕ зависимости
-                 npc_manager: Optional["NpcManager"] = None, # Use string literal!
-                 combat_manager: Optional["CombatManager"] = None, # Use string literal!
-                 item_manager: Optional["ItemManager"] = None, # Use string literal!
-                 time_manager: Optional["TimeManager"] = None, # Use string literal!
-                 status_manager: Optional["StatusManager"] = None, # Use string literal!
-                 crafting_manager: Optional["CraftingManager"] = None, # Use string literal!
-                 economy_manager: Optional["EconomyManager"] = None, # Use string literal!
-                 party_manager: Optional["PartyManager"] = None, # Use string literal!
-                 quest_manager: Optional["QuestManager"] = None, # Use string literal!
-                 relationship_manager: Optional["RelationshipManager"] = None, # Use string literal!
-                 game_log_manager: Optional["GameLogManager"] = None, # Use string literal!
-                 dialogue_manager: Optional["DialogueManager"] = None, # Use string literal!
-                 skill_manager: Optional["SkillManager"] = None, # Added skill_manager
-                 spell_manager: Optional["SpellManager"] = None, # Added spell_manager
-                 # TODO: Добавьте другие менеджеры
+                 event_manager: "EventManager",
+                 character_manager: "CharacterManager",
+                 location_manager: "LocationManager",
+                 db_service: Optional[DBService] = None,
+                 npc_manager: Optional["NpcManager"] = None,
+                 combat_manager: Optional["CombatManager"] = None,
+                 item_manager: Optional["ItemManager"] = None,
+                 time_manager: Optional["TimeManager"] = None,
+                 status_manager: Optional["StatusManager"] = None,
+                 crafting_manager: Optional["CraftingManager"] = None,
+                 economy_manager: Optional["EconomyManager"] = None,
+                 party_manager: Optional["PartyManager"] = None,
+                 quest_manager: Optional["QuestManager"] = None,
+                 relationship_manager: Optional["RelationshipManager"] = None,
+                 game_log_manager: Optional["GameLogManager"] = None,
+                 dialogue_manager: Optional["DialogueManager"] = None,
+                 skill_manager: Optional["SkillManager"] = None,
+                 spell_manager: Optional["SpellManager"] = None,
                 ):
-        print("Initializing PersistenceManager...")
-        # Сохраняем ССЫЛКИ на менеджеры и адаптер как АТРИБУТЫ экземпляра
-        # Используем те же аннотации
-        # ИСПРАВЛЕНИЕ: Убираем строковый литерал для db_adapter
-        self._db_service: Optional[DBService] = db_service # Changed # Use direct type hint!
-
-        # Обязательные (строковые литералы)
+        logger.info("Initializing PersistenceManager...") # Changed
+        self._db_service: Optional[DBService] = db_service
         self._event_manager: "EventManager" = event_manager
         self._character_manager: "CharacterManager" = character_manager
         self._location_manager: "LocationManager" = location_manager
-
-        # Опциональные (строковые литералы)
         self._npc_manager: Optional["NpcManager"] = npc_manager
         self._combat_manager: Optional["CombatManager"] = combat_manager
         self._item_manager: Optional["ItemManager"] = item_manager
@@ -119,291 +67,135 @@ class PersistenceManager:
         self._relationship_manager: Optional["RelationshipManager"] = relationship_manager
         self._game_log_manager: Optional["GameLogManager"] = game_log_manager
         self._dialogue_manager: Optional["DialogueManager"] = dialogue_manager
-        self._skill_manager: Optional["SkillManager"] = skill_manager # Assigned to instance
-        self._spell_manager: Optional["SpellManager"] = spell_manager # Assigned to instance
-        # TODO: Сохраните другие менеджеры
-
-
-        print("PersistenceManager initialized.")
-
+        self._skill_manager: Optional["SkillManager"] = skill_manager
+        self._spell_manager: Optional["SpellManager"] = spell_manager
+        logger.info("PersistenceManager initialized.") # Changed
 
     async def save_game_state(self, guild_ids: List[str], **kwargs: Any) -> None:
-        """
-        Координирует сохранение состояния всех менеджеров для указанных гильдий.
-        Каждый менеджер отвечает за сохранение СВОИХ данных per-guild, используя db_adapter.
-        Вызывается из GameManager или CommandRouter (GM команды).
-        guild_ids: Список ID гильдий, для которых нужно сохранить состояние.
-        kwargs: Дополнительный контекст (напр., time_manager, send_callback_factory) для передачи менеджерам.
-        """
         if not guild_ids:
-            print("PersistenceManager: No guild IDs provided for save. Skipping state save.")
+            logger.info("PersistenceManager: No guild IDs provided for save. Skipping state save.") # Changed
             return
+        logger.info("PersistenceManager: Initiating game state save for %s guilds: %s", len(guild_ids), guild_ids) # Changed
 
-        print(f"PersistenceManager: Initiating game state save for {len(guild_ids)} guilds...")
-
-        # Передаем менеджеры и контекст в kwargs для _call_manager_save
-        call_kwargs = {**kwargs} # Копируем входящие kwargs
-
-        if self._db_service is None or self._db_service.adapter is None: # Changed
-            print("PersistenceManager: Database service or adapter not provided. Managers will simulate save (if they support no DB).")
-            # В режиме без БД, просто вызываем save_state у менеджеров.
+        call_kwargs = {**kwargs}
+        if self._db_service is None or self._db_service.adapter is None:
+            logger.warning("PersistenceManager: Database service or adapter not provided. Managers will simulate save.") # Changed
             for guild_id in guild_ids:
-                 await self._call_manager_save(guild_id, **call_kwargs) # Передаем guild_id и kwargs
-            print("PersistenceManager: Game state save simulation finished.")
-
+                 await self._call_manager_save(guild_id, **call_kwargs)
+            logger.info("PersistenceManager: Game state save simulation finished.") # Changed
         else:
-            print("PersistenceManager: Database adapter found, attempting to save via managers.")
-            # При использовании execute/execute_many с авто-коммитом в SqliteAdapter,
-            # нет необходимости в явной общей транзакции здесь.
-            # Каждый менеджер отвечает за атомарность своих операций.
-            # Если нужна одна большая атомарная транзакция для ВСЕГО сохранения,
-            # нужно убрать авто-коммит из execute/execute_many в SqliteAdapter
-            # и использовать async with self._db_adapter: или async with self._db_adapter.cursor():
-            # и явный commit/rollback здесь.
-            # Для простоты текущей схемы, полагаемся на авто-коммит по операциям менеджеров.
-
+            logger.info("PersistenceManager: Database adapter found, attempting to save via managers.") # Changed
             try:
-                # Вызываем методы сохранения для каждого менеджера и каждой гильдии
                 for guild_id in guild_ids:
-                    await self._call_manager_save(guild_id, **call_kwargs) # Передаем guild_id и kwargs
-
-                # Если все вызовы _call_manager_save завершились без проброса исключения,
-                # считаем сохранение успешным на уровне делегирования.
-                print("PersistenceManager: ✅ Game state save delegation finished (individual managers handle commit).")
-
+                    logger.info("PersistenceManager: Saving state for guild %s...", guild_id) # Added
+                    await self._call_manager_save(guild_id, **call_kwargs)
+                logger.info("PersistenceManager: Game state save delegation finished for all specified guilds.") # Changed
             except Exception as e:
-                print(f"PersistenceManager: ❌ Error during game state save delegation via managers: {e}")
-                # Логируем ошибку, но не пытаемся откатывать общую транзакцию, т.к. ее нет в текущей схеме.
-                import traceback
-                print(traceback.format_exc())
-                # TODO: Добавить логику обработки ошибок сохранения (оповещение GM, попытки повтора?)
-                raise # Пробрасываем исключение, чтобы GameManager знал об ошибке
+                logger.error("PersistenceManager: Error during game state save delegation via managers: %s", e, exc_info=True) # Changed
+                raise
 
-
-    # Вспомогательный метод для вызова save_state у всех менеджеров для одной гильдии
-    # ИСПРАВЛЕНО: Сигнатура соответствует вызову
     async def _call_manager_save(self, guild_id: str, **kwargs: Any) -> None:
-         """Вызывает save_state у каждого менеджера, который поддерживает персистентность, для одной гильдии."""
-         # Передаем guild_id и kwargs дальше менеджерам
          call_kwargs = {'guild_id': guild_id, **kwargs}
-
-         # Список кортежей (атрибут менеджера, имя ожидаемого метода)
          managers_to_save = [
-             (self._event_manager, 'save_state'),
-             (self._character_manager, 'save_state'),
-             (self._location_manager, 'save_state'),
-             (self._npc_manager, 'save_state'),
-             (self._item_manager, 'save_state'),
-             (self._combat_manager, 'save_state'),
-             (self._time_manager, 'save_state'),
-             (self._status_manager, 'save_state'),
-             (self._crafting_manager, 'save_state'),
-             (self._economy_manager, 'save_state'),
-             (self._party_manager, 'save_state'),
-             (self._quest_manager, 'save_state'),
-             (self._relationship_manager, 'save_state'),
-             (self._game_log_manager, 'save_state'),
-             (self._dialogue_manager, 'save_state'),
-             (self._skill_manager, 'save_state'), # Added to save list
-             (self._spell_manager, 'save_state'), # Added to save list
-             # TODO: Добавьте другие менеджеры здесь
+             (self._event_manager, 'save_state'), (self._character_manager, 'save_state'),
+             (self._location_manager, 'save_state'), (self._npc_manager, 'save_state'),
+             (self._item_manager, 'save_state'), (self._combat_manager, 'save_state'),
+             (self._time_manager, 'save_state'), (self._status_manager, 'save_state'),
+             (self._crafting_manager, 'save_state'), (self._economy_manager, 'save_state'),
+             (self._party_manager, 'save_state'), (self._quest_manager, 'save_state'),
+             (self._relationship_manager, 'save_state'), (self._game_log_manager, 'save_state'),
+             (self._dialogue_manager, 'save_state'), (self._skill_manager, 'save_state'),
+             (self._spell_manager, 'save_state'),
          ]
-
          for manager_attr, method_name in managers_to_save:
-              manager = manager_attr # type: Optional[Any]
-              # Проверяем наличие менеджера и метода
+              manager = manager_attr
               if manager and hasattr(manager, method_name):
                    try:
-                       # Менеджер сам внутри должен игнорировать ненужные kwargs или рейзить ошибку, если mandatory args не переданы.
-                       # Передаем словарь аргументов через **call_kwargs.
+                       logger.debug("PersistenceManager: Calling %s.%s for guild %s", type(manager).__name__, method_name, guild_id) # Added
                        await getattr(manager, method_name)(**call_kwargs)
                    except Exception as e:
-                       print(f"PersistenceManager: ❌ Error saving state for guild {guild_id} in manager {type(manager).__name__}: {e}")
-                       # Не пробрасываем здесь, чтобы не остановить сохранение других менеджеров/гильдий.
-                       import traceback
-                       print(traceback.format_exc())
-
-              # Опционально: логировать, если менеджер отсутствует, но ожидался
-              # elif manager_attr: # Проверяем, что ссылка на менеджер вообще была (т.е. не None)
-              #     print(f"PersistenceManager: Info: Optional manager {type(manager_attr).__name__} is None. Skipping save for guild {guild_id}.")
+                       logger.error("PersistenceManager: Error saving state for guild %s in manager %s: %s", guild_id, type(manager).__name__, e, exc_info=True) # Changed
+              elif manager is None: # Only log if manager was expected to be there (i.e., not an optional one that's None)
+                  # This check might be too verbose if many managers are optional and often None.
+                  # For core managers, it's a critical issue.
+                  # For now, let's assume optional managers being None is handled by their respective init or not an error here.
+                  pass
 
 
     async def load_game_state(self, guild_ids: List[str], **kwargs: Any) -> None:
-        """
-        Координирует загрузку состояния всех менеджеров для указанных гильдий при запуске бота.
-        Каждый менеджер отвечает за загрузку СВОИХ данных per-guild, используя db_adapter.
-        kwargs: Передаются в load_state менеджеров (напр., time_manager для StatusManager).
-        Этот метод вызывается из GameManager или CommandRouter (GM команды).
-        guild_ids: Список ID гильдий, для которых нужно загрузить состояние.
-        """
         if not guild_ids:
-            print("PersistenceManager: No guild IDs provided for load. Skipping state load.")
-            # TODO: Решите, что делать, если нет гильдий. Возможно, бот должен загрузить глобальное состояние или упасть?
-            # Пока просто ничего не делаем и возвращаемся. GameManager решит, что делать дальше.
+            logger.info("PersistenceManager: No guild IDs provided for load. Skipping state load.") # Changed
             return
+        logger.info("PersistenceManager: Initiating game state load for %s guilds: %s", len(guild_ids), guild_ids) # Changed
 
-        print(f"PersistenceManager: Initiating game state load for {len(guild_ids)} guilds...")
-
-        # Передаем менеджеры и контекст в kwargs для _call_manager_load и _call_manager_rebuild_caches
-        call_kwargs = {**kwargs} # Копируем входящие kwargs
-
-
-        if self._db_service is None or self._db_service.adapter is None: # Changed # Если адаптер БД не был предоставлен
-            print("PersistenceManager: Database service or adapter not provided. Loading placeholder state (simulated loading).")
-            # В режиме без БД, менеджеры должны загрузить свои in-memory заглушки.
-            # Вызываем load_state (они должны сами симулировать/логировать) для каждой гильдии.
+        call_kwargs = {**kwargs}
+        if self._db_service is None or self._db_service.adapter is None:
+            logger.warning("PersistenceManager: Database service or adapter not provided. Loading placeholder state (simulated loading).") # Changed
             for guild_id in guild_ids:
                  await self._call_manager_load(guild_id, **call_kwargs)
-                 # В режиме заглушки rebuild_runtime_caches может быть вызван сразу после load_state для каждой гильдии
-                 await self._call_manager_rebuild_caches(guild_id, **call_kwargs) # Вызываем rebuild после load каждой гильдии
-
-            print("PersistenceManager: Game state load simulation finished.")
-
-
-        else: # Если адаптер БД есть
-            print("PersistenceManager: Database adapter found, attempting to load via managers.")
-            # При загрузке, атомарность не так критична, как при сохранении.
-            # Если загрузка одного менеджера упадет, это не повредит БД,
-            # но может оставить состояние в памяти inconsistent.
-            # Пока просто логируем ошибки загрузки каждого менеджера.
-
+                 await self._call_manager_rebuild_caches(guild_id, **call_kwargs)
+            logger.info("PersistenceManager: Game state load simulation finished.") # Changed
+        else:
+            logger.info("PersistenceManager: Database adapter found, attempting to load via managers.") # Changed
             try:
-                 # Вызываем методы загрузки для каждой гильдии
                  for guild_id in guild_ids:
-                     print(f"PersistenceManager: Loading state for guild {guild_id} via managers...")
-                     await self._call_manager_load(guild_id, **call_kwargs) # Передаем guild_id и kwargs
-                     print(f"PersistenceManager: Load delegation finished for guild {guild_id}.")
-
-
-                 # После загрузки СОСТОЯНИЯ ВСЕХ ГИЛЬДИЙ всеми менеджерами, вызываем rebuild_runtime_caches для каждой гильдии
-                 # Перестройка часто зависит от данных из РАЗНЫХ менеджеров для ОДНОЙ гильдии,
-                 # поэтому лучше загрузить все состояние по гильдиям, а потом пройтись по rebuild.
-                 print("PersistenceManager: Rebuilding runtime caches for loaded guilds...")
+                     logger.info("PersistenceManager: Loading state for guild %s via managers...", guild_id) # Changed
+                     await self._call_manager_load(guild_id, **call_kwargs)
+                     logger.info("PersistenceManager: Load delegation finished for guild %s.", guild_id) # Changed
+                 logger.info("PersistenceManager: Rebuilding runtime caches for loaded guilds...") # Changed
                  for guild_id in guild_ids:
-                      print(f"PersistenceManager: Rebuilding caches for guild {guild_id} via managers...")
-                      await self._call_manager_rebuild_caches(guild_id, **call_kwargs) # Передаем guild_id и kwargs
-                      print(f"PersistenceManager: Rebuild delegation finished for guild {guild_id}.")
-
-
-                 print("PersistenceManager: ✅ Game state loaded successfully (via managers).")
-
-                 # Optional: Log counts after successful load for all guilds
-                 # Это сложнее в многогильдийном режиме без агрегирующих методов в менеджерах.
-                 # Например, CharacterManager в текущей версии кеширует персонажей по гильдиям.
-                 # total_loaded_chars = sum(len(guild_chars) for guild_chars in self._character_manager._characters.values()) if self._character_manager and hasattr(self._character_manager, '_characters') else 0
-                 # print(f"PersistenceManager: Loaded {total_loaded_chars} characters into cache (total across guilds).")
-
-
+                      logger.info("PersistenceManager: Rebuilding caches for guild %s via managers...", guild_id) # Changed
+                      await self._call_manager_rebuild_caches(guild_id, **call_kwargs)
+                      logger.info("PersistenceManager: Rebuild delegation finished for guild %s.", guild_id) # Changed
+                 logger.info("PersistenceManager: Game state loaded successfully (via managers).") # Changed
             except Exception as e:
-                 print(f"PersistenceManager: ❌ CRITICAL ERROR during game state load via managers: {e}")
-                 # КРИТИЧЕСКАЯ ОШИБКА ЗАГРУЗКИ - возможно, нужно остановить бот.
-                 import traceback
-                 print(traceback.format_exc())
-                 # TODO: Добавить логику обработки критических ошибок загрузки (оповещение GM, режим обслуживания?)
-                 raise # Пробрасываем исключение, чтобы GameManager знал об ошибке
+                 logger.critical("PersistenceManager: CRITICAL ERROR during game state load via managers: %s", e, exc_info=True) # Changed
+                 raise
 
-
-    # Вспомогательный метод для вызова load_state у всех менеджеров для одной гильдии
-    # ИСПРАВЛЕНО: Сигнатура соответствует вызову
     async def _call_manager_load(self, guild_id: str, **kwargs: Any) -> None:
-         """Вызывает load_state у каждого менеджера, который поддерживает персистентность, для одной гильдии."""
-         # Передаем guild_id и kwargs дальше менеджерам
          call_kwargs = {'guild_id': guild_id, **kwargs}
-
-         # Список кортежей (атрибут менеджера, имя ожидаемого метода)
          managers_to_load = [
-             (self._event_manager, 'load_state'),
-             (self._character_manager, 'load_state'),
-             (self._location_manager, 'load_state'),
-             (self._npc_manager, 'load_state'),
-             (self._item_manager, 'load_state'),
-             (self._combat_manager, 'load_state'),
-             (self._time_manager, 'load_state'),
-             (self._status_manager, 'load_state'),
-             (self._crafting_manager, 'load_state'),
-             (self._economy_manager, 'load_state'),
-             (self._party_manager, 'load_state'),
-             (self._quest_manager, 'load_state'),
-             (self._relationship_manager, 'load_state'),
-             (self._game_log_manager, 'load_state'),
-             (self._dialogue_manager, 'load_state'),
-             (self._skill_manager, 'load_state'), # Added to load list
-             (self._spell_manager, 'load_state'), # Added to load list
-             # TODO: Добавьте другие менеджеры здесь
+             (self._event_manager, 'load_state'), (self._character_manager, 'load_state'),
+             (self._location_manager, 'load_state'), (self._npc_manager, 'load_state'),
+             (self._item_manager, 'load_state'), (self._combat_manager, 'load_state'),
+             (self._time_manager, 'load_state'), (self._status_manager, 'load_state'),
+             (self._crafting_manager, 'load_state'), (self._economy_manager, 'load_state'),
+             (self._party_manager, 'load_state'), (self._quest_manager, 'load_state'),
+             (self._relationship_manager, 'load_state'), (self._game_log_manager, 'load_state'),
+             (self._dialogue_manager, 'load_state'), (self._skill_manager, 'load_state'),
+             (self._spell_manager, 'load_state'),
          ]
-
          for manager_attr, method_name in managers_to_load:
-              manager = manager_attr # type: Optional[Any]
-              # Проверяем наличие менеджера и метода
+              manager = manager_attr
               if manager and hasattr(manager, method_name):
                    try:
-                        # Менеджер сам внутри должен игнорировать ненужные kwargs или рейзить ошибку.
-                        # Мы передаем guild_id и все kwargs.
-                        # Передаем словарь аргументов через **call_kwargs.
-                        await getattr(manager, method_name)(**call_kwargs)
-                   except Exception as e:
-                       print(f"PersistenceManager: ❌ Error loading state for guild {guild_id} in manager {type(manager).__name__}: {e}")
-                       # Не пробрасываем здесь, чтобы не остановить загрузку других менеджеров/гильдий.
-                       import traceback
-                       print(traceback.format_exc())
-
-              # Опционально: логировать, если менеджер отсутствует, но ожидался
-              # elif manager_attr:
-              #     print(f"PersistenceManager: Info: Optional manager {type(manager_attr).__name__} is None. Skipping load for guild {guild_id}.")
-
-
-    # Вспомогательный метод для вызова rebuild_runtime_caches у всех менеджеров для одной гильдии
-    # ИСПРАВЛЕНО: Сигнатура соответствует вызову
-    async def _call_manager_rebuild_caches(self, guild_id: str, **kwargs: Any) -> None:
-         """Вызывает rebuild_runtime_caches у каждого менеджера, который поддерживает его, для одной гильдии."""
-         # Передаем guild_id и kwargs дальше менеджерам
-         call_kwargs = {'guild_id': guild_id, **kwargs}
-
-         # Список кортежей (атрибут менеджера, имя ожидаемого метода)
-         managers_to_rebuild = [
-             (self._event_manager, 'rebuild_runtime_caches'),
-             (self._character_manager, 'rebuild_runtime_caches'),
-             (self._location_manager, 'rebuild_runtime_caches'),
-             (self._npc_manager, 'rebuild_runtime_caches'),
-             (self._item_manager, 'rebuild_runtime_caches'),
-             (self._combat_manager, 'rebuild_runtime_caches'),
-             (self._time_manager, 'rebuild_runtime_caches'),
-             (self._status_manager, 'rebuild_runtime_caches'),
-             (self._crafting_manager, 'rebuild_runtime_caches'),
-             (self._economy_manager, 'rebuild_runtime_caches'),
-             (self._party_manager, 'rebuild_runtime_caches'),
-             (self._quest_manager, 'rebuild_runtime_caches'),
-             (self._relationship_manager, 'rebuild_runtime_caches'),
-             (self._game_log_manager, 'rebuild_runtime_caches'),
-             (self._dialogue_manager, 'rebuild_runtime_caches'),
-             (self._skill_manager, 'rebuild_runtime_caches'), # Added to rebuild list
-             (self._spell_manager, 'rebuild_runtime_caches'), # Added to rebuild list
-             # TODO: Добавьте другие менеджеры здесь
-         ]
-
-         for manager_attr, method_name in managers_to_rebuild:
-              manager = manager_attr # type: Optional[Any]
-              # Проверяем наличие менеджера и метода
-              if manager and hasattr(manager, method_name):
-                   try:
-                       # Менеджер сам внутри должен использовать guild_id и kwargs для перестройки.
-                       # Передаем словарь аргументов через **call_kwargs.
+                       logger.debug("PersistenceManager: Calling %s.%s for guild %s", type(manager).__name__, method_name, guild_id) # Added
                        await getattr(manager, method_name)(**call_kwargs)
                    except Exception as e:
-                       print(f"PersistenceManager: ❌ Error rebuilding caches for guild {guild_id} in manager {type(manager).__name__}: {e}")
-                       # Не пробрасываем здесь, чтобы не остановить перестройку других менеджеров/гильдий.
-                       import traceback
-                       print(traceback.format_exc())
+                       logger.error("PersistenceManager: Error loading state for guild %s in manager %s: %s", guild_id, type(manager).__name__, e, exc_info=True) # Changed
+              # else: logger.debug for optional managers if needed
 
-              # Опционально: логировать, если менеджер отсутствует, но ожидался
-              # elif manager_attr:
-              #     print(f"PersistenceManager: Info: Optional manager {type(manager_attr).__name__} is None. Skipping rebuild for guild {guild_id}.")
+    async def _call_manager_rebuild_caches(self, guild_id: str, **kwargs: Any) -> None:
+         call_kwargs = {'guild_id': guild_id, **kwargs}
+         managers_to_rebuild = [
+             (self._event_manager, 'rebuild_runtime_caches'), (self._character_manager, 'rebuild_runtime_caches'),
+             (self._location_manager, 'rebuild_runtime_caches'), (self._npc_manager, 'rebuild_runtime_caches'),
+             (self._item_manager, 'rebuild_runtime_caches'), (self._combat_manager, 'rebuild_runtime_caches'),
+             (self._time_manager, 'rebuild_runtime_caches'), (self._status_manager, 'rebuild_runtime_caches'),
+             (self._crafting_manager, 'rebuild_runtime_caches'), (self._economy_manager, 'rebuild_runtime_caches'),
+             (self._party_manager, 'rebuild_runtime_caches'), (self._quest_manager, 'rebuild_runtime_caches'),
+             (self._relationship_manager, 'rebuild_runtime_caches'), (self._game_log_manager, 'rebuild_runtime_caches'),
+             (self._dialogue_manager, 'rebuild_runtime_caches'), (self._skill_manager, 'rebuild_runtime_caches'),
+             (self._spell_manager, 'rebuild_runtime_caches'),
+         ]
+         for manager_attr, method_name in managers_to_rebuild:
+              manager = manager_attr
+              if manager and hasattr(manager, method_name):
+                   try:
+                       logger.debug("PersistenceManager: Calling %s.%s for guild %s", type(manager).__name__, method_name, guild_id) # Added
+                       await getattr(manager, method_name)(**call_kwargs)
+                   except Exception as e:
+                       logger.error("PersistenceManager: Error rebuilding caches for guild %s in manager %s: %s", guild_id, type(manager).__name__, e, exc_info=True) # Changed
+              # else: logger.debug for optional managers if needed
 
-
-    # ... (Дополнительные вспомогательные методы остаются прежними) ...
-
-# Конец класса PersistenceManager
-
-# TODO: Здесь могут быть другие классы менеджеров или хелперы, если они не являются частью GameManager.
-
-print("DEBUG: persistence_manager.py module loaded.")
+logger.debug("DEBUG: persistence_manager.py module loaded.") # Changed
