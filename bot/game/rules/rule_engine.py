@@ -803,6 +803,336 @@ class RuleEngine:
     #  calculate_initiative, apply_equipment_effects, resolve_saving_throw, _get_entity_data_for_check,
     #  _resolve_single_entity_check_roll)
 
+    async def calculate_market_price(
+        self,
+        guild_id: str,
+        location_id: str,
+        item_template_id: str,
+        quantity: float,
+        is_selling_to_market: bool, # Player is selling to NPC/market
+        actor_entity_id: str,
+        actor_entity_type: str, # e.g. "Character"
+        **kwargs: Any
+    ) -> Optional[float]:
+        """
+        Calculates the market price for an item considering various economic factors.
+        """
+        print(f"RuleEngine: calculate_market_price: Called for item '{item_template_id}' (qty: {quantity}) in loc '{location_id}', player selling: {is_selling_to_market}, actor: {actor_entity_id} ({actor_entity_type})")
+
+        economy_rules = self._rules_data.get("economy_rules")
+        if not economy_rules:
+            print("RuleEngine: calculate_market_price: ERROR - 'economy_rules' not found in rules_data.")
+            return None
+
+        item_definitions = self._rules_data.get("item_definitions")
+        if not item_definitions:
+            print("RuleEngine: calculate_market_price: ERROR - 'item_definitions' not found in rules_data.")
+            return None
+
+        item_def = item_definitions.get(str(item_template_id))
+        if not item_def:
+            print(f"RuleEngine: calculate_market_price: ERROR - Item template '{item_template_id}' not found in item_definitions.")
+            return None
+
+        base_price = item_def.get("base_price")
+        if base_price is None or not isinstance(base_price, (int, float)) or base_price < 0:
+            print(f"RuleEngine: calculate_market_price: ERROR - Invalid or missing 'base_price' for item '{item_template_id}'. Found: {base_price}")
+            return None
+
+        current_price_per_unit = float(base_price)
+        print(f"RuleEngine: calculate_market_price: Initial base_price_per_unit: {current_price_per_unit}")
+
+        # 2. Apply Base Multipliers
+        if is_selling_to_market:
+            multiplier = economy_rules.get("base_sell_price_multiplier", 0.75)
+            current_price_per_unit *= multiplier
+            print(f"RuleEngine: calculate_market_price: Applied base_sell_price_multiplier ({multiplier}). Price_per_unit: {current_price_per_unit}")
+        else: # Player is buying from market
+            multiplier = economy_rules.get("base_buy_price_multiplier", 1.25)
+            current_price_per_unit *= multiplier
+            print(f"RuleEngine: calculate_market_price: Applied base_buy_price_multiplier ({multiplier}). Price_per_unit: {current_price_per_unit}")
+
+        # 3. Apply Regional Modifiers
+        regional_modifiers_all = economy_rules.get("regional_price_modifiers", {})
+        regional_mod_for_location = regional_modifiers_all.get(str(location_id))
+
+        if regional_mod_for_location:
+            base_multiplier_for_direction = economy_rules.get("base_sell_price_multiplier", 0.75) if is_selling_to_market else economy_rules.get("base_buy_price_multiplier", 1.25)
+            effective_multiplier = base_multiplier_for_direction
+
+            if is_selling_to_market:
+                sell_adj = regional_mod_for_location.get("sell_price_multiplier_adj", 0.0) # Additive adjustment to the multiplier itself
+                effective_multiplier += sell_adj
+                print(f"RuleEngine: calculate_market_price: Regional sell_price_multiplier_adj: {sell_adj}. Base mult: {base_multiplier_for_direction}, Effective mult: {effective_multiplier}")
+            else: # Buying from market
+                buy_adj = regional_mod_for_location.get("buy_price_multiplier_adj", 0.0)
+                effective_multiplier += buy_adj
+                print(f"RuleEngine: calculate_market_price: Regional buy_price_multiplier_adj: {buy_adj}. Base mult: {base_multiplier_for_direction}, Effective mult: {effective_multiplier}")
+
+            # Re-calculate price using the adjusted effective multiplier based on the original base_price
+            # (Original base_price * effective_multiplier) vs (current_price_per_unit * adjustment_factor)
+            # The requirement says "E.g., if base buy multiplier is 1.25 and buy_factor_adj is -0.1, the effective multiplier becomes 1.15."
+            # This implies the adjustment is to the multiplier, then applied to the original base price.
+            current_price_per_unit = float(base_price) * effective_multiplier
+            print(f"RuleEngine: calculate_market_price: After regional multiplier adjustment, price_per_unit: {current_price_per_unit}")
+
+            # Category-specific regional modifiers
+            item_category = item_def.get("category")
+            if item_category:
+                category_mods = regional_mod_for_location.get("item_category_multipliers", {}).get(str(item_category))
+                if category_mods:
+                    # These are defined as _adj as well, so they adjust the effective_multiplier further.
+                    if is_selling_to_market:
+                        sell_cat_adj = category_mods.get("sell_price_multiplier_adj", 0.0)
+                        effective_multiplier += sell_cat_adj
+                        print(f"RuleEngine: calculate_market_price: Regional category '{item_category}' sell_adj: {sell_cat_adj}. New Effective mult: {effective_multiplier}")
+                    else:
+                        buy_cat_adj = category_mods.get("buy_price_multiplier_adj", 0.0)
+                        effective_multiplier += buy_cat_adj
+                        print(f"RuleEngine: calculate_market_price: Regional category '{item_category}' buy_adj: {buy_cat_adj}. New Effective mult: {effective_multiplier}")
+
+                    current_price_per_unit = float(base_price) * effective_multiplier # Recalculate with new effective_multiplier
+                    print(f"RuleEngine: calculate_market_price: After category-specific regional adjustment, price_per_unit: {current_price_per_unit}")
+
+        # 4. Apply Supply/Demand Modifiers
+        economy_manager = kwargs.get("economy_manager")
+        supply_demand_rules = economy_rules.get("supply_demand_rules")
+        if economy_manager and supply_demand_rules and hasattr(economy_manager, 'get_market_inventory_level_ratio'):
+            # Assuming get_market_inventory_level_ratio returns a value like 0.0 (empty) to 1.0 (ideal/target) to 2.0 (oversupplied)
+            # This method needs to be implemented in EconomyManager. For now, let's assume it exists.
+            # It might take (guild_id, location_id, item_template_id) and return this ratio.
+            # A simpler version could be get_current_stock and then we calculate ratio here based on some target stock.
+            # Let's assume get_market_inventory_level_ratio exists for simplicity here.
+
+            # Placeholder: Ideal or target stock might be defined in item_def or globally in supply_demand_rules
+            # For now, we rely on a conceptual 'inventory_level_ratio' from economy_manager.
+            # This ratio would be (current_stock / target_stock).
+
+            inventory_level_ratio = await economy_manager.get_market_inventory_level_ratio(guild_id, location_id, item_template_id)
+
+            if inventory_level_ratio is not None:
+                print(f"RuleEngine: calculate_market_price: Supply/Demand - Inventory level ratio: {inventory_level_ratio}")
+                low_supply_thresh = supply_demand_rules.get("low_supply_threshold_percent", 0.2)
+                high_supply_thresh = supply_demand_rules.get("high_supply_threshold_percent", 0.8)
+
+                price_adjustment_factor = 1.0
+
+                if inventory_level_ratio < low_supply_thresh: # Low supply -> price increases (player buying higher, selling higher)
+                    markup_percent_range = supply_demand_rules.get("min_supply_markup_percent", 200.0) - 100.0 # e.g. 200% total price means 100% markup
+                    # Simple linear interpolation for markup:
+                    # Factor = 1.0 + ( (low_supply_thresh - inventory_level_ratio) / low_supply_thresh ) * (markup_percent_range / 100.0)
+                    # Ensure inventory_level_ratio isn't zero to avoid division by zero if low_supply_thresh is used as denominator.
+                    # If low_supply_thresh is 0.2, and ratio is 0.1: (0.1 / 0.2) * markup_range = 0.5 * markup_range
+                    # Max markup when ratio is 0.
+                    clamped_ratio = max(0.0, inventory_level_ratio)
+                    markup_factor = ( (low_supply_thresh - clamped_ratio) / low_supply_thresh ) if low_supply_thresh > 0 else 1.0
+                    price_adjustment_factor = 1.0 + (markup_factor * (markup_percent_range / 100.0))
+                    print(f"RuleEngine: calculate_market_price: Supply/Demand - LOW supply. Markup factor: {price_adjustment_factor}")
+
+                elif inventory_level_ratio > high_supply_thresh: # High supply -> price decreases
+                    discount_percent_range = supply_demand_rules.get("max_supply_discount_percent", 50.0) # e.g. 50% discount means price is 0.5 of normal
+                    # Simple linear interpolation for discount:
+                    # Factor = 1.0 - ( (inventory_level_ratio - high_supply_thresh) / (SomeMaxPossibleRatio - high_supply_thresh) ) * (discount_percent_range / 100.0)
+                    # Assume MaxPossibleRatio is e.g. 2.0 (twice the target stock) for full discount application range.
+                    # Or, more simply, scale up to high_supply_thresh + (1-high_supply_thresh) = 1.0 as the point of max discount application.
+                    # Max discount when ratio is very high (e.g., 1.0 or ideal_stock_multiplier_for_max_discount).
+                    # Let's say max discount is applied when ratio is high_supply_thresh + (e.g. 0.5).
+                    # (inventory_level_ratio - high_supply_thresh) / ( (high_supply_thresh + 0.5) - high_supply_thresh )
+                    # (inventory_level_ratio - high_supply_thresh) / 0.5
+                    # This needs a defined "max_ratio_for_full_discount" or similar in rules.
+                    # For now, let's use a simpler scaling:
+                    # If high_supply_thresh is 0.8, and ratio is 1.0 (meaning 100% of target stock):
+                    # (1.0 - 0.8) / (1.0 - 0.8) - this is not good.
+                    # Let's assume discount_percent_range is the reduction.
+                    # If inventory_level_ratio is higher than high_supply_thresh, apply discount.
+                    # Scaled effect: (inventory_level_ratio - high_supply_thresh) / ( (let's say 1.5 * high_supply_thresh) - high_supply_thresh )
+                    # For now, a simpler linear scale from high_supply_threshold to a conceptual "max_relevant_supply_ratio" (e.g., 2.0)
+                    max_relevant_supply_ratio = high_supply_thresh * 1.5 # Example: 50% above high threshold for full effect
+                    if inventory_level_ratio > max_relevant_supply_ratio : inventory_level_ratio = max_relevant_supply_ratio # Cap effect
+
+                    if max_relevant_supply_ratio > high_supply_thresh: # Avoid division by zero
+                        discount_factor = (inventory_level_ratio - high_supply_thresh) / (max_relevant_supply_ratio - high_supply_thresh)
+                        price_adjustment_factor = 1.0 - (discount_factor * (discount_percent_range / 100.0))
+                        print(f"RuleEngine: calculate_market_price: Supply/Demand - HIGH supply. Discount factor: {price_adjustment_factor}")
+                    else:
+                        price_adjustment_factor = 1.0 - (discount_percent_range / 100.0) # Apply full discount if threshold is met and range is tiny/zero
+                        print(f"RuleEngine: calculate_market_price: Supply/Demand - HIGH supply (max discount due to config). Discount factor: {price_adjustment_factor}")
+
+
+                current_price_per_unit *= price_adjustment_factor
+                print(f"RuleEngine: calculate_market_price: After Supply/Demand adjustment, price_per_unit: {current_price_per_unit}")
+
+        # 5. Apply Relationship Modifiers
+        relationship_manager = kwargs.get("relationship_manager")
+        location_manager = kwargs.get("location_manager") # To find trader_entity
+
+        trader_entity_id: Optional[str] = None
+        trader_entity_type: Optional[str] = None
+
+        if location_manager and hasattr(location_manager, 'get_location'):
+            location_obj = await location_manager.get_location(guild_id, location_id)
+            if location_obj:
+                # Assuming Location object has owner_id and owner_type (e.g. FactionID, NPCID)
+                if hasattr(location_obj, 'owner_id') and getattr(location_obj, 'owner_id'):
+                    trader_entity_id = str(getattr(location_obj, 'owner_id'))
+                    trader_entity_type = str(getattr(location_obj, 'owner_type', "Faction")) # Default to Faction if type not specified
+                    print(f"RuleEngine: calculate_market_price: Trader identified from location owner: {trader_entity_id} ({trader_entity_type})")
+
+        # Allow direct override from kwargs if specific NPC trader is involved not tied to location ownership
+        trader_entity_id = kwargs.get('trader_entity_id', trader_entity_id)
+        trader_entity_type = kwargs.get('trader_entity_type', trader_entity_type)
+
+        if relationship_manager and trader_entity_id and trader_entity_type and hasattr(relationship_manager, 'get_relationship_strength'):
+            relationship_strength = await relationship_manager.get_relationship_strength(
+                guild_id, actor_entity_id, actor_entity_type, trader_entity_id, trader_entity_type
+            )
+            print(f"RuleEngine: calculate_market_price: Relationship strength with {trader_entity_id} ({trader_entity_type}): {relationship_strength}")
+
+            rel_influence_rules = economy_rules.get("relationship_price_influence", {})
+            tiers = rel_influence_rules.get("trading_discount_per_tier", [])
+
+            best_tier_effect = None
+            # Tiers should be sorted by threshold, or we find the best applicable one.
+            # Assuming tiers are defined in a way that higher thresholds are more impactful.
+            # Find the highest threshold tier that the current relationship_strength meets.
+            applicable_tiers = [tier for tier in tiers if relationship_strength >= tier.get("relationship_threshold", float('-inf'))]
+            if applicable_tiers:
+                # Sort by threshold descending to get the "best" applicable tier
+                applicable_tiers.sort(key=lambda t: t.get("relationship_threshold", float('-inf')), reverse=True)
+                best_tier_effect = applicable_tiers[0]
+
+            if best_tier_effect:
+                print(f"RuleEngine: calculate_market_price: Applying relationship tier: {best_tier_effect.get('tier_name_i18n', {}).get('en_US', 'Unnamed Tier')}")
+                price_adj_percentage = 0.0
+                if is_selling_to_market: # Player selling, wants higher price from good relationship (sell_bonus_percent)
+                    price_adj_percentage += best_tier_effect.get("sell_bonus_percent", 0.0)
+                    price_adj_percentage -= best_tier_effect.get("sell_penalty_percent", 0.0) # if defined for negative rel
+                else: # Player buying, wants lower price from good relationship (buy_discount_percent)
+                    price_adj_percentage -= best_tier_effect.get("buy_discount_percent", 0.0)
+                    price_adj_percentage += best_tier_effect.get("buy_markup_percent", 0.0) # if defined for negative rel
+
+                current_price_per_unit *= (1 + (price_adj_percentage / 100.0))
+                print(f"RuleEngine: calculate_market_price: After relationship adjustment ({price_adj_percentage}%), price_per_unit: {current_price_per_unit}")
+
+        # 6. Apply Skill/Reputation Modifiers
+        # This requires fetching the actor_entity (e.g. Character object) to get skills/reputations
+        skill_rep_rules = economy_rules.get("skill_reputation_price_influence", {})
+
+        # Actor might be a Character, potentially fetched via CharacterManager
+        character_manager = kwargs.get("character_manager")
+        actor_entity_obj = None
+        if character_manager and actor_entity_type == "Character" and hasattr(character_manager, 'get_character'):
+            actor_entity_obj = await character_manager.get_character(guild_id, actor_entity_id)
+
+        if actor_entity_obj and skill_rep_rules:
+            # Bartering Skill
+            bartering_rules = skill_rep_rules.get("bartering_skill_influence")
+            if bartering_rules and hasattr(actor_entity_obj, 'skills'): # Assuming actor_entity_obj has a 'skills' dict/attr
+                skill_id = bartering_rules.get("skill_id", "bartering")
+                actor_skills = getattr(actor_entity_obj, 'skills', {}) # e.g. {"bartering": 10, "stealth": 5}
+                skill_level = actor_skills.get(skill_id, 0)
+
+                if skill_level > 0:
+                    total_skill_effect_percent = 0.0
+                    if is_selling_to_market:
+                        bonus_per_point = bartering_rules.get("sell_bonus_percent_per_skill_point", 0.0)
+                        max_bonus = bartering_rules.get("max_total_sell_bonus_percent", float('inf'))
+                        total_skill_effect_percent = min(skill_level * bonus_per_point, max_bonus)
+                    else: # Buying from market
+                        discount_per_point = bartering_rules.get("buy_discount_percent_per_skill_point", 0.0)
+                        max_discount = bartering_rules.get("max_total_discount_percent", float('inf'))
+                        total_skill_effect_percent = -min(skill_level * discount_per_point, max_discount) # Negative for discount
+
+                    current_price_per_unit *= (1 + (total_skill_effect_percent / 100.0))
+                    print(f"RuleEngine: calculate_market_price: After bartering skill '{skill_id}' (lvl {skill_level}, effect {total_skill_effect_percent}%), price_per_unit: {current_price_per_unit}")
+
+            # Faction Reputation (assuming actor_entity_obj has faction reputations and trader has a faction)
+            # This part requires knowing the trader's faction_id.
+            # Let's assume trader_entity_id could be a faction_id if trader_entity_type was "Faction".
+            # Or, if trader is an NPC, that NPC needs a faction_id attribute.
+            # For now, this part will be simplified.
+
+            # trader_faction_id = None
+            # if trader_entity_type == "Faction": trader_faction_id = trader_entity_id
+            # elif trader_entity_type == "NPC": # Need to get NPC's faction
+            #    npc_manager = kwargs.get("npc_manager")
+            #    if npc_manager and hasattr(npc_manager, 'get_npc'):
+            #        npc_trader = await npc_manager.get_npc(guild_id, trader_entity_id)
+            #        if npc_trader and hasattr(npc_trader, 'faction_id'):
+            #            trader_faction_id = getattr(npc_trader, 'faction_id')
+
+            # if trader_faction_id and hasattr(actor_entity_obj, 'reputations'):
+            #    faction_rep_rules = skill_rep_rules.get("faction_reputation_tiers", [])
+            #    actor_reputations = getattr(actor_entity_obj, 'reputations', {}) # e.g. {"merchants_guild": "member_plus"}
+            #    actor_rep_tier_with_trader_faction = actor_reputations.get(trader_faction_id)
+
+            #    if actor_rep_tier_with_trader_faction:
+            #        for rep_tier_rule in faction_rep_rules:
+            #            if rep_tier_rule.get("faction_id") == trader_faction_id and \
+            #               rep_tier_rule.get("reputation_tier_name") == actor_rep_tier_with_trader_faction:
+            #                rep_effect_percent = 0.0
+            #                if is_selling_to_market:
+            #                    rep_effect_percent += rep_tier_rule.get("sell_bonus_percent", 0.0)
+            #                else:
+            #                    rep_effect_percent -= rep_tier_rule.get("buy_discount_percent", 0.0)
+            #                current_price_per_unit *= (1 + (rep_effect_percent / 100.0))
+            #                print(f"RuleEngine: calculate_market_price: After faction reputation '{trader_faction_id}' tier '{actor_rep_tier_with_trader_faction}' effect ({rep_effect_percent}%), price_per_unit: {current_price_per_unit}")
+            #                break # Applied one faction rep tier effect for the trader's faction
+
+        # 7. Final Price
+        final_total_price = current_price_per_unit * quantity
+        final_total_price = max(0, final_total_price) # Ensure price is not negative
+
+        print(f"RuleEngine: calculate_market_price: Final calculated total price for quantity {quantity}: {final_total_price} (per unit: {final_total_price/quantity if quantity else 0})")
+        return float(final_total_price)
+
+    async def process_economy_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None:
+        """
+        Processes economic updates for a game tick, such as restocking markets,
+        adjusting demand/supply effects, etc.
+        This is a placeholder for more complex rule-driven economic simulation.
+        """
+        guild_id_str = str(guild_id)
+        print(f"RuleEngine: process_economy_tick called for guild '{guild_id_str}', game_time_delta: {game_time_delta}s.")
+
+        economy_rules = self._rules_data.get("economy_rules")
+        if not economy_rules:
+            print(f"RuleEngine: process_economy_tick: No 'economy_rules' found for guild '{guild_id_str}'. Skipping.")
+            return
+
+        economy_manager = kwargs.get("economy_manager")
+        if not economy_manager:
+            print(f"RuleEngine: process_economy_tick: 'economy_manager' not found in kwargs. Cannot process economy tick for guild '{guild_id_str}'.")
+            return
+
+        # Placeholder for actual tick processing logic
+        print(f"RuleEngine: process_economy_tick: Placeholder for guild '{guild_id_str}'. Would access 'economy_rules.supply_demand_rules' for restocking intervals, amounts, etc.")
+        print(f"RuleEngine: process_economy_tick: Would also check for rules on item consumption, demand shifts, or global price adjustments.")
+
+        # Example of what detailed logic might involve (conceptual):
+        # supply_demand_rules = economy_rules.get("supply_demand_rules", {})
+        # restock_interval_hours = supply_demand_rules.get("restock_cycle_hours")
+        #
+        # if restock_interval_hours:
+        #     # This would require EconomyManager to store market data with timestamps or for RuleEngine to maintain such state.
+        #     # For each market in economy_manager for the guild:
+        #     #   For each item_template_id in market:
+        #     #     Fetch item_def for target_stock_level (needs to be added to item_def)
+        #     #     current_stock = market_inventory.get(item_template_id)
+        #     #     if time_since_last_restock > restock_interval_hours and current_stock < target_stock_level:
+        #     #         restock_amount = calculate_restock_amount(...)
+        #     #         await economy_manager.add_items_to_market(guild_id_str, location_id, {item_template_id: restock_amount}, **kwargs)
+        #     #         Update last_restock_timestamp for this item/market
+        #     pass
+
+        # For now, no actual modifications are made.
+        # This method should be expanded when specific economic simulation rules are defined.
+        if not economy_rules.get("supply_demand_rules"):
+            print(f"RuleEngine: process_economy_tick: No 'supply_demand_rules' found in 'economy_rules' for guild '{guild_id_str}'. No restocking or detailed simulation will occur.")
+
+        print(f"RuleEngine: process_economy_tick completed for guild '{guild_id_str}'.")
+
+
 print("DEBUG: rule_engine.py module defined.")
 
 
