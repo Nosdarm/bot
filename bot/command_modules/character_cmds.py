@@ -4,12 +4,15 @@ from __future__ import annotations
 import discord
 from discord import app_commands
 from discord.ext import commands
+import json # Added
 
 from typing import TYPE_CHECKING, Optional, Literal
 
 if TYPE_CHECKING:
-    from bot.bot_core import BotCore
+    from bot.bot_core import BotCore # Assuming BotCore is the correct type for bot
+    from bot.game.managers.game_manager import GameManager
     from bot.game.managers.character_manager import CharacterManager
+    from bot.game.models.character import Character # Added
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.services.notification_service import NotificationService
     from bot.game.rules.rule_engine import RuleEngine # To access character_development_rules
@@ -135,6 +138,77 @@ class CharacterDevelopmentCog(commands.Cog):
         if success:
             await self.notification_service.send_notification(discord_user_id, feedback_message)
         await interaction.followup.send(feedback_message, ephemeral=True)
+
+    @app_commands.command(name="stats", description="Показывает характеристики вашего персонажа.")
+    async def cmd_stats(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        guild_id = str(interaction.guild_id)
+        discord_user_id = interaction.user.id
+
+        if not self.character_manager:
+            await interaction.followup.send("Character manager is not available.", ephemeral=True)
+            return
+
+        char: Optional["Character"] = self.character_manager.get_character_by_discord_id(guild_id, discord_user_id)
+
+        if not char:
+            await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
+            return
+
+        # Trigger stats recalculation
+        await self.character_manager.trigger_stats_recalculation(guild_id, char.id)
+
+        # Re-fetch character to get the latest data
+        char = self.character_manager.get_character(guild_id, char.id)
+        if not char:
+            await interaction.followup.send("Ошибка при обновлении данных персонажа. Попробуйте еще раз.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=f"Статистика: {getattr(char, 'name', 'Безымянный')}",
+            color=discord.Color.blue() # You can choose any color
+        )
+
+        embed.add_field(name="Имя", value=getattr(char, 'name', 'N/A'), inline=True)
+        embed.add_field(name="Уровень", value=str(getattr(char, 'level', 1)), inline=True)
+        embed.add_field(name="Опыт", value=str(getattr(char, 'xp', 0)), inline=True)
+        embed.add_field(name="Непотраченный опыт", value=str(getattr(char, 'unspent_xp', 0)), inline=True)
+
+
+        # Base Stats
+        base_stats_str = []
+        base_stats_data = getattr(char, 'stats', {})
+        if base_stats_data:
+            for stat_name, stat_value in base_stats_data.items():
+                base_stats_str.append(f"**{stat_name.capitalize()}**: {stat_value}")
+            embed.add_field(name="Базовые Характеристики", value="\n".join(base_stats_str) or "Нет данных", inline=False)
+        else:
+            embed.add_field(name="Базовые Характеристики", value="Нет данных", inline=False)
+
+        # Effective Stats
+        effective_stats_str = []
+        effective_stats_json = getattr(char, 'effective_stats_json', '{}')
+        try:
+            effective_stats_data = json.loads(effective_stats_json)
+            if effective_stats_data:
+                for stat_name, stat_value in effective_stats_data.items():
+                    # You might want to map keys to more readable names if needed
+                    readable_name = stat_name.replace("_", " ").capitalize()
+                    effective_stats_str.append(f"**{readable_name}**: {stat_value}")
+                embed.add_field(name="Эффективные Характеристики", value="\n".join(effective_stats_str) or "Нет данных", inline=False)
+            else:
+                embed.add_field(name="Эффективные Характеристики", value="Нет данных (не рассчитаны)", inline=False)
+        except json.JSONDecodeError:
+            embed.add_field(name="Эффективные Характеристики", value="Ошибка при чтении эффективных характеристик.", inline=False)
+
+        # HP and other vitals from effective_stats if available, or direct attributes
+        current_hp = getattr(char, 'hp', 'N/A')
+        max_hp = effective_stats_data.get('max_hp', getattr(char, 'max_health', 'N/A')) # Prefer effective max_hp
+        embed.add_field(name="Здоровье", value=f"{current_hp} / {max_hp}", inline=True)
+
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
 
 # Setup function for the cog
 async def setup(bot: BotCore):

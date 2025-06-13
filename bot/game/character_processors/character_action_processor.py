@@ -6,6 +6,7 @@ import uuid
 import traceback
 import asyncio
 import logging
+logger = logging.getLogger(__name__) # Added
 from collections import defaultdict
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union
 
@@ -64,7 +65,7 @@ class CharacterActionProcessor:
                  equipment_manager: Optional[EquipmentManager] = None,
                  inventory_manager: Optional[InventoryManager] = None, # Added
                 ):
-        print("Initializing CharacterActionProcessor...")
+        logger.info("Initializing CharacterActionProcessor...") # Changed
         self._character_manager = character_manager
         self._send_callback_factory = send_callback_factory
         self._game_log_manager = game_log_manager
@@ -84,7 +85,7 @@ class CharacterActionProcessor:
         self._equipment_manager = equipment_manager
 
         self.active_character_actions: Dict[str, Dict[str, Set[str]]] = defaultdict(lambda: defaultdict(set))
-        print("CharacterActionProcessor initialized.")
+        logger.info("CharacterActionProcessor initialized.") # Changed
 
     # ... (is_busy, start_action, add_action_to_queue, process_tick, complete_action, _notify_character methods remain unchanged) ...
     def is_busy(self, guild_id: str, character_id: str) -> bool:
@@ -99,24 +100,24 @@ class CharacterActionProcessor:
         modified_entities: List[Any] = []
         guild_id_from_context = kwargs.get('guild_id')
         if not guild_id_from_context:
-            print(f"CharacterActionProcessor: CRITICAL: guild_id not in context for start_action of char {character_id}.")
+            logger.critical(f"CharacterActionProcessor: CRITICAL: guild_id not in context for start_action of char {character_id}.") # Changed
             await self._notify_character("unknown_guild_FIXME", character_id, "Internal error: Guild context missing for action.")
             return {"success": False, "modified_entities": modified_entities, "message": "Internal error: Guild context missing."}
 
         guild_id = str(guild_id_from_context)
         char = self._character_manager.get_character(guild_id=guild_id, character_id=character_id)
         if not char:
-             print(f"CharacterActionProcessor: Error starting action: Character {character_id} not found in guild {guild_id}.")
+             logger.error(f"CharacterActionProcessor: Error starting action: Character {character_id} not found in guild {guild_id}.") # Changed
              return {"success": False, "modified_entities": modified_entities}
 
         action_type = action_data.get('type')
         if not action_type:
-             print(f"CharacterActionProcessor: Error starting action: action_data is missing 'type'.")
+             logger.error(f"CharacterActionProcessor: Error starting action: action_data is missing 'type'.") # Changed
              await self._notify_character(guild_id, character_id, f"❌ Не удалось начать действие: не указан тип действия.")
              return {"success": False, "modified_entities": modified_entities}
 
         if self.is_busy(guild_id, character_id):
-             print(f"CharacterActionProcessor: Character {character_id} is busy. Cannot start new action directly.")
+             logger.warning(f"CharacterActionProcessor: Character {character_id} is busy. Cannot start new action directly.") # Changed
              await self._notify_character(guild_id, character_id, f"❌ Ваш персонаж занят и не может начать действие '{action_type}'.")
              return {"success": False, "modified_entities": modified_entities}
 
@@ -130,23 +131,22 @@ class CharacterActionProcessor:
                   kwargs_for_calc = {**kwargs, 'guild_id': guild_id}
                   calculated_duration = await rule_engine.calculate_action_duration(action_type, character=char, action_context=action_data, **kwargs_for_calc)
              except Exception as e:
-                  print(f"CharacterActionProcessor: Error calculating duration for action type '{action_type}' for {character_id}: {e}")
-                  traceback.print_exc()
+                  logger.error(f"CharacterActionProcessor: Error calculating duration for action type '{action_type}' for {character_id}: {e}", exc_info=True) # Changed
                   calculated_duration = action_data.get('total_duration', 0.0)
         try:
             action_data['total_duration'] = float(calculated_duration) if calculated_duration is not None else 0.0
         except (ValueError, TypeError):
-             print(f"CharacterActionProcessor: Warning: Calculated duration is not a valid number for action type '{action_type}'. Setting to 0.0.")
+             logger.warning(f"CharacterActionProcessor: Calculated duration is not a valid number for action type '{action_type}'. Setting to 0.0.") # Changed
              action_data['total_duration'] = 0.0
 
         if action_type == 'move':
              target_location_id = action_data.get('target_location_id')
              if not target_location_id:
-                  print(f"CharacterActionProcessor: Error starting move action: Missing target_location_id in action_data.")
+                  logger.error(f"CharacterActionProcessor: Error starting move action: Missing target_location_id in action_data.") # Changed
                   await self._notify_character(guild_id, character_id, f"❌ Ошибка перемещения: не указана целевая локация.")
                   return {"success": False, "modified_entities": modified_entities}
              if location_manager and hasattr(location_manager, 'get_location_static') and location_manager.get_location_static(guild_id, target_location_id) is None:
-                 print(f"CharacterActionProcessor: Error starting move action: Target location '{target_location_id}' does not exist.")
+                 logger.error(f"CharacterActionProcessor: Error starting move action: Target location '{target_location_id}' does not exist.") # Changed
                  await self._notify_character(guild_id, character_id, f"❌ Ошибка перемещения: локация '{target_location_id}' не существует.")
                  return {"success": False, "modified_entities": modified_entities}
              if 'callback_data' not in action_data or not isinstance(action_data['callback_data'], dict):
@@ -170,7 +170,7 @@ class CharacterActionProcessor:
 
         if char not in modified_entities: modified_entities.append(char)
         success_message = f"Character {getattr(char, 'name', character_id)} started action: {action_type}."
-        print(f"CharacterActionProcessor: {success_message} Duration: {action_data['total_duration']:.1f}. Marked as dirty.")
+        logger.info(f"CharacterActionProcessor: {success_message} Duration: {action_data['total_duration']:.1f}. Marked as dirty.") # Changed
         if self._game_log_manager:
             await self._game_log_manager.log_event(
                 guild_id=guild_id, actor_id=character_id, event_type="PLAYER_ACTION_START",
@@ -473,8 +473,7 @@ class CharacterActionProcessor:
             return {"success": True, "message": f"Вы атаковали {target_entity_data.get('name', target_id) if target_entity_data else target_id}. Результаты смотрите в логе боя.", "state_changed": True}
 
         except Exception as e:
-            print(f"CAP.handle_attack_action: Error calling CombatManager: {e}")
-            traceback.print_exc()
+            logger.error(f"CAP.handle_attack_action: Error calling CombatManager: {e}", exc_info=True) # Changed
             # Ensure GameLogManager is available before trying to log
             if self._game_log_manager:
                  await self._game_log_manager.log_error(
@@ -502,7 +501,7 @@ class CharacterActionProcessor:
             slot_id_preference = action_data["action_params"]["slot_id"]
         if not item_instance_id:
             return {"success": False, "message": "Не указан предмет для экипировки (требуется ID экземпляра).", "state_changed": False}
-        print(f"{log_prefix} Attempting to equip item_instance_id: {item_instance_id} to slot: {slot_id_preference}")
+        logger.info(f"{log_prefix} Attempting to equip item_instance_id: {item_instance_id} to slot: {slot_id_preference}") # Changed
         return await self._equipment_manager.equip_item(guild_id, character.id, item_instance_id, slot_id_preference, rules_config)
 
     async def handle_unequip_item_action(self, character: Character, guild_id: str, action_data: Dict[str, Any], rules_config: "CoreGameRulesConfig") -> Dict[str, Any]:
@@ -519,7 +518,7 @@ class CharacterActionProcessor:
             slot_id_to_unequip = action_data["action_params"]["slot_id"]
         if not slot_id_to_unequip:
             return {"success": False, "message": "Не указан слот для снятия предмета.", "state_changed": False}
-        print(f"{log_prefix} Attempting to unequip item from slot: {slot_id_to_unequip}")
+        logger.info(f"{log_prefix} Attempting to unequip item from slot: {slot_id_to_unequip}") # Changed
         return await self._equipment_manager.unequip_item(guild_id, character.id, slot_id_to_unequip, rules_config)
 
     async def handle_drop_item_action(self, character: Character, guild_id: str, action_data: Dict[str, Any], rules_config: "CoreGameRulesConfig") -> Dict[str, Any]:
@@ -541,7 +540,7 @@ class CharacterActionProcessor:
         if not item_instance_id:
             return {"success": False, "message": "Не указан предмет для выбрасывания (требуется ID экземпляра).", "state_changed": False}
 
-        print(f"{log_prefix} Attempting to drop item_instance_id: {item_instance_id}")
+        logger.info(f"{log_prefix} Attempting to drop item_instance_id: {item_instance_id}") # Changed
 
         item_to_drop_data = await self._inventory_manager.get_item_instance_by_id(guild_id, character.id, item_instance_id)
         if not item_to_drop_data:
@@ -555,9 +554,8 @@ class CharacterActionProcessor:
 
 
         if not item_template_id:
-             print(f"{log_prefix} Error: Item instance {item_instance_id} has no template_id.")
+             logger.error(f"{log_prefix} Item instance {item_instance_id} has no template_id.") # Changed
              return {"success": False, "message": "Ошибка данных предмета: отсутствует ID шаблона.", "state_changed": False}
-
 
         removed_success = await self._inventory_manager.remove_item(
             guild_id,
@@ -574,7 +572,7 @@ class CharacterActionProcessor:
         if not current_location_id: # Should not happen if character is valid
              # Attempt to put item back if location is invalid? Or let it be removed.
              # For now, assume location is valid.
-             print(f"{log_prefix} Character {character.id} has no valid location_id. Cannot drop item.")
+             logger.error(f"{log_prefix} Character {character.id} has no valid location_id. Cannot drop item.") # Changed
              # Try to add item back to inventory to prevent loss
              await self._inventory_manager.add_item(guild_id, character.id, item_template_id, item_quantity, item_data=dropped_item_copy)
              return {"success": False, "message": "Ошибка: ваше местоположение не определено, некуда выбрасывать предмет.", "state_changed": False}
@@ -590,7 +588,7 @@ class CharacterActionProcessor:
 
         if not added_to_loc_success:
             # Critical: item removed from inventory but not added to location. Try to give it back.
-            print(f"{log_prefix} CRITICAL: Failed to add '{item_name}' to location {current_location_id}. Attempting to return to inventory.")
+            logger.critical(f"{log_prefix} Failed to add '{item_name}' to location {current_location_id}. Attempting to return to inventory.") # Changed
             await self._inventory_manager.add_item(guild_id, character.id, item_template_id, item_quantity, item_data=dropped_item_copy)
             # Mark character dirty again as inventory changed back
             self._character_manager.mark_character_dirty(guild_id, character.id)

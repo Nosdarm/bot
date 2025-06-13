@@ -31,6 +31,8 @@ if TYPE_CHECKING:
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.combat_manager import CombatManager
     from bot.game.managers.item_manager import ItemManager
+    from bot.game.managers.inventory_manager import InventoryManager # Added
+    from bot.game.managers.equipment_manager import EquipmentManager # Added
     from bot.game.managers.time_manager import TimeManager
     from bot.game.managers.status_manager import StatusManager
     from bot.game.managers.crafting_manager import CraftingManager
@@ -92,6 +94,8 @@ class GameManager:
         self.event_manager: Optional["EventManager"] = None
         self.character_manager: Optional["CharacterManager"] = None
         self.item_manager: Optional["ItemManager"] = None
+        self.inventory_manager: Optional["InventoryManager"] = None # Added
+        self.equipment_manager: Optional["EquipmentManager"] = None # Added
         self.status_manager: Optional["StatusManager"] = None
         self.combat_manager: Optional["CombatManager"] = None
         self.crafting_manager: Optional["CraftingManager"] = None
@@ -207,7 +211,7 @@ class GameManager:
         from bot.game.managers.time_manager import TimeManager
         from bot.game.managers.location_manager import LocationManager
         from bot.game.managers.event_manager import EventManager
-        from bot.game.managers.character_manager import CharacterManager
+        # CharacterManager import moved to _initialize_dependent_managers
         from bot.services.openai_service import OpenAIService
 
         await self._load_or_initialize_rules_config()
@@ -218,104 +222,307 @@ class GameManager:
             oset = self._settings.get('openai_settings', {})
             self.openai_service = OpenAIService(api_key=oset.get('api_key'), model=oset.get('model'), default_max_tokens=oset.get('default_max_tokens'))
             if not self.openai_service.is_available(): self.openai_service = None
-        except Exception as e: self.openai_service = None; logger.warning("GameManager: Failed OpenAIService init (%s)", e, exc_info=True) # Changed
+        except Exception as e: self.openai_service = None; logger.warning("GameManager: Failed OpenAIService init (%s)", e, exc_info=True)
 
         self.event_manager = EventManager(db_service=self.db_service, settings=self._settings.get('event_settings', {}), openai_service=self.openai_service)
-        self.character_manager = CharacterManager(db_service=self.db_service, settings=self._settings, location_manager=self.location_manager, rule_engine=self.rule_engine)
-        logger.info("GameManager: Core managers and OpenAI service initialized.") # Changed
+        # CharacterManager initialization moved
+        logger.info("GameManager: Core managers (excluding CharacterManager) and OpenAI service initialized.")
 
     async def _initialize_dependent_managers(self):
-        logger.info("GameManager: Initializing dependent managers...") # Changed
-        # ... (Imports as before)
+        logger.info("GameManager: Initializing dependent managers...")
         from bot.game.managers.item_manager import ItemManager
         from bot.game.managers.status_manager import StatusManager
-        # ... (other imports)
+        from bot.game.managers.npc_manager import NpcManager
+        from bot.game.managers.character_manager import CharacterManager # Moved import
+        from bot.game.managers.inventory_manager import InventoryManager # Added import
+        from bot.game.managers.equipment_manager import EquipmentManager # Added import
+        from bot.game.managers.combat_manager import CombatManager # Ensure it's imported if not already
+        # ... (other necessary imports like PartyManager, DialogueManager, etc. will be here or in their respective init blocks)
         from bot.game.managers.lore_manager import LoreManager
 
         self.item_manager = ItemManager(db_service=self.db_service, settings=self._settings, location_manager=self.location_manager, rule_engine=self.rule_engine)
-        # ... (Initialize other managers as before, replace print with logger.info or logger.warning)
-        if not hasattr(self, 'campaign_loader') or self.campaign_loader is None:
-            from bot.game.services.campaign_loader import CampaignLoader # Moved import
-            self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service)
-            logger.info("GameManager: Initialized CampaignLoader directly before NpcManager.") # Changed
+        logger.info("GameManager: ItemManager initialized.")
+        self.status_manager = StatusManager(db_service=self.db_service, settings=self._settings.get('status_settings', {}))
+        logger.info("GameManager: StatusManager initialized.")
 
-        # ... (NPC archetype loading logic)
+        # Initialize InventoryManager and EquipmentManager before CharacterManager and NpcManager
+        # Assuming InventoryManager and EquipmentManager depend on db_service and item_manager.
+        self.inventory_manager = InventoryManager(db_service=self.db_service, item_manager=self.item_manager)
+        logger.info("GameManager: InventoryManager initialized.")
+        self.equipment_manager = EquipmentManager(db_service=self.db_service, item_manager=self.item_manager)
+        logger.info("GameManager: EquipmentManager initialized.")
+
+        if not hasattr(self, 'campaign_loader') or self.campaign_loader is None:
+            from bot.game.services.campaign_loader import CampaignLoader
+            self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service)
+            logger.info("GameManager: Initialized CampaignLoader.")
+
         if self.campaign_loader:
             campaign_identifier = self._settings.get('default_campaign_identifier')
             default_campaign_data = await self.campaign_loader.load_campaign_data_from_source(campaign_identifier=campaign_identifier)
-            if default_campaign_data and isinstance(default_campaign_data.get('npc_archetypes'), dict): # Expect a dictionary
+            if default_campaign_data and isinstance(default_campaign_data.get('npc_archetypes'), dict):
                 npc_archetypes_from_campaign = default_campaign_data['npc_archetypes']
-                logger.info("GameManager: Loaded %s NPC archetypes dictionary from campaign '%s'.", len(npc_archetypes_from_campaign), campaign_identifier or 'default')
+                logger.info("GameManager: Loaded %s NPC archetypes from campaign '%s'.", len(npc_archetypes_from_campaign), campaign_identifier or 'default')
             else:
-                npc_archetypes_from_campaign = {} # Initialize as empty dict
-                logger.warning("GameManager: Could not load NPC archetypes dictionary from campaign '%s'. Using empty dict.", campaign_identifier or 'default')
+                npc_archetypes_from_campaign = {}
+                logger.warning("GameManager: Could not load NPC archetypes from campaign '%s'. Using empty dict.", campaign_identifier or 'default')
         else:
             npc_archetypes_from_campaign = {}
-            logger.warning("GameManager: CampaignLoader not available. NPC archetypes will be empty for NpcManager.")
+            logger.warning("GameManager: CampaignLoader not available. NPC archetypes will be empty.")
 
         npc_manager_settings = self._settings.get('npc_settings', {}).copy()
-        # Add the pre-loaded archetypes to this settings dictionary
         npc_manager_settings['loaded_npc_archetypes_from_campaign'] = npc_archetypes_from_campaign
 
-        # Ensure other necessary managers are initialized before NpcManager if they are dependencies
-        # For NpcManager: combat_manager, status_manager are listed.
-        # Original order: ItemManager, CampaignLoader, NpcManager, StatusManager, CombatManager
-        # This means StatusManager and CombatManager are not yet initialized when NpcManager is called.
-        # If NpcManager's __init__ strictly needs them, this order MUST change.
-        # For this subtask, assuming NpcManager can handle None for these at __init__ or they are set later.
-        # This is a critical point for overall system stability but outside the direct archetype loading fix.
-
-        from bot.game.managers.npc_manager import NpcManager # Moved import
+        # NpcManager needs status_manager (now available) and potentially combat_manager (may not be available yet)
         self.npc_manager = NpcManager(
             db_service=self.db_service,
-            settings=npc_manager_settings, # Pass settings containing the loaded archetypes
+            settings=npc_manager_settings,
             item_manager=self.item_manager,
             rule_engine=self.rule_engine,
-            combat_manager=self.combat_manager, # Will be None if not initialized yet
-            status_manager=self.status_manager, # Will be None if not initialized yet
+            combat_manager=self.combat_manager, # Will be None if CombatManager is initialized later
+            status_manager=self.status_manager, # Should be available now
             openai_service=self.openai_service,
             campaign_loader=self.campaign_loader
         )
-        # ... (Rest of manager initializations with logging)
-        # StatusManager and CombatManager are initialized after NpcManager in the original code.
-        # self.status_manager = StatusManager(...)
-        # self.combat_manager = CombatManager(...)
-        self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_service=self.db_service)
+        logger.info("GameManager: NpcManager initialized.")
 
-        # Initialize NotificationService
-        if self.character_manager: # Check if character_manager was successfully initialized
+        # Now initialize CharacterManager with its new dependencies
+        self.character_manager = CharacterManager(
+            db_service=self.db_service,
+            settings=self._settings,
+            item_manager=self.item_manager,
+            location_manager=self.location_manager,
+            rule_engine=self.rule_engine,
+            status_manager=self.status_manager,
+            party_manager=self.party_manager, # May be None if PartyManager initialized later
+            combat_manager=self.combat_manager, # May be None if CombatManager initialized later
+            dialogue_manager=self.dialogue_manager, # May be None if DialogueManager initialized later
+            relationship_manager=self.relationship_manager, # May be None if RelationshipManager initialized later
+            game_log_manager=self.game_log_manager, # May be None if GameLogManager initialized later
+            npc_manager=self.npc_manager,
+            inventory_manager=self.inventory_manager,
+            equipment_manager=self.equipment_manager,
+            game_manager=self # Passing self (GameManager)
+        )
+        logger.info("GameManager: CharacterManager initialized.")
+
+        # Initialize other managers that might depend on CharacterManager or its dependencies
+        # CombatManager, PartyManager, DialogueManager, RelationshipManager, GameLogManager, etc.
+        # Their initialization order relative to CharacterManager is important.
+        # Example: CombatManager might need CharacterManager, so it's initialized after.
+        if not hasattr(self, 'combat_manager') or self.combat_manager is None:
+             from bot.game.managers.combat_manager import CombatManager # Already imported if TYPE_CHECKING
+             self.combat_manager = CombatManager(
+                 db_service=self.db_service,
+                 settings=self._settings.get('combat_settings',{}),
+                 character_manager=self.character_manager,
+                 npc_manager=self.npc_manager,
+                 status_manager=self.status_manager,
+                 rule_engine=self.rule_engine,
+                 time_manager=self.time_manager,
+                 item_manager=self.item_manager,
+                 openai_service=self.openai_service,
+                 game_log_manager=self.game_log_manager # Ensure game_log_manager is init
+            )
+             logger.info("GameManager: CombatManager initialized.")
+
+        if not hasattr(self, 'game_log_manager') or self.game_log_manager is None: # Ensure GameLogManager is initialized
+            from bot.game.managers.game_log_manager import GameLogManager
+            self.game_log_manager = GameLogManager(db_service=self.db_service)
+            logger.info("GameManager: GameLogManager initialized (in _initialize_dependent_managers).")
+            # If CombatManager was initialized before GameLogManager and needs it, update CombatManager
+            if self.combat_manager and not self.combat_manager.game_log_manager:
+                self.combat_manager.game_log_manager = self.game_log_manager
+                logger.info("GameManager: Updated game_log_manager in CombatManager.")
+            if self.character_manager and not self.character_manager._game_log_manager: # Assuming CharacterManager has _game_log_manager
+                self.character_manager._game_log_manager = self.game_log_manager # Or however it's set
+                logger.info("GameManager: Updated game_log_manager in CharacterManager.")
+
+
+        self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_service=self.db_service)
+        logger.info("GameManager: LoreManager initialized.")
+
+        # Initialize NotificationService (depends on CharacterManager)
+        if self.character_manager:
             self.notification_service = NotificationService(
                 send_callback_factory=self._get_discord_send_callback,
                 settings=self._settings,
-                i18n_utils=None,  # Passing None as GameManager doesn't currently manage I18nUtils directly
+                i18n_utils=None,
                 character_manager=self.character_manager
             )
             logger.info("GameManager: NotificationService initialized.")
         else:
             logger.error("GameManager: CharacterManager not available, cannot initialize NotificationService.")
-            self.notification_service = None # Explicitly set to None if dependent manager is missing
+            self.notification_service = None
 
-        # ... (Cross-references, ensure they happen after all relevant managers are initialized)
-        # Example: if self.npc_manager and self.dialogue_manager:
+        # Initialize PartyManager (depends on CharacterManager, TimeManager)
+        if not hasattr(self, 'party_manager') or self.party_manager is None:
+            from bot.game.managers.party_manager import PartyManager
+            self.party_manager = PartyManager(
+                db_service=self.db_service,
+                character_manager=self.character_manager,
+                time_manager=self.time_manager,
+                settings=self._settings.get('party_settings', {})
+            )
+            logger.info("GameManager: PartyManager initialized.")
+            if self.character_manager and not self.character_manager._party_manager: # Update CharacterManager if it stores PartyManager
+                 self.character_manager._party_manager = self.party_manager
+                 logger.info("GameManager: Updated party_manager in CharacterManager.")
+
+        # Other managers like QuestManager, DialogueManager, RelationshipManager, etc.
+        # should be initialized here, ensuring their dependencies are met.
+        # For example, DialogueManager might need NpcManager and CharacterManager.
+        # from bot.game.managers.dialogue_manager import DialogueManager
+        # self.dialogue_manager = DialogueManager(db_service=self.db_service, character_manager=self.character_manager, npc_manager=self.npc_manager, ...)
+        # logger.info("GameManager: DialogueManager initialized.")
+        # if self.character_manager and not self.character_manager._dialogue_manager:
+        #    self.character_manager._dialogue_manager = self.dialogue_manager
+        # if self.npc_manager and not self.npc_manager.dialogue_manager:
         #    self.npc_manager.dialogue_manager = self.dialogue_manager
-        #    self.dialogue_manager.npc_manager = self.npc_manager
-        # This kind of cross-referencing might need to be grouped after ALL managers are initialized.
 
-        logger.info("GameManager: Dependent managers initialized and cross-references set.") # Changed
+
+        logger.info("GameManager: Dependent managers initialized.")
 
     async def _initialize_processors_and_command_system(self):
         logger.info("GameManager: Initializing processors and command system...") # Changed
         # ... (Imports as before)
         from bot.game.managers.undo_manager import UndoManager
-        # ... (Initialize processors as before)
+        from bot.game.character_processors.character_action_processor import CharacterActionProcessor
+        from bot.game.character_processors.character_view_service import CharacterViewService
+        from bot.game.party_processors.party_action_processor import PartyActionProcessor
+        from bot.game.command_handlers.party_handler import PartyCommandHandler
+        from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor
+        from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator
+        from bot.game.event_processors.event_stage_processor import EventStageProcessor
+        from bot.game.event_processors.event_action_processor import EventActionProcessor
+        from bot.game.world_processors.world_simulation_processor import WorldSimulationProcessor
+        from bot.game.managers.persistence_manager import PersistenceManager
+        from bot.game.command_router import CommandRouter
+        # Ensure all managers that are dependencies here are imported or initialized before this function
+        from bot.game.managers.crafting_manager import CraftingManager
+        from bot.game.managers.economy_manager import EconomyManager
+        # PartyManager already imported and initialized in _initialize_dependent_managers
+        from bot.game.managers.quest_manager import QuestManager # Ensure QuestManager is available
+        from bot.game.managers.relationship_manager import RelationshipManager
+        from bot.game.managers.dialogue_manager import DialogueManager
+        # GameLogManager already initialized in _initialize_dependent_managers
+        from bot.game.managers.ability_manager import AbilityManager
+        from bot.game.managers.spell_manager import SpellManager
+        from bot.game.conflict_resolver import ConflictResolver
+        from bot.game.turn_processing_service import TurnProcessingService
+
+
+        # Initialize managers that might not have been initialized yet or are specific to this stage
+        # QuestManager example (if not already initialized and is needed by UndoManager or others)
+        if not hasattr(self, 'quest_manager') or self.quest_manager is None:
+            # Assuming QuestManager needs at least db_service. Add other dependencies as required.
+            self.quest_manager = QuestManager(db_service=self.db_service, character_manager=self.character_manager, settings=self._settings.get('quest_settings', {}))
+            logger.info("GameManager: QuestManager initialized in _initialize_processors_and_command_system.")
+
         if self.db_service and self.game_log_manager and self.character_manager and self.item_manager and self.quest_manager and self.party_manager:
             self.undo_manager = UndoManager(db_service=self.db_service, game_log_manager=self.game_log_manager, character_manager=self.character_manager, item_manager=self.item_manager, quest_manager=self.quest_manager, party_manager=self.party_manager)
-            logger.info("GameManager: UndoManager initialized.") # Changed
+            logger.info("GameManager: UndoManager initialized.")
         else:
-            logger.critical("GameManager: UndoManager could not be initialized due to missing dependencies.") # Changed
+            logger.critical("GameManager: UndoManager could not be initialized due to missing dependencies (QuestManager or others might be missing).")
             self.undo_manager = None
-        # ... (Rest of initialization)
-        logger.info("GameManager: Processors and command system initialized.") # Changed
+
+        # EventStageProcessor and EventActionProcessor are initialized here in original code
+        # These might be needed by CharacterActionProcessor
+        # Ensure their dependencies are met
+        # For now, assuming they might be initialized later or CAP handles None
+        # self._event_stage_processor = EventStageProcessor(...)
+        # self._event_action_processor = EventActionProcessor(...)
+
+
+        self._character_action_processor = CharacterActionProcessor(
+            character_manager=self.character_manager,
+            send_callback_factory=self._get_discord_send_callback,
+            item_manager=self.item_manager,
+            location_manager=self.location_manager,
+            rule_engine=self.rule_engine,
+            time_manager=self.time_manager,
+            combat_manager=self.combat_manager,
+            status_manager=self.status_manager,
+            party_manager=self.party_manager,
+            npc_manager=self.npc_manager,
+            event_stage_processor=self._event_stage_processor, # Ensure this is initialized before CAP or CAP handles None
+            event_action_processor=self._event_action_processor, # Ensure this is initialized before CAP or CAP handles None
+            game_log_manager=self.game_log_manager,
+            openai_service=self.openai_service,
+            event_manager=self.event_manager,
+            equipment_manager=self.equipment_manager,
+            inventory_manager=self.inventory_manager
+        )
+        logger.info("GameManager: CharacterActionProcessor initialized.")
+
+        # Initialize other processors and services like CharacterViewService, PartyActionProcessor, etc.
+        # Ensure their dependencies, including those from the newly reordered managers, are available.
+        if not hasattr(self, '_character_view_service') or not self._character_view_service:
+            self._character_view_service = CharacterViewService(
+                character_manager=self.character_manager,
+                item_manager=self.item_manager,
+                # Add other necessary dependencies for CharacterViewService
+                status_manager=self.status_manager,
+                equipment_manager=self.equipment_manager,
+                inventory_manager=self.inventory_manager,
+                ability_manager=self.ability_manager, # Ensure AbilityManager is initialized
+                spell_manager=self.spell_manager # Ensure SpellManager is initialized
+            )
+            logger.info("GameManager: CharacterViewService initialized.")
+
+        if not hasattr(self, '_party_action_processor') or not self._party_action_processor:
+            self._party_action_processor = PartyActionProcessor(
+                party_manager=self.party_manager,
+                character_manager=self.character_manager,
+                send_callback_factory=self._get_discord_send_callback,
+                # Add other necessary dependencies for PartyActionProcessor
+                location_manager=self.location_manager,
+                time_manager=self.time_manager,
+                game_log_manager=self.game_log_manager
+            )
+            logger.info("GameManager: PartyActionProcessor initialized.")
+
+        if not hasattr(self, '_party_command_handler') or not self._party_command_handler:
+            self._party_command_handler = PartyCommandHandler(
+                party_manager=self.party_manager,
+                character_manager=self.character_manager,
+                send_callback_factory=self._get_discord_send_callback,
+                rule_engine=self.rule_engine,
+                party_action_processor=self._party_action_processor # Pass the initialized processor
+            )
+            logger.info("GameManager: PartyCommandHandler initialized.")
+
+        # Initialize EventStageProcessor and EventActionProcessor if they haven't been already
+        # These are dependencies for CharacterActionProcessor
+        if not hasattr(self, '_event_stage_processor') or not self._event_stage_processor:
+            # from bot.game.event_processors.event_stage_processor import EventStageProcessor # Already imported
+            # Add necessary dependencies for EventStageProcessor
+            # Example: self._event_stage_processor = EventStageProcessor(game_manager=self, openai_service=self.openai_service, ...)
+            # For now, it's left as potentially None if not critical for CAP to have it at init
+            logger.warning("GameManager: _event_stage_processor not explicitly initialized here, ensure it's handled if CAP needs it at init.")
+
+
+        if not hasattr(self, '_event_action_processor') or not self._event_action_processor:
+            # from bot.game.event_processors.event_action_processor import EventActionProcessor # Already imported
+            # Add necessary dependencies for EventActionProcessor
+            # Example: self._event_action_processor = EventActionProcessor(game_manager=self, ...)
+            logger.warning("GameManager: _event_action_processor not explicitly initialized here, ensure it's handled if CAP needs it at init.")
+
+        # PersistenceManager initialization
+        if not hasattr(self, '_persistence_manager') or not self._persistence_manager:
+            # from bot.game.managers.persistence_manager import PersistenceManager # Already imported
+            self._persistence_manager = PersistenceManager(db_service=self.db_service)
+            logger.info("GameManager: PersistenceManager initialized in _initialize_processors_and_command_system.")
+
+        # CommandRouter is typically one of the last things in this setup phase
+        if not hasattr(self, '_command_router') or not self._command_router:
+            # from bot.game.command_router import CommandRouter # Already imported
+            # CommandRouter takes many arguments, ensure all are available
+            self._command_router = CommandRouter(game_manager=self) # Pass self (GameManager)
+            logger.info("GameManager: CommandRouter initialized.")
+
+
+        logger.info("GameManager: Processors and command system initialized.")
 
     async def _load_initial_data_and_state(self):
         logger.info("GameManager: Loading initial game data and state...") # Changed
