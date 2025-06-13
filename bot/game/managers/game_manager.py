@@ -245,12 +245,11 @@ class GameManager:
         self.status_manager = StatusManager(db_service=self.db_service, settings=self._settings.get('status_settings', {}))
         logger.info("GameManager: StatusManager initialized.")
 
-        # Initialize InventoryManager and EquipmentManager before CharacterManager and NpcManager
-        # Assuming InventoryManager and EquipmentManager depend on db_service and item_manager.
-        self.inventory_manager = InventoryManager(db_service=self.db_service, item_manager=self.item_manager)
-        logger.info("GameManager: InventoryManager initialized.")
-        self.equipment_manager = EquipmentManager(db_service=self.db_service, item_manager=self.item_manager)
-        logger.info("GameManager: EquipmentManager initialized.")
+        # GameLogManager needs to be initialized before CharacterManager if CharacterManager logs extensively at init or uses it early.
+        if not hasattr(self, 'game_log_manager') or self.game_log_manager is None:
+            from bot.game.managers.game_log_manager import GameLogManager
+            self.game_log_manager = GameLogManager(db_service=self.db_service)
+            logger.info("GameManager: GameLogManager initialized (early in _initialize_dependent_managers).")
 
         if not hasattr(self, 'campaign_loader') or self.campaign_loader is None:
             from bot.game.services.campaign_loader import CampaignLoader
@@ -273,20 +272,27 @@ class GameManager:
         npc_manager_settings = self._settings.get('npc_settings', {}).copy()
         npc_manager_settings['loaded_npc_archetypes_from_campaign'] = npc_archetypes_from_campaign
 
-        # NpcManager needs status_manager (now available) and potentially combat_manager (may not be available yet)
+        # NpcManager needs status_manager (now available) and potentially combat_manager.
+        # CombatManager initialization is further down, so self.combat_manager might be None here.
+        # NpcManager's __init__ must be able to handle combat_manager=None if it's a dependency.
         self.npc_manager = NpcManager(
             db_service=self.db_service,
             settings=npc_manager_settings,
             item_manager=self.item_manager,
             rule_engine=self.rule_engine,
-            combat_manager=self.combat_manager, # Will be None if CombatManager is initialized later
-            status_manager=self.status_manager, # Should be available now
+            combat_manager=self.combat_manager,
+            status_manager=self.status_manager,
             openai_service=self.openai_service,
             campaign_loader=self.campaign_loader
         )
         logger.info("GameManager: NpcManager initialized.")
 
-        # Now initialize CharacterManager with its new dependencies
+        # Initialize CharacterManager (must be before InventoryManager and EquipmentManager)
+        # As per previous subtask, CharacterManager needs InventoryManager and EquipmentManager in constructor.
+        # However, current subtask makes InventoryManager need CharacterManager.
+        # To break the immediate cycle for this step, CharacterManager is created,
+        # then InventoryManager, then EquipmentManager.
+        # This implies CharacterManager might need setters for Inventory/Equipment managers or handle them being None initially.
         self.character_manager = CharacterManager(
             db_service=self.db_service,
             settings=self._settings,
@@ -294,24 +300,48 @@ class GameManager:
             location_manager=self.location_manager,
             rule_engine=self.rule_engine,
             status_manager=self.status_manager,
-            party_manager=self.party_manager, # May be None if PartyManager initialized later
-            combat_manager=self.combat_manager, # May be None if CombatManager initialized later
-            dialogue_manager=self.dialogue_manager, # May be None if DialogueManager initialized later
-            relationship_manager=self.relationship_manager, # May be None if RelationshipManager initialized later
-            game_log_manager=self.game_log_manager, # May be None if GameLogManager initialized later
+            # party_manager, combat_manager, dialogue_manager, relationship_manager will be None if not yet initialized
+            party_manager=self.party_manager,
+            combat_manager=self.combat_manager,
+            dialogue_manager=self.dialogue_manager,
+            relationship_manager=self.relationship_manager,
+            game_log_manager=self.game_log_manager,
             npc_manager=self.npc_manager,
-            inventory_manager=self.inventory_manager,
-            equipment_manager=self.equipment_manager,
-            game_manager=self # Passing self (GameManager)
+            # inventory_manager and equipment_manager are not passed here to break constructor cycle
+            inventory_manager=None,
+            equipment_manager=None,
+            game_manager=self
         )
-        logger.info("GameManager: CharacterManager initialized.")
+        logger.info("GameManager: CharacterManager initialized (inventory/equipment managers will be set if needed).")
 
-        # Initialize other managers that might depend on CharacterManager or its dependencies
-        # CombatManager, PartyManager, DialogueManager, RelationshipManager, GameLogManager, etc.
-        # Their initialization order relative to CharacterManager is important.
-        # Example: CombatManager might need CharacterManager, so it's initialized after.
+        # Initialize InventoryManager (Corrected: needs CharacterManager)
+        self.inventory_manager = InventoryManager(character_manager=self.character_manager, item_manager=self.item_manager)
+        logger.info("GameManager: InventoryManager initialized.")
+        # If CharacterManager has a setter for inventory_manager:
+        if hasattr(self.character_manager, '_inventory_manager') and self.character_manager._inventory_manager is None:
+             self.character_manager._inventory_manager = self.inventory_manager # Or a public setter method
+             logger.info("GameManager: Set inventory_manager in CharacterManager.")
+
+
+        # Initialize EquipmentManager (Corrected: needs multiple managers)
+        self.equipment_manager = EquipmentManager(
+            character_manager=self.character_manager,
+            inventory_manager=self.inventory_manager,
+            item_manager=self.item_manager,
+            status_manager=self.status_manager,
+            rule_engine=self.rule_engine,
+            db_service=self.db_service
+        )
+        logger.info("GameManager: EquipmentManager initialized.")
+        # If CharacterManager has a setter for equipment_manager:
+        if hasattr(self.character_manager, '_equipment_manager') and self.character_manager._equipment_manager is None:
+             self.character_manager._equipment_manager = self.equipment_manager # Or a public setter method
+             logger.info("GameManager: Set equipment_manager in CharacterManager.")
+
+
+        # Initialize CombatManager (depends on CharacterManager, NpcManager, StatusManager, etc.)
         if not hasattr(self, 'combat_manager') or self.combat_manager is None:
-             from bot.game.managers.combat_manager import CombatManager # Already imported if TYPE_CHECKING
+             from bot.game.managers.combat_manager import CombatManager
              self.combat_manager = CombatManager(
                  db_service=self.db_service,
                  settings=self._settings.get('combat_settings',{}),
@@ -322,22 +352,16 @@ class GameManager:
                  time_manager=self.time_manager,
                  item_manager=self.item_manager,
                  openai_service=self.openai_service,
-                 game_log_manager=self.game_log_manager # Ensure game_log_manager is init
+                 game_log_manager=self.game_log_manager
             )
              logger.info("GameManager: CombatManager initialized.")
-
-        if not hasattr(self, 'game_log_manager') or self.game_log_manager is None: # Ensure GameLogManager is initialized
-            from bot.game.managers.game_log_manager import GameLogManager
-            self.game_log_manager = GameLogManager(db_service=self.db_service)
-            logger.info("GameManager: GameLogManager initialized (in _initialize_dependent_managers).")
-            # If CombatManager was initialized before GameLogManager and needs it, update CombatManager
-            if self.combat_manager and not self.combat_manager.game_log_manager:
-                self.combat_manager.game_log_manager = self.game_log_manager
-                logger.info("GameManager: Updated game_log_manager in CombatManager.")
-            if self.character_manager and not self.character_manager._game_log_manager: # Assuming CharacterManager has _game_log_manager
-                self.character_manager._game_log_manager = self.game_log_manager # Or however it's set
-                logger.info("GameManager: Updated game_log_manager in CharacterManager.")
-
+             # Update CharacterManager and NpcManager if they hold a reference to CombatManager and it was None
+             if self.character_manager and self.character_manager._combat_manager is None:
+                 self.character_manager._combat_manager = self.combat_manager
+                 logger.info("GameManager: Updated combat_manager in CharacterManager.")
+             if self.npc_manager and self.npc_manager.combat_manager is None: # Assuming direct attribute name
+                 self.npc_manager.combat_manager = self.combat_manager
+                 logger.info("GameManager: Updated combat_manager in NpcManager.")
 
         self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_service=self.db_service)
         logger.info("GameManager: LoreManager initialized.")
