@@ -43,6 +43,54 @@
         {"direction": "юг", "target_location_id": "town_square"}
       ]
     }
-   
+  ],
+  "factions": [
+    { "id": "faction_knights_of_valor", "name_i18n": {"en": "Knights of Valor", "ru": "Рыцари Доблести"}, "guild_id": "default_guild", "description_i18n": {"en": "A noble order dedicated to justice and protection.", "ru": "Благородный орден, посвященный справедливости и защите."}},
+    { "id": "faction_shadow_syndicate", "name_i18n": {"en": "Shadow Syndicate", "ru": "Теневой Синдикат"}, "guild_id": "default_guild", "description_i18n": {"en": "A clandestine organization involved in various illicit activities.", "ru": "Тайная организация, занимающаяся различными незаконными делами."}},
+    { "id": "faction_merchant_guild", "name_i18n": {"en": "Merchant Guild", "ru": "Торговая Гильдия"}, "guild_id": "default_guild", "description_i18n": {"en": "A powerful consortium of traders and artisans.", "ru": "Могущественный консорциум торговцев и ремесленников."}}
+  ],
+  "relationships": [
+    {
+      "id": "rel_knights_vs_syndicate",
+      "guild_id": "default_guild",
+      "entity1_id": "faction_knights_of_valor",
+      "entity1_type": "faction",
+      "entity2_id": "faction_shadow_syndicate",
+      "entity2_type": "faction",
+      "relationship_type": "hostile",
+      "strength": -75.0,
+      "details_i18n": {
+        "en": "The Knights of Valor and the Shadow Syndicate are sworn enemies, locked in a bitter ideological and territorial conflict.",
+        "ru": "Рыцари Доблести и Теневой Синдикат - заклятые враги, ведущие ожесточенную идеологическую и территориальную борьбу."
+      }
+    },
+    {
+      "id": "rel_knights_and_merchants_neutral",
+      "guild_id": "default_guild",
+      "entity1_id": "faction_knights_of_valor",
+      "entity1_type": "faction",
+      "entity2_id": "faction_merchant_guild",
+      "entity2_type": "faction",
+      "relationship_type": "neutral",
+      "strength": 10.0,
+      "details_i18n": {
+        "en": "The Knights of Valor maintain a wary but generally neutral stance towards the Merchant Guild, recognizing their economic importance.",
+        "ru": "Рыцари Доблести придерживаются настороженной, но в целом нейтральной позиции по отношению к Торговой Гильдии, признавая её экономическую важность."
+      }
+    },
+    {
+      "id": "rel_syndicate_and_merchants_tense",
+      "guild_id": "default_guild",
+      "entity1_id": "faction_shadow_syndicate",
+      "entity1_type": "faction",
+      "entity2_id": "faction_merchant_guild",
+      "entity2_type": "faction",
+      "relationship_type": "tense_neutral",
+      "strength": -20.0,
+      "details_i18n": {
+        "en": "The Shadow Syndicate often strong-arms the Merchant Guild, leading to a tense and distrustful relationship.",
+        "ru": "Теневой Синдикат часто оказывает давление на Торговую Гильдию, что приводит к напряженным и недоверчивым отношениям."
+      }
+    }
   ]
 }
