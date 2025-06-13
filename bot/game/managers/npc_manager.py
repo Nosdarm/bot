@@ -137,48 +137,47 @@ class NpcManager:
         logger.info("NpcManager: Loading NPC archetypes...")
         self._npc_archetypes = {}  # Initialize as an empty dictionary
 
+        # Get archetypes pre-loaded by GameManager from the campaign file
         campaign_archetypes = {}
-        if self._campaign_loader and hasattr(self._campaign_loader, 'get_all_npc_archetypes'):
-            loaded_campaign_archetypes = self._campaign_loader.get_all_npc_archetypes()
-            if isinstance(loaded_campaign_archetypes, dict):
-                campaign_archetypes = loaded_campaign_archetypes
-                logger.info("NpcManager: Loaded %s NPC archetypes from CampaignLoader.", len(campaign_archetypes))
-            elif loaded_campaign_archetypes is not None:
-                logger.warning("NpcManager: CampaignLoader returned non-dict archetypes of type %s. Using empty dict instead.", type(loaded_campaign_archetypes).__name__)
-            # If None, it's handled by the initial {}
+        if self._settings and isinstance(self._settings.get('loaded_npc_archetypes_from_campaign'), dict):
+            campaign_archetypes = self._settings['loaded_npc_archetypes_from_campaign']
+            logger.info("NpcManager: Received %s NPC archetypes pre-loaded from campaign data via settings.", len(campaign_archetypes))
+        elif self._settings and self._settings.get('loaded_npc_archetypes_from_campaign') is not None:
+             logger.warning("NpcManager: 'loaded_npc_archetypes_from_campaign' in settings was not a dict, type: %s.", type(self._settings.get('loaded_npc_archetypes_from_campaign')).__name__)
 
-        settings_archetypes = {}
-        if self._settings and 'npc_archetypes' in self._settings:
-            loaded_settings_archetypes = self._settings['npc_archetypes']
-            if isinstance(loaded_settings_archetypes, dict):
-                settings_archetypes = loaded_settings_archetypes
-                logger.info("NpcManager: Loaded %s NPC archetypes from direct settings.", len(settings_archetypes))
-            elif loaded_settings_archetypes is not None:
-                logger.warning("NpcManager: Direct settings returned non-dict archetypes of type %s. Using empty dict instead.", type(loaded_settings_archetypes).__name__)
-            # If None, it's handled by the initial {}
 
-        # Merge dictionaries. Settings will overwrite campaign archetypes if keys conflict.
+        # Get archetypes defined directly in NpcManager's own settings (e.g., global fallbacks or overrides)
+        # These would typically be under a key like 'npc_archetypes' directly in the 'npc_settings' block.
+        direct_settings_archetypes = {}
+        if self._settings and isinstance(self._settings.get('npc_archetypes'), dict):
+            direct_settings_archetypes = self._settings['npc_archetypes']
+            logger.info("NpcManager: Found %s NPC archetypes in direct NpcManager settings.", len(direct_settings_archetypes))
+        elif self._settings and self._settings.get('npc_archetypes') is not None:
+             logger.warning("NpcManager: 'npc_archetypes' in direct NpcManager settings was not a dict, type: %s.", type(self._settings.get('npc_archetypes')).__name__)
+
+        # Merge dictionaries. Direct settings can overwrite campaign archetypes if keys conflict.
         self._npc_archetypes.update(campaign_archetypes)
-        self._npc_archetypes.update(settings_archetypes)
+        self._npc_archetypes.update(direct_settings_archetypes) # Direct settings take precedence
 
-        if not self._npc_archetypes and not campaign_archetypes and not settings_archetypes:
-             logger.warning("NpcManager: No NPC archetypes found in settings or CampaignLoader after attempting to load both.")
-        elif not self._npc_archetypes and (campaign_archetypes or settings_archetypes):
-             logger.info("NpcManager: NPC archetypes successfully loaded and merged, resulting in %s final archetypes.", len(self._npc_archetypes))
+        if not self._npc_archetypes:
+             logger.warning("NpcManager: No NPC archetypes found after attempting to load from pre-loaded campaign data and direct settings.")
+        else:
+             logger.info("NpcManager: NPC archetypes successfully loaded/merged, resulting in %s final archetypes.", len(self._npc_archetypes))
 
-
-        # Ensure archetypes have basic structure (This loop should now be safe)
+        # Ensure archetypes have basic structure (existing loop for validation)
         for arch_id, arch_data in self._npc_archetypes.items():
             if not isinstance(arch_data, dict):
                 logger.warning("NpcManager: Archetype %s data is not a dict after loading and merging. Skipping. Data: %s", arch_id, arch_data)
                 continue
-            arch_data.setdefault('name', f"Archetype {arch_id}")
-            arch_data.setdefault('stats', {"max_health": 50.0}) # Basic default
-            # Ensure i18n fields are dicts
-            for i18n_key in ['name_i18n', 'description_i18n', 'backstory_i18n', 'persona_i18n']:
+            arch_data.setdefault('name', f"Archetype {arch_id}") # Fallback name using arch_id
+            # Ensure name_i18n exists for display_name logic elsewhere
+            if not isinstance(arch_data.get('name_i18n'), dict) or not arch_data.get('name_i18n'):
+                arch_data['name_i18n'] = {'en': arch_data['name']} # Create from plain name or fallback
+            arch_data.setdefault('stats', {"max_health": 50.0})
+            for i18n_key in ['description_i18n', 'backstory_i18n', 'persona_i18n']:
                 current_value = arch_data.get(i18n_key)
                 if not isinstance(current_value, dict):
-                    if current_value is not None: # Log if we are overwriting something unexpected
+                    if current_value is not None:
                         logger.warning("NpcManager: Archetype %s had a non-dict value for %s ('%s'). Initializing to empty dict.", arch_id, i18n_key, current_value)
                     arch_data[i18n_key] = {}
 

@@ -21,7 +21,7 @@ class CharacterDevelopmentCog(commands.Cog):
         # Corrected access to character_manager through game_manager
         self.character_manager: CharacterManager = self.bot.game_manager.character_manager
         self.game_log_manager: GameLogManager = self.bot.game_manager.game_log_manager
-        self.notification_service: NotificationService = self.bot.get_service("NotificationService")
+        self.notification_service: NotificationService = self.bot.game_manager.notification_service
         self.rule_engine: RuleEngine = self.bot.get_manager("RuleEngine") # RuleEngine for rules
 
     @app_commands.command(name="spend_xp", description="Spend your Unspent XP to improve your character.")
