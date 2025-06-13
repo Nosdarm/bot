@@ -167,7 +167,8 @@ class QuestManager:
         logger.info("Attempting to start quest %s for char %s in guild %s.", quest_template_id_str, character_id_str, guild_id_str) # Added guild_id
         if quest_template_id_str.startswith("AI:"):
             # ... (AI quest generation logic, ensure guild_id in logs) ...
-            logger.info("AI-gen quest data for '%s' (req_id: %s) prepared for mod in guild %s.", quest_concept, request_id, guild_id_str) # Added guild_id
+            request_id = str(uuid.uuid4())
+            logger.info("AI-gen quest data for '%s' (req_id: %s) prepared for mod in guild %s.", quest_template_id_str, request_id, guild_id_str) # Added guild_id
             return {"status": "pending_moderation", "request_id": "dummy_request_id", "quest_data_preview": {}} # Simplified for brevity
 
         template_data_from_campaign = self.get_quest_template(guild_id_str, quest_template_id_str)
@@ -203,7 +204,40 @@ class QuestManager:
             logger.error("DBService not available for save_generated_quest for guild %s.", guild_id_str) # Added guild_id
             return False
         try:
-            # ... (DB params setup as before) ...
+            sql = """
+    INSERT INTO generated_quests
+    (id, title_i18n, description_i18n, status, suggested_level, stages_json, rewards_json, prerequisites_json, consequences_json, quest_giver_npc_id, ai_prompt_context_json, guild_id, quest_giver_details_i18n, consequences_summary_i18n)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    ON CONFLICT (id, guild_id) DO UPDATE SET
+    title_i18n = EXCLUDED.title_i18n,
+    description_i18n = EXCLUDED.description_i18n,
+    status = EXCLUDED.status,
+    suggested_level = EXCLUDED.suggested_level,
+    stages_json = EXCLUDED.stages_json,
+    rewards_json = EXCLUDED.rewards_json,
+    prerequisites_json = EXCLUDED.prerequisites_json,
+    consequences_json = EXCLUDED.consequences_json,
+    quest_giver_npc_id = EXCLUDED.quest_giver_npc_id,
+    ai_prompt_context_json = EXCLUDED.ai_prompt_context_json,
+    quest_giver_details_i18n = EXCLUDED.quest_giver_details_i18n,
+    consequences_summary_i18n = EXCLUDED.consequences_summary_i18n;
+"""
+            params = (
+                quest.id,
+                json.dumps(quest.name_i18n or {}),
+                json.dumps(quest.description_i18n or {}),
+                quest.status,
+                quest.suggested_level,
+                quest.steps_json_str,
+                quest.rewards_json_str,
+                quest.prerequisites_json_str,
+                quest.consequences_json_str,
+                quest.quest_giver_npc_id,
+                quest.ai_prompt_context_json_str,
+                quest.guild_id,
+                json.dumps(quest.quest_giver_details_i18n or {}),
+                json.dumps(quest.consequences_summary_i18n or {})
+            )
             await self._db_service.adapter.execute(sql, params)
             logger.info("Saved generated quest %s for guild %s.", quest.id, guild_id_str) # Added guild_id
             return True
