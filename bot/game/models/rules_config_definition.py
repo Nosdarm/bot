@@ -161,19 +161,79 @@ MASTER_RULES_CONFIG_STRUCTURE = {
         }
     },
     # --- New Top-Level Keys ---
+    # item_definitions: Governed by ItemDefinition in rules_schema.py.
+    # Each item definition should support fields like 'id', 'name_i18n', 'description_i18n',
+    # 'category', 'weight', 'stackable', 'effects_on_use_ids', 'equipable_slot_id',
+    # and for economy, a crucial field is 'base_price' (numeric).
     "economy_rules": {
-        "description": "Rules governing game economy, prices, currency.",
-        "base_buy_price_multiplier": 1.25, # NPCs sell items at 125% of base value
-        "base_sell_price_multiplier": 0.75, # NPCs buy items from players at 75% of base value
+        "description": "Rules governing game economy, prices, currency, trade, and item valuation.",
+        "base_buy_price_multiplier": 1.25,  # Default multiplier for NPC selling price (item_base_price * this_value)
+        "base_sell_price_multiplier": 0.75,  # Default multiplier for NPC buying price (item_base_price * this_value)
         "currency_units": {
-            "gold": {"name_i18n": {"en_US": "Gold"}, "symbol": "g"},
-            "silver": {"name_i18n": {"en_US": "Silver"}, "symbol": "s"}
+            "gold": {"name_i18n": {"en_US": "Gold"}, "symbol": "g", "base_unit": True}, # Example base currency
+            "silver": {"name_i18n": {"en_US": "Silver"}, "symbol": "s"},
+            "copper": {"name_i18n": {"en_US": "Copper"}, "symbol": "c"}
         },
-        "exchange_rates": { # Relative to a base unit or each other
-            "gold_to_silver": 100 # 1 gold = 100 silver
+        "exchange_rates": {  # Rates define how many of the KEY unit you get for ONE of the base_unit currency.
+                             # Or, if no base_unit is True, it's relative to a conceptual primary currency (e.g. gold).
+            "silver_for_one_gold": 100, # 1 gold = 100 silver
+            "copper_for_one_silver": 100  # 1 silver = 100 copper
         },
-        "regional_price_modifiers": { # Example: prices might vary by location
-            "starting_village_market": {"buy_factor_adj": -0.1, "sell_factor_adj": 0.05} # Cheaper to buy, slightly better to sell
+        "regional_price_modifiers": {  # Defines adjustments to buy/sell multipliers in specific regions or markets.
+            "market_A_id": {
+                "name_i18n": {"en_US": "Market A - Major City"},
+                "buy_price_multiplier_adj": -0.1,  # e.g., items are 10% cheaper to buy here
+                "sell_price_multiplier_adj": 0.05, # e.g., players get 5% more when selling here
+                "item_category_multipliers": { # Optional: specific categories have different rates
+                    "food": {"buy_price_multiplier_adj": -0.2}, # Food is even cheaper
+                    "luxury_goods": {"sell_price_multiplier_adj": 0.1} # Luxuries sell for more
+                }
+            },
+            "remote_outpost_b": {
+                 "name_i18n": {"en_US": "Remote Outpost B"},
+                 "buy_price_multiplier_adj": 0.2, # Items are 20% more expensive
+                 "sell_price_multiplier_adj": -0.05 # Players get 5% less
+            }
+        },
+        "supply_demand_rules": {
+            "description": "Rules for dynamic price adjustments based on simulated supply and demand.",
+            "max_supply_discount_percent": 50.0,  # Max discount when supply is extremely high (e.g., items sell at 50% of normal buy price)
+            "min_supply_markup_percent": 200.0, # Max markup when supply is extremely low (e.g., items sell at 200% of normal buy price)
+            "low_supply_threshold_percent": 0.2,  # Below this % of ideal stock, prices start to rise.
+            "high_supply_threshold_percent": 0.8, # Above this % of ideal stock, prices start to fall.
+            "restock_cycle_hours": 24, # How often supply/demand might be recalculated or restocked.
+            "demand_elasticity_factor": 0.5 # How sensitive price is to changes in demand (0-1, higher means more sensitive)
+        },
+        "relationship_price_influence": {
+            "description": "How relationship strength with a faction or NPC affects prices.",
+            "trading_discount_per_tier": [ # Applied progressively; highest matching threshold is used.
+                {"relationship_threshold": 80, "buy_discount_percent": 15.0, "sell_bonus_percent": 5.0, "tier_name_i18n": {"en_US": "Trusted Ally"}},
+                {"relationship_threshold": 50, "buy_discount_percent": 10.0, "sell_bonus_percent": 2.0, "tier_name_i18n": {"en_US": "Friend"}},
+                {"relationship_threshold": 20, "buy_discount_percent": 5.0, "sell_bonus_percent": 0.0, "tier_name_i18n": {"en_US": "Cordial"}},
+                {"relationship_threshold": -20, "buy_markup_percent": 0.0, "sell_penalty_percent": 0.0, "tier_name_i18n": {"en_US": "Neutral"}},
+                {"relationship_threshold": -50, "buy_markup_percent": 10.0, "sell_penalty_percent": 5.0, "tier_name_i18n": {"en_US": "Unfriendly"}},
+                {"relationship_threshold": -80, "buy_markup_percent": 25.0, "sell_penalty_percent": 10.0, "tier_name_i18n": {"en_US": "Hostile"}}
+            ],
+            "applies_to_faction_merchants": True,
+            "applies_to_independent_merchants": False # Or could be based on merchant's personal relationship
+        },
+        "skill_reputation_price_influence": {
+            "description": "How player skills (e.g., bartering) or reputation tiers affect prices.",
+            "bartering_skill_influence": {
+                "skill_id": "bartering", # Assumes a skill system where "bartering" is a defined skill
+                "buy_discount_percent_per_skill_point": 0.5, # 0.5% better buy price per point in bartering
+                "sell_bonus_percent_per_skill_point": 0.5,  # 0.5% better sell price per point in bartering
+                "max_total_discount_percent": 25.0, # Max benefit from this skill
+                "max_total_sell_bonus_percent": 25.0
+            },
+            "faction_reputation_tiers": [ # Example influence from specific faction reputation levels
+                {"faction_id": "merchants_guild", "reputation_tier_name": "member_plus", "buy_discount_percent": 5.0, "sell_bonus_percent": 2.0},
+                {"faction_id": "thieves_guild", "reputation_tier_name": "fence_contact", "sell_bonus_on_stolen_goods_percent": 10.0} # More specific rule
+            ],
+            "global_renown_influence": { # Example: overall player fame/infamy
+                 "renown_threshold_positive": 1000, "positive_effect_buy_discount_percent": 3.0,
+                 "renown_threshold_negative": -500, "negative_effect_buy_markup_percent": 5.0
+            }
         }
     },
     "ai_behavior_rules": {
