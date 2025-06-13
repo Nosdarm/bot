@@ -78,6 +78,7 @@
     "quest_templates": [],
     "npc_archetypes": {
         "goblin_grunt": {
+            "id": "goblin_grunt",
             "name_i18n": {
                 "en": "Goblin Grunt",
                 "ru": "[RU] Goblin Grunt"
@@ -137,6 +138,7 @@
             "loot_table_id": "goblin_grunt_loot"
         },
         "human_town_guard": {
+            "id": "human_town_guard",
             "name_i18n": {
                 "en": "Town Guard",
                 "ru": "[RU] Town Guard"
@@ -202,6 +204,7 @@
             "dialogue_template_id": "guard_generic_dialogue"
         },
         "alchemist_npc": {
+            "id": "alchemist_npc",
             "name_i18n": {
                 "en": "Elara Meadowlight",
                 "ru": "[RU] Elara Meadowlight"
@@ -261,6 +264,7 @@
             "dialogue_template_id": "alchemist_generic_dialogue"
         },
         "tavern_barkeep_npc": {
+            "id": "tavern_barkeep_npc",
             "name_i18n": {
                 "en": "Borin Stonebeard",
                 "ru": "[RU] Borin Stonebeard"

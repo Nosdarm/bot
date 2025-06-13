@@ -183,41 +183,55 @@ class CampaignLoader:
 
         npc_archetypes = campaign_data["npc_archetypes"]
         print(f"CampaignLoader: Populating {len(npc_archetypes)} NPCs for guild '{guild_id}' from '{campaign_file_path}'...")
-        default_lang = self._settings.get('game_rules', {}).get('default_bot_language', 'en') # Use configured default_lang
+        default_lang = self._settings.get('game_rules', {}).get('default_bot_language', 'en')
 
-        for npc_def in npc_archetypes.values(): # Iterate over dictionary values
+        for npc_key, npc_def in npc_archetypes.items(): # Iterate over dictionary keys and values
             if not isinstance(npc_def, dict):
-                print(f"CampaignLoader: WARNING - Skipping malformed NPC definition. Expected a dictionary, but got {type(npc_def)}. Data: {npc_def}")
+                print(f"CampaignLoader: WARNING - Skipping malformed NPC definition. Expected a dictionary, but got {type(npc_def)}. Key: '{npc_key}', Data: {npc_def}")
                 continue
 
-            npc_id = npc_def.get("id")
-            name_i18n = npc_def.get("name_i18n")
+            npc_id_internal = npc_def.get("id")
+            npc_id = npc_id_internal  # Assume internal ID is present first
 
-            display_name_log = npc_id # Fallback for logging
+            if not npc_id_internal:
+                npc_id = npc_key  # Fallback to the dictionary key
+                print(f"CampaignLoader: WARNING - NPC definition for key '{npc_key}' is missing an internal 'id' field. Using the key as npc_id. NPC Data: {npc_def}")
+            elif npc_id_internal != npc_key:
+                print(f"CampaignLoader: WARNING - NPC definition for key '{npc_key}' has an internal 'id' ('{npc_id_internal}') that differs from its key. Prioritizing internal 'id'.")
+                # npc_id is already set to npc_id_internal from the initial assignment.
+
+            # The rest of the logic uses 'npc_id'
+            name_i18n = npc_def.get("name_i18n")
+            display_name_log = npc_id # Default display_name_log to the determined npc_id
+
             if isinstance(name_i18n, dict) and name_i18n:
                 display_name_log = name_i18n.get(default_lang, next(iter(name_i18n.values()), npc_id))
-            elif isinstance(npc_def.get("name"), str): # Check for a plain 'name' field if 'name_i18n' is bad for logging
+            elif isinstance(npc_def.get("name"), str) and npc_def.get("name"): # Check plain 'name' for logging if name_i18n is bad
                  display_name_log = npc_def.get("name")
 
-            if not npc_id: # Check if 'id' field is missing in the dictionary content
-                print(f"CampaignLoader: Skipping NPC definition due to missing 'id' field in its content. NPC Data: {npc_def}")
+            # This check for a valid npc_id (must not be None or empty) is crucial.
+            if not npc_id:
+                print(f"CampaignLoader: Skipping NPC definition due to unable to determine a valid 'id' (key: '{npc_key}'). NPC Data: {npc_def}")
                 continue
 
+            # Check for name_i18n (as it was before, using the determined npc_id for logging if name is missing)
             if not (isinstance(name_i18n, dict) and name_i18n):
-                # If name_i18n is missing or invalid, try to use a plain "name" field if it exists.
                 plain_name = npc_def.get("name")
                 if isinstance(plain_name, str) and plain_name:
                     name_i18n = {default_lang: plain_name}
-                    # Update display_name_log as it might have been just npc_id before this block
-                    display_name_log = plain_name
-                    print(f"CampaignLoader: NPC ID '{npc_id}' missing 'name_i18n', using plain 'name' field ('{plain_name}') for default lang '{default_lang}'.")
+                    # display_name_log would have already been set to plain_name if name_i18n was initially missing/invalid
+                    print(f"CampaignLoader: NPC '{display_name_log}' (ID: {npc_id}) missing 'name_i18n', using plain 'name' field for default lang '{default_lang}'.")
                 else:
+                    # If display_name_log is still just the npc_id at this point, it means no usable name was found.
                     print(f"CampaignLoader: Skipping NPC '{display_name_log}' (ID: {npc_id}) due to missing or invalid 'name_i18n' and no fallback 'name' field.")
                     continue
-
-            # Ensure display_name_log is updated if name_i18n was populated from plain_name
-            if isinstance(name_i18n, dict) and name_i18n: # Re-evaluate display_name_log after potential plain_name fallback
-                 display_name_log = name_i18n.get(default_lang, next(iter(name_i18n.values()), npc_id))
+            # Ensure display_name_log is robustly set if name_i18n was successfully derived or found
+            if isinstance(name_i18n, dict) and name_i18n:
+                 current_display_name = name_i18n.get(default_lang, next(iter(name_i18n.values()), None))
+                 if current_display_name:
+                     display_name_log = current_display_name
+                 # If after all this, display_name_log is still just npc_id, it means a name couldn't be resolved.
+                 # The skip condition above for missing name_i18n and plain_name should handle this.
 
 
             # Extract other fields, assuming DBService.create_npc will be updated to handle them
