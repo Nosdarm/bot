@@ -107,7 +107,7 @@ class Location(Base):
     type_i18n = Column(JSON, nullable=False)
     coordinates = Column(JSON, nullable=True)
     static_connections = Column(JSON, nullable=True)
-    guild_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
     exits = Column(JSON, nullable=True)
     inventory = Column(JSON, nullable=True)
     npc_ids = Column(JSON, nullable=True, default=lambda: [])
@@ -168,7 +168,7 @@ class Event(Base):
     state_variables = Column(JSON, nullable=True)
     stages_data = Column(JSON, nullable=True)
     end_message_template_i18n = Column(JSON, nullable=True)
-    guild_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
 
 class Party(Base):
     __tablename__ = 'parties'
@@ -177,7 +177,7 @@ class Party(Base):
     player_ids = Column(JSON, nullable=True)
     current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
     turn_status = Column(String, nullable=True)
-    guild_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
     leader_id = Column(String, ForeignKey('players.id'), nullable=True)
     state_variables = Column(JSON, nullable=True)
     current_action = Column(String, nullable=True) # Was JSON, should be String if it's just action type/ID
@@ -211,7 +211,7 @@ class ItemTemplate(Base):
     guild_id = Column(String, nullable=False)
     __table_args__ = (Index('idx_itemtemplate_guild_id', 'guild_id'),)
 
-class LocationTemplate(Base): __tablename__ = 'location_templates'; id = Column(String, primary_key=True); name = Column(String, nullable=False); description = Column(Text, nullable=True); properties = Column(JSON, nullable=True); guild_id = Column(String, nullable=False)
+class LocationTemplate(Base): __tablename__ = 'location_templates'; id = Column(String, primary_key=True); name = Column(String, nullable=False); description = Column(Text, nullable=True); properties = Column(JSON, nullable=True); guild_id = Column(String, nullable=False, index=True)
 
 class NPC(Base):
     __tablename__ = 'npcs'
@@ -221,7 +221,7 @@ class NPC(Base):
     description_i18n = Column(JSON, nullable=True)
     backstory_i18n = Column(JSON, nullable=True)
     persona_i18n = Column(JSON, nullable=True)
-    guild_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
     location_id = Column(String, ForeignKey('locations.id'), nullable=True)
     stats = Column(JSON, nullable=True)
     inventory = Column(JSON, nullable=True)
@@ -308,7 +308,7 @@ class Inventory(Base):
 class Combat(Base):
     __tablename__ = 'combats'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    guild_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
     location_id = Column(String, ForeignKey('locations.id'), nullable=False)
     status = Column(String(50), nullable=False, default="pending", index=True)
     participants = Column(JSON, nullable=False, default=lambda: [])
@@ -406,7 +406,7 @@ class Status(Base):
     applied_at = Column(Float, nullable=True) # Changed to Float
     source_id = Column(String, nullable=True)
     state_variables = Column(JSON, nullable=True)
-    guild_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
     effects = Column(JSON, nullable=True) # This might be for dynamic effects, usually effects are from template
     name_i18n = Column(JSON, nullable=True) # Should come from template
     description_i18n = Column(JSON, nullable=True) # Should come from template
