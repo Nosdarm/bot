@@ -284,17 +284,17 @@ class DBService:
 
 
     async def create_location(
-        self, loc_id: str, name_i18n: Dict[str, str], description_i18n: Dict[str, str], guild_id: str,
+        self, loc_id: str, name_i18n: Dict[str, str], description_i18n: Dict[str, str], type_i18n: Dict[str, str], guild_id: str,
         exits: Optional[Dict[str, str]] = None, template_id: str = "default",
         properties: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         sql = """
-            INSERT INTO locations (id, template_id, name_i18n, descriptions_i18n, guild_id, exits, state_variables, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO locations (id, template_id, name_i18n, descriptions_i18n, type_i18n, guild_id, exits, state_variables, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id;
         """
         params = (
-            loc_id, template_id, json.dumps(name_i18n), json.dumps(description_i18n), guild_id,
+            loc_id, template_id, json.dumps(name_i18n), json.dumps(description_i18n), json.dumps(type_i18n), guild_id,
             json.dumps(exits) if exits else '{}',
             json.dumps(properties) if properties else '{}', True
         )
