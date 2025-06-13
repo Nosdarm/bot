@@ -139,6 +139,11 @@ class CampaignLoader:
                 if "exits" not in properties and loc_def.get("connections"): # Store raw connections if needed
                     properties["raw_connections"] = loc_def.get("connections")
 
+                # Handle type_i18n
+                type_i18n = loc_def.get("type_i18n")
+                if not isinstance(type_i18n, dict) or not type_i18n:
+                    type_i18n = {"en": "Unknown Type", "ru": "Неизвестный Тип"}
+                    print(f"CampaignLoader: Location ID '{loc_id}' missing 'type_i18n', using default.")
 
                 # Assuming db_service.create_location can handle name_i18n and description_i18n as dicts
                 # and will serialize them to JSON strings for DB storage.
@@ -150,10 +155,9 @@ class CampaignLoader:
                         # and a 'properties' field for other static data.
                         await self._db_service.create_location(
                             loc_id=loc_id,
-                            # name=name_i18n.get(default_lang, loc_id), # Old: pass plain name
-                            name_i18n=name_i18n, # New: pass dict
-                            # description=description_i18n.get(default_lang, ""), # Old: pass plain desc
-                            description_i18n=description_i18n, # New: pass dict (template desc)
+                            name_i18n=name_i18n,
+                            description_i18n=description_i18n,
+                            type_i18n=type_i18n,
                             guild_id=guild_id,
                             exits=exits_data,
                             template_id=loc_def.get("template_id", loc_id),
