@@ -14,6 +14,8 @@ from bot.api.routers import rule_config as rule_config_router
 from bot.api.routers import ability as ability_router
 from bot.api.routers import game_log as game_log_router
 from bot.api.routers import action as action_router
+from bot.api.routers import location as location_router
+from bot.api.routers import map as map_router
 # from bot.api.dependencies import create_db_and_tables # If you want to create tables on startup
 
 # Configure basic logging
@@ -111,6 +113,16 @@ app.include_router(
     action_router.router,
     prefix="/api/v1/guilds/{guild_id}", # Specific paths like /characters/{char_id}/activate_ability are in the router
     tags=["Actions"]
+)
+app.include_router(
+    location_router.router,
+    prefix="/api/v1/guilds/{guild_id}/locations",
+    tags=["Locations"]
+)
+app.include_router(
+    map_router.router,
+    prefix="/api/v1/guilds/{guild_id}/map",
+    tags=["Map Management"]
 )
 
 @app.on_event("startup")
