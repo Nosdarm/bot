@@ -22,7 +22,7 @@ async def get_or_create_rules_config(db: AsyncSession, guild_id: str) -> RulesCo
 
     if not db_config:
         logger.info(f"No RulesConfig found for guild {guild_id}. Initializing with defaults on-the-fly.")
-
+        
         # Create RulesConfig with defaults from the Pydantic schema
         default_data = RuleConfigData().dict() # Get Pydantic model defaults
         db_config = RulesConfig(guild_id=guild_id, config_data=default_data)
@@ -32,7 +32,7 @@ async def get_or_create_rules_config(db: AsyncSession, guild_id: str) -> RulesCo
             # If get_db_session does a final commit, this might be redundant or could
             # cause issues if it's a nested transaction.
             # For now, let's assume this explicit commit is needed for refresh.
-            await db.commit()
+            await db.commit() 
             await db.refresh(db_config)
             logger.info(f"Created default RulesConfig for guild {guild_id} on-the-fly.")
         except Exception as e_create:
@@ -48,7 +48,7 @@ async def get_or_create_rules_config(db: AsyncSession, guild_id: str) -> RulesCo
 
 @router.get(
     "/",  # Path relative to the router's prefix (e.g., /api/v1/guilds/{guild_id}/config/)
-    response_model=RuleConfigResponse,
+    response_model=RuleConfigResponse, 
     summary="Get current game rule configuration for the guild"
 )
 async def get_guild_rules_config_endpoint( # Renamed to avoid conflict with model name
@@ -63,13 +63,13 @@ async def get_guild_rules_config_endpoint( # Renamed to avoid conflict with mode
     except Exception as e:
         logger.error(f"Unexpected error fetching or creating RulesConfig for guild {guild_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error accessing guild configuration.")
-
+        
     return db_config
 
 
 @router.put(
     "/", # Path relative to the router's prefix
-    response_model=RuleConfigResponse,
+    response_model=RuleConfigResponse, 
     summary="Update game rule configuration for the guild"
 )
 async def update_guild_rules_config_endpoint( # Renamed to avoid conflict
@@ -81,7 +81,7 @@ async def update_guild_rules_config_endpoint( # Renamed to avoid conflict
     try:
         db_config = await get_or_create_rules_config(db, guild_id)
     except HTTPException:
-        raise
+        raise 
     except Exception as e:
         logger.error(f"Unexpected error fetching or creating RulesConfig for update for guild {guild_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error accessing guild configuration before update.")
@@ -101,5 +101,5 @@ async def update_guild_rules_config_endpoint( # Renamed to avoid conflict
         # Rollback is handled by get_db_session for general exceptions.
         logger.error(f"Error updating RulesConfig for guild {guild_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update RulesConfig.")
-
+    
     return db_config

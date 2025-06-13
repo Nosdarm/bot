@@ -6,6 +6,8 @@ import json
 import uuid
 import traceback
 import asyncio
+import time
+
 # Импорт базовых типов
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union, Tuple # Added Tuple
 

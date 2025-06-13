@@ -110,4 +110,3 @@ def downgrade() -> None:
                nullable=True)
     # Python-side default lambda:[] is removed with the model change.
     # No server_default was permanently set for 'participants' in upgrade, so none to remove here.
-```

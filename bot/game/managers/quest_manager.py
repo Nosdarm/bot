@@ -3,7 +3,7 @@ import uuid
 import time
 import asyncio
 import traceback
-from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union
+from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union, cast
 from copy import deepcopy
 
 from ..models.quest import Quest # Required for type hinting and Quest.from_dict
@@ -587,4 +587,4 @@ class QuestManager:
         self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
         return True
 
-[end of bot/game/managers/quest_manager.py]
+
