@@ -3,120 +3,66 @@
 from __future__ import annotations
 import json
 import uuid
-import traceback
+import traceback # Will be removed
 import asyncio
-import time # Added for timestamp in crafting task
-# Импорт базовых типов
-# ИСПРАВЛЕНИЕ: Импортируем необходимые типы из typing
-from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awaitable, Union # Added Union
+import time
+import logging # Added
+from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awaitable, Union
 
-# Импорт модели CraftingQueue (нужен при runtime для кеша и возвращаемых типов)
-# TODO: Create a CraftingQueue model if you don't have one.
-# For now, we'll just use Dict[str, Any] for queue items and assume the queue itself is a list of these.
-# If you create a model like bot.game.models.crafting_queue.CraftingQueue, import it here.
-# from bot.game.models.crafting_queue import CraftingQueue # Example import
-
-# Адаптер БД
-from bot.services.db_service import DBService # Changed
-
-# Import built-in types for isinstance checks
-from builtins import dict, set, list, str, int, bool, float # Added relevant builtins
-
+from bot.services.db_service import DBService
+from builtins import dict, set, list, str, int, bool, float
 
 if TYPE_CHECKING:
-    # Чтобы не создавать циклических импортов, импортируем эти типы только для подсказок
-    # Используем строковые литералы ("ClassName")
     from bot.game.managers.item_manager import ItemManager
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.time_manager import TimeManager
-    # Add other managers/processors that might be in context kwargs
-    # from bot.game.managers.location_manager import LocationManager
-    # from bot.game.managers.combat_manager import CombatManager
-    # from bot.game.managers.status_manager import StatusManager
-    # from bot.game.managers.party_manager import PartyManager
 
+logger = logging.getLogger(__name__) # Added
 
-print("--- CraftingManager module starts loading ---") # Отладочный вывод в начале файла
+logger.debug("--- CraftingManager module starts loading ---") # Changed
 
 class CraftingManager:
-    """
-    Менеджер для управления системой крафтинга:
-    рецепты, очереди крафтинга, обработка задач.
-    Работает на основе guild_id для многогильдийной поддержки.
-    """
-    # Required args для PersistenceManager
-    # Судя по схеме БД, очереди привязаны к entity_id (характеру/NPC) и guild_id.
-    # PersistenceManager должен загружать/сохранять очереди per-guild.
-    required_args_for_load: List[str] = ["guild_id"] # Загрузка per-guild
-    required_args_for_save: List[str] = ["guild_id"] # Сохранение per-guild
-    # ИСПРАВЛЕНИЕ: Добавляем guild_id для rebuild_runtime_caches
-    required_args_for_rebuild: List[str] = ["guild_id"] # Rebuild per-guild
+    required_args_for_load: List[str] = ["guild_id"]
+    required_args_for_save: List[str] = ["guild_id"]
+    required_args_for_rebuild: List[str] = ["guild_id"]
 
-
-    # --- Class-Level Attribute Annotations ---
-    # Статические рецепты крафтинга: {recipe_id: data_dict} (Global)
     _crafting_recipes: Dict[str, Dict[str, Any]]
-
-    # Кеш активных очередей крафтинга: {guild_id: {entity_id: queue_data}}
-    # queue_data is a dict potentially with 'queue' (List[Dict]) and 'state_variables' (Dict).
-    # The entity_id is the PRIMARY KEY from the DB table crafting_queues.
-    # ИСПРАВЛЕНИЕ: Кеш очередей крафтинга должен быть per-guild
-    _crafting_queues: Dict[str, Dict[str, Dict[str, Any]]] # {guild_id: {entity_id: queue_data_dict}}
-
-    # Изменённые очереди, подлежащие записи: {guild_id: set(entity_ids)}
-    # ИСПРАВЛЕНИЕ: dirty queues также per-guild
-    _dirty_crafting_queues: Dict[str, Set[str]] # {guild_id: {entity_id}}
-
-    # Удалённые очереди, подлежащие удалению из БД: {guild_id: set(entity_ids)}
-    # ИСПРАВЛЕНИЕ: deleted queue ids также per-guild
-    _deleted_crafting_queue_ids: Dict[str, Set[str]] # {guild_id: {entity_id}}
-
+    _crafting_queues: Dict[str, Dict[str, Dict[str, Any]]]
+    _dirty_crafting_queues: Dict[str, Set[str]]
+    _deleted_crafting_queue_ids: Dict[str, Set[str]]
 
     def __init__(
         self,
-        # Используем строковые литералы для всех опциональных зависимостей
-        db_service: Optional["DBService"] = None, # Changed
+        db_service: Optional["DBService"] = None,
         settings: Optional[Dict[str, Any]] = None,
-        item_manager: Optional["ItemManager"] = None, # Use string literal! Needs to create/consume items
-        rule_engine: Optional["RuleEngine"] = None, # Use string literal! Needs to process recipes, requirements, results
-        time_manager: Optional["TimeManager"] = None, # Use string literal! Needs for task duration/completion time
-        character_manager: Optional["CharacterManager"] = None, # Use string literal! Needs to check character inventory/stats
-        npc_manager: Optional["NpcManager"] = None, # Use string literal! Needs to check NPC inventory/stats
-        # Add other injected dependencies here with Optional and string literals
+        item_manager: Optional["ItemManager"] = None,
+        rule_engine: Optional["RuleEngine"] = None,
+        time_manager: Optional["TimeManager"] = None,
+        character_manager: Optional["CharacterManager"] = None,
+        npc_manager: Optional["NpcManager"] = None,
     ):
-        print("Initializing CraftingManager...")
-        self._db_service = db_service # Changed
+        logger.info("Initializing CraftingManager...") # Changed
+        self._db_service = db_service
         self._settings = settings
-
-        # Инжектированные зависимости
         self._item_manager = item_manager
         self._rule_engine = rule_engine
         self._time_manager = time_manager
         self._character_manager = character_manager
         self._npc_manager = npc_manager
 
-
-        # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
-        # Статические рецепты: {recipe_id: data_dict}} (Global)
         self._crafting_recipes = {}
-
-        # Кеш активных очередей крафтинга: {guild_id: {entity_id: queue_data_dict}}
-        self._crafting_queues = {} # Инициализируем как пустой dict
-
-        # Для оптимизации персистенции
-        self._dirty_crafting_queues = {} # Инициализируем как пустой dict
-        self._deleted_crafting_queue_ids = {} # Инициализируем как пустой dict
+        self._crafting_queues = {}
+        self._dirty_crafting_queues = {}
+        self._deleted_crafting_queue_ids = {}
 
         self.load_static_recipes()
-
-        print("CraftingManager initialized.\n")
+        logger.info("CraftingManager initialized.") # Changed
 
     def load_static_recipes(self) -> None:
-        """Загружает глобальные статические рецепты из self._settings."""
-        print("CraftingManager: Loading global crafting recipes...")
-        self._crafting_recipes = {} # Clear global recipe cache
+        logger.info("CraftingManager: Loading global crafting recipes...") # Changed
+        self._crafting_recipes = {}
 
         if self._settings and 'crafting_recipes' in self._settings:
             recipes_data_dict = self._settings['crafting_recipes']
@@ -126,55 +72,37 @@ class CraftingManager:
                         if isinstance(data.get('ingredients'), list) and isinstance(data.get('results'), list):
                             data.setdefault('id', str(recipe_id))
                             data.setdefault('name_i18n', {"en": f"Unnamed Recipe ({recipe_id})", "ru": f"Рецепт без имени ({recipe_id})"})
-                            data.setdefault('crafting_time_seconds', 10.0) # Renamed from 'time' for clarity
+                            data.setdefault('crafting_time_seconds', 10.0)
                             data.setdefault('requirements', {})
                             self._crafting_recipes[str(recipe_id)] = data
                         else:
-                            print(f"CraftingManager: Warning: Skipping invalid recipe '{recipe_id}': missing 'ingredients' or 'results' lists. Data: {data}")
-                print(f"CraftingManager: Loaded {len(self._crafting_recipes)} global crafting recipes.")
+                            logger.warning("CraftingManager: Skipping invalid recipe '%s': missing 'ingredients' or 'results' lists. Data: %s", recipe_id, data) # Changed
+                logger.info("CraftingManager: Loaded %s global crafting recipes.", len(self._crafting_recipes)) # Changed
             else:
-                print("CraftingManager: 'crafting_recipes' in settings is not a dictionary.")
+                logger.warning("CraftingManager: 'crafting_recipes' in settings is not a dictionary.") # Changed
         else:
-            print("CraftingManager: No 'crafting_recipes' found in settings.")
+            logger.info("CraftingManager: No 'crafting_recipes' found in settings.") # Changed
 
     def get_recipe(self, recipe_id: str) -> Optional[Dict[str, Any]]:
-        """Возвращает данные рецепта по его ID (глобальный кеш)."""
         return self._crafting_recipes.get(str(recipe_id))
 
-
-    # get_crafting_queue now needs guild_id
-    # The queue is identified by entity_id (character or npc)
-    def get_crafting_queue(self, guild_id: str, entity_id: str) -> Optional[Dict[str, Any]]: # Returning the raw queue data dict
-        """Получить очередь крафтинга для сущности по ее ID для определенной гильдии."""
+    def get_crafting_queue(self, guild_id: str, entity_id: str) -> Optional[Dict[str, Any]]:
         guild_id_str = str(guild_id)
-        # Get queue from the per-guild cache
-        guild_queues = self._crafting_queues.get(guild_id_str) # Get per-guild cache
+        guild_queues = self._crafting_queues.get(guild_id_str)
         if guild_queues:
-             # Return a copy of the queue data to prevent external modification
-             queue_data = guild_queues.get(str(entity_id)) # Ensure entity_id is string
+             queue_data = guild_queues.get(str(entity_id))
              if queue_data is not None:
-                  return queue_data.copy() # Return a copy
-        return None # Guild or queue not found
+                  return queue_data.copy()
+        return None
 
-
-    # TODO: Implement add_to_queue method
-    # Needs guild_id, entity_id, entity_type, recipe_id, quantity, context
-    # Should validate recipe, requirements (via RuleEngine), consume ingredients (via ItemManager),
-    # add task to queue, mark queue dirty.
     async def add_recipe_to_craft_queue(self, guild_id: str, entity_id: str, entity_type: str, recipe_id: str, quantity: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Adds a recipe to the crafting queue for a specific entity.
-        Performs requirement checks, consumes ingredients, and then queues the task.
-        """
         guild_id_str = str(guild_id)
         entity_id_str = str(entity_id)
         recipe_id_str = str(recipe_id)
-        print(f"CraftingManager: Attempting to add {quantity}x recipe '{recipe_id_str}' to queue for {entity_type} {entity_id_str} in guild {guild_id_str}.")
+        logger.info("CraftingManager: Attempting to add %sx recipe '%s' to queue for %s %s in guild %s.", quantity, recipe_id_str, entity_type, entity_id_str, guild_id_str) # Changed
 
-        # Retrieve necessary managers from self or context
         rule_engine: Optional["RuleEngine"] = context.get('rule_engine', self._rule_engine)
         item_manager: Optional["ItemManager"] = context.get('item_manager', self._item_manager)
-        # CharacterManager and NpcManager are already attributes of self
         time_manager: Optional["TimeManager"] = context.get('time_manager', self._time_manager)
 
         if not rule_engine: return {"success": False, "message": "Crafting system (RuleEngine) is unavailable."}
@@ -183,648 +111,338 @@ class CraftingManager:
         if not self._npc_manager and entity_type == "NPC": return {"success": False, "message": "NPC system is unavailable."}
         if not time_manager: return {"success": False, "message": "Time system (TimeManager) is unavailable."}
 
-        # Fetch the recipe
-        recipe = self.get_recipe(recipe_id_str) # Removed guild_id_str
+        recipe = self.get_recipe(recipe_id_str)
         if not recipe:
             return {"success": False, "message": f"Recipe '{recipe_id_str}' not found."}
 
-        # Use i18n name if available, fallback to plain name or ID
-        # Assuming get_default_bot_language() is available or a default can be used.
-        # For simplicity, let's assume a default or direct access to name_i18n here.
-        # This part might need a language context if used outside GameManager.
-        # default_lang = context.get('default_language', 'en') # Example, if context had language
-        default_lang = 'en' # Placeholder
+        default_lang = 'en'
         recipe_name_i18n = recipe.get('name_i18n', {})
         recipe_name = recipe_name_i18n.get(default_lang, recipe_name_i18n.get('en', recipe_id_str))
-
-        # --- 4. Requirement Checks ---
-        # FIXME: RuleEngine.check_crafting_requirements method does not exist. Implement or remove block.
-        # if hasattr(rule_engine, 'check_crafting_requirements'):
-        #     try:
-        #         requirements_met, requirement_message = await rule_engine.check_crafting_requirements(
-        #             entity_id_str, entity_type, recipe, context
-        #         )
-        #         if not requirements_met:
-        #             return {"success": False, "message": requirement_message or f"Requirements not met for crafting {recipe_name}."}
-        #     except Exception as e:
-        #         print(f"CraftingManager: Error during rule_engine.check_crafting_requirements for {entity_id_str}, recipe {recipe_id_str}: {e}")
-        #         traceback.print_exc()
-        #         return {"success": False, "message": f"Error checking requirements for {recipe_name}."}
-        # else:
-        #     print(f"CraftingManager: Warning: RuleEngine.check_crafting_requirements not implemented. Skipping requirement checks.")
-        print(f"CraftingManager: FIXME: RuleEngine.check_crafting_requirements call skipped as method is missing.")
-
-
-        # --- 5. Ingredient Checks & Consumption ---
-        # FIXME: ItemManager.entity_has_item_template_id and ItemManager.remove_item_from_entity_inventory_by_template_id methods do not exist.
-        # The following block for ingredient check and consumption is effectively disabled.
-        # ingredients_to_consume = []
-        # for ingredient in recipe.get('ingredients', []):
-        #     item_template_id = ingredient.get('item_template_id')
-        #     required_quantity = ingredient.get('quantity', 0) * quantity # Total needed for all items
-            
-        #     if not item_template_id or required_quantity <= 0:
-        #         continue # Skip invalid ingredient entry
-
-        #     has_enough = False
-        #     if hasattr(item_manager, 'entity_has_item_template_id'):
-        #         try:
-        #             has_enough = await item_manager.entity_has_item_template_id(
-        #                 entity_id_str, entity_type, item_template_id, required_quantity, context
-        #             )
-        #         except Exception as e:
-        #             print(f"CraftingManager: Error checking ingredients for {entity_id_str}, item {item_template_id}: {e}")
-        #             traceback.print_exc()
-        #             return {"success": False, "message": f"Error checking ingredients for {recipe_name}."}
-        #     else:
-        #         print(f"CraftingManager: Warning: ItemManager.entity_has_item_template_id not implemented. Cannot check ingredients.")
-        #         # return {"success": False, "message": "Cannot verify ingredients due to system configuration."} # Fail closed
-
-        #     if not has_enough:
-        #         ingredient_template = item_manager.get_item_template(guild_id_str, item_template_id)
-        #         ingredient_name = getattr(ingredient_template, 'name', item_template_id) if ingredient_template else item_template_id
-        #         return {"success": False, "message": f"Insufficient ingredients: Missing {required_quantity}x {ingredient_name} for {recipe_name}."}
-            
-        #     ingredients_to_consume.append({'item_template_id': item_template_id, 'quantity': required_quantity})
-
-        # for item_to_consume in ingredients_to_consume:
-        #     if hasattr(item_manager, 'remove_item_from_entity_inventory_by_template_id'):
-        #         try:
-        #             removed_count = await item_manager.remove_item_from_entity_inventory_by_template_id(
-        #                 entity_id_str, entity_type, item_to_consume['item_template_id'], item_to_consume['quantity'], context
-        #             )
-        #             if removed_count < item_to_consume['quantity']:
-        #                 print(f"CraftingManager: CRITICAL: Failed to consume enough {item_to_consume['item_template_id']} for {entity_id_str}. Expected {item_to_consume['quantity']}, got {removed_count}.")
-        #                 return {"success": False, "message": f"Critical error consuming ingredients for {recipe_name}. Please contact an admin."}
-        #         except Exception as e:
-        #             print(f"CraftingManager: Error consuming ingredients for {entity_id_str}, item {item_to_consume['item_template_id']}: {e}")
-        #             traceback.print_exc()
-        #             return {"success": False, "message": f"Error consuming ingredients for {recipe_name}."}
-        #     else:
-        #         print(f"CraftingManager: Warning: ItemManager.remove_item_from_entity_inventory_by_template_id not implemented. Cannot consume ingredients.")
-        #         # return {"success": False, "message": "Cannot consume ingredients due to system configuration."} # Fail closed
         
-        print(f"CraftingManager: FIXME: Ingredient consumption skipped as ItemManager methods are missing. Assuming ingredients are available and consumed.")
+        logger.warning("CraftingManager: FIXME: RuleEngine.check_crafting_requirements call skipped as method is missing for recipe %s, entity %s, guild %s.", recipe_id_str, entity_id_str, guild_id_str) # Changed
+        logger.warning("CraftingManager: FIXME: Ingredient consumption skipped for recipe %s, entity %s, guild %s as ItemManager methods are missing. Assuming ingredients are available and consumed.", recipe_id_str, entity_id_str, guild_id_str) # Changed
 
-        # --- 6. Task Creation ---
-        total_duration = float(recipe.get('time', 10.0)) * quantity # Total time for all items
-        current_game_time = time_manager.get_current_game_time(guild_id_str) # Assuming this is synchronous for now
+        total_duration = float(recipe.get('crafting_time_seconds', 10.0)) * quantity # Changed 'time' to 'crafting_time_seconds'
+        current_game_time = time_manager.get_current_game_time(guild_id_str)
 
         task = {
-            'task_id': str(uuid.uuid4()),
-            'recipe_id': recipe_id_str,
-            'quantity': quantity,
-            'progress': 0.0,
-            'total_duration': total_duration,
-            'added_at': current_game_time 
+            'task_id': str(uuid.uuid4()), 'recipe_id': recipe_id_str, 'quantity': quantity,
+            'progress': 0.0, 'total_duration': total_duration, 'added_at': current_game_time
         }
 
-        # --- 7. Add to Queue ---
         guild_queues_cache = self._crafting_queues.setdefault(guild_id_str, {})
-        # Ensure entity_id_str is used as key
         entity_queue_data = guild_queues_cache.setdefault(entity_id_str, {'entity_id': entity_id_str, 'entity_type': entity_type, 'guild_id': guild_id_str, 'queue': [], 'state_variables': {}})
         
-        # Ensure 'queue' key exists and is a list
         if not isinstance(entity_queue_data.get('queue'), list):
             entity_queue_data['queue'] = []
             
         entity_queue_data['queue'].append(task)
-        self.mark_queue_dirty(guild_id_str, entity_id_str) # Use string entity_id
+        self.mark_queue_dirty(guild_id_str, entity_id_str)
 
-        print(f"CraftingManager: Task {task['task_id']} for recipe {recipe_id_str} (x{quantity}) added to queue for {entity_type} {entity_id_str}. Queue length: {len(entity_queue_data['queue'])}.")
+        logger.info("CraftingManager: Task %s for recipe %s (x%s) added to queue for %s %s in guild %s. Queue length: %s.", task['task_id'], recipe_id_str, quantity, entity_type, entity_id_str, guild_id_str, len(entity_queue_data['queue'])) # Changed
         
         return {"success": True, "message": f"✅ Started crafting {quantity}x {recipe_name}. It has been added to your queue."}
 
-
-    # TODO: Implement process_tick method
-    # Called by WorldSimulationProcessor
-    # Needs guild_id, game_time_delta, context
-    # Should iterate through active queues for the guild, update task progress,
-    # call RuleEngine to process completed tasks, handle results (ItemManager).
-    # Should mark queues dirty if changed.
     async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None:
-        """
-        Обрабатывает игровой тик для очередей крафтинга для определенной гильдии.
-        """
         guild_id_str = str(guild_id)
-        # print(f"CraftingManager: Processing tick for guild {guild_id_str}. Delta: {game_time_delta:.2f}. (Placeholder)") # Too noisy
-
-        # Get RuleEngine from kwargs or self
-        rule_engine = kwargs.get('rule_engine', self._rule_engine) # type: Optional["RuleEngine"]
-        time_manager = kwargs.get('time_manager', self._time_manager) # type: Optional["TimeManager"]
+        rule_engine = kwargs.get('rule_engine', self._rule_engine)
+        time_manager = kwargs.get('time_manager', self._time_manager)
 
         if not rule_engine or not hasattr(rule_engine, 'process_crafting_task'):
-             # print(f"CraftingManager: Warning: RuleEngine or process_crafting_task method not available for guild {guild_id_str}. Skipping crafting tick.") # Too noisy?
-             return # Cannot process tick without RuleEngine logic
+             # logger.debug("CraftingManager: RuleEngine or process_crafting_task method not available for guild %s. Skipping crafting tick.", guild_id_str) # Too noisy
+             return
 
-
-        # Get all crafting queues for this guild
         guild_queues = self._crafting_queues.get(guild_id_str)
         if not guild_queues:
-             # print(f"CraftingManager: No crafting queues found for guild {guild_id_str} during tick.") # Too noisy?
-             return # No queues in this guild
+             # logger.debug("CraftingManager: No crafting queues found for guild %s during tick.", guild_id_str) # Too noisy
+             return
 
-
-        # Iterate through queues and process
-        # Iterate over a copy of the entity_ids in the queue cache to avoid issues if a queue is removed during processing
         entity_ids_with_queues = list(guild_queues.keys())
         for entity_id in entity_ids_with_queues:
-             # Check if the queue still exists in the cache for this guild (might have been removed)
              queue_data = guild_queues.get(entity_id)
-             if not queue_data: continue # Skip if queue was removed
+             if not queue_data: continue
 
-             queue_list = queue_data.get('queue', []) # Get the list of tasks
+             queue_list = queue_data.get('queue', [])
              if not isinstance(queue_list, list):
-                  print(f"CraftingManager: Warning: Crafting queue for entity {entity_id} in guild {guild_id_str} is not a list ({type(queue_list)}). Resetting to empty list.")
-                  queue_list = [] # Reset if not list
-                  queue_data['queue'] = queue_list # Update in data dict
+                  logger.warning("CraftingManager: Crafting queue for entity %s in guild %s is not a list (%s). Resetting to empty list.", entity_id, guild_id_str, type(queue_list)) # Changed
+                  queue_list = []
+                  queue_data['queue'] = queue_list
 
-             # Process the first item in the queue if it exists
              if queue_list:
-                  task = queue_list[0] # Get the current task (Dict[str, Any])
+                  task = queue_list[0]
                   if not isinstance(task, dict):
-                       print(f"CraftingManager: Warning: Invalid task data in queue for entity {entity_id} in guild {guild_id_str}: {task}. Removing from queue.")
-                       queue_list.pop(0) # Remove invalid task
-                       self.mark_queue_dirty(guild_id_str, entity_id) # Mark dirty
-                       continue # Move to next entity
+                       logger.warning("CraftingManager: Invalid task data in queue for entity %s in guild %s: %s. Removing from queue.", entity_id, guild_id_str, task) # Changed
+                       queue_list.pop(0)
+                       self.mark_queue_dirty(guild_id_str, entity_id)
+                       continue
 
-                  # Ensure task has 'progress' attribute
                   if 'progress' not in task or not isinstance(task.get('progress'), (int, float)):
-                       print(f"CraftingManager: Warning: Task for entity {entity_id} in guild {guild_id_str} missing 'progress' attribute. Initializing to 0.0.")
+                       logger.warning("CraftingManager: Task for entity %s in guild %s missing 'progress' attribute. Initializing to 0.0.", entity_id, guild_id_str) # Changed
                        task['progress'] = 0.0
 
-                  # Add game time delta to progress
                   task['progress'] += game_time_delta
-                  self.mark_queue_dirty(guild_id_str, entity_id) # Mark queue dirty as progress changed
+                  self.mark_queue_dirty(guild_id_str, entity_id)
 
-                  # Check if the task is complete
                   recipe_id = task.get('recipe_id')
                   if recipe_id is None:
-                       print(f"CraftingManager: Warning: Task for entity {entity_id} in guild {guild_id_str} missing 'recipe_id'. Removing from queue.")
-                       queue_list.pop(0) # Remove invalid task
-                       # Queue is already marked dirty
+                       logger.warning("CraftingManager: Task for entity %s in guild %s missing 'recipe_id'. Removing from queue.", entity_id, guild_id_str) # Changed
+                       queue_list.pop(0)
                        continue
 
-                  # Get the recipe data to check total time
-                  recipe = self.get_recipe(str(recipe_id)) # Use global get_recipe
+                  recipe = self.get_recipe(str(recipe_id))
                   if not recipe:
-                       print(f"CraftingManager: Warning: Recipe '{recipe_id}' not found for task for entity {entity_id} in guild {guild_id_str}. Removing from queue.")
-                       queue_list.pop(0) # Remove task with missing recipe
-                       # Queue is already marked dirty
+                       logger.warning("CraftingManager: Recipe '%s' not found for task for entity %s in guild %s. Removing from queue.", recipe_id, entity_id, guild_id_str) # Changed
+                       queue_list.pop(0)
                        continue
 
-                  required_time = float(recipe.get('crafting_time_seconds', 10.0)) # Use new field name
+                  required_time = float(recipe.get('crafting_time_seconds', 10.0))
 
                   if task['progress'] >= required_time:
-                       # Task is complete! Process result.
-                       print(f"CraftingManager: Crafting task '{recipe_id}' complete for entity {entity_id} in guild {guild_id_str}.")
+                       logger.info("CraftingManager: Crafting task '%s' complete for entity %s in guild %s.", recipe_id, entity_id, guild_id_str) # Changed
                        try:
-                           # Call RuleEngine to process task completion (give items, grant XP, etc.)
-                           # process_crafting_task needs entity_id, entity_type, recipe_id, context
-                           # Determine entity_type (Character or NPC?)
-                           entity_type = None # Try to determine entity type from managers in kwargs or self
+                           entity_type = None
                            char_mgr = kwargs.get('character_manager', self._character_manager)
                            npc_mgr = kwargs.get('npc_manager', self._npc_manager)
                            if char_mgr and hasattr(char_mgr, 'get_character') and char_mgr.get_character(guild_id_str, entity_id): entity_type = 'Character'
                            elif npc_mgr and hasattr(npc_mgr, 'get_npc') and npc_mgr.get_npc(guild_id_str, entity_id): entity_type = 'NPC'
 
                            if entity_type is None:
-                                print(f"CraftingManager: Warning: Could not determine type for entity {entity_id} in guild {guild_id_str} during crafting task completion. Cannot process task results via RuleEngine.")
-                                # Remove task anyway to prevent infinite loop
+                                logger.warning("CraftingManager: Could not determine type for entity %s in guild %s during crafting task completion. Cannot process task results via RuleEngine.", entity_id, guild_id_str) # Changed
                                 queue_list.pop(0)
-                                # Queue is already marked dirty
-                                continue # Move to next entity
+                                continue
 
+                           task_context = {**kwargs, 'guild_id': guild_id_str, 'entity_id': entity_id, 'entity_type': entity_type, 'recipe_data': recipe}
 
-                           # Pass all necessary context to RuleEngine
-                           task_context = {**kwargs, 'guild_id': guild_id_str, 'entity_id': entity_id, 'entity_type': entity_type, 'recipe_data': recipe} # Add specific task info
-
-                           # FIXME: RuleEngine.process_crafting_task method does not exist. Implement or remove call.
-                           # await rule_engine.process_crafting_task(
-                           #     entity_id=entity_id,
-                           #     entity_type=entity_type,
-                           #     recipe_id=str(recipe_id), # Ensure string
-                           #     context=task_context # Pass full context
-                           # )
-                           # print(f"CraftingManager: RuleEngine.process_crafting_task executed for {entity_id} in guild {guild_id_str}.")
-                           print(f"CraftingManager: FIXME: Crafting task completion logic via RuleEngine.process_crafting_task skipped for {entity_id}, recipe {recipe_id}.")
-                           # For now, assume task gives items directly without RuleEngine if method is missing.
-                           # This is a placeholder for actual item granting.
+                           logger.warning("CraftingManager: FIXME: Crafting task completion logic via RuleEngine.process_crafting_task skipped for entity %s, recipe %s, guild %s.", entity_id, recipe_id, guild_id_str) # Changed
                            if self._item_manager and hasattr(self._item_manager, 'add_item_to_entity_inventory_by_template_id'):
                                for result_item_data in recipe.get('results', []):
                                    result_template_id = result_item_data.get('item_template_id')
-                                   result_quantity = result_item_data.get('quantity', 1) * task.get('quantity', 1) # Multiply by task quantity
+                                   result_quantity = result_item_data.get('quantity', 1) * task.get('quantity', 1)
                                    if result_template_id and result_quantity > 0:
                                        await self._item_manager.add_item_to_entity_inventory_by_template_id(
                                            entity_id, entity_type, result_template_id, result_quantity, task_context
                                        )
-                                       print(f"CraftingManager: Placeholder: Granted {result_quantity}x {result_template_id} to {entity_id}.")
+                                       logger.info("CraftingManager: Placeholder: Granted %sx %s to %s in guild %s.", result_quantity, result_template_id, entity_id, guild_id_str) # Changed
                            else:
-                               print(f"CraftingManager: Placeholder: ItemManager or add_item_to_entity_inventory_by_template_id missing. Cannot grant items for completed task {recipe_id}.")
+                               logger.warning("CraftingManager: Placeholder: ItemManager or add_item_to_entity_inventory_by_template_id missing for guild %s. Cannot grant items for completed task %s.", guild_id_str, recipe_id) # Changed
 
-
-                           # Remove the completed task from the queue
                            queue_list.pop(0)
-                           # Queue is already marked dirty from progress update
-
-                           # If there are more tasks in the queue, the next one starts immediately (or at next tick)
                            if queue_list:
-                                # Reset progress for the *next* task if it exists
                                 next_task = queue_list[0]
                                 if isinstance(next_task, dict):
-                                     next_task['progress'] = 0.0 # Reset progress for the new first task
-                                     self.mark_queue_dirty(guild_id_str, entity_id) # Mark dirty
+                                     next_task['progress'] = 0.0
+                                     self.mark_queue_dirty(guild_id_str, entity_id)
 
                        except Exception as e:
-                           print(f"CraftingManager: ❌ Error processing crafting task '{recipe_id}' for entity {entity_id} in guild {guild_id_str}: {e}")
-                           traceback.print_exc()
-                           # Decide how to handle error - remove task or leave it stuck? Remove for now.
-                           queue_list.pop(0) # Remove the task that caused error
-                           # Queue is already marked dirty
-                           # Continue loop
+                           logger.error("CraftingManager: Error processing crafting task '%s' for entity %s in guild %s: %s", recipe_id, entity_id, guild_id_str, e, exc_info=True) # Changed
+                           queue_list.pop(0)
 
-                  # else: Task is not complete yet, leave in queue
-
-
-        # After processing all entities, save state if any queues were marked dirty.
-        # Save happens automatically by PersistenceManager.process_tick if this manager is in its list.
-
-
-    # load_state - loads per-guild
-    # required_args_for_load = ["guild_id"]
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
-        """Загружает очереди крафтинга и рецепты для определенной гильдии из базы данных/настроек в кеш."""
         guild_id_str = str(guild_id)
-        print(f"CraftingManager: Loading state for guild {guild_id_str} (queues + recipes)...")
+        logger.info("CraftingManager: Loading state for guild %s (queues + recipes)...", guild_id_str) # Changed
 
-        if self._db_service is None or self._db_service.adapter is None: # Changed
-            print(f"CraftingManager: Warning: No DB service or adapter. Skipping queue/recipe load for guild {guild_id_str}. It will work with empty caches.")
-            # TODO: In non-DB mode, load placeholder data
+        if self._db_service is None or self._db_service.adapter is None:
+            logger.warning("CraftingManager: No DB service or adapter for guild %s. Skipping queue/recipe load. Will work with empty caches.", guild_id_str) # Changed
             return
 
-        # --- 1. Загрузка статических рецептов (per-guild) ---
-        # Recipes are now global and loaded in __init__. No per-guild recipe loading here.
-        # self.load_static_recipes(guild_id_str) # This line is removed.
-
-
-        # --- 2. Загрузка активных очередей крафтинга (per-guild) ---
-        # Очищаем кеши очередей ТОЛЬКО для этой гильдии перед загрузкой
-        self._crafting_queues.pop(guild_id_str, None) # Remove old cache for this guild
-        self._crafting_queues[guild_id_str] = {} # Create an empty cache for this guild
-
-        # При загрузке, считаем, что все в DB "чистое", поэтому очищаем dirty/deleted для этой гильдии
+        self._crafting_queues.pop(guild_id_str, None)
+        self._crafting_queues[guild_id_str] = {}
         self._dirty_crafting_queues.pop(guild_id_str, None)
         self._deleted_crafting_queue_ids.pop(guild_id_str, None)
 
         rows = []
         try:
-            # Execute SQL SELECT FROM crafting_queues WHERE guild_id = ?
-            # Assuming table has columns: entity_id, entity_type, guild_id, queue, state_variables
-            sql = '''
-            SELECT entity_id, entity_type, guild_id, queue, state_variables
-            FROM crafting_queues WHERE guild_id = $1
-            ''' # Changed placeholder
-            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,)) # Changed to db_service
-            print(f"CraftingManager: Found {len(rows)} crafting queues in DB for guild {guild_id_str}.")
-
+            sql = 'SELECT entity_id, entity_type, guild_id, queue, state_variables FROM crafting_queues WHERE guild_id = $1'
+            rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,))
+            logger.info("CraftingManager: Found %s crafting queues in DB for guild %s.", len(rows), guild_id_str) # Changed
         except Exception as e:
-            print(f"CraftingManager: ❌ CRITICAL ERROR executing DB fetchall for crafting queues for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # Clear queue cache for this guild on critical error
+            logger.critical("CraftingManager: CRITICAL ERROR executing DB fetchall for crafting queues for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
             self._crafting_queues.pop(guild_id_str, None)
-            raise # Re-raise critical error
-
+            raise
 
         loaded_count = 0
-        # Get the cache dict for this specific guild
         guild_queues_cache = self._crafting_queues[guild_id_str]
-
         for row in rows:
              data = dict(row)
              try:
-                 # Validate and parse data
                  entity_id_raw = data.get('entity_id')
                  entity_type_raw = data.get('entity_type')
-                 loaded_guild_id_raw = data.get('guild_id') # Should match guild_id_str due to WHERE clause
+                 loaded_guild_id_raw = data.get('guild_id')
 
                  if entity_id_raw is None or entity_type_raw is None or loaded_guild_id_raw is None or str(loaded_guild_id_raw) != guild_id_str:
-                     # This check is mostly redundant due to WHERE clause but safe.
-                     print(f"CraftingManager: Warning: Skipping queue row with invalid ID/Type/Guild ('{entity_id_raw}', '{entity_type_raw}', '{loaded_guild_id_raw}') during load for guild {guild_id_str}. Row: {row}.")
+                     logger.warning("CraftingManager: Skipping queue row with invalid ID/Type/Guild ('%s', '%s', '%s') during load for guild %s. Row: %s.", entity_id_raw, entity_type_raw, loaded_guild_id_raw, guild_id_str, row) # Changed
                      continue
 
                  entity_id = str(entity_id_raw)
-                 entity_type = str(entity_type_raw) # Ensure type is string
+                 entity_type = str(entity_type_raw)
 
-
-                 # Parse JSON fields, handle None/malformed data gracefully
                  try:
                      data['queue'] = json.loads(data.get('queue') or '[]') if isinstance(data.get('queue'), (str, bytes)) else []
                  except (json.JSONDecodeError, TypeError):
-                      print(f"CraftingManager: Warning: Failed to parse queue for entity {entity_id} in guild {guild_id_str}. Setting to []. Data: {data.get('queue')}")
+                      logger.warning("CraftingManager: Failed to parse queue for entity %s in guild %s. Setting to []. Data: %s", entity_id, guild_id_str, data.get('queue')) # Changed
                       data['queue'] = []
-                 else: # Ensure queue items are dicts and have basic required fields (e.g., 'recipe_id')
+                 else:
                       cleaned_queue = []
                       for task in data['queue']:
                            if isinstance(task, dict) and task.get('recipe_id') is not None:
-                                # Basic validation for task structure
-                                task.setdefault('progress', 0.0) # Ensure progress field
+                                task.setdefault('progress', 0.0)
                                 cleaned_queue.append(task)
                            else:
-                                print(f"CraftingManager: Warning: Invalid task format in queue for entity {entity_id} in guild {guild_id_str}. Skipping task: {task}")
+                                logger.warning("CraftingManager: Invalid task format in queue for entity %s in guild %s. Skipping task: %s", entity_id, guild_id_str, task) # Changed
                       data['queue'] = cleaned_queue
-
 
                  try:
                      data['state_variables'] = json.loads(data.get('state_variables') or '{}') if isinstance(data.get('state_variables'), (str, bytes)) else {}
                  except (json.JSONDecodeError, TypeError):
-                      print(f"CraftingManager: Warning: Failed to parse state_variables for queue of entity {entity_id} in guild {guild_id_str}. Setting to {{}}. Data: {data.get('state_variables')}")
+                      logger.warning("CraftingManager: Failed to parse state_variables for queue of entity %s in guild %s. Setting to {}. Data: %s", entity_id, guild_id_str, data.get('state_variables')) # Changed
                       data['state_variables'] = {}
 
-
-                 # Ensure required fields exist and have correct types after parsing
                  data['entity_id'] = entity_id
                  data['entity_type'] = entity_type
-                 data['guild_id'] = guild_id_str # Ensure guild_id is string
+                 data['guild_id'] = guild_id_str
 
-
-                 # Store the loaded queue data dict in the per-guild cache, indexed by entity_id
-                 # We are not using a dedicated CraftingQueue model currently, just storing the data dicts.
                  guild_queues_cache[entity_id] = {
-                     'entity_id': data['entity_id'],
-                     'entity_type': data['entity_type'],
-                     'guild_id': data['guild_id'],
-                     'queue': data['queue'],
+                     'entity_id': data['entity_id'], 'entity_type': data['entity_type'],
+                     'guild_id': data['guild_id'], 'queue': data['queue'],
                      'state_variables': data['state_variables'],
                  }
-
                  loaded_count += 1
-
              except Exception as e:
-                 print(f"CraftingManager: Error loading crafting queue for entity {data.get('entity_id', 'N/A')} in guild {guild_id_str}: {e}")
-                 import traceback
-                 print(traceback.format_exc())
-                 # Continue loop for other rows
+                 logger.error("CraftingManager: Error loading crafting queue for entity %s in guild %s: %s", data.get('entity_id', 'N/A'), guild_id_str, e, exc_info=True) # Changed
+        logger.info("CraftingManager: Successfully loaded %s crafting queues into cache for guild %s.", loaded_count, guild_id_str) # Changed
+        logger.info("CraftingManager: Load state complete for guild %s.", guild_id_str) # Changed
 
-
-        print(f"CraftingManager: Successfully loaded {loaded_count} crafting queues into cache for guild {guild_id_str}.")
-        print(f"CraftingManager: Load state complete for guild {guild_id_str}.")
-
-
-    # save_state - saves per-guild
-    # required_args_for_save = ["guild_id"]
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
-        """Сохраняет измененные очереди крафтинга для определенной гильдии."""
         guild_id_str = str(guild_id)
-        print(f"CraftingManager: Saving crafting queue state for guild {guild_id_str}...")
+        logger.info("CraftingManager: Saving crafting queue state for guild %s...", guild_id_str) # Changed
 
-        if self._db_service is None or self._db_service.adapter is None: # Changed
-            print(f"CraftingManager: Warning: Cannot save crafting queue state for guild {guild_id_str}, DB service or adapter missing.")
+        if self._db_service is None or self._db_service.adapter is None:
+            logger.warning("CraftingManager: Cannot save crafting queue state for guild %s, DB service or adapter missing.", guild_id_str) # Changed
             return
 
-        # ИСПРАВЛЕНИЕ: Соберите dirty/deleted ID ИЗ per-guild кешей
-        dirty_queue_entity_ids_set = self._dirty_crafting_queues.get(guild_id_str, set()).copy() # Use a copy
-        deleted_queue_entity_ids_set = self._deleted_crafting_queue_ids.get(guild_id_str, set()).copy() # Use a copy
+        dirty_queue_entity_ids_set = self._dirty_crafting_queues.get(guild_id_str, set()).copy()
+        deleted_queue_entity_ids_set = self._deleted_crafting_queue_ids.get(guild_id_str, set()).copy()
 
         if not dirty_queue_entity_ids_set and not deleted_queue_entity_ids_set:
-            # print(f"CraftingManager: No dirty or deleted crafting queues to save for guild {guild_id_str}.") # Too noisy
-            # ИСПРАВЛЕНИЕ: Если нечего сохранять/удалять, очищаем per-guild dirty/deleted сеты
+            # logger.debug("CraftingManager: No dirty or deleted crafting queues to save for guild %s.", guild_id_str) # Too noisy
             self._dirty_crafting_queues.pop(guild_id_str, None)
             self._deleted_crafting_queue_ids.pop(guild_id_str, None)
             return
 
-        print(f"CraftingManager: Saving {len(dirty_queue_entity_ids_set)} dirty, {len(deleted_queue_entity_ids_set)} deleted crafting queues for guild {guild_id_str}...")
+        logger.info("CraftingManager: Saving %s dirty, %s deleted crafting queues for guild %s...", len(dirty_queue_entity_ids_set), len(deleted_queue_entity_ids_set), guild_id_str) # Changed
 
         try:
-            # 1. Удаление очередей, помеченных для удаления для этой гильдии
             if deleted_queue_entity_ids_set:
                 ids_to_delete = list(deleted_queue_entity_ids_set)
-                if ids_to_delete: # Check if there are IDs to delete
-                    placeholders_del = ','.join([f'${i+2}' for i in range(len(ids_to_delete))]) # $2, $3, ...
-                    # Assuming the table PK is just entity_id as per the DB schema in sqlite_adapter
-                    # If PK is composite (entity_id, entity_type, guild_id), the DELETE WHERE clause needs adjustment.
-                    # Sticking to entity_id PK for now based on the last adapter code provided.
-                    sql_delete_batch = f"DELETE FROM crafting_queues WHERE guild_id = $1 AND entity_id IN ({placeholders_del})" # Changed placeholders
+                if ids_to_delete:
+                    placeholders_del = ','.join([f'${i+2}' for i in range(len(ids_to_delete))])
+                    sql_delete_batch = f"DELETE FROM crafting_queues WHERE guild_id = $1 AND entity_id IN ({placeholders_del})"
                     try:
-                        await self._db_service.adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete))) # Changed
-                        print(f"CraftingManager: Deleted {len(ids_to_delete)} crafting queues from DB for guild {guild_id_str}.")
-                        # ИСПРАВЛЕНИЕ: Очищаем per-guild deleted set after successful deletion
+                        await self._db_service.adapter.execute(sql_delete_batch, (guild_id_str, *tuple(ids_to_delete)))
+                        logger.info("CraftingManager: Deleted %s crafting queues from DB for guild %s.", len(ids_to_delete), guild_id_str) # Changed
                         self._deleted_crafting_queue_ids.pop(guild_id_str, None)
                     except Exception as e:
-                        print(f"CraftingManager: Error deleting crafting queues for guild {guild_id_str}: {e}"); traceback.print_exc();
-                        # Do NOT clear deleted set on error
-            else: # If the set was empty for this guild
+                        logger.error("CraftingManager: Error deleting crafting queues for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
+            else:
                 self._deleted_crafting_queue_ids.pop(guild_id_str, None)
 
-
-            # 2. Обновить или вставить измененные очереди для этого guild_id
-            # Filter dirty IDs on queues that still exist in the per-guild active cache
             guild_queues_cache = self._crafting_queues.get(guild_id_str, {})
-            queues_to_upsert_list: List[Dict[str, Any]] = [ qd for eid in list(dirty_queue_entity_ids_set) if (qd := guild_queues_cache.get(eid)) is not None ] # Iterate over a copy of IDs
+            queues_to_upsert_list: List[Dict[str, Any]] = [ qd for eid in list(dirty_queue_entity_ids_set) if (qd := guild_queues_cache.get(eid)) is not None ]
 
             if queues_to_upsert_list:
-                 print(f"CraftingManager: Upserting {len(queues_to_upsert_list)} crafting queues for guild {guild_id_str}...")
-                 # Assuming table has columns: entity_id, entity_type, guild_id, queue, state_variables
-                 # And PK is entity_id
+                 logger.info("CraftingManager: Upserting %s crafting queues for guild %s...", len(queues_to_upsert_list), guild_id_str) # Changed
                  upsert_sql = '''
-                 INSERT INTO crafting_queues
-                 (entity_id, entity_type, guild_id, queue, state_variables)
+                 INSERT INTO crafting_queues (entity_id, entity_type, guild_id, queue, state_variables)
                  VALUES ($1, $2, $3, $4, $5)
                  ON CONFLICT (entity_id) DO UPDATE SET
-                    entity_type = EXCLUDED.entity_type,
-                    guild_id = EXCLUDED.guild_id,
-                    queue = EXCLUDED.queue,
-                    state_variables = EXCLUDED.state_variables
-                 ''' # PostgreSQL UPSERT
+                    entity_type = EXCLUDED.entity_type, guild_id = EXCLUDED.guild_id,
+                    queue = EXCLUDED.queue, state_variables = EXCLUDED.state_variables
+                 '''
                  data_to_upsert = []
-                 upserted_entity_ids: Set[str] = set() # Track entity IDs successfully prepared
-            else: # If the set was empty for this guild
-                self._deleted_crafting_queue_ids.pop(guild_id_str, None)
-
-
-            # 2. Обновить или вставить измененные очереди для этого guild_id
-            # Filter dirty IDs on queues that still exist in the per-guild active cache
-            guild_queues_cache = self._crafting_queues.get(guild_id_str, {})
-            queues_to_upsert_list: List[Dict[str, Any]] = [ qd for eid in list(dirty_queue_entity_ids_set) if (qd := guild_queues_cache.get(eid)) is not None ] # Iterate over a copy of IDs
-
-            if queues_to_upsert_list:
-                 print(f"CraftingManager: Upserting {len(queues_to_upsert_list)} crafting queues for guild {guild_id_str}...")
-                 # Assuming table has columns: entity_id, entity_type, guild_id, queue, state_variables
-                 # And PK is entity_id
-                 upsert_sql = '''
-                 INSERT INTO crafting_queues
-                 (entity_id, entity_type, guild_id, queue, state_variables)
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (entity_id) DO UPDATE SET
-                    entity_type = EXCLUDED.entity_type,
-                    guild_id = EXCLUDED.guild_id,
-                    queue = EXCLUDED.queue,
-                    state_variables = EXCLUDED.state_variables
-                 ''' # PostgreSQL UPSERT
-                 data_to_upsert = []
-                 upserted_entity_ids: Set[str] = set() # Track entity IDs successfully prepared
+                 upserted_entity_ids: Set[str] = set()
 
                  for queue_data in queues_to_upsert_list:
                       try:
-                           # Ensure queue data has all required keys
                            entity_id = queue_data.get('entity_id')
                            entity_type = queue_data.get('entity_type')
                            queue_guild_id = queue_data.get('guild_id')
 
-                           # Double check required keys and guild ID match
                            if entity_id is None or entity_type is None or str(queue_guild_id) != guild_id_str:
-                               print(f"CraftingManager: Warning: Skipping upsert for queue with invalid ID/Type ('{entity_id}', '{entity_type}') or mismatched guild ('{queue_guild_id}') during save for guild {guild_id_str}. Expected guild {guild_id_str}.")
+                               logger.warning("CraftingManager: Skipping upsert for queue with invalid ID/Type ('%s', '%s') or mismatched guild ('%s') during save for guild %s. Expected guild %s.", entity_id, entity_type, queue_guild_id, guild_id_str, guild_id_str) # Changed
                                continue
 
                            queue_list = queue_data.get('queue', [])
                            state_variables = queue_data.get('state_variables', {})
-
-                           # Ensure data types are suitable for JSON dumping
                            if not isinstance(queue_list, list): queue_list = []
                            if not isinstance(state_variables, dict): state_variables = {}
-
                            queue_json = json.dumps(queue_list)
                            state_variables_json = json.dumps(state_variables)
-
-                           data_to_upsert.append((
-                               str(entity_id),
-                               str(entity_type),
-                               guild_id_str, # Ensure guild_id string
-                               queue_json,
-                               state_variables_json,
-                           ))
-                           upserted_entity_ids.add(str(entity_id)) # Track entity ID
-
+                           data_to_upsert.append((str(entity_id), str(entity_type), guild_id_str, queue_json, state_variables_json))
+                           upserted_entity_ids.add(str(entity_id))
                       except Exception as e:
-                           print(f"CraftingManager: Error preparing data for queue of entity {queue_data.get('entity_id', 'N/A')} (guild {queue_data.get('guild_id', 'N/A')}) for upsert: {e}")
-                           import traceback
-                           print(traceback.format_exc())
-                           # This queue won't be saved but remains in _dirty_crafting_queues
-
-
+                           logger.error("CraftingManager: Error preparing data for queue of entity %s (guild %s) for upsert: %s", queue_data.get('entity_id', 'N/A'), queue_data.get('guild_id', 'N/A'), e, exc_info=True) # Changed
                  if data_to_upsert:
-                      if self._db_service is None or self._db_service.adapter is None: # Changed
-                           print(f"CraftingManager: Warning: DB service or adapter is None during queue upsert batch for guild {guild_id_str}.")
+                      if self._db_service is None or self._db_service.adapter is None:
+                           logger.warning("CraftingManager: DB service or adapter is None during queue upsert batch for guild %s.", guild_id_str) # Changed
                       else:
-                           await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert) # Changed
-                           print(f"CraftingManager: Successfully upserted {len(data_to_upsert)} crafting queues for guild {guild_id_str}.")
-                           # Only clear dirty flags for queues that were successfully processed
+                           await self._db_service.adapter.execute_many(upsert_sql, data_to_upsert)
+                           logger.info("CraftingManager: Successfully upserted %s crafting queues for guild %s.", len(data_to_upsert), guild_id_str) # Changed
                            if guild_id_str in self._dirty_crafting_queues:
                                 self._dirty_crafting_queues[guild_id_str].difference_update(upserted_entity_ids)
-                                # If set is empty after update, remove the guild key
                                 if not self._dirty_crafting_queues[guild_id_str]:
                                      del self._dirty_crafting_queues[guild_id_str]
+            else: # No queues to upsert (dirty set might have been for queues now deleted)
+                if dirty_queue_entity_ids_set: # If there were dirty IDs but no corresponding queues in cache
+                    logger.warning("CraftingManager: Dirty queues %s for guild %s were not found in cache for saving.", dirty_queue_entity_ids_set, guild_id_str)
+                # Clear the dirty set for the guild if it exists and is now empty or was for non-cached items
+                if guild_id_str in self._dirty_crafting_queues:
+                    self._dirty_crafting_queues[guild_id_str].clear() # Clear all, as those not found are no longer relevant
+                    if not self._dirty_crafting_queues[guild_id_str]:
+                        del self._dirty_crafting_queues[guild_id_str]
 
-                 # Note: Ended/empty queues that were removed from _crafting_queues
-                 # (by clean_up_for_entity calling remove_queue) are NOT saved by this upsert block.
-                 # They are handled by the DELETE block.
 
         except Exception as e:
-            print(f"CraftingManager: ❌ Error during saving state for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # Do NOT clear dirty/deleted sets on error to allow retry.
-            # raise # Re-raise if critical
+            logger.error("CraftingManager: Error during saving state for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
+        logger.info("CraftingManager: Save state complete for guild %s.", guild_id_str) # Changed
 
-        print(f"CraftingManager: Save state complete for guild {guild_id_str}.")
-
-
-    # rebuild_runtime_caches - rebuilds per-guild caches after loading
-    # required_args_for_rebuild = ["guild_id"]
-    # Already takes guild_id and **kwargs
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-        """
-        Перестройка кешей, специфичных для выполнения, после загрузки состояния для гильдии.
-        (Сейчас минимально, так как основные кеши наполняются при загрузке).
-        """
         guild_id_str = str(guild_id)
-        print(f"CraftingManager: Rebuilding runtime caches for guild {guild_id_str}...")
-        # Сейчас ничего дополнительного делать не нужно, так как _crafting_queues
-        # уже наполняется в load_state. Если бы были другие кеши, зависящие от
-        # данных других менеджеров, они бы строились здесь.
-        print(f"CraftingManager: Runtime caches rebuilt for guild {guild_id_str}. Crafting queues count: {len(self._crafting_queues.get(guild_id_str, {}))}")
+        logger.info("CraftingManager: Rebuilding runtime caches for guild %s...", guild_id_str) # Changed
+        logger.info("CraftingManager: Runtime caches rebuilt for guild %s. Crafting queues count: %s", guild_id_str, len(self._crafting_queues.get(guild_id_str, {}))) # Changed
 
-
-    # mark_queue_dirty needs guild_id
-    # Needs _dirty_crafting_queues Set (per-guild)
     def mark_queue_dirty(self, guild_id: str, entity_id: str) -> None:
-         """Помечает очередь крафтинга сущности как измененную для последующего сохранения для определенной гильдии."""
          guild_id_str = str(guild_id)
          entity_id_str = str(entity_id)
-         # Add check that the entity ID exists in the per-guild active queue cache
          guild_queues_cache = self._crafting_queues.get(guild_id_str)
          if guild_queues_cache and entity_id_str in guild_queues_cache:
-              # Add to the per-guild dirty set
               self._dirty_crafting_queues.setdefault(guild_id_str, set()).add(entity_id_str)
-         # else: print(f"CraftingManager: Warning: Attempted to mark non-existent crafting queue for entity {entity_id_str} in guild {guild_id_str} as dirty.") # Too noisy?
+         # else: logger.debug("CraftingManager: Attempted to mark non-existent crafting queue for entity %s in guild %s as dirty.", entity_id_str, guild_id_str) # Too noisy
 
-
-    # mark_queue_deleted needs guild_id
-    # Needs _deleted_crafting_queue_ids Set (per-guild)
-    # Called by remove_queue or clean_up_for_entity
     def mark_queue_deleted(self, guild_id: str, entity_id: str) -> None:
-        """Помечает очередь крафтинга сущности как удаленную для определенной гильдии."""
         guild_id_str = str(guild_id)
         entity_id_str = str(entity_id)
-
-        # Check if queue exists in the per-guild cache
         guild_queues_cache = self._crafting_queues.get(guild_id_str)
         if guild_queues_cache and entity_id_str in guild_queues_cache:
-            # Remove from per-guild cache
             del guild_queues_cache[entity_id_str]
-            print(f"CraftingManager: Removed crafting queue for entity {entity_id_str} from cache for guild {guild_id_str}.")
-
-            # Add to per-guild deleted set
-            self._deleted_crafting_queue_ids.setdefault(guild_id_str, set()).add(entity_id_str) # uses set()
-
-            # Remove from per-guild dirty set if it was there
-            self._dirty_crafting_queues.get(guild_id_str, set()).discard(entity_id_str) # uses set()
-
-            print(f"CraftingManager: Crafting queue for entity {entity_id_str} marked for deletion for guild {guild_id_str}.")
-
-        # Handle case where queue was already deleted but mark_deleted is called again
+            logger.info("CraftingManager: Removed crafting queue for entity %s from cache for guild %s.", entity_id_str, guild_id_str) # Changed
+            self._deleted_crafting_queue_ids.setdefault(guild_id_str, set()).add(entity_id_str)
+            self._dirty_crafting_queues.get(guild_id_str, set()).discard(entity_id_str)
+            logger.info("CraftingManager: Crafting queue for entity %s marked for deletion for guild %s.", entity_id_str, guild_id_str) # Changed
         elif guild_id_str in self._deleted_crafting_queue_ids and entity_id_str in self._deleted_crafting_queue_ids[guild_id_str]:
-             print(f"CraftingManager: Crafting queue for entity {entity_id_str} in guild {guild_id_str} already marked for deletion.")
+             logger.debug("CraftingManager: Crafting queue for entity %s in guild %s already marked for deletion.", entity_id_str, guild_id_str) # Changed
         else:
-             print(f"CraftingManager: Warning: Attempted to mark non-existent crafting queue for entity {entity_id_str} in guild {guild_id_str} as deleted.")
+             logger.warning("CraftingManager: Attempted to mark non-existent crafting queue for entity %s in guild %s as deleted.", entity_id_str, guild_id_str) # Changed
 
-
-    # TODO: Implement clean_up_for_entity method (used by Character/NPC Managers)
-    # This method is called by CharacterManager.remove_character, NpcManager.remove_npc etc.
-    # It should remove the crafting queue associated with this entity.
     async def clean_up_for_entity(self, entity_id: str, entity_type: str, **kwargs: Any) -> None:
-         """
-         Удаляет очередь крафтинга, связанную с сущностью, когда сущность удаляется.
-         Предназначен для вызова менеджерами сущностей (Character, NPC).
-         """
-         # Get guild_id from context kwargs
          guild_id = kwargs.get('guild_id')
          if guild_id is None:
-              print(f"CraftingManager: Warning: clean_up_for_entity called for {entity_type} {entity_id} without guild_id in context. Cannot clean up crafting queue.")
-              return # Cannot clean up without guild_id
-
+              logger.warning("CraftingManager: clean_up_for_entity called for %s %s without guild_id in context. Cannot clean up crafting queue.", entity_type, entity_id) # Changed
+              return
          guild_id_str = str(guild_id)
-         print(f"CraftingManager: Cleaning up crafting queue for {entity_type} {entity_id} in guild {guild_id_str}...")
-
-         # Check if the queue exists for this entity/guild
+         logger.info("CraftingManager: Cleaning up crafting queue for %s %s in guild %s...", entity_type, entity_id, guild_id_str) # Changed
          guild_queues_cache = self._crafting_queues.get(guild_id_str)
          if guild_queues_cache and entity_id in guild_queues_cache:
-              # Mark the queue for deletion
-              self.mark_queue_deleted(guild_id_str, entity_id) # Use mark_queue_deleted with guild_id
+              self.mark_queue_deleted(guild_id_str, entity_id)
+         # else: logger.debug("CraftingManager: No crafting queue found for %s %s in guild %s for cleanup.", entity_type, entity_id, guild_id_str) # Too noisy
 
-         # else: print(f"CraftingManager: No crafting queue found for {entity_type} {entity_id} in guild {guild_id_str} for cleanup.") # Too noisy?
-
-
-# TODO: Implement remove_queue(entity_id, guild_id, **context) method
-# A public method to explicitly remove a queue if needed (e.g., player deletes their queue).
-# async def remove_queue(self, entity_id: str, guild_id: str, **kwargs: Any) -> None: ...
-
-
-# TODO: Implement get_entity_id_by_discord_id method (if needed for commands)
-# For commands like /craft add, need to find character entity ID by Discord ID.
-# This would likely delegate to CharacterManager/NpcManager.
-# async def get_entity_id_by_discord_id(self, discord_id: int, guild_id: str, **kwargs: Any) -> Optional[str]: ...
-
-# --- Конец класса CraftingManager ---
-
-print("--- CraftingManager module finished loading ---") # Отладочный вывод в конце файла
+logger.debug("--- CraftingManager module finished loading ---") # Changed
