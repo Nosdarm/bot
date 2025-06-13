@@ -100,7 +100,7 @@ async def create_character_for_player(
     db.add(db_character_instance)
     try:
         await db.commit()
-        await db.refresh(db_character)
+        await db.refresh(db_character_instance) # Corrected variable name
     except IntegrityError as e: # Catch potential DB errors like FK violations if any
         await db.rollback()
         logger.error(f"IntegrityError creating character for player {player_id}: {e}")
@@ -185,7 +185,7 @@ async def update_character(
     db.add(db_character_instance)
     try:
         await db.commit()
-        await db.refresh(db_character)
+        await db.refresh(db_character_instance) # Corrected variable name
     except Exception as e:
         await db.rollback()
         logger.error(f"Error updating character {character_id}: {e}")
