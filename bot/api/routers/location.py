@@ -16,9 +16,9 @@ router = APIRouter() # Prefix will be /api/v1/guilds/{guild_id}/locations from m
 
 @router.post("/", response_model=LocationResponse, status_code=status.HTTP_201_CREATED, summary="Create a new location for the guild")
 async def create_location(
-    guild_id: str = Path(..., description="Guild ID from path prefix"),
-    location_data: LocationCreate, # Direct body parameter
-    db: AsyncSession = Depends(get_db_session)
+    location_data: LocationCreate, # Body parameter (no default)
+    guild_id: str = Path(..., description="Guild ID from path prefix"), # Path parameter
+    db: AsyncSession = Depends(get_db_session) # Parameter with default
 ):
     logger.info(f"Attempting to create location '{location_data.name_i18n.get('en', 'Unknown Name')}' in guild {guild_id}")
 
@@ -86,10 +86,10 @@ async def get_location(
 
 @router.put("/{location_id}", response_model=LocationResponse, summary="Update a location")
 async def update_location(
-    guild_id: str = Path(..., description="Guild ID from path prefix"),
-    location_id: str = Path(..., description="ID of the location to update"),
-    location_update_data: LocationUpdate, # Direct body parameter
-    db: AsyncSession = Depends(get_db_session)
+    location_update_data: LocationUpdate, # Body parameter
+    guild_id: str = Path(..., description="Guild ID from path prefix"), # Path parameter
+    location_id: str = Path(..., description="ID of the location to update"), # Path parameter
+    db: AsyncSession = Depends(get_db_session) # Parameter with default
 ):
     logger.info(f"Updating location {location_id} in guild {guild_id}")
     stmt = select(Location).where(Location.id == location_id, Location.guild_id == guild_id)
