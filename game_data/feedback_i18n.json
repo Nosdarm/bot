@@ -1,0 +1,24 @@
+{
+  "en": {
+    "feedback.relationship.price_discount_faction": "Your good standing with {faction_name} gives you a {discount_percent}% discount!",
+    "feedback.relationship.price_markup_faction": "Your poor standing with {faction_name} results in a {markup_percent}% price markup.",
+    "feedback.relationship.npc_hostile_generic": "{npc_name} has become hostile towards you due to your poor relationship!",
+    "feedback.relationship.dialogue_check_bonus": "Your relationship with {npc_name} made that check easier (Bonus: {bonus_amount_str}).",
+    "feedback.relationship.dialogue_check_penalty": "Your relationship with {npc_name} made that check harder (Penalty: {penalty_amount_str}).",
+    "feedback.relationship.dialogue_option_unavailable_poor": "You are not trusted enough by {npc_name} for that option.",
+    "feedback.relationship.dialogue_option_unavailable_good": "Your strong bond with {npc_name} makes that option unnecessary.",
+    "feedback.relationship.quest_reward_bonus_xp": "You received {bonus_xp} bonus XP from '{quest_name}' thanks to your relationship with {giver_name}!",
+    "feedback.relationship.quest_reward_bonus_currency": "You received {bonus_currency} bonus {currency_name} from '{quest_name}' thanks to your relationship with {giver_name}!"
+  },
+  "ru": {
+    "feedback.relationship.price_discount_faction": "Ваша хорошая репутация у {faction_name} дает вам скидку {discount_percent}%!",
+    "feedback.relationship.price_markup_faction": "Ваша плохая репутация у {faction_name} приводит к наценке {markup_percent}%.",
+    "feedback.relationship.npc_hostile_generic": "{npc_name} стал враждебен к вам из-за плохих отношений!",
+    "feedback.relationship.dialogue_check_bonus": "Ваши отношения с {npc_name} облегчили эту проверку (Бонус: {bonus_amount_str}).",
+    "feedback.relationship.dialogue_check_penalty": "Ваши отношения с {npc_name} усложнили эту проверку (Штраф: {penalty_amount_str}).",
+    "feedback.relationship.dialogue_option_unavailable_poor": "Вы недостаточно пользуетесь доверием у {npc_name} для этого варианта.",
+    "feedback.relationship.dialogue_option_unavailable_good": "Ваша крепкая связь с {npc_name} делает этот вариант ненужным.",
+    "feedback.relationship.quest_reward_bonus_xp": "Вы получили {bonus_xp} бонусного опыта за задание '{quest_name}' благодаря вашим отношениям с {giver_name}!",
+    "feedback.relationship.quest_reward_bonus_currency": "Вы получили {bonus_currency} бонусных монет ({currency_name}) за задание '{quest_name}' благодаря вашим отношениям с {giver_name}!"
+  }
+}

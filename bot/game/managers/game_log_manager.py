@@ -4,18 +4,25 @@ import json
 import uuid
 # import time # Not strictly needed if only using NOW()
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
+import asyncio # Added for create_task
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
+    from bot.game.services.relationship_event_processor import RelationshipEventProcessor # Added
 
 class GameLogManager:
     # required_args_for_load and required_args_for_save seem generic, keeping them.
     required_args_for_load: List[str] = ["guild_id"]
     required_args_for_save: List[str] = ["guild_id"]
 
-    def __init__(self, db_service: Optional[DBService] = None, settings: Optional[Dict[str, Any]] = None):
+    def __init__(self,
+                 db_service: Optional[DBService] = None,
+                 settings: Optional[Dict[str, Any]] = None,
+                 relationship_event_processor: Optional[RelationshipEventProcessor] = None # Added
+                 ):
         self._db_service = db_service
         self._settings = settings if settings is not None else {}
+        self._relationship_event_processor = relationship_event_processor # Added
         # print("GameLogManager initialized.") # Consider removing for production
 
     async def log_event(
@@ -60,6 +67,22 @@ class GameLogManager:
 
         try:
             await self._db_service.adapter.execute(sql, params)
+
+            # After successful DB save, notify RelationshipEventProcessor
+            if self._relationship_event_processor:
+                log_data_for_processor = {
+                    "guild_id": guild_id,
+                    "event_type": event_type,
+                    "details": details_json, # Pass the JSON string of details
+                    "log_id": log_id, # For tracing
+                    "player_id": player_id # For context
+                    # Other fields from 'params' can be added if needed by processor,
+                    # but 'details' should contain most of what rules need.
+                }
+                asyncio.create_task(
+                    self._relationship_event_processor.process_new_log_entry(log_data_for_processor)
+                )
+
         except Exception as e:
             print(f"GameLogManager: Failed to log event to DB for guild {guild_id}. Type: {event_type}, Error: {e}")
             # Fallback logging for detailed error context

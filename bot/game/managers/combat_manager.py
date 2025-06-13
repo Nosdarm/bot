@@ -893,6 +893,84 @@ class CombatManager:
             #        pass
             if game_log_manager: await game_log_manager.log_debug("Quest progress updates placeholder.", guild_id=guild_id_str, combat_id=combat_id)
 
+        # --- Enhanced Logging for Relationship Updates ---
+        detailed_participants_data = []
+        default_lang = self._settings.get('main_bot_language', 'en') if self._settings else 'en'
+
+        for p in combat.participants:
+            entity_id = p.entity_id
+            entity_type = p.entity_type
+            faction_id: Optional[str] = None
+            entity_name: str = p.entity_id # Fallback name
+
+            if entity_type == "Character" and character_manager:
+                char_obj = await character_manager.get_character(guild_id_str, entity_id)
+                if char_obj:
+                    faction_id = getattr(char_obj, 'faction_id', None)
+                    # Consistent name fetching similar to start_combat
+                    name_i18n_dict = getattr(char_obj, 'name_i18n', {})
+                    entity_name = name_i18n_dict.get(default_lang, p.entity_id) if isinstance(name_i18n_dict, dict) else getattr(char_obj, 'name', p.entity_id)
+            elif entity_type == "NPC" and npc_manager:
+                npc_obj = await npc_manager.get_npc(guild_id_str, entity_id)
+                if npc_obj:
+                    faction_id = getattr(npc_obj, 'faction_id', None)
+                    name_i18n_dict = getattr(npc_obj, 'name_i18n', {})
+                    entity_name = name_i18n_dict.get(default_lang, p.entity_id) if isinstance(name_i18n_dict, dict) else getattr(npc_obj, 'name', p.entity_id)
+
+            status = "unknown"
+            if entity_id in winning_entity_ids and p.hp > 0:
+                status = "winner_survived"
+            elif entity_id in winning_entity_ids and p.hp <= 0:
+                status = "winner_defeated"
+            elif p.hp <= 0:
+                status = "loser_defeated"
+            else:
+                status = "loser_survived"
+
+            detailed_participants_data.append({
+                "entity_id": entity_id,
+                "entity_type": entity_type,
+                "name": entity_name,
+                "faction_id": faction_id,
+                "initial_hp": p.max_hp,
+                "final_hp": p.hp,
+                "status": status
+            })
+
+        player_ids_involved = list(set(p_data['entity_id'] for p_data in detailed_participants_data if p_data['entity_type'] == "Character"))
+        party_ids_involved = []
+        if party_manager and character_manager:
+            for player_id_involved in player_ids_involved:
+                char_obj_for_party = await character_manager.get_character(guild_id_str, player_id_involved)
+                if char_obj_for_party:
+                    p_party_id = getattr(char_obj_for_party, 'party_id', None)
+                    if p_party_id:
+                        party_ids_involved.append(p_party_id)
+
+        event_data_for_relationships = {
+            "guild_id": guild_id_str, # Though guild_id is top-level in log_event, useful for rules if they only get details
+            "combat_id": combat.id,
+            "location_id": combat.location_id,
+            "event_id": combat.event_id,
+            "winning_entity_ids": winning_entity_ids,
+            "participants": detailed_participants_data,
+            "player_ids_involved": player_ids_involved,
+            "party_ids_involved": list(set(party_ids_involved)),
+            "combat_difficulty": getattr(combat, 'difficulty_metric', None)
+        }
+
+        if game_log_manager:
+            await game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="COMBAT_ENDED",
+                details=event_data_for_relationships,
+                player_id=None, # Top-level player_id not primary, details has list
+                party_id=None,  # Top-level party_id not primary, details has list
+                location_id=combat.location_id,
+                channel_id=combat.channel_id
+            )
+        # --- End of Enhanced Logging ---
+
         if game_log_manager: await game_log_manager.log_info(f"Combat consequences processed for {combat_id}.", guild_id=guild_id_str, combat_id=combat_id)
 
 
