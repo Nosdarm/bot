@@ -76,4 +76,3 @@ def downgrade() -> None:
     # Note: Python-side default change for 'id' (adding lambda str(uuid.uuid4()))
     # is not reverted in schema as it's a Python-level default.
     # The column itself was likely already PK and string.
-```

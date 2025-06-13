@@ -1,561 +1,241 @@
 # bot/game/managers/time_manager.py
 
-# --- Импорты ---
 import asyncio
-import traceback
+import traceback # Will be removed
 import json
 import uuid
-from typing import Optional, Dict, Any, List, Callable, Awaitable, Union, Set # Добавляем Set
+import logging # Added
+from typing import Optional, Dict, Any, List, Callable, Awaitable, Union, Set
 
-
-# TODO: Импортируйте модели, если TimeManager их использует (например, для аннотаций)
-# from bot.game.models.game_time import GameTime # Если у вас есть модель для времени
-
-# TODO: Импорт адаптера БД - используем наш конкретный SQLite адаптер
-# from bot.database.postgres_adapter import PostgresAdapter # Replaced with DBService
 from bot.services.db_service import DBService
 
-# TODO: Импорт других менеджеров, если TimeManager их использует в своих методах
-# Например, менеджеры, методы которых вызываются при срабатывании таймеров
-# from bot.game.managers.event_manager import EventManager
-# from bot.game.managers.status_manager import StatusManager
-# from bot.game.managers.combat_manager import CombatManager
-# from bot.game.managers.character_manager import CharacterManager # Если таймеры привязаны к персонажам
+if TYPE_CHECKING: # Ensure TYPE_CHECKING is defined or imported if used
+    pass
 
+logger = logging.getLogger(__name__) # Added
 
-# TODO: Определите Type Alias для данных callback'а таймера, если они специфичны
-# TimerCallbackData = Dict[str, Any]
-
+SendToChannelCallback = Callable[..., Awaitable[Any]]
+SendCallbackFactory = Callable[[int], SendToChannelCallback]
 
 class TimeManager:
-    """
-    Менеджер для управления игровым временем и таймерами.
-    Отвечает за обновление времени, срабатывание таймеров и их персистентность в БД.
-    Работает на основе guild_id для многогильдийной поддержки.
-    """
-    # Добавляем required_args для совместимости с PersistenceManager
-    required_args_for_load = ["guild_id"] # load_state фильтрует по guild_id
-    required_args_for_save = ["guild_id"] # save_state фильтрует по guild_id
-    required_args_for_rebuild = ["guild_id"] # rebuild_runtime_caches фильтрует по guild_id
-
+    required_args_for_load = ["guild_id"]
+    required_args_for_save = ["guild_id"]
+    required_args_for_rebuild = ["guild_id"]
 
     def __init__(self,
-                 # Принимаем зависимости, которые передает GameManager.
-                 db_service: Optional[DBService] = None, # Changed from db_adapter
+                 db_service: Optional[DBService] = None,
                  settings: Optional[Dict[str, Any]] = None,
-
-                 # TODO: Добавьте другие зависимости, если TimeManager их требует
-                 # event_manager: Optional['EventManager'] = None,
-                 # status_manager: Optional['StatusManager'] = None,
-                 # combat_manager: Optional['CombatManager'] = None,
-                 # character_manager: Optional['CharacterManager'] = None,
                  ):
-        print("Initializing TimeManager...")
-        self._db_service = db_service # Changed from _db_adapter
+        logger.info("Initializing TimeManager...") # Changed
+        self._db_service = db_service
         self._settings = settings
+        self._current_game_time: Dict[str, float] = {}
+        self._active_timers: Dict[str, Dict[str, Any]] = {}
+        logger.info("TimeManager initialized.") # Changed
 
-        # TODO: Сохраните другие зависимости
-        # self._event_manager = event_manager
-        # self._status_manager = status_manager
-        # self._combat_manager = combat_manager
-        # self._character_manager = character_manager
-
-
-        # --- Хранилище для игрового времени и активных таймеров ---
-        # NOTE: Если игровое время должно быть пер-гильдийным, _current_game_time
-        # должен быть Dict[str, float] = {guild_id: game_time}.
-        # В текущей реализации оно глобальное float. Переделываем на пер-гильдийное.
-        self._current_game_time: Dict[str, float] = {} # <-- ИСПРАВЛЕНО: Пер-гильдийное время
-
-        # Храним активные таймеры в словаре {guild_id: {timer_id: timer_data}}. Переделываем на пер-гильдийное.
-        self._active_timers: Dict[str, Dict[str, Any]] = {} # <-- ИСПРАВЛЕНО: Пер-гильдийные таймеры
-
-
-        print("TimeManager initialized.")
-
-    # --- Методы получения времени и таймеров ---
-
-    # ИСПРАВЛЕНИЕ: get_current_game_time должен принимать guild_id.
     def get_current_game_time(self, guild_id: str) -> float:
-         """Возвращает текущее игровое время для определенной гильдии."""
          guild_id_str = str(guild_id)
-         # Возвращаем время для гильдии, по умолчанию 0.0 если нет записи
          return self._current_game_time.get(guild_id_str, 0.0)
 
-    # TODO: Добавьте метод для получения конкретного таймера
-
-    # --- Методы управления таймерами (интеграция с БД) ---
-
-    # ИСПРАВЛЕНИЕ: add_timer должен принимать guild_id.
     async def add_timer(self, guild_id: str, timer_type: str, duration: float, callback_data: Dict[str, Any], **kwargs: Any) -> Optional[str]:
-        """
-        Добавляет новый таймер, который сработает через указанное игровое время duration для определенной гильдии.
-        Сохраняет его в БД и добавляет в кеш активных таймеров.
-        :param guild_id: ID гильдии, к которой привязан таймер.
-        :param timer_type: Строковый тип таймера (для идентификации логики срабатывания).
-        :param duration: Длительность в игровом времени до срабатывания.
-        :param callback_data: Словарь данных, необходимых при срабатывании (JSON-сериализуемый).
-        :param kwargs: Дополнительный контекст, переданный из вызывающего метода.
-        :return: ID созданного таймера или None при ошибке.
-        """
         guild_id_str = str(guild_id)
-        print(f"TimeManager: Adding timer of type '{timer_type}' with duration {duration} for guild {guild_id_str}.")
+        logger.info("TimeManager: Adding timer of type '%s' with duration %.2f for guild %s.", timer_type, duration, guild_id_str) # Changed
 
-        if self._db_service is None: # Changed from _db_adapter
-             print(f"TimeManager: Error adding timer for guild {guild_id_str}: Database service is not available.") # Changed message
+        if self._db_service is None:
+             logger.error("TimeManager: Error adding timer for guild %s: Database service is not available.", guild_id_str) # Changed
              return None
 
         if duration <= 0:
-             print(f"TimeManager: Warning: Attempted to add timer with non-positive duration ({duration}). Sparing immediately.")
-             # TODO: Возможно, выполнить логику срабатывания callback_data сразу же?
-             # await self._trigger_timer_callback(timer_type, callback_data, **kwargs) # Нужны kwargs! (они уже в сигнатуре add_timer)
-             # Решите, как обрабатывать нулевую/отрицательную длительность - сразу срабатывать или игнорировать.
-             # Игнорирование может быть безопаснее, если callback_data неполны.
-             return None # Пока просто игнорируем и возвращаем None
-
+             logger.warning("TimeManager: Attempted to add timer with non-positive duration (%.2f) for guild %s. Sparing immediately or ignoring.", duration, guild_id_str) # Changed
+             return None
 
         timer_id = str(uuid.uuid4())
-        # Используем пер-гильдийное текущее время для расчета времени срабатывания
-        ends_at = self.get_current_game_time(guild_id_str) + duration # Используем get_current_game_time с guild_id
-
-        new_timer_data: Dict[str, Any] = { # Явная аннотация словаря
-            'id': timer_id,
-            'type': timer_type,
-            'ends_at': ends_at,
-            'callback_data': callback_data,
-            'is_active': True,
-            'guild_id': guild_id_str, # <-- СОХРАНЯЕМ guild_id в данных таймера
-            # TODO: Добавьте другие поля для Timer, если есть (напр., target_id, target_type)
-            # 'target_id': kwargs.get('target_id'),
-            # 'target_type': kwargs.get('target_type'),
+        ends_at = self.get_current_game_time(guild_id_str) + duration
+        new_timer_data: Dict[str, Any] = {
+            'id': timer_id, 'type': timer_type, 'ends_at': ends_at,
+            'callback_data': callback_data, 'is_active': True, 'guild_id': guild_id_str,
         }
-
         try:
-            # TODO: Убедитесь, что SQL запрос соответствует ВСЕМ полям Timer модели, включая guild_id
-            sql = '''
-                INSERT INTO timers (id, type, ends_at, callback_data, is_active, guild_id)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                -- TODO: Добавить другие колонки в SQL
-            '''
+            sql = 'INSERT INTO timers (id, type, ends_at, callback_data, is_active, guild_id) VALUES ($1, $2, $3, $4, $5, $6)'
             params = (
-                new_timer_data['id'],
-                new_timer_data['type'],
-                new_timer_data['ends_at'],
-                json.dumps(new_timer_data['callback_data']),
-                bool(new_timer_data['is_active']), # Changed to boolean
-                new_timer_data['guild_id'] # <-- Параметр guild_id
-                # TODO: Добавить другие параметры в кортеж
+                new_timer_data['id'], new_timer_data['type'], new_timer_data['ends_at'],
+                json.dumps(new_timer_data['callback_data']), bool(new_timer_data['is_active']),
+                new_timer_data['guild_id']
             )
-
-            await self._db_service.adapter.execute(sql, params) # Changed from _db_adapter
-            # execute уже коммитит
-
-            print(f"TimeManager: Timer '{timer_type}' added for guild {guild_id_str}, ends at {ends_at:.2f}, saved to DB with ID {timer_id}.")
-
-            # --- Добавление в кеш после успешного сохранения ---
-            # Добавляем в пер-гильдийный кеш таймеров
+            await self._db_service.adapter.execute(sql, params)
+            logger.info("TimeManager: Timer '%s' added for guild %s, ends at %.2f, saved to DB with ID %s.", timer_type, guild_id_str, ends_at, timer_id) # Changed
             self._active_timers.setdefault(guild_id_str, {})[timer_id] = new_timer_data
-            print(f"TimeManager: Timer {timer_id} added to memory cache for guild {guild_id_str}.")
-
+            logger.debug("TimeManager: Timer %s added to memory cache for guild %s.", timer_id, guild_id_str) # Changed
             return timer_id
-
         except Exception as e:
-            print(f"TimeManager: ❌ Error adding or saving timer to DB for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # rollback уже в execute
+            logger.error("TimeManager: Error adding or saving timer to DB for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
             return None
 
-
-    # ИСПРАВЛЕНИЕ: remove_timer должен принимать guild_id.
     async def remove_timer(self, guild_id: str, timer_id: str) -> None:
-        """
-        Удаляет таймер по ID из кеша и БД для определенной гильдии.
-        """
-        guild_id_str = str(guild_id)
-        timer_id_str = str(timer_id)
-        print(f"TimeManager: Removing timer {timer_id_str} for guild {guild_id_str}...")
-
-        # Проверяем наличие в пер-гильдийном кеше
+        guild_id_str, timer_id_str = str(guild_id), str(timer_id)
+        logger.info("TimeManager: Removing timer %s for guild %s...", timer_id_str, guild_id_str) # Changed
         guild_timers_cache = self._active_timers.get(guild_id_str)
-
         if not guild_timers_cache or timer_id_str not in guild_timers_cache:
-             print(f"TimeManager: Warning: Attempted to remove non-existent or inactive timer {timer_id_str} for guild {guild_id_str} (not found in cache).")
-             # Продолжаем попытку удаления из БД, на случай если он там есть, но нет в кеше.
-             pass
-
-
+             logger.warning("TimeManager: Attempted to remove non-existent or inactive timer %s for guild %s (not found in cache).", timer_id_str, guild_id_str) # Changed
         try:
-            # --- Удаляем из БД ---
-            if self._db_service: # Changed from _db_adapter
-                # ИСПРАВЛЕНИЕ: Добавляем фильтр по guild_id в SQL DELETE
+            if self._db_service:
                 sql = 'DELETE FROM timers WHERE id = $1 AND guild_id = $2'
-                await self._db_service.adapter.execute(sql, (timer_id_str, guild_id_str)) # Changed from _db_adapter
-                # execute уже коммитит
-                print(f"TimeManager: Timer {timer_id_str} deleted from DB for guild {guild_id_str}.")
+                await self._db_service.adapter.execute(sql, (timer_id_str, guild_id_str))
+                logger.info("TimeManager: Timer %s deleted from DB for guild %s.", timer_id_str, guild_id_str) # Changed
             else:
-                print(f"TimeManager: No DB service. Simulating delete from DB for timer {timer_id_str} for guild {guild_id_str}.") # Changed message
-
-            # --- Удаляем из кеша ---
-            # Удаляем из пер-гильдийного кеша
-            if guild_timers_cache: # Проверяем, что кеш для гильдии существует
-                 guild_timers_cache.pop(timer_id_str, None) # Удаляем по ID
-                 # Если после удаления кеш для гильдии опустел, можно удалить и сам ключ гильдии из self._active_timers
-                 if not guild_timers_cache:
-                      self._active_timers.pop(guild_id_str, None)
-            print(f"TimeManager: Timer {timer_id_str} removed from cache for guild {guild_id_str}.")
-
-
+                logger.warning("TimeManager: No DB service. Simulating delete from DB for timer %s for guild %s.", timer_id_str, guild_id_str) # Changed
+            if guild_timers_cache:
+                 guild_timers_cache.pop(timer_id_str, None)
+                 if not guild_timers_cache: self._active_timers.pop(guild_id_str, None)
+            logger.info("TimeManager: Timer %s removed from cache for guild %s.", timer_id_str, guild_id_str) # Changed
         except Exception as e:
-            print(f"TimeManager: ❌ Error removing timer {timer_id_str} for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # rollback уже в execute
+            logger.error("TimeManager: Error removing timer %s for guild %s: %s", timer_id_str, guild_id_str, e, exc_info=True) # Changed
 
-
-    # Метод обработки тика (используется WorldSimulationProcessor)
-    # ИСПРАВЛЕНИЕ: Добавляем guild_id и **kwargs к сигнатуре
-    # ИСПРАВЛЕНИЕ: Аннотируем game_time_delta как float
     async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None:
-        """
-        Обрабатывает тик игрового времени для определенной гильдии.
-        Обновляет текущее время, проверяет и срабатывает активные таймеры для этой гильдии.
-        Принимает game_time_delta и менеджеры/сервисы через kwargs для вызова callback'ов.
-        """
-        # print(f"TimeManager: Processing tick for guild {guild_id} with delta: {game_time_delta}") # Бывает очень шумно
-
-        if self._db_service is None: # Changed from _db_adapter
-             print(f"TimeManager: Skipping tick processing for guild {guild_id} (no DB service).") # Changed message
+        guild_id_str = str(guild_id)
+        # logger.debug("TimeManager: Processing tick for guild %s with delta: %.2f", guild_id_str, game_time_delta) # Too noisy for info
+        if self._db_service is None:
+             logger.warning("TimeManager: Skipping tick processing for guild %s (no DB service).", guild_id_str) # Changed
              return
 
-        guild_id_str = str(guild_id)
-
-        # --- Обновляем текущее игровое время для этой гильдии ---
-        # Получаем текущее время для гильдии (по умолчанию 0.0), обновляем его и сохраняем в пер-гильдийном кеше
         current_game_time_for_guild = self._current_game_time.get(guild_id_str, 0.0)
         current_game_time_for_guild += float(game_time_delta)
-        self._current_game_time[guild_id_str] = current_game_time_for_guild # Сохраняем обновленное время в пер-гильдийном кеше
-        # print(f"TimeManager: Updated game time for guild {guild_id_str} to {self._current_game_time[guild_id_str]:.2f}.")
+        self._current_game_time[guild_id_str] = current_game_time_for_guild
+        # logger.debug("TimeManager: Updated game time for guild %s to %.2f.", guild_id_str, self._current_game_time[guild_id_str]) # Too noisy
 
-        # --- Проверяем и срабатываем активные таймеры для этой гильдии ---
-        # Получаем пер-гильдийный кеш таймеров
         guild_timers_cache = self._active_timers.get(guild_id_str, {})
+        if not guild_timers_cache: return
 
-        if not guild_timers_cache:
-             # print(f"TimeManager: No active timers in cache for guild {guild_id_str} to check.") # Too noisy
-             return # Нет таймеров для этой гильдии в кеше
-
-        timers_to_trigger: List[Dict[str, Any]] = [] # Список данных таймеров к срабатыванию
-
-        # Проходим по всем активным таймерам в кеше ДЛЯ ЭТОЙ ГИЛЬДИИ
-        # Итерируем по копии словаря values(), т.к. срабатывание может привести к удалению таймера из кеша
+        timers_to_trigger: List[Dict[str, Any]] = []
         for timer_data in list(guild_timers_cache.values()):
-             # Таймер уже отфильтрован по guild_id, т.к. берется из guild_timers_cache
-             # Проверяем только is_active (в кеше) и ends_at
-             if timer_data.get('is_active', True) and timer_data.get('ends_at', float('inf')) <= current_game_time_for_guild: # Проверяем is_active и ends_at безопасно
-                  # Проверяем наличие всех необходимых полей перед добавлением в список срабатывания
+             if timer_data.get('is_active', True) and timer_data.get('ends_at', float('inf')) <= current_game_time_for_guild:
                   if 'id' in timer_data and 'type' in timer_data and 'ends_at' in timer_data:
-                       # print(f"TimeManager: Timer '{timer_data.get('type', 'Unknown')}' with ID {timer_data.get('id', 'N/A')} for guild {guild_id_str} triggered at game time {current_game_time_for_guild:.2f}.") # Debug
-                       timers_to_trigger.append(timer_data) # Добавляем весь словарь данных таймера
-                       # Помечаем таймер как неактивный В КЕШЕ сразу, чтобы он не сработал повторно в этом тике
-                       # Это важно, если _trigger_timer_callback сам не удаляет таймер немедленно.
-                       timer_data['is_active'] = False # Устанавливаем флаг в кеше
-
-
+                       # logger.debug("TimeManager: Timer '%s' (ID %s) for guild %s triggered at game time %.2f.", timer_data.get('type', 'Unknown'), timer_data.get('id', 'N/A'), guild_id_str, current_game_time_for_guild) # Too noisy
+                       timers_to_trigger.append(timer_data)
+                       timer_data['is_active'] = False
                   else:
-                       print(f"TimeManager: Warning: Skipping triggering invalid timer data in cache for guild {guild_id_str}: {timer_data}")
+                       logger.warning("TimeManager: Skipping triggering invalid timer data in cache for guild %s: %s", guild_id_str, timer_data) # Changed
 
-
-        # --- Вызываем callback'и для сработавших таймеров ---
         for timer_data in timers_to_trigger:
-             # Вызываем callback'и ПОСЛЕ сбора списка таймеров к срабатыванию
              try:
-                  # Вызываем вспомогательный метод для срабатывания
-                  # Передаем guild_id и ВСЕ менеджеры/сервисы из kwargs process_tick
-                  # _trigger_timer_callback принимает timer_type, callback_data, **kwargs
-                  await self._trigger_timer_callback(timer_data['type'], timer_data.get('callback_data', {}), **kwargs) # Передаем kwargs из process_tick
-
-                  # TODO: Удалить таймер из кеша и БД после успешного срабатывания (или пометить как выполненный в БД)
-                  # Если is_active=False в кеше уже означает завершение,
-                  # а remove_timer сам удаляет из БД, то здесь просто вызываем remove_timer.
-                  # remove_timer принимает guild_id и timer_id
+                  await self._trigger_timer_callback(timer_data['type'], timer_data.get('callback_data', {}), **kwargs)
                   await self.remove_timer(guild_id_str, timer_data['id'])
-
-
              except Exception as e:
-                  print(f"TimeManager: ❌ Error triggering timer callback for timer {timer_data.get('id', 'N/A')} ({timer_data.get('type', 'Unknown')}) for guild {guild_id_str}: {e}")
-                  import traceback
-                  print(traceback.format_exc())
-                  # TODO: Логика обработки ошибки срабатывания таймера - возможно, пометить таймер как ошибочный в БД?
+                  logger.error("TimeManager: Error triggering timer callback for timer %s (%s) for guild %s: %s", timer_data.get('id', 'N/A'), timer_data.get('type', 'Unknown'), guild_id_str, e, exc_info=True) # Changed
+        # logger.debug("TimeManager: Tick processing finished for guild %s.", guild_id_str) # Too noisy
 
-        # print(f"TimeManager: Tick processing finished for guild {guild_id_str}.")
-
-
-    # --- Вспомогательный метод для срабатывания callback'ов таймеров ---
-    # Этот метод принимает тип таймера и данные, а затем вызывает нужную логику,
-    # используя менеджеры/сервисы, переданные в TimeManager (через __init__ или kwargs).
-    # ИСПРАВЛЕНИЕ: Добавляем guild_id в сигнатуру, если логика callback'а зависит от гильдии
-    # Callback'и обычно вызываются с контекстом WorldSimulationProcessor (kwargs).
-    # WSP передает свой контекст в kwargs process_tick, а TimeManager передает этот kwargs дальше.
-    # Значит, guild_id и все менеджеры УЖЕ ЕСТЬ в kwargs _trigger_timer_callback.
     async def _trigger_timer_callback(self, timer_type: str, callback_data: Dict[str, Any], **kwargs: Any) -> None:
-        """
-        Вызывает соответствующую логику при срабатывании таймера.
-        :param timer_type: Тип сработавшего таймера.
-        :param callback_data: Данные, связанные с таймером.
-        :param kwargs: Дополнительные менеджеры/сервисы, переданные из WorldSimulationProcessor.
-                      (Включает guild_id, менеджеры и т.д.)
-        """
         if not isinstance(callback_data, dict):
-            print(f"TimeManager: Warning: callback_data is not a dictionary for timer type '{timer_type}'. Received: {type(callback_data)}. Guild: {kwargs.get('guild_id')}. Skipping.")
+            logger.warning("TimeManager: callback_data is not a dictionary for timer type '%s'. Received: %s. Guild: %s. Skipping.", timer_type, type(callback_data), kwargs.get('guild_id'), exc_info=True) # Changed
             return
-        # TODO: guild_id может быть нужен здесь, получить его из kwargs.get('guild_id')
-        guild_id = kwargs.get('guild_id') # Получаем guild_id из контекста
-
-
-        print(f"TimeManager: Triggering callback for timer type '{timer_type}' for guild {guild_id} with data {callback_data}.")
-
+        guild_id = kwargs.get('guild_id')
+        logger.info("TimeManager: Triggering callback for timer type '%s' for guild %s with data %s.", timer_type, guild_id, callback_data) # Changed
 
         if timer_type == 'event_stage_transition':
-             # Пример: таймер для автоматического перехода стадии события
-             event_id = callback_data.get('event_id')
-             target_stage_id = callback_data.get('target_stage_id')
+             event_id, target_stage_id = callback_data.get('event_id'), callback_data.get('target_stage_id')
              if event_id and target_stage_id and guild_id is not None:
-                  # Нужно получить EventManager, EventStageProcessor и другие зависимости из kwargs
-                  event_manager = kwargs.get('event_manager')
-                  event_stage_processor = kwargs.get('event_stage_processor')
-                  send_callback_factory = kwargs.get('send_callback_factory')
-
+                  event_manager, event_stage_processor, send_callback_factory = kwargs.get('event_manager'), kwargs.get('event_stage_processor'), kwargs.get('send_callback_factory')
                   if event_manager and event_stage_processor and send_callback_factory:
-                       # EventManager.get_event должен принимать guild_id
-                       event = event_manager.get_event(guild_id, event_id) # Передаем guild_id
+                       event = event_manager.get_event(guild_id, event_id)
                        if event:
-                            print(f"TimeManager: Triggering auto-transition for event {event_id} to stage {target_stage_id} for guild {guild_id}...")
+                            logger.info("TimeManager: Triggering auto-transition for event %s to stage %s for guild %s...", event_id, target_stage_id, guild_id) # Changed
                             if event.channel_id is None:
-                                 print(f"TimeManager: Warning: Cannot auto-advance event {event.id}. Event has no channel_id for notifications.")
-                                 return # Не можем уведомить о переходе
-
+                                 logger.warning("TimeManager: Cannot auto-advance event %s in guild %s. Event has no channel_id for notifications.", event.id, guild_id) # Changed
+                                 return
                             event_channel_callback = send_callback_factory(event.channel_id)
-                            # Вызываем EventStageProcessor
-                            # StageProcessor.advance_stage ожидает context, который должен содержать guild_id
-                            await event_stage_processor.advance_stage(
-                                 event=event,
-                                 target_stage_id=target_stage_id,
-                                 # Передаем ВСЕ менеджеры/сервисы из kwargs TimeManager (это контекст из WSP)
-                                 **kwargs, # Передаем весь контекст, включая guild_id и менеджеры
-                                 # Перезаписываем callback на специфичный для канала события
-                                 send_message_callback=event_channel_callback,
-                                 transition_context={"trigger": "timer", "timer_type": timer_type, "guild_id": guild_id}
-                             )
-                            # TODO: Сохранить состояние игры после перехода (WorldSimulationProcessor делает это после World Tick)
-                       else:
-                            print(f"TimeManager: Error triggering event stage transition timer: Event {event_id} not found for guild {guild_id}.")
-                  else:
-                       print(f"TimeManager: Error triggering event stage transition timer for guild {guild_id}: Required managers/processors not available (Event/Stage/SendCallbackFactory).")
-             elif guild_id is None:
-                  print(f"TimeManager: Error triggering event stage transition timer for {event_id}: guild_id missing in context.")
-
-
-        # TODO: Добавьте другие типы таймеров и логику их срабатывания
-        # elif timer_type == 'status_effect_end':
-        #      status_id = callback_data.get('status_id')
-        #      if status_id and guild_id is not None and self._status_manager:
-        #           # remove_status_effect должен принимать status_id, guild_id и context
-        #           await self._status_manager.remove_status_effect(status_id, guild_id, **kwargs) # Передаем guild_id и контекст
-        # elif timer_type == 'combat_end_delay':
-        #      combat_id = callback_data.get('combat_id')
-        #      if combat_id and guild_id is not None and self._combat_manager:
-        #           # finalize_combat_outcome должен принимать combat_id, guild_id и context
-        #           await self._combat_manager.finalize_combat_outcome(combat_id, guild_id, **kwargs) # Передаем guild_id и контекст
-
+                            await event_stage_processor.advance_stage(event=event, target_stage_id=target_stage_id, **kwargs, send_message_callback=event_channel_callback, transition_context={"trigger": "timer", "timer_type": timer_type, "guild_id": guild_id})
+                       else: logger.error("TimeManager: Error triggering event stage transition timer: Event %s not found for guild %s.", event_id, guild_id) # Changed
+                  else: logger.error("TimeManager: Error triggering event stage transition timer for guild %s: Required managers/processors not available.", guild_id) # Changed
+             elif guild_id is None: logger.error("TimeManager: Error triggering event stage transition timer for %s: guild_id missing in context.", event_id) # Changed
         else:
-             print(f"TimeManager: Warning: Unhandled timer type '{timer_type}' triggered for guild {guild_id}.")
+             logger.warning("TimeManager: Unhandled timer type '%s' triggered for guild %s.", timer_type, guild_id) # Changed
 
-
-    # --- Методы персистентности (Используются PersistenceManager'ом) ---
-
-    # ИСПРАВЛЕНИЕ: save_state должен принимать guild_id и **kwargs
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
-        """
-        Сохраняет состояние TimeManager (игровое время, активные таймеры) для определенной гильдии в БД.
-        """
-        print(f"TimeManager: Saving state for guild {guild_id}...")
-        if self._db_service is None: # Changed from _db_adapter
-             print(f"TimeManager: Database service is not available. Skipping save for guild {guild_id}.") # Changed message
-             return
-
         guild_id_str = str(guild_id)
-
+        logger.info("TimeManager: Saving state for guild %s...", guild_id_str) # Changed
+        if self._db_service is None:
+             logger.error("TimeManager: Database service is not available. Skipping save for guild %s.", guild_id_str) # Changed
+             return
         try:
-            # --- Сохранение текущего игрового времени для этой гильдии (в global_state) ---
-            # Получаем текущее время для этой гильдии из кеша (обновлено в process_tick)
             current_game_time_for_guild = self._current_game_time.get(guild_id_str, 0.0)
-
-            # Сохраняем текущее игровое время для этой гильдии в global_state
-            await self._db_service.adapter.execute(
-                "INSERT INTO global_state (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-                (f'game_time_{guild_id_str}', json.dumps(current_game_time_for_guild))
-            )
-            # execute уже коммитит (для этой одной операции)
-
-
-            # --- Сохранение активных таймеров для этой гильдии (в таблице timers) ---
-            # Удаляем ВСЕ таймеры для этой гильдии из БД перед вставкой
+            await self._db_service.adapter.execute("INSERT INTO global_state (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (f'game_time_{guild_id_str}', json.dumps(current_game_time_for_guild)))
             await self._db_service.adapter.execute("DELETE FROM timers WHERE guild_id = $1", (guild_id_str,))
-            # execute уже коммитит (для этой одной операции)
-
-            # Вставляем все активные таймеры ИЗ КЕША, которые принадлежат этой гильдии
-            # Получаем пер-гильдийный кеш таймеров
             guild_timers_cache = self._active_timers.get(guild_id_str, {})
-
-            timers_to_save = [t for t in guild_timers_cache.values() if t.get('is_active', True)] # Фильтруем по is_active в кеше
-
+            timers_to_save = [t for t in guild_timers_cache.values() if t.get('is_active', True)]
             if timers_to_save:
-                sql = '''
-                    INSERT INTO timers (id, type, ends_at, callback_data, is_active, guild_id)
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                    -- TODO: Добавить другие колонки в SQL
-                '''
+                sql = 'INSERT INTO timers (id, type, ends_at, callback_data, is_active, guild_id) VALUES ($1, $2, $3, $4, $5, $6)'
                 data_to_save = []
                 for timer_data in timers_to_save:
-                    # Убедимся, что guild_id присутствует в данных таймера
                     timer_guild_id = timer_data.get('guild_id')
                     if timer_guild_id is None or str(timer_guild_id) != guild_id_str:
-                         print(f"TimeManager: Warning: Skipping save for timer {timer_data.get('id', 'N/A')} ({timer_data.get('type', 'Unknown')}) with missing or mismatched guild_id ({timer_guild_id}) in cache. Expected {guild_id_str}.")
-                         continue # Пропускаем таймер с неправильной гильдией в кеше
-
-                    data_to_save.append((
-                        timer_data['id'],
-                        timer_data['type'],
-                        timer_data['ends_at'],
-                        json.dumps(timer_data.get('callback_data', {})),
-                        bool(timer_data.get('is_active', True)), # Changed to boolean
-                        timer_guild_id # <-- Параметр guild_id из данных таймера
-                        # TODO: Добавить другие параметры в кортеж
-                    ))
-                # Используем execute_many для пакетной вставки таймеров
-                if data_to_save: # Только если есть что сохранять
+                         logger.warning("TimeManager: Skipping save for timer %s (%s) with missing or mismatched guild_id (%s) in cache. Expected %s.", timer_data.get('id', 'N/A'), timer_data.get('type', 'Unknown'), timer_guild_id, guild_id_str) # Changed
+                         continue
+                    data_to_save.append((timer_data['id'], timer_data['type'], timer_data['ends_at'], json.dumps(timer_data.get('callback_data', {})), bool(timer_data.get('is_active', True)), timer_guild_id))
+                if data_to_save:
                      await self._db_service.adapter.execute_many(sql, data_to_save)
-                     # execute_many коммитит сам
-
-            # Note: При использовании execute и execute_many с авто-коммитом в каждом вызове,
-            # нет необходимости в явном self._conn.commit() в конце save_state.
-
-            print(f"TimeManager: Successfully saved state for guild {guild_id_str} (time: {current_game_time_for_guild:.2f}, timers: {len(timers_to_save)}).")
-
+            logger.info("TimeManager: Successfully saved state for guild %s (time: %.2f, timers: %s).", guild_id_str, current_game_time_for_guild, len(timers_to_save)) # Changed
         except Exception as e:
-            print(f"TimeManager: ❌ Error during saving state for guild {guild_id_str}: {e}")
-            import traceback
-            print(traceback.format_exc())
-            # При ошибке в execute_many, он сам откатит свою транзакцию.
-            # Если ошибка в первом execute (game_time), только он откатится.
-            # Явный rollback в конце save_state может откатить предыдущие операции,
-            # если они не были закоммичены (но execute/execute_many авто-коммитят).
-            # Если нужна атомарность всего save_state, нужно использовать одну транзакцию
-            # через async with self._conn: или async with self._conn.cursor():
-            # Для простоты пока оставим как есть с авто-коммитом по операциям.
+            logger.error("TimeManager: Error during saving state for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
 
-
-    # ИСПРАВЛЕНИЕ: load_state должен принимать guild_id и **kwargs
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
-        """
-        Загружает состояние TimeManager (игровое время, активные таймеры) для определенной гильдии из БД в кеш.
-        """
-        print(f"TimeManager: Loading state for guild {guild_id}...")
         guild_id_str = str(guild_id)
-
-        if self._db_service is None: # Changed from _db_adapter
-             print(f"TimeManager: Database service is not available. Loading placeholder state or leaving default for guild {guild_id_str}.") # Changed message
-             # Если игровое время пер-гильдийное, устанавливаем дефолтное время для этой гильдии
+        logger.info("TimeManager: Loading state for guild %s...", guild_id_str) # Changed
+        if self._db_service is None:
+             logger.warning("TimeManager: Database service not available. Loading placeholder state or leaving default for guild %s.", guild_id_str) # Changed
              if guild_id_str not in self._current_game_time: self._current_game_time[guild_id_str] = 0.0
-             # Если таймеры пер-гильдийные, очищаем или инициализируем кеш для этой гильдии
-             self._active_timers.pop(guild_id_str, None)
-             self._active_timers[guild_id_str] = {}
-
-             print(f"TimeManager: State is default after load (no DB adapter) for guild {guild_id_str}. Time = {self._current_game_time.get(guild_id_str, 0.0):.2f}, Timers = 0.")
+             self._active_timers.pop(guild_id_str, None); self._active_timers[guild_id_str] = {}
+             logger.info("TimeManager: State is default after load (no DB adapter) for guild %s. Time = %.2f, Timers = 0.", guild_id_str, self._current_game_time.get(guild_id_str, 0.0)) # Changed
              return
-
         try:
-            # --- Загрузка текущего игрового времени для этой гильгии ---
-            # Предполагаем, что время хранится per-guild в global_state с ключом 'game_time_<guild_id>'
-            sql_time = '''SELECT value FROM global_state WHERE key = $1'''
+            sql_time = 'SELECT value FROM global_state WHERE key = $1'
             key = f'game_time_{guild_id_str}'
-            row_time = await self._db_service.adapter.fetchone(sql_time, (key,)) # Changed from _db_adapter
+            row_time = await self._db_service.adapter.fetchone(sql_time, (key,))
             if row_time and row_time['value']:
                 try:
                     loaded_time = json.loads(row_time['value'])
-                    # ИСПРАВЛЕНИЕ: Если игровое время пер-гильдийное, сохраняем его в Dict
                     self._current_game_time[guild_id_str] = float(loaded_time)
-                    print(f"TimeManager: Loaded game time for guild {guild_id_str}: {self._current_game_time[guild_id_str]:.2f}")
-
+                    logger.info("TimeManager: Loaded game time for guild %s: %.2f", guild_id_str, self._current_game_time[guild_id_str]) # Changed
                 except (json.JSONDecodeError, ValueError, TypeError) as e:
-                     print(f"TimeManager: Error decoding or converting game time from DB for guild {guild_id_str}: {e}. Using default 0.0")
-                     # Если игровое время пер-гильдийное: устанавливаем дефолт для этой гильдии
+                     logger.error("TimeManager: Error decoding or converting game time from DB for guild %s: %s. Using default 0.0", guild_id_str, e, exc_info=True) # Changed
                      self._current_game_time[guild_id_str] = 0.0
             else:
-                 print(f"TimeManager: No saved game time found for guild {guild_id_str}. Starting from 0.0.")
-                 # Если игровое время пер-гильдийное: устанавливаем дефолт для этой гильгии
+                 logger.info("TimeManager: No saved game time found for guild %s. Starting from 0.0.", guild_id_str) # Changed
                  self._current_game_time[guild_id_str] = 0.0
 
-
-            # --- Загрузка активных таймеров для этой гильдии ---
-            # Очищаем кеш таймеров ДЛЯ ЭТОЙ ГИЛЬДИИ перед загрузкой
-            self._active_timers.pop(guild_id_str, None)
-            self._active_timers[guild_id_str] = {} # Создаем пустой кеш для этой гильдии
-            guild_timers_cache = self._active_timers[guild_id_str] # Получаем ссылку на кеш гильдии
-
-
-            # Выбираем таймеры ТОЛЬКО для этой гильдии и которые активны
-            sql_timers = '''SELECT id, type, ends_at, callback_data, is_active, guild_id FROM timers WHERE guild_id = $1 AND is_active = TRUE''' # Changed 1 to TRUE
+            self._active_timers.pop(guild_id_str, None); self._active_timers[guild_id_str] = {}
+            guild_timers_cache = self._active_timers[guild_id_str]
+            sql_timers = 'SELECT id, type, ends_at, callback_data, is_active, guild_id FROM timers WHERE guild_id = $1 AND is_active = TRUE'
             rows_timers = await self._db_service.adapter.fetchall(sql_timers, (guild_id_str,))
-
             if rows_timers:
-                 print(f"TimeManager: Loaded {len(rows_timers)} active timers for guild {guild_id_str} from DB.")
-
+                 logger.info("TimeManager: Loaded %s active timers for guild %s from DB.", len(rows_timers), guild_id_str) # Changed
+                 time_mgr, current_game_time_for_guild = kwargs.get('time_manager', self), None
+                 if time_mgr and hasattr(time_mgr, 'get_current_game_time'): current_game_time_for_guild = time_mgr.get_current_game_time(guild_id_str)
+                 loaded_count = 0
                  for row in rows_timers:
                       try:
-                           # Создаем словарь данных таймера из строки БД
-                           timer_data: Dict[str, Any] = { # Явная аннотация
-                                'id': row['id'],
-                                'type': row['type'],
-                                'ends_at': float(row['ends_at']), # assumed REAL type in DB, ensure float
-                                'callback_data': json.loads(row['callback_data']) if row['callback_data'] else {},
-                                'is_active': bool(row['is_active']), # Преобразуем 0/1 в bool
-                                # ДОБАВЛЕНО: Загружаем guild_id из БД в данные таймера
-                                'guild_id': row['guild_id'] # Сохраняем guild_id в данных таймера
-                                # TODO: Загрузите другие поля (target_id, target_type и т.д.)
-                           }
-                           # Добавляем загруженный таймер в кеш ДЛЯ ЭТОЙ ГИЛЬДИИ
-                           guild_timers_cache[timer_data['id']] = timer_data
-
-                      except (json.JSONDecodeError, ValueError, TypeError) as e:
-                           print(f"TimeManager: ❌ Error decoding or converting timer data from DB for ID {row.get('id', 'Unknown')} for guild {guild_id_str}: {e}. Skipping timer.")
-                           import traceback
-                           print(traceback.format_exc())
-
-
-                 print(f"TimeManager: Successfully loaded {len(guild_timers_cache)} active timers into cache for guild {guild_id_str}.")
-
+                           row_dict = dict(row); status_id_db = row_dict.get('id')
+                           if status_id_db is None: continue
+                           row_dict['callback_data'] = json.loads(row_dict.get('callback_data') or '{}') if isinstance(row_dict.get('callback_data'), (str, bytes)) else {}
+                           row_dict['ends_at'] = float(row_dict['ends_at']) if row_dict.get('ends_at') is not None else float('inf')
+                           row_dict['is_active'] = bool(row_dict.get('is_active'))
+                           if str(row_dict.get('guild_id')) != guild_id_str: continue # Ensure guild match
+                           timer_instance_data = {k: row_dict[k] for k in ['id', 'type', 'ends_at', 'callback_data', 'is_active', 'guild_id']}
+                           if timer_instance_data['ends_at'] is not None and current_game_time_for_guild is not None:
+                                if timer_instance_data['ends_at'] <= current_game_time_for_guild: # Timer already expired
+                                    logger.info("TimeManager: Expired timer %s (type: %s) found during load for guild %s. Triggering immediately.", timer_instance_data['id'], timer_instance_data['type'], guild_id_str) # Added
+                                    await self._trigger_timer_callback(timer_instance_data['type'], timer_instance_data.get('callback_data', {}), **kwargs)
+                                    await self.remove_timer(guild_id_str, timer_instance_data['id']) # Remove after triggering
+                                    continue # Don't add to active cache
+                           guild_timers_cache[timer_instance_data['id']] = timer_instance_data
+                           loaded_count += 1
+                      except (json.JSONDecodeError, ValueError, TypeError) as e_row:
+                           logger.error("TimeManager: Error decoding or converting timer data from DB for ID %s for guild %s: %s. Skipping timer.", row.get('id', 'Unknown'), guild_id_str, e_row, exc_info=True) # Changed
+                 logger.info("TimeManager: Successfully loaded %s active timers into cache for guild %s.", loaded_count, guild_id_str) # Changed
             else:
-                 print(f"TimeManager: No active timers found in DB for guild {guild_id_str}.")
+                 logger.info("TimeManager: No active timers found in DB for guild %s.", guild_id_str) # Changed
+        except Exception as e_load:
+            logger.critical("TimeManager: CRITICAL ERROR loading state for guild %s from DB: %s", guild_id_str, e_load, exc_info=True) # Changed
 
-
-        except Exception as e:
-            print(f"TimeManager: ❌ Error during loading state for guild {guild_id_str} from DB: {e}")
-            import traceback
-            print(traceback.format_exc())
-            print(f"TimeManager: Loading failed for guild {guild_id_str}. State for this guild might be incomplete.")
-
-
-    # --- Метод перестройки кешей (обычно простая заглушка для TimeManager) ---
-    # ИСПРАВЛЕНИЕ: Добавляем guild_id и **kwargs
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-         """
-         Перестраивает внутренние кеши TimeManager после загрузки для определенной гильдии.
-         """
-         print(f"TimeManager: Simulating rebuilding runtime caches for guild {guild_id}.")
-         pass # TimeManager обычно не имеет сложных кешей, которые нужно перестраивать после загрузки.
-             # Но метод должен существовать с правильной сигнатурой.
-
-
-# Конец класса TimeManager
+         logger.info("TimeManager: Simulating rebuilding runtime caches for guild %s.", guild_id) # Changed
+         pass

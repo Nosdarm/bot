@@ -71,7 +71,8 @@ class HTTPValidationError(BaseModel):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.error(f"Request validation error: {exc.errors()}")
+    guild_id_in_path = request.path_params.get("guild_id", "N/A")
+    logger.error(f"Request validation error for guild_id '{guild_id_in_path}': {exc.errors()}")
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"detail": exc.errors()},
