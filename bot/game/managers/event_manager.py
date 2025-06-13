@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.services.openai_service import OpenAIService
     from bot.game.ai.event_ai_generator import EventAIGenerator # Added import
+    from bot.game.managers.game_log_manager import GameLogManager # Added
     # Добавляем другие менеджеры/процессоры, которые могут быть в context kwargs
     # from bot.game.event_processors.event_action_processor import EventActionProcessor
     # from bot.game.character_processors.character_view_service import CharacterViewService
@@ -90,6 +91,7 @@ class EventManager:
         party_manager: Optional["PartyManager"] = None, # Use string literal!
         time_manager: Optional["TimeManager"] = None, # Use string literal!
         event_stage_processor: Optional["EventStageProcessor"] = None, # Use string literal!
+        game_log_manager: Optional["GameLogManager"] = None, # Added
         # Add other injected dependencies here with Optional and string literals
         # Example: event_action_processor: Optional["EventActionProcessor"] = None,
         multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None,
@@ -110,6 +112,7 @@ class EventManager:
         self._party_manager = party_manager
         self._time_manager = time_manager
         self._event_stage_processor = event_stage_processor
+        self._game_log_manager = game_log_manager # Added
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
         # self._event_action_processor = event_action_processor
@@ -375,6 +378,28 @@ class EventManager:
             # if rule_engine and hasattr(rule_engine, 'on_event_created'):
             #      try: await rule_engine.on_event_created(event, context=kwargs)
             #      except Exception: traceback.print_exc();
+
+            # --- Log EVENT_STARTED ---
+            if self._game_log_manager:
+                log_event_data = {
+                    "event_id": event.id,
+                    "event_template_id": event.template_id,
+                    "event_name_i18n": event.name_i18n,
+                    "guild_id": event.guild_id,
+                    "channel_id": event.channel_id,
+                    "location_id": location_id, # Parameter passed to create_event_from_template
+                    "involved_player_ids": initial_player_ids or [],
+                    "spawned_npc_ids": event.state_variables.get('__temp_npcs', []),
+                    "spawned_item_ids": event.state_variables.get('__temp_items', [])
+                }
+                asyncio.create_task(self._game_log_manager.log_event(
+                    guild_id=guild_id_str,
+                    event_type="EVENT_STARTED",
+                    details=log_event_data,
+                    player_id=kwargs.get('initiating_player_id'),
+                    location_id=location_id,
+                    channel_id=event.channel_id
+                ))
 
             return event # Return the created Event object
 
@@ -667,6 +692,39 @@ class EventManager:
         # If ended events should NOT stay in the active cache, then call remove_active_event here.
         # Let's assume ended events *are* removed from the active cache and marked for DB deletion.
         # This means end_event should call remove_active_event.
+
+        # --- Log EVENT_ENDED ---
+        # This should happen BEFORE remove_active_event is called, so event object is still easily accessible.
+        if self._game_log_manager:
+            log_event_data_end = {
+                "event_id": event.id,
+                "event_template_id": event.template_id,
+                "event_name_i18n": event.name_i18n,
+                "guild_id": event.guild_id,
+                "channel_id": event.channel_id,
+                "final_stage_id": event.current_stage_id, # Stage at the time of ending
+                "outcome": event.state_variables.get('final_outcome'), # Optional: outcome from state
+                "involved_player_ids": event.players,
+                "spawned_npc_ids_at_end": event.state_variables.get('__temp_npcs', []),
+                "final_state_variables": event.state_variables.copy() # Full context
+            }
+            # Determine a primary location for the log, if available in final state
+            log_location_id = event.state_variables.get('location_id', None)
+            # If event.location_id was a direct attribute, it could be used too.
+            # For now, assuming it might be in state_variables if it's dynamic.
+
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="EVENT_ENDED",
+                details=log_event_data_end,
+                player_id=kwargs.get('terminating_player_id'), # If a specific player action ended it
+                location_id=log_location_id,
+                channel_id=event.channel_id,
+                message_key="event_ended_log_summary",
+                message_params={"event_name": event.name_i18n.get(self._settings.get('main_bot_language', 'en'), event.id),
+                                "outcome": log_event_data_end["outcome"] or "N/A"}
+            ))
+
         print(f"EventManager: Event {event_id} in guild {guild_id_str} state set to inactive. Calling remove_active_event...")
         await self.remove_active_event(guild_id_str, event_id, **kwargs) # remove_active_event marks for deletion and removes from cache
 
