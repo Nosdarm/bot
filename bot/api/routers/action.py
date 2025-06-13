@@ -2,12 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Path, status, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload # Added for eager loading player in character
 import logging
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field # Import BaseModel and Field
 
 from bot.api.dependencies import get_db_session
-from bot.database.models import Character, Ability, RulesConfig, GameLog
+from bot.database.models import Character, Ability, RulesConfig, GameLog, Player, Location
 # Assuming GameLogEntryCreate is available for logging the event
 from bot.api.schemas.game_log_schemas import GameLogEntryCreate, GameLogEntryResponse, ParticipatingEntity
 
@@ -173,4 +174,163 @@ async def activate_ability_endpoint(
         targets=request_data.target_ids,
         effects_summary=simulated_effects,
         log_entry=log_entry_model # Pass the GameLog model instance
+    )
+
+
+# --- Pydantic Schemas for Movement ---
+class CharacterMoveRequest(BaseModel):
+    target_location_id: str = Field(..., description="ID of the location to move to.")
+    # exit_direction: Optional[str] = Field(None, description="Optional direction of exit taken (e.g., 'north'). Not strictly enforced by logic yet.")
+
+class CharacterMoveResponse(BaseModel):
+    success: bool
+    message: str
+    character_id: str
+    new_location_id: str
+    new_location_name_i18n: Dict[str, str] # Display name of new location
+    log_entry: Optional[GameLogEntryResponse] = None
+
+
+# --- Helper to log movement ---
+async def log_character_movement(
+    db: AsyncSession,
+    guild_id: str,
+    character_id: str,
+    player_id: str, # Player whose location is changing
+    old_location_id: Optional[str],
+    new_location_id: str,
+    success: bool,
+    message: str
+) -> Optional[GameLog]:
+    event_type = "character_move_success" if success else "character_move_failure"
+
+    description_map = {
+        "en": message,
+        # Add other languages if message is constructed with i18n support
+    }
+
+    participating_entities = [ParticipatingEntity(type="character", id=character_id)]
+    if player_id != character_id: # If player concept is separate from character for movement logging
+            participating_entities.append(ParticipatingEntity(type="player", id=player_id))
+
+    log_create_data = GameLogEntryCreate(
+        event_type=event_type,
+        player_id=player_id, # Log against the player who moved
+        location_id=new_location_id if success else old_location_id,
+        description_i18n=description_map,
+        involved_entities_ids=participating_entities,
+        details={"from_location_id": old_location_id, "to_location_id": new_location_id, "raw_message": message}
+    )
+
+    db_log_entry = GameLog(guild_id=guild_id, **log_create_data.dict(exclude_none=True))
+    # This log entry will be added to session and committed by the main endpoint
+    return db_log_entry
+
+
+@router.post(
+    "/characters/{character_id}/move",
+    response_model=CharacterMoveResponse,
+    summary="Move a character to a new location"
+)
+async def move_character_endpoint(
+    guild_id: str = Path(..., description="Guild ID from path prefix"),
+    character_id: str = Path(..., description="ID of the character to move"),
+    move_request: CharacterMoveRequest = Body(...),
+    db: AsyncSession = Depends(get_db_session)
+):
+    logger.info(f"Character {character_id} in guild {guild_id} attempting to move to location {move_request.target_location_id}")
+
+    # 1. Fetch Character and associated Player
+    char_stmt = select(Character).options(selectinload(Character.player)).where(Character.id == character_id, Character.guild_id == guild_id)
+    char_result = await db.execute(char_stmt)
+    db_character = char_result.scalars().first()
+
+    if not db_character:
+        # Attempt to log this failure if possible, though character context is missing
+        # For now, just raise. A more advanced logger could log guild_id and attempted char_id.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Character {character_id} not found in guild {guild_id}.")
+
+    db_player = db_character.player
+    if not db_player: # Should not happen if FK is enforced and player not deleted separately
+        # Log this problematic state. Player_id might be unknown.
+        # Using db_character.player_id which is the FK.
+        log_entry_fail_noplayer = await log_character_movement(db, guild_id, character_id, db_character.player_id, "UNKNOWN_LOCATION", move_request.target_location_id, False, "Character not linked to a valid player.")
+        if log_entry_fail_noplayer: db.add(log_entry_fail_noplayer)
+        # This commit for logging a failure before raising is tricky with the get_db_session pattern
+        # which handles commit/rollback at the end. For now, this log might not be persisted
+        # if the HTTPException bypasses the normal successful exit of get_db_session.
+        # A dedicated logging service or out-of-band logging might be better for critical errors.
+        # For simplicity here, we'll add it, but acknowledge this commit may not happen.
+        # Consider removing this pre-emptive commit for failure logs if it complicates transaction management.
+        # await db.commit()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Character is not linked to a player.")
+
+    current_location_id = db_player.current_location_id
+    original_log_player_id = db_player.id # Save for logging before potential changes
+
+    # 2. Fetch Current Location (if set)
+    current_db_location = None
+    if current_location_id:
+        curr_loc_stmt = select(Location).where(Location.id == current_location_id, Location.guild_id == guild_id)
+        curr_loc_result = await db.execute(curr_loc_stmt)
+        current_db_location = curr_loc_result.scalars().first()
+        if not current_db_location:
+            log_entry_fail_currloc = await log_character_movement(db, guild_id, character_id, original_log_player_id, current_location_id, move_request.target_location_id, False, f"Character's current location {current_location_id} not found.")
+            if log_entry_fail_currloc: db.add(log_entry_fail_currloc)
+            # await db.commit() # Same consideration for commit as above
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Character's current location {current_location_id} not found.")
+
+    # 3. Fetch Target Location
+    target_loc_stmt = select(Location).where(Location.id == move_request.target_location_id, Location.guild_id == guild_id)
+    target_loc_result = await db.execute(target_loc_stmt)
+    target_db_location = target_loc_result.scalars().first()
+    if not target_db_location:
+        log_entry_fail_tgtloc = await log_character_movement(db, guild_id, character_id, original_log_player_id, current_location_id, move_request.target_location_id, False, f"Target location {move_request.target_location_id} not found.")
+        if log_entry_fail_tgtloc: db.add(log_entry_fail_tgtloc)
+        # await db.commit() # Same consideration for commit as above
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Target location {move_request.target_location_id} not found in guild {guild_id}.")
+
+    # 4. Validate Movement
+    can_move = False
+    if not current_db_location:
+        can_move = True
+        logger.info(f"Character {character_id} has no current location. Allowing move to {target_db_location.id}.")
+    elif current_db_location.exits and isinstance(current_db_location.exits, dict): # Ensure exits is a dict
+        if move_request.target_location_id in current_db_location.exits.values():
+            can_move = True
+
+    if not can_move:
+        message = f"Cannot move from {current_location_id if current_location_id else 'an unknown location'} to {target_db_location.id}. No valid exit."
+        log_entry_fail_move = await log_character_movement(db, guild_id, character_id, original_log_player_id, current_location_id, target_db_location.id, False, message)
+        if log_entry_fail_move: db.add(log_entry_fail_move)
+        # await db.commit() # Commit the log for failed attempt. Risky with overall transaction.
+        # The main get_db_session will rollback if an exception is raised.
+        # So, this log for a "business logic failure" that then raises HTTP 400 might not be committed.
+        # This is a common challenge: transactional business logic vs. audit/failure logging.
+        # For now, this log will likely be rolled back.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+
+    # 5. Perform Movement
+    db_player.current_location_id = target_db_location.id
+    db.add(db_player) # Mark player object as dirty
+
+    # 6. Log successful movement
+    success_message = f"Character {db_character.name_i18n.get('en', character_id)} moved from {current_db_location.name_i18n.get('en', current_location_id) if current_db_location else 'an unknown place'} to {target_db_location.name_i18n.get('en', target_db_location.id)}."
+    log_entry_model = await log_character_movement(db, guild_id, character_id, original_log_player_id, current_location_id, target_db_location.id, True, success_message)
+    if log_entry_model:
+            db.add(log_entry_model) # Add the log entry to the session to be committed with player update
+
+    # The commit for db_player update and log_entry_model addition is handled by get_db_session dependency wrapper.
+    # If explicit refresh is needed before response (e.g. if log_entry_model had DB defaults not set by Python),
+    # then a commit and refresh would be needed here, carefully.
+    # However, our GameLog model has defaults that Python side can mostly replicate (UUID, timestamp is server).
+    # Pydantic response model will serialize log_entry_model.
+
+    return CharacterMoveResponse(
+        success=True,
+        message=success_message,
+        character_id=character_id,
+        new_location_id=target_db_location.id,
+        new_location_name_i18n=target_db_location.name_i18n,
+        log_entry=log_entry_model
     )
