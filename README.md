@@ -18,7 +18,59 @@ A new set of API endpoints has been added to manage simple RPG characters, indep
 - `PUT /characters/{character_id}`: Update a character.
 - `DELETE /characters/{character_id}`: Delete a character.
 
-Refer to the API documentation at `/docs` (Swagger UI) or `/redoc` when the FastAPI application is running.
+### Item Endpoints
+These endpoints manage item templates.
+- **Prefix:** `/api/v1/items`
+
+- **`POST /` - Create Item**
+  - Description: Creates a new item template.
+  - Request Body: `NewItemCreate` (fields: `name: str`, `description: Optional[str]`, `item_type: str`, `item_metadata: Optional[dict]`)
+  - Response Body: `NewItemRead`
+
+- **`GET /` - List Items**
+  - Description: Retrieves a list of all item templates.
+  - Query Parameters: `skip: int = 0` (optional), `limit: int = 100` (optional)
+  - Response Body: `List[NewItemRead]`
+
+- **`GET /{item_id}` - Get Item**
+  - Description: Retrieves a specific item template by its ID.
+  - Path Parameters: `item_id: UUID`
+  - Response Body: `NewItemRead`
+
+- **`PUT /{item_id}` - Update Item**
+  - Description: Updates an existing item template.
+  - Path Parameters: `item_id: UUID`
+  - Request Body: `NewItemUpdate` (fields: `name: Optional[str]`, `description: Optional[str]`, `item_type: Optional[str]`, `item_metadata: Optional[dict]`)
+  - Response Body: `NewItemRead`
+
+- **`DELETE /{item_id}` - Delete Item**
+  - Description: Deletes an item template. This operation will fail if the item is currently present in any character's inventory.
+  - Path Parameters: `item_id: UUID`
+  - Response Body: `NewItemRead` (representing the item that was deleted)
+
+### Character Inventory Endpoints
+These endpoints manage items within a specific character's inventory.
+- **Prefix:** `/api/v1/characters/{character_id}` (where `{character_id}` is the ID of the character)
+
+- **`GET /inventory` - Get Character Inventory**
+  - Description: Retrieves all items in the specified character's inventory.
+  - Path Parameters: `character_id: str`
+  - Response Body: `List[InventoryItemRead]` (each entry includes full item details and quantity)
+    - `InventoryItemRead` schema: `{ "item": NewItemRead, "quantity": int }`
+
+- **`POST /inventory/add` - Add Item to Inventory**
+  - Description: Adds an item to the character's inventory. If the item already exists in the inventory, its quantity is increased.
+  - Path Parameters: `character_id: str`
+  - Request Body: `NewCharacterItemCreate` (fields: `item_id: UUID`, `quantity: int = 1`)
+  - Response Body: `NewCharacterItemRead` (includes item details, character ID, and new quantity)
+
+- **`POST /inventory/remove` - Remove Item from Inventory**
+  - Description: Removes a specified quantity of an item from the character's inventory. If the quantity to remove is greater than or equal to the current quantity, the item is completely removed from the inventory.
+  - Path Parameters: `character_id: str`
+  - Request Body: `NewCharacterItemCreate` (fields: `item_id: UUID`, `quantity: int = 1` (represents quantity to remove))
+  - Response Body: `NewCharacterItemRead` (if quantity is reduced but item remains) or HTTP `204 No Content` (if item is fully removed from inventory).
+
+Refer to the API documentation at `/docs` (Swagger UI) or `/redoc` when the FastAPI application is running for detailed request/response schemas and interactive testing. These new endpoints will also be available there.
 
 ## Setup and Running
 

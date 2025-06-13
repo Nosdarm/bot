@@ -18,6 +18,8 @@ from bot.api.routers import location as location_router
 from bot.api.routers import map as map_router
 from bot.api.routers import combat as combat_router
 from bot.api.routers import rpg_character_api
+from bot.api.routers import item_router  # New Item router
+from bot.api.routers import inventory_router  # New Inventory router
 # from bot.api.dependencies import create_db_and_tables # If you want to create tables on startup
 
 # Configure basic logging
@@ -135,6 +137,20 @@ app.include_router(
 app.include_router(
     rpg_character_api.router,
     # The prefix "/characters" and tags ["RPG Characters"] are defined in rpg_character_api.py
+)
+
+# New Item Router
+app.include_router(
+    item_router.router,
+    prefix="/api/v1/items",
+    tags=["Items (New)"]
+)
+
+# New Inventory Router (associated with specific characters)
+app.include_router(
+    inventory_router.router,
+    prefix="/api/v1/characters/{character_id}", # character_id will be passed to inventory_router endpoints
+    tags=["Character Inventory (New)"]
 )
 
 @app.on_event("startup")

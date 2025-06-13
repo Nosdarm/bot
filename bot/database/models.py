@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -85,6 +85,7 @@ class Character(Base):
 
     # Relationship to Player
     player = relationship("Player", back_populates="characters")
+    new_items_association = relationship("NewCharacterItem", back_populates="character", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index('idx_character_guild_player', 'guild_id', 'player_id'),
@@ -463,6 +464,44 @@ class PendingConflict(Base):
     resolution_data_json = Column(JSON, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     resolved_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class NewItem(Base):
+    __tablename__ = 'new_items'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False, unique=True)
+    description = Column(String, nullable=True)
+    item_type = Column(String, nullable=False)  # e.g., "weapon", "armor", "consumable"
+    item_metadata = Column(JSONB, name="metadata", nullable=True) # Renamed attribute to item_metadata, column name remains 'metadata'
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # For global items, unique constraint on name only
+    __table_args__ = (UniqueConstraint('name', name='uq_new_item_name'),)
+
+    def __repr__(self):
+        return f"<NewItem(id={self.id}, name='{self.name}', item_type='{self.item_type}')>"
+
+
+class NewCharacterItem(Base):
+    __tablename__ = 'new_character_items'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Character.id is String, so character_id must be String for FK
+    character_id = Column(String, ForeignKey('characters.id'), nullable=False, index=True)
+    item_id = Column(UUID(as_uuid=True), ForeignKey('new_items.id'), nullable=False, index=True)
+    quantity = Column(Integer, default=1, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    character = relationship("Character", back_populates="new_items_association")
+    item = relationship("NewItem")
+
+    __table_args__ = (CheckConstraint('quantity > 0', name='check_new_char_item_quantity_positive'),)
+
+    def __repr__(self):
+        return f"<NewCharacterItem(id={self.id}, character_id='{self.character_id}', item_id='{self.item_id}', quantity={self.quantity})>"
 
 
 class RPGCharacter(Base):
