@@ -234,25 +234,25 @@ class DBService:
 
     async def create_item_definition(
         self, item_id: str, name: str, description: str,
-        item_type: str, effects: Optional[Dict[str, Any]] = None
+        item_type: str, guild_id: str, effects: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         properties_data = {'effects': effects} if effects else {}
         name_i18n_json = json.dumps({"en": name, "ru": name})
         description_i18n_json = json.dumps({"en": description, "ru": description})
 
         sql = """
-            INSERT INTO item_templates (id, name_i18n, description_i18n, type, properties)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO item_templates (id, name_i18n, description_i18n, type, properties, guild_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id;
         """
-        params = (item_id, name_i18n_json, description_i18n_json, item_type, json.dumps(properties_data))
+        params = (item_id, name_i18n_json, description_i18n_json, item_type, json.dumps(properties_data), guild_id)
         try: # Added
             inserted_id = await self.adapter.execute_insert(sql, params)
             if inserted_id:
-                logger.info("DBService: Created item definition %s.", item_id) # Added
-                return await self.get_item_definition(item_id)
+                logger.info("DBService: Created item definition %s for guild %s.", item_id, guild_id) # Added
+                return await self.get_item_definition(item_id) # Assuming get_item_definition might also need guild_id
             else: # Added
-                logger.error("DBService: Failed to create item definition %s (no ID returned).", item_id)
+                logger.error("DBService: Failed to create item definition %s for guild %s (no ID returned).", item_id, guild_id)
                 return None
         except Exception as e: # Added
             logger.error("DBService: Error creating item definition %s: %s", item_id, e, exc_info=True)

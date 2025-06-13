@@ -40,16 +40,16 @@ class CampaignLoader:
             traceback.print_exc()
             return None
 
-    async def load_and_populate_items(self, items_file_path: Optional[str] = None) -> None:
+    async def load_and_populate_items(self, guild_id: str, items_file_path: Optional[str] = None) -> None:
         if not self._db_service:
-            print("CampaignLoader: DBService not available, skipping item population.")
+            print(f"CampaignLoader: DBService not available, skipping item population for guild '{guild_id}'.")
             return
 
         file_path = items_file_path or os.path.join(self._data_base_path, "items.json")
         items_data = await self._load_json_file(file_path)
 
         if items_data and isinstance(items_data, list):
-            print(f"CampaignLoader: Populating {len(items_data)} item definitions...")
+            print(f"CampaignLoader: Populating {len(items_data)} item definitions for guild '{guild_id}'...")
             for item_def in items_data:
                 item_id = item_def.get("id")
                 name = item_def.get("name")
@@ -76,17 +76,18 @@ class CampaignLoader:
                             name=name,
                             description=description,
                             item_type=item_type,
+                            guild_id=guild_id,
                             effects=properties_to_store # Pass the consolidated dict here
                         )
-                        print(f"CampaignLoader: Created item definition '{name}' (ID: {item_id}).")
+                        print(f"CampaignLoader: Created item definition '{name}' (ID: {item_id}) for guild '{guild_id}'.")
                     else:
-                        print(f"CampaignLoader: Item definition '{name}' (ID: {item_id}) already exists, skipping.")
+                        print(f"CampaignLoader: Item definition '{name}' (ID: {item_id}) already exists for guild '{guild_id}', skipping.")
                 except Exception as e:
-                    print(f"CampaignLoader: Error creating item definition '{name}' (ID: {item_id}): {e}")
+                    print(f"CampaignLoader: Error creating item definition '{name}' (ID: {item_id}) for guild '{guild_id}': {e}")
                     traceback.print_exc()
-            print("CampaignLoader: Item definition population complete.")
+            print(f"CampaignLoader: Item definition population for guild '{guild_id}' complete.")
         else:
-            print(f"CampaignLoader: No item data found or data is not a list in '{file_path}'.")
+            print(f"CampaignLoader: No item data found or data is not a list in '{file_path}' for guild '{guild_id}'.")
 
     async def load_and_populate_locations(self, guild_id: str, locations_file_path: Optional[str] = None) -> None:
         if not self._db_service:
@@ -296,10 +297,9 @@ class CampaignLoader:
 
         print(f"CampaignLoader: Starting population of all game data for guild '{guild_id}'.")
 
-        # 1. Populate Item Definitions (Global)
-        # Items are global, so they are loaded once, not per guild, but function can be called per guild if needed
-        # to ensure they are loaded if not already. DBService methods are idempotent.
-        await self.load_and_populate_items()
+        # 1. Populate Item Definitions (Per Guild)
+        # Items are now associated with a guild.
+        await self.load_and_populate_items(guild_id=guild_id)
 
         # 2. Populate Locations (Per Guild)
         await self.load_and_populate_locations(guild_id=guild_id)
