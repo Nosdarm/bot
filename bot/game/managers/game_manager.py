@@ -321,8 +321,7 @@ class GameManager:
                     logger.info("GameManager: Populating game data for guild %s.", guild_id_str) # Added
                     await self.campaign_loader.populate_all_game_data(guild_id=guild_id_str, campaign_identifier=None)
             else:
-                logger.info("GameManager: No active guilds specified, loading global item data via CampaignLoader.") # Added
-                await self.campaign_loader.load_and_populate_items()
+                logger.warning("GameManager: No active guilds specified. Item template loading will be skipped as item templates require a guild_id due to schema constraints.")
 
         if self._persistence_manager:
             # ... (load_context_kwargs setup)
