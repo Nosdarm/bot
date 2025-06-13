@@ -95,9 +95,19 @@ The JSON profile MUST include the following fields:
 - `inventory`: Optional list of objects, each with `item_template_id` (must be an ID from `game_terms_dictionary` where `term_type` is 'item_template') and `quantity`. Scale quantity and quality/type of items based on `scaling_parameters` and NPC role.
 - `faction_affiliations`: Optional list of objects, each with `faction_id` (use known faction IDs from `game_terms_dictionary` or `faction_data` in context if available, or generate new plausible ones if necessary) and `rank_i18n`: {{{lang_example_str}}}.
 - `relationships`: Optional list of objects, each with `target_entity_id` (can be an ID from `game_terms_dictionary` for existing entities, or a newly generated placeholder ID for a new related NPC), `relationship_type` (e.g., "friendly", "hostile", "neutral"), and `strength` (numeric value, e.g., from -100 to 100).
+
+TRADER-SPECIFIC INSTRUCTIONS (Apply if relevant for the NPC concept):
+- If this NPC is a trader, include `"is_trader": true` in the root of the JSON profile.
+- If `"is_trader": true`:
+    - Populate the `inventory` field: This MUST be a list of item objects. Each item object MUST contain:
+        - `item_template_id`: string (a valid item ID from `game_terms_dictionary` where `term_type` is 'item_template').
+        - `quantity`: integer (the amount of this item the trader has in stock). This quantity should be scaled appropriately based on `scaling_parameters`, the trader's type (e.g., a small village shop vs. a large city emporium), and the item's rarity/value. Provide a varied and thematic assortment of goods. Prices will be determined by game rules based on these item template IDs and quantities.
+    - Add a `currency_gold`: integer field to the root of the JSON profile (e.g., `"currency_gold": 500`). This represents the trader's starting cash on hand. Scale this amount using `scaling_parameters` and the trader's presumed wealth/scale of operation.
+    - For `dialogue_hints_i18n`, include some trade-related phrases or topics. Examples: "Bargaining phrases", "Comments on item quality or rarity", "Mentions of new stock or items they are looking to buy", "Rumors about supply shortages or new trade routes".
+
 CRITICAL INSTRUCTIONS:
 1.  Refer to `game_terms_dictionary` in the `<game_context>` for valid IDs and names of stats, skills, abilities, spells, item templates.
-2.  Adhere strictly to `scaling_parameters` and `player_context` from `<game_context>` to determine appropriate values for all numerical properties (stats, skill levels, quantity/quality of inventory, etc.), ensuring the NPC is balanced for the given context.
+2.  Adhere strictly to `scaling_parameters` and `player_context` from `<game_context>` to determine appropriate values for all numerical properties (stats, skill levels, quantity/quality of inventory, trader currency amounts, etc.), ensuring the NPC is balanced for the given context.
 3.  All textual fields (names, descriptions, roles, etc.) MUST be in the specified multilingual JSON format: {{{lang_example_str}}}.
 4.  The entire output must be a single JSON object representing the NPC profile. Do not include any text outside this JSON object.
 """
@@ -156,7 +166,7 @@ The JSON item profile MUST include:
 - `item_type`: string (e.g., "weapon", "armor", "potion", "ring", "quest_item", "resource"; use types from `game_terms_dictionary` if item types are listed, otherwise use common RPG types).
 - `rarity`: string (e.g., "common", "uncommon", "rare", "epic", "legendary"; scaled based on `scaling_parameters`).
 - `properties_i18n`: A dictionary of key-value pairs. Property keys should be standardized (e.g., "damage", "armor_class", "healing_amount", "attribute_bonus_strength"). Values for textual properties (like effect descriptions) MUST be multilingual {{{lang_example_str}}}. Numerical values MUST be scaled using `scaling_parameters` from `<game_context>`. Example: `{{"damage": "1d8+2", "effect_i18n": {{{{"en": "Grants +5 to Strength for 1 minute", "ru": "Дает +5 к Силе на 1 минуту"}}}} }}`.
-- `value`: integer (estimated gold value, scaled using `scaling_parameters` and item rarity/power).
+- `value`: integer (estimated gold value, scaled using `scaling_parameters` and item rarity/power. This value will be used as the item's `base_price` in economic calculations by the game rules.).
 - `weight`: float (item weight).
 - `stackable`: boolean (can the item be stacked in inventory?).
 - `icon`: string (suggest an emoji or a descriptive keyword for an icon, e.g., "⚔️", "shield_icon", "red_potion_ bubbling").
@@ -164,7 +174,7 @@ The JSON item profile MUST include:
 - `requirements`: Optional object (e.g., `{{"level": 5, "strength": 12}}`; use stat/skill IDs from `game_terms_dictionary`).
 CRITICAL INSTRUCTIONS:
 1.  Use `game_terms_dictionary` from `<game_context>` for `item_type` (if defined there), `equipable_slot` (if defined), and any stat/skill IDs used in `requirements` or `properties_i18n`.
-2.  Scale `value`, `rarity`, and numerical values in `properties_i18n` according to `scaling_parameters` and `player_context` (if available) from `<game_context>`.
+2.  Scale `value`, `rarity`, and numerical values in `properties_i18n` according to `scaling_parameters` and `player_context` (if available) from `<game_context>`. The `value` field is especially important as it will directly serve as the item's `base_price` for all economic activities and trade calculations.
 3.  All textual fields (names, descriptions, property effects) MUST be in the specified multilingual JSON format: {{{lang_example_str}}}.
 4.  The entire output must be a single JSON object representing the item profile. Do not include any text outside this JSON object.
 """
