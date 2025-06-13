@@ -3,7 +3,7 @@ import pytest_asyncio
 import os
 import asyncio
 
-from typing import AsyncGenerator, Dict, Any
+from typing import AsyncGenerator, Dict, Any, Iterator
 
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -89,7 +89,7 @@ async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture(scope="function")
-def client(db_session: AsyncSession) -> TestClient:
+def client(db_session: AsyncSession) -> Iterator[TestClient]:
     """Provides a TestClient instance for making API requests."""
     # Override the app's DB dependency to use the test session
     # This requires your FastAPI app to have a way to override dependencies,
@@ -186,7 +186,7 @@ class TestGuildContext:
         modified_data = rules_cfg_before.config_data.copy()
         modified_data["default_language"] = "xx"
         rules_cfg_before.config_data = modified_data
-        session.add(rules_cfg_before) # For SQLAlchemy 2.0 ORM objects
+        db_session.add(rules_cfg_before) # For SQLAlchemy 2.0 ORM objects
         await db_session.commit()
 
         response = client.post(f"/api/v1/guilds/{TEST_GUILD_ID_ALPHA}/initialize?force_reinitialize=true")
