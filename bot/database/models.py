@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint
+from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -462,3 +463,25 @@ class PendingConflict(Base):
     resolution_data_json = Column(JSON, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     resolved_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class RPGCharacter(Base):
+    __tablename__ = 'rpg_characters'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    class_name = Column(String, nullable=False) # Renamed from 'class' to avoid keyword conflict
+    level = Column(Integer, default=1, nullable=False)
+    health = Column(Integer, nullable=False)
+    mana = Column(Integer, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint('level >= 0', name='check_level_non_negative'),
+        CheckConstraint('health >= 0', name='check_health_non_negative'),
+        CheckConstraint('mana >= 0', name='check_mana_non_negative'),
+    )
+
+    def __repr__(self):
+        return f"<RPGCharacter(id={self.id}, name='{self.name}', class_name='{self.class_name}')>"

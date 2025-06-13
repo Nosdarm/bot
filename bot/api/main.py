@@ -17,6 +17,7 @@ from bot.api.routers import action as action_router
 from bot.api.routers import location as location_router
 from bot.api.routers import map as map_router
 from bot.api.routers import combat as combat_router
+from bot.api.routers import rpg_character_api
 # from bot.api.dependencies import create_db_and_tables # If you want to create tables on startup
 
 # Configure basic logging
@@ -130,6 +131,10 @@ app.include_router(
     combat_router.router,
     prefix="/api/v1/guilds/{guild_id}/combats",
     tags=["Combat"]
+)
+app.include_router(
+    rpg_character_api.router,
+    # The prefix "/characters" and tags ["RPG Characters"] are defined in rpg_character_api.py
 )
 
 @app.on_event("startup")
