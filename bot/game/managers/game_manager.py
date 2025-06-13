@@ -19,6 +19,7 @@ from discord import Client
 from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 from bot.game.models.character import Character
+from bot.services.notification_service import NotificationService # Added runtime import
 
 if TYPE_CHECKING:
     from discord import Message
@@ -238,24 +239,64 @@ class GameManager:
         if self.campaign_loader:
             campaign_identifier = self._settings.get('default_campaign_identifier')
             default_campaign_data = await self.campaign_loader.load_campaign_data_from_source(campaign_identifier=campaign_identifier)
-            if default_campaign_data and isinstance(default_campaign_data.get('npc_archetypes'), list):
+            if default_campaign_data and isinstance(default_campaign_data.get('npc_archetypes'), dict): # Expect a dictionary
                 npc_archetypes_from_campaign = default_campaign_data['npc_archetypes']
-                logger.info("GameManager: Loaded %s NPC archetypes from campaign '%s'.", len(npc_archetypes_from_campaign), campaign_identifier or 'default') # Changed
+                logger.info("GameManager: Loaded %s NPC archetypes dictionary from campaign '%s'.", len(npc_archetypes_from_campaign), campaign_identifier or 'default')
             else:
-                npc_archetypes_from_campaign = [] # Ensure it's a list
-                logger.warning("GameManager: Could not load NPC archetypes from campaign '%s'. Using empty list.", campaign_identifier or 'default') # Changed
+                npc_archetypes_from_campaign = {} # Initialize as empty dict
+                logger.warning("GameManager: Could not load NPC archetypes dictionary from campaign '%s'. Using empty dict.", campaign_identifier or 'default')
         else:
-            npc_archetypes_from_campaign = []
-            logger.warning("GameManager: CampaignLoader not available. NPC archetypes will be empty for NpcManager.") # Changed
+            npc_archetypes_from_campaign = {}
+            logger.warning("GameManager: CampaignLoader not available. NPC archetypes will be empty for NpcManager.")
 
         npc_manager_settings = self._settings.get('npc_settings', {}).copy()
-        npc_manager_settings['npc_archetypes'] = npc_archetypes_from_campaign
+        # Add the pre-loaded archetypes to this settings dictionary
+        npc_manager_settings['loaded_npc_archetypes_from_campaign'] = npc_archetypes_from_campaign
+
+        # Ensure other necessary managers are initialized before NpcManager if they are dependencies
+        # For NpcManager: combat_manager, status_manager are listed.
+        # Original order: ItemManager, CampaignLoader, NpcManager, StatusManager, CombatManager
+        # This means StatusManager and CombatManager are not yet initialized when NpcManager is called.
+        # If NpcManager's __init__ strictly needs them, this order MUST change.
+        # For this subtask, assuming NpcManager can handle None for these at __init__ or they are set later.
+        # This is a critical point for overall system stability but outside the direct archetype loading fix.
 
         from bot.game.managers.npc_manager import NpcManager # Moved import
-        self.npc_manager = NpcManager(db_service=self.db_service, settings=npc_manager_settings, item_manager=self.item_manager, rule_engine=self.rule_engine, combat_manager=self.combat_manager, status_manager=self.status_manager, openai_service=self.openai_service, campaign_loader=self.campaign_loader)
+        self.npc_manager = NpcManager(
+            db_service=self.db_service,
+            settings=npc_manager_settings, # Pass settings containing the loaded archetypes
+            item_manager=self.item_manager,
+            rule_engine=self.rule_engine,
+            combat_manager=self.combat_manager, # Will be None if not initialized yet
+            status_manager=self.status_manager, # Will be None if not initialized yet
+            openai_service=self.openai_service,
+            campaign_loader=self.campaign_loader
+        )
         # ... (Rest of manager initializations with logging)
+        # StatusManager and CombatManager are initialized after NpcManager in the original code.
+        # self.status_manager = StatusManager(...)
+        # self.combat_manager = CombatManager(...)
         self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_service=self.db_service)
-        # ... (Cross-references)
+
+        # Initialize NotificationService
+        if self.character_manager: # Check if character_manager was successfully initialized
+            self.notification_service = NotificationService(
+                send_callback_factory=self._get_discord_send_callback,
+                settings=self._settings,
+                i18n_utils=None,  # Passing None as GameManager doesn't currently manage I18nUtils directly
+                character_manager=self.character_manager
+            )
+            logger.info("GameManager: NotificationService initialized.")
+        else:
+            logger.error("GameManager: CharacterManager not available, cannot initialize NotificationService.")
+            self.notification_service = None # Explicitly set to None if dependent manager is missing
+
+        # ... (Cross-references, ensure they happen after all relevant managers are initialized)
+        # Example: if self.npc_manager and self.dialogue_manager:
+        #    self.npc_manager.dialogue_manager = self.dialogue_manager
+        #    self.dialogue_manager.npc_manager = self.npc_manager
+        # This kind of cross-referencing might need to be grouped after ALL managers are initialized.
+
         logger.info("GameManager: Dependent managers initialized and cross-references set.") # Changed
 
     async def _initialize_processors_and_command_system(self):
