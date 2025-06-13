@@ -4,16 +4,16 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from uuid import UUID
 
-from ....database import inventory_crud, item_crud # For item checks if needed, and character_crud placeholder
-from ....database.models import Character # To check character existence
+from database import inventory_crud, item_crud # For item checks if needed, and character_crud placeholder
+from database.models import Character # To check character existence
 # We need a way to get a character. Assuming a character_crud.py exists or similar
 # For now, let's define a placeholder if direct db access for simple get is acceptable:
-from ....database.models import Character as CharacterModel # ORM Model
+from database.models import Character as CharacterModel # ORM Model
 # from ....database import character_crud # Placeholder for actual character CRUD module
 
-from ...schemas.inventory_schemas import (
-    NewCharacterItemRead,
-    NewCharacterItemCreate,
+from schemas.inventory_schemas import (
+    NewCharacterItemRead, 
+    NewCharacterItemCreate, 
     # NewCharacterItemUpdate, # Not used directly in this router's current spec
     InventoryItemRead
 )
@@ -62,9 +62,9 @@ async def add_item_to_inventory_endpoint(character_id: str, item_add_data: NewCh
     try:
         # Character existence is checked within add_item_to_character_inventory
         added_item_entry = await inventory_crud.add_item_to_character_inventory(
-            db=db,
-            character_id=character_id,
-            item_id=item_add_data.item_id,
+            db=db, 
+            character_id=character_id, 
+            item_id=item_add_data.item_id, 
             quantity=item_add_data.quantity
         )
         return added_item_entry
@@ -85,10 +85,10 @@ async def add_item_to_inventory_endpoint(character_id: str, item_add_data: NewCh
 
 @router.post("/inventory/remove", response_model=Optional[NewCharacterItemRead])
 async def remove_item_from_inventory_endpoint(
-    character_id: str,
+    character_id: str, 
     item_remove_data: NewCharacterItemCreate, # Using NewCharacterItemCreate for item_id and quantity
-    db: AsyncSession = Depends(get_db),
-    response: Response # To set status code for 204
+    response: Response, # Moved here
+    db: AsyncSession = Depends(get_db) # Default argument now at the end
 ):
     try:
         # Character existence is implicitly checked by inventory_crud function if item not found for char.
@@ -100,7 +100,7 @@ async def remove_item_from_inventory_endpoint(
         )
         if updated_item_entry is None: # Item was fully removed
             response.status_code = status.HTTP_204_NO_CONTENT
-            return None
+            return None 
         return updated_item_entry
     except ValueError as ve:
         if "Character not found" in str(ve): # Should be caught by character check if implemented before call
