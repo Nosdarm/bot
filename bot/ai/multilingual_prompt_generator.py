@@ -13,17 +13,12 @@ class MultilingualPromptGenerator:
         self,
         context_collector: 'PromptContextCollector',
         main_bot_language: str, # e.g., "ru", "en"
-        # Potentially OpenAIService if it's used directly for some reason, though likely not.
     ):
         self.context_collector = context_collector
-        # main_bot_language and target_languages will now be primarily sourced from GenerationContext
-        # However, keeping main_bot_language might be useful for methods not directly using GenerationContext
-        # or as a default if GenerationContext isn't fully populated.
         self.main_bot_language = main_bot_language
 
 
     def update_main_bot_language(self, new_language: str) -> None:
-        """Updates the main bot language used for prompt generation."""
         self.main_bot_language = new_language
         print(f"MultilingualPromptGenerator: Main bot language updated to '{new_language}'.")
 
@@ -50,37 +45,18 @@ Output only the requested JSON object, without any additional explanatory text b
 """
 
     def _build_full_prompt_for_openai(self, specific_task_prompt: str, generation_context: GenerationContext) -> Dict[str, str]:
-        """
-        Combines the base system prompt, specific task prompt, and context into a format
-        suitable for an OpenAI API call (system and user messages).
-        Context data is stringified as JSON to be included in the user prompt.
-        """
         system_prompt = self._get_base_system_prompt(target_languages=generation_context.target_languages)
-
-        # Serialize the rich context data into a JSON string to be part of the user prompt
         try:
-            # Try Pydantic v2 method first
             context_json_string = generation_context.model_dump_json(indent=2, exclude_none=True)
         except AttributeError:
-            # Fallback to Pydantic v1 method
             context_dict = generation_context.dict(exclude_none=True)
             context_json_string = json.dumps(context_dict, ensure_ascii=False, indent=2)
         except TypeError as e:
-            # Handle cases where the object might not be a Pydantic model or other TypeError during serialization
             print(f"Error serializing GenerationContext (TypeError): {e}. Context type: {type(generation_context)}")
-            context_json_string = json.dumps({
-                "error": "context_serialization_failed_type_error",
-                "detail": str(e),
-                "message": "Problematic GenerationContext data was omitted from the prompt."
-            }, indent=2)
+            context_json_string = json.dumps({ "error": "context_serialization_failed_type_error", "detail": str(e) }, indent=2)
         except Exception as e_unknown:
-            # Catch any other unexpected error during serialization
             print(f"Unknown error serializing GenerationContext: {e_unknown}. Context type: {type(generation_context)}")
-            context_json_string = json.dumps({
-                "error": "unknown_context_serialization_failed",
-                "detail": str(e_unknown),
-                "message": "Problematic GenerationContext data was omitted due to an unknown error."
-            }, indent=2)
+            context_json_string = json.dumps({ "error": "unknown_context_serialization_failed", "detail": str(e_unknown) }, indent=2)
 
         user_prompt = f"""
 Here is the current game context:
@@ -96,14 +72,12 @@ Based on this context, please perform the following task:
         return {"system": system_prompt, "user": user_prompt}
 
     def generate_npc_profile_prompt(self, generation_context: GenerationContext) -> Dict[str, str]:
+        # ... (NPC prompt remains unchanged from previous state)
         npc_id_idea = generation_context.request_params.get("npc_id_idea", "a generic NPC")
-
         lang_example_str = ", ".join([f'"{lang}": "..."' for lang in sorted(list(set(generation_context.target_languages)))])
-
         task_prompt = f"""
 Generate a complete JSON profile for a new NPC.
 NPC Identifier/Concept: {npc_id_idea}
-
 The JSON profile MUST include the following fields:
 - `template_id`: string (a unique template ID for this NPC, e.g., "npc_wizard_frost_001", "npc_bandit_chief_generic").
 - `name_i18n`: {{{lang_example_str}}} (multilingual name).
@@ -121,7 +95,6 @@ The JSON profile MUST include the following fields:
 - `inventory`: Optional list of objects, each with `item_template_id` (must be an ID from `game_terms_dictionary` where `term_type` is 'item_template') and `quantity`. Scale quantity and quality/type of items based on `scaling_parameters` and NPC role.
 - `faction_affiliations`: Optional list of objects, each with `faction_id` (use known faction IDs from `game_terms_dictionary` or `faction_data` in context if available, or generate new plausible ones if necessary) and `rank_i18n`: {{{lang_example_str}}}.
 - `relationships`: Optional list of objects, each with `target_entity_id` (can be an ID from `game_terms_dictionary` for existing entities, or a newly generated placeholder ID for a new related NPC), `relationship_type` (e.g., "friendly", "hostile", "neutral"), and `strength` (numeric value, e.g., from -100 to 100).
-
 CRITICAL INSTRUCTIONS:
 1.  Refer to `game_terms_dictionary` in the `<game_context>` for valid IDs and names of stats, skills, abilities, spells, item templates.
 2.  Adhere strictly to `scaling_parameters` and `player_context` from `<game_context>` to determine appropriate values for all numerical properties (stats, skill levels, quantity/quality of inventory, etc.), ensuring the NPC is balanced for the given context.
@@ -131,7 +104,6 @@ CRITICAL INSTRUCTIONS:
         return self._build_full_prompt_for_openai(task_prompt, generation_context)
 
     def generate_quest_prompt(self, generation_context: GenerationContext) -> Dict[str, str]:
-        """Generates a prompt to create a structured quest."""
         quest_idea = generation_context.request_params.get("quest_idea", "a generic quest")
         lang_example_str = ", ".join([f'"{lang}": "..."' for lang in sorted(list(set(generation_context.target_languages)))])
 
@@ -140,51 +112,43 @@ Design a complete, structured JSON quest based on the following idea:
 Quest Idea/Trigger: {quest_idea}
 
 The JSON quest structure MUST include:
-- `template_id`: string (a unique template ID for this quest, e.g., "quest_rescue_merchant_001").
-- `title_i18n`: {{{lang_example_str}}} (multilingual title).
-- `description_i18n`: {{{lang_example_str}}} (multilingual description outlining the premise).
-- `suggested_level`: integer (appropriate for the player level, scaled using `player_context.level_info` and `scaling_parameters` from `<game_context>`).
-- `quest_giver_id`: Optional string (ID of an NPC from `game_terms_dictionary` or `faction_data` that gives the quest. If a new NPC, ensure it's also generated or referenced).
-- `stages`: An array of stage objects, each having:
-    - `stage_id`: string (unique identifier for the stage, e.g., "stage_1_find_clues").
-    - `title_i18n`: {{{lang_example_str}}} (multilingual title for the stage).
-    - `description_i18n`: {{{lang_example_str}}} (multilingual description of what the player needs to do for this stage).
-    - `objectives`: An array of objective objects, each with:
-        - `objective_id`: string (e.g., "obj_1_1_kill_bandits")
-        - `description_i18n`: {{{lang_example_str}}} (multilingual detailing of conditions, e.g., "Defeat the 3 goblin lookouts").
-        - `type`: string (e.g., "kill", "collect", "goto", "talk", "use_skill", "event_trigger"; use types from `game_terms_dictionary` if available).
-        - `target_id`: Optional string (e.g., specific NPC ID, item template ID, location ID from `game_terms_dictionary`).
-        - `quantity`: Optional integer (if applicable).
-        - `skill_check`: Optional object (e.g., `{{"skill_id": "lockpicking", "dc": 15, "description_i18n": {{{lang_example_str}}} }}`; skill_id must be from `game_terms_dictionary`).
-    - `alternative_solutions_i18n`: Optional {{{lang_example_str}}} (multilingual description of other ways to complete the stage).
-- `prerequisites`: Optional list of quest template IDs (from `game_terms_dictionary` or previously generated quests) that must be completed before this quest can start.
-- `consequences`: Optional object describing outcomes:
-    - `description_i18n`: {{{lang_example_str}}} (multilingual summary of consequences).
-    - `world_state_changes`: Optional list of objects defining changes to the world state (e.g., `[{{"type": "location_state_change", "location_id": "loc_town_01", "new_state_key": "destroyed"}}]`).
-    - `relationship_changes`: Optional list of objects defining changes to NPC/faction relationships (e.g., `[{{"target_id": "faction_villagers", "change_amount": 20, "type": "faction"}}]`).
-- `rewards`: object containing:
-    - `experience_points`: integer (scaled using `scaling_parameters` and `player_context`).
-    - `gold`: integer (scaled similarly).
-    - `items`: Optional list of objects, each with `item_template_id` (from `game_terms_dictionary`) and `quantity` (scaled).
-    - `ability_unlocks`: Optional list of ability IDs (from `game_terms_dictionary`).
+- `name_i18n`: {{{lang_example_str}}} (multilingual title for the quest, also accept `title_i18n` as an alias).
+- `description_i18n`: {{{lang_example_str}}} (multilingual description outlining the quest premise).
+- `suggested_level`: Optional integer (appropriate player level, scaled using `player_context.level_info` and `scaling_parameters`).
+- `guild_id`: Optional string (if applicable, the guild associated with this quest).
+- `influence_level`: Optional string (e.g., "local", "regional", "global").
+- `quest_giver_id`: Optional string (ID of an NPC from `game_terms_dictionary` or `faction_data` that gives the quest).
+- `quest_giver_details_i18n`: Optional {{{lang_example_str}}} (multilingual details about the quest giver if not a known NPC).
+- `npc_involvement`: Optional dictionary (e.g., `{{"key_npc_id": "npc_wizard_eldron", "role_in_quest": "informant"}}`).
+- `steps`: An array of step objects. Each step object MUST conform to the following structure:
+    - `title_i18n`: {{{lang_example_str}}} (multilingual title for the step).
+    - `description_i18n`: {{{lang_example_str}}} (multilingual description of what the player needs to do for this step).
+    - `step_order`: integer (sequential order of the step, starting from 0 or 1).
+    - `required_mechanics_json`: string (A valid JSON string detailing specific, concrete game mechanic requirements for this step. Examples: `{{"action": "PLAYER_KILL_NPC", "npc_id": "goblin_scout", "quantity": 3}}`, `{{"action": "PLAYER_ACQUIRE_ITEM", "item_id": "lost_amulet", "quantity": 1}}`, `{{"action": "PLAYER_USE_SKILL", "skill_id": "lockpicking", "target_id": "chest_001", "dc": 15}}`. The structure of this JSON will be interpreted by the game's rule engine. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
+    - `abstract_goal_json`: string (A valid JSON string for more complex, less strictly defined goals that might require narrative judgment or broader log analysis. Examples: `{{"goal": "BEFRIEND_NPC", "npc_id": "merchant_elara"}}`, `{{"goal": "SECURE_AREA", "location_id": "old_watchtower"}}`, `{{"goal": "DELIVER_MESSAGE_TO_NPC", "npc_id": "captain_valerius", "message_summary_i18n": {lang_example_str} }} `. This will be interpreted by a rule engine or another LLM. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
+    - `consequences_json`: string (A valid JSON string for step-specific consequences/rewards upon its completion. Example: `{{"grant_xp": 50, "grant_items": [{{"item_id": "minor_potion_healing", "quantity": 2}}], "spawn_npc": {{ "npc_id": "grateful_child", "location_id": "current" }} }}`. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
+    - `assignee_type`: Optional string (e.g., "player", "party").
+    - `assignee_id`: Optional string (player_id or party_id, if applicable).
+- `prerequisites_json`: string (A valid JSON string describing conditions that must be met before this quest can start. Example: `{{"quests_completed": ["quest_intro_001"], "min_level": 5, "faction_reputation": {{"faction_id": "town_guard", "min_standing": "neutral"}}}}`. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
+- `consequences_json`: string (A valid JSON string describing overall quest outcomes upon final completion or failure. Example: `{{"on_complete": {{ "grant_xp": 500, "grant_gold": 100, "reputation_change": [{{"faction_id": "merchant_guild", "change": 25}}] }}, "on_fail": {{ "reputation_change": [{{"faction_id": "merchant_guild", "change": -10}}] }} }}`. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
+- `consequences_summary_i18n`: Optional {{{lang_example_str}}} (multilingual summary of overall quest consequences).
 
 CRITICAL INSTRUCTIONS:
-1.  Use `game_terms_dictionary` from `<game_context>` for all entity IDs (NPCs, items, locations, skills, abilities).
-2.  Scale `suggested_level`, XP, gold, and item rewards according to `scaling_parameters` and `player_context` in `<game_context>`.
-3.  All textual fields MUST be in the specified multilingual JSON format: {{{lang_example_str}}}.
-4.  The entire output must be a single JSON object representing the quest. Do not include any text outside this JSON object.
+1.  All `*_json` fields (e.g., `required_mechanics_json`, `abstract_goal_json`, `consequences_json`, `prerequisites_json`) MUST be valid JSON strings. Their internal structure should be a JSON object or array as appropriate for the data they represent.
+2.  Use `game_terms_dictionary` from `<game_context>` for all entity IDs (NPCs, items, locations, skills, abilities, factions).
+3.  Scale `suggested_level`, XP, gold, and item rewards (within step or quest consequences) according to `scaling_parameters` and `player_context` in `<game_context>`.
+4.  All textual fields (titles, descriptions, summaries) MUST be in the specified multilingual JSON format: {{{lang_example_str}}}.
+5.  The entire output must be a single JSON object representing the quest. Do not include any text outside this JSON object.
 """
         return self._build_full_prompt_for_openai(task_prompt, generation_context)
 
     def generate_item_description_prompt(self, generation_context: GenerationContext) -> Dict[str, str]:
-        """Generates a prompt for item name, description, and properties."""
+        # ... (Item prompt remains unchanged from previous state)
         item_idea = generation_context.request_params.get("item_idea", "a generic item")
         lang_example_str = ", ".join([f'"{lang}": "..."' for lang in sorted(list(set(generation_context.target_languages)))])
-
         task_prompt = f"""
 Generate a complete JSON profile for a new game item based on the following idea:
 Item Idea/Keywords: {item_idea}
-
 The JSON item profile MUST include:
 - `template_id`: string (a unique template ID, e.g., "item_sword_flaming_001", "item_potion_healing_greater").
 - `name_i18n`: {{{lang_example_str}}} (multilingual name).
@@ -198,7 +162,6 @@ The JSON item profile MUST include:
 - `icon`: string (suggest an emoji or a descriptive keyword for an icon, e.g., "⚔️", "shield_icon", "red_potion_ bubbling").
 - `equipable_slot`: Optional string (e.g., "weapon_hand", "armor_chest", "finger"; use slots from `game_terms_dictionary` if available).
 - `requirements`: Optional object (e.g., `{{"level": 5, "strength": 12}}`; use stat/skill IDs from `game_terms_dictionary`).
-
 CRITICAL INSTRUCTIONS:
 1.  Use `game_terms_dictionary` from `<game_context>` for `item_type` (if defined there), `equipable_slot` (if defined), and any stat/skill IDs used in `requirements` or `properties_i18n`.
 2.  Scale `value`, `rarity`, and numerical values in `properties_i18n` according to `scaling_parameters` and `player_context` (if available) from `<game_context>`.
@@ -208,15 +171,12 @@ CRITICAL INSTRUCTIONS:
         return self._build_full_prompt_for_openai(task_prompt, generation_context)
 
     def generate_location_description_prompt(self, generation_context: GenerationContext) -> Dict[str, str]:
-        """Generates a prompt for an atmospheric location description and potential new connections."""
+        # ... (Location prompt remains unchanged from previous state)
         location_idea = generation_context.request_params.get("location_idea", "a generic location")
-        # existing_location_id = generation_context.request_params.get("existing_location_id") # If needed for context fetching strategy
         lang_example_str = ", ".join([f'"{lang}": "..."' for lang in sorted(list(set(generation_context.target_languages)))])
-
         task_prompt = f"""
 Generate a JSON object describing a game location based on the following idea:
 Location Idea/Current Location ID (if updating): {location_idea}
-
 The JSON output MUST include:
 - `template_id`: string (a unique template ID for this location, e.g., "loc_haunted_forest_001", "loc_market_district_capital").
 - `name_i18n`: {{{lang_example_str}}} (multilingual name of the location).
@@ -233,7 +193,6 @@ The JSON output MUST include:
     - `travel_time_hours`: Optional integer (estimated travel time).
 - `possible_events_i18n`: Optional list of brief descriptions for events that could occur here: `[{{{lang_example_str}}}, ...]`
 - `required_access_items_ids`: Optional list of item template IDs (from `game_terms_dictionary`) needed to enter this location.
-
 CRITICAL INSTRUCTIONS:
 1.  Use `game_terms_dictionary` from `<game_context>` for any referenced entity IDs (items, NPCs, other locations).
 2.  If suggesting items or encounters (via PoIs or events), ensure they are appropriate for the location's theme and consider `scaling_parameters` from `<game_context>`.
@@ -241,3 +200,5 @@ CRITICAL INSTRUCTIONS:
 4.  The entire output must be a single JSON object. Do not include any text outside this JSON object.
 """
         return self._build_full_prompt_for_openai(task_prompt, generation_context)
+
+[end of bot/ai/multilingual_prompt_generator.py]
