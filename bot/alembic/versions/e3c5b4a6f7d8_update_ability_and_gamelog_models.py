@@ -92,4 +92,4 @@ def downgrade() -> None:
                nullable=True)
     # Downgrading Python-level 'id' default change is not applicable to schema.
 
-```
+

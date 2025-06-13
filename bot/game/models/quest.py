@@ -308,4 +308,3 @@ class Quest(BaseModel):
             pass # quest_obj.consequences = data_copy["consequences"]
 
         return quest_obj
-[end of bot/game/models/quest.py]
