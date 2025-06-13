@@ -5,7 +5,7 @@ import traceback
 from typing import Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bot.game.managers.rule_engine import RuleEngine
+    from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.game_log_manager import GameLogManager
 
@@ -96,4 +96,4 @@ class RelationshipEventProcessor:
             # Potentially log this error
             # Be careful with logging to GameLogManager here to avoid loops.
             # Consider a simple file logger or print for REP's own operational issues.
-```
+
