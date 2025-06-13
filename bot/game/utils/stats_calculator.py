@@ -180,25 +180,59 @@ async def calculate_effective_stats(
                  effective_stats[stat_key] = round(effective_stats[stat_key])
 
     # --- Stage 5: Calculate Derived Stats ---
-    if rules_config_data.derived_stat_rules:
-        # This import is here because MagicMock is only used in this section,
-        # which itself is only relevant if rules_config_data.derived_stat_rules exists.
-        # If this section were active, and MagicMock was needed for a default, it would be here.
-        # from unittest.mock import MagicMock # Moved to top TYPE_CHECKING for clarity, not needed at runtime here
+    # The existing derived_stat_rules might provide a generic way.
+    # The following calculations are specific overrides or additions as per the subtask.
 
-        con_val = effective_stats.get("constitution",
-                                     rules_config_data.base_stats.get("CONSTITUTION",
-                                                                      MagicMock(default_value=10) if TYPE_CHECKING else type('obj', (object,), {'default_value': 10})()
-                                                                     ).default_value
-                                    )
-        hp_per_con = rules_config_data.derived_stat_rules.get('hp_per_constitution_point', 10.0)
-        base_hp_offset = rules_config_data.derived_stat_rules.get('base_hp_offset', 0.0)
+    # Get effective base stats for calculation (ensure keys are lowercase)
+    eff_base_strength = effective_stats.get("base_strength", 0.0) # Default to 0.0 for calculations
+    eff_base_dexterity = effective_stats.get("base_dexterity", 0.0)
+    eff_base_constitution = effective_stats.get("base_constitution", 0.0)
+    # eff_base_intelligence = effective_stats.get("base_intelligence", 0.0) # Not used in current formulas
+    # eff_base_wisdom = effective_stats.get("base_wisdom", 0.0)
+    # eff_base_charisma = effective_stats.get("base_charisma", 0.0)
 
-        max_hp_base_default_obj = rules_config_data.base_stats.get("MAX_HP")
-        max_hp_base_default = max_hp_base_default_obj.default_value if max_hp_base_default_obj else 0.0
+    entity_level = getattr(entity, 'level', 1) # Get level from entity, default to 1
+    if not isinstance(entity_level, (int, float)) or entity_level < 1:
+        entity_level = 1 # Ensure level is a positive number for calculations
 
-        if effective_stats.get("max_hp") == max_hp_base_default :
-             effective_stats['max_hp'] = round(float(con_val) * hp_per_con + base_hp_offset)
+    # Max HP Calculation
+    # Max HP = 10 (base_offset) + constitution * 2 (scaling_factor) + level * 5 (level_factor)
+    # These factors could also come from rules_config_data if a more generic system is desired later.
+    max_hp_base_offset = 10.0
+    max_hp_con_scaling_factor = 2.0
+    max_hp_level_scaling_factor = 5.0
+    effective_stats['max_hp'] = round(
+        max_hp_base_offset +
+        (eff_base_constitution * max_hp_con_scaling_factor) +
+        (entity_level * max_hp_level_scaling_factor)
+    )
+
+    # Attack Calculation
+    # Attack = strength + level / 2
+    attack_level_divisor = 2.0
+    effective_stats['attack'] = round(eff_base_strength + (entity_level / attack_level_divisor))
+
+    # Defense Calculation
+    # Defense = dexterity + level / 2
+    defense_level_divisor = 2.0
+    effective_stats['defense'] = round(eff_base_dexterity + (entity_level / defense_level_divisor))
+
+    # Note: Current HP (entity.hp) is not managed here.
+    # The caller (e.g., CharacterManager) should handle adjusting current HP if max_hp changes.
+
+    # Process any other generic derived_stat_rules from config, if they don't conflict.
+    # The current derived_stat_rules logic for max_hp was:
+    # if rules_config_data.derived_stat_rules:
+    #     con_val = effective_stats.get("constitution", ...)
+    #     hp_per_con = rules_config_data.derived_stat_rules.get('hp_per_constitution_point', 10.0)
+    #     base_hp_offset_config = rules_config_data.derived_stat_rules.get('base_hp_offset', 0.0)
+    #     max_hp_base_default_obj = rules_config_data.base_stats.get("MAX_HP")
+    #     max_hp_base_default = max_hp_base_default_obj.default_value if max_hp_base_default_obj else 0.0
+    #     # Only apply if max_hp is still at its default (i.e., not set by specific items/effects directly)
+    #     if effective_stats.get("max_hp") == max_hp_base_default:
+    #          effective_stats['max_hp'] = round(float(con_val) * hp_per_con + base_hp_offset_config)
+    # The new specific formulas for max_hp, attack, defense take precedence as per the task.
+    # If other derived stats were defined in derived_stat_rules, their calculation could be added here.
 
     effective_stats['granted_abilities_skills'] = [gas.model_dump(mode='python') for gas in granted_abilities_skills]
     return effective_stats

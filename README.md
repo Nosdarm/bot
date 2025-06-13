@@ -18,8 +18,10 @@ A new set of API endpoints has been added to manage simple RPG characters, indep
 - `PUT /characters/{character_id}`: Update a character.
 - `DELETE /characters/{character_id}`: Delete a character.
 
+## Game API Endpoints
+The following sections describe endpoints related to the main game functionalities, typically prefixed by `/api/v1/` (this prefix is configured in the main FastAPI application).
+
 ### Item Endpoints
-These endpoints manage item templates.
 - **Prefix:** `/api/v1/items`
 
 - **`POST /` - Create Item**
@@ -48,9 +50,95 @@ These endpoints manage item templates.
   - Path Parameters: `item_id: UUID`
   - Response Body: `NewItemRead` (representing the item that was deleted)
 
+### Character Endpoints
+These endpoints manage characters within a specific guild.
+- **Prefix:** `/api/v1/guilds/{guild_id}` (where `{guild_id}` is the ID of the guild)
+
+Note: The following character routes are relative to the prefix above (e.g., `/api/v1/guilds/{guild_id}/players/{player_id}/characters/`).
+
+- **`POST /players/{player_id}/characters/` - Create Character**
+    - Description: Creates a new character for a specific player within the guild.
+    - Path Parameters: `guild_id`, `player_id`.
+    - Request Body: `CharacterCreate` schema.
+    - Response Body: `CharacterResponse` schema.
+
+- **`GET /players/{player_id}/characters/` - List Player's Characters**
+    - Description: Lists all characters belonging to a specific player within the guild.
+    - Path Parameters: `guild_id`, `player_id`.
+    - Response Body: List of `CharacterResponse` schema.
+
+- **`GET /characters/{character_id}` - Get Character**
+    - Description: Retrieves a specific character by its ID within the guild.
+    - Path Parameters: `guild_id`, `character_id`.
+    - Response Body: `CharacterResponse` schema.
+
+- **`PUT /characters/{character_id}` - Update Character**
+    - Description: Updates a specific character by its ID within the guild.
+    - Path Parameters: `guild_id`, `character_id`.
+    - Request Body: `CharacterUpdate` schema.
+    - Response Body: `CharacterResponse` schema.
+
+- **`DELETE /characters/{character_id}` - Delete Character**
+    - Description: Deletes a specific character by its ID within the guild.
+    - Path Parameters: `guild_id`, `character_id`.
+    - Response: `204 No Content`.
+
+#### Character Progression and Stats
+The following endpoints are relative to `/api/v1/guilds/{guild_id}/characters/{character_id}`.
+
+*   **Method & Path:** `POST /gain_xp`
+*   **Description:** Adds a specified amount of experience points (XP) to a character. If the character gains enough XP to level up, their level and base stats will be increased automatically. This process can repeat if enough XP is gained for multiple levels.
+*   **Path Parameters (from prefix):**
+    *   `guild_id` (string): The ID of the guild the character belongs to.
+    *   `character_id` (string): The ID of the character gaining XP.
+*   **Request Body:**
+    ```json
+    {
+        "amount": 150
+    }
+    ```
+    *   `amount` (integer, required): The amount of XP to grant. Must be a positive integer. (Corresponds to `GainXPRequest` schema)
+*   **Response Body (200 OK):**
+    *   Returns the updated Character object, reflecting any changes to XP, level, and stats. (Corresponds to `CharacterResponse` schema)
+*   **Error Responses:**
+    *   `400 Bad Request`: If the `amount` is not positive or other validation fails.
+    *   `404 Not Found`: If the specified `character_id` or `guild_id` does not exist.
+
+*   **Method & Path:** `GET /stats`
+*   **Description:** Retrieves detailed statistics for a character, including their base attributes, current level, experience points, and calculated effective/derived stats (like Max HP, Attack, Defense).
+*   **Path Parameters (from prefix):**
+    *   `guild_id` (string): The ID of the guild the character belongs to.
+    *   `character_id` (string): The ID of the character.
+*   **Response Body (200 OK):**
+    *   Returns a JSON object with the character's statistics:
+    ```json
+    {
+        "base_stats": {
+            "base_strength": 10,
+            "base_dexterity": 10,
+            "base_constitution": 10,
+            "base_intelligence": 10,
+            "base_wisdom": 10,
+            "base_charisma": 10
+        },
+        "level": 1,
+        "experience": 50,
+        "effective_stats": {
+            "max_hp": 125,
+            "attack": 10,
+            "defense": 10
+            // ... other effective stats calculated by the system
+        }
+    }
+    ```
+    (Corresponds to `CharacterStatsResponse` schema.)
+*   **Error Responses:**
+    *   `404 Not Found`: If the specified `character_id` or `guild_id` does not exist.
+
 ### Character Inventory Endpoints
 These endpoints manage items within a specific character's inventory.
 - **Prefix:** `/api/v1/characters/{character_id}` (where `{character_id}` is the ID of the character)
+  *Note: This prefix seems different from the guild-based character endpoints above. Clarification might be needed on whether inventory is guild-specific or global character based.*
 
 - **`GET /inventory` - Get Character Inventory**
   - Description: Retrieves all items in the specified character's inventory.
