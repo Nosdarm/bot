@@ -166,9 +166,22 @@ class QuestManager:
         guild_id_str, character_id_str, quest_template_id_str = str(guild_id), str(character_id), str(quest_template_id)
         logger.info("Attempting to start quest %s for char %s in guild %s.", quest_template_id_str, character_id_str, guild_id_str) # Added guild_id
         if quest_template_id_str.startswith("AI:"):
+<<<<<<< HEAD
             # ... (AI quest generation logic, ensure guild_id in logs) ...
             logger.info("AI-gen quest data for '%s' (req_id: %s) prepared for mod in guild %s.", quest_concept, request_id, guild_id_str) # Added guild_id
             return {"status": "pending_moderation", "request_id": "dummy_request_id", "quest_data_preview": {}} # Simplified for brevity
+=======
+            quest_concept = quest_template_id_str.replace("AI:", "", 1)
+            generation_context_data = kwargs.get("generation_context")
+            if not isinstance(generation_context_data, GenerationContext): return {"status": "error", "message": "Missing generation context for AI quest."}
+            ai_generated_quest_dict = await self.generate_quest_details_from_ai(guild_id_str, quest_concept, generation_context_data, triggering_entity_id=character_id_str)
+            if ai_generated_quest_dict is None: return {"status": "error", "message": "AI quest generation failed."}
+            user_id = kwargs.get('user_id') # Removed trailing semicolon for consistency, though not strictly required by task
+            if not user_id: return {"status": "error", "message": "User ID required for AI quest moderation."}
+            request_id = str(uuid.uuid4()) # Define request_id on its own line
+            logger.info(f"AI-gen quest data for '{quest_concept}' (req_id: {request_id}) prepared for mod.")
+            return {"status": "pending_moderation", "request_id": request_id, "quest_data_preview": ai_generated_quest_dict.get("name_i18n")}
+>>>>>>> 3e617e53121f150cd9c5a335a91331f2fe772df8
 
         template_data_from_campaign = self.get_quest_template(guild_id_str, quest_template_id_str)
         if not template_data_from_campaign:
@@ -203,12 +216,49 @@ class QuestManager:
             logger.error("DBService not available for save_generated_quest for guild %s.", guild_id_str) # Added guild_id
             return False
         try:
+<<<<<<< HEAD
             # ... (DB params setup as before) ...
             await self._db_service.adapter.execute(sql, params)
             logger.info("Saved generated quest %s for guild %s.", quest.id, guild_id_str) # Added guild_id
             return True
         except Exception as e:
             logger.error("Error saving generated quest %s for guild %s: %s", quest.id, guild_id_str, e, exc_info=True) # Added guild_id, exc_info
+=======
+            stages_json_for_db = quest.steps_json
+            title_i18n_json = json.dumps(quest.name_i18n or {}); description_i18n_json = json.dumps(quest.description_i18n or {});
+            rewards_json = quest.rewards_json_str or "{}" ; prerequisites_json = quest.prerequisites_json_str or "{}"
+            consequences_json = quest.consequences_json_str or "{}"; ai_prompt_context_json = quest.ai_prompt_context_json_str or "{}"
+            quest_giver_details_i18n_json = json.dumps(quest.quest_giver_details_i18n or {})
+            consequences_summary_i18n_json = json.dumps(quest.consequences_summary_i18n or {})
+            suggested_level_val = 0
+            if isinstance(quest.influence_level, str) and quest.influence_level.isdigit():
+                try: suggested_level_val = int(quest.influence_level)
+                except ValueError: pass
+            quest_giver_npc_id = quest.npc_involvement.get('giver') if isinstance(quest.npc_involvement, dict) else None
+            sql = """INSERT INTO generated_quests
+                   (id, guild_id, title_i18n, description_i18n, status, suggested_level, stages_json,
+                    rewards_json, prerequisites_json, consequences_json, quest_giver_npc_id,
+                    ai_prompt_context_json, quest_giver_details_i18n, consequences_summary_i18n)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                   ON CONFLICT (id) DO UPDATE SET
+                   guild_id = EXCLUDED.guild_id, title_i18n = EXCLUDED.title_i18n,
+                   description_i18n = EXCLUDED.description_i18n, status = EXCLUDED.status,
+                   suggested_level = EXCLUDED.suggested_level, stages_json = EXCLUDED.stages_json,
+                   rewards_json = EXCLUDED.rewards_json, prerequisites_json = EXCLUDED.prerequisites_json,
+                   consequences_json = EXCLUDED.consequences_json, quest_giver_npc_id = EXCLUDED.quest_giver_npc_id,
+                   ai_prompt_context_json = EXCLUDED.ai_prompt_context_json,
+                   quest_giver_details_i18n = EXCLUDED.quest_giver_details_i18n,
+                   consequences_summary_i18n = EXCLUDED.consequences_summary_i18n
+                   """
+            params = (quest.id, quest.guild_id, title_i18n_json, description_i18n_json, quest.status,
+                      suggested_level_val, stages_json_for_db, rewards_json, prerequisites_json,
+                      consequences_json, quest_giver_npc_id, ai_prompt_context_json,
+                      quest_giver_details_i18n_json, consequences_summary_i18n_json)
+            await self._db_service.adapter.execute(sql, params)
+            return True
+        except Exception as e:
+            logger.error(f"Error saving generated quest {quest.id}: {e}\n{traceback.format_exc()}")
+>>>>>>> 3e617e53121f150cd9c5a335a91331f2fe772df8
             return False
 
     async def start_quest_from_moderated_data(self, guild_id: str, character_id: str, quest_data_from_ai: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
