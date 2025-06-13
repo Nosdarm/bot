@@ -1,14 +1,23 @@
 import logging
 import json
-from typing import Callable, Awaitable, Any, Dict, Optional
+from typing import Callable, Awaitable, Any, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bot.utils.i18n_utils import I18nUtils # For type hinting
+    from bot.game.managers.character_manager import CharacterManager # For type hinting
 
 logger = logging.getLogger(__name__)
 
 class NotificationService:
     """
-    Handles sending notifications, particularly for game master alerts.
+    Handles sending notifications, including game master alerts and player feedback.
     """
-    def __init__(self, send_callback_factory: Callable[[int], Callable[..., Awaitable[Any]]], settings: Dict[str, Any]):
+    def __init__(self,
+                 send_callback_factory: Callable[[int], Callable[..., Awaitable[Any]]],
+                 settings: Dict[str, Any],
+                 i18n_utils: Optional["I18nUtils"] = None, # Added
+                 character_manager: Optional["CharacterManager"] = None # Added
+                ):
         """
         Initializes the NotificationService.
 
@@ -17,9 +26,59 @@ class NotificationService:
                                    returns an awaitable function (e.g., a Discord channel's send method)
                                    which can be called with `content` or `embed`.
             settings: The application settings dictionary.
+            i18n_utils: An instance of I18nUtils for localization.
+            character_manager: An instance of CharacterManager to resolve player Discord IDs.
         """
         self.send_callback_factory = send_callback_factory
         self.settings = settings
+        self._i18n_utils = i18n_utils # Added
+        self._character_manager = character_manager # Added
+        logger.info("NotificationService initialized.")
+
+
+    async def send_relationship_influence_feedback(
+        self,
+        guild_id: str,
+        player_id: str, # This is the in-game entity ID (e.g., character_id)
+        feedback_key: str,
+        context_params: Dict[str, Any],
+        language: str,
+        channel_id: Optional[int] = None
+    ) -> None:
+        """
+        Sends localized feedback to a player regarding relationship influences.
+        Attempts to DM the player if channel_id is not provided.
+        """
+        if not self._i18n_utils:
+            logger.error("NotificationService: I18nUtils not available. Cannot send relationship feedback.")
+            return
+
+        try:
+            formatted_message = self._i18n_utils.get_localized_string(feedback_key, language, **context_params)
+            if not formatted_message:
+                logger.warning(f"NotificationService: Could not find or format message for key '{feedback_key}' in language '{language}'.")
+                return
+
+            if channel_id is not None:
+                try:
+                    send_func = self.send_callback_factory(channel_id)
+                    await send_func(content=formatted_message)
+                    logger.info(f"Sent relationship feedback '{feedback_key}' to channel {channel_id} for player {player_id}.")
+                except Exception as e:
+                    logger.error(f"Failed to send relationship feedback to channel {channel_id}: {e}", exc_info=True)
+            elif self._character_manager:
+                char_obj = await self._character_manager.get_character(guild_id, player_id)
+                if char_obj and hasattr(char_obj, 'discord_user_id') and char_obj.discord_user_id:
+                    await self.send_player_direct_message(str(char_obj.discord_user_id), formatted_message)
+                    logger.info(f"Attempted to DM relationship feedback '{feedback_key}' to player {player_id} (Discord ID: {char_obj.discord_user_id}).")
+                else:
+                    logger.warning(f"NotificationService: Cannot DM player {player_id} for feedback '{feedback_key}': Character not found or no discord_user_id.")
+            else:
+                logger.warning(f"NotificationService: No channel_id provided and CharacterManager not available for DM. Cannot send feedback '{feedback_key}' to player {player_id}.")
+
+        except Exception as e:
+            logger.error(f"NotificationService: Error sending relationship influence feedback (key: {feedback_key}): {e}", exc_info=True)
+
 
     async def send_moderation_request_alert(self, guild_id: str, request_id: str, content_type: str, user_id: str, content_summary: Dict[str, Any], moderation_interface_link: str) -> None:
         """

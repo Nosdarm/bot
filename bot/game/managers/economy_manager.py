@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.time_manager import TimeManager
+    from bot.game.managers.game_log_manager import GameLogManager # Added
+    from bot.game.managers.relationship_manager import RelationshipManager # Added
     # Add other managers/processors that might be in context kwargs
     # from bot.game.managers.combat_manager import CombatManager
     # from bot.game.managers.status_manager import StatusManager
@@ -70,6 +72,8 @@ class EconomyManager:
         npc_manager: Optional["NpcManager"] = None, # Use string literal!
         rule_engine: Optional["RuleEngine"] = None, # Use string literal!
         time_manager: Optional["TimeManager"] = None, # Use string literal!
+        game_log_manager: Optional["GameLogManager"] = None, # Added
+        relationship_manager: Optional["RelationshipManager"] = None, # Added
         # Add other injected dependencies here with Optional and string literals
         # Example: combat_manager: Optional["CombatManager"] = None,
     ):
@@ -84,6 +88,8 @@ class EconomyManager:
         self._npc_manager = npc_manager
         self._rule_engine = rule_engine
         self._time_manager = time_manager
+        self._game_log_manager = game_log_manager # Added
+        self._relationship_manager = relationship_manager # Added
 
         # ИСПРАВЛЕНИЕ: Инициализируем кеши как пустые outer словари
         # {guild_id: {location_id: {item_template_id: quantity}}}
@@ -261,25 +267,31 @@ class EconomyManager:
         item_template_id: str,
         quantity: Union[int, float],
         is_selling: bool, # True if seller, False if buyer
+        actor_entity_id: str, # Added: ID of the entity initiating the trade
+        actor_entity_type: str, # Added: Type of the entity (e.g., "Character", "NPC")
         **kwargs: Any
-    ) -> Optional[Union[int, float]]:
+    ) -> tuple[Optional[float], Optional[Dict[str, Any]]]: # MODIFIED return type
         """
         Рассчитывает цену для покупки или продажи предмета на рынке локации для определенной гильдии.
+        Теперь учитывает отношения между актором и предполагаемым торговцем/фракцией.
+        Returns a tuple: (final_price, feedback_data).
+        feedback_data is a dict like {"key": "...", "params": {...}} or None.
         """
         guild_id_str = str(guild_id)
         tpl_id_str = str(item_template_id)
         resolved_quantity = float(quantity) if isinstance(quantity, (int, float)) else 0.0
+        feedback_data: Optional[Dict[str, Any]] = None # ADDED for feedback
 
         if resolved_quantity <= 0:
              print(f"EconomyManager: Warning: Cannot calculate price for non-positive quantity ({resolved_quantity}) of {tpl_id_str} in guild {guild_id_str}.")
-             return None
+             return None, None # MODIFIED return
 
         # Get market inventory for this location/guild
         market_inv = self.get_market_inventory(guild_id_str, location_id) # Use get_market_inventory with guild_id
         if market_inv is None:
              # Market doesn't exist or invalid location
              print(f"EconomyManager: Market inventory not found for location {location_id} in guild {guild_id_str}. Cannot calculate price.")
-             return None
+             return None, None # MODIFIED return
 
         # Get item template data for this guild
         item_mgr = kwargs.get('item_manager', self._item_manager) # Get ItemManager from context or self
@@ -291,7 +303,7 @@ class EconomyManager:
         if item_template is None:
              print(f"EconomyManager: Item template '{tpl_id_str}' not found for guild {guild_id_str}. Cannot calculate price.")
              # TODO: Send feedback?
-             return None
+             return None, None # MODIFIED return
 
         # Get RuleEngine from kwargs or self
         rule_engine = kwargs.get('rule_engine', self._rule_engine) # type: Optional["RuleEngine"]
@@ -313,28 +325,133 @@ class EconomyManager:
                   print(f"EconomyManager: FIXME: Call to rule_engine.calculate_market_price skipped for item {tpl_id_str} as method is missing.")
                   # Ensure returned price is numeric
                   if isinstance(price, (int, float)) and price >= 0:
-                       return price
+                       base_calculated_price = float(price) # Use price from rule engine if available
                   elif price is not None:
                        print(f"EconomyManager: Warning: RuleEngine.calculate_market_price returned non-numeric or negative price ({price}) for {tpl_id_str} in guild {guild_id_str}. Returning None.")
-                       return None
+                       return None, None # MODIFIED return
+                  else: # price is None (rule engine didn't provide it or error)
+                       # Fallback to base price calculation
+                       print(f"EconomyManager: Warning: RuleEngine.calculate_market_price did not return a price for guild {guild_id_str}. Using fallback for base price.")
+                       base_calculated_price = float(item_template.get('base_price', 0.0)) * resolved_quantity
 
              except Exception as e:
                   print(f"EconomyManager: ❌ Error calculating market price via RuleEngine for {tpl_id_str} in guild {guild_id_str}: {e}")
                   traceback.print_exc()
                   # Decide error handling: return None or raise? Return None is safer for commands.
-                  return None
-
+                  return None, None # MODIFIED return
         else:
-             print(f"EconomyManager: Warning: RuleEngine or calculate_market_price method not available for guild {guild_id_str}. Cannot calculate price.")
-             # TODO: Fallback to a default price based on item template data directly?
-             base_price = float(item_template.get('base_price', 0.0)) # Use base_price from template
-             if base_price > 0:
-                 calculated_price = base_price * resolved_quantity # Simple calculation
-                 # Adjust for buying/selling? (e.g., selling price might be lower than buying)
-                 if is_selling: calculated_price *= 0.8 # Example markdown
-                 print(f"EconomyManager: Using fallback base price calculation for {tpl_id_str} in guild {guild_id_str}. Price: {calculated_price:.2f}")
-                 return calculated_price
-             return None # No RuleEngine and no fallback price
+             print(f"EconomyManager: Warning: RuleEngine or calculate_market_price method not available for guild {guild_id_str}. Using fallback for base price.")
+             base_calculated_price = float(item_template.get('base_price', 0.0)) * resolved_quantity
+
+        if base_calculated_price is None or base_calculated_price < 0:
+            print(f"EconomyManager: Base price calculation failed or resulted in negative for {tpl_id_str}. Aborting.")
+            return None, None # MODIFIED return
+
+        final_price = base_calculated_price
+
+        # --- Determine Trader Entity (Placeholder) ---
+        # TODO: Implement actual logic to get trader entity for the market at location_id
+        trader_entity_id: Optional[str] = None # This would be the ID of the NPC or Faction owning/running the shop
+        trader_entity_type: Optional[str] = None # e.g., "NPC", "Faction"
+        trader_name: str = "the merchant" # Default name for feedback
+
+        # Example placeholder logic:
+        loc_obj = None
+        if self._location_manager and hasattr(self._location_manager, 'get_location_instance'):
+            loc_obj = self._location_manager.get_location_instance(guild_id_str, location_id)
+
+        if loc_obj and hasattr(loc_obj, 'owner_id') and hasattr(loc_obj, 'owner_type'):
+            # Assuming LocationInstance has owner_id and owner_type (e.g. Faction, NPC)
+            trader_entity_id = getattr(loc_obj, 'owner_id', None)
+            trader_entity_type = getattr(loc_obj, 'owner_type', None)
+            if trader_entity_id and trader_entity_type:
+                 # Try to get a display name for the trader
+                 if trader_entity_type == "Faction" and self._rule_engine and hasattr(self._rule_engine, 'get_faction_details'):
+                     faction_details = self._rule_engine.get_faction_details(trader_entity_id)
+                     trader_name = faction_details.get("name", trader_entity_id) if faction_details else trader_entity_id
+                 elif trader_entity_type == "NPC" and self._npc_manager and hasattr(self._npc_manager, 'get_npc_instance_by_id'):
+                     npc_instance = self._npc_manager.get_npc_instance_by_id(guild_id_str, trader_entity_id)
+                     trader_name = getattr(npc_instance, 'name', trader_entity_id) if npc_instance else trader_entity_id
+                 else:
+                     trader_name = f"{trader_entity_type} {trader_entity_id}"
+                 print(f"EconomyManager: Determined trader for location {location_id} as {trader_entity_type} {trader_entity_id} ({trader_name})")
+
+
+        # --- Fetch Relationship Strength ---
+        relationship_strength = 0.0
+        if trader_entity_id and trader_entity_type and self._relationship_manager:
+            try:
+                relationship_strength = await self._relationship_manager.get_relationship_strength(
+                    guild_id_str,
+                    actor_entity_id,
+                    actor_entity_type,
+                    trader_entity_id,
+                    trader_entity_type
+                )
+            except Exception as e_rel:
+                print(f"EconomyManager: Error fetching relationship strength: {e_rel}")
+                relationship_strength = 0.0
+
+        # --- Apply Relationship Modifier from RuleConfig ---
+        if self._rule_engine and self._rule_engine._rules_data:
+            influence_rules = self._rule_engine._rules_data.get("relationship_influence_rules", {}).get("trading", {}).get("price_modifier_percent", [])
+            applied_modifier_rule = False
+            actor_trader_type_combo = f"{actor_entity_type}-{trader_entity_type}"
+
+            for rule in sorted(influence_rules, key=lambda x: x.get("threshold", 0), reverse=True): # Process stricter positive thresholds first
+                threshold = rule.get("threshold")
+                rule_type_match = rule.get("type_match")
+                discount_percent_val = rule.get("discount_percent")
+                markup_percent_val = rule.get("markup_percent")
+
+                if rule_type_match and rule_type_match != actor_trader_type_combo:
+                    continue
+
+                if discount_percent_val is not None and relationship_strength >= threshold:
+                    modifier = float(discount_percent_val) / 100.0
+                    price_before_mod = final_price # Store price before this mod for comparison
+                    if is_selling:
+                        final_price = base_calculated_price * (1 + modifier)
+                    else:
+                        final_price = base_calculated_price * (1 - modifier)
+
+                    feedback_data = {
+                        "key": "feedback.relationship.price_discount_explicit",
+                        "params": {"entity_name": trader_name, "percent": discount_percent_val}
+                    }
+                    print(f"EconomyManager: Applied discount of {discount_percent_val}% for {actor_entity_type} {actor_entity_id} with {trader_name} (Rel: {relationship_strength:.2f}, Threshold: {threshold}). Orig: {base_calculated_price:.2f}, New: {final_price:.2f}")
+                    applied_modifier_rule = True
+                    break
+                elif markup_percent_val is not None and relationship_strength <= threshold:
+                    modifier = float(markup_percent_val) / 100.0
+                    price_before_mod = final_price
+                    if is_selling:
+                        final_price = base_calculated_price * (1 - modifier)
+                    else:
+                        final_price = base_calculated_price * (1 + modifier)
+
+                    feedback_data = {
+                        "key": "feedback.relationship.price_markup_explicit",
+                        "params": {"entity_name": trader_name, "percent": markup_percent_val}
+                    }
+                    print(f"EconomyManager: Applied markup of {markup_percent_val}% for {actor_entity_type} {actor_entity_id} with {trader_name} (Rel: {relationship_strength:.2f}, Threshold: {threshold}). Orig: {base_calculated_price:.2f}, New: {final_price:.2f}")
+                    applied_modifier_rule = True
+                    break
+
+            if not applied_modifier_rule and trader_entity_id: # If a specific trader exists but no explicit rule applied
+                 # Optionally, add a generic feedback if any modifier was implicitly part of base_calculated_price from RuleEngine
+                 # For now, only explicit rule matches generate feedback here.
+                 # Or, if final_price != base_calculated_price due to other rule engine logic (not relationship based)
+                 # we might want a generic feedback.
+                 # Current logic: feedback_data is only set if a relationship rule explicitly matches.
+                 pass
+
+
+        # Ensure price is not negative
+        if final_price < 0: final_price = 0.0
+
+        # print(f"EconomyManager: Final calculated price for {tpl_id_str} (Qty: {resolved_quantity}, Sell: {is_selling}): {final_price:.2f}")
+        return float(final_price), feedback_data # MODIFIED return
 
 
     # TODO: Implement buy_item method
@@ -378,21 +495,30 @@ class EconomyManager:
 
         # --- 2. Calculate price ---
         # calculate_price needs guild_id, location_id, tpl_id, count, is_selling=False, context
-        total_cost = await self.calculate_price(
+        # It now returns a tuple: (price, feedback_data)
+        price_result_tuple = await self.calculate_price(
             guild_id=guild_id_str,
             location_id=location_id,
             item_template_id=tpl_id_str,
             quantity=resolved_count,
             is_selling=False, # Buying
+            actor_entity_id=buyer_entity_id, # Pass actor details
+            actor_entity_type=buyer_entity_type, # Pass actor details
             **kwargs # Pass context
         )
+        total_cost, buy_feedback_data = price_result_tuple # Unpack tuple
 
         if total_cost is None:
             print(f"EconomyManager: Failed to calculate price for buying {resolved_count:.2f}×'{tpl_id_str}' in guild {guild_id_str}.")
-            # TODO: Send feedback?
+            # TODO: Send feedback from buy_feedback_data if any (e.g. "cannot determine price")
             return None
         # Ensure total_cost is non-negative (RuleEngine should handle this)
         if total_cost < 0: total_cost = 0 # Should not happen with correct price calculation
+
+        # TODO: Use buy_feedback_data (e.g., pass to notification service via the command that called buy_item)
+        # For now, just printing it if it exists
+        if buy_feedback_data:
+            print(f"EconomyManager: Feedback from buy price calculation: {buy_feedback_data}")
 
 
         # --- 3. Deduct currency from buyer ---
@@ -536,6 +662,29 @@ class EconomyManager:
 
         print(f"EconomyManager: Purchase successful for {buyer_entity_id} in guild {guild_id_str}. Created items: {created_item_ids}.")
         # TODO: Send feedback (e.g., "You bought X items for Y currency.")
+
+        # --- Log TRADE_COMPLETED event for buying ---
+        if self._game_log_manager and created_item_ids: # Log only if purchase was successful
+            event_data_buy = {
+                "player_id": buyer_entity_id,
+                "player_entity_type": buyer_entity_type,
+                "location_id": location_id,
+                "item_template_id": tpl_id_str,
+                "quantity": float(num_instances_to_create), # Log the actual number of instances created
+                "total_price": total_cost,
+                "transaction_type": "buy",
+                "trader_npc_id": None, # Placeholder
+                "trader_faction_id": None, # Placeholder
+                "price_favorability": None # Placeholder
+            }
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="TRADE_COMPLETED",
+                details=event_data_buy,
+                player_id=buyer_entity_id,
+                location_id=location_id
+            ))
+
         return created_item_ids # Return list of IDs of purchased items
 
 
@@ -615,22 +764,30 @@ class EconomyManager:
         # If selling 1 instance, the quantity of units is the instance's quantity.
         quantity_of_units_sold = float(getattr(item_instance, 'quantity', 1.0)) # Quantity of the instance being sold
 
-        total_revenue = await self.calculate_price(
+        # calculate_price now returns a tuple: (price, feedback_data)
+        price_result_tuple_sell = await self.calculate_price(
             guild_id=guild_id_str,
             location_id=location_id,
             item_template_id=item_template_id,
             quantity=quantity_of_units_sold, # Calculate price based on total units
             is_selling=True, # Selling
+            actor_entity_id=seller_entity_id, # Pass actor details
+            actor_entity_type=seller_entity_type, # Pass actor details
             **kwargs # Pass context
         )
+        total_revenue, sell_feedback_data = price_result_tuple_sell # Unpack tuple
 
         if total_revenue is None:
             print(f"EconomyManager: Failed to calculate price for selling instance '{item_id_str}' ({quantity_of_units_sold:.2f} units) in guild {guild_id_str}.")
-            # TODO: Send feedback?
+            # TODO: Send feedback from sell_feedback_data if any
             return None
         # Ensure total_revenue is non-negative (RuleEngine should handle this)
         if total_revenue < 0: total_revenue = 0 # Should not happen with correct price calculation
 
+        # TODO: Use sell_feedback_data (e.g., pass to notification service via the command that called sell_item)
+        # For now, just printing it if it exists
+        if sell_feedback_data:
+            print(f"EconomyManager: Feedback from sell price calculation: {sell_feedback_data}")
 
         # --- 3. Remove item instance from seller's inventory ---
         # Simplest way is to mark the specific item instance for deletion.
@@ -739,6 +896,29 @@ class EconomyManager:
 
         print(f"EconomyManager: Sale successful for {seller_entity_id} in guild {guild_id_str}. Earned revenue: {total_revenue:.2f}.")
         # TODO: Send feedback (e.g., "You sold X items for Y currency.")
+
+        # --- Log TRADE_COMPLETED event for selling ---
+        if self._game_log_manager: # Log regardless of addition_successful to market, as currency was added and item removed from player
+            event_data_sell = {
+                "player_id": seller_entity_id,
+                "player_entity_type": seller_entity_type,
+                "location_id": location_id,
+                "item_template_id": item_template_id, # Fetched from item_instance
+                "quantity": quantity_of_units_sold, # Quantity from the item instance
+                "total_price": total_revenue,
+                "transaction_type": "sell",
+                "trader_npc_id": None, # Placeholder
+                "trader_faction_id": None, # Placeholder
+                "price_favorability": None # Placeholder
+            }
+            asyncio.create_task(self._game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="TRADE_COMPLETED",
+                details=event_data_sell,
+                player_id=seller_entity_id,
+                location_id=location_id
+            ))
+
         return total_revenue # Return revenue earned
 
     # process_tick method - called by WorldSimulationProcessor
