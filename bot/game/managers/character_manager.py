@@ -254,8 +254,8 @@ class CharacterManager:
             current_action, action_queue, party_id, state_variables,
             hp, max_health, is_alive, status_effects, level, xp, unspent_xp,
             selected_language, collected_actions_json,
-            skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json, effective_stats_json
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+            skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json, effective_stats_json, is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
         RETURNING id;
         """
         db_params = (
@@ -266,7 +266,7 @@ class CharacterManager:
             data['hp'], data['max_health'], data['is_alive'], json.dumps(data['status_effects']),
             data['level'], data['experience'], data['unspent_xp'], data['selected_language'],
             data['collected_actions_json'], data['skills_data_json'], data['abilities_data_json'],
-            data['spells_data_json'], data['character_class'], data['flags_json'], data['effective_stats_json']
+            data['spells_data_json'], data['character_class'], data['flags_json'], data['effective_stats_json'], True
         )
         try:
             await self._db_service.adapter.execute_insert(sql, db_params)
