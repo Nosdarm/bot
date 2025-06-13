@@ -198,7 +198,18 @@ class CharacterManager:
             return None
 
         new_id = str(uuid.uuid4())
-        stats = {'strength': 10, 'dexterity': 10, 'intelligence': 10}
+        stats = {
+            "base_strength": 10,
+            "base_dexterity": 10,
+            "base_constitution": 10,
+            "base_intelligence": 10,
+            "base_wisdom": 10,
+            "base_charisma": 10
+        }
+        # Note: The rule_engine might override these if it generates stats with these specific keys.
+        # If rule_engine provides a dict with different keys (e.g. 'strength' instead of 'base_strength'),
+        # they would be merged or replaced depending on how 'generated_stats' is assigned to 'stats'.
+        # For this change, we assume the goal is to ensure these base_stat keys are present initially.
         if self._rule_engine and hasattr(self._rule_engine, 'generate_initial_character_stats'):
             try:
                 generated_stats = self._rule_engine.generate_initial_character_stats()
@@ -772,3 +783,137 @@ class CharacterManager:
         except Exception as e:
             logger.error("CharacterManager: Error recreating character %s from data in guild %s: %s", char_id, guild_id_str, e, exc_info=True) # Added
             return False
+
+    def level_up(self, character: Character) -> None:
+        """
+        Increases a character's level and base stats.
+        This method directly modifies the character object.
+        Saving and stat recalculation should be handled by the calling method.
+        """
+        if not character:
+            logger.warning("CharacterManager.level_up: Attempted to level up a None character.")
+            return
+
+        character.level += 1
+        logger.info("CharacterManager.level_up: Character %s (ID: %s) leveled up to %s.", getattr(character, 'name', 'Unknown'), character.id, character.level)
+
+        current_stats = character.stats
+        if not isinstance(current_stats, dict):
+            logger.warning("CharacterManager.level_up: Character %s (ID: %s) has invalid or missing stats. Initializing to defaults for level up.", getattr(character, 'name', 'Unknown'), character.id)
+            current_stats = {
+                "base_strength": 10, "base_dexterity": 10, "base_constitution": 10,
+                "base_intelligence": 10, "base_wisdom": 10, "base_charisma": 10
+            }
+
+        # Increment base stats, using .get() with a default in case a stat is missing
+        current_stats["base_strength"] = current_stats.get("base_strength", 10) + 1
+        current_stats["base_dexterity"] = current_stats.get("base_dexterity", 10) + 1
+        current_stats["base_constitution"] = current_stats.get("base_constitution", 10) + 1
+        current_stats["base_intelligence"] = current_stats.get("base_intelligence", 10) + 1
+        current_stats["base_wisdom"] = current_stats.get("base_wisdom", 10) + 1
+        current_stats["base_charisma"] = current_stats.get("base_charisma", 10) + 1
+
+        character.stats = current_stats
+        # Note: Saving/marking dirty and recalculating effective stats is handled by the calling method (e.g., gain_xp)
+
+    async def gain_xp(self, guild_id: str, character_id: str, amount: int) -> Dict[str, Any]:
+        """
+        Adds XP to a character, handles level ups, and returns update information.
+        """
+        guild_id_str = str(guild_id)
+        char = self.get_character(guild_id_str, character_id)
+
+        if not char:
+            logger.error("CharacterManager.gain_xp: Character %s not found in guild %s.", character_id, guild_id_str)
+            raise ValueError(f"Character {character_id} not found in guild {guild_id_str}")
+
+        if amount <= 0:
+            logger.warning("CharacterManager.gain_xp: XP amount must be positive. Received %s for char %s.", amount, character_id)
+            raise ValueError("XP amount must be positive.")
+
+        # Ensure 'xp', 'level', and 'stats' attributes exist. The Character model should define these.
+        if not all(hasattr(char, attr) for attr in ['xp', 'level', 'stats']):
+            logger.error("CharacterManager.gain_xp: Character %s (ID: %s) is missing required attributes (xp, level, or stats).", getattr(char, 'name', 'Unknown'), char.id)
+            # Fallback: initialize missing attributes if possible, or raise error
+            if not hasattr(char, 'xp'): setattr(char, 'xp', 0)
+            if not hasattr(char, 'level'): setattr(char, 'level', 1)
+            if not hasattr(char, 'stats'):
+                setattr(char, 'stats', {
+                    "base_strength": 10, "base_dexterity": 10, "base_constitution": 10,
+                    "base_intelligence": 10, "base_wisdom": 10, "base_charisma": 10
+                })
+            # Or, more strictly: raise AttributeError("Character object is missing critical attributes for XP gain.")
+
+
+        char.xp += amount
+        levels_gained = 0
+
+        # XP requirement formula: current_level * 100 (example)
+        # This should ideally come from game settings or rules engine
+        xp_for_next_level = char.level * 100
+
+        while char.xp >= xp_for_next_level:
+            char.xp -= xp_for_next_level
+            self.level_up(char) # Call the synchronous level_up method
+            levels_gained += 1
+            # Recalculate XP needed for the new level
+            xp_for_next_level = char.level * 100
+
+        self.mark_character_dirty(guild_id_str, character_id)
+        # Recalculate effective stats, especially if a level was gained.
+        await self._recalculate_and_store_effective_stats(guild_id_str, character_id, char)
+
+        logger.info("CharacterManager.gain_xp: Character %s (ID: %s) gained %s XP. Levels gained: %s. New XP: %s, New Level: %s.",
+                    getattr(char, 'name', 'Unknown'), char.id, amount, levels_gained, char.xp, char.level)
+
+        # Prepare return data. Using char.to_dict() if available, otherwise manual construction.
+        if hasattr(char, 'to_dict') and callable(char.to_dict):
+            char_data = char.to_dict()
+            # Ensure names match API schema (experience vs xp)
+            if 'xp' in char_data and 'experience' not in char_data:
+                char_data['experience'] = char_data['xp']
+            if 'name_i18n' not in char_data and hasattr(char, 'name_i18n'): # Ensure name_i18n is included
+                 char_data['name_i18n'] = char.name_i18n
+            if 'class_i18n' not in char_data and hasattr(char, 'character_class'): # Map character_class to class_i18n if needed
+                 char_data['class_i18n'] = {"en": char.character_class} # Example mapping
+
+        else:
+            # Manual construction, try to match CharacterResponse schema
+            char_data = {
+                "id": char.id,
+                "player_id": str(char.discord_user_id) if hasattr(char, 'discord_user_id') else None, # Assuming discord_user_id maps to player_id
+                "guild_id": guild_id_str,
+                "name_i18n": getattr(char, 'name_i18n', {"en": getattr(char, 'name', '')}),
+                "class_i18n": {"en": getattr(char, 'character_class', "N/A")}, # Example mapping
+                "description_i18n": getattr(char, 'description_i18n', {}), # Assuming this exists or is added
+                "level": char.level,
+                "experience": char.xp, # Mapping xp to experience for the response
+                "stats": char.stats, # This should be the base stats dict
+                "current_hp": getattr(char, 'hp', 0),
+                "max_hp": getattr(char, 'max_health', 0), # Assuming max_health maps to max_hp
+                "abilities": getattr(char, 'abilities_data', []), # Assuming abilities_data exists
+                "inventory": getattr(char, 'inventory', []), # Assuming inventory exists
+                "npc_relationships": getattr(char, 'npc_relationships', {}), # Assuming this exists or is added
+                "is_active_char": getattr(char, 'is_active_char', False) # Assuming this exists or is added
+            }
+
+        # If effective_stats are stored on char model as a JSON string, parse them for the response
+        # This part is speculative based on _recalculate_and_store_effective_stats
+        effective_stats_json_str = getattr(char, 'effective_stats_json', '{}')
+        try:
+            effective_stats = json.loads(effective_stats_json_str)
+        except json.JSONDecodeError:
+            effective_stats = {}
+
+        # The CharacterResponse schema might expect stats to be the base stats (CharacterStatsSchema)
+        # and might have a separate field for effective/derived stats.
+        # For now, char_data['stats'] is the base stats. If effective stats need to be part of char_data:
+        # char_data['effective_stats'] = effective_stats # Or merge as appropriate
+
+        return {
+            "updated_character_data": char_data, # This should ideally match CharacterResponse schema
+            "levels_gained": levels_gained,
+            "xp_added": amount,
+            "xp_for_next_level": xp_for_next_level, # Added for context
+            "effective_stats_preview": effective_stats # Added for context, might not be part of final response
+        }
