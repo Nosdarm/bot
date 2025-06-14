@@ -10,7 +10,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 
-from bot.database.models import Base, Player, Location, RulesConfig # Add other models as needed
+from bot.database.models import ( # Updated imports
+    Base, Player, Location, RulesConfig, GeneratedFaction, GeneratedQuest,
+    MobileGroup, PlayerNpcMemory, QuestStep, Relationship, NPC, Questline
+)
 
 # --- Test Database Configuration ---
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "postgresql+asyncpg://postgres:test123@localhost:5432/test_kvelin_rpg_bot_constraints")
@@ -188,3 +191,323 @@ class TestRulesConfigModelConstraints:
         db_session.add(rules_config3_diff_guild)
         await db_session.commit() # Should succeed
         assert rules_config3_diff_guild.guild_id == UNIQUE_GUILD_ID_2
+
+
+# --- Tests for GeneratedFaction ---
+@pytest.mark.asyncio
+class TestGeneratedFactionModel:
+    async def test_create_read_update_delete_faction(self, db_session: AsyncSession):
+        faction_id = str(uuid.uuid4())
+        guild_id = UNIQUE_GUILD_ID_1
+
+        # Create
+        new_faction = GeneratedFaction(
+            id=faction_id,
+            guild_id=guild_id,
+            name_i18n={"en": "Test Faction"},
+            description_i18n={"en": "A test faction"}
+        )
+        db_session.add(new_faction)
+        await db_session.commit()
+        await db_session.refresh(new_faction)
+
+        assert new_faction.id == faction_id
+        assert new_faction.name_i18n["en"] == "Test Faction"
+
+        # Read
+        retrieved_faction = await db_session.get(GeneratedFaction, faction_id)
+        assert retrieved_faction is not None
+        assert retrieved_faction.guild_id == guild_id
+
+        # Update
+        retrieved_faction.description_i18n = {"en": "Updated description"}
+        db_session.add(retrieved_faction)
+        await db_session.commit()
+        await db_session.refresh(retrieved_faction)
+        assert retrieved_faction.description_i18n["en"] == "Updated description"
+
+        # Delete
+        await db_session.delete(retrieved_faction)
+        await db_session.commit()
+        deleted_faction = await db_session.get(GeneratedFaction, faction_id)
+        assert deleted_faction is None
+
+    async def test_faction_guild_id_not_nullable(self, db_session: AsyncSession):
+        faction_id = str(uuid.uuid4())
+        with pytest.raises(IntegrityError):
+            new_faction = GeneratedFaction(
+                id=faction_id,
+                guild_id=None, # Should fail
+                name_i18n={"en": "Test Faction"}
+            )
+            db_session.add(new_faction)
+            await db_session.flush()
+
+
+# --- Tests for GeneratedQuest ---
+@pytest.mark.asyncio
+class TestGeneratedQuestModel:
+    async def test_create_read_update_delete_quest(self, db_session: AsyncSession):
+        quest_id = str(uuid.uuid4())
+        guild_id = UNIQUE_GUILD_ID_1
+
+        # Create
+        new_quest = GeneratedQuest(
+            id=quest_id,
+            guild_id=guild_id,
+            name_i18n={"en": "Test Quest"},
+            description_i18n={"en": "A test quest"}
+        )
+        db_session.add(new_quest)
+        await db_session.commit()
+        await db_session.refresh(new_quest)
+        assert new_quest.id == quest_id
+
+        # Read
+        retrieved_quest = await db_session.get(GeneratedQuest, quest_id)
+        assert retrieved_quest is not None
+
+        # Update
+        retrieved_quest.name_i18n = {"en": "Updated Test Quest"}
+        db_session.add(retrieved_quest)
+        await db_session.commit()
+        await db_session.refresh(retrieved_quest)
+        assert retrieved_quest.name_i18n["en"] == "Updated Test Quest"
+
+        # Delete
+        await db_session.delete(retrieved_quest)
+        await db_session.commit()
+        assert await db_session.get(GeneratedQuest, quest_id) is None
+
+    async def test_quest_guild_id_not_nullable(self, db_session: AsyncSession):
+        quest_id = str(uuid.uuid4())
+        with pytest.raises(IntegrityError):
+            new_quest = GeneratedQuest(id=quest_id, guild_id=None, name_i18n={"en": "Test Quest"})
+            db_session.add(new_quest)
+            await db_session.flush()
+
+
+# --- Tests for MobileGroup ---
+@pytest.mark.asyncio
+class TestMobileGroupModel:
+    async def test_create_read_update_delete_mobile_group(self, db_session: AsyncSession):
+        group_id = str(uuid.uuid4())
+        guild_id = UNIQUE_GUILD_ID_1
+        new_group = MobileGroup(id=group_id, guild_id=guild_id, name_i18n={"en": "Test Group"})
+        db_session.add(new_group)
+        await db_session.commit()
+        await db_session.refresh(new_group)
+        assert new_group.id == group_id
+
+        retrieved_group = await db_session.get(MobileGroup, group_id)
+        assert retrieved_group is not None
+        retrieved_group.name_i18n = {"en": "Updated Group Name"}
+        db_session.add(retrieved_group)
+        await db_session.commit()
+        await db_session.refresh(retrieved_group)
+        assert retrieved_group.name_i18n["en"] == "Updated Group Name"
+
+        await db_session.delete(retrieved_group)
+        await db_session.commit()
+        assert await db_session.get(MobileGroup, group_id) is None
+
+    async def test_mobile_group_guild_id_not_nullable(self, db_session: AsyncSession):
+        group_id = str(uuid.uuid4())
+        with pytest.raises(IntegrityError):
+            new_group = MobileGroup(id=group_id, guild_id=None, name_i18n={"en": "Test Group"})
+            db_session.add(new_group)
+            await db_session.flush()
+
+
+# --- Tests for PlayerNpcMemory ---
+@pytest.mark.asyncio
+class TestPlayerNpcMemoryModel:
+    # Helper to create a Player and NPC for FK constraints
+    async def _setup_player_npc(self, db_session: AsyncSession, guild_id: str):
+        player_id = str(uuid.uuid4())
+        npc_id = str(uuid.uuid4())
+
+        test_player = Player(id=player_id, discord_id=str(uuid.uuid4()), name_i18n={"en": "Test Player FK"}, guild_id=guild_id, level=1, xp=0, gold=0)
+        db_session.add(test_player)
+
+        # Assuming Location is needed for NPC or use a simplified NPC if not.
+        # For this test, let's assume NPC doesn't strictly need a location or it's nullable.
+        test_npc = NPC(id=npc_id, name_i18n={"en": "Test NPC FK"}, guild_id=guild_id)
+        db_session.add(test_npc)
+
+        await db_session.commit()
+        return player_id, npc_id
+
+    async def test_create_read_delete_player_npc_memory(self, db_session: AsyncSession):
+        memory_id = str(uuid.uuid4())
+        guild_id = UNIQUE_GUILD_ID_1
+        player_id, npc_id = await self._setup_player_npc(db_session, guild_id)
+
+        new_memory = PlayerNpcMemory(
+            id=memory_id,
+            guild_id=guild_id,
+            player_id=player_id,
+            npc_id=npc_id,
+            memory_details_i18n={"en": "Met this NPC."}
+        )
+        db_session.add(new_memory)
+        await db_session.commit()
+        await db_session.refresh(new_memory)
+        assert new_memory.id == memory_id
+
+        retrieved_memory = await db_session.get(PlayerNpcMemory, memory_id)
+        assert retrieved_memory is not None
+        assert retrieved_memory.player_id == player_id
+
+        await db_session.delete(retrieved_memory)
+        await db_session.commit()
+        assert await db_session.get(PlayerNpcMemory, memory_id) is None
+
+    async def test_player_npc_memory_guild_id_not_nullable(self, db_session: AsyncSession):
+        memory_id = str(uuid.uuid4())
+        player_id, npc_id = await self._setup_player_npc(db_session, UNIQUE_GUILD_ID_1)
+        with pytest.raises(IntegrityError):
+            new_memory = PlayerNpcMemory(id=memory_id, guild_id=None, player_id=player_id, npc_id=npc_id)
+            db_session.add(new_memory)
+            await db_session.flush()
+
+    async def test_player_npc_memory_player_id_fk_constraint(self, db_session: AsyncSession):
+        memory_id = str(uuid.uuid4())
+        _, npc_id = await self._setup_player_npc(db_session, UNIQUE_GUILD_ID_1) # We only need npc_id
+        with pytest.raises(IntegrityError): # Foreign key violation
+            new_memory = PlayerNpcMemory(
+                id=memory_id, guild_id=UNIQUE_GUILD_ID_1,
+                player_id=str(uuid.uuid4()), # Non-existent player_id
+                npc_id=npc_id
+            )
+            db_session.add(new_memory)
+            await db_session.flush()
+
+    async def test_player_npc_memory_npc_id_fk_constraint(self, db_session: AsyncSession):
+        memory_id = str(uuid.uuid4())
+        player_id, _ = await self._setup_player_npc(db_session, UNIQUE_GUILD_ID_1) # We only need player_id
+        with pytest.raises(IntegrityError): # Foreign key violation
+            new_memory = PlayerNpcMemory(
+                id=memory_id, guild_id=UNIQUE_GUILD_ID_1,
+                player_id=player_id,
+                npc_id=str(uuid.uuid4()) # Non-existent npc_id
+            )
+            db_session.add(new_memory)
+            await db_session.flush()
+
+
+# --- Tests for QuestStep ---
+@pytest.mark.asyncio
+class TestQuestStepModel:
+    async def _setup_questline(self, db_session: AsyncSession, guild_id: str):
+        questline_id = str(uuid.uuid4())
+        test_questline = Questline(id=questline_id, guild_id=guild_id, name_i18n={"en": "Test Questline"})
+        db_session.add(test_questline)
+        await db_session.commit()
+        return questline_id
+
+    async def test_create_read_delete_quest_step(self, db_session: AsyncSession):
+        step_id = str(uuid.uuid4())
+        guild_id = UNIQUE_GUILD_ID_1
+        questline_id = await self._setup_questline(db_session, guild_id)
+
+        new_step = QuestStep(
+            id=step_id,
+            guild_id=guild_id,
+            questline_id=questline_id,
+            step_details_i18n={"en": "Complete task A."}
+        )
+        db_session.add(new_step)
+        await db_session.commit()
+        await db_session.refresh(new_step)
+        assert new_step.id == step_id
+
+        retrieved_step = await db_session.get(QuestStep, step_id)
+        assert retrieved_step is not None
+
+        await db_session.delete(retrieved_step)
+        await db_session.commit()
+        assert await db_session.get(QuestStep, step_id) is None
+
+    async def test_quest_step_guild_id_not_nullable(self, db_session: AsyncSession):
+        step_id = str(uuid.uuid4())
+        questline_id = await self._setup_questline(db_session, UNIQUE_GUILD_ID_1)
+        with pytest.raises(IntegrityError):
+            new_step = QuestStep(id=step_id, guild_id=None, questline_id=questline_id)
+            db_session.add(new_step)
+            await db_session.flush()
+
+    async def test_quest_step_questline_id_fk_constraint(self, db_session: AsyncSession):
+        step_id = str(uuid.uuid4())
+        with pytest.raises(IntegrityError):
+            new_step = QuestStep(
+                id=step_id, guild_id=UNIQUE_GUILD_ID_1,
+                questline_id=str(uuid.uuid4()) # Non-existent questline_id
+            )
+            db_session.add(new_step)
+            await db_session.flush()
+
+
+# --- Tests for Relationship ---
+@pytest.mark.asyncio
+class TestRelationshipModel:
+    async def test_create_read_delete_relationship(self, db_session: AsyncSession):
+        rel_id = str(uuid.uuid4())
+        guild_id = UNIQUE_GUILD_ID_1
+        entity1_id = str(uuid.uuid4()) # These can be any string for this model
+        entity2_id = str(uuid.uuid4())
+
+        new_rel = Relationship(
+            id=rel_id,
+            guild_id=guild_id,
+            entity1_id=entity1_id, entity1_type="player",
+            entity2_id=entity2_id, entity2_type="npc",
+            relationship_type_i18n={"en": "Friendly"},
+            status_i18n={"en": "Good"}
+        )
+        db_session.add(new_rel)
+        await db_session.commit()
+        await db_session.refresh(new_rel)
+        assert new_rel.id == rel_id
+
+        retrieved_rel = await db_session.get(Relationship, rel_id)
+        assert retrieved_rel is not None
+        assert retrieved_rel.entity1_type == "player"
+
+        await db_session.delete(retrieved_rel)
+        await db_session.commit()
+        assert await db_session.get(Relationship, rel_id) is None
+
+    async def test_relationship_guild_id_not_nullable(self, db_session: AsyncSession):
+        rel_id = str(uuid.uuid4())
+        with pytest.raises(IntegrityError):
+            new_rel = Relationship(
+                id=rel_id, guild_id=None,
+                entity1_id="e1", entity1_type="t1",
+                entity2_id="e2", entity2_type="t2"
+            )
+            db_session.add(new_rel)
+            await db_session.flush()
+
+    async def test_relationship_entity_fields_not_nullable(self, db_session: AsyncSession):
+        common_args = {"id": str(uuid.uuid4()), "guild_id": UNIQUE_GUILD_ID_1}
+        fields_to_test = ["entity1_id", "entity1_type", "entity2_id", "entity2_type"]
+
+        base_data = {
+            "entity1_id": "e1_val", "entity1_type": "player",
+            "entity2_id": "e2_val", "entity2_type": "npc",
+            "relationship_type_i18n": {"en": "Neutral"}
+        }
+
+        for field in fields_to_test:
+            with pytest.raises(IntegrityError, match=f".*constraint failed.*{field}"): # Check for specific field if DB supports named constraints in error
+                data = base_data.copy()
+                data[field] = None # Set the current field to None
+                # Need to ensure other nullable fields are handled or not relevant for the specific constraint
+                # For example, if entity1_id is part of a composite key or other constraint being violated
+
+                # It's safer to test one None at a time for fields defined as nullable=False in the model
+                rel = Relationship(**common_args, **data)
+                db_session.add(rel)
+                await db_session.flush()
+                await db_session.rollback() # rollback this specific attempt

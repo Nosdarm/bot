@@ -8,35 +8,45 @@ import uuid # For generating player IDs
 import logging
 
 from bot.api.dependencies import get_db_session
-from bot.api.schemas.player_schemas import PlayerCreate, PlayerUpdate, PlayerResponse
+from bot.api.schemas.player_schemas import PlayerCreate, PlayerUpdate, PlayerRead # Updated PlayerResponse to PlayerRead
 from bot.database.models import Player
 
 logger = logging.getLogger(__name__)
 router = APIRouter() # Prefix will be added in main.py: /api/v1/guilds/{guild_id}/players
 
-@router.post("/", response_model=PlayerResponse, status_code=status.HTTP_201_CREATED, summary="Create a new player")
+@router.post("/", response_model=PlayerRead, status_code=status.HTTP_201_CREATED, summary="Create a new player")
 async def create_player(
-    guild_id: str = Path(..., description="Guild ID from path"),
-    player_data: PlayerCreate = Depends(), # Using Depends for PlayerCreate to make it a dependency
+    # guild_id from path is usually preferred as the authoritative source
+    path_guild_id: str = Path(..., description="Guild ID from path", alias="guild_id"),
+    player_data: PlayerCreate, # Removed Depends(), direct model usage
     db: AsyncSession = Depends(get_db_session)
 ):
-    logger.info(f"Attempting to create player for discord_id {player_data.discord_id} in guild {guild_id}")
+    logger.info(f"Attempting to create player for discord_id {player_data.discord_id} in guild {player_data.guild_id}")
+
+    if path_guild_id != player_data.guild_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Guild ID in path ({path_guild_id}) does not match Guild ID in body ({player_data.guild_id})."
+        )
+
     player_id = str(uuid.uuid4())
 
     # Ensure discord_id is not already taken for this guild (UniqueConstraint handles this at DB)
     # but a pre-check can give a nicer error.
-    existing_player_stmt = select(Player).where(Player.discord_id == player_data.discord_id, Player.guild_id == guild_id)
+    existing_player_stmt = select(Player).where(Player.discord_id == player_data.discord_id, Player.guild_id == player_data.guild_id)
     result = await db.execute(existing_player_stmt)
     if result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Player with Discord ID {player_data.discord_id} already exists in guild {guild_id}"
+            detail=f"Player with Discord ID {player_data.discord_id} already exists in guild {player_data.guild_id}"
         )
 
+    # Create Player instance using all fields from PlayerCreate schema
+    db_player_data = player_data.dict()
+    # guild_id is already in player_data.dict() due to schema change
     db_player = Player(
         id=player_id,
-        guild_id=guild_id,
-        **player_data.dict() # Pydantic model to dict
+        **db_player_data
     )
     db.add(db_player)
     try:
@@ -58,11 +68,14 @@ async def create_player(
     # If PlayerResponse expects characters, ensure they are loaded.
     # For creation, characters list will be empty.
     db_player.characters = [] # Initialize as empty list for new player response
+    # Ensure all fields expected by PlayerRead are present, or adjust PlayerRead schema
+    # For example, if PlayerRead expects xp, level, etc., ensure they have default values in the Player model or are set here.
+    # The Player model has defaults for xp, level, etc.
 
     return db_player
 
 
-@router.get("/{player_id}", response_model=PlayerResponse, summary="Get player details by Player ID")
+@router.get("/{player_id}", response_model=PlayerRead, summary="Get player details by Player ID")
 async def get_player(
     guild_id: str = Path(..., description="Guild ID from path"),
     player_id: str = Path(..., description="ID of the player to retrieve"),
@@ -92,11 +105,11 @@ async def get_player_by_discord_id(
     return db_player
 
 
-@router.put("/{player_id}", response_model=PlayerResponse, summary="Update player details")
+@router.put("/{player_id}", response_model=PlayerRead, summary="Update player details")
 async def update_player(
     guild_id: str = Path(..., description="Guild ID from path"),
     player_id: str = Path(..., description="ID of the player to update"),
-    player_update_data: PlayerUpdate = Depends(), # Using Depends for PlayerUpdate
+    player_update_data: PlayerUpdate, # Removed Depends(), direct model usage
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Updating player {player_id} in guild {guild_id}")
@@ -136,8 +149,8 @@ async def delete_player(
     db: AsyncSession = Depends(get_db_session)
 ):
     # This currently marks the player as inactive instead of actually deleting.
-    # True deletion would be: await db.delete(db_player)
-    logger.info(f"Attempting to mark player {player_id} inactive in guild {guild_id}")
+    # This will be a hard delete as per requirements.
+    logger.info(f"Attempting to delete player {player_id} in guild {guild_id}")
     stmt = select(Player).where(Player.id == player_id, Player.guild_id == guild_id)
     result = await db.execute(stmt)
     db_player = result.scalars().first()
@@ -145,16 +158,16 @@ async def delete_player(
     if not db_player:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Player not found in this guild")
 
-    if not db_player.is_active: # Already inactive
-        return # Or return some specific message/status if preferred
-
-    db_player.is_active = False
-    db.add(db_player)
+    await db.delete(db_player)
     try:
         await db.commit()
-        # No content returned, so no need to refresh for response
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error marking player {player_id} inactive: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not mark player inactive.")
+        logger.error(f"Error deleting player {player_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not delete player.")
+
+    # For HTTP 204, FastAPI expects no response body.
+    # If a message is desired, change status_code and return a dict.
+    # For example, return {"message": "Player deleted successfully"} with status_code=200
+    # However, sticking to 204 as per current code for delete.
     return # Implicitly returns 204 No Content
