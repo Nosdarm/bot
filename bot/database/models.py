@@ -266,16 +266,17 @@ class GeneratedNpc(Base):
 class GeneratedFaction(Base):
     __tablename__ = 'generated_factions'
     id = Column(String, primary_key=True)
-    guild_id = Column(String, nullable=False)
     name_i18n = Column(JSON, nullable=True)
     description_i18n = Column(JSON, nullable=True)
+    guild_id = Column(String, nullable=False, index=True)
     __table_args__ = (Index('idx_generatedfaction_guild_id', 'guild_id'),)
 
 class GeneratedQuest(Base):
     __tablename__ = 'generated_quests'
     id = Column(String, primary_key=True)
-    guild_id = Column(String, nullable=False)
     name_i18n = Column(JSON, nullable=True)
+    description_i18n = Column(JSON, nullable=True)
+    guild_id = Column(String, nullable=False, index=True)
     __table_args__ = (Index('idx_generatedquest_guild_id', 'guild_id'),)
 
 class Item(Base):
@@ -355,26 +356,30 @@ class GameLog(Base):
 class Relationship(Base):
     __tablename__ = 'relationships'
     id = Column(String, primary_key=True)
-    guild_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
     entity1_id = Column(String, nullable=False)
     entity1_type = Column(String, nullable=False)
     entity2_id = Column(String, nullable=False)
     entity2_type = Column(String, nullable=False)
     relationship_type_i18n = Column(JSON, nullable=True)
     status_i18n = Column(JSON, nullable=True)
-    __table_args__ = (Index('idx_relationship_guild_id', 'guild_id'),)
+    __table_args__ = (
+        Index('idx_relationship_guild_id', 'guild_id'),
+        Index('idx_relationship_entity1', 'guild_id', 'entity1_id', 'entity1_type'),
+        Index('idx_relationship_entity2', 'guild_id', 'entity2_id', 'entity2_type'),
+    )
 
 class PlayerNpcMemory(Base):
     __tablename__ = 'player_npc_memory'
     id = Column(String, primary_key=True)
-    guild_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
     player_id = Column(String, ForeignKey('players.id'), nullable=False)
     npc_id = Column(String, ForeignKey('npcs.id'), nullable=False)
     memory_details_i18n = Column(JSON, nullable=True)
     __table_args__ = (
-        Index('idx_playernpcmemory_guild_id', 'guild_id'),
-        Index('idx_playernpcmemory_player_id', 'player_id'),
-        Index('idx_playernpcmemory_npc_id', 'npc_id'),
+        Index('idx_playernpcmemory_guild_player_npc', 'guild_id', 'player_id', 'npc_id'),
+        Index('idx_playernpcmemory_player_id', 'player_id'), # Keep existing index if still needed
+        Index('idx_playernpcmemory_npc_id', 'npc_id'), # Keep existing index if still needed
     )
 
 class Ability(Base):
@@ -440,19 +445,18 @@ class Questline(Base):
 class QuestStep(Base):
     __tablename__ = 'quest_steps'
     id = Column(String, primary_key=True)
-    guild_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
     questline_id = Column(String, ForeignKey('questlines.id'), nullable=False)
     step_details_i18n = Column(JSON, nullable=True)
     __table_args__ = (
-        Index('idx_queststep_guild_id', 'guild_id'),
-        Index('idx_queststep_questline_id', 'questline_id'),
+        Index('idx_queststep_guild_questline', 'guild_id', 'questline_id'),
     )
 
 class MobileGroup(Base):
     __tablename__ = 'mobile_groups'
     id = Column(String, primary_key=True)
-    guild_id = Column(String, nullable=False)
     name_i18n = Column(JSON, nullable=True)
+    guild_id = Column(String, nullable=False, index=True)
     __table_args__ = (Index('idx_mobilegroup_guild_id', 'guild_id'),)
 
 class PendingConflict(Base):

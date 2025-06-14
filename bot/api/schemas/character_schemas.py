@@ -32,9 +32,9 @@ class CharacterBase(BaseModel):
 
 
 class CharacterCreate(CharacterBase):
-    # player_id will come from path or context (e.g. if creating for logged-in player)
-    # guild_id will also come from path
-    pass # Inherits all from CharacterBase, specific fields can be enforced if needed
+    player_id: str = Field(..., description="ID of the player this character belongs to")
+    guild_id: str = Field(..., description="Guild ID this character record belongs to")
+    # name_i18n, class_i18n, description_i18n are inherited
 
 
 class CharacterUpdate(BaseModel): # Allow partial updates
@@ -52,7 +52,7 @@ class CharacterUpdate(BaseModel): # Allow partial updates
     is_active_char: Optional[bool] = None
 
 
-class CharacterResponse(CharacterBase):
+class CharacterRead(CharacterBase):
     id: str = Field(..., description="Character's unique ID")
     player_id: str = Field(..., description="ID of the player this character belongs to")
     guild_id: str = Field(..., description="Guild ID this character belongs to")

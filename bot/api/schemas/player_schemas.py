@@ -23,7 +23,7 @@ class PlayerBase(BaseModel):
     name_i18n: Dict[str, str] = Field(..., description="Player's name (nickname/pseudonym), i18n JSON object", example={"en": "PlayerOne", "ru": "ИгрокОдин"})
     selected_language: Optional[str] = Field(None, description="Player's preferred language code (e.g., 'en', 'ru')")
     is_active: Optional[bool] = Field(True, description="Whether the player account is active")
-    # Guild_id will typically come from the path parameter in the API, not usually in request body for create/update directly under a guild_id path.
+    # Guild_id will be required in PlayerCreate schema as per requirements.
 
     # Game-specific fields that might be updatable or part of creation
     # These are extensive in the model; only include what's needed for API CRUD.
@@ -34,9 +34,9 @@ class PlayerBase(BaseModel):
 
 
 class PlayerCreate(PlayerBase):
-    # discord_id is crucial for creation, linking to a Discord user
     discord_id: str = Field(..., description="Player's Discord User ID")
-    # guild_id will be sourced from path
+    guild_id: str = Field(..., description="Guild ID this player record belongs to")
+    # name_i18n is inherited from PlayerBase
 
 
 class PlayerUpdate(BaseModel): # Using BaseModel directly for more control on optional fields
@@ -46,16 +46,21 @@ class PlayerUpdate(BaseModel): # Using BaseModel directly for more control on op
     # Other fields as needed for update
 
 
-class PlayerResponse(PlayerBase):
+class PlayerRead(PlayerBase):
     id: str = Field(..., description="Player's unique ID")
     guild_id: str = Field(..., description="Guild ID this player record belongs to")
+    xp: Optional[int] = Field(0, description="Player's experience points")
+    level: Optional[int] = Field(1, description="Player's level")
+    unspent_xp: Optional[int] = Field(0, description="Player's unspent XP")
+    gold: Optional[int] = Field(0, description="Player's gold")
+    # current_game_status: Optional[str] = Field(None, description="Player's current game status") # Example
     # characters: List['CharacterResponse'] = [] # Full CharacterResponse might be too verbose here
     characters: List[CharacterBasicResponse] = [] # List of basic character info
 
     class Config:
         orm_mode = True
 
-# If CharacterResponse is defined in character_schemas.py, you might need:
-# from .character_schemas import CharacterResponse
-# And then PlayerResponse.update_forward_refs() after CharacterResponse is defined.
+# If CharacterRead is defined in character_schemas.py, you might need:
+# from .character_schemas import CharacterRead
+# And then PlayerRead.update_forward_refs() after CharacterRead is defined.
 # For now, CharacterBasicResponse is self-contained.

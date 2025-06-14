@@ -19,7 +19,7 @@ import json # Added json
 from bot.api.dependencies import get_db_session
 # Updated schema imports
 from bot.api.schemas.character_schemas import (
-    CharacterCreate, CharacterUpdate, CharacterResponse, CharacterStatsSchema
+    CharacterCreate, CharacterUpdate, CharacterRead, CharacterStatsSchema # Renamed CharacterResponse to CharacterRead
 )
 from bot.database.models import Character as DBCharacter, Player # Renamed Character to DBCharacter to avoid conflict
 # Assuming CharacterManager can be directly imported. This is a simplification.
@@ -52,35 +52,46 @@ class CharacterStatsResponse(BaseModel):
 # Note: guild_id is expected to be a path parameter provided by the include_router prefix in main.py
 
 @router.post(
-    "/players/{player_id}/characters/",
-    response_model=CharacterResponse,
+    "/players/{player_id}/characters/", # Assuming this path is acceptable (POST /characters/ was in req)
+    response_model=CharacterRead,      # Use CharacterRead
     status_code=status.HTTP_201_CREATED,
     summary="Create a new character for a player"
 )
 async def create_character_for_player(
-    guild_id: str = Path(..., description="Guild ID from path prefix"),
-    player_id: str = Path(..., description="ID of the player to create the character for"),
-    character_data: CharacterCreate = Depends(), # Using Depends for CharacterCreate
+    path_guild_id: str = Path(..., description="Guild ID from path prefix", alias="guild_id"),
+    path_player_id: str = Path(..., description="ID of the player to create the character for", alias="player_id"),
+    character_data: CharacterCreate, # Removed Depends()
     db: AsyncSession = Depends(get_db_session)
 ):
-    logger.info(f"Attempting to create character for player {player_id} in guild {guild_id}")
+    logger.info(f"Attempting to create character for player {character_data.player_id} in guild {character_data.guild_id}")
+
+    if path_guild_id != character_data.guild_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Guild ID in path ({path_guild_id}) does not match Guild ID in body ({character_data.guild_id})."
+        )
+    if path_player_id != character_data.player_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Player ID in path ({path_player_id}) does not match Player ID in body ({character_data.player_id})."
+        )
 
     # Verify player exists and belongs to the guild
-    player_stmt = select(Player).where(Player.id == player_id, Player.guild_id == guild_id)
+    player_stmt = select(Player).where(Player.id == character_data.player_id, Player.guild_id == character_data.guild_id)
     result = await db.execute(player_stmt)
     db_player = result.scalars().first()
     if not db_player:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Player with ID {player_id} not found in guild {guild_id}"
+            detail=f"Player with ID {character_data.player_id} not found in guild {character_data.guild_id}"
         )
 
     character_id = str(uuid.uuid4())
     # Use DBCharacter for instantiation
     db_character_instance = DBCharacter(
         id=character_id,
-        player_id=player_id,
-        guild_id=guild_id, # Explicitly set guild_id
+        player_id=character_data.player_id, # Use from body after validation
+        guild_id=character_data.guild_id,   # Use from body after validation
         # Ensure character_data fields match DBCharacter model expectations
         # Notably, 'experience' from schema maps to 'xp' in DB model
         # and 'stats' from schema (CharacterStatsSchema object) maps to 'stats' (JSON) in DB
@@ -100,25 +111,25 @@ async def create_character_for_player(
     db.add(db_character_instance)
     try:
         await db.commit()
-        await db.refresh(db_character_instance) # Corrected variable name
+        await db.refresh(db_character_instance)
     except IntegrityError as e: # Catch potential DB errors like FK violations if any
         await db.rollback()
-        logger.error(f"IntegrityError creating character for player {player_id}: {e}")
+        logger.error(f"IntegrityError creating character for player {character_data.player_id}: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not create character due to data integrity issue.")
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error creating character for player {player_id}: {e}")
+        logger.error(f"Error creating character for player {character_data.player_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not create character.")
     return db_character_instance
 
 @router.get(
     "/players/{player_id}/characters/",
-    response_model=List[CharacterResponse],
+    response_model=List[CharacterRead], # Use CharacterRead
     summary="List all characters for a specific player"
 )
 async def list_characters_for_player(
-    guild_id: str = Path(..., description="Guild ID from path prefix"),
-    player_id: str = Path(..., description="ID of the player whose characters to list"),
+    guild_id: str = Path(..., description="Guild ID from path prefix"), # Retain guild_id from path
+    player_id: str = Path(..., description="ID of the player whose characters to list"), # Retain player_id from path
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Listing characters for player {player_id} in guild {guild_id}")
@@ -138,7 +149,7 @@ async def list_characters_for_player(
 
 @router.get(
     "/characters/{character_id}",
-    response_model=CharacterResponse,
+    response_model=CharacterRead, # Use CharacterRead
     summary="Get a specific character by Character ID"
 )
 async def get_character(
@@ -156,13 +167,13 @@ async def get_character(
 
 @router.put(
     "/characters/{character_id}",
-    response_model=CharacterResponse,
+    response_model=CharacterRead, # Use CharacterRead
     summary="Update a character's details"
 )
 async def update_character(
     guild_id: str = Path(..., description="Guild ID from path prefix"),
     character_id: str = Path(..., description="ID of the character to update"),
-    character_update_data: CharacterUpdate = Depends(), # Using Depends for CharacterUpdate
+    character_update_data: CharacterUpdate, # Removed Depends()
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Updating character {character_id} in guild {guild_id}")
@@ -185,7 +196,7 @@ async def update_character(
     db.add(db_character_instance)
     try:
         await db.commit()
-        await db.refresh(db_character_instance) # Corrected variable name
+        await db.refresh(db_character_instance)
     except Exception as e:
         await db.rollback()
         logger.error(f"Error updating character {character_id}: {e}")
@@ -220,17 +231,18 @@ async def delete_character(
     return # Implicitly returns 204 No Content
 
 
-# --- New Endpoints ---
+# --- Endpoints below are existing and not part of the current CRUD subtask ---
+# --- They will be updated to use CharacterRead if they use CharacterResponse ---
 
 @router.post(
     "/characters/{character_id}/gain_xp",
-    response_model=CharacterResponse,
+    response_model=CharacterRead, # Use CharacterRead
     summary="Grant experience to a character and handle level ups"
 )
 async def gain_xp_for_character(
     guild_id: str = Path(..., description="Guild ID character belongs to"),
     character_id: str = Path(..., description="ID of the character gaining XP"),
-    payload: GainXPRequest = Depends(), # Use Pydantic model for the request body
+    payload: GainXPRequest, # Removed Depends()
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Attempting to grant {payload.amount} XP to character {character_id} in guild {guild_id}")
@@ -293,18 +305,18 @@ async def gain_xp_for_character(
             db_character_model_instance.level, db_character_model_instance.xp # Pass current level and DB xp
         )
 
-        # The manager returns data that should be compatible with CharacterResponse
+        # The manager returns data that should be compatible with CharacterRead
         # The key is that 'updated_character_data' now contains 'experience' and 'stats' as a dict
         api_response_data = result_data['updated_character_data']
 
         # We need to ensure the 'stats' field in api_response_data is a dict that CharacterStatsSchema can validate
-        # If it's already a CharacterStatsSchema object from the manager, .dict() might be needed by CharacterResponse
-        # If it's a dict from the manager, CharacterResponse should handle it if its 'stats' field is Type[CharacterStatsSchema]
+        # If it's already a CharacterStatsSchema object from the manager, .dict() might be needed by CharacterRead
+        # If it's a dict from the manager, CharacterRead should handle it if its 'stats' field is Type[CharacterStatsSchema]
         if isinstance(api_response_data["stats"], CharacterStatsSchema):
              api_response_data["stats"] = api_response_data["stats"].dict() # Ensure it's a dict for Pydantic model
 
-        # Also, CharacterResponse expects player_id, which should be in api_response_data from the mock
-        return CharacterResponse(**api_response_data)
+        # Also, CharacterRead expects player_id, which should be in api_response_data from the mock
+        return CharacterRead(**api_response_data)
 
     except ValueError as e:
         logger.warning(f"ValueError in gain_xp for char {character_id}: {e}")
