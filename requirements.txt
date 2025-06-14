@@ -11,4 +11,4 @@ aiosqlite
 spacy>=3.7.0,<3.8.0
 # For specific models, these can be installed via pip:
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz
-ru_core_news_sm @ https://github.com/explosion/spacy-models/releases/download/ru_core_news_sm-3.7.1/ru_core_news_sm-3.7.1.tar.gz
+#ru_core_news_sm
