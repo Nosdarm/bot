@@ -8,7 +8,8 @@ from copy import deepcopy
 from sqlalchemy import sql
 
 from ..models.quest import Quest
-from bot.ai.ai_data_models import GenerationContext
+# FIXME: GenerationContext class definition is missing from bot/ai/ai_data_models.py
+# from bot.ai.ai_data_models import GenerationContext
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
