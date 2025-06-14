@@ -33,6 +33,7 @@ from bot.game.managers.time_manager import TimeManager # Нужен для по�
 from bot.game.managers.combat_manager import CombatManager # Нужен для начала боя
 # from bot.game.managers.item_manager import ItemManager # Если у партии есть общий инвентарь или действия с предметами
 # from bot.game.managers.status_manager import StatusManager # Если статусы могут быть наложены на партию или участников
+from bot.game.managers.game_log_manager import GameLogManager # Added for game_log_manager
 
 # TODO: Импорт процессоров, если они вызываются (EventStageProcessor для триггеров, CharacterActionProcessor для координации индивидуальных действий)
 from bot.game.event_processors.event_stage_processor import EventStageProcessor # Для триггеров в complete_party_action
@@ -82,6 +83,7 @@ class PartyActionProcessor:
                  # event_action_processor: Optional['EventActionProcessor'] = None, # Если действие триггерит действие события
                  # character_action_processor: Optional['CharacterActionProcessor'] = None, # Нужен для запуска индивидуальных действий участников (напр., following_party_move)
                  # npc_action_processor: Optional['NpcActionProcessor'] = None, # Если NPC тоже имеют свой процессор действий
+                 game_log_manager: Optional['GameLogManager'] = None,
                 ):
         print("Initializing PartyActionProcessor...")
         # --- Сохранение всех переданных аргументов в self._... ---
@@ -104,6 +106,7 @@ class PartyActionProcessor:
         # self._event_action_processor = event_action_processor
         # self._character_action_processor = character_action_processor
         # self._npc_action_processor = npc_action_processor
+        self._game_log_manager = game_log_manager
 
 
         print("PartyActionProcessor initialized.")
