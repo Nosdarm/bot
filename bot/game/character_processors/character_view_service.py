@@ -29,6 +29,10 @@ if TYPE_CHECKING:
     from bot.game.rules.rule_engine import RuleEngine
     # TODO: Добавить импорты менеджеров, которые могут быть в context, если они нужны здесь
     # from bot.game.managers.npc_manager import NpcManager
+    from bot.game.managers.equipment_manager import EquipmentManager
+    from bot.game.managers.inventory_manager import InventoryManager
+    from bot.game.managers.ability_manager import AbilityManager
+    from bot.game.managers.spell_manager import SpellManager
 
 
 class CharacterViewService:
@@ -44,6 +48,10 @@ class CharacterViewService:
         rule_engine: Optional["RuleEngine"] = None, # Use string literal
         status_manager: Optional["StatusManager"] = None, # Use string literal
         party_manager: Optional["PartyManager"] = None, # Use string literal
+        equipment_manager: Optional["EquipmentManager"] = None,
+        inventory_manager: Optional["InventoryManager"] = None,
+        ability_manager: Optional["AbilityManager"] = None,
+        spell_manager: Optional["SpellManager"] = None,
         # TODO: Добавить другие нужные менеджеры, если они инжектируются
         # npc_manager: Optional["NpcManager"] = None, # Пример: если нужен здесь
     ):
@@ -54,6 +62,10 @@ class CharacterViewService:
         self._rule_engine = rule_engine
         self._status_manager = status_manager
         self._party_manager = party_manager
+        self._equipment_manager = equipment_manager
+        self._inventory_manager = inventory_manager
+        self._ability_manager = ability_manager
+        self._spell_manager = spell_manager
         # self._npc_manager = npc_manager # Храним инжектированные менеджеры
 
         print("CharacterViewService initialized.")
