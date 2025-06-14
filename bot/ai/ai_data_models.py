@@ -133,3 +133,43 @@ class GenerationContext(BaseModel):
     # character_id: Optional[str] = None
     # location_id: Optional[str] = None
     # world_state: Optional[Dict[str, Any]] = None # Snapshot of relevant world state
+
+class ValidationIssue(BaseModel):
+    """
+    Represents a single validation issue found in AI-generated data.
+    """
+    field: str
+    issue_type: str
+    message: str
+    severity: str  # e.g., "error", "warning", "info"
+    corrected_value: Optional[Any] = None
+
+class ValidatedEntity(BaseModel):
+    """
+    Represents an entity (like an NPC, Quest, Item) that has undergone validation.
+    """
+    entity_id: Optional[str] = None
+    entity_type: str
+    data: Dict[str, Any]
+    validation_status: str  # e.g., "success", "success_with_autocorrections", "requires_moderation", "error"
+    issues: List[ValidationIssue] = []
+    original_data: Optional[Dict[str, Any]] = None # If autocorrections were applied
+
+class ParsedAiData(BaseModel):
+    """
+    Holds the outcome of parsing and validating AI-generated data.
+    """
+    overall_status: str  # e.g., "success", "partial_success", "error"
+    entities: List[ValidatedEntity] = []
+    global_errors: List[str] = [] # For errors not specific to one entity, or structural errors
+    raw_ai_output: Optional[str] = None
+
+class ValidationError(BaseModel):
+    """
+    Placeholder for a custom validation error.
+    Currently, Pydantic's ValidationError is used directly in validation logic.
+    This can be expanded if specific custom error structures are needed.
+    """
+    detail: Optional[str] = None
+    # Example: error_code: Optional[int] = None
+    # Example: affected_fields: Optional[List[str]] = None
