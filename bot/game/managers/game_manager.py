@@ -338,22 +338,8 @@ class GameManager:
              self.character_manager._equipment_manager = self.equipment_manager # Or a public setter method
              logger.info("GameManager: Set equipment_manager in CharacterManager.")
 
-
-        # Initialize PartyManager (depends on CharacterManager, TimeManager)
-        if not hasattr(self, 'party_manager') or self.party_manager is None:
-            from bot.game.managers.party_manager import PartyManager
-            self.party_manager = PartyManager(
-                db_service=self.db_service,
-                character_manager=self.character_manager,
-                time_manager=self.time_manager,
-                settings=self._settings.get('party_settings', {})
-            )
-            logger.info("GameManager: PartyManager initialized.")
-            if self.character_manager and not self.character_manager._party_manager: # Update CharacterManager if it stores PartyManager
-                 self.character_manager._party_manager = self.party_manager
-                 logger.info("GameManager: Updated party_manager in CharacterManager.")
-
         # Initialize CombatManager (depends on CharacterManager, NpcManager, StatusManager, etc.)
+        # Moved up to be available for PartyManager
         if not hasattr(self, 'combat_manager') or self.combat_manager is None:
              from bot.game.managers.combat_manager import CombatManager
              self.combat_manager = CombatManager(
@@ -362,20 +348,37 @@ class GameManager:
                  rule_engine=self.rule_engine,
                  character_manager=self.character_manager,
                  npc_manager=self.npc_manager,
-                 party_manager=self.party_manager, # Added
+                 party_manager=self.party_manager, # party_manager might be None here if not moved before CombatManager
                  status_manager=self.status_manager,
                  item_manager=self.item_manager,
-                 location_manager=self.location_manager # Added
-                 # time_manager, openai_service, game_log_manager removed as per subtask
+                 location_manager=self.location_manager
             )
              logger.info("GameManager: CombatManager initialized.")
-             # Update CharacterManager and NpcManager if they hold a reference to CombatManager and it was None
              if self.character_manager and self.character_manager._combat_manager is None:
                  self.character_manager._combat_manager = self.combat_manager
                  logger.info("GameManager: Updated combat_manager in CharacterManager.")
-             if self.npc_manager and self.npc_manager.combat_manager is None: # Assuming direct attribute name
+             if self.npc_manager and self.npc_manager.combat_manager is None:
                  self.npc_manager.combat_manager = self.combat_manager
                  logger.info("GameManager: Updated combat_manager in NpcManager.")
+
+        # Initialize PartyManager (Corrected: needs CombatManager)
+        if not hasattr(self, 'party_manager') or self.party_manager is None:
+            from bot.game.managers.party_manager import PartyManager
+            self.party_manager = PartyManager(
+                db_service=self.db_service,
+                settings=self._settings.get('party_settings', {}),
+                npc_manager=self.npc_manager,
+                character_manager=self.character_manager,
+                combat_manager=self.combat_manager # Added combat_manager
+            )
+            logger.info("GameManager: PartyManager initialized.")
+            if self.character_manager and not self.character_manager._party_manager:
+                 self.character_manager._party_manager = self.party_manager
+                 logger.info("GameManager: Updated party_manager in CharacterManager.")
+            # If CombatManager needs PartyManager and was initialized with None for it:
+            if self.combat_manager and self.combat_manager.party_manager is None: # Assuming direct attribute name
+                self.combat_manager.party_manager = self.party_manager
+                logger.info("GameManager: Updated party_manager in CombatManager.")
 
         self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_service=self.db_service)
         logger.info("GameManager: LoreManager initialized.")
