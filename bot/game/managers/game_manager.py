@@ -376,8 +376,8 @@ class GameManager:
                  self.character_manager._party_manager = self.party_manager
                  logger.info("GameManager: Updated party_manager in CharacterManager.")
             # If CombatManager needs PartyManager and was initialized with None for it:
-            if self.combat_manager and self.combat_manager.party_manager is None: # Assuming direct attribute name
-                self.combat_manager.party_manager = self.party_manager
+            if self.combat_manager and self.combat_manager._party_manager is None: # Changed to _party_manager
+                self.combat_manager._party_manager = self.party_manager # Changed to _party_manager
                 logger.info("GameManager: Updated party_manager in CombatManager.")
 
         self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_service=self.db_service)
