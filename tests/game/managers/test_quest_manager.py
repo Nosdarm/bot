@@ -5,7 +5,8 @@ import json
 import time
 
 from bot.game.managers.quest_manager import QuestManager
-from bot.game.models.quest import Quest # Import Quest model for type checking and potentially direct instantiation if needed
+from bot.game.models.quest import Quest
+from bot.ai.ai_data_models import GenerationContext # Import the actual GenerationContext
 
 class TestQuestManager(unittest.IsolatedAsyncioTestCase):
 
@@ -174,32 +175,52 @@ class TestQuestManager(unittest.IsolatedAsyncioTestCase):
             "entities": [{"validated_data": expected_data}]
         })
 
-        result = await self.quest_manager.generate_quest_details_from_ai(guild_id, quest_idea)
+        # Create a dummy GenerationContext instance
+        dummy_event_data = {"type": "test_event"}
+        generation_context_arg = GenerationContext(event=dummy_event_data, guild_id=guild_id, lang="en")
+
+        result = await self.quest_manager.generate_quest_details_from_ai(guild_id, quest_idea, generation_context_arg)
         self.assertEqual(result, expected_data)
 
     async def test_generate_quest_details_from_ai_openai_fails(self):
+        guild_id = "gid_openai_fail"
+        quest_idea = "concept_openai_fail"
         self.mock_prompt_generator.generate_quest_prompt.return_value = {"system": "sys", "user": "usr"}
         self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"error": "OpenAI down"})
 
-        result = await self.quest_manager.generate_quest_details_from_ai("gid", "concept")
+        dummy_event_data = {"type": "test_event"}
+        generation_context_arg = GenerationContext(event=dummy_event_data, guild_id=guild_id, lang="en")
+
+        result = await self.quest_manager.generate_quest_details_from_ai(guild_id, quest_idea, generation_context_arg)
         self.assertIsNone(result)
 
     async def test_generate_quest_details_from_ai_validator_fails(self):
+        guild_id = "gid_validator_fail"
+        quest_idea = "concept_validator_fail"
         self.mock_prompt_generator.generate_quest_prompt.return_value = {"system": "sys", "user": "usr"}
         self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"})
         self.mock_ai_validator.validate_ai_response = AsyncMock(return_value={"global_errors": ["validation failed"]})
 
-        result = await self.quest_manager.generate_quest_details_from_ai("gid", "concept")
+        dummy_event_data = {"type": "test_event"}
+        generation_context_arg = GenerationContext(event=dummy_event_data, guild_id=guild_id, lang="en")
+
+        result = await self.quest_manager.generate_quest_details_from_ai(guild_id, quest_idea, generation_context_arg)
         self.assertIsNone(result)
 
     async def test_generate_quest_details_from_ai_validator_requires_moderation(self):
+        guild_id = "gid_validator_mod"
+        quest_idea = "concept_validator_mod"
         self.mock_prompt_generator.generate_quest_prompt.return_value = {"system": "sys", "user": "usr"}
         self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"})
         self.mock_ai_validator.validate_ai_response = AsyncMock(return_value={
-            "overall_status": "requires_manual_review", # This status might not be used by validator, it uses 'requires_moderation' in entity
+            "overall_status": "requires_manual_review",
             "entities": [{"validated_data": {"name":"Needs Review"}, "requires_moderation": True}]
         })
-        result = await self.quest_manager.generate_quest_details_from_ai("gid", "concept")
+
+        dummy_event_data = {"type": "test_event"}
+        generation_context_arg = GenerationContext(event=dummy_event_data, guild_id=guild_id, lang="en")
+
+        result = await self.quest_manager.generate_quest_details_from_ai(guild_id, quest_idea, generation_context_arg)
         self.assertIsNone(result)
 
     async def test_start_quest_from_moderated_data_success(self):
