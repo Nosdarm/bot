@@ -119,3 +119,17 @@ class GeneratedQuest(BaseModel):
 #         GeneratedQuest(**sample_quest_data_invalid_json)
 #     except ValueError as e:
 #         print(f"Caught expected error for invalid quest JSON: {e}")
+
+
+class GenerationContext(BaseModel):
+    """
+    Context for AI generation tasks, such as narrative generation for events.
+    """
+    event: Dict[str, Any] = {} # Or a more specific Pydantic model if event_data has a known structure
+    guild_id: str
+    lang: str
+    # Optional: Include other context fields that might be relevant for generation
+    # player_id: Optional[str] = None
+    # character_id: Optional[str] = None
+    # location_id: Optional[str] = None
+    # world_state: Optional[Dict[str, Any]] = None # Snapshot of relevant world state

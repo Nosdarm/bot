@@ -16,9 +16,9 @@ router = APIRouter() # Prefix will be added in main.py: /api/v1/guilds/{guild_id
 
 @router.post("/", response_model=PlayerRead, status_code=status.HTTP_201_CREATED, summary="Create a new player")
 async def create_player(
+    player_data: PlayerCreate,
     # guild_id from path is usually preferred as the authoritative source
     path_guild_id: str = Path(..., description="Guild ID from path", alias="guild_id"),
-    player_data: PlayerCreate, # Removed Depends(), direct model usage
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Attempting to create player for discord_id {player_data.discord_id} in guild {player_data.guild_id}")
@@ -90,11 +90,11 @@ async def get_player(
     return db_player
 
 
-@router.get("/by_discord/{discord_user_id}", response_model=PlayerResponse, summary="Get player details by Discord User ID")
+@router.get("/by_discord/{discord_user_id}", response_model=PlayerRead, summary="Get player details by Discord User ID")
 async def get_player_by_discord_id(
-    guild_id: str = Path(..., description="Guild ID from path"),
-    discord_user_id: str = Path(..., description="Discord User ID of the player"),
-    db: AsyncSession = Depends(get_db_session)
+    guild_id: str = Path(..., description="Guild ID from path"), # This Path param comes first now
+    discord_user_id: str = Path(..., description="Discord User ID of the player"), # Then this one
+    db: AsyncSession = Depends(get_db_session) # db param with default is last.
 ):
     logger.info(f"Fetching player by discord_id {discord_user_id} for guild {guild_id}")
     stmt = select(Player).options(selectinload(Player.characters)).where(Player.discord_id == discord_user_id, Player.guild_id == guild_id)
@@ -107,9 +107,9 @@ async def get_player_by_discord_id(
 
 @router.put("/{player_id}", response_model=PlayerRead, summary="Update player details")
 async def update_player(
+    player_update_data: PlayerUpdate,
     guild_id: str = Path(..., description="Guild ID from path"),
     player_id: str = Path(..., description="ID of the player to update"),
-    player_update_data: PlayerUpdate, # Removed Depends(), direct model usage
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Updating player {player_id} in guild {guild_id}")
