@@ -58,9 +58,9 @@ class CharacterStatsResponse(BaseModel):
     summary="Create a new character for a player"
 )
 async def create_character_for_player(
+    character_data: CharacterCreate,
     path_guild_id: str = Path(..., description="Guild ID from path prefix", alias="guild_id"),
     path_player_id: str = Path(..., description="ID of the player to create the character for", alias="player_id"),
-    character_data: CharacterCreate, # Removed Depends()
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Attempting to create character for player {character_data.player_id} in guild {character_data.guild_id}")
@@ -171,9 +171,9 @@ async def get_character(
     summary="Update a character's details"
 )
 async def update_character(
+    character_update_data: CharacterUpdate,
     guild_id: str = Path(..., description="Guild ID from path prefix"),
     character_id: str = Path(..., description="ID of the character to update"),
-    character_update_data: CharacterUpdate, # Removed Depends()
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Updating character {character_id} in guild {guild_id}")
@@ -240,9 +240,9 @@ async def delete_character(
     summary="Grant experience to a character and handle level ups"
 )
 async def gain_xp_for_character(
+    payload: GainXPRequest,
     guild_id: str = Path(..., description="Guild ID character belongs to"),
     character_id: str = Path(..., description="ID of the character gaining XP"),
-    payload: GainXPRequest, # Removed Depends()
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Attempting to grant {payload.amount} XP to character {character_id} in guild {guild_id}")
