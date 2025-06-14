@@ -357,8 +357,8 @@ class GameManager:
              if self.character_manager and self.character_manager._combat_manager is None:
                  self.character_manager._combat_manager = self.combat_manager
                  logger.info("GameManager: Updated combat_manager in CharacterManager.")
-             if self.npc_manager and self.npc_manager.combat_manager is None:
-                 self.npc_manager.combat_manager = self.combat_manager
+             if self.npc_manager and self.npc_manager._combat_manager is None: # Changed to _combat_manager
+                 self.npc_manager._combat_manager = self.combat_manager # Changed to _combat_manager
                  logger.info("GameManager: Updated combat_manager in NpcManager.")
 
         # Initialize PartyManager (Corrected: needs CombatManager)
