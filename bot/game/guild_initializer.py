@@ -51,65 +51,140 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
             db_session.add(new_rule_config)
             logger.info(f"Added default RuleConfig for guild {guild_id}.")
 
-        # 2. Create Default GeneratedFaction (Faction)
-        # Check if default faction exists or handle if force_reinitialize
-        default_faction_id = f"default_faction_{str(uuid.uuid4())[:8]}" # Unique ID for faction
+        # 2. Create Default GeneratedFactions
+        logger.info(f"Initializing default factions for guild {guild_id}.")
+        if force_reinitialize:
+            logger.info(f"Force reinitialize: Deleting existing factions for guild {guild_id}.")
+            existing_factions_stmt = select(GeneratedFaction).where(GeneratedFaction.guild_id == guild_id)
+            result = await db_session.execute(existing_factions_stmt)
+            for faction in result.scalars().all():
+                await db_session.delete(faction)
+            await db_session.flush()
 
-        existing_faction_stmt = select(GeneratedFaction).where(GeneratedFaction.guild_id == guild_id, GeneratedFaction.name_i18n['en'].astext == "Neutral Observers")
-        faction_result = await db_session.execute(existing_faction_stmt)
-        existing_faction = faction_result.scalars().first()
+        default_factions_data = [
+            {
+                "id": f"faction_observers_{str(uuid.uuid4())[:8]}",
+                "name_i18n": {"en": "Neutral Observers", "ru": "Нейтральные Наблюдатели"},
+                "description_i18n": {"en": "A neutral faction, keen on watching events unfold without direct intervention.", "ru": "Нейтральная фракция, заинтересованная в наблюдении за событиями без прямого вмешательства."}
+            },
+            {
+                "id": f"faction_guardians_{str(uuid.uuid4())[:8]}",
+                "name_i18n": {"en": "Forest Guardians", "ru": "Стражи Леса"},
+                "description_i18n": {"en": "Protectors of the ancient woods and its secrets.", "ru": "Защитники древних лесов и их тайн."}
+            },
+            {
+                "id": f"faction_merchants_{str(uuid.uuid4())[:8]}",
+                "name_i18n": {"en": "Rivertown Traders", "ru": "Торговцы Речного Города"},
+                "description_i18n": {"en": "A mercantile collective known for their extensive network along the river.", "ru": "Торговый коллектив, известный своей обширной сетью вдоль реки."}
+            }
+        ]
 
-        if not existing_faction or force_reinitialize:
-            if existing_faction and force_reinitialize:
-                logger.info(f"Force reinitializing default Faction for guild {guild_id}. Deleting old one first if names match.")
-                # More complex logic might be needed if we don't want to delete by name
-                await db_session.delete(existing_faction)
-                await db_session.flush() # Ensure delete is processed before add
-
-            default_faction = GeneratedFaction(
-                id=default_faction_id,
+        factions_to_add = []
+        for faction_data in default_factions_data:
+            # Check if this specific faction already exists (e.g. by name, if names are unique identifiers for default set)
+            # For simplicity, if not forcing, we assume we don't add if ANY faction exists, or we add if this one doesn't.
+            # A more robust check might be needed if we want to add missing default factions without force_reinitialize.
+            # Current logic: if not force_reinitialize, it might add factions if some are missing, or skip if one was found by earlier broader checks.
+            # The initial check for RuleConfig is the main gate for non-forced reinitialization.
+            # If we are here and not force_reinitialize, it means RuleConfig was missing.
+            new_faction = GeneratedFaction(
+                id=faction_data["id"],
                 guild_id=guild_id,
-                name_i18n={"en": "Neutral Observers", "ru": "Нейтральные Наблюдатели"},
-                description_i18n={"en": "A neutral faction observing events.", "ru": "Нейтральная фракция, наблюдающая за событиями."}
+                name_i18n=faction_data["name_i18n"],
+                description_i18n=faction_data["description_i18n"]
             )
-            db_session.add(default_faction)
-            logger.info(f"Added default Faction '{default_faction_id}' for guild {guild_id}.")
+            factions_to_add.append(new_faction)
+
+        if factions_to_add:
+            db_session.add_all(factions_to_add)
+            logger.info(f"Added {len(factions_to_add)} default factions for guild {guild_id}.")
         else:
-            logger.info(f"Default faction already exists for guild {guild_id} and not forcing reinitialization.")
+            logger.info(f"No new factions to add for guild {guild_id} (either existed or not forcing).")
 
-        # 3. Create Default Location (Starting Area)
-        starting_location_id = f"starting_area_{str(uuid.uuid4())[:8]}" # Unique ID for location
 
-        existing_location_stmt = select(Location).where(Location.guild_id == guild_id, Location.static_name == f"internal_starting_crossroads_{guild_id}")
-        loc_result = await db_session.execute(existing_location_stmt)
-        existing_location = loc_result.scalars().first()
+        # 3. Create Default Map (Locations)
+        logger.info(f"Initializing default map for guild {guild_id}.")
+        if force_reinitialize:
+            logger.info(f"Force reinitialize: Deleting existing locations for guild {guild_id}.")
+            existing_locations_stmt = select(Location).where(Location.guild_id == guild_id)
+            result = await db_session.execute(existing_locations_stmt)
+            for loc in result.scalars().all():
+                await db_session.delete(loc)
+            await db_session.flush()
 
-        if not existing_location or force_reinitialize:
-            if existing_location and force_reinitialize:
-                logger.info(f"Force reinitializing starting Location for guild {guild_id}. Deleting old one first.")
-                await db_session.delete(existing_location)
-                await db_session.flush()
+        # Define locations
+        village_square_id = f"loc_village_square_{str(uuid.uuid4())[:8]}"
+        village_tavern_id = f"loc_village_tavern_{str(uuid.uuid4())[:8]}"
+        village_shop_id = f"loc_village_shop_{str(uuid.uuid4())[:8]}"
+        forest_edge_id = f"loc_forest_edge_{str(uuid.uuid4())[:8]}"
+        deep_forest_id = f"loc_deep_forest_{str(uuid.uuid4())[:8]}"
 
-            starting_location = Location(
-                id=starting_location_id,
+        default_locations_data = [
+            {
+                "id": village_square_id,
+                "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"},
+                "descriptions_i18n": {"en": "The bustling center of a small village.", "ru": "Шумный центр небольшой деревни."},
+                "static_name": f"internal_village_square_{guild_id}",
+                "exits": {
+                    "north": {"id": forest_edge_id, "name_i18n": {"en": "Forest Edge", "ru": "Опушка Леса"}},
+                    "east": {"id": village_tavern_id, "name_i18n": {"en": "The Prancing Pony Tavern", "ru": "Таверна 'Гарцующий Пони'"}},
+                    "west": {"id": village_shop_id, "name_i18n": {"en": "General Store", "ru": "Универсальный Магазин"}}
+                }
+            },
+            {
+                "id": village_tavern_id,
+                "name_i18n": {"en": "The Prancing Pony Tavern", "ru": "Таверна 'Гарцующий Пони'"},
+                "descriptions_i18n": {"en": "A cozy tavern, filled with locals and adventurers.", "ru": "Уютная таверна, полная местных жителей и искателей приключений."},
+                "static_name": f"internal_village_tavern_{guild_id}",
+                "exits": {"west": {"id": village_square_id, "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"}}}
+            },
+            {
+                "id": village_shop_id,
+                "name_i18n": {"en": "General Store", "ru": "Универсальный Магазин"},
+                "descriptions_i18n": {"en": "A store selling various goods and supplies.", "ru": "Магазин, продающий различные товары и припасы."},
+                "static_name": f"internal_village_shop_{guild_id}",
+                "exits": {"east": {"id": village_square_id, "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"}}}
+            },
+            {
+                "id": forest_edge_id,
+                "name_i18n": {"en": "Forest Edge", "ru": "Опушка Леса"},
+                "descriptions_i18n": {"en": "The edge of a dark and ancient forest.", "ru": "Край темного и древнего леса."},
+                "static_name": f"internal_forest_edge_{guild_id}",
+                "exits": {
+                    "south": {"id": village_square_id, "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"}},
+                    "north": {"id": deep_forest_id, "name_i18n": {"en": "Deep Forest", "ru": "Глубокий Лес"}}
+                }
+            },
+            {
+                "id": deep_forest_id,
+                "name_i18n": {"en": "Deep Forest", "ru": "Глубокий Лес"},
+                "descriptions_i18n": {"en": "The heart of the ancient, whispering woods.", "ru": "Сердце древнего, шепчущего леса."},
+                "static_name": f"internal_deep_forest_{guild_id}",
+                "exits": {"south": {"id": forest_edge_id, "name_i18n": {"en": "Forest Edge", "ru": "Опушка Леса"}}}
+            }
+        ]
+
+        locations_to_add = []
+        for loc_data in default_locations_data:
+            new_location = Location(
+                id=loc_data["id"],
                 guild_id=guild_id,
-                name_i18n={"en": "Quiet Crossroads", "ru": "Тихий Перекресток"},
-                descriptions_i18n={"en": "A quiet crossroads, suitable for starting an adventure.", "ru": "Тихий перекресток, подходящий для начала приключения."},
-                static_name=f"internal_starting_crossroads_{guild_id}", # Ensure this is unique per guild if needed
+                name_i18n=loc_data["name_i18n"],
+                descriptions_i18n=loc_data["descriptions_i18n"],
+                static_name=loc_data["static_name"],
                 is_active=True,
-                exits={},
-                inventory={},
-                state_variables={},
-                static_connections={},
-                details_i18n={},
-                tags_i18n={},
-                atmosphere_i18n={},
-                features_i18n={}
+                exits=loc_data.get("exits", {}),
+                # Ensure all required fields from Location model are present
+                inventory={}, state_variables={}, static_connections={}, details_i18n={},
+                tags_i18n={}, atmosphere_i18n={}, features_i18n={}, type_i18n={"en": "Area", "ru": "Область"}
             )
-            db_session.add(starting_location)
-            logger.info(f"Added starting Location '{starting_location_id}' for guild {guild_id}.")
+            locations_to_add.append(new_location)
+
+        if locations_to_add:
+            db_session.add_all(locations_to_add)
+            logger.info(f"Added {len(locations_to_add)} default locations for guild {guild_id}.")
         else:
-            logger.info(f"Starting location already exists for guild {guild_id} and not forcing reinitialization.")
+            logger.info(f"No new locations to add for guild {guild_id} (either existed or not forcing).")
 
         await db_session.commit()
         logger.info(f"Successfully initialized/updated default data for guild_id: {guild_id}")
