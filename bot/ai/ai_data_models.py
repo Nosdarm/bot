@@ -1,4 +1,4 @@
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator # Changed
 from typing import List, Dict, Optional, Any
 import json
 
@@ -16,20 +16,20 @@ class GeneratedQuestStep(BaseModel):
     assignee_type: Optional[str] = None # e.g., 'player', 'party'
     assignee_id: Optional[str] = None   # player_id or party_id
 
-    @validator('required_mechanics_json', 'abstract_goal_json', 'consequences_json', pre=True, allow_reuse=True)
-    def ensure_valid_json_string(cls, value: Any) -> str:
-        if isinstance(value, (dict, list)): # If AI provides actual dict/list
+    @field_validator('required_mechanics_json', 'abstract_goal_json', 'consequences_json', mode='before') # Changed
+    def ensure_valid_json_string(cls, v: Any) -> str: # Changed value to v
+        if isinstance(v, (dict, list)): # If AI provides actual dict/list # Changed value to v
             try:
-                return json.dumps(value)
+                return json.dumps(v) # Changed value to v
             except (TypeError, OverflowError) as e:
                 raise ValueError(f"Invalid object for JSON stringification: {e}")
-        if not isinstance(value, str):
+        if not isinstance(v, str): # Changed value to v
             raise ValueError("JSON field must be a string.")
         try:
-            json.loads(value)
+            json.loads(v) # Changed value to v
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON string: {e}")
-        return value
+        return v # Changed value to v
 
 class GeneratedQuest(BaseModel):
     """
@@ -52,7 +52,7 @@ class GeneratedQuest(BaseModel):
     quest_giver_details_i18n: Optional[Dict[str, str]] = None
     consequences_summary_i18n: Optional[Dict[str, str]] = None
 
-    _validate_json_strings = validator('consequences_json', 'prerequisites_json', pre=True, allow_reuse=True)(GeneratedQuestStep.ensure_valid_json_string)
+    _validate_json_strings = field_validator('consequences_json', 'prerequisites_json', mode='before')(GeneratedQuestStep.ensure_valid_json_string) # Changed
 
     # Example of how you might load data if AI uses 'title_i18n' for quest name
     # This is more for data transformation before validation, Pydantic v2 has better ways for aliases.
