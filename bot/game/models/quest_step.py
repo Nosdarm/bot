@@ -10,9 +10,9 @@ class QuestStep(BaseModel):
     Represents a single step or task within a quest.
     """
     def __init__(self,
-                 id: Optional[str] = None,
                  quest_id: str, # Mandatory
                  guild_id: str, # Mandatory
+                 id: Optional[str] = None, # Default
                  title_i18n: Optional[Dict[str, str]] = None,
                  description_i18n: Optional[Dict[str, str]] = None,
                  requirements_i18n: Optional[Dict[str, str]] = None, # Added
@@ -83,30 +83,31 @@ class QuestStep(BaseModel):
         quest_step_id = data.pop('id', None)
 
         # Mandatory fields (Quest.from_dict is responsible for injecting these)
-        quest_id = data.pop('quest_id')
-        guild_id = data.pop('guild_id')
+        # The order of pop doesn't matter here, but the order in cls() call does.
+        m_quest_id = data.pop('quest_id')
+        m_guild_id = data.pop('guild_id')
 
         # Optional fields
         title_i18n = data.get('title_i18n', {})
         description_i18n = data.get('description_i18n', {})
-        requirements_i18n = data.get('requirements_i18n', {}) # ADDED
+        requirements_i18n = data.get('requirements_i18n', {})
         required_mechanics_json = data.get('required_mechanics_json', '{}')
         abstract_goal_json = data.get('abstract_goal_json', '{}')
-        conditions_json = data.get('conditions_json', '{}') # ADDED
+        conditions_json = data.get('conditions_json', '{}')
         step_order = data.get('step_order', 0)
         status = data.get('status', 'pending')
         assignee_type = data.get('assignee_type', "")
         assignee_id = data.get('assignee_id', "")
         consequences_json = data.get('consequences_json', '{}')
-        linked_location_id = data.get('linked_location_id') # ADDED (default None)
-        linked_npc_id = data.get('linked_npc_id') # ADDED (default None)
-        linked_item_id = data.get('linked_item_id') # ADDED (default None)
-        linked_guild_event_id = data.get('linked_guild_event_id') # ADDED (default None)
+        linked_location_id = data.get('linked_location_id')
+        linked_npc_id = data.get('linked_npc_id')
+        linked_item_id = data.get('linked_item_id')
+        linked_guild_event_id = data.get('linked_guild_event_id')
 
 
-        return cls(id=quest_step_id,
-                   quest_id=quest_id,
-                   guild_id=guild_id, # ADDED
+        return cls(quest_id=m_quest_id, # Corrected order
+                   guild_id=m_guild_id, # Corrected order
+                   id=quest_step_id,
                    title_i18n=title_i18n,
                    description_i18n=description_i18n,
                    requirements_i18n=requirements_i18n, # ADDED
