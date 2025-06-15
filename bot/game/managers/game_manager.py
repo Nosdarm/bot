@@ -486,6 +486,23 @@ class GameManager:
             logger.critical("GameManager: UndoManager could not be initialized due to missing dependencies (QuestManager or others might be missing).")
             self.undo_manager = None
 
+        if not hasattr(self, '_on_enter_action_executor') or self._on_enter_action_executor is None:
+            from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor
+            self._on_enter_action_executor = OnEnterActionExecutor(
+                npc_manager=self.npc_manager,
+                item_manager=self.item_manager,
+                combat_manager=self.combat_manager,
+                status_manager=self.status_manager
+            )
+            logger.info("GameManager: OnEnterActionExecutor initialized.")
+
+        if not hasattr(self, '_stage_description_generator') or self._stage_description_generator is None:
+            from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator
+            self._stage_description_generator = StageDescriptionGenerator(
+                openai_service=self.openai_service
+            )
+            logger.info("GameManager: StageDescriptionGenerator initialized.")
+
         # EventStageProcessor and EventActionProcessor are initialized here in original code
         # These might be needed by CharacterActionProcessor
         # Ensure their dependencies are met
@@ -557,38 +574,51 @@ class GameManager:
         if not hasattr(self, '_event_stage_processor') or self._event_stage_processor is None:
             # from bot.game.event_processors.event_stage_processor import EventStageProcessor # Already imported
             self._event_stage_processor = EventStageProcessor(
-                game_manager=self, # Provides access to all other managers and settings
-                event_manager=self.event_manager,
-                character_manager=self.character_manager,
-                location_manager=self.location_manager,
-                npc_manager=self.npc_manager,
-                item_manager=self.item_manager,
-                dialogue_manager=self.dialogue_manager,
+                on_enter_action_executor=self._on_enter_action_executor, # Now initialized
+                stage_description_generator=self._stage_description_generator, # Now initialized
                 rule_engine=self.rule_engine,
-                openai_service=self.openai_service,
-                send_callback_factory=self._get_discord_send_callback,
-                settings=self._settings
+                character_manager=self.character_manager,
+                loc_manager=self.location_manager, # Alias for location_manager
+                npc_manager=self.npc_manager,
+                combat_manager=self.combat_manager,
+                item_manager=self.item_manager,
+                time_manager=self.time_manager,
+                status_manager=self.status_manager,
+                party_manager=self.party_manager,
+                dialogue_manager=self.dialogue_manager, # Now initialized
+                # economy_manager=self.economy_manager, # Optional, pass if available
+                # crafting_manager=self.crafting_manager, # Optional, pass if available
+                event_action_processor=None # Pass None initially to avoid circular dependency with EventActionProcessor. EventStageProcessor lists it as Optional.
             )
-            logger.info("GameManager: EventStageProcessor initialized.")
+            logger.info("GameManager: EventStageProcessor correctly initialized.")
 
 
         if not hasattr(self, '_event_action_processor') or self._event_action_processor is None:
             # from bot.game.event_processors.event_action_processor import EventActionProcessor # Already imported
             self._event_action_processor = EventActionProcessor(
-                game_manager=self, # Provides access to all other managers and settings
+                event_stage_processor=self._event_stage_processor, # Now correctly initialized
                 event_manager=self.event_manager,
                 character_manager=self.character_manager,
-                npc_manager=self.npc_manager,
-                item_manager=self.item_manager,
-                combat_manager=self.combat_manager,
-                status_manager=self.status_manager,
-                quest_manager=self.quest_manager,
-                dialogue_manager=self.dialogue_manager,
+                loc_manager=self.location_manager, # Pass location_manager as loc_manager
                 rule_engine=self.rule_engine,
+                openai_service=self.openai_service, # Is Optional in EAP's init
                 send_callback_factory=self._get_discord_send_callback,
-                settings=self._settings
+
+                # Optional managers accepted by EventActionProcessor
+                npc_manager=self.npc_manager,
+                combat_manager=self.combat_manager,
+                item_manager=self.item_manager,
+                time_manager=self.time_manager,
+                status_manager=self.status_manager,
+                party_manager=self.party_manager,
+                dialogue_manager=self.dialogue_manager, # Now initialized
+                # economy_manager=self.economy_manager, # Pass if available
+                # crafting_manager=self.crafting_manager, # Pass if available
+                on_enter_action_executor=self._on_enter_action_executor, # Pass if EAP uses it
+                stage_description_generator=self._stage_description_generator, # Pass if EAP uses it
+                character_action_processor=self._character_action_processor # Pass if EAP uses it
             )
-            logger.info("GameManager: EventActionProcessor initialized.")
+            logger.info("GameManager: EventActionProcessor correctly initialized.")
 
         # PersistenceManager initialization
         if not hasattr(self, '_persistence_manager') or not self._persistence_manager:
