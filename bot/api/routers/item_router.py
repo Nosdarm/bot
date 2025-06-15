@@ -6,12 +6,12 @@ from uuid import UUID
 
 from bot.database import item_crud # Adjusted path
 from bot.api.schemas.item_schemas import NewItemCreate, NewItemRead, NewItemUpdate # Adjusted path
-from bot.api.dependencies import get_db # Adjusted path
+from bot.api.dependencies import get_db_session # Adjusted path
 
 router = APIRouter()
 
 @router.post("/", response_model=NewItemRead, status_code=status.HTTP_201_CREATED)
-async def create_item_endpoint(item: NewItemCreate, db: AsyncSession = Depends(get_db)):
+async def create_item_endpoint(item: NewItemCreate, db: AsyncSession = Depends(get_db_session)):
     try:
         created_item = await item_crud.create_new_item(db=db, item=item)
         return created_item
@@ -22,7 +22,7 @@ async def create_item_endpoint(item: NewItemCreate, db: AsyncSession = Depends(g
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.get("/", response_model=List[NewItemRead])
-async def read_items_endpoint(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db)):
+async def read_items_endpoint(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db_session)):
     try:
         items = await item_crud.get_new_items(db=db, skip=skip, limit=limit)
         return items
@@ -30,7 +30,7 @@ async def read_items_endpoint(skip: int = 0, limit: int = 100, db: AsyncSession 
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.get("/{item_id}", response_model=NewItemRead)
-async def read_item_endpoint(item_id: UUID, db: AsyncSession = Depends(get_db)):
+async def read_item_endpoint(item_id: UUID, db: AsyncSession = Depends(get_db_session)):
     try:
         db_item = await item_crud.get_new_item(db=db, item_id=item_id)
         if db_item is None:
@@ -42,7 +42,7 @@ async def read_item_endpoint(item_id: UUID, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.put("/{item_id}", response_model=NewItemRead)
-async def update_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSession = Depends(get_db)):
+async def update_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSession = Depends(get_db_session)):
     try:
         updated_item = await item_crud.update_new_item(db=db, item_id=item_id, item_update=item)
         if updated_item is None:
@@ -56,7 +56,7 @@ async def update_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSess
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.patch("/{item_id}", response_model=NewItemRead)
-async def patch_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSession = Depends(get_db)):
+async def patch_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSession = Depends(get_db_session)):
     # The item_crud.update_new_item function should use model_dump(exclude_unset=True)
     # from the Pydantic model, which is suitable for PATCH behavior.
     try:
@@ -72,7 +72,7 @@ async def patch_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSessi
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.delete("/{item_id}", response_model=NewItemRead)
-async def delete_item_endpoint(item_id: UUID, db: AsyncSession = Depends(get_db)):
+async def delete_item_endpoint(item_id: UUID, db: AsyncSession = Depends(get_db_session)):
     try:
         deleted_item = await item_crud.delete_new_item(db=db, item_id=item_id)
         if deleted_item is None: # This case implies item was not found before attempting delete or after check (if logic changes)

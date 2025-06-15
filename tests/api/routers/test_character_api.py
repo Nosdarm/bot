@@ -6,7 +6,7 @@ from sqlalchemy import select
 from typing import AsyncIterator, Dict, Any
 import uuid
 
-from main import app # Import your FastAPI app instance
+from bot.api.main import app # Import your FastAPI app instance
 from bot.database.models import Player, Character as DBCharacter, Base # Renamed to DBCharacter
 from bot.api.schemas.character_schemas import CharacterRead
 
