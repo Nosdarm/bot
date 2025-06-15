@@ -143,7 +143,7 @@ class LocationManager:
             SELECT id, guild_id, template_id, name, name_i18n, descriptions_i18n,
                    details_i18n, tags_i18n, atmosphere_i18n, features_i18n,
                    exits, state_variables, channel_id, image_url, is_active
-            FROM location_instances WHERE guild_id = $1
+            FROM locations WHERE guild_id = $1
             """
             rows = await db_service.adapter.fetchall(sql, (guild_id_str,))
             self._diagnostic_log.append(f"DEBUG_LM: Fetched {len(rows)} rows from DB for guild {guild_id_str}.")
