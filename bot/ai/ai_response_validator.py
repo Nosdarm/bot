@@ -76,67 +76,140 @@ class AIResponseValidator:
         status_str = self._calculate_entity_status(issues)
         return ValidatedEntity(entity_id=entity_id_str,entity_type="npc",data=npc_data,original_data=original_data_copy if status_str == "success_with_autocorrections" else None,validation_status=status_str,issues=issues)
 
+    def _parse_internal_json_string(self, json_string: Any, field_path: str, entity_info: str, issues: List[ValidationIssue]) -> Optional[Union[Dict, List]]:
+        """Safely parses a JSON string and logs an issue on failure."""
+        if not isinstance(json_string, str):
+            # This case should ideally be caught by Pydantic if the field type is 'str'
+            issues.append(ValidationIssue(
+                field=field_path, issue_type="invalid_type_for_json_string",
+                message=f"{entity_info}: Expected a JSON string for '{field_path}', but got {type(json_string).__name__}.",
+                severity="error"
+            ))
+            return None
+        if not json_string.strip(): # Empty string
+            issues.append(ValidationIssue(
+                field=field_path, issue_type="empty_json_string",
+                message=f"{entity_info}: Field '{field_path}' is an empty string. Cannot parse as JSON.",
+                severity="warning" # Or error, depending on whether empty string is permissible before parsing
+            ))
+            return None
+        try:
+            return json.loads(json_string)
+        except json.JSONDecodeError as e:
+            issues.append(ValidationIssue(
+                field=field_path, issue_type="json_decode_error",
+                message=f"{entity_info}: Invalid JSON in field '{field_path}': {e}. Value: '{json_string[:100]}...' (truncated)",
+                severity="error"
+            ))
+            return None
+
+    def _validate_ids_in_parsed_json(self, parsed_content: Union[Dict, List], field_path: str, entity_info: str, issues: List[ValidationIssue], game_terms: Dict[str, Set[str]]):
+        """Recursively checks for known ID patterns within parsed JSON content."""
+        id_patterns = {
+            "npc_id": game_terms.get("npc_ids", set()),
+            "target_npc_id": game_terms.get("npc_ids", set()),
+            "item_id": game_terms.get("item_template_ids", set()),
+            "location_id": game_terms.get("location_ids", set()), # Assuming "location_ids" is in game_terms
+            "skill_id": game_terms.get("skill_ids", set()),
+            "faction_id": game_terms.get("faction_ids", set()), # Assuming "faction_ids" is in game_terms
+            "quest_id": game_terms.get("quest_ids", set()),
+        }
+
+        if isinstance(parsed_content, dict):
+            for key, value in parsed_content.items():
+                if key in id_patterns and isinstance(value, str) and value not in id_patterns[key]:
+                    issues.append(ValidationIssue(
+                        field=f"{field_path}.{key}", issue_type="invalid_reference_in_json",
+                        message=f"{entity_info}: Unknown ID '{value}' for '{key}' in '{field_path}'.",
+                        severity="warning"
+                    ))
+                elif key == "grant_items" and isinstance(value, list): # Special handling for grant_items array
+                    for idx, item_grant in enumerate(value):
+                        if isinstance(item_grant, dict) and "item_id" in item_grant:
+                            item_id_val = item_grant["item_id"]
+                            if isinstance(item_id_val, str) and item_id_val not in id_patterns["item_id"]:
+                                issues.append(ValidationIssue(
+                                    field=f"{field_path}.{key}[{idx}].item_id", issue_type="invalid_reference_in_json",
+                                    message=f"{entity_info}: Unknown item_id '{item_id_val}' in '{field_path}.{key}'.",
+                                    severity="warning"
+                                ))
+                        self._validate_ids_in_parsed_json(item_grant, f"{field_path}.{key}[{idx}]", entity_info, issues, game_terms) # Recurse
+                elif isinstance(value, (dict, list)):
+                    self._validate_ids_in_parsed_json(value, f"{field_path}.{key}", entity_info, issues, game_terms) # Recurse
+        elif isinstance(parsed_content, list):
+            for i, item in enumerate(parsed_content):
+                if isinstance(item, (dict, list)):
+                    self._validate_ids_in_parsed_json(item, f"{field_path}[{i}]", entity_info, issues, game_terms) # Recurse
+
 
     def validate_quest_block(self, quest_data: Dict[str, Any], generation_context: GenerationContext, game_terms: Dict[str, Set[str]]) -> ValidatedEntity:
         issues: List[ValidationIssue] = []
-        # Quest ID might be 'id' or 'template_id' from AI, Pydantic model doesn't enforce one for generation.
-        # We'll use 'name_i18n' as a fallback for entity_info if ID is missing.
-        quest_name_for_info = quest_data.get('name_i18n', {}).get('en', 'Unknown Quest')
+        quest_name_for_info = quest_data.get('name_i18n', {}).get(generation_context.main_language, 'Unknown Quest')
         entity_id_str = quest_data.get('id', quest_data.get('template_id', quest_name_for_info))
         entity_info = f"Quest '{entity_id_str}'"
-        original_data_copy = quest_data.copy() # For storing pre-autocorrection state
+        original_data_copy = quest_data.copy()
 
-        # Data passed here should already be validated by GeneratedQuest Pydantic model.
-        # `validate_quest_block` now focuses on deeper, domain-specific validation.
-
-        # --- I18n Field Completeness (Top-Level Quest) ---
+        # I18n Field Completeness (Top-Level Quest)
         top_level_i18n_fields = ['name_i18n', 'description_i18n']
-        if quest_data.get('quest_giver_details_i18n'): top_level_i18n_fields.append('quest_giver_details_i18n')
-        if quest_data.get('consequences_summary_i18n'): top_level_i18n_fields.append('consequences_summary_i18n')
+        if 'quest_giver_details_i18n' in quest_data: top_level_i18n_fields.append('quest_giver_details_i18n')
+        if 'consequences_summary_i18n' in quest_data: top_level_i18n_fields.append('consequences_summary_i18n')
 
         for field in top_level_i18n_fields:
             field_value = quest_data.get(field)
-            if field_value is not None: # Field is present
+            if field_value is not None:
                 if self._check_is_dict(field_value, field, entity_info, issues):
                     self._validate_i18n_field_completeness(field_value, field, entity_info, issues, generation_context.target_languages)
-            # else: If Pydantic model made it optional, it's fine. If mandatory, Pydantic caught it.
+            elif field in ['name_i18n', 'description_i18n']: # Mandatory by Pydantic model
+                 issues.append(ValidationIssue(field=field, issue_type="missing_required_field", message=f"{entity_info}: Required field '{field}' is missing.", severity="error"))
 
-        # --- Suggested Level (Example of a numerical check) ---
+
+        # Suggested Level
         suggested_level = quest_data.get("suggested_level")
-        if suggested_level is not None: # Pydantic would have checked type if defined in model.
+        if suggested_level is not None:
             if not isinstance(suggested_level, int) or suggested_level < 0:
                  issues.append(ValidationIssue(field="suggested_level", issue_type="invalid_value", message=f"{entity_info}: suggested_level '{suggested_level}' must be a non-negative integer.", severity="warning"))
+            # Example of using self.rules (assuming QuestRewardRules might have level constraints)
+            # quest_rules_config = self.rules.quest_rules
+            # if hasattr(quest_rules_config, 'min_suggested_level') and suggested_level < quest_rules_config.min_suggested_level:
+            #     issues.append(ValidationIssue(field="suggested_level", issue_type="value_out_of_range", message=f"{entity_info}: suggested_level {suggested_level} is below minimum {quest_rules_config.min_suggested_level}.", severity="warning"))
+            # if hasattr(quest_rules_config, 'max_suggested_level') and suggested_level > quest_rules_config.max_suggested_level:
+            #     issues.append(ValidationIssue(field="suggested_level", issue_type="value_out_of_range", message=f"{entity_info}: suggested_level {suggested_level} is above maximum {quest_rules_config.max_suggested_level}.", severity="warning"))
 
-        # --- Referential Integrity (Example: quest_giver_id) ---
+
+        # Referential Integrity: npc_involvement
         known_npc_ids = game_terms.get("npc_ids", set())
-        quest_giver_id = quest_data.get("quest_giver_id")
-        if quest_giver_id and quest_giver_id not in known_npc_ids:
-            issues.append(ValidationIssue(field="quest_giver_id", issue_type="invalid_reference", message=f"{entity_info}: Quest giver ID '{quest_giver_id}' not found in known NPC IDs.", severity="warning"))
+        npc_involvement = quest_data.get("npc_involvement")
+        if npc_involvement is not None:
+            if self._check_is_dict(npc_involvement, "npc_involvement", entity_info, issues):
+                for role, npc_id_val in npc_involvement.items():
+                    if isinstance(npc_id_val, str):
+                        if npc_id_val not in known_npc_ids:
+                            issues.append(ValidationIssue(field=f"npc_involvement.{role}", issue_type="invalid_reference", message=f"{entity_info}: NPC ID '{npc_id_val}' for role '{role}' in 'npc_involvement' not found in known NPC IDs.", severity="warning"))
+                    else:
+                        issues.append(ValidationIssue(field=f"npc_involvement.{role}", issue_type="invalid_type", message=f"{entity_info}: NPC ID for role '{role}' in 'npc_involvement' must be a string, got {type(npc_id_val).__name__}.", severity="warning"))
 
-        # --- JSON String Fields (Quest Level) ---
-        # Pydantic validated these are valid JSON strings.
-        # Here, we might add warnings if they are empty but expected to have content.
-        for json_field_name in ["prerequisites_json", "consequences_json"]:
+        # JSON String Fields (Quest Level): Check content and parse for IDs
+        quest_level_json_fields_to_check_ids = ["prerequisites_json", "consequences_json"]
+        for json_field_name in quest_level_json_fields_to_check_ids:
             json_string_value = quest_data.get(json_field_name)
-            if json_string_value in ["{}", "[]", "null", ""]: # Check for empty/null JSON content
-                issues.append(ValidationIssue(
-                    field=json_field_name, issue_type="empty_json_content",
-                    message=f"{entity_info}: Field '{json_field_name}' is an empty/null JSON string ('{json_string_value}'). This might be acceptable but review if content was expected.",
-                    severity="info" # Info or warning depending on game logic expectations
-                ))
+            if json_string_value is not None: # Pydantic ensures it's a string if present
+                if json_string_value in ["{}", "[]", "\"\"", "null"]:
+                    issues.append(ValidationIssue(field=json_field_name, issue_type="empty_json_content", message=f"{entity_info}: Field '{json_field_name}' contains empty/null JSON ('{json_string_value}'). Content might be expected.", severity="info"))
+                else:
+                    parsed_content = self._parse_internal_json_string(json_string_value, json_field_name, entity_info, issues)
+                    if parsed_content:
+                        self._validate_ids_in_parsed_json(parsed_content, json_field_name, entity_info, issues, game_terms)
 
-        # --- Steps Validation ---
-        steps_list = quest_data.get('steps', []) # Changed from 'stages'
-        if not isinstance(steps_list, list): # Pydantic should ensure this is a list
-            issues.append(ValidationIssue(field="steps", issue_type="invalid_type", message=f"{entity_info}: 'steps' must be a list.", severity="error")) # Should be caught by Pydantic
+        # Steps Validation
+        steps_list = quest_data.get('steps', [])
+        step_orders = []
+        if not isinstance(steps_list, list):
+            issues.append(ValidationIssue(field="steps", issue_type="invalid_type", message=f"{entity_info}: 'steps' must be a list.", severity="error"))
         else:
             for s_idx, step_data in enumerate(steps_list):
-                # step_data here is a dict because GeneratedQuest has List[GeneratedQuestStep]
-                # and .model_dump() converts GeneratedQuestStep to dict.
-                step_info = f"{entity_info}, Step {step_data.get('step_order', s_idx)}"
-
+                step_info = f"{entity_info}, Step (index {s_idx}, order {step_data.get('step_order', 'N/A')})"
                 if not self._check_is_dict(step_data, f"steps[{s_idx}]", step_info, issues):
-                    continue # Should not happen if Pydantic validated
+                    continue
 
                 # I18n for step title and description
                 step_i18n_fields = ['title_i18n', 'description_i18n']
@@ -144,39 +217,47 @@ class AIResponseValidator:
                     f_val = step_data.get(field)
                     if f_val is not None and self._check_is_dict(f_val, f"steps[{s_idx}].{field}", step_info, issues):
                         self._validate_i18n_field_completeness(f_val, f"steps[{s_idx}].{field}", step_info, issues, generation_context.target_languages)
-                    elif f_val is None: # Pydantic should have caught if mandatory
-                        issues.append(ValidationIssue(field=f"steps[{s_idx}].{field}", issue_type="missing_required_field", message=f"{step_info}: Required field '{field}' is missing.", severity="error"))
+                    elif field in ['title_i18n', 'description_i18n']: # Mandatory by GeneratedQuestStep
+                         issues.append(ValidationIssue(field=f"steps[{s_idx}].{field}", issue_type="missing_required_field", message=f"{step_info}: Required field '{field}' is missing.", severity="error"))
 
-
-                # Check step_order
-                if not isinstance(step_data.get('step_order'), int):
+                # Step Order
+                current_step_order = step_data.get('step_order')
+                if isinstance(current_step_order, int):
+                    step_orders.append(current_step_order)
+                else: # Pydantic should catch non-int, but this is a fallback
                     issues.append(ValidationIssue(field=f"steps[{s_idx}].step_order", issue_type="invalid_type", message=f"{step_info}: 'step_order' must be an integer.", severity="error"))
 
-                # JSON String Fields within Step
-                # Pydantic (GeneratedQuestStep) validated these are valid JSON strings.
-                # Add warnings for empty JSON strings if content is expected.
+                # JSON String Fields within Step: Check content and parse for IDs
                 step_json_fields = ['required_mechanics_json', 'abstract_goal_json', 'consequences_json']
                 for json_field_name in step_json_fields:
                     json_string_value = step_data.get(json_field_name)
-                    if json_string_value is None: # Field is missing
-                         issues.append(ValidationIssue(
-                            field=f"steps[{s_idx}].{json_field_name}", issue_type="missing_required_field",
-                            message=f"{step_info}: Required JSON string field '{json_field_name}' is missing.",
-                            severity="error" # Assuming these are mandatory per game design
-                        ))
-                    elif json_string_value in ["{}", "[]", "null", ""]: # Empty/null JSON
-                        issues.append(ValidationIssue(
-                            field=f"steps[{s_idx}].{json_field_name}", issue_type="empty_json_content",
-                            message=f"{step_info}: Field '{json_field_name}' is an empty/null JSON string ('{json_string_value}'). Review if content was expected.",
-                            severity="warning"
-                        ))
-                # Old objective list validation within stages is removed.
+                    step_field_path = f"steps[{s_idx}].{json_field_name}"
+                    if json_string_value is not None: # Pydantic ensures it's string if present
+                        if json_string_value in ["{}", "[]", "\"\"", "null"]:
+                            issues.append(ValidationIssue(field=step_field_path, issue_type="empty_json_content", message=f"{step_info}: Field '{json_field_name}' contains empty/null JSON ('{json_string_value}'). Content might be expected.", severity="warning"))
+                        else:
+                            parsed_content = self._parse_internal_json_string(json_string_value, step_field_path, step_info, issues)
+                            if parsed_content:
+                                self._validate_ids_in_parsed_json(parsed_content, step_field_path, step_info, issues, game_terms)
+                    else: # Mandatory by GeneratedQuestStep
+                        issues.append(ValidationIssue(field=step_field_path, issue_type="missing_required_field", message=f"{step_info}: Required JSON string field '{json_field_name}' is missing.", severity="error"))
 
-        # --- Reward Validation (Example for quest-level rewards if not fully in consequences_json) ---
-        # This part might be redundant if all rewards are inside consequences_json,
-        # or it might validate a separate simplified 'rewards' structure if still used.
-        # For now, assuming GeneratedQuest Pydantic model handles reward structure.
-        # If 'rewards' field existed outside consequences_json and needed validation, it would go here.
+            # Validate step_orders list
+            if step_orders:
+                if len(step_orders) != len(set(step_orders)):
+                    issues.append(ValidationIssue(field="steps.step_order", issue_type="duplicate_value", message=f"{entity_info}: Duplicate 'step_order' values found: {step_orders}.", severity="error"))
+
+                # Check for sequence (e.g., starts at 0 or 1, no gaps) - warning if not ideal
+                sorted_orders = sorted(list(set(step_orders))) # Unique sorted orders
+                if not (sorted_orders[0] == 0 or sorted_orders[0] == 1):
+                     issues.append(ValidationIssue(field="steps.step_order", issue_type="invalid_sequence_start", message=f"{entity_info}: 'step_order' sequence should ideally start at 0 or 1. Found: {sorted_orders[0]}.", severity="warning"))
+                for i in range(len(sorted_orders) - 1):
+                    if sorted_orders[i+1] - sorted_orders[i] != 1:
+                        issues.append(ValidationIssue(field="steps.step_order", issue_type="non_sequential_values", message=f"{entity_info}: 'step_order' values are not sequential (gap detected around {sorted_orders[i]}). Orders: {sorted_orders}.", severity="warning"))
+                        break # Only report first gap
+
+        # Placeholder for more complex logical consistency checks (e.g., rewards vs. difficulty)
+        # logger.debug(f"{entity_info}: Further logical consistency checks (e.g., reward scaling) can be added here.")
 
         status_str = self._calculate_entity_status(issues)
         return ValidatedEntity(
