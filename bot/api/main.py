@@ -7,6 +7,7 @@ import logging
 import time
 import uvicorn # For running the app if this becomes the main entry point
 import os # ADDED for os.getenv
+from typing import Dict, Any, List, Optional # ADDED
 
 from bot.game.managers.game_manager import GameManager # ADDED
 from bot.services.db_service import DBService # ADDED

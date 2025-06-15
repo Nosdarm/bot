@@ -14,6 +14,7 @@ class Quest(BaseModel):
     Represents a quest in the game.
     """
     def __init__(self,
+                 guild_id: str, # MOVED: Made required and placed before optionals
                  id: Optional[str] = None,
                  name_i18n: Optional[Dict[str, str]] = None,
                  description_i18n: Optional[Dict[str, str]] = None,
@@ -22,10 +23,10 @@ class Quest(BaseModel):
                  influence_level: str = "local",
                  prerequisites: Optional[List[str]] = None,
                  connections: Optional[Dict[str, List[str]]] = None,
-                 steps: Optional[List['QuestStep']] = None, # MODIFIED
+                 steps: Optional[List['QuestStep']] = None,
                  rewards: Optional[Dict[str, Any]] = None,
                  npc_involvement: Optional[Dict[str, str]] = None,
-                 guild_id: str, # MODIFIED: Made required
+                 # guild_id: str, # Original position commented out
                  quest_giver_details_i18n: Optional[Dict[str, str]] = None,
                  consequences_summary_i18n: Optional[Dict[str, str]] = None,
                  name: Optional[str] = None,
