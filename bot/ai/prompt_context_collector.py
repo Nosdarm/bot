@@ -531,7 +531,7 @@ class PromptContextCollector:
 
 
         # 1. Stats
-        attributes_data = game_rules_data.get("character_stats_rules", {}).get("attributes", {}) # Use game_rules_data
+        attributes_data = game_rules_data.get("character_stats_rules", {}).get("attributes", {}) # Ensure uses game_rules_data
         if isinstance(attributes_data, dict):
             for stat_id, stat_info in attributes_data.items():
                 if isinstance(stat_info, dict):
@@ -545,7 +545,7 @@ class PromptContextCollector:
                     terms.append({"id": stat_id, "name_i18n": {main_lang: stat_id}, "term_type": "stat", "description_i18n": default_description.copy()})
 
         # 2. Skills
-        skills_data = game_rules_data.get("skill_rules", {}).get("skills", {}) # Use game_rules_data
+        skills_data = game_rules_data.get("skill_rules", {}).get("skills", {}) # Ensure uses game_rules_data
         if isinstance(skills_data, dict):
             for skill_id, skill_info in skills_data.items():
                 if isinstance(skill_info, dict):
