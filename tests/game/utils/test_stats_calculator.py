@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import MagicMock, AsyncMock
 
 from bot.game.utils.stats_calculator import calculate_effective_stats
-from bot.ai.rules_schema import CoreGameRulesConfig, BaseStatDefinition, ItemDefinition, StatModifierRule, StatusEffectDefinition, GrantedAbilityOrSkill # ItemDefinition might not be used directly if ItemTemplate is used
+from bot.ai.rules_schema import CoreGameRulesConfig, BaseStatDefinition, StatModifierRule, StatusEffectDefinition, GrantedAbilityOrSkill # MODIFIED: ItemDefinition removed
 from bot.game.models.character import Character
 from bot.game.models.npc import NPC as NpcModel
 from bot.game.models.item import ItemTemplate
@@ -29,13 +29,18 @@ class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
                 "ATTACK_BONUS": BaseStatDefinition(name_i18n={"en": "Attack Bonus"}, default_value=0, min_value=-5, max_value=20),
                 "FIRE_RESISTANCE": BaseStatDefinition(name_i18n={"en": "Fire Resistance"}, default_value=0, min_value=0, max_value=100),
             },
-            derived_stat_rules={ # Assuming derived_stat_rules is a Dict[str, float] or a Pydantic model
-                "hp_per_constitution_point": 10.0,
-                "base_hp_offset": 0.0
-            },
-            item_definitions={},
+            # derived_stat_rules is removed
+            item_effects={}, # Changed from item_definitions
             status_effects={},
-            equipment_slots={}, checks={}, damage_types={}, xp_rules=None, loot_tables={}, action_conflicts=[], location_interactions={}
+            equipment_slots={},
+            checks={},
+            damage_types={},
+            xp_rules=None, # Assuming XPRule is optional and can be None
+            loot_tables={},
+            action_conflicts=[],
+            location_interactions={},
+            relation_rules=[], # Added missing required field
+            relationship_influence_rules=[] # Added missing required field
         )
 
         self.player_entity = Character(
