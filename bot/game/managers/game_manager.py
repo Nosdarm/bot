@@ -446,6 +446,25 @@ class GameManager:
             self.quest_manager = QuestManager(db_service=self.db_service, character_manager=self.character_manager, settings=self._settings.get('quest_settings', {}))
             logger.info("GameManager: QuestManager initialized in _initialize_processors_and_command_system.")
 
+        if not hasattr(self, 'dialogue_manager') or self.dialogue_manager is None:
+            from bot.game.managers.dialogue_manager import DialogueManager
+            self.dialogue_manager = DialogueManager(
+                db_service=self.db_service,
+                character_manager=self.character_manager,
+                npc_manager=self.npc_manager,
+                openai_service=self.openai_service,
+                settings=self._settings.get('dialogue_settings', {}),
+                # Add other dependencies like rule_engine, event_manager if needed by DialogueManager's init
+                rule_engine=self.rule_engine, # Assuming it might need it
+                event_manager=self.event_manager # Assuming it might need it
+            )
+            logger.info("GameManager: DialogueManager initialized in _initialize_processors_and_command_system.")
+            # Update CharacterManager and NpcManager if they need DialogueManager post-init
+            if self.character_manager and hasattr(self.character_manager, '_dialogue_manager') and self.character_manager._dialogue_manager is None:
+                self.character_manager._dialogue_manager = self.dialogue_manager
+            if self.npc_manager and hasattr(self.npc_manager, 'dialogue_manager') and self.npc_manager.dialogue_manager is None:
+                self.npc_manager.dialogue_manager = self.dialogue_manager
+
         if self.db_service and self.game_log_manager and self.character_manager and self.item_manager and self.quest_manager and self.party_manager:
             self.undo_manager = UndoManager(db_service=self.db_service, game_log_manager=self.game_log_manager, character_manager=self.character_manager, item_manager=self.item_manager, quest_manager=self.quest_manager, party_manager=self.party_manager)
             logger.info("GameManager: UndoManager initialized.")
@@ -521,19 +540,41 @@ class GameManager:
 
         # Initialize EventStageProcessor and EventActionProcessor if they haven't been already
         # These are dependencies for CharacterActionProcessor
-        if not hasattr(self, '_event_stage_processor') or not self._event_stage_processor:
+        if not hasattr(self, '_event_stage_processor') or self._event_stage_processor is None:
             # from bot.game.event_processors.event_stage_processor import EventStageProcessor # Already imported
-            # Add necessary dependencies for EventStageProcessor
-            # Example: self._event_stage_processor = EventStageProcessor(game_manager=self, openai_service=self.openai_service, ...)
-            # For now, it's left as potentially None if not critical for CAP to have it at init
-            logger.warning("GameManager: _event_stage_processor not explicitly initialized here, ensure it's handled if CAP needs it at init.")
+            self._event_stage_processor = EventStageProcessor(
+                game_manager=self, # Provides access to all other managers and settings
+                event_manager=self.event_manager,
+                character_manager=self.character_manager,
+                location_manager=self.location_manager,
+                npc_manager=self.npc_manager,
+                item_manager=self.item_manager,
+                dialogue_manager=self.dialogue_manager,
+                rule_engine=self.rule_engine,
+                openai_service=self.openai_service,
+                send_callback_factory=self._get_discord_send_callback,
+                settings=self._settings
+            )
+            logger.info("GameManager: EventStageProcessor initialized.")
 
 
-        if not hasattr(self, '_event_action_processor') or not self._event_action_processor:
+        if not hasattr(self, '_event_action_processor') or self._event_action_processor is None:
             # from bot.game.event_processors.event_action_processor import EventActionProcessor # Already imported
-            # Add necessary dependencies for EventActionProcessor
-            # Example: self._event_action_processor = EventActionProcessor(game_manager=self, ...)
-            logger.warning("GameManager: _event_action_processor not explicitly initialized here, ensure it's handled if CAP needs it at init.")
+            self._event_action_processor = EventActionProcessor(
+                game_manager=self, # Provides access to all other managers and settings
+                event_manager=self.event_manager,
+                character_manager=self.character_manager,
+                npc_manager=self.npc_manager,
+                item_manager=self.item_manager,
+                combat_manager=self.combat_manager,
+                status_manager=self.status_manager,
+                quest_manager=self.quest_manager,
+                dialogue_manager=self.dialogue_manager,
+                rule_engine=self.rule_engine,
+                send_callback_factory=self._get_discord_send_callback,
+                settings=self._settings
+            )
+            logger.info("GameManager: EventActionProcessor initialized.")
 
         # PersistenceManager initialization
         if not hasattr(self, '_persistence_manager') or not self._persistence_manager:
@@ -558,11 +599,87 @@ class GameManager:
             )
             logger.info("GameManager: PersistenceManager initialized in _initialize_processors_and_command_system.")
 
+        if not hasattr(self, '_world_simulation_processor') or self._world_simulation_processor is None:
+            # from bot.game.world_processors.world_simulation_processor import WorldSimulationProcessor # Already imported at top of method
+
+            # Ensure all WSP dependencies that are managers are explicitly available
+            # For example, RelationshipManager might not be initialized yet.
+            # For now, we assume managers like RelationshipManager are either initialized
+            # before this point or WSP can handle them being None if passed as optional.
+            # The WSP __init__ signature lists many as Optional.
+
+            self._world_simulation_processor = WorldSimulationProcessor(
+                # Mandatory arguments from WSP's __init__
+                event_manager=self.event_manager,
+                character_manager=self.character_manager,
+                location_manager=self.location_manager,
+                rule_engine=self.rule_engine,
+                openai_service=self.openai_service,
+                event_stage_processor=self._event_stage_processor,
+                event_action_processor=self._event_action_processor,
+                persistence_manager=self._persistence_manager, # This is initialized just before CommandRouter in the original problematic code
+                settings=self._settings,
+                send_callback_factory=self._get_discord_send_callback,
+                character_action_processor=self._character_action_processor,
+                party_action_processor=self._party_action_processor,
+
+                # Optional arguments for WSP, provide if available and initialized
+                npc_manager=self.npc_manager,
+                combat_manager=self.combat_manager,
+                item_manager=self.item_manager,
+                time_manager=self.time_manager,
+                status_manager=self.status_manager,
+                crafting_manager=self.crafting_manager, # Assuming it's initialized or WSP handles None
+                economy_manager=self.economy_manager,   # Assuming it's initialized or WSP handles None
+                party_manager=self.party_manager,
+                dialogue_manager=self.dialogue_manager, # Now initialized
+                quest_manager=self.quest_manager,       # Now initialized
+                relationship_manager=self.relationship_manager, # Assuming it's initialized or WSP handles None
+                game_log_manager=self.game_log_manager,
+                multilingual_prompt_generator=self.multilingual_prompt_generator # This is on GameManager, pass if available
+            )
+            logger.info("GameManager: WorldSimulationProcessor initialized.")
+
         # CommandRouter is typically one of the last things in this setup phase
-        if not hasattr(self, '_command_router') or not self._command_router:
-            # from bot.game.command_router import CommandRouter # Already imported
-            # CommandRouter takes many arguments, ensure all are available
-            self._command_router = CommandRouter(game_manager=self) # Pass self (GameManager)
+        if not hasattr(self, '_command_router') or self._command_router is None:
+            # from bot.game.command_router import CommandRouter # Already imported at top of method
+            self._command_router = CommandRouter(
+                # Mandatory arguments based on TypeError and __init__ signature
+                character_manager=self.character_manager,
+                event_manager=self.event_manager,
+                persistence_manager=self._persistence_manager,
+                settings=self._settings,
+                world_simulation_processor=self._world_simulation_processor, # Now initialized
+                send_callback_factory=self._get_discord_send_callback,
+                character_action_processor=self._character_action_processor,
+                character_view_service=self._character_view_service,
+                location_manager=self.location_manager,
+                rule_engine=self.rule_engine,
+                party_command_handler=self._party_command_handler,
+
+                # Optional arguments for CommandRouter, provide if available
+                openai_service=self.openai_service,
+                item_manager=self.item_manager,
+                npc_manager=self.npc_manager,
+                combat_manager=self.combat_manager,
+                time_manager=self.time_manager,
+                status_manager=self.status_manager,
+                party_manager=self.party_manager,
+                crafting_manager=self.crafting_manager, # If available, else CommandRouter should handle None
+                economy_manager=self.economy_manager,   # If available, else CommandRouter should handle None
+                party_action_processor=self._party_action_processor,
+                event_action_processor=self._event_action_processor, # Now initialized
+                event_stage_processor=self._event_stage_processor, # Now initialized
+                quest_manager=self.quest_manager,
+                dialogue_manager=self.dialogue_manager, # Now initialized
+                # campaign_loader=self.campaign_loader, # GameManager.campaign_loader is type CampaignLoader, CommandRouter expects CampaignLoaderService. This might be an issue or handled by CommandRouter if it's a subtype or duck-typed. Pass for now.
+                campaign_loader=self.campaign_loader, # Using self.campaign_loader directly as per subtask note.
+                relationship_manager=self.relationship_manager, # If available, else CommandRouter should handle None
+                game_log_manager=self.game_log_manager,
+                conflict_resolver=self.conflict_resolver, # If available, else CommandRouter should handle None
+                game_manager=self, # Explicitly passing self as game_manager
+                ai_validator=getattr(self, 'ai_validator', None) # Pass if GameManager has an ai_validator attribute
+            )
             logger.info("GameManager: CommandRouter initialized.")
 
 
