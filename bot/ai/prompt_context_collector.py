@@ -373,7 +373,7 @@ class PromptContextCollector:
                       for attr_id, data in attributes_data.items()}
 
         # Skills
-        skill_rules = game_rules.get("skill_rules", {})
+        skill_rules = game_rules_data.get("skill_rules", {})
         skill_stat_map_data = skill_rules.get("skill_stat_map", {})
         skills = {skill_id: {"associated_stat": stat_id, "description_i18n": skill_rules.get("skills", {}).get(skill_id, {}).get("description_i18n", {"en": "No description", "ru": "Нет описания"})} # Assuming description_i18n
                   for skill_id, stat_id in skill_stat_map_data.items()}
