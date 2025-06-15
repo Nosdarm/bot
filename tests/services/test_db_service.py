@@ -26,18 +26,21 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         """Set up for each test."""
         # Mock the SqliteAdapter instance within DBService
-        self.mock_adapter = AsyncMock() 
+        self.mock_adapter = AsyncMock()
+        # Configure mock adapter properties to mimic SQLiteAdapter behavior for these tests
+        self.mock_adapter.supports_returning_id_on_insert = False
+        self.mock_adapter.json_column_type_cast = "" # SQLite stores JSON as TEXT, no cast needed
         
         # Patch the SqliteAdapter class to return our mock_adapter instance
         # when DBService tries to create it.
         # This requires knowing where SqliteAdapter is imported and used by DBService.
         # Assuming DBService instantiates SqliteAdapter like: self.adapter = SqliteAdapter(db_path)
-        # The patch target should be 'bot.services.db_service.SqliteAdapter'
-        self.sqlite_adapter_patch = patch('bot.services.db_service.SqliteAdapter')
+        # The patch target should be 'bot.database.sqlite_adapter.SQLiteAdapter' as DBService imports it from there.
+        self.sqlite_adapter_patch = patch('bot.database.sqlite_adapter.SQLiteAdapter')
         self.MockSqliteAdapterClass = self.sqlite_adapter_patch.start()
         self.MockSqliteAdapterClass.return_value = self.mock_adapter
 
-        self.db_service = DBService(db_path=":memory:")
+        self.db_service = DBService(db_type="sqlite") # Changed db_path to db_type
         # Ensure the mock adapter is indeed used
         self.assertIs(self.db_service.adapter, self.mock_adapter)
 
@@ -68,21 +71,28 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
         # Columns should be id, name, value, details
         # Values should include the generated ID and json.dumps(test_data['details'])
         
-        self.mock_adapter.execute.assert_called_once()
-        args, _ = self.mock_adapter.execute.call_args
-        
-        # args[0] is the SQL string, args[1] is the tuple of parameters
-        sql_query = args[0]
-        sql_params = args[1]
+        # Verify that execute_insert was called, and check its arguments
+        self.mock_adapter.execute_insert.assert_called_once()
+        call_args = self.mock_adapter.execute_insert.call_args
+        sql_query_passed_to_mock = call_args[0][0]
+        sql_params_passed_to_mock = call_args[0][1]
 
-        self.assertTrue(sql_query.startswith("INSERT INTO items (id, name, value, details) VALUES (?, ?, ?, ?)")) # Order might vary, better check keys
+        # Example: check parts of the actual SQL passed to the mock, expecting $ placeholders
+        # self.assertIn("INSERT INTO items (id, name, value, details) VALUES ($1, $2, $3, $4)", sql_query_passed_to_mock)
+        self.assertTrue(sql_query_passed_to_mock.startswith("INSERT INTO items ("))
+        self.assertIn(") VALUES ($1, $2, $3, $4)", sql_query_passed_to_mock) # Check for 4 placeholders
+        # Check if all expected columns are mentioned in the SQL query (order agnostic)
+        self.assertIn("id", sql_query_passed_to_mock)
+        self.assertIn("name", sql_query_passed_to_mock)
+        self.assertIn("value", sql_query_passed_to_mock)
+        self.assertIn("details", sql_query_passed_to_mock)
         
-        # To make the check robust against column order, we can parse the query or check params carefully
-        # For now, let's assume a consistent order or check parameters by content
-        self.assertIn(expected_id, sql_params)
-        self.assertIn("Test Item", sql_params)
-        self.assertIn(100, sql_params)
-        self.assertIn(json.dumps({"color": "red", "size": "M"}), sql_params)
+        # Check that the parameters are correct (order might matter depending on how columns are processed in create_entity)
+        # For robustness, ensure all expected values are present in the params tuple
+        self.assertIn(expected_id, sql_params_passed_to_mock)
+        self.assertIn("Test Item", sql_params_passed_to_mock)
+        self.assertIn(100, sql_params_passed_to_mock)
+        self.assertIn(json.dumps({"color": "red", "size": "M"}), sql_params_passed_to_mock)
 
 
     async def test_create_entity_with_id_provided(self):
@@ -90,6 +100,7 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
         provided_id = "custom_id_123"
         test_data = {"id": provided_id, "name": "Test Product", "price": 25.50}
         
+        # This now calls execute_insert
         returned_id = await self.db_service.create_entity(
             table_name="products",
             data=test_data.copy(),
@@ -97,12 +108,12 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(returned_id, provided_id)
         
-        self.mock_adapter.execute.assert_called_once()
-        args, _ = self.mock_adapter.execute.call_args
+        self.mock_adapter.execute_insert.assert_called_once() # Changed from execute
+        args, _ = self.mock_adapter.execute_insert.call_args # Changed from execute
         sql_query = args[0]
         sql_params = args[1]
 
-        self.assertTrue(sql_query.startswith("INSERT INTO products (id, name, price) VALUES (?, ?, ?)"))
+        self.assertTrue(sql_query.startswith("INSERT INTO products (id, name, price) VALUES ($1, $2, $3)")) # Changed ? to $N
         self.assertIn(provided_id, sql_params)
         self.assertIn("Test Product", sql_params)
         self.assertIn(25.50, sql_params)
@@ -135,7 +146,7 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
         )
 
         self.mock_adapter.fetchone.assert_called_once_with(
-            "SELECT * FROM configurations WHERE id = ?", (entity_id,)
+            "SELECT * FROM configurations WHERE id = $1", (entity_id,) # Changed ? to $1
         )
         self.assertEqual(result, expected_result)
 
@@ -154,7 +165,7 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
         )
         
         self.mock_adapter.fetchone.assert_called_once_with(
-            "SELECT * FROM guild_items WHERE id = ? AND guild_id = ?", (entity_id, guild_id)
+            "SELECT * FROM guild_items WHERE id = $1 AND guild_id = $2", (entity_id, guild_id) # Changed ? to $N
         )
         self.assertEqual(result, db_row_data) # Assuming no JSON fields for this test
 
@@ -194,10 +205,12 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
 
         # Check query construction (order of SET items might vary)
         self.assertTrue(sql_query.startswith("UPDATE assets SET"))
-        self.assertIn("status = ?", sql_query)
-        self.assertIn("inventory_count = ?", sql_query)
-        self.assertIn("config = ?", sql_query)
-        self.assertTrue(sql_query.endswith("WHERE id = ?"))
+        # Assertions check for $N placeholders now
+        self.assertIn("status = $1", sql_query)
+        self.assertIn("inventory_count = $2", sql_query)
+        # self.adapter.json_column_type_cast is "", so no ::jsonb
+        self.assertIn("config = $3", sql_query)
+        self.assertTrue(sql_query.endswith("WHERE id = $4")) # Adjust index based on actual number of SET params
 
         # Check params
         self.assertIn("inactive", sql_params)
@@ -223,14 +236,14 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
         sql_query = args[0]
         sql_params = args[1]
 
-        self.assertTrue(sql_query.startswith("UPDATE guild_finances SET value = ? WHERE id = ? AND guild_id = ?"))
+        self.assertTrue(sql_query.startswith("UPDATE guild_finances SET value = $1 WHERE id = $2 AND guild_id = $3")) # Changed ? to $N
         self.assertEqual(sql_params, (5000, entity_id, guild_id))
 
 
     async def test_delete_entity_success(self):
         """Test delete_entity successfully deletes an entity."""
         entity_id = "entity_to_delete"
-        self.mock_adapter.execute.return_value = None # Assume success if no error
+        self.mock_adapter.execute.return_value = "DELETE 1" # Simulate successful delete
 
         success = await self.db_service.delete_entity(
             table_name="records",
@@ -239,13 +252,14 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(success)
         self.mock_adapter.execute.assert_called_once_with(
-            "DELETE FROM records WHERE id = ?", (entity_id,)
+            "DELETE FROM records WHERE id = $1", (entity_id,) # Changed ? to $1
         )
 
     async def test_delete_entity_with_guild_id(self):
         """Test delete_entity with guild_id constraint."""
         entity_id = "record_xyz"
         guild_id = "archive_guild"
+        self.mock_adapter.execute.return_value = "DELETE 1" # Simulate successful delete
 
         success = await self.db_service.delete_entity(
             table_name="guild_archives",
@@ -254,39 +268,79 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(success)
         self.mock_adapter.execute.assert_called_once_with(
-            "DELETE FROM guild_archives WHERE id = ? AND guild_id = ?", (entity_id, guild_id)
+            "DELETE FROM guild_archives WHERE id = $1 AND guild_id = $2", (entity_id, guild_id) # Changed ? to $N
         )
         
     async def test_create_entity_handles_db_error(self):
         """Test create_entity handles database execution errors."""
-        self.mock_adapter.execute.side_effect = Exception("DB write error")
+        self.mock_adapter.execute_insert.side_effect = Exception("DB write error") # Changed from execute to execute_insert
         test_data = {"name": "Error Case"}
-        
-        with patch('builtins.print') as mock_print: # Suppress print
-            returned_id = await self.db_service.create_entity("error_table", test_data)
+        # ID will be generated by create_entity. Use a valid UUID format for mocking.
+        entity_id_placeholder = "12345678-1234-5678-1234-567812345678"
+        # Import the module to patch its logger instance directly
+        from bot.services import db_service as db_service_module
+        with patch('uuid.uuid4', return_value=uuid.UUID(entity_id_placeholder)):
+            with patch.object(db_service_module.logger, 'error') as mock_log_error_on_instance:
+                returned_id = await self.db_service.create_entity("error_table", test_data.copy())
         
         self.assertIsNone(returned_id)
-        mock_print.assert_called_with("Error creating entity in error_table: DB write error")
+        # Check that the error was logged with relevant info
+        mock_log_error_on_instance.assert_called_once()
+
+        log_call_args, log_call_kwargs = mock_log_error_on_instance.call_args
+        format_string = log_call_args[0]
+        log_params = log_call_args[1:]
+
+        self.assertIn("DBService: Error creating entity in table '%s' (ID: %s, Guild: %s): %s", format_string)
+        self.assertEqual("error_table", log_params[0])
+        self.assertEqual(entity_id_placeholder, log_params[1])
+        # self.assertEqual("N/A", log_params[2]) # Guild ID
+        self.assertIsInstance(log_params[3], Exception) # The exception instance
+        self.assertEqual(str(log_params[3]), "DB write error")
+        self.assertTrue(log_call_kwargs.get('exc_info', False))
+
 
     async def test_update_entity_handles_db_error(self):
         """Test update_entity handles database execution errors."""
         self.mock_adapter.execute.side_effect = Exception("DB update error")
-        
-        with patch('builtins.print') as mock_print: # Suppress print
+        from bot.services import db_service as db_service_module
+        with patch.object(db_service_module.logger, 'error') as mock_log_error_on_instance:
             success = await self.db_service.update_entity("error_table", "id1", {"name": "Error Update"})
 
         self.assertFalse(success)
-        mock_print.assert_called_with("Error updating entity id1 in error_table: DB update error")
+        mock_log_error_on_instance.assert_called_once()
+        log_call_args, log_call_kwargs = mock_log_error_on_instance.call_args
+        format_string = log_call_args[0]
+        log_params = log_call_args[1:]
+
+        self.assertIn("DBService: Error updating entity '%s' in table '%s' (Guild: %s): %s", format_string)
+        self.assertEqual("id1", log_params[0])
+        self.assertEqual("error_table", log_params[1])
+        # self.assertEqual("N/A (or not applicable)", log_params[2]) # Guild ID
+        self.assertIsInstance(log_params[3], Exception)
+        self.assertEqual(str(log_params[3]), "DB update error")
+        self.assertTrue(log_call_kwargs.get('exc_info', False))
 
     async def test_delete_entity_handles_db_error(self):
         """Test delete_entity handles database execution errors."""
         self.mock_adapter.execute.side_effect = Exception("DB delete error")
-
-        with patch('builtins.print') as mock_print: # Suppress print
+        from bot.services import db_service as db_service_module
+        with patch.object(db_service_module.logger, 'error') as mock_log_error_on_instance:
             success = await self.db_service.delete_entity("error_table", "id1")
 
         self.assertFalse(success)
-        mock_print.assert_called_with("Error deleting entity id1 from error_table: DB delete error")
+        mock_log_error_on_instance.assert_called_once()
+        log_call_args, log_call_kwargs = mock_log_error_on_instance.call_args
+        format_string = log_call_args[0]
+        log_params = log_call_args[1:]
+
+        self.assertIn("DBService: Error deleting entity '%s' from table '%s' (Guild: %s): %s", format_string)
+        self.assertEqual("id1", log_params[0])
+        self.assertEqual("error_table", log_params[1])
+        # self.assertEqual("N/A (or not applicable)", log_params[2]) # Guild ID
+        self.assertIsInstance(log_params[3], Exception)
+        self.assertEqual(str(log_params[3]), "DB delete error")
+        self.assertTrue(log_call_kwargs.get('exc_info', False))
 
 
 if __name__ == '__main__':
