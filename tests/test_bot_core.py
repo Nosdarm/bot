@@ -38,7 +38,9 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
         mock_char.selected_language = "ru"
         mock_char.собранные_действия_JSON = None # Start with no actions
 
-        mock_character_manager.get_character_by_discord_id.return_value = mock_char
+        # Ensure get_player_by_discord_id on GameManager is an AsyncMock
+        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_char)
+        # mock_character_manager.get_character_by_discord_id.return_value = mock_char # This is for CharacterManager
         mock_character_manager.update_character = AsyncMock()
 
         # Mock discord.Message
@@ -120,7 +122,9 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
         mock_char.selected_language = "ru"
         mock_char.собранные_действия_JSON = None 
 
-        mock_character_manager.get_character_by_discord_id.return_value = mock_char
+        # Ensure get_player_by_discord_id on GameManager is an AsyncMock
+        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_char)
+        # mock_character_manager.get_character_by_discord_id.return_value = mock_char
 
         mock_message = AsyncMock(spec=discord.Message)
         mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user_talker")
@@ -169,7 +173,9 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
         mock_char.selected_language = "ru"
         mock_char.собранные_действия_JSON = None
 
-        mock_character_manager.get_character_by_discord_id.return_value = mock_char
+        # Ensure get_player_by_discord_id on GameManager is an AsyncMock
+        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_char)
+        # mock_character_manager.get_character_by_discord_id.return_value = mock_char
 
         mock_message = AsyncMock(spec=discord.Message)
         mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user_fighter")
@@ -224,7 +230,9 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
         mock_char.selected_language = None # Player has NOT set a language
         mock_char.собранные_действия_JSON = None
 
-        mock_character_manager.get_character_by_discord_id.return_value = mock_char
+        # Ensure get_player_by_discord_id on GameManager is an AsyncMock
+        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_char)
+        # mock_character_manager.get_character_by_discord_id.return_value = mock_char
         # Mock save_character as it's called after NLU processing
         mock_character_manager.save_character = AsyncMock()
         mock_character_manager.mark_character_dirty = MagicMock()

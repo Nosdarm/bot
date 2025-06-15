@@ -8,6 +8,7 @@ import uuid
 import traceback # Will be removed
 import asyncio
 import logging # Added
+import sys # Added for debug printing
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union, TypedDict
 
 from builtins import dict, set, list, str, int, bool, float
@@ -32,8 +33,8 @@ from bot.game.models.item import Item
 from bot.utils.i18n_utils import get_i18n_text
 from bot.ai.rules_schema import CoreGameRulesConfig, EquipmentSlotDefinition, ItemEffectDefinition, EffectProperty
 
-logger = logging.getLogger(__name__) # Added
-logger.debug("DEBUG: item_manager.py module loaded.") # Changed
+logger = logging.getLogger(__name__)
+logger.debug("DEBUG: item_manager.py module loaded.")
 
 class EquipResult(TypedDict):
     success: bool
@@ -43,9 +44,9 @@ class EquipResult(TypedDict):
     slot_id: Optional[str]
 
 class ItemManager:
-    required_args_for_load = ["guild_id"]
-    required_args_for_save = ["guild_id"]
-    required_args_for_rebuild = ["guild_id"]
+    required_args_for_load: List[str] = ["guild_id"]
+    required_args_for_save: List[str] = ["guild_id"]
+    required_args_for_rebuild: List[str] = ["guild_id"]
 
     _item_templates: Dict[str, Dict[str, Any]]
     _items: Dict[str, Dict[str, "Item"]]
@@ -70,7 +71,7 @@ class ItemManager:
         game_log_manager: Optional["GameLogManager"] = None,
         inventory_manager: Optional["InventoryManager"] = None,
     ):
-        logger.info("Initializing ItemManager...") # Changed
+        logger.info("Initializing ItemManager...")
         self._db_service = db_service
         self._settings = settings
         self._rule_engine = rule_engine
@@ -95,44 +96,88 @@ class ItemManager:
         self._items_by_location = {}
         self._dirty_items = {}
         self._deleted_items = {}
+        self._diagnostic_log = [] # Added diagnostic log
 
-        self._load_item_templates() # This might need guild_id context if templates become guild-specific
-        logger.info("ItemManager initialized.") # Changed
+
+        self._load_item_templates()
+        logger.info("ItemManager initialized.")
+
+    def _load_item_templates(self):
+        self._diagnostic_log.append("DEBUG: ENTERING _load_item_templates")
+        self._item_templates = {}
+
+        self._diagnostic_log.append(f"DEBUG: self._settings type: {type(self._settings)}")
+        self._diagnostic_log.append(f"DEBUG: self._settings value: {self._settings}")
+
+        if self._settings:
+            legacy_templates = self._settings.get("item_templates")
+            self._diagnostic_log.append(f"DEBUG: legacy_templates type: {type(legacy_templates)}")
+            self._diagnostic_log.append(f"DEBUG: legacy_templates value: {legacy_templates}")
+
+            if isinstance(legacy_templates, dict):
+                default_lang = self._settings.get("default_language", "en")
+                self._diagnostic_log.append(f"DEBUG: Processing legacy_templates. Default lang: {default_lang}")
+                for template_id, template_data in legacy_templates.items():
+                    self._diagnostic_log.append(f"DEBUG: Processing template_id: {template_id}")
+                    if isinstance(template_data, dict):
+                        processed_template = template_data.copy()
+                        name_i18n = processed_template.get("name_i18n")
+                        plain_name = processed_template.get("name")
+                        if not isinstance(name_i18n, dict):
+                            name_i18n = {"en": plain_name} if plain_name else {"en": template_id}
+                        processed_template["name_i18n"] = name_i18n
+                        processed_template["name"] = name_i18n.get(default_lang, next(iter(name_i18n.values()), template_id))
+
+                        desc_i18n = processed_template.get("description_i18n")
+                        plain_desc = processed_template.get("description")
+                        if not isinstance(desc_i18n, dict):
+                            desc_i18n = {"en": plain_desc} if plain_desc else {"en": ""}
+                        processed_template["description_i18n"] = desc_i18n
+                        processed_template["description"] = desc_i18n.get(default_lang, next(iter(desc_i18n.values()), ""))
+
+                        self._item_templates[str(template_id)] = processed_template
+                        self._diagnostic_log.append(f"DEBUG: Loaded template '{template_id}' into self._item_templates.")
+                self._diagnostic_log.append(f"DEBUG: Finished loop. Loaded {len(self._item_templates)} templates. Keys: {list(self._item_templates.keys())}")
+            else:
+                self._diagnostic_log.append("DEBUG: No 'item_templates' dictionary found in settings or it's not a dict.")
+        else:
+            self._diagnostic_log.append("DEBUG: No settings provided, cannot load legacy item templates.")
+        self._diagnostic_log.append(f"DEBUG: EXITING _load_item_templates. Final _item_templates keys: {list(self._item_templates.keys())}")
+
 
     async def apply_item_effects(self, guild_id: str, character_id: str, item_instance: Dict[str, Any], rules_config: CoreGameRulesConfig) -> bool:
-        log_prefix = f"ItemManager.apply_item_effects(guild='{guild_id}', char='{character_id}', item_instance='{item_instance.get('instance_id', 'N/A')}'):" # Added guild_id
+        log_prefix = f"ItemManager.apply_item_effects(guild='{guild_id}', char='{character_id}', item_instance='{item_instance.get('instance_id', 'N/A')}'):"
         if not self._status_manager or not self._character_manager:
-            logger.error("%s StatusManager or CharacterManager not available.", log_prefix) # Changed
+            logger.error("%s StatusManager or CharacterManager not available.", log_prefix)
             return False
 
         item_template_id = item_instance.get('template_id')
         item_instance_id = item_instance.get('instance_id')
 
         if not item_template_id or not item_instance_id:
-            logger.error("%s Item template ID or instance ID missing.", log_prefix) # Changed
+            logger.error("%s Item template ID or instance ID missing.", log_prefix)
             return False
 
-        # Update log_prefix with template_id now that it's confirmed
         log_prefix = f"ItemManager.apply_item_effects(guild='{guild_id}', char='{character_id}', item='{item_template_id}', instance='{item_instance_id}'):"
 
 
         item_definition = rules_config.item_definitions.get(item_template_id)
         if not item_definition or not item_definition.on_equip_effects:
-            logger.debug("%s No on-equip effects defined for item.", log_prefix) # Changed, common case
+            logger.debug("%s No on-equip effects defined for item.", log_prefix)
             return False
 
         effects_applied = False
         for effect_prop in item_definition.on_equip_effects:
             effect: ItemEffectDefinition = rules_config.item_effects.get(effect_prop.effect_id)
             if not effect:
-                logger.warning("%s Effect definition for '%s' not found in rules_config.item_effects.", log_prefix, effect_prop.effect_id) # Changed
+                logger.warning("%s Effect definition for '%s' not found in rules_config.item_effects.", log_prefix, effect_prop.effect_id)
                 continue
 
             for specific_effect in effect.effects:
                 if specific_effect.type == "apply_status":
                     status_def = rules_config.status_effects.get(specific_effect.status_effect_id)
                     if not status_def:
-                        logger.warning("%s Status definition for '%s' not found.", log_prefix, specific_effect.status_effect_id) # Changed
+                        logger.warning("%s Status definition for '%s' not found.", log_prefix, specific_effect.status_effect_id)
                         continue
                     duration = specific_effect.duration_turns if specific_effect.duration_turns is not None else status_def.default_duration_turns
                     await self._status_manager.apply_status(
@@ -140,39 +185,39 @@ class ItemManager:
                         guild_id=guild_id, duration_turns=duration,
                         source_item_instance_id=item_instance_id, source_item_template_id=item_template_id
                     )
-                    logger.info("%s Applied status '%s'.", log_prefix, specific_effect.status_effect_id) # Changed
+                    logger.info("%s Applied status '%s'.", log_prefix, specific_effect.status_effect_id)
                     effects_applied = True
         if effects_applied:
             self._character_manager.mark_character_dirty(guild_id, character_id)
         return effects_applied
 
     async def remove_item_effects(self, guild_id: str, character_id: str, item_instance: Dict[str, Any], rules_config: CoreGameRulesConfig) -> bool:
-        log_prefix = f"ItemManager.remove_item_effects(guild='{guild_id}', char='{character_id}', item_instance='{item_instance.get('instance_id', 'N/A')}'):" # Added guild_id
+        log_prefix = f"ItemManager.remove_item_effects(guild='{guild_id}', char='{character_id}', item_instance='{item_instance.get('instance_id', 'N/A')}'):"
         if not self._status_manager or not self._character_manager:
-            logger.error("%s StatusManager or CharacterManager not available.", log_prefix) # Changed
+            logger.error("%s StatusManager or CharacterManager not available.", log_prefix)
             return False
 
         item_template_id = item_instance.get('template_id')
         item_instance_id = item_instance.get('instance_id')
 
         if not item_template_id or not item_instance_id:
-            logger.error("%s Item template ID or instance ID missing.", log_prefix) # Changed
+            logger.error("%s Item template ID or instance ID missing.", log_prefix)
             return False
 
         log_prefix = f"ItemManager.remove_item_effects(guild='{guild_id}', char='{character_id}', item='{item_template_id}', instance='{item_instance_id}'):"
 
 
-        item_definition = rules_config.item_definitions.get(item_template_id) # Not strictly needed if only removing statuses by source
+        item_definition = rules_config.item_definitions.get(item_template_id)
         effects_removed = False
         if hasattr(self._status_manager, 'remove_statuses_by_source_item_instance'):
             removed_count = await self._status_manager.remove_statuses_by_source_item_instance(
                 guild_id=guild_id, target_id=character_id, source_item_instance_id=item_instance_id
             )
             if removed_count > 0:
-                logger.info("%s Removed %s status(es) sourced from item instance '%s'.", log_prefix, removed_count, item_instance_id) # Changed
+                logger.info("%s Removed %s status(es) sourced from item instance '%s'.", log_prefix, removed_count, item_instance_id)
                 effects_removed = True
         else:
-            logger.warning("%s StatusManager does not have 'remove_statuses_by_source_item_instance' method.", log_prefix) # Changed
+            logger.warning("%s StatusManager does not have 'remove_statuses_by_source_item_instance' method.", log_prefix)
 
         if effects_removed:
             self._character_manager.mark_character_dirty(guild_id, character_id)
@@ -190,41 +235,35 @@ class ItemManager:
     async def equip_item(self, character_id: str, guild_id: str, item_template_id_to_equip: str,
                          rules_config: CoreGameRulesConfig, slot_id_preference: Optional[str] = None
                         ) -> EquipResult:
-        log_prefix = f"ItemManager.equip_item(guild='{guild_id}', char='{character_id}', item_template='{item_template_id_to_equip}'):" # Added guild_id
-        logger.debug("%s Called. Note: This method is slated for simplification/deprecation by EquipmentManager.", log_prefix) # Changed
+        log_prefix = f"ItemManager.equip_item(guild='{guild_id}', char='{character_id}', item_template='{item_template_id_to_equip}'):"
+        logger.debug("%s Called. Note: This method is slated for simplification/deprecation by EquipmentManager.", log_prefix)
 
         if not self._character_manager or not self._db_service or not self._inventory_manager:
-            logger.error("%s Core services (Character, DB, Inventory) not available.", log_prefix) # Added
+            logger.error("%s Core services (Character, DB, Inventory) not available.", log_prefix)
             return EquipResult(success=False, message="Core services not available.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
-        # ... (Rest of equip_item logic, ensure guild_id in logs for errors/warnings) ...
-        # Example: logger.error("%s Error calculating/updating effective stats for user %s: %s", log_prefix, character_id, e, exc_info=True)
-        return EquipResult(success=False, message="Legacy method, full refactor pending EquipmentManager.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference) # Placeholder
+
+        return EquipResult(success=False, message="Legacy method, full refactor pending EquipmentManager.", character_id=character_id, item_id=item_template_id_to_equip, slot_id=slot_id_preference)
 
     async def unequip_item(self, character_id: str, guild_id: str, rules_config: CoreGameRulesConfig,
                            item_instance_id_to_unequip: Optional[str] = None, slot_id_to_unequip: Optional[str] = None
                           ) -> EquipResult:
-        log_prefix = f"ItemManager.unequip_item(guild='{guild_id}', char='{character_id}', item_instance='{item_instance_id_to_unequip}', slot='{slot_id_to_unequip}'):" # Added guild_id
-        logger.debug("%s Called. Note: This method is slated for simplification/deprecation by EquipmentManager.", log_prefix) # Changed
-        # ... (Rest of unequip_item logic, ensure guild_id in logs for errors/warnings) ...
-        return EquipResult(success=False, message="Legacy method, full refactor pending EquipmentManager.", character_id=character_id, item_id=item_instance_id_to_unequip, slot_id=slot_id_to_unequip) # Placeholder
+        log_prefix = f"ItemManager.unequip_item(guild='{guild_id}', char='{character_id}', item_instance='{item_instance_id_to_unequip}', slot='{slot_id_to_unequip}'):"
+        logger.debug("%s Called. Note: This method is slated for simplification/deprecation by EquipmentManager.", log_prefix)
+
+        return EquipResult(success=False, message="Legacy method, full refactor pending EquipmentManager.", character_id=character_id, item_id=item_instance_id_to_unequip, slot_id=slot_id_to_unequip)
 
     async def use_item(self, guild_id: str, character_user: CharacterModel, item_template_id: str,
                        rules_config: CoreGameRulesConfig, target_entity: Optional[Any] = None) -> Dict[str, Any]:
-        log_prefix = f"ItemManager.use_item(guild='{guild_id}', char='{character_user.id}', item='{item_template_id}'):" # Added guild_id
-        # ... (Rest of use_item logic, ensure guild_id in logs for errors/warnings) ...
-        # Example: logger.error("%s Error calculating/updating effective stats for user %s in guild %s: %s", log_prefix, character_user.id, guild_id, e, exc_info=True)
-        return {"success": False, "message": "Not fully implemented with new logging.", "state_changed": False} # Placeholder
+        log_prefix = f"ItemManager.use_item(guild='{guild_id}', char='{character_user.id}', item='{item_template_id}'):"
 
-    def _load_item_templates(self): # This might need guild_id if templates become guild-specific
-        logger.info("ItemManager: _load_item_templates called. Consider if this is still needed with CoreGameRulesConfig.") # Changed
-        self._item_templates = {}
+        return {"success": False, "message": "Not fully implemented with new logging.", "state_changed": False}
 
-    def get_item_template(self, template_id: str) -> Optional[Dict[str, Any]]: # Might need guild_id
+    def get_item_template(self, template_id: str) -> Optional[Dict[str, Any]]:
         if self.rules_config and template_id in self.rules_config.item_definitions:
             item_def_model = self.rules_config.item_definitions[template_id]
             try: return item_def_model.model_dump(mode='python')
             except AttributeError: return json.loads(item_def_model.model_dump_json())
-        logger.debug("ItemManager.get_item_template: Template '%s' not in rules_config, checking legacy _item_templates.", template_id) # Changed
+        logger.debug("ItemManager.get_item_template: Template '%s' not in rules_config, checking legacy _item_templates.", template_id)
         return self._item_templates.get(str(template_id))
 
     async def get_all_item_instances(self, guild_id: str) -> List["Item"]:
@@ -232,20 +271,30 @@ class ItemManager:
         return list(self._items.get(guild_id_str, {}).values())
 
     async def get_items_by_owner(self, guild_id: str, owner_id: str) -> List["Item"]:
-        # ... (Logic as before)
-        return [] # Placeholder
+        return []
 
     async def get_items_in_location(self, guild_id: str, location_id: str) -> List["Item"]:
-        # ... (Logic as before)
-        return [] # Placeholder
+        return []
 
-    def get_item_template_display_name(self, template_id: str, lang: str, default_lang: str = "en") -> str: # Might need guild_id
-        # ... (Logic as before)
-        return f"Item template '{template_id}' not found in rules" # Placeholder
+    def get_item_template_display_name(self, template_id: str, lang: str, default_lang: str = "en") -> str:
+        template = self.get_item_template(template_id)
+        if template:
+            name_i18n = template.get("name_i18n")
+            if isinstance(name_i18n, dict):
+                return name_i18n.get(lang, name_i18n.get(default_lang, template_id))
+            return template.get("name", template_id) # Fallback to plain name or ID
+        return f"Item template '{template_id}' not found"
 
-    def get_item_template_display_description(self, template_id: str, lang: str, default_lang: str = "en") -> str: # Might need guild_id
-        # ... (Logic as before)
-        return f"Item template '{template_id}' not found in rules" # Placeholder
+
+    def get_item_template_display_description(self, template_id: str, lang: str, default_lang: str = "en") -> str:
+        template = self.get_item_template(template_id)
+        if template:
+            desc_i18n = template.get("description_i18n")
+            if isinstance(desc_i18n, dict):
+                return desc_i18n.get(lang, desc_i18n.get(default_lang, "No description available."))
+            return template.get("description", "No description available.") # Fallback
+        return f"Item template '{template_id}' not found"
+
 
     def get_item_instance(self, guild_id: str, item_id: str) -> Optional["Item"]:
         guild_id_str, item_id_str = str(guild_id), str(item_id)
@@ -253,37 +302,34 @@ class ItemManager:
 
     async def create_item_instance(self, guild_id: str, template_id: str, owner_id: Optional[str] = None, owner_type: Optional[str] = None, location_id: Optional[str] = None, quantity: float = 1.0, initial_state: Optional[Dict[str, Any]] = None, is_temporary: bool = False, **kwargs: Any) -> Optional["Item"]:
         guild_id_str, template_id_str = str(guild_id), str(template_id)
-        log_prefix = f"ItemManager.create_item_instance(guild='{guild_id_str}', template='{template_id_str}'):" # Added
+        log_prefix = f"ItemManager.create_item_instance(guild='{guild_id_str}', template='{template_id_str}'):"
         if self._db_service is None:
-            logger.error("%s DBService is None.", log_prefix) # Added
+            logger.error("%s DBService is None.", log_prefix)
             return None
         if not self.rules_config or template_id_str not in self.rules_config.item_definitions:
-            logger.warning("%s Template '%s' not found in rules_config.", log_prefix, template_id_str) # Changed
+            logger.warning("%s Template '%s' not found in rules_config.", log_prefix, template_id_str)
             return None
         if quantity <= 0:
-            logger.warning("%s Attempted to create item with non-positive quantity %.2f.", log_prefix, quantity) # Added
+            logger.warning("%s Attempted to create item with non-positive quantity %.2f.", log_prefix, quantity)
             return None
-        # ... (Rest of create_item_instance logic, ensure guild_id in logs for errors/warnings) ...
-        # Example: logger.info("%s Created world item %s.", log_prefix, new_item.id)
-        return None # Placeholder
+
+        return None
 
     async def remove_item_instance(self, guild_id: str, item_id: str, **kwargs: Any) -> bool:
-        # ... (Logic as before, ensure guild_id in logs for errors/warnings) ...
-        # Example: logger.info("ItemManager.remove_item_instance: Item '%s' removed from world in guild '%s'.", item_id_str, guild_id_str)
-        return False # Placeholder
+
+        return False
 
     async def update_item_instance(self, guild_id: str, item_id: str, updates: Dict[str, Any], **kwargs: Any) -> bool:
-        # ... (Logic as before, ensure guild_id in logs for errors/warnings) ...
-        # Example: logger.info("ItemManager.update_item_instance: Item '%s' in guild '%s' updated.", item_id_str, guild_id_str)
-        return False # Placeholder
+
+        return False
 
     async def revert_item_creation(self, guild_id: str, item_id: str, **kwargs: Any) -> bool: return await self.remove_item_instance(guild_id, item_id, **kwargs)
     async def revert_item_deletion(self, guild_id: str, item_data: Dict[str, Any], **kwargs: Any) -> bool:
-        # ... (Logic as before, ensure guild_id in logs for errors/warnings) ...
-        return False # Placeholder
+
+        return False
     async def revert_item_update(self, guild_id: str, item_id: str, old_field_values: Dict[str, Any], **kwargs: Any) -> bool: return await self.update_item_instance(guild_id, item_id, old_field_values, **kwargs)
     async def use_item_in_combat(self, guild_id: str, actor_id: str, item_instance_id: str, target_id: Optional[str] = None, game_log_manager: Optional['GameLogManager'] = None) -> Dict[str, Any]:
-        logger.debug("ItemManager.use_item_in_combat called for actor %s, item_instance %s, target %s in guild %s.", actor_id, item_instance_id, target_id, guild_id) # Added
+        logger.debug("ItemManager.use_item_in_combat called for actor %s, item_instance %s, target %s in guild %s.", actor_id, item_instance_id, target_id, guild_id)
         return {"success": False, "consumed": False, "message": "Not implemented in detail."}
 
     def _clear_guild_state_cache(self, guild_id: str) -> None:
@@ -292,39 +338,38 @@ class ItemManager:
         self._items[guild_id_str] = {}
         self._items_by_owner[guild_id_str] = {}
         self._items_by_location[guild_id_str] = {}
-        logger.info("ItemManager: Cleared runtime cache for guild '%s'.", guild_id_str) # Changed
+        logger.info("ItemManager: Cleared runtime cache for guild '%s'.", guild_id_str)
 
     def mark_item_dirty(self, guild_id: str, item_id: str) -> None:
          if str(guild_id) in self._items and str(item_id) in self._items[str(guild_id)]:
              self._dirty_items.setdefault(str(guild_id), set()).add(str(item_id))
-             # logger.debug("ItemManager: Item '%s' in guild '%s' marked dirty.", item_id, guild_id) # Too noisy
 
-    def _update_lookup_caches_add(self, guild_id: str, item_data: Dict[str, Any]) -> None: # Internal, less logging
-        # ... (Logic as before)
+
+    def _update_lookup_caches_add(self, guild_id: str, item_data: Dict[str, Any]) -> None:
+
         pass
-    def _update_lookup_caches_remove(self, guild_id: str, item_data: Dict[str, Any]) -> None: # Internal, less logging
-        # ... (Logic as before)
+    def _update_lookup_caches_remove(self, guild_id: str, item_data: Dict[str, Any]) -> None:
+
         pass
 
     async def save_item(self, item: "Item", guild_id: str) -> bool:
-        # ... (Logic as before, ensure guild_id in logs for errors) ...
-        # Example: logger.error("Error saving item %s to DB for guild %s: %s", item_id, guild_id_str, e, exc_info=True)
-        # Example: logger.debug("ItemManager.save_item: Item '%s' saved to DB and cache for guild '%s'.", item_id, guild_id_str)
-        return False # Placeholder
+
+
+        return False
 
     async def get_items_in_location_async(self, guild_id: str, location_id: str) -> List["Item"]: return await self.get_items_in_location(guild_id, location_id)
     async def transfer_item_world_to_character(self, guild_id: str, character_id: str, item_instance_id: str, quantity: int = 1) -> bool:
-        logger.info("ItemManager.transfer_item_world_to_character: Placeholder for item %s to char %s in guild %s.", item_instance_id, character_id, guild_id) # Changed
+        logger.info("ItemManager.transfer_item_world_to_character: Placeholder for item %s to char %s in guild %s.", item_instance_id, character_id, guild_id)
         return False
 
     async def revert_item_owner_change(self, guild_id: str, item_id: str, old_owner_id: Optional[str], old_owner_type: Optional[str], old_location_id_if_unowned: Optional[str], **kwargs: Any) -> bool:
-        # ... (Logic as before, ensure guild_id in logs for errors/warnings) ...
-        # Example: logger.info("ItemManager.revert_item_owner_change: Reverted owner/location for item %s in guild %s.", item_id, guild_id)
-        return False # Placeholder
+
+
+        return False
 
     async def revert_item_quantity_change(self, guild_id: str, item_id: str, old_quantity: float, **kwargs: Any) -> bool:
-        # ... (Logic as before, ensure guild_id in logs for errors/warnings) ...
-        # Example: logger.info("ItemManager.revert_item_quantity_change: Reverted quantity for item %s to %.2f in guild %s.", item_id, old_quantity, guild_id)
-        return False # Placeholder
 
-logger.debug("DEBUG: item_manager.py module loaded (after overwrite).") # Changed
+
+        return False
+
+logger.debug("DEBUG: item_manager.py module loaded (after overwrite).")
