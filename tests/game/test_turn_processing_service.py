@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Optional
 
 from bot.game.turn_processing_service import TurnProcessingService
 from bot.ai.rules_schema import CoreGameRulesConfig, ActionConflictDefinition
-from bot.game.conflict_resolver import ActionWrapper, ActionStatus # For type hinting if needed in future
+# from bot.game.conflict_resolver import ActionWrapper, ActionStatus # MODIFIED: Removed import
 
 # For mocking player data
 class MockPlayer:
@@ -198,7 +198,7 @@ class TestTurnProcessingService(unittest.IsolatedAsyncioTestCase):
             "involved_actions": [
                 {"character_id": "player_A", "action_id": "actionA1", "action_data": json.loads(mock_player_A.collected_actions_json)[0]},
                 {"character_id": "player_B", "action_id": "actionB1", "action_data": json.loads(mock_player_B.collected_actions_json)[0]},
-            ], "details_for_gm": "Test conflict for GM", "status": ActionStatus.MANUAL_PENDING.value,
+            ], "details_for_gm": "Test conflict for GM", "status": "manual_pending", # MODIFIED: Direct string value
         }
         self.mock_conflict_resolver.analyze_actions_for_conflicts.return_value = {
             "actions_to_execute": [], "pending_conflict_details": [conflict_detail_for_db],
