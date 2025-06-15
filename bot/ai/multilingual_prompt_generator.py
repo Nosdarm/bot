@@ -1,7 +1,7 @@
 # bot/ai/multilingual_prompt_generator.py
 
 import json
-from typing import TYPE_CHECKING, Dict, Any, List, Optional
+from typing import TYPE_CHECKING, Dict, Any, List, Optional, Tuple # Ensure Tuple is imported
 
 from bot.ai.ai_data_models import GenerationContext, ParsedAiData, ValidationError, ValidatedEntity, ValidationIssue
 
@@ -13,9 +13,14 @@ class MultilingualPromptGenerator:
         self,
         context_collector: 'PromptContextCollector',
         main_bot_language: str, # e.g., "ru", "en"
+        settings: Optional[Dict[str, Any]] = None # Added settings for prompt_templates_config
     ):
         self.context_collector = context_collector
         self.main_bot_language = main_bot_language
+        self.settings = settings if settings else {}
+        # Example of how prompt_templates_config might be loaded from settings
+        # This assumes settings structure like: {"prompt_templates": {"en": {"narrative_generation_system": "..."}}}
+        self.prompt_templates_config: Dict[str, Dict[str, str]] = self.settings.get("prompt_templates", {})
 
 
     def update_main_bot_language(self, new_language: str) -> None:
@@ -211,4 +216,70 @@ CRITICAL INSTRUCTIONS:
 """
         return self._build_full_prompt_for_openai(task_prompt, generation_context)
 
+    def get_prompt_template(self, lang: str, template_key: str) -> Optional[str]:
+        """
+        Placeholder: Retrieves a prompt template string.
+        In a real implementation, this would load from config files or a database.
+        Uses self.prompt_templates_config which should be populated during __init__.
+        """
+        if not hasattr(self, 'prompt_templates_config') or not self.prompt_templates_config:
+            # print(f"DEBUG: prompt_templates_config not found or empty in MultilingualPromptGenerator.")
+            return None
 
+        lang_templates = self.prompt_templates_config.get(lang)
+        if lang_templates:
+            return lang_templates.get(template_key)
+        return None
+
+    def generate_narrative_prompt(
+        self,
+        event_type: str,
+        source_name: str,
+        target_name: Optional[str],
+        key_details_str: str,
+        guild_setting: str,
+        tone: str,
+        lang: str
+    ) -> Tuple[str, str]:
+        """
+        Generates system and user prompts for creating a narrative for a game event.
+
+        Args:
+            event_type: The type of the event (e.g., "PLAYER_MOVE", "ITEM_DROP").
+            source_name: Name of the entity that caused the event.
+            target_name: Optional name of the entity affected by the event.
+            key_details_str: A string summarizing other key details of the event.
+            guild_setting: Brief description of the game world (e.g., "Dark Fantasy").
+            tone: Desired narrative tone (e.g., "Gritty", "Epic", "Concise").
+            lang: The desired language code for the narrative (e.g., "en", "ru").
+
+        Returns:
+            A tuple containing (system_prompt, user_prompt).
+        """
+
+        # System prompt sets the persona and overall instruction for the AI
+        system_prompt_template = self.get_prompt_template(lang, "narrative_generation_system")
+        if not system_prompt_template: # Fallback if specific template not found
+            system_prompt_template = "You are a master storyteller for a text-based role-playing game. Your descriptions should be engaging and fit the specified tone and setting. Focus on creating a brief, vivid narrative for the event provided by the user. The narrative should be in {lang}."
+
+        system_prompt = system_prompt_template.format(lang=lang, tone=tone, guild_setting=guild_setting)
+
+        user_prompt_lines = []
+        user_prompt_lines.append(f"Language for narrative: {lang}")
+        user_prompt_lines.append(f"Game Setting: {guild_setting}")
+        user_prompt_lines.append(f"Desired Tone: {tone}")
+        user_prompt_lines.append(f"Event Type: {event_type}")
+        user_prompt_lines.append(f"Event Source: {source_name}")
+        if target_name:
+            user_prompt_lines.append(f"Event Target: {target_name}")
+        user_prompt_lines.append(f"Key Details: {key_details_str}")
+
+        user_prompt_lines.append("\nInstructions:")
+        user_prompt_lines.append("Based on the event details above, generate a brief (1-2 sentences) narrative description of what happened. Make it immersive and fit the specified tone and setting.")
+        user_prompt_lines.append("Do NOT repeat the input details verbatim; weave them into a story.")
+        user_prompt_lines.append("Focus on the action and its immediate impact or feeling.")
+
+        user_prompt = "\n".join(user_prompt_lines)
+
+        # print(f"DEBUG Narrative Prompts for lang '{lang}':\nSystem: {system_prompt}\nUser: {user_prompt}")
+        return system_prompt, user_prompt

@@ -9,6 +9,7 @@ import asyncio
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
     from bot.game.services.relationship_event_processor import RelationshipEventProcessor
+    from bot.game.ai.narrative_generator import AINarrativeGenerator # Added import
 
 logger = logging.getLogger(__name__) # Added
 
@@ -19,12 +20,22 @@ class GameLogManager:
     def __init__(self,
                  db_service: Optional[DBService] = None,
                  settings: Optional[Dict[str, Any]] = None,
-                 relationship_event_processor: Optional[RelationshipEventProcessor] = None
+                 relationship_event_processor: Optional[RelationshipEventProcessor] = None,
+                 narrative_generator: Optional[AINarrativeGenerator] = None # Added parameter
                  ):
         self._db_service = db_service
         self._settings = settings if settings is not None else {}
         self._relationship_event_processor = relationship_event_processor
+        self._narrative_generator = narrative_generator # Stored instance
         logger.info("GameLogManager initialized.") # Changed
+
+    def get_guild_setting(self, guild_id: str, setting_key: str, default_value: Any) -> Any:
+        """ Safely retrieves a nested guild setting. """
+        try:
+            # Assuming settings structure like: self._settings['guilds']['guild_id']['setting_key']
+            return self._settings.get('guilds', {}).get(guild_id, {}).get(setting_key, default_value)
+        except Exception:
+            return default_value
 
     async def log_event(
         self,
@@ -35,55 +46,140 @@ class GameLogManager:
         party_id: Optional[str] = None,
         location_id: Optional[str] = None,
         channel_id: Optional[str] = None,
-        message_key: Optional[str] = None,
-        message_params: Optional[Dict[str, Any]] = None,
-        involved_entities_ids: Optional[List[str]] = None
+        description_key: Optional[str] = None, # Renamed from message_key
+        description_params: Optional[Dict[str, Any]] = None, # Renamed from message_params
+        involved_entities_ids: Optional[List[str]] = None,
+        source_entity_id: Optional[str] = None, # New
+        source_entity_type: Optional[str] = None, # New
+        target_entity_id: Optional[str] = None, # New
+        target_entity_type: Optional[str] = None, # New
+        generate_narrative: bool = False # New parameter
     ) -> None:
         if self._db_service is None or self._db_service.adapter is None:
-            log_message_fallback = f"Guild: {guild_id}, Event: {event_type}, Details: {details}"
-            if message_key:
-                log_message_fallback += f", MsgKey: {message_key}"
-            logger.error("GameLogManager: DB service not available. Log: %s", log_message_fallback) # Changed
+            log_message_fallback = (
+                f"Guild: {guild_id}, Event: {event_type}, Details: {details}, "
+                f"Player: {player_id}, Party: {party_id}, Location: {location_id}, Channel: {channel_id}, "
+                f"DescKey: {description_key}, DescParams: {description_params}, Involved: {involved_entities_ids}, "
+                f"SrcID: {source_entity_id}, SrcType: {source_entity_type}, TgtID: {target_entity_id}, TgtType: {target_entity_type}"
+            )
+            logger.error("GameLogManager: DB service not available. Log: %s", log_message_fallback)
             return
 
         log_id = str(uuid.uuid4())
-        message_params_json = json.dumps(message_params) if message_params is not None else None
+        description_params_json = json.dumps(description_params) if description_params is not None else None
         involved_entities_ids_json = json.dumps(involved_entities_ids) if involved_entities_ids is not None else None
-        details_json = json.dumps(details)
+
+        # Ensure details is a mutable dictionary if it's not already
+        # This is crucial because we might add ai_narrative keys to it.
+        current_details: Dict[str, Any] = {}
+        if isinstance(details, dict):
+            current_details = details.copy() # Work with a copy if it's already a dict
+        elif isinstance(details, str):
+            try:
+                current_details = json.loads(details)
+                if not isinstance(current_details, dict): # Ensure loaded JSON is a dict
+                    current_details = {"original_details_str": details, "parsing_error": "Loaded JSON was not a dict"}
+            except json.JSONDecodeError:
+                current_details = {"original_details_str": details, "json_decode_error": True}
+        elif details is not None: # Handle other non-dict, non-str types by converting to str
+             current_details = {"original_details_str": str(details)}
+
+
+        if generate_narrative and self._narrative_generator:
+            source_name = current_details.get("source_name", source_entity_id or player_id or "Unknown Source")
+            target_name = current_details.get("target_name", target_entity_id)
+
+            key_details_list = []
+            # Example: More specific detail extraction based on event_type
+            if event_type == "PLAYER_MOVE": # Assuming event_type strings are consistent
+                key_details_list.append(f"to location {current_details.get('target_location_name', current_details.get('target_location_id', 'somewhere'))}")
+            elif event_type == "ITEM_PICKUP":
+                 key_details_list.append(f"item '{current_details.get('item_name', current_details.get('item_id', 'something'))}'")
+            elif event_type == "NPC_ATTACK": # Example for another type
+                 key_details_list.append(f"target '{current_details.get('target_name', target_name or 'someone')}' with '{current_details.get('action_name', 'an attack')}'")
+
+
+            if not key_details_list: # Fallback if no specific details extracted
+                temp_details_for_str = {k: v for k, v in current_details.items() if not k.startswith('ai_narrative_') and k not in ['source_name', 'target_name']}
+                if temp_details_for_str:
+                    key_details_list.append(str(temp_details_for_str))
+
+            key_details_str = ". ".join(key_details_list) if key_details_list else "something notable occurred."
+
+            event_data_for_narrative = {
+                "event_type": event_type,
+                "source_name": str(source_name),
+                "target_name": str(target_name) if target_name else None,
+                "key_details_str": key_details_str
+            }
+
+            world_setting = self.get_guild_setting(guild_id, "world_setting", "generic fantasy")
+            tone = self.get_guild_setting(guild_id, "narrative_tone", "neutral")
+            langs_to_generate = self.get_guild_setting(guild_id, "narrative_langs", ["en"])
+
+            guild_context_for_narrative = {
+                "world_setting": world_setting,
+                "tone": tone
+            }
+
+            for lang_code in langs_to_generate:
+                try:
+                    narrative = await self._narrative_generator.generate_narrative_for_event(
+                        event_data=event_data_for_narrative,
+                        guild_context=guild_context_for_narrative,
+                        lang=lang_code
+                    )
+                    if narrative and not narrative.startswith("Error:"):
+                        current_details[f'ai_narrative_{lang_code}'] = narrative
+                    elif narrative:
+                        current_details[f'ai_narrative_{lang_code}_error'] = narrative
+                except Exception as e:
+                    current_details[f'ai_narrative_{lang_code}_error'] = f"Failed to generate narrative for {lang_code}: {str(e)}"
+                    logger.error(f"GameLogManager: Exception during narrative generation for lang {lang_code}, guild {guild_id}: {e}", exc_info=True)
+
+        details_json = json.dumps(current_details) # Serialize final details (potentially with narrative)
 
         sql = """
             INSERT INTO game_logs 
             (id, timestamp, guild_id, player_id, party_id, event_type,
-            message_key, message_params, location_id, involved_entities_ids, details, channel_id)
-            VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            description_key, description_params_json, location_id, involved_entities_ids, details, channel_id,
+            source_entity_id, source_entity_type, target_entity_id, target_entity_type)
+            VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         """
         params = (
             log_id, guild_id, player_id, party_id, event_type,
-            message_key, message_params_json, location_id, involved_entities_ids_json,
-            details_json, channel_id
+            description_key, description_params_json, location_id, involved_entities_ids_json,
+            details_json, channel_id,
+            source_entity_id, source_entity_type, target_entity_id, target_entity_type # New params
         )
 
         try:
             await self._db_service.adapter.execute(sql, params)
-            logger.debug("GameLogManager: Logged event %s (type: %s) to DB for guild %s. ID: %s", event_type, message_key or 'N/A', guild_id, log_id) # Added debug log
+            logger.debug("GameLogManager: Logged event %s (desc_key: %s) to DB for guild %s. ID: %s", event_type, description_key or 'N/A', guild_id, log_id)
 
             if self._relationship_event_processor:
+                # Ensure details being passed are stringified JSON if RelationshipEventProcessor expects that
                 log_data_for_processor = {
                     "guild_id": guild_id, "event_type": event_type,
-                    "details": details_json, "log_id": log_id, "player_id": player_id
+                    "details": details_json, "log_id": log_id, "player_id": player_id,
+                    "source_entity_id": source_entity_id, "source_entity_type": source_entity_type,
+                    "target_entity_id": target_entity_id, "target_entity_type": target_entity_type,
+                    "description_key": description_key, "description_params_json": description_params_json
                 }
                 asyncio.create_task(
                     self._relationship_event_processor.process_new_log_entry(log_data_for_processor)
                 )
         except Exception as e:
-            logger.error("GameLogManager: Failed to log event to DB for guild %s. Type: %s, Error: %s", guild_id, event_type, e, exc_info=True) # Changed
+            logger.error("GameLogManager: Failed to log event to DB for guild %s. Type: %s, Error: %s", guild_id, event_type, e, exc_info=True)
             fallback_data = {
                 "log_id": log_id, "guild_id": guild_id, "player_id": player_id, "party_id": party_id,
-                "event_type": event_type, "message_key": message_key, "message_params": message_params,
+                "event_type": event_type, "description_key": description_key, "description_params": description_params,
                 "location_id": location_id, "involved_entities_ids": involved_entities_ids,
-                "details": details, "channel_id": channel_id
+                "details": details, "channel_id": channel_id,
+                "source_entity_id": source_entity_id, "source_entity_type": source_entity_type,
+                "target_entity_id": target_entity_id, "target_entity_type": target_entity_type
             }
-            logger.error("GameLogManager (DB-FAIL): Data: %s", json.dumps(fallback_data)) # Changed
+            logger.error("GameLogManager (DB-FAIL): Data: %s", json.dumps(fallback_data))
 
     async def get_logs_by_guild(
         self, guild_id: str, limit: int = 100, offset: int = 0,
@@ -91,11 +187,15 @@ class GameLogManager:
         party_id_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         if self._db_service is None or self._db_service.adapter is None:
-            logger.error("GameLogManager: DB service or adapter not available. Cannot fetch logs for guild %s.", guild_id) # Changed
+            logger.error("GameLogManager: DB service or adapter not available. Cannot fetch logs for guild %s.", guild_id)
             return []
         
         params_list: List[Any] = [guild_id]
-        sql = "SELECT id, timestamp, guild_id, player_id, party_id, event_type, message_key, message_params, location_id, involved_entities_ids, details, channel_id FROM game_logs WHERE guild_id = $1"
+        sql = """SELECT id, timestamp, guild_id, player_id, party_id, event_type,
+                      description_key, description_params_json, location_id,
+                      involved_entities_ids, details, channel_id,
+                      source_entity_id, source_entity_type, target_entity_id, target_entity_type
+               FROM game_logs WHERE guild_id = $1"""
         current_param_idx = 1
 
         if event_type_filter:
@@ -143,10 +243,14 @@ class GameLogManager:
 
     async def get_log_by_id(self, log_id: str, guild_id: str) -> Optional[Dict[str, Any]]:
         if self._db_service is None or self._db_service.adapter is None:
-            logger.error("GameLogManager: DB service or adapter not available. Cannot fetch log %s for guild %s.", log_id, guild_id) # Changed
+            logger.error("GameLogManager: DB service or adapter not available. Cannot fetch log %s for guild %s.", log_id, guild_id)
             return None
 
-        sql = "SELECT id, timestamp, guild_id, player_id, party_id, event_type, message_key, message_params, location_id, involved_entities_ids, details, channel_id FROM game_logs WHERE id = $1 AND guild_id = $2"
+        sql = """SELECT id, timestamp, guild_id, player_id, party_id, event_type,
+                      description_key, description_params_json, location_id,
+                      involved_entities_ids, details, channel_id,
+                      source_entity_id, source_entity_type, target_entity_id, target_entity_type
+               FROM game_logs WHERE id = $1 AND guild_id = $2"""
         try:
             row = await self._db_service.adapter.fetchone(sql, (log_id, guild_id))
             if row:
