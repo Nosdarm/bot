@@ -4,9 +4,9 @@ from sqlalchemy.exc import IntegrityError
 from typing import List
 from uuid import UUID
 
-from database import item_crud # Adjusted path
-from schemas.item_schemas import NewItemCreate, NewItemRead, NewItemUpdate # Adjusted path
-from dependencies import get_db # Adjusted path
+from bot.database import item_crud # Adjusted path
+from bot.api.schemas.item_schemas import NewItemCreate, NewItemRead, NewItemUpdate # Adjusted path
+from bot.api.dependencies import get_db # Adjusted path
 
 router = APIRouter()
 
