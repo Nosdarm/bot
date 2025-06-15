@@ -19,6 +19,8 @@ from .models import Base # Assuming models.py is in the same directory
 # PostgreSQL connection. If this variable is not set, it falls back to a
 # default URL suitable for local development.
 # For production and other environments, it is strongly recommended to set
+from bot.database.base_adapter import BaseDbAdapter
+# For production and other environments, it is strongly recommended to set
 # DATABASE_URL to a valid PostgreSQL connection string.
 # Example: DATABASE_URL="postgresql+asyncpg://user:password@host:port/dbname"
 
@@ -36,7 +38,7 @@ else:
     print(f"🌍 Using database URL from environment variable {DATABASE_URL_ENV_VAR}.")
 
 
-class PostgresAdapter:
+class PostgresAdapter(BaseDbAdapter):
     """
     Асинхронный адаптер для работы с базой данных PostgreSQL.
     """
@@ -517,5 +519,13 @@ Last encountered error: {last_retryable_exception}
             print(f"PostgresAdapter: ❌ Error upserting location {location_data.get('id')}: {e}")
             traceback.print_exc()
             return False
+
+    @property
+    def supports_returning_id_on_insert(self) -> bool:
+        return True
+
+    @property
+    def json_column_type_cast(self) -> Optional[str]:
+        return "::jsonb"
 
 print(f"DEBUG: Finished loading postgres_adapter.py from: {__file__}")
