@@ -12,9 +12,9 @@ from sqlalchemy import select, text, delete
 
 from bot.api.main import app  # Main FastAPI application
 from bot.database.models import Base, RulesConfig, Player, GeneratedFaction, Location # Add other models as needed
-from bot.game.guild_initializer import DEFAULT_RULES_CONFIG_ID # Assuming this is the ID used
+# from bot.game.guild_initializer import DEFAULT_RULES_CONFIG_ID # Removed as it's not defined or used
 # For default location checks
-from bot.game.guild_initializer import DEFAULT_START_LOCATION_ID # This is a template_id, actual ID is dynamic
+# from bot.game.guild_initializer import DEFAULT_START_LOCATION_ID # TODO: Investigate missing DEFAULT_START_LOCATION_ID
 # The actual ID of the default location is dynamic, so we'll use static_name or name_i18n for querying
 DEFAULT_LOCATION_STATIC_NAME_FORMAT = "internal_starting_crossroads_{}" # Used to form the static_name
 DEFAULT_LOCATION_EN_NAME = "Quiet Crossroads"

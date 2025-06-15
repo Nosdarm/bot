@@ -3,7 +3,7 @@ import json
 from unittest.mock import MagicMock, patch, mock_open
 
 from bot.ai.prompt_context_collector import PromptContextCollector
-from bot.ai.ai_data_models import GameTerm, ScalingParameter, GenerationContext # Assuming these are in this path
+from bot.ai.ai_data_models import GenerationContext # Assuming these are in this path. GameTerm and ScalingParameter removed.
 
 # Mocking the actual game models that might be returned by managers
 # These can be simple MagicMock instances or basic dicts if managers are expected to return dicts
@@ -589,10 +589,10 @@ class TestPromptContextCollector(unittest.TestCase):
         mock_world_state = {"current_time": {"game_time_string": "Day 1, 10:00:00"}}
         self.collector.get_world_state_context = MagicMock(return_value=mock_world_state)
 
-        mock_game_terms = [GameTerm(id="term1", name_i18n={"en":"Term 1"}, term_type="general")]
+        mock_game_terms = [{"id":"term1", "name_i18n":{"en":"Term 1"}, "term_type":"general"}] # Changed to dict
         self.collector.get_game_terms_dictionary = MagicMock(return_value=mock_game_terms)
 
-        mock_scaling_params = [ScalingParameter(parameter_name="xp_scale", value=1.2, context="general")]
+        mock_scaling_params = [{"parameter_name":"xp_scale", "value":1.2, "context":"general"}] # Changed to dict
         self.collector.get_scaling_parameters = MagicMock(return_value=mock_scaling_params)
 
         mock_faction_data = [{"id": "faction1", "name_i18n": {"en": "The Nobles"}}]

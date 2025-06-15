@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Optional
 from bot.game.character_processors.character_action_processor import CharacterActionProcessor
 from bot.game.models.character import Character as CharacterModel
 from bot.game.models.combat import Combat as CombatModel # For mocking combat instances
-from bot.ai.rules_schema import CoreGameRulesConfig, ItemDefinition, EquipmentSlotDefinition, StatusEffectDefinition, ItemEffectDefinition
+from bot.ai.rules_schema import CoreGameRulesConfig, EquipmentSlotDefinition, StatusEffectDefinition, ItemEffectDefinition # ItemDefinition removed
 from bot.game.managers.character_manager import CharacterManager
 from bot.game.managers.item_manager import ItemManager
 from bot.game.managers.inventory_manager import InventoryManager
@@ -97,7 +97,7 @@ class TestCharacterActionProcessor(unittest.IsolatedAsyncioTestCase):
         self.mock_send_callback_factory = MagicMock(return_value=self.mock_send_callback)
 
         self.rules_config = CoreGameRulesConfig(
-            item_definitions={}, equipment_slots={}, status_effects={},
+            equipment_slots={}, status_effects={}, # ItemDefinition removed
             item_effects={}, action_conflicts=[]
         )
         self.mock_rule_engine.rules_config_data = self.rules_config # CAP might get it from here
