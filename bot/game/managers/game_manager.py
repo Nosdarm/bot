@@ -528,7 +528,8 @@ class GameManager:
             openai_service=self.openai_service,
             event_manager=self.event_manager,
             equipment_manager=self.equipment_manager,
-            inventory_manager=self.inventory_manager
+            inventory_manager=self.inventory_manager,
+            db_service=self.db_service
         )
         logger.info("GameManager: CharacterActionProcessor initialized.")
 
