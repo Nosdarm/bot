@@ -365,7 +365,7 @@ class PromptContextCollector:
             if game_rules_data is None:
                 logger.warning(f"PromptContextCollector: No game rules found for guild {guild_id} in DB. Using empty rules.")
                 game_rules_data = {}
-
+        
         # Attributes
         character_stats_rules = game_rules_data.get("character_stats_rules", {})
         attributes_data = character_stats_rules.get("attributes", {})
@@ -471,7 +471,7 @@ class PromptContextCollector:
                     if member_levels:
                         party_average_level = sum(member_levels) / len(member_levels)
                         party_average_level = round(party_average_level, 1)
-
+        
         if party_average_level is None:
             party_average_level = float(character_level)
 
@@ -681,7 +681,7 @@ class PromptContextCollector:
         # For now, `get_scaling_parameters` will keep using `self.settings` as per current structure,
         # which means it might use stale or global rules, not guild-specific if `game_rules` was only in settings.
         # This is a limitation of the current refactoring scope. # This comment is now less relevant here.
-
+        
         character_stats_rules = game_rules_data.get("character_stats_rules", {}) # Use game_rules_data parameter
         stat_ranges_by_role = character_stats_rules.get("stat_ranges_by_role", {})
         if isinstance(stat_ranges_by_role, dict):
