@@ -71,7 +71,17 @@ class TestLoreManager(unittest.TestCase):
 
     def test_load_lore_from_file_success(self):
         self._write_dummy_lore_file(self.dummy_lore_data)
-        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_adapter=None)
+        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_service=None) # Changed db_adapter to db_service
+
+        print("--- DIAGNOSTIC LOG FROM LoreManager (test_load_lore_from_file_success) ---", file=sys.stderr)
+        if hasattr(self.lore_manager_instance, '_diagnostic_log'):
+          for entry in self.lore_manager_instance._diagnostic_log:
+            print(entry, file=sys.stderr)
+        else:
+          print("DEBUG_TEST: _diagnostic_log attribute not found on lore_manager_instance", file=sys.stderr)
+        print("--- END DIAGNOSTIC LOG ---", file=sys.stderr)
+        sys.stderr.flush()
+
         self.assertEqual(len(self.lore_manager_instance._lore_entries), 3)
         entry1 = self.lore_manager_instance.get_lore_entry("entry1")
         self.assertIsNotNone(entry1)
@@ -85,7 +95,7 @@ class TestLoreManager(unittest.TestCase):
 
         # LoreManager constructor calls load_lore_from_file.
         # It should create a dummy file if the specified one doesn't exist.
-        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_adapter=None)
+        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_service=None) # Changed db_adapter to db_service
         self.assertEqual(len(self.lore_manager_instance._lore_entries), 0)
         self.assertTrue(os.path.exists(CUSTOM_LORE_FILE_PATH)) # Check dummy file creation
         with open(CUSTOM_LORE_FILE_PATH, 'r') as f:
@@ -94,7 +104,7 @@ class TestLoreManager(unittest.TestCase):
 
     def test_load_lore_from_empty_json_list_file(self):
         self._write_dummy_lore_file([]) # Write an empty list
-        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_adapter=None)
+        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_service=None) # Changed db_adapter to db_service
         self.assertEqual(len(self.lore_manager_instance._lore_entries), 0)
 
     def test_load_lore_from_malformed_json_file(self):
@@ -102,19 +112,19 @@ class TestLoreManager(unittest.TestCase):
         with open(CUSTOM_LORE_FILE_PATH, 'w', encoding='utf-8') as f:
             f.write("this is not json {")
 
-        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_adapter=None)
+        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_service=None) # Changed db_adapter to db_service
         self.assertEqual(len(self.lore_manager_instance._lore_entries), 0)
         # The file itself might still exist but be empty or in its malformed state.
         # LoreManager's load method should handle the JSONDecodeError gracefully.
 
     def test_load_lore_from_json_not_a_list(self):
         self._write_dummy_lore_file({"not": "a list"}) # Write a JSON object instead of list
-        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_adapter=None)
+        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_service=None) # Changed db_adapter to db_service
         self.assertEqual(len(self.lore_manager_instance._lore_entries), 0)
 
     def test_get_lore_entry(self):
         self._write_dummy_lore_file(self.dummy_lore_data)
-        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_adapter=None)
+        self.lore_manager_instance = LoreManager(settings=self.mock_settings, db_service=None) # Changed db_adapter to db_service
 
         entry1 = self.lore_manager_instance.get_lore_entry("entry1")
         self.assertIsNotNone(entry1)
@@ -125,7 +135,7 @@ class TestLoreManager(unittest.TestCase):
 
     def test_get_lore_title(self):
         self._write_dummy_lore_file(self.dummy_lore_data)
-        manager = LoreManager(settings=self.mock_settings, db_adapter=None)
+        manager = LoreManager(settings=self.mock_settings, db_service=None) # Changed db_adapter to db_service
 
         # Primary language
         self.assertEqual(manager.get_lore_title("entry1", "en", "fr"), "Title 1 EN")
@@ -144,7 +154,7 @@ class TestLoreManager(unittest.TestCase):
 
     def test_get_lore_text(self):
         self._write_dummy_lore_file(self.dummy_lore_data)
-        manager = LoreManager(settings=self.mock_settings, db_adapter=None)
+        manager = LoreManager(settings=self.mock_settings, db_service=None) # Changed db_adapter to db_service
 
         # Primary language
         self.assertEqual(manager.get_lore_text("entry1", "en", "fr"), "Text 1 EN")
@@ -164,7 +174,7 @@ class TestLoreManager(unittest.TestCase):
     def test_persistence_hooks_noop(self):
         """Test that persistence hooks run without error (they are no-ops for file-based manager)."""
         self._write_dummy_lore_file(self.dummy_lore_data)
-        manager = LoreManager(settings=self.mock_settings, db_adapter=None)
+        manager = LoreManager(settings=self.mock_settings, db_service=None) # Changed db_adapter to db_service
         initial_count = len(manager._lore_entries)
 
         # These are async methods in LoreManager

@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 import json
+import sys # Added for logging
+import logging # Added for logging
 
 from bot.game.managers.item_manager import ItemManager
 # No DB adapter needed if we only test loading from settings for templates
@@ -8,6 +10,11 @@ from bot.game.managers.item_manager import ItemManager
 class TestItemManagerTemplateLoading(unittest.TestCase):
 
     def test_load_item_templates_i18n_conversion_and_name_derivation(self):
+        # Configure logging to be visible for this test
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr, force=True)
+        print("DEBUG_TEST: Logging configured for test_load_item_templates_i18n_conversion_and_name_derivation", file=sys.stderr)
+        sys.stderr.flush()
+
         """
         Test _load_item_templates correctly processes i18n fields from settings
         and derives a plain 'name'.
@@ -45,8 +52,12 @@ class TestItemManagerTemplateLoading(unittest.TestCase):
         # Patch _settings directly on an instance or pass it in __init__
         # For this test, let's assume ItemManager uses self._settings
 
-        item_manager = ItemManager(settings=mock_settings, db_adapter=None) # DB adapter not used in this specific test path
+        item_manager = ItemManager(settings=mock_settings, db_service=None) # Changed db_adapter to db_service
         # _load_item_templates is called in __init__
+
+        # Debug step: Check if templates are loaded into the internal cache
+        internal_templates_cache = item_manager._item_templates
+        self.assertIn("sword1", internal_templates_cache, "sword1 should be loaded into _item_templates by _load_item_templates")
 
         #Sword
         sword1_template = item_manager.get_item_template("sword1")
