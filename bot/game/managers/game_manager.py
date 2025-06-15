@@ -538,7 +538,24 @@ class GameManager:
         # PersistenceManager initialization
         if not hasattr(self, '_persistence_manager') or not self._persistence_manager:
             # from bot.game.managers.persistence_manager import PersistenceManager # Already imported
-            self._persistence_manager = PersistenceManager(db_service=self.db_service)
+            self._persistence_manager = PersistenceManager(
+                event_manager=self.event_manager,
+                character_manager=self.character_manager,
+                location_manager=self.location_manager,
+                db_service=self.db_service,
+                npc_manager=self.npc_manager,
+                combat_manager=self.combat_manager,
+                item_manager=self.item_manager,
+                time_manager=self.time_manager,
+                status_manager=self.status_manager,
+                party_manager=self.party_manager,
+                quest_manager=self.quest_manager,
+                game_log_manager=self.game_log_manager
+                # Other optional managers like dialogue, relationship, skill, spell, crafting, economy
+                # will be omitted for now as their initialization order relative to PersistenceManager
+                # is less clear or they might not be strictly required for its core functions.
+                # PersistenceManager is designed to handle None for these.
+            )
             logger.info("GameManager: PersistenceManager initialized in _initialize_processors_and_command_system.")
 
         # CommandRouter is typically one of the last things in this setup phase
