@@ -1132,6 +1132,84 @@ class RuleEngine:
 
         print(f"RuleEngine: process_economy_tick completed for guild '{guild_id_str}'.")
 
+    async def resolve_dice_roll(
+        self,
+        dice_string: str,
+        pre_rolled_result: Optional[int] = None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Resolves a dice roll string, e.g., "2d6+3", "1d20", "d6-1".
+        Optionally accepts a pre_rolled_result for one of the dice (typically the first d20).
+        context is currently unused but included for future extensibility (e.g., character-specific modifiers).
+        """
+        # print(f"RuleEngine: resolve_dice_roll called with dice_string='{dice_string}', pre_rolled_result={pre_rolled_result}, context={context}")
+
+        # Regex to parse dice string: (\d*)d(\d+)([+-]\d+)?
+        # Group 1: Number of dice (optional, defaults to 1)
+        # Group 2: Sides of dice
+        # Group 3: Modifier (optional, e.g., +3, -1), allowing spaces like " + 3" or " - 2"
+        # Regex to parse dice string: (\d*)d(\d+)(\s*[+-]\s*\d+)?
+        dice_string_cleaned = dice_string.lower().strip()
+        match = re.fullmatch(r"(\d*)d(\d+)(\s*[+-]\s*\d+)?", dice_string_cleaned)
+
+        if not match:
+            # Try matching simpler "d20" or "d6" forms (implies 1 die)
+            match_simple = re.fullmatch(r"d(\d+)(\s*[+-]\s*\d+)?", dice_string_cleaned)
+            if match_simple:
+                num_dice_str = "1"
+                sides_str = match_simple.group(1)
+                modifier_str = match_simple.group(2)
+            else:
+                raise ValueError(f"Invalid dice string format: {dice_string}")
+        else:
+            num_dice_str = match.group(1)
+            sides_str = match.group(2)
+            modifier_str = match.group(3)
+
+        num_dice = int(num_dice_str) if num_dice_str else 1
+        sides = int(sides_str)
+        # Process modifier string by removing spaces before converting to int
+        modifier = int(modifier_str.replace(" ", "")) if modifier_str else 0
+
+        if sides <= 0:
+            raise ValueError("Dice sides must be positive.")
+        if num_dice <= 0:
+            raise ValueError("Number of dice must be positive.")
+
+        rolls = []
+        roll_total = 0
+
+        for i in range(num_dice):
+            if i == 0 and pre_rolled_result is not None:
+                # Use pre_rolled_result for the first die if provided
+                # Ensure it's within the valid range for the die
+                if not (1 <= pre_rolled_result <= sides):
+                    # This could be an error, or we could clamp it, or just use it.
+                    # For now, let's use it but be aware it might be "out of bounds" for a natural roll.
+                    # Or, more strictly, raise an error if it's impossible for the die type.
+                    # Let's be strict for now.
+                    raise ValueError(f"pre_rolled_result {pre_rolled_result} is not valid for a d{sides}.")
+                roll = pre_rolled_result
+            else:
+                roll = random.randint(1, sides)
+            rolls.append(roll)
+            roll_total += roll
+
+        total_with_modifier = roll_total + modifier
+
+        result = {
+            "dice_string": dice_string,
+            "num_dice": num_dice,
+            "sides": sides,
+            "modifier": modifier,
+            "rolls": rolls, # List of individual dice results
+            "roll_total_raw": roll_total, # Sum of dice before modifier
+            "total": total_with_modifier, # Final result after modifier
+            "pre_rolled_input": pre_rolled_result # For logging/debugging
+        }
+        # print(f"RuleEngine: resolve_dice_roll result: {result}")
+        return result
 
 print("DEBUG: rule_engine.py module defined.")
 

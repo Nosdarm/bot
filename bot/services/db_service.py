@@ -1,23 +1,48 @@
 # bot/services/db_service.py
 import json
 import logging # Added
+import os # Moved import to top
 import traceback # Will be removed where logger.error(exc_info=True) is used
+import uuid # Moved uuid import to top
 from typing import Optional, List, Dict, Any
 
-from bot.database.postgres_adapter import PostgresAdapter
+from bot.database.base_adapter import BaseDbAdapter # Changed
+# from bot.database.postgres_adapter import PostgresAdapter # Moved into __init__
+# from bot.database.sqlite_adapter import SQLiteAdapter # Moved into __init__
 
 logger = logging.getLogger(__name__) # Added
 
 class DBService:
     """
-    Service layer for database operations, abstracting the PostgresAdapter.
+    Service layer for database operations, abstracting the database adapter.
     Handles data conversion (e.g., JSON string to dict) where necessary.
-    PostgresAdapter methods fetchone/fetchall now return dicts directly.
+    Adapter methods fetchone/fetchall should return dicts directly.
     """
 
-    def __init__(self):
-        self.adapter = PostgresAdapter()
-        logger.info("DBService initialized.") # Added
+    def __init__(self, adapter: Optional[BaseDbAdapter] = None, db_type: Optional[str] = None):
+        if adapter:
+            self.adapter: BaseDbAdapter = adapter
+            logger.info(f"DBService initialized with provided adapter: {type(self.adapter).__name__}")
+        else:
+            # Determine DB type from argument or environment variable
+            # In a real application, this might come from a dedicated config service
+            effective_db_type = db_type or os.getenv("DATABASE_TYPE", "postgres").lower()
+
+            if effective_db_type == "sqlite":
+                from bot.database.sqlite_adapter import SQLiteAdapter # Import here
+                # Potentially pass db_path from config here if SQLiteAdapter takes it
+                self.adapter: BaseDbAdapter = SQLiteAdapter()
+                logger.info("DBService initialized with SQLiteAdapter.")
+            elif effective_db_type == "postgres":
+                from bot.database.postgres_adapter import PostgresAdapter # Import here
+                # Potentially pass db_url from config here
+                self.adapter: BaseDbAdapter = PostgresAdapter()
+                logger.info("DBService initialized with PostgresAdapter.")
+            else:
+                raise ValueError(f"Unsupported database type: {effective_db_type}")
+
+        # Ensure os is imported if not already
+        # import os # Removed from here
 
     async def connect(self) -> None:
         """Connects to the database."""
@@ -785,13 +810,22 @@ class DBService:
 
 
     async def create_entity(self, table_name: str, data: Dict[str, Any], id_field: str = 'id') -> Optional[str]:
-        import uuid
+        # import uuid # Moved to top
         # import json # Already imported
+        # To check adapter type
+        # from bot.database.sqlite_adapter import SQLiteAdapter # No longer needed here
+        # import uuid # Moved to top
 
         original_guild_id = data.get('guild_id', 'N/A') # For logging
 
         if id_field == 'id' and 'id' not in data:
             data['id'] = str(uuid.uuid4())
+
+        # The ID that will be used for the entity, generated if not provided.
+        entity_id = data.get(id_field)
+        if not entity_id: # Should not happen if id_field is 'id' due to above block, but as a safeguard.
+            logger.error("DBService: Entity ID missing in create_entity after generation attempt for table %s.", table_name)
+            return None
 
         processed_data = {}
         for key, value in data.items():
@@ -802,22 +836,33 @@ class DBService:
         
         columns = ', '.join(processed_data.keys())
         placeholders = ', '.join([f'${i+1}' for i in range(len(processed_data))])
-        sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
-        if id_field in data:
-            sql += f" RETURNING {id_field}"
+        sql_base = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+
+        sql_to_execute = sql_base
+        use_returning_clause = self.adapter.supports_returning_id_on_insert
+
+        if use_returning_clause and id_field in processed_data: # id_field must be in processed_data to be returned
+            sql_to_execute += f" RETURNING {id_field}"
         
-        entity_id_to_log = data.get(id_field, 'N/A')
         try:
-            if id_field in data and " RETURNING " in sql:
-                returned_val = await self.adapter.execute_insert(sql, tuple(processed_data.values()))
-                logger.info("DBService: Created entity in table '%s' with ID '%s' (Guild: %s).", table_name, returned_val, original_guild_id) # Added
-                return returned_val
+            if use_returning_clause:
+                # This path is for adapters that support RETURNING (e.g., Postgres)
+                returned_val = await self.adapter.execute_insert(sql_to_execute, tuple(processed_data.values()))
+                if returned_val:
+                    logger.info("DBService: Created entity in table '%s' with ID '%s' (using RETURNING, Guild: %s).", table_name, returned_val, original_guild_id)
+                    return returned_val
+                else:
+                    # Fallback if RETURNING didn't work as expected but no exception (should not happen with Postgres)
+                    logger.warning("DBService: Created entity in table '%s', RETURNING used but no value returned. Fallback to input ID '%s' (Guild: %s).", table_name, entity_id, original_guild_id)
+                    return entity_id # Return the generated/input ID as a fallback
             else:
-                await self.adapter.execute(sql, tuple(processed_data.values()))
-                logger.info("DBService: Created entity in table '%s' with ID '%s' (Guild: %s, no RETURNING used).", table_name, entity_id_to_log, original_guild_id) # Added
-                return data.get(id_field)
+                # This path is for adapters that do not use RETURNING here (e.g., SQLite)
+                # execute_insert for SQLiteAdapter is now expected to return None.
+                await self.adapter.execute_insert(sql_to_execute, tuple(processed_data.values()))
+                logger.info("DBService: Created entity in table '%s' with ID '%s' (no RETURNING, Guild: %s).", table_name, entity_id, original_guild_id)
+                return entity_id # Return the generated/input ID
         except Exception as e:
-            logger.error("DBService: Error creating entity in table '%s' (ID: %s, Guild: %s): %s", table_name, entity_id_to_log, original_guild_id, e, exc_info=True) # Changed
+            logger.error("DBService: Error creating entity in table '%s' (ID: %s, Guild: %s): %s", table_name, entity_id, original_guild_id, e, exc_info=True)
             return None
 
     async def get_entity(self, table_name: str, entity_id: str, guild_id: Optional[str] = None, id_field: str = 'id') -> Optional[Dict[str, Any]]:
@@ -851,22 +896,28 @@ class DBService:
 
     async def update_entity(self, table_name: str, entity_id: str, data: Dict[str, Any], guild_id: Optional[str] = None, id_field: str = 'id') -> bool:
         # import json # Already imported
+        # To check adapter type
+        # from bot.database.sqlite_adapter import SQLiteAdapter # Already moved to top and not needed here specifically
+
         if not data:
             logger.warning("DBService: No data provided for updating entity '%s' in table '%s'.", entity_id, table_name) # Added
             return False
 
-        processed_data = {}
+        # processed_data = {} # Not used here with current logic
         param_idx = 1
         set_clauses = []
         params_list = []
 
+        # is_sqlite = isinstance(self.adapter, SQLiteAdapter) # Replaced by property
+        json_cast_str = self.adapter.json_column_type_cast or "" # Empty string if None
+
         for key, value in data.items():
             if isinstance(value, (dict, list)):
-                set_clauses.append(f"{key} = ${param_idx}::jsonb")
-                params_list.append(json.dumps(value))
+                params_list.append(json.dumps(value)) # Value is always JSON string for dict/list
+                set_clauses.append(f"{key} = ${param_idx}{json_cast_str}")
             else:
-                set_clauses.append(f"{key} = ${param_idx}")
                 params_list.append(value)
+                set_clauses.append(f"{key} = ${param_idx}")
             param_idx += 1
         
         set_clause_str = ', '.join(set_clauses)
