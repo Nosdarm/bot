@@ -6,6 +6,12 @@ from pydantic import BaseModel # For error detail model
 import logging
 import time
 import uvicorn # For running the app if this becomes the main entry point
+import os # ADDED for os.getenv
+
+from bot.game.managers.game_manager import GameManager # ADDED
+from bot.services.db_service import DBService # ADDED
+# from bot.services.config_service import ConfigService # Assuming a ConfigService exists or will be created
+# For now, we can simulate config loading if ConfigService is not ready.
 
 from bot.api.routers import guild as guild_router
 from bot.api.routers import player as player_router
@@ -20,6 +26,7 @@ from bot.api.routers import combat as combat_router
 from bot.api.routers import rpg_character_api
 from bot.api.routers import item_router  # New Item router
 from bot.api.routers import inventory_router  # New Inventory router
+from bot.api.routers import quest_router # ADDED: Import the new quest router
 # from bot.api.dependencies import create_db_and_tables # If you want to create tables on startup
 
 # Configure basic logging
@@ -153,12 +160,74 @@ app.include_router(
     tags=["Character Inventory (New)"]
 )
 
+# ADDED: Include the Quest router
+# It's not guild-specific at the prefix level, as guild_id is part of its payload for /handle_event
+app.include_router(
+    quest_router.router,
+    prefix="/api/v1", # The /quests prefix is defined within the router itself
+    tags=["Quests"]
+)
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("FastAPI application startup...")
     # await create_db_and_tables() # Uncomment if you want to ensure tables are created on startup by FastAPI app
     # (Alembic should be the primary way to manage schema)
-    logger.info("FastAPI application started.")
+
+    # Initialize DBService
+    # DB_TYPE can be an environment variable, e.g., "postgres" or "sqlite"
+    # DB_URL (for Postgres) or DB_PATH (for SQLite) would also come from env/config
+    db_service = DBService(db_type=os.getenv("DATABASE_TYPE", "postgres"))
+    await db_service.connect()
+    # Initialize database schema (e.g., create tables if they don't exist)
+    # In a production setup, Alembic migrations are preferred over this.
+    # await db_service.initialize_database()
+    logger.info("DBService connected and initialized.")
+    app.state.db_service = db_service # Make DBService available globally if needed by dependencies
+
+    # Initialize ConfigService (simulated for now)
+    # config_service = ConfigService(config_file_path="data/settings.json")
+    # For this example, using a placeholder. A real app would load from file or env.
+    game_settings: Dict[str, Any] = {
+        "default_language": os.getenv("DEFAULT_LANGUAGE", "en"),
+        "target_languages": ["en", "ru"], # Example
+        "openai_api_key": os.getenv("OPENAI_API_KEY"),
+        # Add other relevant global game settings if GameManager expects them directly
+        # Guild-specific settings might be loaded by GameManager per guild.
+    }
+    logger.info("Simulated config loaded.")
+
+    # Initialize GameManager
+    # GameManager's __init__ should handle creating all its sub-managers and services,
+    # passing them the db_service, relevant settings, and each other as needed.
+    logger.info("Initializing GameManager...")
+    game_manager = GameManager(
+        settings=game_settings,
+        db_service=db_service
+    )
+
+    # Assuming GameManager has a method to initialize its sub-managers and load initial data.
+    # This might involve loading data for all guilds or preparing for on-demand loading.
+    await game_manager.initialize_all_managers()
+    logger.info("GameManager initialized its managers.")
+
+    # Store GameManager in app.state to make it accessible in request handlers via dependencies
+    app.state.game_manager = game_manager
+    logger.info("GameManager instance stored in app.state.")
+
+    logger.info("FastAPI application started successfully.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("FastAPI application shutting down...")
+    if hasattr(app.state, 'db_service') and app.state.db_service:
+        await app.state.db_service.close()
+        logger.info("DBService connection closed.")
+    # If GameManager has a specific shutdown method for its components:
+    # if hasattr(app.state, 'game_manager') and app.state.game_manager:
+    #     await app.state.game_manager.shutdown()
+    #     logger.info("GameManager shutdown complete.")
+    logger.info("FastAPI application shutdown complete.")
 
 @app.get("/", tags=["Root"], summary="Root path for API health check")
 async def read_root():

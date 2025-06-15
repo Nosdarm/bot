@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from bot.game.managers.economy_manager import EconomyManager
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.game_log_manager import GameLogManager
+    from bot.services.notification_service import NotificationService # ADDED
+    from bot.ai.prompt_context_collector import PromptContextCollector # ADDED
     # Ensure DialogueManager is here if used in __init__ or methods
     from bot.game.managers.dialogue_manager import DialogueManager
 
@@ -27,6 +29,8 @@ if TYPE_CHECKING:
     # CustomFunctionCallback = Callable[[GameState, Dict[str, Any]], Awaitable[None]] # GameState might be Any
     CustomFunctionCallback = Callable[[Any, Dict[str, Any]], Awaitable[None]]
 
+import logging # ADDED
+logger = logging.getLogger(__name__) # ADDED
 
 class ConsequenceProcessor:
     """
@@ -43,13 +47,14 @@ class ConsequenceProcessor:
         event_manager: EventManager,
         quest_manager: QuestManager,
         status_manager: StatusManager,
-        dialogue_manager: Optional["DialogueManager"] = None, # Add if dialogue consequences are handled
-        # combat_manager: Optional[CombatManager] = None, # Add if combat consequences are handled
-        game_state: Optional[Any] = None, # For global state or complex interactions
+        dialogue_manager: Optional["DialogueManager"] = None,
+        game_state: Optional[Any] = None,
         rule_engine: Optional["RuleEngine"] = None,
         economy_manager: Optional["EconomyManager"] = None,
         relationship_manager: Optional["RelationshipManager"] = None,
-        game_log_manager: Optional["GameLogManager"] = None
+        game_log_manager: Optional["GameLogManager"] = None,
+        notification_service: Optional["NotificationService"] = None, # ADDED
+        prompt_context_collector: Optional["PromptContextCollector"] = None # ADDED
     ):
         self._character_manager = character_manager
         self._npc_manager = npc_manager
@@ -65,268 +70,313 @@ class ConsequenceProcessor:
         self._economy_manager = economy_manager
         self._relationship_manager = relationship_manager
         self._game_log_manager = game_log_manager
+        self._notification_service = notification_service # ADDED
+        self._prompt_context_collector = prompt_context_collector # ADDED
+
 
         # A registry for custom functions if you want to make it extensible
         self._custom_functions: Dict[str, CustomFunctionCallback] = {}
-        print("ConsequenceProcessor initialized.")
+        logger.info("ConsequenceProcessor initialized.") # Use logger
 
     def register_custom_function(self, name: str, func: CustomFunctionCallback) -> None:
         """Registers a custom consequence function."""
         if name in self._custom_functions:
-            print(f"Warning: Overwriting custom consequence function '{name}'.")
+            logger.warning(f"Overwriting custom consequence function '{name}'.") # Use logger
         self._custom_functions[name] = func
-        print(f"Custom consequence function '{name}' registered.")
+        logger.info(f"Custom consequence function '{name}' registered.") # Use logger
 
     async def process_consequences(
         self,
         guild_id: str,
         consequences: List[Dict[str, Any]],
-        source_entity_id: Optional[str] = None, # e.g., NPC causing the consequence
-        target_entity_id: Optional[str] = None, # e.g., Character affected
-        event_context: Optional[Dict[str, Any]] = None, # Context from an event or action
+        source_entity_id: Optional[str] = None,
+        target_entity_id: Optional[str] = None,
+        event_context: Optional[Dict[str, Any]] = None,
         send_callback_factory: Optional[Callable[[int], Callable[[str], Awaitable[None]]]] = None
     ) -> None:
         """
         Processes a list of consequence dictionaries.
-
-        Args:
-            guild_id: The ID of the guild where consequences occur.
-            consequences: A list of dictionaries, each defining a consequence.
-                          Example: {'action_type': 'ADD_ITEM_TO_CHARACTER', 'item_template_id': 'sword', 'character_id': 'char123', 'quantity': 1}
-            source_entity_id: Optional ID of the entity that is the source of these consequences.
-            target_entity_id: Optional ID of the primary entity targeted by these consequences.
-                              This can be overridden by 'character_id', 'npc_id' etc. within a consequence.
-            event_context: Optional dictionary providing context from the event or action triggering these consequences.
-            send_callback_factory: Optional factory to create send_message callbacks for specific channels.
+        (Args documentation remains the same)
         """
         if not consequences:
             return
 
-        print(f"ConsequenceProcessor: Processing {len(consequences)} consequences for guild {guild_id}.")
+        logger.info(f"Processing {len(consequences)} consequences for guild {guild_id}. Source: {source_entity_id}, Target: {target_entity_id}")
 
-        for i, cons in enumerate(consequences):
-            action_type = cons.get('action_type')
+        for i, cons_dict in enumerate(consequences):
+            action_type = cons_dict.get('action_type')
             if not action_type:
-                print(f"Warning: Consequence {i+1} missing 'action_type'. Skipping: {cons}")
+                logger.warning(f"Consequence {i+1} missing 'action_type'. Skipping: {cons_dict}")
                 continue
 
-            # Resolve target_id: use specific ID from consequence, fallback to primary target_entity_id
-            # This helps direct consequences correctly when a list has mixed targets.
-            current_target_id = cons.get('character_id') or cons.get('npc_id') or cons.get('entity_id') or target_entity_id
+            current_target_id = cons_dict.get('character_id') or cons_dict.get('npc_id') or cons_dict.get('entity_id') or target_entity_id
+            target_entity_type_str = "Unknown" # Default
+            log_player_id = None
 
-            print(f"ConsequenceProcessor: Executing consequence {i+1}/{len(consequences)}: {action_type} for target '{current_target_id}' (Source: '{source_entity_id}')")
+            logger.debug(f"Executing consequence {i+1}/{len(consequences)}: {action_type} for target '{current_target_id}' (Source: '{source_entity_id}')")
 
             try:
+                # --- MODIFY_NPC_STATS ---
                 if action_type == "MODIFY_NPC_STATS":
-                    npc_id = cons.get('npc_id', current_target_id)
-                    stats_changes = cons.get('stats_changes') # {'health': -10, 'mana': 5}
-                    if npc_id and stats_changes:
+                    npc_id = cons_dict.get('npc_id', current_target_id)
+                    stats_changes = cons_dict.get('stats_changes')
+                    if npc_id and stats_changes and self._npc_manager:
                         await self._npc_manager.modify_npc_stats(guild_id, npc_id, stats_changes)
+                        target_entity_type_str = "NPC"
+                        if self._game_log_manager:
+                            await self._game_log_manager.log_event(
+                                guild_id=guild_id, event_type="CONSEQUENCE_NPC_STAT_MODIFIED",
+                                details={"consequence": cons_dict, "npc_id": npc_id, "changes": stats_changes},
+                                source_entity_id=source_entity_id, target_entity_id=npc_id, target_entity_type=target_entity_type_str
+                            )
                     else:
-                        print(f"Warning: Missing npc_id or stats_changes for MODIFY_NPC_STATS: {cons}")
+                        logger.warning(f"Missing npc_id, stats_changes or NpcManager for MODIFY_NPC_STATS: {cons_dict}")
 
+                # --- MODIFY_CHARACTER_STATS ---
                 elif action_type == "MODIFY_CHARACTER_STATS":
-                    char_id = cons.get('character_id', current_target_id)
-                    stats_changes = cons.get('stats_changes')
-                    if char_id and stats_changes:
+                    char_id = cons_dict.get('character_id', current_target_id)
+                    stats_changes = cons_dict.get('stats_changes')
+                    if char_id and stats_changes and self._character_manager:
                         await self._character_manager.modify_character_stats(guild_id, char_id, stats_changes)
+                        target_entity_type_str = "Character"
+                        log_player_id = char_id
+                        if self._game_log_manager:
+                             await self._game_log_manager.log_event(
+                                guild_id=guild_id, event_type="CONSEQUENCE_CHAR_STAT_MODIFIED",
+                                details={"consequence": cons_dict, "character_id": char_id, "changes": stats_changes},
+                                player_id=log_player_id, source_entity_id=source_entity_id, target_entity_id=char_id, target_entity_type=target_entity_type_str
+                            )
                     else:
-                        print(f"Warning: Missing character_id or stats_changes for MODIFY_CHARACTER_STATS: {cons}")
+                        logger.warning(f"Missing character_id, stats_changes or CharacterManager for MODIFY_CHARACTER_STATS: {cons_dict}")
 
+                # --- ADD_ITEM_TO_CHARACTER ---
                 elif action_type == "ADD_ITEM_TO_CHARACTER":
-                    char_id = cons.get('character_id', current_target_id)
-                    item_template_id = cons.get('item_template_id')
-                    quantity = cons.get('quantity', 1.0) # Default to 1.0 as items use REAL for quantity
-                    state_vars = cons.get('state_variables', {})
-                    if char_id and item_template_id:
+                    char_id = cons_dict.get('character_id', current_target_id)
+                    item_template_id = cons_dict.get('item_template_id')
+                    quantity = int(cons_dict.get('quantity', 1))
+                    state_vars = cons_dict.get('state_variables', {})
+                    if char_id and item_template_id and self._item_manager:
                         await self._item_manager.give_item_to_character(guild_id, char_id, item_template_id, quantity, state_vars)
-                    else:
-                        print(f"Warning: Missing character_id or item_template_id for ADD_ITEM_TO_CHARACTER: {cons}")
+                        target_entity_type_str = "Character"
+                        log_player_id = char_id
+                        if self._game_log_manager:
+                            await self._game_log_manager.log_event(
+                                guild_id=guild_id, event_type="CONSEQUENCE_ITEM_ADDED_TO_CHAR",
+                                details={"consequence": cons_dict, "item_template_id": item_template_id, "quantity": quantity, "character_id": char_id},
+                                player_id=log_player_id, source_entity_id=source_entity_id, target_entity_id=char_id, target_entity_type=target_entity_type_str
+                            )
+                        if self._notification_service:
+                            item_name = item_template_id
+                            # Placeholder for fetching localized item name
+                            # lang_code = "en" # Default
+                            # if self._prompt_context_collector: lang_code = self._prompt_context_collector.get_main_language_code()
+                            # if self._character_manager: # Check if char manager can give lang
+                            #     char_obj = await self._character_manager.get_character(guild_id, char_id)
+                            #     if char_obj and char_obj.selected_language: lang_code = char_obj.selected_language
+                            # if self._item_manager:
+                            #     item_template = await self._item_manager.get_item_template(guild_id, item_template_id)
+                            #     if item_template: item_name = item_template.get_name(lang_code)
 
+                            await self._notification_service.notify_player(
+                                player_id=char_id, message_type="item_received",
+                                payload={"message": f"You received {quantity}x {item_name}.", "item_name": item_name, "quantity": quantity, "source": source_entity_id or "Unknown Source"}
+                            )
+                    else:
+                        logger.warning(f"Missing char_id, item_template_id or ItemManager for ADD_ITEM_TO_CHARACTER: {cons_dict}")
+
+                # --- REMOVE_ITEM_FROM_CHARACTER ---
                 elif action_type == "REMOVE_ITEM_FROM_CHARACTER":
-                    char_id = cons.get('character_id', current_target_id)
-                    item_id_or_template_id = cons.get('item_id') or cons.get('item_template_id')
-                    quantity = cons.get('quantity', 1.0)
-                    if char_id and item_id_or_template_id:
-                        # Determine if removing by specific instance ID or by template ID
-                        if cons.get('item_id'):
-                             await self._item_manager.remove_item_from_character_by_instance_id(guild_id, char_id, cons.get('item_id'), quantity)
-                        else: # by template_id
-                             await self._item_manager.remove_item_from_character_by_template_id(guild_id, char_id, cons.get('item_template_id'), quantity)
-                    else:
-                        print(f"Warning: Missing character_id or item_id/item_template_id for REMOVE_ITEM_FROM_CHARACTER: {cons}")
-
-                elif action_type == "CHANGE_LOCATION":
-                    entity_id = cons.get('entity_id', current_target_id) # Can be character or NPC
-                    entity_type = cons.get('entity_type') # 'character' or 'npc'
-                    new_location_id = cons.get('new_location_id')
-                    if entity_id and entity_type and new_location_id:
-                        if entity_type.lower() == 'character':
-                            await self._character_manager.move_character_to_location(guild_id, entity_id, new_location_id)
-                        elif entity_type.lower() == 'npc':
-                            await self._npc_manager.move_npc_to_location(guild_id, entity_id, new_location_id)
+                    char_id = cons_dict.get('character_id', current_target_id)
+                    item_id_or_template_id = cons_dict.get('item_id') or cons_dict.get('item_template_id')
+                    quantity = int(cons_dict.get('quantity', 1))
+                    if char_id and item_id_or_template_id and self._item_manager:
+                        removed_by_instance = bool(cons_dict.get('item_id'))
+                        if removed_by_instance:
+                             await self._item_manager.remove_item_from_character_by_instance_id(guild_id, char_id, str(cons_dict.get('item_id')), quantity)
                         else:
-                            print(f"Warning: Unknown entity_type '{entity_type}' for CHANGE_LOCATION: {cons}")
+                             await self._item_manager.remove_item_from_character_by_template_id(guild_id, char_id, str(cons_dict.get('item_template_id')), quantity)
+                        target_entity_type_str = "Character"
+                        log_player_id = char_id
+                        if self._game_log_manager:
+                             await self._game_log_manager.log_event(
+                                guild_id=guild_id, event_type="CONSEQUENCE_ITEM_REMOVED_FROM_CHAR",
+                                details={"consequence": cons_dict, "item_id_or_template": item_id_or_template_id, "quantity": quantity, "character_id": char_id},
+                                player_id=log_player_id, source_entity_id=source_entity_id, target_entity_id=char_id, target_entity_type=target_entity_type_str
+                            )
+                        if self._notification_service:
+                             item_name = str(item_id_or_template_id)
+                             await self._notification_service.notify_player(
+                                player_id=char_id, message_type="item_lost",
+                                payload={"message": f"{quantity}x {item_name} removed from your inventory.", "item_name": item_name, "quantity": quantity, "source": source_entity_id or "Unknown Source"}
+                            )
                     else:
-                        print(f"Warning: Missing entity_id, entity_type, or new_location_id for CHANGE_LOCATION: {cons}")
+                        logger.warning(f"Missing char_id, item_id/template_id or ItemManager for REMOVE_ITEM_FROM_CHARACTER: {cons_dict}")
 
+                # --- CHANGE_LOCATION ---
+                elif action_type == "CHANGE_LOCATION":
+                    entity_id = cons_dict.get('entity_id', current_target_id)
+                    entity_type_param = cons_dict.get('entity_type')
+                    new_location_id = cons_dict.get('new_location_id')
+                    if entity_id and entity_type_param and new_location_id:
+                        moved = False
+                        if entity_type_param.lower() == 'character' and self._character_manager:
+                            await self._character_manager.move_character_to_location(guild_id, entity_id, new_location_id)
+                            target_entity_type_str = "Character"; log_player_id = entity_id; moved = True
+                        elif entity_type_param.lower() == 'npc' and self._npc_manager:
+                            await self._npc_manager.move_npc_to_location(guild_id, entity_id, new_location_id)
+                            target_entity_type_str = "NPC"; moved = True
+                        else:
+                            logger.warning(f"Unknown entity_type '{entity_type_param}' or missing manager for CHANGE_LOCATION: {cons_dict}")
+
+                        if moved and self._game_log_manager:
+                            await self._game_log_manager.log_event(
+                                guild_id=guild_id, event_type="CONSEQUENCE_ENTITY_LOCATION_CHANGED",
+                                details={"consequence": cons_dict, "entity_id": entity_id, "new_location_id": new_location_id, "entity_type": entity_type_param},
+                                player_id=log_player_id, source_entity_id=source_entity_id, target_entity_id=entity_id, target_entity_type=target_entity_type_str
+                            )
+                    else:
+                        logger.warning(f"Missing entity_id, entity_type, or new_location_id for CHANGE_LOCATION: {cons_dict}")
+
+                # --- START_EVENT ---
                 elif action_type == "START_EVENT":
-                    event_template_id = cons.get('event_template_id')
-                    channel_id = cons.get('channel_id') # Optional, might come from context
-                    involved_character_ids = cons.get('character_ids', [])
-                    involved_npc_ids = cons.get('npc_ids', [])
-                    initial_state = cons.get('initial_state', {})
-
-                    if event_template_id:
-                        # Ensure involved_character_ids has the primary target if applicable
-                        if current_target_id and current_target_id not in involved_character_ids and self._character_manager.get_character(guild_id, current_target_id):
-                             involved_character_ids.append(current_target_id)
+                    event_template_id = cons_dict.get('event_template_id')
+                    if event_template_id and self._event_manager:
+                        # Ensure involved_character_ids has the primary target if applicable and if it's a character
+                        involved_character_ids = cons_dict.get('character_ids', [])
+                        if current_target_id and self._character_manager and await self._character_manager.get_character(guild_id, current_target_id):
+                             if current_target_id not in involved_character_ids:
+                                involved_character_ids.append(current_target_id)
 
                         await self._event_manager.start_event(
-                            guild_id=guild_id,
-                            event_template_id=event_template_id,
-                            channel_id=channel_id, # Needs a valid channel
-                            involved_character_ids=involved_character_ids,
-                            involved_npc_ids=involved_npc_ids,
-                            initial_state_data=initial_state,
-                            send_callback_factory=send_callback_factory # Pass this down
+                            guild_id=guild_id, event_template_id=event_template_id,
+                            channel_id=cons_dict.get('channel_id'), involved_character_ids=involved_character_ids,
+                            involved_npc_ids=cons_dict.get('npc_ids', []), initial_state_data=cons_dict.get('initial_state', {}),
+                            send_callback_factory=send_callback_factory
                         )
+                        if self._game_log_manager:
+                            await self._game_log_manager.log_event(
+                                guild_id=guild_id, event_type="CONSEQUENCE_EVENT_STARTED",
+                                details={"consequence": cons_dict, "event_template_id": event_template_id},
+                                source_entity_id=source_entity_id
+                            )
                     else:
-                        print(f"Warning: Missing event_template_id for START_EVENT: {cons}")
+                        logger.warning(f"Missing event_template_id or EventManager for START_EVENT: {cons_dict}")
 
+                # --- UPDATE_QUEST_STATE ---
                 elif action_type == "UPDATE_QUEST_STATE":
-                    quest_id = cons.get('quest_id')
-                    character_id = cons.get('character_id', current_target_id)
-                    new_stage_id = cons.get('new_stage_id')
-                    objective_updates = cons.get('objective_updates') # e.g., {'kill_goblins': {'increment': 5}}
-                    is_completed = cons.get('is_completed')
-                    is_failed = cons.get('is_failed')
-
-                    if quest_id and character_id:
-                        await self._quest_manager.update_quest_progress(
-                            guild_id=guild_id,
-                            character_id=character_id,
-                            quest_id=quest_id,
-                            new_stage_id=new_stage_id,
-                            objective_updates=objective_updates,
-                            completed=is_completed,
-                            failed=is_failed
+                    quest_id = cons_dict.get('quest_id')
+                    character_id = cons_dict.get('character_id', current_target_id)
+                    if quest_id and character_id and self._quest_manager:
+                        await self._quest_manager.update_quest_progress( # This method needs to exist in QuestManager
+                            guild_id=guild_id, character_id=character_id, quest_id=quest_id,
+                            new_stage_id=cons_dict.get('new_stage_id'), # Assuming update_quest_progress handles stages/steps
+                            objective_updates=cons_dict.get('objective_updates'),
+                            completed=cons_dict.get('is_completed'), failed=cons_dict.get('is_failed')
                         )
+                        target_entity_type_str = "Character"; log_player_id = character_id
+                        if self._game_log_manager:
+                             await self._game_log_manager.log_event(
+                                guild_id=guild_id, event_type="CONSEQUENCE_QUEST_STATE_UPDATED",
+                                details={"consequence": cons_dict, "quest_id": quest_id, "character_id": character_id},
+                                player_id=log_player_id, source_entity_id=source_entity_id, target_entity_id=character_id, target_entity_type=target_entity_type_str
+                            )
+                        if self._notification_service:
+                            status_str = "updated"
+                            if cons_dict.get('is_completed'): status_str = "completed"
+                            elif cons_dict.get('is_failed'): status_str = "failed"
+                            await self._notification_service.notify_player(
+                                player_id=character_id, message_type="quest_update",
+                                payload={"message": f"Quest '{quest_id}' status: {status_str}.", "quest_id": quest_id, "new_status": status_str, "source": source_entity_id or "Unknown Source"}
+                            )
                     else:
-                        print(f"Warning: Missing quest_id or character_id for UPDATE_QUEST_STATE: {cons}")
+                        logger.warning(f"Missing quest_id, character_id or QuestManager for UPDATE_QUEST_STATE: {cons_dict}")
 
+                # --- APPLY_STATUS_EFFECT ---
                 elif action_type == "APPLY_STATUS_EFFECT":
-                    target_id = cons.get('target_id', current_target_id)
-                    target_type = cons.get('target_type') # 'character', 'npc', 'party', 'location'
-                    status_type = cons.get('status_type')
-                    duration = cons.get('duration') # Optional, in game seconds
-                    source_id = cons.get('source_id', source_entity_id)
-                    status_state_vars = cons.get('state_variables', {})
-
-                    if target_id and target_type and status_type:
+                    target_id = cons_dict.get('target_id', current_target_id)
+                    target_type_param = cons_dict.get('target_type')
+                    status_type_val = cons_dict.get('status_type')
+                    if target_id and target_type_param and status_type_val and self._status_manager:
                         await self._status_manager.apply_status_effect(
-                            guild_id=guild_id,
-                            target_id=target_id,
-                            target_type=target_type,
-                            status_type=status_type,
-                            duration=duration,
-                            source_id=source_id,
-                            state_variables=status_state_vars
+                            guild_id=guild_id, target_id=target_id, target_type=target_type_param,
+                            status_type=status_type_val, duration=cons_dict.get('duration'),
+                            source_id=cons_dict.get('source_id', source_entity_id),
+                            state_variables=cons_dict.get('state_variables', {})
                         )
+                        target_entity_type_str = target_type_param.capitalize()
+                        log_player_id = target_id if target_type_param.lower() == 'character' else None
+                        if self._game_log_manager:
+                            await self._game_log_manager.log_event(
+                                guild_id=guild_id, event_type="CONSEQUENCE_STATUS_EFFECT_APPLIED",
+                                details={"consequence": cons_dict, "target_id": target_id, "status": status_type_val},
+                                player_id=log_player_id, source_entity_id=source_entity_id, target_entity_id=target_id, target_entity_type=target_entity_type_str
+                            )
                     else:
-                        print(f"Warning: Missing target_id, target_type, or status_type for APPLY_STATUS_EFFECT: {cons}")
+                        logger.warning(f"Missing target_id, target_type, status_type or StatusManager for APPLY_STATUS_EFFECT: {cons_dict}")
 
+                # --- CUSTOM_FUNCTION ---
                 elif action_type == "CUSTOM_FUNCTION":
-                    func_name = cons.get('function_name')
-                    params = cons.get('params', {})
+                    func_name = cons_dict.get('function_name')
+                    params = cons_dict.get('params', {})
                     if func_name and func_name in self._custom_functions:
-                        # Ensure GameState is passed if the custom function expects it
-                        # This example assumes GameState might not always be available or needed
-                        # but if it is, it should be passed from self._game_state
                         gs = self._game_state
-                        if not gs:
-                             print(f"Warning: GameState not available for CUSTOM_FUNCTION '{func_name}'. Some operations might fail.")
-                        # We might need to pass more context to custom functions
-                        full_params = {
-                            **params,
-                            'guild_id': guild_id,
-                            'source_entity_id': source_entity_id,
-                            'target_entity_id': current_target_id, # current_target_id is better here
-                            'event_context': event_context,
-                            'send_callback_factory': send_callback_factory
-                        }
+                        if not gs: logger.warning(f"GameState not available for CUSTOM_FUNCTION '{func_name}'. Some operations might fail.")
+                        full_params = {**params, 'guild_id': guild_id, 'source_entity_id': source_entity_id, 'target_entity_id': current_target_id, 'event_context': event_context, 'send_callback_factory': send_callback_factory}
                         await self._custom_functions[func_name](gs, full_params)
+                        if self._game_log_manager:
+                             await self._game_log_manager.log_event(
+                                guild_id=guild_id, event_type=f"CONSEQUENCE_CUSTOM_FUNC_{func_name.upper()}",
+                                details={"consequence": cons_dict, "function_name": func_name, "params": params},
+                                source_entity_id=source_entity_id, target_entity_id=current_target_id
+                            )
                     elif func_name:
-                        print(f"Warning: Custom function '{func_name}' not registered. Skipping.")
+                        logger.warning(f"Custom function '{func_name}' not registered. Skipping.")
                     else:
-                        print(f"Warning: Missing function_name for CUSTOM_FUNCTION: {cons}")
+                        logger.warning(f"Missing function_name for CUSTOM_FUNCTION: {cons_dict}")
 
+                # --- AWARD_XP ---
                 elif action_type == "AWARD_XP":
-                    char_id = cons.get('character_id', current_target_id)
-                    xp_amount_val = cons.get('amount')
-                    source_type = cons.get('source_type', "quest") # Default to "quest" if not specified
-                    source_id = cons.get('source_id') # Optional
-
-                    if not char_id:
-                        print(f"Warning: Missing character_id for AWARD_XP: {cons}")
-                    elif xp_amount_val is None:
-                        print(f"Warning: Missing amount for AWARD_XP: {cons}")
+                    char_id = cons_dict.get('character_id', current_target_id)
+                    xp_amount_val = cons_dict.get('amount')
+                    if not char_id: logger.warning(f"Missing character_id for AWARD_XP: {cons_dict}")
+                    elif xp_amount_val is None: logger.warning(f"Missing amount for AWARD_XP: {cons_dict}")
                     else:
                         try:
                             xp_amount = int(xp_amount_val)
-                            if xp_amount <= 0:
-                                print(f"Info: AWARD_XP amount is zero or negative ({xp_amount}). Skipping for char {char_id}.")
-                            elif not self._character_manager:
-                                print(f"Warning: CharacterManager not available. Cannot award XP for AWARD_XP: {cons}")
-                            elif not self._rule_engine:
-                                print(f"Warning: RuleEngine not available. Cannot award XP for AWARD_XP: {cons}")
+                            if xp_amount <= 0: logger.info(f"AWARD_XP amount is zero or negative ({xp_amount}). Skipping for char {char_id}.")
+                            elif not self._character_manager or not self._rule_engine:
+                                logger.warning(f"CharacterManager or RuleEngine not available. Cannot award XP for AWARD_XP: {cons_dict}")
                             else:
-                                character_obj = self._character_manager.get_character(guild_id, char_id)
+                                character_obj = await self._character_manager.get_character(guild_id, char_id)
                                 if character_obj:
-                                    actual_event_context = event_context if event_context else {}
                                     await self._rule_engine.award_experience(
-                                        character=character_obj,
-                                        amount=xp_amount,
-                                        source_type=source_type,
-                                        guild_id=guild_id,
-                                        source_id=source_id,
-                                        **actual_event_context # Pass event_context for potential notification_service
+                                        character=character_obj, amount=xp_amount,
+                                        source_type=cons_dict.get('source_type', "quest"), guild_id=guild_id,
+                                        source_id=cons_dict.get('source_id', source_entity_id),
+                                        **(event_context if event_context else {})
                                     )
-                                    log_message_xp = f"AWARD_XP: Awarded {xp_amount} XP to character {char_id} (Source: {source_type}, ID: {source_id})."
-                                    print(f"ConsequenceProcessor: {log_message_xp}")
+                                    target_entity_type_str = "Character"; log_player_id = char_id
                                     if self._game_log_manager:
                                         await self._game_log_manager.log_event(
-                                            guild_id=guild_id,
-                                            event_type="CONSEQUENCE_XP_AWARDED",
-                                            message=log_message_xp,
-                                            related_entities=[{"id": char_id, "type": "Character"}],
-                                            metadata=cons
+                                            guild_id=guild_id, event_type="CONSEQUENCE_XP_AWARDED",
+                                            details={"consequence": cons_dict, "character_id": char_id, "amount": xp_amount},
+                                            player_id=log_player_id, source_entity_id=source_entity_id, target_entity_id=char_id, target_entity_type=target_entity_type_str
                                         )
-                                else:
-                                    print(f"Warning: Character {char_id} not found for AWARD_XP: {cons}")
-                        except ValueError:
-                            print(f"Warning: Invalid amount '{xp_amount_val}' for AWARD_XP (must be an integer): {cons}")
-                        except Exception as e_xp:
-                            print(f"Error processing AWARD_XP consequence: {cons}")
-                            print(f"Exception: {e_xp}")
-                            traceback.print_exc()
-
-                # Add more consequence types here
-                # elif action_type == "START_DIALOGUE":
-                #     # Requires DialogueManager
-                #     pass
-                # elif action_type == "TRIGGER_COMBAT":
-                #     # Requires CombatManager
-                #     pass
+                                    if self._notification_service:
+                                        await self._notification_service.notify_player(
+                                            player_id=char_id, message_type="xp_gained",
+                                            payload={"message": f"You gained {xp_amount} XP!", "amount": xp_amount, "source": source_entity_id or "Unknown Source"}
+                                        )
+                                else: logger.warning(f"Character {char_id} not found for AWARD_XP: {cons_dict}")
+                        except ValueError: logger.warning(f"Invalid amount '{xp_amount_val}' for AWARD_XP (must be an integer): {cons_dict}")
+                        except Exception as e_xp: logger.error(f"Error processing AWARD_XP consequence: {cons_dict}, Exception: {e_xp}", exc_info=True)
 
                 else:
-                    print(f"Warning: Unknown action_type '{action_type}'. Skipping: {cons}")
+                    logger.warning(f"Unknown action_type '{action_type}'. Skipping: {cons_dict}")
 
             except Exception as e:
-                print(f"Error processing consequence: {cons}")
-                print(f"Exception: {e}")
-                traceback.print_exc()
-        print(f"ConsequenceProcessor: Finished processing consequences for guild {guild_id}.")
+                logger.error(f"Error processing consequence: {cons_dict}. Exception: {e}", exc_info=True)
+        logger.info(f"Finished processing consequences for guild {guild_id}.")
 
     async def _placeholder_send_message(self, message: str) -> None:
         """Placeholder for sending messages if no callback is provided."""
