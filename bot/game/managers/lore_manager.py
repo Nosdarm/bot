@@ -13,53 +13,67 @@ DEFAULT_LORE_FILE = "game_data/lore_i18n.json"
 
 class LoreManager:
     def __init__(self, settings: Dict[str, Any], db_service: Optional[DBService] = None):
-        logger.info("Initializing LoreManager...") # Changed
+        logger.info("Initializing LoreManager...")
         self._settings = settings
         self._db_service = db_service
         self._lore_entries: Dict[str, LoreEntry] = {}
-        self._lore_file_path = self._settings.get('lore_file_path', DEFAULT_LORE_FILE) # Used self._settings
+        self._lore_file_path = self._settings.get('lore_file_path', DEFAULT_LORE_FILE)
 
         self.load_lore_from_file(self._lore_file_path)
-        logger.info("LoreManager initialized. Loaded %s entries from %s", len(self._lore_entries), self._lore_file_path) # Changed
+        log_msg = f"LoreManager initialized. Loaded {len(self._lore_entries)} entries from {self._lore_file_path}"
+        logger.info(log_msg)
 
     def load_lore_from_file(self, file_path: str) -> None:
         """Loads lore entries from a JSON file into the _lore_entries cache."""
+        logger.debug(f"LoreManager: Attempting to load lore from file: {file_path}")
         self._lore_entries = {}
         if not os.path.exists(file_path):
-            logger.warning("LoreManager: Lore file not found at %s. No lore will be loaded.", file_path) # Changed
+            log_msg = f"Lore file not found at {file_path}. No lore will be loaded."
+            logger.warning(f"LoreManager: {log_msg}")
             try:
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 with open(file_path, 'w', encoding='utf-8') as f:
                     json.dump([], f)
-                logger.info("LoreManager: Created an empty lore file at %s.", file_path) # Changed
+                log_msg_create = f"Created an empty lore file at {file_path}."
+                logger.info(f"LoreManager: {log_msg_create}")
             except IOError as e:
-                logger.error("LoreManager: Error creating dummy lore file at %s: %s", file_path, e, exc_info=True) # Changed
+                log_msg_err = f"Error creating dummy lore file at {file_path}: {e}"
+                logger.error(f"LoreManager: {log_msg_err}", exc_info=True)
             return
 
         try:
+            logger.debug(f"LoreManager: Reading and parsing lore file: {file_path}")
             with open(file_path, 'r', encoding='utf-8') as f:
                 lore_data_list = json.load(f)
 
             if not isinstance(lore_data_list, list):
-                logger.error("LoreManager: Lore file %s does not contain a JSON list. Found type: %s", file_path, type(lore_data_list)) # Changed
+                log_msg = f"Lore file {file_path} does not contain a JSON list. Found type: {type(lore_data_list)}"
+                logger.error(f"LoreManager: {log_msg}")
                 return
 
+            logger.debug(f"LoreManager: Processing {len(lore_data_list)} entries from file.")
             for entry_data in lore_data_list:
                 if not isinstance(entry_data, dict):
-                    logger.warning("LoreManager: Skipping non-dict item in lore file %s: %s", file_path, entry_data) # Changed
+                    log_msg = f"Skipping non-dict item in lore file {file_path}: {entry_data}"
+                    logger.warning(f"LoreManager: {log_msg}")
                     continue
                 try:
                     lore_entry = LoreEntry.from_dict(entry_data)
                     self._lore_entries[lore_entry.id] = lore_entry
                 except Exception as e:
-                    logger.error("LoreManager: Error parsing lore entry data from %s: %s. Error: %s", file_path, entry_data, e, exc_info=True) # Changed
-            logger.info("LoreManager: Successfully loaded %s lore entries from %s.", len(self._lore_entries), file_path) # Changed
+                    log_msg = f"Error parsing lore entry data from {file_path}: {entry_data}. Error: {e}"
+                    logger.error(f"LoreManager: {log_msg}", exc_info=True)
+            log_msg_success = f"Successfully loaded {len(self._lore_entries)} lore entries from {file_path}."
+            logger.info(f"LoreManager: {log_msg_success}")
         except json.JSONDecodeError as e:
-            logger.error("LoreManager: Error decoding JSON from lore file %s: %s", file_path, e, exc_info=True) # Changed
+            log_msg = f"Error decoding JSON from lore file {file_path}: {e}"
+            logger.error(f"LoreManager: {log_msg}", exc_info=True)
         except IOError as e:
-            logger.error("LoreManager: Error reading lore file %s: %s", file_path, e, exc_info=True) # Changed
+            log_msg = f"Error reading lore file {file_path}: {e}"
+            logger.error(f"LoreManager: {log_msg}", exc_info=True)
         except Exception as e:
-            logger.error("LoreManager: Unexpected error loading lore from %s: %s", file_path, e, exc_info=True) # Changed
+            log_msg = f"Unexpected error loading lore from {file_path}: {e}"
+            logger.error(f"LoreManager: {log_msg}", exc_info=True)
 
     def get_lore_entry(self, entry_id: str) -> Optional[LoreEntry]:
         return self._lore_entries.get(entry_id)
@@ -77,20 +91,24 @@ class LoreManager:
         return get_i18n_text(entry.to_dict(), "text", lang, default_lang)
 
     async def load_state(self, data: Dict[str, Any], **kwargs) -> None: # Added guild_id for consistency, though not used
-        guild_id = kwargs.get('guild_id', 'global_lore') # Lore is global, but PM might pass guild_id
-        logger.info("LoreManager: load_state called for guild %s. Reloading from file for consistency.", guild_id) # Changed
+        guild_id = kwargs.get('guild_id', 'global_lore')
+        log_msg = f"load_state called for guild {guild_id}. Reloading from file for consistency."
+        logger.info(f"LoreManager: {log_msg}")
         self.load_lore_from_file(self._lore_file_path)
 
-    async def save_state(self, **kwargs) -> Dict[str, Any]: # Added guild_id for consistency
+    async def save_state(self, **kwargs) -> Dict[str, Any]:
         guild_id = kwargs.get('guild_id', 'global_lore')
-        logger.info("LoreManager: save_state called for guild %s. No dynamic state to save for file-based lore.", guild_id) # Changed
+        log_msg = f"save_state called for guild {guild_id}. No dynamic state to save for file-based lore."
+        logger.info(f"LoreManager: {log_msg}")
         return {"lore_file_path": self._lore_file_path}
 
-    async def rebuild_runtime_caches(self, **kwargs) -> None: # Added guild_id for consistency
+    async def rebuild_runtime_caches(self, **kwargs) -> None:
         guild_id = kwargs.get('guild_id', 'global_lore')
-        logger.info("LoreManager: rebuild_runtime_caches called for guild %s. Reloading lore from file.", guild_id) # Changed
+        log_msg_rebuild = f"rebuild_runtime_caches called for guild {guild_id}. Reloading lore from file."
+        logger.info(f"LoreManager: {log_msg_rebuild}")
         self.load_lore_from_file(self._lore_file_path)
-        logger.info("LoreManager: Runtime cache rebuilt for guild %s. Loaded %s entries.", guild_id, len(self._lore_entries)) # Changed
+        log_msg_rebuilt = f"Runtime cache rebuilt for guild {guild_id}. Loaded {len(self._lore_entries)} entries."
+        logger.info(f"LoreManager: {log_msg_rebuilt}")
 
 if __name__ == "__main__":
     import asyncio
