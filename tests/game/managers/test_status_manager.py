@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, patch, MagicMock, call
 import uuid
 import time # For StatusEffect.applied_at
+import sys # Added import sys
 
 from bot.game.managers.status_manager import StatusManager
 from bot.game.models.status_effect import StatusEffect
@@ -17,16 +18,23 @@ class TestStatusManager(unittest.IsolatedAsyncioTestCase):
 
         # Mock other managers that might be in context, though not directly used by remove_status_effects_by_type
         self.mock_rule_engine = AsyncMock()
+        # Configure rules_config_data and its status_effects attribute
+        self.mock_rule_engine.rules_config_data = MagicMock()
+        self.mock_rule_engine.rules_config_data.status_effects = {} # Make it an empty dict
+
         self.mock_time_manager = AsyncMock()
         # ... any other managers StatusManager.__init__ might expect
 
         self.status_manager = StatusManager(
-            db_adapter=self.mock_db_adapter,
+            db_service=self.mock_db_adapter, # Changed db_adapter to db_service
             settings=self.mock_settings,
             rule_engine=self.mock_rule_engine,
             time_manager=self.mock_time_manager
             # Pass other mocks if StatusManager requires them
         )
+
+        # Removed diagnostic print block from asyncSetUp
+
         # Clear any effects that might be loaded by _load_status_templates if it did more
         self.status_manager._status_effects = {}
 
@@ -60,9 +68,14 @@ class TestStatusManager(unittest.IsolatedAsyncioTestCase):
         self.status_manager.remove_status_effect = AsyncMock(side_effect=lambda sid, gid, **kw: sid) # Return sid on success
 
         context_arg = {"some_key": "some_value"}
+
+        if hasattr(self.status_manager, '_diagnostic_log'): self.status_manager._diagnostic_log = [] # Clear for this run
+
         removed_count = await self.status_manager.remove_status_effects_by_type(
             target_id, target_type, status_type_to_remove, guild_id, context_arg
         )
+
+        # Removed diagnostic print block
 
         self.assertEqual(removed_count, 2)
 

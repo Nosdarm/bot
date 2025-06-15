@@ -10,7 +10,7 @@ from bot.game.constants import DEFAULT_BASE_STATS, GUILD_DEFAULT_INITIAL_LOCATIO
 class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
-        self.mock_db_adapter = AsyncMock()
+        self.mock_db_service = AsyncMock() # Renamed from mock_db_adapter for clarity
         self.mock_settings = {
             "default_initial_location_id": GUILD_DEFAULT_INITIAL_LOCATION_ID,
             "default_base_stats": DEFAULT_BASE_STATS
@@ -20,34 +20,62 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.mock_status_manager = AsyncMock()
         self.mock_combat_manager = AsyncMock()
         self.mock_party_manager = AsyncMock()
+        # Added mocks for other dependencies of CharacterManager constructor based on its definition
+        self.mock_item_manager = AsyncMock()
+        self.mock_dialogue_manager = AsyncMock()
+        self.mock_relationship_manager = AsyncMock()
+        self.mock_game_log_manager = AsyncMock()
+        self.mock_npc_manager = AsyncMock()
+        self.mock_inventory_manager = AsyncMock()
+        self.mock_equipment_manager = AsyncMock()
+        self.mock_game_manager = AsyncMock()
+
 
         self.char_manager = CharacterManager(
-            db_adapter=self.mock_db_adapter,
+            db_service=self.mock_db_service, # Changed db_adapter to db_service
             settings=self.mock_settings,
-            rule_engine=self.mock_rule_engine,
+            item_manager=self.mock_item_manager, # Added
             location_manager=self.mock_location_manager,
+            rule_engine=self.mock_rule_engine,
             status_manager=self.mock_status_manager,
+            party_manager=self.mock_party_manager, # Added
             combat_manager=self.mock_combat_manager,
-            party_manager=self.mock_party_manager
+            dialogue_manager=self.mock_dialogue_manager, # Added
+            relationship_manager=self.mock_relationship_manager, # Added
+            game_log_manager=self.mock_game_log_manager, # Added
+            npc_manager=self.mock_npc_manager, # Added
+            inventory_manager=self.mock_inventory_manager, # Added
+            equipment_manager=self.mock_equipment_manager, # Added
+            game_manager=self.mock_game_manager # Added
         )
 
     async def test_init_with_all_dependencies(self):
-        self.assertEqual(self.char_manager._db_adapter, self.mock_db_adapter)
+        self.assertEqual(self.char_manager._db_service, self.mock_db_service) # Changed to _db_service
         self.assertEqual(self.char_manager._settings, self.mock_settings)
-        self.assertEqual(self.char_manager._rule_engine, self.mock_rule_engine)
+        self.assertEqual(self.char_manager._item_manager, self.mock_item_manager)
         self.assertEqual(self.char_manager._location_manager, self.mock_location_manager)
+        self.assertEqual(self.char_manager._rule_engine, self.mock_rule_engine)
         self.assertEqual(self.char_manager._status_manager, self.mock_status_manager)
-        self.assertEqual(self.char_manager._combat_manager, self.mock_combat_manager)
         self.assertEqual(self.char_manager._party_manager, self.mock_party_manager)
+        self.assertEqual(self.char_manager._combat_manager, self.mock_combat_manager)
+        self.assertEqual(self.char_manager._dialogue_manager, self.mock_dialogue_manager)
+        self.assertEqual(self.char_manager._relationship_manager, self.mock_relationship_manager)
+        self.assertEqual(self.char_manager._game_log_manager, self.mock_game_log_manager)
+        self.assertEqual(self.char_manager._npc_manager, self.mock_npc_manager)
+        self.assertEqual(self.char_manager._inventory_manager, self.mock_inventory_manager)
+        self.assertEqual(self.char_manager._equipment_manager, self.mock_equipment_manager)
+        self.assertEqual(self.char_manager._game_manager, self.mock_game_manager)
         self.assertEqual(self.char_manager._characters, {})
         self.assertEqual(self.char_manager._discord_to_char_map, {})
         self.assertEqual(self.char_manager._dirty_characters, {})
         self.assertEqual(self.char_manager._deleted_characters_ids, {})
 
     async def test_init_without_optional_dependencies(self):
-        char_manager = CharacterManager(db_adapter=self.mock_db_adapter, settings=self.mock_settings)
-        self.assertEqual(char_manager._db_adapter, self.mock_db_adapter)
+        # Test with only db_service and settings, all others should be None
+        char_manager = CharacterManager(db_service=self.mock_db_service, settings=self.mock_settings)
+        self.assertEqual(char_manager._db_service, self.mock_db_service)
         self.assertEqual(char_manager._settings, self.mock_settings)
+        self.assertIsNone(char_manager._item_manager) # Added
         self.assertIsNone(char_manager._rule_engine)
         self.assertIsNone(char_manager._location_manager)
         self.assertIsNone(char_manager._status_manager)

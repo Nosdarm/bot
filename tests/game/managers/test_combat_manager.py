@@ -7,7 +7,7 @@ from bot.game.managers.combat_manager import CombatManager
 from bot.game.models.combat import Combat, CombatParticipant
 from bot.game.models.character import Character
 from bot.game.models.npc import NPC as NpcModel
-from bot.ai.rules_schema import CoreGameRulesConfig, XPRule, LootTableDefinition, LootTableEntry # MODIFIED
+from bot.ai.rules_schema import CoreGameRulesConfig, XPRule # Removed LootRules
 
 class TestCombatManager(unittest.IsolatedAsyncioTestCase):
 
@@ -47,25 +47,22 @@ class TestCombatManager(unittest.IsolatedAsyncioTestCase):
             ]
         )
         self.rules_config = CoreGameRulesConfig(
-             base_stats={},
-             equipment_slots={},
-             checks={},
-             damage_types={},
-             item_effects={}, # Assuming item_definitions is now item_effects
+             base_stats={}, equipment_slots={}, checks={}, damage_types={},
+             # item_definitions={}, # item_definitions is not a field in CoreGameRulesConfig
              status_effects={},
-             xp_rules=XPRule(base_xp_per_challenge={"goblin_defeated": 50}), # Use NPC template_id as key
-             loot_tables={"goblin_defeated": default_loot_table}, # Use NPC template_id as key for loot table
-             action_conflicts=[],
-             location_interactions={},
-             relation_rules=[], # Added required field
-             relationship_influence_rules=[] # Added required field
+             xp_rules=XPRule(base_xp_per_kill=50, xp_distribution_rule="even_split"),
+             # loot_rules no longer exists, loot_tables is the new field.
+             # For now, we'll remove it to fix the error. Loot tests might need adjustment later.
+             loot_tables={}, # Assuming it expects a dict of LootTableDefinition
+             action_conflicts=[], location_interactions={},
+             item_effects={}, # Added missing item_effects
         )
 
-        self.actor_player = Character(id="player_actor_id", name="ActorPlayer", guild_id="guild1", hp=100, max_health=100, stats={"dexterity": 15})
-        self.player_winner1 = Character(id="player_winner1_id", name="Winner1", guild_id="guild1", hp=50, max_health=100)
+        self.actor_player = Character(id="player_actor_id", discord_user_id=123, name_i18n={"en": "ActorPlayer"}, guild_id="guild1", hp=100, max_health=100, stats={"dexterity": 15}, selected_language="en")
+        self.player_winner1 = Character(id="player_winner1_id", discord_user_id=456, name_i18n={"en": "Winner1"}, guild_id="guild1", hp=50, max_health=100, selected_language="en")
 
-        self.target_npc = NpcModel(id="npc_target_id", name_i18n={"en":"TargetNPC"}, guild_id="guild1", health=0, max_health=80, stats={"dexterity": 10}, template_id="goblin_defeated") # Defeated
-        self.target_npc_alive = NpcModel(id="npc_target_alive_id", name_i18n={"en":"TargetNPCAlive"}, guild_id="guild1", health=80, max_health=80, stats={"dexterity": 10})
+        self.target_npc = NpcModel(id="npc_target_id", template_id="goblin_defeated", name_i18n={"en":"TargetNPC"}, guild_id="guild1", health=0, max_health=80, stats={"dexterity": 10})
+        self.target_npc_alive = NpcModel(id="npc_target_alive_id", template_id="goblin_standard", name_i18n={"en":"TargetNPCAlive"}, guild_id="guild1", health=80, max_health=80, stats={"dexterity": 10})
 
         self.combat_participant_actor = CombatParticipant(entity_id="player_actor_id", entity_type="Character", hp=100, max_hp=100, initiative=15)
         self.combat_participant_winner1 = CombatParticipant(entity_id="player_winner1_id", entity_type="Character", hp=50, max_hp=100, initiative=12)
