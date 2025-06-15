@@ -5,7 +5,7 @@ import discord
 
 # Assuming your inventory commands are in a cog or a module like this:
 # Adjust the import path to where your InventoryCommands class or functions are located.
-from bot.command_modules.inventory_cmds import InventoryCommands
+from bot.command_modules.inventory_cmds import InventoryCog
 
 # Models
 from bot.game.models.character import Character
@@ -36,7 +36,7 @@ class TestInventoryCommands(unittest.IsolatedAsyncioTestCase):
         self.mock_game_manager.rule_engine = self.mock_rule_engine
 
         # Instantiate the cog with mocked dependencies
-        self.cog = InventoryCommands(bot=self.bot, game_manager=self.mock_game_manager)
+        self.cog = InventoryCog(bot=self.bot) # Pass only bot, as InventoryCog expects
 
         # Mock interaction object
         self.interaction = AsyncMock(spec=discord.Interaction)
