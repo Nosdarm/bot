@@ -138,6 +138,8 @@ class TestRuleEngineResolveCheck(unittest.IsolatedAsyncioTestCase):
         self.mock_resolve_dice_roll_patch = patch.object(self.rule_engine, 'resolve_dice_roll', new_callable=AsyncMock)
         self.mock_dice_roller = self.mock_resolve_dice_roll_patch.start()
         self.addCleanup(self.mock_resolve_dice_roll_patch.stop)
+        # The above mock is REINSTATED to ensure TestRuleEngineResolveCheck tests are isolated
+        # from the actual dice rolling logic, which is tested in TestRuleEngineResolveDiceRoll.
 
         # Store for mock actors created in tests
         self.mock_actors_cache = {}
@@ -619,6 +621,106 @@ class TestRuleEngineResolveCheck(unittest.IsolatedAsyncioTestCase):
             metadata=unittest.mock.ANY
         )
         self.assertEqual(self.mock_game_log_manager.log_event.call_count, 2)
+
+
+class TestRuleEngineResolveDiceRoll(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        self.rule_engine = RuleEngine(rules_data={}) # Minimal setup
+
+    @patch('random.randint')
+    async def test_simple_roll_1d20(self, mock_randint):
+        mock_randint.return_value = 15
+        result = await self.rule_engine.resolve_dice_roll("1d20")
+        expected = {
+            "dice_string": "1d20", "num_dice": 1, "sides": 20, "modifier": 0,
+            "rolls": [15], "roll_total_raw": 15, "total": 15, "pre_rolled_input": None
+        }
+        self.assertEqual(result, expected)
+        mock_randint.assert_called_once_with(1, 20)
+
+    @patch('random.randint')
+    async def test_roll_with_modifier_2d6_plus_3(self, mock_randint):
+        mock_randint.side_effect = [4, 5] # Rolls for 2d6
+        result = await self.rule_engine.resolve_dice_roll("2d6+3")
+        expected = {
+            "dice_string": "2d6+3", "num_dice": 2, "sides": 6, "modifier": 3,
+            "rolls": [4, 5], "roll_total_raw": 9, "total": 12, "pre_rolled_input": None
+        }
+        self.assertEqual(result, expected)
+        self.assertEqual(mock_randint.call_count, 2)
+        mock_randint.assert_any_call(1, 6)
+
+    @patch('random.randint')
+    async def test_roll_d_shorthand_d6(self, mock_randint):
+        mock_randint.return_value = 3
+        result = await self.rule_engine.resolve_dice_roll("d6")
+        expected = {
+            "dice_string": "d6", "num_dice": 1, "sides": 6, "modifier": 0,
+            "rolls": [3], "roll_total_raw": 3, "total": 3, "pre_rolled_input": None
+        }
+        self.assertEqual(result, expected)
+        mock_randint.assert_called_once_with(1, 6)
+
+    @patch('random.randint')
+    async def test_roll_with_negative_modifier_1d4_minus_1(self, mock_randint):
+        mock_randint.return_value = 2
+        result = await self.rule_engine.resolve_dice_roll("1d4-1")
+        expected = {
+            "dice_string": "1d4-1", "num_dice": 1, "sides": 4, "modifier": -1,
+            "rolls": [2], "roll_total_raw": 2, "total": 1, "pre_rolled_input": None
+        }
+        self.assertEqual(result, expected)
+        mock_randint.assert_called_once_with(1, 4)
+
+    async def test_invalid_dice_string_format(self):
+        with self.assertRaisesRegex(ValueError, "Invalid dice string format: abc"):
+            await self.rule_engine.resolve_dice_roll("abc")
+        with self.assertRaisesRegex(ValueError, "Invalid dice string format: 1d"):
+            await self.rule_engine.resolve_dice_roll("1d")
+        with self.assertRaisesRegex(ValueError, "Dice sides must be positive."):
+            await self.rule_engine.resolve_dice_roll("1d0")
+        with self.assertRaisesRegex(ValueError, "Number of dice must be positive."):
+            await self.rule_engine.resolve_dice_roll("0d6")
+
+    @patch('random.randint') # Mock randint even if not used, to prevent actual random calls
+    async def test_pre_rolled_result_valid(self, mock_randint):
+        result = await self.rule_engine.resolve_dice_roll("1d20+5", pre_rolled_result=10)
+        expected = {
+            "dice_string": "1d20+5", "num_dice": 1, "sides": 20, "modifier": 5,
+            "rolls": [10], "roll_total_raw": 10, "total": 15, "pre_rolled_input": 10
+        }
+        self.assertEqual(result, expected)
+        mock_randint.assert_not_called() # random.randint should not be called
+
+    @patch('random.randint')
+    async def test_pre_rolled_result_multiple_dice(self, mock_randint):
+        # Pre-rolled result only applies to the first die. Others are rolled.
+        mock_randint.return_value = 6 # For the second d8
+        result = await self.rule_engine.resolve_dice_roll("2d8-2", pre_rolled_result=3)
+        expected = {
+            "dice_string": "2d8-2", "num_dice": 2, "sides": 8, "modifier": -2,
+            "rolls": [3, 6], "roll_total_raw": 9, "total": 7, "pre_rolled_input": 3
+        }
+        self.assertEqual(result, expected)
+        mock_randint.assert_called_once_with(1, 8) # Called for the second die
+
+    async def test_pre_rolled_result_invalid_value_for_die(self):
+        with self.assertRaisesRegex(ValueError, "pre_rolled_result 25 is not valid for a d20"):
+            await self.rule_engine.resolve_dice_roll("1d20", pre_rolled_result=25)
+        with self.assertRaisesRegex(ValueError, "pre_rolled_result 0 is not valid for a d6"):
+            await self.rule_engine.resolve_dice_roll("1d6", pre_rolled_result=0)
+
+    @patch('random.randint')
+    async def test_whitespace_and_case_insensitivity(self, mock_randint):
+        mock_randint.return_value = 10
+        result = await self.rule_engine.resolve_dice_roll(" 1D20 + 2 ")
+        expected = {
+            "dice_string": " 1D20 + 2 ", "num_dice": 1, "sides": 20, "modifier": 2,
+            "rolls": [10], "roll_total_raw": 10, "total": 12, "pre_rolled_input": None
+        }
+        self.assertEqual(result, expected)
+        mock_randint.assert_called_once_with(1, 20)
 
 
 if __name__ == '__main__':
