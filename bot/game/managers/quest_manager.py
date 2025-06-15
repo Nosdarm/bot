@@ -57,12 +57,45 @@ class QuestManager:
         self._item_manager = item_manager
         self._rule_engine = rule_engine
         self._relationship_manager = relationship_manager
-        self._consequence_processor = consequence_processor
+        self._consequence_processor = consequence_processor # This will be replaced by the new instantiation below
         self._game_log_manager = game_log_manager
         self._notification_service = notification_service
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
         self._ai_validator = ai_validator
+
+        # Ensure ConsequenceProcessor is initialized with NotificationService
+        if consequence_processor is None and character_manager and npc_manager and item_manager and self._location_manager and self._event_manager and self and self._status_manager and game_log_manager: # self is QuestManager
+            from bot.game.services.consequence_processor import ConsequenceProcessor # Local import to avoid circular if not already imported at top
+            self._consequence_processor = ConsequenceProcessor(
+                character_manager=character_manager,
+                npc_manager=npc_manager,
+                item_manager=item_manager,
+                location_manager=self._location_manager, # Assuming LocationManager is available as self._location_manager
+                event_manager=self._event_manager,       # Assuming EventManager is available as self._event_manager
+                quest_manager=self, # Pass self (QuestManager)
+                status_manager=self._status_manager,   # Assuming StatusManager is available as self._status_manager
+                dialogue_manager=None, # Pass actual DialogueManager if available
+                game_state=None, # Pass actual GameState if available
+                rule_engine=rule_engine,
+                economy_manager=None, # Pass actual EconomyManager if available
+                relationship_manager=relationship_manager,
+                game_log_manager=game_log_manager,
+                notification_service=self._notification_service, # Pass NotificationService
+                prompt_context_collector=None # Pass PromptContextCollector if available, None for now
+            )
+            logger.info("QuestManager: Auto-initialized ConsequenceProcessor with NotificationService.")
+        elif consequence_processor:
+            self._consequence_processor = consequence_processor
+            # If ConsequenceProcessor was already provided, we assume it was correctly initialized by the caller.
+            # However, to ensure it has the notification service from this QuestManager's context if not already set:
+            if hasattr(self._consequence_processor, '_notification_service') and getattr(self._consequence_processor, '_notification_service') is None:
+                 setattr(self._consequence_processor, '_notification_service', self._notification_service)
+                 logger.info("QuestManager: Attached NotificationService to pre-existing ConsequenceProcessor.")
+            if hasattr(self._consequence_processor, '_prompt_context_collector') and getattr(self._consequence_processor, '_prompt_context_collector') is None:
+                 # setattr(self._consequence_processor, '_prompt_context_collector', self._prompt_context_collector_instance_if_any) # Pass if QuestManager gets one
+                 pass
+
 
         self._active_quests: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._quest_templates: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -72,6 +105,81 @@ class QuestManager:
         self.campaign_data: Dict[str, Any] = self._settings.get("campaign_data", {})
         self._default_lang = self._settings.get("default_language", "en")
         logger.info("QuestManager initialized.")
+
+    async def get_active_quests_for_character(self, guild_id: str, character_id: str) -> List[Quest]:
+        """Retrieves active Quest Pydantic objects for a character in a guild."""
+        active_quests_char_cache = self._active_quests.get(str(guild_id), {}).get(str(character_id), {})
+        quests_to_return: List[Quest] = []
+        if not active_quests_char_cache:
+            logger.debug(f"No active quest entries in _active_quests cache for char {character_id} in guild {guild_id}.")
+            return quests_to_return
+
+        all_guild_quests = self._all_quests.get(str(guild_id), {})
+        for quest_id, quest_dict_from_active in active_quests_char_cache.items():
+            quest_obj = all_guild_quests.get(quest_id)
+            if quest_obj:
+                if quest_obj.status == 'active': # Double check status from the definitive object
+                    quests_to_return.append(quest_obj)
+                else:
+                    logger.debug(f"Quest {quest_id} found in _all_quests but status is '{quest_obj.status}', not 'active'. Skipping from active list for char {character_id}.")
+            elif isinstance(quest_dict_from_active, dict) and quest_dict_from_active.get('status') == 'active':
+                # Fallback: reconstruct from dict if not in _all_quests (should be rare if _all_quests is kept up-to-date)
+                logger.warning(f"Quest {quest_id} for char {character_id} (guild {guild_id}) was in _active_quests (status: active) but not _all_quests. Reconstructing.")
+                current_quest_data = deepcopy(quest_dict_from_active)
+                current_quest_data.setdefault('guild_id', str(guild_id)) # Ensure guild_id for from_dict
+
+                reconstructed_quest = Quest.from_dict(current_quest_data)
+                # Ensure steps are also Pydantic objects if they were dicts in the cache
+                if not reconstructed_quest.steps and current_quest_data.get('steps'):
+                    parsed_steps = []
+                    for step_d_idx, step_d_val in enumerate(current_quest_data['steps']):
+                        if isinstance(step_d_val, dict):
+                            step_d_val.setdefault('guild_id', str(guild_id))
+                            step_d_val.setdefault('quest_id', quest_id)
+                            parsed_steps.append(QuestStep.from_dict(step_d_val))
+                        elif isinstance(step_d_val, QuestStep): # If already a Pydantic object
+                            parsed_steps.append(step_d_val)
+                        else:
+                            logger.warning(f"Step data at index {step_d_idx} for reconstructed quest {quest_id} is neither dict nor QuestStep. Skipping step.")
+                    reconstructed_quest.steps = parsed_steps
+                quests_to_return.append(reconstructed_quest)
+                # Optionally add to _all_quests here if this path is hit often
+                # self._all_quests.setdefault(str(guild_id), {})[quest_id] = reconstructed_quest
+            else:
+                logger.debug(f"Quest {quest_id} from _active_quests for char {character_id} (guild {guild_id}) not found in _all_quests and not a reconstructible active dict.")
+
+        logger.info(f"Retrieved {len(quests_to_return)} active quests for character {character_id} in guild {guild_id}.")
+        return quests_to_return
+
+    async def get_completed_quests_for_character(self, guild_id: str, character_id: str) -> List[Quest]:
+        """Retrieves completed Quest Pydantic objects for a character in a guild."""
+        guild_id_str = str(guild_id)
+        character_id_str = str(character_id)
+
+        completed_quest_ids = self._completed_quests.get(guild_id_str, {}).get(character_id_str, [])
+        quests_to_return: List[Quest] = []
+
+        if not completed_quest_ids:
+            logger.debug(f"No completed quest IDs found in _completed_quests cache for char {character_id_str} in guild {guild_id_str}.")
+            return quests_to_return
+
+        all_guild_quests = self._all_quests.get(guild_id_str, {})
+        for quest_id in completed_quest_ids:
+            quest_obj = all_guild_quests.get(quest_id)
+            if quest_obj:
+                if quest_obj.status == 'completed': # Verify status from the definitive object
+                    quests_to_return.append(quest_obj)
+                else:
+                    logger.warning(f"Quest {quest_id} listed in _completed_quests for char {character_id_str} but its status in _all_quests is '{quest_obj.status}'.")
+            else:
+                # This case is less likely for completed quests if they are always loaded into _all_quests
+                # and status updated there. If a quest was completed but never made it to _all_quests,
+                # it means it was handled only via _active_quests and then its ID moved to _completed_quests.
+                # This would be a gap in ensuring _all_quests is comprehensive.
+                logger.warning(f"Completed quest {quest_id} for char {character_id_str} (guild {guild_id_str}) not found in _all_quests cache. Cannot retrieve full details.")
+
+        logger.info(f"Retrieved {len(quests_to_return)} completed quests for character {character_id_str} in guild {guild_id_str}.")
+        return quests_to_return
 
     def load_quest_templates(self, guild_id: str) -> None:
         guild_id_str = str(guild_id)
