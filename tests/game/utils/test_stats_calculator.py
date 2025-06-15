@@ -7,9 +7,9 @@ from bot.game.utils.stats_calculator import calculate_effective_stats
 from bot.ai.rules_schema import CoreGameRulesConfig, BaseStatDefinition, StatModifierRule, StatusEffectDefinition, GrantedAbilityOrSkill # MODIFIED: ItemDefinition removed
 from bot.game.models.character import Character
 from bot.game.models.npc import NPC as NpcModel
-from bot.game.models.item import ItemTemplate
+from bot.database.models import ItemTemplate # Corrected import path
 from bot.game.models.status_effect import StatusEffect as StatusEffectInstance
-from bot.game.models.status_effect import StatusEffectTemplate
+# StatusEffectTemplate removed
 
 class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
 
@@ -22,12 +22,12 @@ class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
 
         self.rules_config = CoreGameRulesConfig(
             base_stats={
-                "STRENGTH": BaseStatDefinition(name_i18n={"en": "Strength"}, default_value=10, min_value=1, max_value=30),
-                "DEXTERITY": BaseStatDefinition(name_i18n={"en": "Dexterity"}, default_value=10, min_value=1, max_value=30),
-                "CONSTITUTION": BaseStatDefinition(name_i18n={"en": "Constitution"}, default_value=10, min_value=1, max_value=30),
-                "MAX_HP": BaseStatDefinition(name_i18n={"en": "Max HP"}, default_value=50, min_value=1, max_value=1000),
-                "ATTACK_BONUS": BaseStatDefinition(name_i18n={"en": "Attack Bonus"}, default_value=0, min_value=-5, max_value=20),
-                "FIRE_RESISTANCE": BaseStatDefinition(name_i18n={"en": "Fire Resistance"}, default_value=0, min_value=0, max_value=100),
+                "STRENGTH": BaseStatDefinition(name_i18n={"en": "Strength"}, description_i18n={"en": "Measures physical power"}, default_value=10, min_value=1, max_value=30),
+                "DEXTERITY": BaseStatDefinition(name_i18n={"en": "Dexterity"}, description_i18n={"en": "Measures agility"}, default_value=10, min_value=1, max_value=30),
+                "CONSTITUTION": BaseStatDefinition(name_i18n={"en": "Constitution"}, description_i18n={"en": "Measures endurance"}, default_value=10, min_value=1, max_value=30),
+                "MAX_HP": BaseStatDefinition(name_i18n={"en": "Max HP"}, description_i18n={"en": "Maximum health points"}, default_value=50, min_value=1, max_value=1000),
+                "ATTACK_BONUS": BaseStatDefinition(name_i18n={"en": "Attack Bonus"}, description_i18n={"en": "Bonus to attack rolls"}, default_value=0, min_value=-5, max_value=20),
+                "FIRE_RESISTANCE": BaseStatDefinition(name_i18n={"en": "Fire Resistance"}, description_i18n={"en": "Resistance to fire damage"}, default_value=0, min_value=0, max_value=100),
             },
             # derived_stat_rules is removed
             item_effects={}, # Changed from item_definitions
@@ -44,20 +44,19 @@ class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
         )
 
         self.player_entity = Character(
-            id="player1", name="Test Player", guild_id="guild1", discord_user_id=123,
+            id="player1", name_i18n={"en": "Test Player"}, guild_id="guild1", discord_user_id=123,
             stats={"strength": 12, "dexterity": 11, "constitution": 14},
-            skills_data_json=json.dumps({"sword_skill": 5}),
+            skills_data=[{"skill_id": "sword_skill", "level": 5}],
             inventory=[],
-            status_effects=[],
-            effective_stats_json="{}"
+            status_effects=[]
+            # effective_stats_json removed
         )
         self.npc_entity = NpcModel(
             id="npc1", name_i18n={"en": "Test NPC"}, guild_id="guild1", template_id="goblin_warrior",
             stats={"strength": 15, "dexterity": 8, "constitution": 13},
-            skills_data_json=json.dumps({"axe_skill": 3}),
+            skills_data=[{"skill_id": "axe_skill", "level": 3}],
             inventory=[],
-            status_effects=[],
-            effective_stats_json="{}"
+            status_effects=[]
         )
 
     async def test_base_stats_no_modifiers_player(self):
@@ -83,9 +82,9 @@ class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
     async def test_item_flat_bonus(self):
         self.player_entity.inventory = [{"template_id": "strong_ring", "equipped": True, "id": "ring1"}] # Added 'id' for instance
 
-        strong_ring_template = ItemTemplate( # Mocking ItemTemplate from models
+        strong_ring_template = ItemTemplate(
             id="strong_ring", name_i18n={"en":"Ring of Strength"}, type="ring",
-            stat_modifiers=[StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=2.0)]
+            properties={"stat_modifiers": [StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=2.0).model_dump()]} # Store in properties
         )
         self.mock_item_manager.get_item_template = AsyncMock(return_value=strong_ring_template)
         self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
@@ -103,7 +102,7 @@ class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
         self.player_entity.inventory = [{"template_id": "agile_boots", "equipped": True, "id": "boots1"}]
         agile_boots_template = ItemTemplate(
             id="agile_boots", name_i18n={"en":"Boots of Agility"}, type="feet",
-            stat_modifiers=[StatModifierRule(stat_name="DEXTERITY", bonus_type="multiplier", value=1.1)]
+            properties={"stat_modifiers": [StatModifierRule(stat_name="DEXTERITY", bonus_type="multiplier", value=1.1).model_dump()]} # Store in properties
         )
         self.mock_item_manager.get_item_template = AsyncMock(return_value=agile_boots_template)
         self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
@@ -118,13 +117,14 @@ class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(effective_stats.get("dexterity"), 12) # 11 * 1.1 = 12.1, rounded to 12
 
     async def test_status_flat_bonus(self):
-        blessed_status_instance = StatusEffectInstance(id="status1", status_type="blessed_buff", target_id="player1", target_type="Character", duration=3.0, template_id="blessed_buff")
-        blessed_template = StatusEffectTemplate( # Mocking StatusEffectTemplate
-            id="blessed_buff", name_i18n={"en":"Blessed"},
+        blessed_status_instance = StatusEffectInstance(id="status1", status_type="blessed_buff", target_id="player1", target_type="Character", duration=3.0) # template_id removed
+        # StatusEffectTemplate removed, using StatusEffectDefinition from rules_schema
+        blessed_template_data = StatusEffectDefinition(
+            id="blessed_buff", name_i18n={"en":"Blessed"}, description_i18n={"en":"Feeling blessed."},
             stat_modifiers=[StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=3.0)]
         )
         self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[blessed_status_instance])
-        self.mock_status_manager.get_status_template = AsyncMock(return_value=blessed_template)
+        self.mock_status_manager.get_status_template = AsyncMock(return_value=blessed_template_data)
         self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
         self.mock_item_manager.get_item_template = AsyncMock(return_value=None)
 
@@ -140,17 +140,18 @@ class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
         self.player_entity.inventory = [{"template_id": "strong_ring", "equipped": True, "id": "ring1"}]
         strong_ring_template = ItemTemplate(
             id="strong_ring", name_i18n={"en":"Ring of Strength"}, type="ring",
-            stat_modifiers=[StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=2.0)]
+            properties={"stat_modifiers": [StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=2.0).model_dump()]} # Store in properties
         )
-        titans_status_instance = StatusEffectInstance(id="status_titan", status_type="might_of_titans", target_id="player1", target_type="Character", duration=2.0, template_id="might_of_titans")
-        titans_template = StatusEffectTemplate(
-            id="might_of_titans", name_i18n={"en":"Might of Titans"},
+        titans_status_instance = StatusEffectInstance(id="status_titan", status_type="might_of_titans", target_id="player1", target_type="Character", duration=2.0) # template_id removed
+        # StatusEffectTemplate removed, using StatusEffectDefinition from rules_schema
+        titans_template_data = StatusEffectDefinition(
+            id="might_of_titans", name_i18n={"en":"Might of Titans"}, description_i18n={"en":"Feeling mighty."},
             stat_modifiers=[StatModifierRule(stat_name="STRENGTH", bonus_type="multiplier", value=1.5)]
         )
 
         self.mock_item_manager.get_item_template = AsyncMock(return_value=strong_ring_template)
         self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[titans_status_instance])
-        self.mock_status_manager.get_status_template = AsyncMock(return_value=titans_template)
+        self.mock_status_manager.get_status_template = AsyncMock(return_value=titans_template_data)
         self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
 
         effective_stats = await calculate_effective_stats(
@@ -165,7 +166,7 @@ class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
         self.player_entity.inventory = [{"template_id": "godly_ring", "equipped": True, "id": "ring_god"}]
         godly_ring_template = ItemTemplate(
             id="godly_ring", name_i18n={"en":"Godly Ring of Strength"}, type="ring",
-            stat_modifiers=[StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=100.0)]
+            properties={"stat_modifiers": [StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=100.0).model_dump()]} # Store in properties
         )
         self.mock_item_manager.get_item_template = AsyncMock(return_value=godly_ring_template)
         self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
@@ -183,7 +184,7 @@ class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
         self.player_entity.inventory = [{"template_id": "skill_helm", "equipped": True, "id": "helm1"}]
         skill_helm_template = ItemTemplate(
             id="skill_helm", name_i18n={"en":"Helm of Knowing"}, type="head",
-            grants_abilities_or_skills=[GrantedAbilityOrSkill(type="skill", id="ancient_knowledge", level=1)]
+            properties={"grants_abilities_or_skills": [GrantedAbilityOrSkill(type="skill", id="ancient_knowledge", level=1).model_dump()]} # Store in properties
         )
         self.mock_item_manager.get_item_template = AsyncMock(return_value=skill_helm_template)
         self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)

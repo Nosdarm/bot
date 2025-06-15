@@ -4,20 +4,20 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from uuid import UUID
 
-from database import inventory_crud, item_crud # For item checks if needed, and character_crud placeholder
-from database.models import Character # To check character existence
+from ...database import inventory_crud, item_crud # For item checks if needed, and character_crud placeholder
+from ...database.models import Character # To check character existence
 # We need a way to get a character. Assuming a character_crud.py exists or similar
 # For now, let's define a placeholder if direct db access for simple get is acceptable:
-from database.models import Character as CharacterModel # ORM Model
+from ...database.models import Character as CharacterModel # ORM Model
 # from ....database import character_crud # Placeholder for actual character CRUD module
 
-from schemas.inventory_schemas import (
+from ..schemas.inventory_schemas import (
     NewCharacterItemRead, 
     NewCharacterItemCreate, 
     # NewCharacterItemUpdate, # Not used directly in this router's current spec
     InventoryItemRead
 )
-from ..dependencies import get_db
+from ..dependencies import get_db_session
 
 router = APIRouter()
 
@@ -28,7 +28,7 @@ async def get_character_orm(db: AsyncSession, character_id: str) -> Optional[Cha
 
 
 @router.get("/inventory", response_model=List[InventoryItemRead])
-async def get_character_inventory_endpoint(character_id: str, db: AsyncSession = Depends(get_db)):
+async def get_character_inventory_endpoint(character_id: str, db: AsyncSession = Depends(get_db_session)):
     character = await get_character_orm(db, character_id)
     if not character:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
@@ -58,7 +58,7 @@ async def get_character_inventory_endpoint(character_id: str, db: AsyncSession =
 
 
 @router.post("/inventory/add", response_model=NewCharacterItemRead)
-async def add_item_to_inventory_endpoint(character_id: str, item_add_data: NewCharacterItemCreate, db: AsyncSession = Depends(get_db)):
+async def add_item_to_inventory_endpoint(character_id: str, item_add_data: NewCharacterItemCreate, db: AsyncSession = Depends(get_db_session)):
     try:
         # Character existence is checked within add_item_to_character_inventory
         added_item_entry = await inventory_crud.add_item_to_character_inventory(
@@ -88,7 +88,7 @@ async def remove_item_from_inventory_endpoint(
     character_id: str, 
     item_remove_data: NewCharacterItemCreate, # Using NewCharacterItemCreate for item_id and quantity
     response: Response, # Moved here
-    db: AsyncSession = Depends(get_db) # Default argument now at the end
+    db: AsyncSession = Depends(get_db_session) # Default argument now at the end
 ):
     try:
         # Character existence is implicitly checked by inventory_crud function if item not found for char.

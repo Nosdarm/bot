@@ -5,7 +5,7 @@ import discord
 
 # Assuming your party commands are in a cog or a module like this:
 # Adjust the import path to where your PartyCommands class or functions are located.
-from bot.command_modules.party_cmds import PartyCommands
+from bot.command_modules.party_cmds import PartyCog
 
 # Models (primarily for type hinting or if manager methods return them directly)
 from bot.game.models.character import Character
@@ -35,7 +35,7 @@ class TestPartyCommands(unittest.IsolatedAsyncioTestCase):
         self.mock_game_manager.location_manager = self.mock_location_manager
 
         # Instantiate the cog with mocked dependencies
-        self.cog = PartyCommands(bot=self.bot, game_manager=self.mock_game_manager)
+        self.cog = PartyCog(bot=self.bot) # Pass only bot, as PartyCog expects
 
         # Mock interaction object
         self.interaction = AsyncMock(spec=discord.Interaction)
