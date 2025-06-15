@@ -87,6 +87,104 @@ class NpcManager:
         self._load_npc_archetypes()
         logger.info("NpcManager initialized.") # Changed
 
+    async def create_npc_from_ai_concept(
+        self,
+        guild_id: str,
+        npc_concept: Dict[str, Any],
+        lang: str,
+        location_id: Optional[str] = None, # Optional initial location
+        context: Optional[Dict[str, Any]] = None # For additional info like role
+    ) -> Optional[NPC]:
+        """
+        Creates an NPC based on an AI-generated concept.
+
+        Args:
+            guild_id: The ID of the guild.
+            npc_concept: A dictionary containing AI-generated NPC details.
+                         Expected keys: 'name_i18n' (dict), 'description_i18n' (dict),
+                                        'persona_i18n' (dict), 'role' (str, optional),
+                                        'stats_suggestion' (dict, optional),
+                                        'inventory_suggestion' (list of item_ids/concepts, optional),
+                                        'faction_id_suggestion' (str, optional from context).
+            lang: The primary language of the provided concept.
+            location_id: Optional ID of the location to spawn the NPC.
+            context: Optional dictionary for additional context e.g. {'role': 'faction_leader'}.
+
+        Returns:
+            The created NPC object, or None if creation failed.
+        """
+        guild_id_str = str(guild_id)
+        # _ensure_guild_cache_exists is not defined in the provided NpcManager snippet,
+        # but it's good practice. If it's missing, create_npc should handle cache internally.
+        # For now, assuming create_npc or subsequent get_npc will handle cache.
+
+        name_i18n = npc_concept.get("name_i18n")
+        description_i18n = npc_concept.get("description_i18n", {})
+        persona_i18n = npc_concept.get("persona_i18n", {})
+
+        role = npc_concept.get("role", context.get("role") if context else None)
+
+        stats = npc_concept.get("stats_suggestion", {})
+        inventory = npc_concept.get("inventory_suggestion", [])
+
+        faction_id = npc_concept.get("faction_id_suggestion", context.get("faction_id") if context else None)
+
+        if not name_i18n or not isinstance(name_i18n, dict) or not name_i18n.get(lang):
+            logger.error(f"NpcManager: AI NPC concept for guild {guild_id_str} is missing 'name_i18n' or name for lang '{lang}'. Concept: {str(npc_concept)[:200]}")
+            return None
+
+        for i18n_field_dict in [name_i18n, description_i18n, persona_i18n]:
+            if isinstance(i18n_field_dict, dict) and lang != 'en' and 'en' not in i18n_field_dict and i18n_field_dict.get(lang):
+                i18n_field_dict['en'] = i18n_field_dict[lang]
+
+        npc_template_id = npc_concept.get("npc_template_id", "generic_humanoid_ai")
+
+        creation_kwargs = {
+            "name_i18n_override": name_i18n,
+            "description_i18n_override": description_i18n,
+            "persona_i18n_override": persona_i18n,
+            "base_stats_override": stats if stats else None,
+            "initial_inventory_override": inventory if inventory else None,
+            "faction_id_override": faction_id if faction_id else None,
+            "role_override": role if role else None,
+            "state_variables_override": npc_concept.get("state_variables", None)
+        }
+        creation_kwargs = {k: v for k, v in creation_kwargs.items() if v is not None}
+
+        try:
+            # Assuming create_npc handles these overrides and can bypass further AI generation/moderation
+            # if these direct values are provided.
+            npc_id_or_moderation_data = await self.create_npc(
+                guild_id=guild_id_str,
+                npc_template_id=npc_template_id,
+                location_id=location_id,
+                **creation_kwargs
+            )
+
+            if isinstance(npc_id_or_moderation_data, str):
+                created_npc_id = npc_id_or_moderation_data
+                # self._ensure_guild_cache_exists(guild_id_str) # Ensure cache before get
+                new_npc = self.get_npc(guild_id_str, created_npc_id) # get_npc should load from DB if not in cache
+                if new_npc:
+                    logger.info(f"NpcManager: Successfully created NPC '{new_npc.name}' (ID: {new_npc.id}) from AI concept in guild {guild_id_str}.")
+                    return new_npc
+                else: # This case implies create_npc returned an ID but get_npc failed right after.
+                    logger.error(f"NpcManager: NPC ID {created_npc_id} returned by create_npc, but get_npc failed for guild {guild_id_str}. This might indicate an issue with immediate data persistence or caching if create_npc doesn't populate cache directly.")
+                    # As a fallback, try to construct a temporary NPC object if all data is available,
+                    # though this is not ideal as it bypasses the standard loading path.
+                    # For now, returning None is safer.
+                    return None
+            elif isinstance(npc_id_or_moderation_data, dict):
+                logger.warning(f"NpcManager: NPC creation from AI concept for guild {guild_id_str} resulted in moderation request. Direct creation failed. Concept: {str(npc_concept)[:200]}")
+                return None
+            else: # create_npc returned None or unexpected type
+                logger.error(f"NpcManager: Failed to create NPC from AI concept for guild {guild_id_str}. create_npc returned: {npc_id_or_moderation_data}. Concept: {str(npc_concept)[:200]}")
+                return None
+
+        except Exception as e:
+            logger.error(f"NpcManager: Unexpected error creating NPC from AI concept in guild {guild_id_str}: {e}. Concept: {str(npc_concept)[:200]}", exc_info=True)
+            return None
+
     async def _recalculate_and_store_effective_stats(self, guild_id: str, npc_id: str, npc_model: Optional[NPC] = None) -> None:
         """Helper to recalculate and store effective stats for an NPC."""
         log_prefix = f"NpcManager._recalculate_and_store_effective_stats(guild='{guild_id}', npc='{npc_id}'):" # Added

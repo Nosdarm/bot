@@ -6,9 +6,13 @@ import logging # Added
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING
 
 from bot.game.models.faction import Faction
+from bot.game.managers.npc_manager import NpcManager # Added
+from bot.game.models.npc import NPC # Added
+
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
+    # NpcManager and NPC already imported above for type hinting
 
 logger = logging.getLogger(__name__) # Added
 
@@ -260,3 +264,113 @@ class FactionManager:
         except Exception as e:
             logger.error("FactionManager: DB error saving factions for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
         # logger.debug("FactionManager: Save state complete for guild %s.", guild_id_str) # Too noisy for info
+
+    async def create_faction_from_ai(
+        self,
+        guild_id: str,
+        faction_concept: Dict[str, Any],
+        lang: str, # Primary language of the concept
+        npc_manager: NpcManager # Pass NpcManager instance for leader creation
+    ) -> Optional[Faction]:
+        """
+        Creates a faction and potentially its leader based on an AI-generated concept.
+
+        Args:
+            guild_id: The ID of the guild.
+            faction_concept: A dictionary containing the AI-generated faction details.
+                             Expected keys: 'name_i18n', 'description_i18n',
+                                            'leader_concept' (dict with 'name', 'persona'),
+                                            'goals' (list of str), 'alignment_suggestion'.
+            lang: The primary language of the provided concept.
+            npc_manager: An instance of NpcManager to handle NPC leader creation.
+
+        Returns:
+            The created Faction object, or None if creation failed.
+        """
+        guild_id_str = str(guild_id)
+        self._ensure_guild_cache_exists(guild_id_str) # Ensure cache setup
+
+        name_i18n = faction_concept.get("name_i18n")
+        description_i18n = faction_concept.get("description_i18n", {})
+        leader_concept = faction_concept.get("leader_concept")
+        goals = faction_concept.get("goals", []) # List of strings
+        alignment = faction_concept.get("alignment_suggestion")
+
+        if not name_i18n or not isinstance(name_i18n, dict) or not name_i18n.get(lang):
+            logger.error(f"FactionManager: AI faction concept for guild {guild_id_str} is missing 'name_i18n' or name for lang '{lang}'. Concept: {str(faction_concept)[:200]}")
+            return None
+
+        if lang != 'en' and 'en' not in name_i18n:
+            name_i18n['en'] = name_i18n[lang]
+        if lang != 'en' and 'en' not in description_i18n and description_i18n.get(lang): # Check if lang key exists before copying
+            description_i18n['en'] = description_i18n[lang]
+
+
+        state_vars = faction_concept.get("state_variables", {})
+        if goals: # Ensure goals is a list of strings, as expected by the prompt
+            if isinstance(goals, list) and all(isinstance(g, str) for g in goals):
+                state_vars['goals'] = goals
+            else:
+                logger.warning(f"FactionManager: 'goals' from AI concept is not a list of strings for faction '{str(name_i18n)[:50]}'. Skipping goals. Data: {goals}")
+
+        if faction_concept.get('raw_ai_suggestion'):
+            state_vars['raw_ai_suggestion'] = faction_concept['raw_ai_suggestion']
+
+        created_leader_id: Optional[str] = None
+        if leader_concept and isinstance(leader_concept, dict) and npc_manager:
+            leader_name = leader_concept.get("name")
+            leader_persona = leader_concept.get("persona")
+
+            if leader_name and leader_persona:
+                npc_creation_concept = {
+                    "name_i18n": {lang: leader_name},
+                    "description_i18n": {lang: f"Leader of {name_i18n[lang]}. Persona: {leader_persona}"},
+                    "persona_i18n": {lang: leader_persona},
+                    "role": "faction_leader",
+                    "faction_id_suggestion": None
+                }
+                if lang != 'en':
+                    npc_creation_concept["name_i18n"]['en'] = leader_name
+                    npc_creation_concept["description_i18n"]['en'] = f"Leader of {name_i18n.get('en', name_i18n[lang])}. Persona: {leader_persona}"
+                    npc_creation_concept["persona_i18n"]['en'] = leader_persona
+
+                logger.info(f"FactionManager: Placeholder - Would attempt to create NPC leader '{leader_name}' for faction '{name_i18n[lang]}'.")
+                # created_leader_id = f"npc_leader_{uuid.uuid4().hex[:6]}" # Placeholder ID generation
+                # Actual NpcManager call will be integrated in a future step/subtask.
+                # For now, created_leader_id remains None.
+
+                # Example of how it might look (actual call deferred):
+                # try:
+                #     leader_npc = await npc_manager.create_npc_from_ai_concept(
+                #         guild_id=guild_id_str,
+                #         npc_concept=npc_creation_concept,
+                #         lang=lang
+                #     )
+                #     if leader_npc:
+                #         created_leader_id = leader_npc.id
+                # except Exception as e:
+                #     logger.error(f"FactionManager: Failed to create AI-suggested leader for faction in guild {guild_id_str}. Error: {e}", exc_info=True)
+
+        try:
+            new_faction = await self.create_faction(
+                guild_id=guild_id_str,
+                name_i18n=name_i18n,
+                description_i18n=description_i18n,
+                leader_id=created_leader_id,
+                alignment=alignment,
+                member_ids=[created_leader_id] if created_leader_id else [],
+                state_variables=state_vars
+            )
+            if new_faction and created_leader_id:
+                 logger.info(f"FactionManager: Placeholder - Would associate leader {created_leader_id} with new faction {new_faction.id}.")
+                 # Example of update call (deferred):
+                 # await npc_manager.update_npc_details(guild_id_str, created_leader_id, {"faction_id": new_faction.id})
+
+            return new_faction
+
+        except ValueError as e: # Pydantic validation error from Faction model
+            logger.error(f"FactionManager: Error validating data for AI faction in guild {guild_id_str}: {e}. Concept: {str(faction_concept)[:200]}", exc_info=True)
+            return None
+        except Exception as e: # Other unexpected errors
+            logger.error(f"FactionManager: Unexpected error creating faction from AI concept in guild {guild_id_str}: {e}. Concept: {str(faction_concept)[:200]}", exc_info=True)
+            return None
