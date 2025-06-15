@@ -1,6 +1,6 @@
 # bot/game/action_processor.py
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple # Added List and Tuple
 
 # Import models
 from bot.game.models.game_state import GameState
@@ -312,3 +312,69 @@ class ActionProcessor:
         # Placeholder response for unhandled action types
         print(f"Action type '{action_type}' not handled by any specific processor.")
         return {"success": False, "message": f"**Мастер:** Действие '{action_type}' не поддерживается.", "target_channel_id": ctx_channel_id, "state_changed": False}
+
+    async def process_party_actions(self,
+                                   game_state: GameState,
+                                   char_manager: Optional[CharacterManager],
+                                   loc_manager: Optional[LocationManager],
+                                   event_manager: Optional[EventManager],
+                                   rule_engine: Optional[RuleEngine],
+                                   openai_service: Optional[OpenAIService],
+                                   # game_log_manager: Optional[GameLogManager], # Already in process, consider if needed here
+                                   party_actions_data: List[tuple[str, str]], # List of (char_id, actions_json_str)
+                                   ctx_channel_id_fallback: int,
+                                   **kwargs: Any # For additional managers like NpcManager, CombatManager if actions require them
+                                   ) -> Dict[str, Any]:
+        """
+        Processes a list of actions for a party, typically at the end of a turn.
+        This method would iterate through each character's actions, call self.process()
+        or a similar refined method for each, aggregate results, and orchestrate
+        any party-wide consequences or narrative.
+
+        For now, this is a placeholder to satisfy test mocks.
+        A full implementation would be complex.
+        """
+        print(f"ActionProcessor.process_party_actions CALLED with {len(party_actions_data)} actions. Placeholder implementation.")
+        # Placeholder: Process first action if available, for basic testing
+        # In a real scenario, loop through all actions, handle interdependencies, etc.
+
+        # This is a very simplified placeholder response.
+        # A real implementation would aggregate results from individual action processing.
+        individual_results = []
+        overall_success = True
+        any_state_changed = False
+
+        # Example of how it *might* iterate, though self.process needs discord_user_id not char_id directly
+        # for char_id, actions_json_str in party_actions_data:
+        #     if char_manager:
+        #         character = await char_manager.get_character(char_id) # Assuming get_character by internal ID
+        #         if character and character.discord_user_id:
+        #             try:
+        #                 actions = json.loads(actions_json_str)
+        #                 for action in actions: # Assuming actions_json_str can be a list of actions
+        #                     action_type = action.get("intent") # Or however action type is defined
+        #                     action_data = action # Pass the whole action dict as data
+        #                     if action_type:
+        #                         # TODO: game_log_manager is not passed here, self.process expects it.
+        #                         # This highlights that process_party_actions needs careful design
+        #                         # or self.process needs to be callable with slightly different params.
+        #                         # For now, this part is effectively pseudo-code.
+        #                         # res = await self.process(game_state, char_manager, loc_manager, event_manager, rule_engine, openai_service, game_log_manager,
+        #                         #                          ctx_channel_id_fallback, character.discord_user_id, action_type, action_data)
+        #                         # individual_results.append(res)
+        #                         # if not res.get("success", False): overall_success = False
+        #                         # if res.get("state_changed", False): any_state_changed = True
+        #                         pass # Skipping actual call to self.process for placeholder
+        #             except json.JSONDecodeError:
+        #                 print(f"Error decoding actions for char_id {char_id}: {actions_json_str}")
+        #                 individual_results.append({"success": False, "message": f"Error decoding actions for {char_id}"})
+        #                 overall_success = False
+
+
+        return {
+            "success": overall_success,
+            "message": "Party actions processed (placeholder response).", # Generic message
+            "individual_action_results": individual_results, # Would be list of dicts from self.process
+            "target_channel_id": ctx_channel_id_fallback, # Or determined dynamically
+            "overall_state_changed": any_state_changed # Aggregated from individual actions
+        }

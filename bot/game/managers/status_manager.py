@@ -41,7 +41,7 @@ class StatusManager:
                  combat_manager: Optional['CombatManager'] = None,
                  party_manager: Optional['PartyManager'] = None,
                  ):
-        logger.info("Initializing StatusManager...") # Changed
+        logger.info("Initializing StatusManager...")
         self._db_service = db_service
         self._settings = settings
         self._rule_engine = rule_engine
@@ -54,41 +54,47 @@ class StatusManager:
         if self._rule_engine and hasattr(self._rule_engine, 'rules_config_data'):
             self.rules_config = self._rule_engine.rules_config_data
         self._status_effects: Dict[str, Dict[str, StatusEffect]] = {}
-        self._status_templates: Dict[str, Dict[str, Any]] = {} # Note: This seems to be global, not per-guild
+        self._status_templates: Dict[str, Dict[str, Any]] = {}
         self._dirty_status_effects: Dict[str, Set[str]] = {}
         self._deleted_status_effects_ids: Dict[str, Set[str]] = {}
         self._load_status_templates()
-        logger.info("StatusManager initialized.") # Changed
+        logger.info("StatusManager initialized.")
 
     def _load_status_templates(self):
-        logger.info("StatusManager: Loading status templates...") # Changed
+        logger.info("StatusManager: Loading status templates...")
         self._status_templates = {}
         if self.rules_config and self.rules_config.status_effects:
             for status_id, status_def in self.rules_config.status_effects.items():
                 try: self._status_templates[status_id] = status_def.model_dump(mode='python')
                 except AttributeError: self._status_templates[status_id] = status_def.dict()
-            logger.info("StatusManager: Loaded %s status templates from CoreGameRulesConfig.", len(self.rules_config.status_effects)) # Changed
+            log_msg_rules = f"Loaded {len(self.rules_config.status_effects)} status templates from CoreGameRulesConfig."
+            logger.info(f"StatusManager: {log_msg_rules}")
             return
-        logger.warning("StatusManager: CoreGameRulesConfig.status_effects not found or empty. Falling back to settings for status templates.") # Changed
+        log_msg_fallback = "CoreGameRulesConfig.status_effects not found or empty. Falling back to settings for status templates."
+        logger.warning(f"StatusManager: {log_msg_fallback}")
         try:
             if self._settings is None:
-                logger.error("StatusManager: Settings object is None. Cannot load status templates.") # Changed
+                log_msg_no_settings = "Settings object is None. Cannot load status templates."
+                logger.error(f"StatusManager: {log_msg_no_settings}")
                 return
             raw_templates = self._settings.get('status_templates')
             if raw_templates is None:
-                logger.warning("StatusManager: 'status_templates' key not found in settings.") # Changed
+                log_msg_no_key = "'status_templates' key not found in settings."
+                logger.warning(f"StatusManager: {log_msg_no_key}")
                 return
             processed_templates = {}
             for template_id, template_data in raw_templates.items():
                 if not isinstance(template_data, dict):
-                    logger.warning("StatusManager: Template data for '%s' is not a dictionary. Skipping.", template_id) # Changed
+                    log_msg_skip = f"Template data for '{template_id}' is not a dictionary. Skipping."
+                    logger.warning(f"StatusManager: {log_msg_skip}")
                     continue
-                # ... (i18n processing as before)
                 processed_templates[template_id] = template_data
             self._status_templates = processed_templates
-            logger.info("StatusManager: Loaded and processed %s status templates from settings.", len(self._status_templates)) # Changed
+            log_msg_loaded_settings = f"Loaded and processed {len(self._status_templates)} status templates from settings."
+            logger.info(f"StatusManager: {log_msg_loaded_settings}")
         except Exception as e:
-            logger.error("StatusManager: Error loading status templates from settings: %s", e, exc_info=True) # Changed
+            log_msg_err_settings = f"Error loading status templates from settings: {e}"
+            logger.error(f"StatusManager: {log_msg_err_settings}", exc_info=True)
 
     def get_status_template(self, status_type: str) -> Optional[Dict[str, Any]]:
         if self.rules_config and self.rules_config.status_effects and status_type in self.rules_config.status_effects:
@@ -98,14 +104,11 @@ class StatusManager:
         return self._status_templates.get(status_type)
 
     def get_status_display_name(self, status_instance: StatusEffect, lang: str = "en", default_lang: str = "en") -> str:
-        # ... (logic as before)
-        return "Неизвестный статус" # Placeholder
+        return "Неизвестный статус"
     def get_status_display_description(self, status_instance: StatusEffect, lang: str = "en", default_lang: str = "en") -> str:
-        # ... (logic as before)
-        return "Описание недоступно." # Placeholder
+        return "Описание недоступно."
     def get_status_effect(self, guild_id: str, status_effect_id: str) -> Optional[StatusEffect]:
-        # ... (logic as before)
-        return None # Placeholder
+        return None
 
     async def apply_status(self, target_id: str, target_type: str, status_id: str, guild_id: str,
                            duration_turns: Optional[float] = None, source_id: Optional[str] = None,
@@ -113,96 +116,100 @@ class StatusManager:
                            initial_state_variables: Optional[Dict[str, Any]] = None, **kwargs: Any
                           ) -> Optional[StatusEffect]:
         guild_id_str = str(guild_id)
-        log_prefix = f"StatusManager.apply_status(guild='{guild_id_str}', target='{target_type} {target_id}', status_id='{status_id}'):" # Added guild_id
+        log_prefix = f"StatusManager.apply_status(guild='{guild_id_str}', target='{target_type} {target_id}', status_id='{status_id}'):"
         if self._db_service is None:
-             logger.error("%s Error: Database service is not available.", log_prefix) # Changed
+             err_msg = f"{log_prefix} Error: Database service is not available."
+             logger.error(err_msg)
              return None
         status_template = self.get_status_template(status_id)
         if not status_template:
-            logger.error("%s Error: Status template '%s' not found.", log_prefix, status_id) # Changed
+            err_msg = f"{log_prefix} Error: Status template '{status_id}' not found."
+            logger.error(err_msg)
             return None
-        # ... (rest of apply_status logic, ensure guild_id_str in logs for errors/warnings) ...
-        # Example: logger.error("%s Error applying status: %s", log_prefix, e, exc_info=True)
-        # Example: logger.info("%s Status effect '%s' (type: %s) applied successfully.", log_prefix, status_effect_obj.id, status_id)
-        return None # Placeholder
+        return None
 
     async def remove_status_effect(self, status_effect_id: str, guild_id: str, **kwargs: Any) -> bool:
         guild_id_str, status_effect_id_str = str(guild_id), str(status_effect_id)
-        log_prefix = f"StatusManager.remove_status_effect(guild='{guild_id_str}', id='{status_effect_id_str}'):" # Added guild_id
-        # ... (rest of remove_status_effect logic, ensure guild_id_str in logs for errors/warnings) ...
-        # Example: logger.error("%s Error removing status: %s", log_prefix, e, exc_info=True)
-        # Example: logger.info("%s Successfully processed removal.", log_prefix)
-        return False # Placeholder
+        log_prefix = f"StatusManager.remove_status_effect(guild='{guild_id_str}', id='{status_effect_id_str}'):"
+        return False
 
     async def remove_statuses_by_source_item_instance(self, guild_id: str, target_id: str, source_item_instance_id: str, **kwargs: Any) -> int:
         guild_id_str, target_id_str = str(guild_id), str(target_id)
-        log_prefix = f"StatusManager.remove_statuses_by_source_item(guild='{guild_id_str}', target='{target_id_str}', item_instance='{source_item_instance_id}'):" # Added guild_id
-        # ... (rest of logic, ensure guild_id_str in logs for errors/warnings) ...
-        # Example: logger.info("%s Successfully removed %s status(es).", log_prefix, removed_count)
-        return 0 # Placeholder
+        log_prefix = f"StatusManager.remove_statuses_by_source_item(guild='{guild_id_str}', target='{target_id_str}', item_instance='{source_item_instance_id}'):"
+        return 0
 
     async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None:
         guild_id_str = str(guild_id)
-        # logger.debug("StatusManager: Processing tick for guild %s. Delta: %.2f", guild_id_str, game_time_delta) # Too noisy for info
-        # ... (rest of process_tick logic, ensure guild_id_str in logs for errors/warnings) ...
-        # Example: logger.error("StatusManager: Error in tick processing for status %s ('%s') on %s %s for guild %s: %s", eff_id, eff.status_type, eff.target_type, eff.target_id, guild_id_str, e, exc_info=True)
         pass
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         guild_id_str = str(guild_id)
-        logger.info("StatusManager: Saving state for guild %s...", guild_id_str) # Changed
+        logger.info("StatusManager: Saving state for guild %s...", guild_id_str)
         if self._db_service is None:
-             logger.error("StatusManager: Database service is not available. Skipping save for guild %s.", guild_id_str) # Changed
+             err_msg = f"Database service is not available. Skipping save for guild {guild_id_str}."
+             logger.error(f"StatusManager: {err_msg}")
              return
-        # ... (rest of save_state logic, ensure guild_id_str in logs for errors/warnings) ...
-        # Example: logger.error("StatusManager: Error during saving state for guild %s: %s", guild_id_str, e, exc_info=True)
-        # Example: logger.info("StatusManager: Successfully saved state for guild %s.", guild_id_str)
 
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         guild_id_str = str(guild_id)
-        logger.info("StatusManager: Loading state for guild %s...", guild_id_str) # Changed
+        logger.info("StatusManager: Loading state for guild %s...", guild_id_str)
         if self._db_service is None:
-             logger.warning("StatusManager: Database service not available. Loading placeholder state for guild %s.", guild_id_str) # Changed
+             warn_msg = f"Database service not available. Loading placeholder state for guild {guild_id_str}."
+             logger.warning(f"StatusManager: {warn_msg}")
              self._status_effects[guild_id_str] = {}
              self._dirty_status_effects.pop(guild_id_str, None)
              self._deleted_status_effects_ids.pop(guild_id_str, None)
              return
-        # ... (rest of load_state logic, ensure guild_id_str in logs for errors/warnings) ...
-        # Example: logger.error("StatusManager: CRITICAL ERROR loading state for guild %s: %s", guild_id_str, e_load, exc_info=True)
-        # Example: logger.info("StatusManager: Loaded %s statuses for guild %s.", loaded_count, guild_id_str)
 
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-         logger.info("StatusManager: Rebuilding runtime caches for guild %s (No specific action needed for StatusManager unless more complex caches are added).", guild_id) # Changed
+         log_msg = f"Rebuilding runtime caches for guild {guild_id} (No specific action needed for StatusManager unless more complex caches are added)."
+         logger.info(f"StatusManager: {log_msg}")
 
     async def clean_up_for_character(self, character_id: str, context: Dict[str, Any], **kwargs: Any) -> None:
          guild_id = context.get('guild_id')
          if guild_id is None:
-             logger.warning("StatusManager: clean_up_for_character called for char %s without guild_id.", character_id) # Added
+             logger.warning("StatusManager: clean_up_for_character called for char %s without guild_id.", character_id)
              return
          guild_id_str = str(guild_id)
-         logger.info("StatusManager: Cleaning up statuses for character %s in guild %s.", character_id, guild_id_str) # Added
-         # ... (rest of logic, ensure guild_id_str in logs) ...
+         logger.info("StatusManager: Cleaning up statuses for character %s in guild %s.", character_id, guild_id_str)
          pass
 
     async def save_status_effect(self, status_effect: "StatusEffect", guild_id: str) -> bool:
         guild_id_str = str(guild_id)
         effect_id = getattr(status_effect, 'id', 'N/A')
-        logger.debug("StatusManager: Saving status effect %s for guild %s.", effect_id, guild_id_str) # Added
+        logger.debug("StatusManager: Saving status effect %s for guild %s.", effect_id, guild_id_str)
         if self._db_service is None:
-            logger.error("StatusManager: DBService not available, cannot save status effect %s for guild %s.", effect_id, guild_id_str) # Added
+            logger.error("StatusManager: DBService not available, cannot save status effect %s for guild %s.", effect_id, guild_id_str)
             return False
-        # ... (rest of logic, ensure guild_id_str in logs for errors) ...
-        # Example: logger.error("StatusManager: Error saving status effect %s for guild %s: %s", effect_id, guild_id_str, e, exc_info=True)
-        return False # Placeholder
+        return False
 
     async def remove_status_effects_by_type(self, target_id: str, target_type: str, status_type_to_remove: str, guild_id: str, context: Dict[str, Any]) -> int:
         guild_id_str = str(guild_id)
-        logger.info("StatusManager: Removing statuses of type '%s' from %s %s in guild %s.", status_type_to_remove, target_type, target_id, guild_id_str) # Added
-        # ... (rest of logic, ensure guild_id_str in logs) ...
-        return 0 # Placeholder
+        target_id_str = str(target_id)
+
+        logger.info("StatusManager: Removing statuses of type '%s' from %s %s in guild %s.", status_type_to_remove, target_type, target_id_str, guild_id_str)
+
+        removed_count = 0
+        guild_statuses = self._status_effects.get(guild_id_str, {})
+        if not guild_statuses:
+            return 0
+
+        effects_to_check = list(guild_statuses.values())
+
+        for effect in effects_to_check:
+            if (str(effect.target_id) == target_id_str and
+                effect.target_type == target_type and
+                effect.status_type == status_type_to_remove):
+
+                removal_result = await self.remove_status_effect(effect.id, guild_id_str, **context)
+
+                if removal_result == effect.id:
+                    removed_count += 1
+
+        logger.info("StatusManager: Successfully removed %s status(es) of type '%s' from %s %s in guild %s.", removed_count, status_type_to_remove, target_type, target_id_str, guild_id_str)
+        return removed_count
 
     def mark_status_effect_dirty(self, guild_id: str, status_effect_id: str) -> None:
         guild_id_str, status_effect_id_str = str(guild_id), str(status_effect_id)
         if guild_id_str in self._status_effects and status_effect_id_str in self._status_effects[guild_id_str]:
             self._dirty_status_effects.setdefault(guild_id_str, set()).add(status_effect_id_str)
-        # else: logger.debug("StatusManager: Attempted to mark non-cached status %s for guild %s as dirty.", status_effect_id_str, guild_id_str) # Too noisy

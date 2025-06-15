@@ -174,7 +174,7 @@ class CombatManager:
                     logger.warning("CombatManager: Character %s not found for combat in guild %s.", p_id, guild_id_str) # Changed
                     continue
             elif p_type == "NPC":
-                npc = self._npc_manager.get_npc(guild_id_str, p_id)
+                npc = await self._npc_manager.get_npc(guild_id_str, p_id) # Added await
                 if npc:
                     name_i18n_dict = getattr(npc, 'name_i18n', {})
                     entity_name = name_i18n_dict.get('en', p_id) if isinstance(name_i18n_dict, dict) else p_id
@@ -313,7 +313,7 @@ class CombatManager:
            self._npc_manager and self._character_manager:
 
             logger.info("CombatManager: NPC Turn: %s in combat %s (guild %s)", current_actor_id, combat_id, guild_id_str) # Changed
-            npc_object = self._npc_manager.get_npc(guild_id_str, current_actor_id)
+            npc_object = await self._npc_manager.get_npc(guild_id_str, current_actor_id) # Added await
 
             if npc_object:
                 rules_config_data = kwargs.get('rules_config', self._settings.get('rules', {}))
@@ -667,7 +667,7 @@ class CombatManager:
             base_xp_per_kill_fallback = combat_xp_rules.get('base_xp_per_kill', 0)
 
             for defeated_npc_p_data in defeated_npcs_participants:
-                npc_model = npc_manager.get_npc(guild_id_str, defeated_npc_p_data.entity_id)
+                npc_model = await npc_manager.get_npc(guild_id_str, defeated_npc_p_data.entity_id) # Added await
                 if npc_model:
                     npc_stats = getattr(npc_model, 'stats', {})
                     if not isinstance(npc_stats, dict): npc_stats = {}

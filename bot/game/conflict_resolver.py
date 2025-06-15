@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 from bot.services.db_service import DBService
 from bot.ai.rules_schema import CoreGameRulesConfig, ActionConflictDefinition # Added
+import enum # Added for ActionStatus
 
 # Placeholder for actual RuleEngine classes
 # from ..core.rule_engine import RuleEngine # Assuming RuleEngine might be in a core module
@@ -780,6 +781,38 @@ class ConflictResolver:
 
 # The test block (`if __name__ == '__main__':`) with mock classes should be removed from this file.
 # It belongs in a separate test file.
+
+class ActionStatus(enum.Enum):
+    PENDING_ANALYSIS = "pending_analysis"
+    MANUAL_PENDING = "manual_pending"
+    AUTO_RESOLVED_PROCEED = "auto_resolved_proceed"
+    AUTO_RESOLVED_FAILED_CONFLICT = "auto_resolved_failed_conflict"
+    PENDING_EXECUTION = "pending_execution"
+    # Add other statuses as discovered or needed
+    EXECUTED = "executed"
+    FAILED = "failed"
+
+class ActionWrapper:
+    def __init__(self, player_id: str, action_data: Dict[str, Any], action_id: str, original_intent: str, status: ActionStatus = ActionStatus.PENDING_ANALYSIS):
+        self.player_id: str = player_id
+        self.action_data: Dict[str, Any] = action_data
+        self.action_id: str = action_id
+        self.original_intent: str = original_intent
+        self._status: ActionStatus = status
+        self.participated_in_conflict_resolution: bool = False
+        self.is_resolved: bool = False # Indicates if the action itself is done (executed, failed, etc.)
+
+    @property
+    def status(self) -> ActionStatus:
+        return self._status
+
+    @status.setter
+    def status(self, value: ActionStatus):
+        self._status = value
+
+    def __repr__(self) -> str:
+        return f"<ActionWrapper id={self.action_id} player={self.player_id} intent={self.original_intent} status={self.status.value}>"
+
 
 if __name__ == '__main__':
     # Example Usage (for testing purposes)
