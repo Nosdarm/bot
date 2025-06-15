@@ -140,7 +140,7 @@ class LocationManager:
         rows = []
         try:
             sql = """
-            SELECT id, guild_id, template_id, name, name_i18n, descriptions_i18n,
+            SELECT id, guild_id, template_id, name_i18n, descriptions_i18n,
                    details_i18n, tags_i18n, atmosphere_i18n, features_i18n,
                    exits, state_variables, channel_id, image_url, is_active
             FROM locations WHERE guild_id = $1
