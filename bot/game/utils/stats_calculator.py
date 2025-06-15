@@ -102,11 +102,24 @@ async def calculate_effective_stats(
     for item_instance_data in equipped_item_instances:
         template_id = item_instance_data.get("template_id")
         item_template: Optional["ItemTemplate"] = await item_manager.get_item_template(guild_id, template_id) if template_id else None
-        if item_template:
-            if hasattr(item_template, 'stat_modifiers') and isinstance(item_template.stat_modifiers, list):
-                item_modifiers_all.extend(item_template.stat_modifiers)
-            if hasattr(item_template, 'grants_abilities_or_skills') and isinstance(item_template.grants_abilities_or_skills, list):
-                granted_abilities_skills.extend(item_template.grants_abilities_or_skills)
+        if item_template and item_template.properties: # Check if properties exist
+            # Access modifiers and granted abilities/skills from the properties dictionary
+            stat_modifiers_data = item_template.properties.get('stat_modifiers')
+            if isinstance(stat_modifiers_data, list):
+                    # Convert dicts back to StatModifierRule objects if necessary, or ensure they are stored as such
+                    for mod_data in stat_modifiers_data:
+                        if isinstance(mod_data, dict):
+                            item_modifiers_all.append(StatModifierRule(**mod_data))
+                        elif isinstance(mod_data, StatModifierRule): # If already objects
+                            item_modifiers_all.append(mod_data)
+
+            grants_data = item_template.properties.get('grants_abilities_or_skills')
+            if isinstance(grants_data, list):
+                for grant_data in grants_data:
+                    if isinstance(grant_data, dict):
+                        granted_abilities_skills.append(GrantedAbilityOrSkill(**grant_data))
+                    elif isinstance(grant_data, GrantedAbilityOrSkill): # If already objects
+                        granted_abilities_skills.append(grant_data)
 
     # Apply flat item bonuses
     for mod_rule in item_modifiers_all:
@@ -118,12 +131,15 @@ async def calculate_effective_stats(
     active_status_instances: List["StatusEffectInstance"] = await status_manager.get_active_statuses_for_entity(guild_id, entity_id, entity_type)
     status_modifiers_all: List[StatModifierRule] = []
     for status_instance in active_status_instances:
-        status_template: Optional["StatusEffectTemplate"] = await status_manager.get_status_template(guild_id, status_instance.template_id)
-        if status_template:
-            if hasattr(status_template, 'stat_modifiers') and isinstance(status_template.stat_modifiers, list):
-                status_modifiers_all.extend(status_template.stat_modifiers)
-            if hasattr(status_template, 'grants_abilities_or_skills') and isinstance(status_template.grants_abilities_or_skills, list):
-                granted_abilities_skills.extend(status_template.grants_abilities_or_skills)
+            # Changed status_instance.template_id to status_instance.status_type
+            # Also, status_template type hint should be StatusEffectDefinition from rules_schema
+            status_template: Optional[StatusEffectDefinition] = await status_manager.get_status_template(guild_id, status_instance.status_type)
+            # This block needs to be aligned with the line above
+            if status_template:
+                if hasattr(status_template, 'stat_modifiers') and isinstance(status_template.stat_modifiers, list):
+                    status_modifiers_all.extend(status_template.stat_modifiers)
+                if hasattr(status_template, 'grants_abilities_or_skills') and isinstance(status_template.grants_abilities_or_skills, list):
+                    granted_abilities_skills.extend(status_template.grants_abilities_or_skills)
 
     # Apply flat status bonuses
     for mod_rule in status_modifiers_all:

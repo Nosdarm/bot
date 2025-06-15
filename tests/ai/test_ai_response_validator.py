@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import json
 
 from bot.ai.ai_response_validator import AIResponseValidator
-from bot.ai.ai_data_models import GenerationContext, GameTerm, ValidationIssue, ValidatedEntity, ParsedAiData
+from bot.ai.ai_data_models import GenerationContext, ValidationIssue, ValidatedEntity, ParsedAiData
 from bot.ai.rules_schema import (
     GameRules, CharacterStatRules, SkillRules, ItemRules, QuestRules,
     FactionRules, RoleStatRules, StatRange, ItemPriceCategory, ItemPriceDetail,
@@ -72,51 +72,53 @@ class TestAIResponseValidator(unittest.TestCase):
         self.validator = AIResponseValidator(rules=self.mock_game_rules)
 
         # 2. Mock GenerationContext
-        self.mock_game_terms_list = [
-            GameTerm(id="strength", name_i18n={"en": "Strength"}, term_type="stat"),
-            GameTerm(id="dexterity", name_i18n={"en": "Dexterity"}, term_type="stat"),
-            GameTerm(id="intelligence", name_i18n={"en": "Intelligence"}, term_type="stat"),
-            GameTerm(id="health", name_i18n={"en": "Health"}, term_type="stat"),
-            GameTerm(id="mana", name_i18n={"en": "Mana"}, term_type="stat"),
-            GameTerm(id="mining", name_i18n={"en": "Mining"}, term_type="skill"),
-            GameTerm(id="herbalism", name_i18n={"en": "Herbalism"}, term_type="skill"),
-            GameTerm(id="lockpicking", name_i18n={"en": "Lockpicking"}, term_type="skill"),
-            GameTerm(id="ab001", name_i18n={"en": "Power Attack"}, term_type="ability"),
-            GameTerm(id="sp001", name_i18n={"en": "Fireball"}, term_type="spell"),
-            GameTerm(id="npc_guard", name_i18n={"en": "Guard"}, term_type="npc"), # Example NPC ID
-            GameTerm(id="npc_merchant", name_i18n={"en": "Merchant"}, term_type="npc"),
-            GameTerm(id="item_sword", name_i18n={"en": "Sword"}, term_type="item_template"),
-            GameTerm(id="item_potion_health", name_i18n={"en": "Health Potion"}, term_type="item_template"),
-            GameTerm(id="loc_town_square", name_i18n={"en": "Town Square"}, term_type="location"),
-            GameTerm(id="empire", name_i18n={"en": "The Empire"}, term_type="faction"),
-            GameTerm(id="rebels", name_i18n={"en": "Rebel Alliance"}, term_type="faction"),
-            GameTerm(id="neutral_guild", name_i18n={"en": "Neutral Guild"}, term_type="faction"),
-            GameTerm(id="q001_main_story", name_i18n={"en": "Main Story Quest"}, term_type="quest"),
-            GameTerm(id="warrior", name_i18n={"en": "Warrior"}, term_type="archetype"), # Archetype
-            GameTerm(id="mage", name_i18n={"en": "Mage"}, term_type="archetype"),
-            GameTerm(id="commoner", name_i18n={"en": "Commoner"}, term_type="archetype"),
+        # GameTerm is removed, so we'll use a simplified dictionary for game_terms_dictionary
+        # or mock the structure that GenerationContext expects if it's more complex.
+        # For now, assuming game_terms_dictionary is a list of dicts or simple objects.
+        self.mock_game_terms_list_data = [
+            {"id": "strength", "name_i18n": {"en": "Strength"}, "term_type": "stat"},
+            {"id": "dexterity", "name_i18n": {"en": "Dexterity"}, "term_type": "stat"},
+            {"id": "intelligence", "name_i18n": {"en": "Intelligence"}, "term_type": "stat"},
+            {"id": "health", "name_i18n": {"en": "Health"}, "term_type": "stat"},
+            {"id": "mana", "name_i18n": {"en": "Mana"}, "term_type": "stat"},
+            {"id": "mining", "name_i18n": {"en": "Mining"}, "term_type": "skill"},
+            {"id": "herbalism", "name_i18n": {"en": "Herbalism"}, "term_type": "skill"},
+            {"id": "lockpicking", "name_i18n": {"en": "Lockpicking"}, "term_type": "skill"},
+            {"id": "ab001", "name_i18n": {"en": "Power Attack"}, "term_type": "ability"},
+            {"id": "sp001", "name_i18n": {"en": "Fireball"}, "term_type": "spell"},
+            {"id": "npc_guard", "name_i18n": {"en": "Guard"}, "term_type": "npc"},
+            {"id": "npc_merchant", "name_i18n": {"en": "Merchant"}, "term_type": "npc"},
+            {"id": "item_sword", "name_i18n": {"en": "Sword"}, "term_type": "item_template"},
+            {"id": "item_potion_health", "name_i18n": {"en": "Health Potion"}, "term_type": "item_template"},
+            {"id": "loc_town_square", "name_i18n": {"en": "Town Square"}, "term_type": "location"},
+            {"id": "empire", "name_i18n": {"en": "The Empire"}, "term_type": "faction"},
+            {"id": "rebels", "name_i18n": {"en": "Rebel Alliance"}, "term_type": "faction"},
+            {"id": "neutral_guild", "name_i18n": {"en": "Neutral Guild"}, "term_type": "faction"},
+            {"id": "q001_main_story", "name_i18n": {"en": "Main Story Quest"}, "term_type": "quest"},
+            {"id": "warrior", "name_i18n": {"en": "Warrior"}, "term_type": "archetype"},
+            {"id": "mage", "name_i18n": {"en": "Mage"}, "term_type": "archetype"},
+            {"id": "commoner", "name_i18n": {"en": "Commoner"}, "term_type": "archetype"},
         ]
         self.mock_generation_context = GenerationContext(
             guild_id="test_guild",
-            main_language="en",
-            target_languages=["en", "ru", "fr"], # Adding a third for thoroughness
+            main_language="en", # Assuming GenerationContext expects main_language, not lang
+            target_languages=["en", "ru", "fr"],
             request_type="test_generation",
-            game_terms_dictionary=self.mock_game_terms_list
-            # Other fields can be default or mocked if needed by specific validation paths
+            game_terms_dictionary=self.mock_game_terms_list_data # Pass the list of dicts
         )
 
         # Prepare game_terms dict for validator methods
         self.game_terms_dict_for_validation = {
-            "stat_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "stat"},
-            "skill_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "skill"},
-            "ability_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "ability"},
-            "spell_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "spell"},
-            "npc_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "npc"},
-            "item_template_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "item_template"},
-            "location_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "location"},
-            "faction_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "faction"},
-            "quest_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "quest"},
-            "archetype_ids": {t.id for t in self.mock_game_terms_list if t.term_type == "archetype"},
+            "stat_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "stat"},
+            "skill_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "skill"},
+            "ability_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "ability"},
+            "spell_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "spell"},
+            "npc_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "npc"},
+            "item_template_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "item_template"},
+            "location_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "location"},
+            "faction_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "faction"},
+            "quest_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "quest"},
+            "archetype_ids": {t["id"] for t in self.mock_game_terms_list_data if t["term_type"] == "archetype"},
         }
 
     def test_validate_i18n_field_completeness(self):

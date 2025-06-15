@@ -1,7 +1,7 @@
 # bot/ai/prompt_context_collector.py
 import json
 from typing import TYPE_CHECKING, Dict, Any, List, Optional, Union
-from bot.ai.ai_data_models import GameTerm, ScalingParameter, GenerationContext
+from bot.ai.ai_data_models import GenerationContext # ScalingParameter and GameTerm removed
 
 if TYPE_CHECKING:
     from bot.game.managers.character_manager import CharacterManager
@@ -465,20 +465,17 @@ class PromptContextCollector:
         if text_or_dict is None:
             return {default_lang: default_text}
         if isinstance(text_or_dict, dict):
-            # Ensure the default_lang key exists if the dict is not empty but missing it
-            if not text_or_dict and default_text: # if dict is empty, fill with default
+            if not text_or_dict and default_text:
                  return {default_lang: default_text}
-            if default_lang not in text_or_dict and text_or_dict: # if default_lang missing but dict has content
-                # Pick first available lang's text or default_text
+            if default_lang not in text_or_dict and text_or_dict:
                 first_val = next(iter(text_or_dict.values()), default_text)
                 return {**text_or_dict, default_lang: text_or_dict.get(default_lang, first_val)}
             return text_or_dict
-        # If it's a string
         return {default_lang: str(text_or_dict)}
 
-    def get_game_terms_dictionary(self, guild_id: str) -> List[GameTerm]:
+    def get_game_terms_dictionary(self, guild_id: str) -> List[Dict[str, Any]]: # Changed List[GameTerm] to List[Dict[str, Any]]
         """Compiles a list of game terms from various managers and settings."""
-        terms: List[GameTerm] = []
+        terms: List[Dict[str, Any]] = [] # Changed List[GameTerm] to List[Dict[str, Any]]
         game_rules = self.settings.get("game_rules", {})
         main_lang = self.get_main_language_code()
         default_description = {"en": "No description available.", main_lang: "Описание отсутствует."}
@@ -489,123 +486,117 @@ class PromptContextCollector:
         if isinstance(attributes_data, dict):
             for stat_id, stat_info in attributes_data.items():
                 if isinstance(stat_info, dict):
-                    terms.append(GameTerm(
-                        id=stat_id,
-                        name_i18n=self._ensure_i18n_dict(stat_info.get("name_i18n"), main_lang, stat_id),
-                        term_type="stat",
-                        description_i18n=self._ensure_i18n_dict(stat_info.get("description_i18n"), main_lang, default_description[main_lang])
-                    ))
-                else: # stat_info might be a simple value if not a dict
-                    terms.append(GameTerm(id=stat_id, name_i18n={main_lang: stat_id}, term_type="stat", description_i18n=default_description.copy()))
+                    terms.append({
+                        "id": stat_id,
+                        "name_i18n": self._ensure_i18n_dict(stat_info.get("name_i18n"), main_lang, stat_id),
+                        "term_type": "stat",
+                        "description_i18n": self._ensure_i18n_dict(stat_info.get("description_i18n"), main_lang, default_description[main_lang])
+                    })
+                else:
+                    terms.append({"id": stat_id, "name_i18n": {main_lang: stat_id}, "term_type": "stat", "description_i18n": default_description.copy()})
 
         # 2. Skills
         skills_data = game_rules.get("skill_rules", {}).get("skills", {})
         if isinstance(skills_data, dict):
             for skill_id, skill_info in skills_data.items():
                 if isinstance(skill_info, dict):
-                    terms.append(GameTerm(
-                        id=skill_id,
-                        name_i18n=self._ensure_i18n_dict(skill_info.get("name_i18n"), main_lang, skill_id),
-                        term_type="skill",
-                        description_i18n=self._ensure_i18n_dict(skill_info.get("description_i18n"), main_lang, default_description[main_lang])
-                    ))
+                    terms.append({
+                        "id": skill_id,
+                        "name_i18n": self._ensure_i18n_dict(skill_info.get("name_i18n"), main_lang, skill_id),
+                        "term_type": "skill",
+                        "description_i18n": self._ensure_i18n_dict(skill_info.get("description_i18n"), main_lang, default_description[main_lang])
+                    })
                 else:
-                    terms.append(GameTerm(id=skill_id, name_i18n={main_lang: skill_id}, term_type="skill", description_i18n=default_description.copy()))
+                    terms.append({"id": skill_id, "name_i18n": {main_lang: skill_id}, "term_type": "skill", "description_i18n": default_description.copy()})
 
         # 3. Abilities
         if self.ability_manager and hasattr(self.ability_manager, '_ability_templates'):
-            # _ability_templates is Dict[str, Dict[str, AbilityTemplate]] where outer key is guild_id
             for ability_id, ability_obj in self.ability_manager._ability_templates.get(guild_id, {}).items():
-                if hasattr(ability_obj, 'name') and hasattr(ability_obj, 'description'): # AbilityTemplate has name, description as strings
-                    terms.append(GameTerm(
-                        id=ability_id,
-                        name_i18n=self._ensure_i18n_dict(getattr(ability_obj, 'name', ability_id), main_lang, ability_id),
-                        term_type="ability",
-                        description_i18n=self._ensure_i18n_dict(getattr(ability_obj, 'description', None), main_lang, default_description[main_lang])
-                    ))
+                if hasattr(ability_obj, 'name') and hasattr(ability_obj, 'description'):
+                    terms.append({
+                        "id": ability_id,
+                        "name_i18n": self._ensure_i18n_dict(getattr(ability_obj, 'name', ability_id), main_lang, ability_id),
+                        "term_type": "ability",
+                        "description_i18n": self._ensure_i18n_dict(getattr(ability_obj, 'description', None), main_lang, default_description[main_lang])
+                    })
 
         # 4. Spells
         if self.spell_manager and hasattr(self.spell_manager, '_spell_templates'):
-            # _spell_templates is Dict[str, Dict[str, SpellTemplate]]
             for spell_id, spell_obj in self.spell_manager._spell_templates.get(guild_id, {}).items():
-                 if hasattr(spell_obj, 'name') and hasattr(spell_obj, 'description'): # SpellTemplate has name, description as strings
-                    terms.append(GameTerm(
-                        id=spell_id,
-                        name_i18n=self._ensure_i18n_dict(getattr(spell_obj, 'name', spell_id), main_lang, spell_id),
-                        term_type="spell",
-                        description_i18n=self._ensure_i18n_dict(getattr(spell_obj, 'description', None), main_lang, default_description[main_lang])
-                    ))
+                 if hasattr(spell_obj, 'name') and hasattr(spell_obj, 'description'):
+                    terms.append({
+                        "id": spell_id,
+                        "name_i18n": self._ensure_i18n_dict(getattr(spell_obj, 'name', spell_id), main_lang, spell_id),
+                        "term_type": "spell",
+                        "description_i18n": self._ensure_i18n_dict(getattr(spell_obj, 'description', None), main_lang, default_description[main_lang])
+                    })
 
         # 5. NPC Archetypes
         if self.npc_manager and hasattr(self.npc_manager, '_npc_archetypes'):
-            # _npc_archetypes is Dict[str, Dict[str, Any]] - global cache
             for archetype_id, archetype_data in self.npc_manager._npc_archetypes.items():
                 if isinstance(archetype_data, dict):
                     desc = archetype_data.get("description_i18n", archetype_data.get("backstory_i18n", archetype_data.get("backstory")))
-                    terms.append(GameTerm(
-                        id=archetype_id,
-                        name_i18n=self._ensure_i18n_dict(archetype_data.get("name_i18n", archetype_data.get("name")), main_lang, archetype_id),
-                        term_type="npc_archetype",
-                        description_i18n=self._ensure_i18n_dict(desc, main_lang, default_description[main_lang])
-                    ))
+                    terms.append({
+                        "id": archetype_id,
+                        "name_i18n": self._ensure_i18n_dict(archetype_data.get("name_i18n", archetype_data.get("name")), main_lang, archetype_id),
+                        "term_type": "npc_archetype",
+                        "description_i18n": self._ensure_i18n_dict(desc, main_lang, default_description[main_lang])
+                    })
 
         # 6. Item Templates
         if self.item_manager and hasattr(self.item_manager, '_item_templates'):
-            # _item_templates is Dict[str, Dict[str, Any]] - global cache
             for template_id, item_data in self.item_manager._item_templates.items():
                 if isinstance(item_data, dict):
-                    terms.append(GameTerm(
-                        id=template_id,
-                        name_i18n=self._ensure_i18n_dict(item_data.get("name_i18n"), main_lang, template_id),
-                        term_type="item_template",
-                        description_i18n=self._ensure_i18n_dict(item_data.get("description_i18n"), main_lang, default_description[main_lang])
-                    ))
+                    terms.append({
+                        "id": template_id,
+                        "name_i18n": self._ensure_i18n_dict(item_data.get("name_i18n"), main_lang, template_id),
+                        "term_type": "item_template",
+                        "description_i18n": self._ensure_i18n_dict(item_data.get("description_i18n"), main_lang, default_description[main_lang])
+                    })
 
         # 7. Location Templates
         if self.location_manager and hasattr(self.location_manager, '_location_templates'):
-            # _location_templates is Dict[str, Dict[str, Any]] - global cache
             for template_id, loc_data in self.location_manager._location_templates.items():
                 if isinstance(loc_data, dict):
-                    terms.append(GameTerm(
-                        id=template_id,
-                        name_i18n=self._ensure_i18n_dict(loc_data.get("name_i18n"), main_lang, template_id),
-                        term_type="location_template",
-                        description_i18n=self._ensure_i18n_dict(loc_data.get("description_i18n"), main_lang, default_description[main_lang])
-                    ))
+                    terms.append({
+                        "id": template_id,
+                        "name_i18n": self._ensure_i18n_dict(loc_data.get("name_i18n"), main_lang, template_id),
+                        "term_type": "location_template",
+                        "description_i18n": self._ensure_i18n_dict(loc_data.get("description_i18n"), main_lang, default_description[main_lang])
+                    })
 
         # 8. Factions
-        faction_summary_list = self.get_faction_data_context(guild_id) # This already returns List[Dict[str, Any]]
+        faction_summary_list = self.get_faction_data_context(guild_id)
         for faction_info in faction_summary_list:
             if isinstance(faction_info, dict):
-                terms.append(GameTerm(
-                    id=faction_info.get("id", "unknown_faction"),
-                    name_i18n=self._ensure_i18n_dict(faction_info.get("name_i18n"), main_lang, faction_info.get("id", "Unknown Faction")),
-                    term_type="faction",
-                    description_i18n=self._ensure_i18n_dict(faction_info.get("description_i18n"), main_lang, default_description[main_lang])
-                ))
+                terms.append({
+                    "id": faction_info.get("id", "unknown_faction"),
+                    "name_i18n": self._ensure_i18n_dict(faction_info.get("name_i18n"), main_lang, faction_info.get("id", "Unknown Faction")),
+                    "term_type": "faction",
+                    "description_i18n": self._ensure_i18n_dict(faction_info.get("description_i18n"), main_lang, default_description[main_lang])
+                })
 
         # 9. Quest Templates
         if self.quest_manager and hasattr(self.quest_manager, '_quest_templates'):
-            # _quest_templates is Dict[str, Dict[str, Dict[str, Any]]] -> guild_id -> template_id -> template_data
             for template_id, quest_data in self.quest_manager._quest_templates.get(guild_id, {}).items():
                 if isinstance(quest_data, dict):
-                    terms.append(GameTerm(
-                        id=template_id,
-                        name_i18n=self._ensure_i18n_dict(quest_data.get("name_i18n"), main_lang, template_id),
-                        term_type="quest_template",
-                        description_i18n=self._ensure_i18n_dict(quest_data.get("description_i18n"), main_lang, default_description[main_lang])
-                    ))
+                    terms.append({
+                        "id": template_id,
+                        "name_i18n": self._ensure_i18n_dict(quest_data.get("name_i18n"), main_lang, template_id),
+                        "term_type": "quest_template",
+                        "description_i18n": self._ensure_i18n_dict(quest_data.get("description_i18n"), main_lang, default_description[main_lang])
+                    })
 
         return terms
 
-    def get_scaling_parameters(self, guild_id: str) -> List[ScalingParameter]:
+    def get_scaling_parameters(self, guild_id: str) -> List[Dict[str, Any]]: # Changed List[ScalingParameter] to List[Dict[str, Any]]
         """Extracts various scaling parameters from game rules."""
-        params: List[ScalingParameter] = []
+        params: List[Dict[str, Any]] = [] # Changed List[ScalingParameter] to List[Dict[str, Any]]
         game_rules_data = self.settings.get("game_rules", {})
 
         def _add_param(name: str, val: Any, ctx: Optional[str] = None):
             try:
-                params.append(ScalingParameter(parameter_name=name, value=float(val), context=ctx))
+                params.append({"parameter_name": name, "value": float(val), "context": ctx}) # Changed to dict
             except (ValueError, TypeError):
                 print(f"Warning: Could not convert value '{val}' to float for scaling parameter '{name}'. Skipping.")
 
