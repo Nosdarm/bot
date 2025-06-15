@@ -3,7 +3,7 @@
 # --- Импорты ---
 import json
 import uuid
-import traceback
+import traceback # Added
 import asyncio
 import logging
 logger = logging.getLogger(__name__) # Added
@@ -12,15 +12,17 @@ from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHE
 
 # Импорт модели Character (нужен для работы с объектами персонажей, полученными от CharacterManager)
 from bot.game.models.character import Character
+from bot.game.models.action_request import ActionRequest # Added
 
 # Импорт менеджера персонажей (CharacterActionProcessor нуждается в нем для получения объектов Character)
 from bot.game.managers.character_manager import CharacterManager
 from bot.game.managers.equipment_manager import EquipmentManager
-from bot.game.managers.inventory_manager import InventoryManager # Added
+from bot.game.managers.inventory_manager import InventoryManager
 
 # Импорт других менеджеров/сервисов
 from bot.game.managers.item_manager import ItemManager
 from bot.game.managers.location_manager import LocationManager
+from bot.game.managers.dialogue_manager import DialogueManager # Added
 from bot.game.rules.rule_engine import RuleEngine
 from bot.game.managers.time_manager import TimeManager
 from bot.game.managers.combat_manager import CombatManager
@@ -29,12 +31,15 @@ from bot.game.managers.status_manager import StatusManager
 from bot.game.managers.party_manager import PartyManager
 from bot.game.managers.npc_manager import NpcManager
 from bot.game.managers.game_log_manager import GameLogManager
+from bot.services.db_service import DBService # Added
 
 # Импорт процессоров
 from bot.game.event_processors.event_stage_processor import EventStageProcessor
 from bot.game.event_processors.event_action_processor import EventActionProcessor
 from bot.game.managers.event_manager import EventManager # For handle_explore_action
 from bot.services.openai_service import OpenAIService # For descriptions
+from bot.game.services.location_interaction_service import LocationInteractionService # Added
+
 
 if TYPE_CHECKING:
     from bot.ai.rules_schema import CoreGameRulesConfig
@@ -48,44 +53,226 @@ SendCallbackFactory = Callable[[int], SendToChannelCallback]
 class CharacterActionProcessor:
     def __init__(self,
                  character_manager: CharacterManager,
-                 send_callback_factory: SendCallbackFactory,
+                 send_callback_factory: SendCallbackFactory, # This might be deprecated if notifications go via a different system
+                 db_service: DBService, # Added
                  item_manager: Optional[ItemManager] = None,
                  location_manager: Optional[LocationManager] = None,
+                 dialogue_manager: Optional[DialogueManager] = None, # Added
                  rule_engine: Optional[RuleEngine] = None,
-                 time_manager: Optional[TimeManager] = None,
+                 time_manager: Optional[TimeManager] = None, # May not be used directly by handlers anymore
                  combat_manager: Optional[CombatManager] = None,
                  status_manager: Optional[StatusManager] = None,
                  party_manager: Optional[PartyManager] = None,
                  npc_manager: Optional[NpcManager] = None,
-                 event_stage_processor: Optional[EventStageProcessor] = None,
-                 event_action_processor: Optional[EventActionProcessor] = None,
+                 event_stage_processor: Optional[EventStageProcessor] = None, # May be less relevant now
+                 event_action_processor: Optional[EventActionProcessor] = None, # May be less relevant now
                  game_log_manager: Optional[GameLogManager] = None,
-                 openai_service: Optional[OpenAIService] = None,
+                 openai_service: Optional[OpenAIService] = None, # For descriptions in explore
                  event_manager: Optional[EventManager] = None,
                  equipment_manager: Optional[EquipmentManager] = None,
-                 inventory_manager: Optional[InventoryManager] = None, # Added
+                 inventory_manager: Optional[InventoryManager] = None,
+                 location_interaction_service: Optional[LocationInteractionService] = None # Added
                 ):
-        logger.info("Initializing CharacterActionProcessor...") # Changed
+        logger.info("Initializing CharacterActionProcessor...")
         self._character_manager = character_manager
-        self._send_callback_factory = send_callback_factory
+        self._send_callback_factory = send_callback_factory # Kept for now, but direct notifications might change
+        self.db_service = db_service # Added
         self._game_log_manager = game_log_manager
         self._item_manager = item_manager
-        self._inventory_manager = inventory_manager # Added
+        self._inventory_manager = inventory_manager
         self._location_manager = location_manager
+        self._dialogue_manager = dialogue_manager # Added
         self._rule_engine = rule_engine
-        self._time_manager = time_manager
+        self._time_manager = time_manager # Note: May become less directly used by handlers
         self._combat_manager = combat_manager
         self._status_manager = status_manager
         self._party_manager = party_manager
         self._npc_manager = npc_manager
-        self._event_stage_processor = event_stage_processor
-        self._event_action_processor = event_action_processor
+        self._event_stage_processor = event_stage_processor # Note: May become less relevant
+        self._event_action_processor = event_action_processor # Note: May become less relevant
         self._openai_service = openai_service
         self._event_manager = event_manager
         self._equipment_manager = equipment_manager
+        self._location_interaction_service = location_interaction_service # Added
 
-        self.active_character_actions: Dict[str, Dict[str, Set[str]]] = defaultdict(lambda: defaultdict(set))
-        logger.info("CharacterActionProcessor initialized.") # Changed
+        # active_character_actions and old queueing logic might be deprecated by GuildActionScheduler
+        # self.active_character_actions: Dict[str, Dict[str, Set[str]]] = defaultdict(lambda: defaultdict(set))
+        logger.info("CharacterActionProcessor initialized.")
+
+    async def process_action_from_request(self, action_request: ActionRequest, character: Character, context: Dict[str, Any]) -> Dict[str, Any]:
+        guild_id = action_request.guild_id
+        # Assumes action_type is "PLAYER_MOVE", "PLAYER_ATTACK", etc.
+        base_action_type = action_request.action_type.replace("PLAYER_", "", 1).upper()
+        action_data = action_request.action_data # This is the original NLU output / player command details
+
+        # Rules config can be passed in context or fetched from rule_engine
+        rules_config: Optional[CoreGameRulesConfig] = context.get('rules_config')
+        if not rules_config and self._rule_engine:
+            rules_config = self._rule_engine.rules_config_data # type: ignore
+
+        if not rules_config: # Still no rules_config, critical error
+            logger.error(f"CAP.process_action_from_request: Rules configuration not available for guild {guild_id}.")
+            return {"success": False, "message": "Критическая ошибка: правила игры не загружены для обработки действия.", "state_changed": False}
+
+        result: Dict[str, Any] = {"success": False, "message": f"Действие '{base_action_type}' не реализовано.", "state_changed": False}
+
+        transaction_begun = False
+        # Define actions that typically modify persistent state and require a transaction
+        state_changing_actions = ["MOVE", "ATTACK", "SKILL_USE", "PICKUP_ITEM", "EQUIP", "UNEQUIP", "DROP_ITEM", "USE_ITEM", "INTERACT_OBJECT"]
+        # For TALK, state_changed is often True due to dialogue state, but transaction might depend on specific dialogue outcomes
+        # If TALK can lead to quests starting/advancing, items given, etc., it might need a transaction.
+        # For now, let's assume TALK handles its own transactions if complex, or doesn't need one for simple convos.
+
+        # Context channel_id for notifications, if available from original command context
+        # This is not directly in ActionRequest but could be passed in `context` by TurnProcessingService if needed.
+        context_channel_id = context.get('channel_id')
+
+
+        try:
+            if base_action_type in state_changing_actions:
+                if self.db_service: await self.db_service.begin_transaction(); transaction_begun = True
+                else: logger.warning(f"CAP.process_action_from_request: DBService not available for state-changing action {base_action_type}.")
+
+            if base_action_type == "MOVE":
+                target_entity_data = next((e for e in action_data.get("entities", []) if e.get("type") in ["location_name", "location_id", "portal_id"]), None)
+                if target_entity_data:
+                    result = await self.handle_move_action(character, target_entity_data, guild_id, context_channel_id)
+                else:
+                    result = {"success": False, "message": "Куда идти? Цель не указана.", "state_changed": False}
+
+            elif base_action_type == "ATTACK":
+                result = await self.handle_attack_action(character, guild_id, action_data, rules_config)
+
+            elif base_action_type == "LOOK" or base_action_type == "EXPLORE" or base_action_type == "LOOK_AROUND" or base_action_type == "SEARCH_AREA" or base_action_type == "SEARCH":
+                explore_params = {'target': None}
+                look_target_entity = next((e for e in action_data.get("entities", []) if e.get("type") not in ["command", "intent"]), None)
+                if look_target_entity:
+                    explore_params['target'] = look_target_entity.get("value", look_target_entity.get("name"))
+                result = await self.handle_explore_action(character, guild_id, explore_params, context_channel_id)
+                # LOOK actions typically don't change persistent game state requiring transaction commit.
+                # result["state_changed"] is often False unless it triggers an event.
+
+            elif base_action_type == "SKILL_USE":
+                skill_entity = next((e for e in action_data.get("entities", []) if e.get("type") == "skill_name"), None)
+                skill_id_or_name = skill_entity.get("value") if skill_entity else action_data.get("skill_id")
+                target_entity_data = next((e for e in action_data.get("entities", []) if e.get("type") not in ["skill_name", "command", "intent"]), None)
+                if skill_id_or_name:
+                    result = await self.handle_skill_use_action(character, skill_id_or_name, target_entity_data, action_data, guild_id, context_channel_id)
+                else:
+                    result = {"success": False, "message": "Какое умение использовать?", "state_changed": False}
+
+            elif base_action_type == "PICKUP_ITEM" or base_action_type == "PICKUP":
+                item_entity_data = next((e for e in action_data.get("entities", []) if e.get("type") in ["item_name", "item_id", "item"]), None)
+                if item_entity_data:
+                    result = await self.handle_pickup_item_action(character, item_entity_data, guild_id, context_channel_id)
+                else:
+                    result = {"success": False, "message": "Что подобрать?", "state_changed": False}
+
+            elif base_action_type == "EQUIP":
+                result = await self.handle_equip_item_action(character, guild_id, action_data, rules_config)
+
+            elif base_action_type == "UNEQUIP":
+                result = await self.handle_unequip_item_action(character, guild_id, action_data, rules_config)
+
+            elif base_action_type == "DROP_ITEM":
+                result = await self.handle_drop_item_action(character, guild_id, action_data, rules_config)
+
+            elif base_action_type == "TALK":
+                if not self._dialogue_manager:
+                    result = {"success": False, "message": "Система диалогов недоступна.", "state_changed": False}
+                else:
+                    result = await self._dialogue_manager.handle_talk_action(
+                        character_speaker=character, guild_id=guild_id,
+                        action_data=action_data, rules_config=rules_config
+                    )
+
+            elif base_action_type == "USE_ITEM":
+                if not self._item_manager:
+                     result = {"success": False, "message": "Система предметов недоступна.", "state_changed": False}
+                else:
+                    item_entity = next((e for e in action_data.get("entities", []) if e.get("type") in ["item", "item_template_id", "item_instance_id"]), None)
+                    target_entity_data = next((e for e in action_data.get("entities", []) if e.get("type") in ["character", "npc", "player_character", "self"]), None)
+
+                    actual_target_entity_obj = None
+                    if target_entity_data and target_entity_data.get("id"):
+                        target_obj_id = target_entity_data.get("id")
+                        target_obj_type = target_entity_data.get("type")
+                        if target_obj_type in ["character", "player_character"] or (target_obj_type == "self" and target_obj_id == character.id): # type: ignore
+                            if target_obj_id == character.id or target_obj_type == "self": # type: ignore
+                                actual_target_entity_obj = character
+                            elif self._character_manager:
+                                actual_target_entity_obj = await self._character_manager.get_character(guild_id, target_obj_id) # type: ignore
+                        elif target_obj_type == "npc" and self._npc_manager:
+                            actual_target_entity_obj = await self._npc_manager.get_npc(guild_id, target_obj_id) # type: ignore
+                    elif not target_entity_data: # Default to self if no target specified for usable items
+                        actual_target_entity_obj = character
+
+                    if item_entity and item_entity.get("id"):
+                        item_id_from_nlu = item_entity.get("id")
+                        result = await self._item_manager.use_item( # type: ignore
+                            guild_id=guild_id, character_user=character,
+                            item_template_id=item_id_from_nlu,
+                            rules_config=rules_config, # type: ignore
+                            target_entity=actual_target_entity_obj,
+                            additional_params=action_data
+                        )
+                    else:
+                        result = {"success": False, "message": "Какой предмет использовать?", "state_changed": False}
+
+            elif base_action_type in ["INTERACT_OBJECT", "USE_SKILL_ON_OBJECT", "MOVE_TO_INTERACTIVE_FEATURE", "USE_ITEM_ON_OBJECT"]:
+                 if not self._location_interaction_service:
+                     result = {"success": False, "message": "Сервис взаимодействия с локацией недоступен.", "state_changed": False}
+                 else:
+                    result = await self._location_interaction_service.process_interaction( # type: ignore
+                        guild_id=guild_id, character_id=character.id,
+                        action_data=action_data, rules_config=rules_config # type: ignore
+                    )
+
+            else:
+                logger.warning(f"CAP.process_action_from_request: Unhandled base_action_type '{base_action_type}' for character {character.id}.")
+                if self._game_log_manager:
+                    await self._game_log_manager.log_event(
+                        guild_id=guild_id, event_type="PLAYER_ACTION_UNKNOWN",
+                        message=f"Player {character.id} (Name: {character.name}) attempted unhandled action type '{base_action_type}'.",
+                        details={"action_request_id": action_request.action_id, "action_type": action_request.action_type, "action_data": action_data}
+                    )
+
+            if transaction_begun and self.db_service:
+                if result.get("success") and result.get("state_changed", False):
+                    await self.db_service.commit_transaction()
+                    logger.debug(f"CAP.process_action_from_request: Committed transaction for action {base_action_type} by {character.id}")
+                else:
+                    await self.db_service.rollback_transaction()
+                    logger.debug(f"CAP.process_action_from_request: Rolled back transaction for action {base_action_type} by {character.id} (Success: {result.get('success')}, StateChanged: {result.get('state_changed', False)})")
+            transaction_begun = False
+
+        except Exception as e:
+            logger.error(f"CAP.process_action_from_request: Exception during {base_action_type} for {character.id}: {e}", exc_info=True)
+            if transaction_begun and self.db_service:
+                await self.db_service.rollback_transaction()
+                logger.debug(f"CAP.process_action_from_request: Rolled back transaction due to exception for action {base_action_type} by {character.id}")
+            result = {"success": False, "message": f"Внутренняя ошибка при обработке '{base_action_type}': {str(e)}", "state_changed": False, "error": True}
+
+        finally:
+            if transaction_begun and self.db_service and hasattr(self.db_service, 'is_transaction_active') and self.db_service.is_transaction_active(): # type: ignore
+                logger.warning(f"CAP.process_action_from_request: Transaction for action {action_request.action_id} ({base_action_type}) by {character.id} was still active in finally block. Rolling back.")
+                await self.db_service.rollback_transaction()
+
+        if self._game_log_manager:
+            log_event_type = f"PLAYER_ACTION_{base_action_type}_RESULT"
+            log_message = f"Player {character.id} (Name: {character.name}) action {base_action_type} (ReqID: {action_request.action_id}) result: Success={result.get('success')}. Message: {result.get('message')}"
+            # Sanitize result for logging if it contains complex objects
+            loggable_result = result.copy()
+            if "modified_entities" in loggable_result: # Example of removing large data
+                loggable_result["modified_entities_count"] = len(loggable_result["modified_entities"])
+                del loggable_result["modified_entities"]
+
+            await self._game_log_manager.log_event(
+                guild_id, log_event_type, log_message,
+                details={"action_request_id": action_request.action_id, "result": loggable_result, "character_id": character.id, "action_data": action_data}
+            )
+
+        return result
 
     # ... (is_busy, start_action, add_action_to_queue, process_tick, complete_action, _notify_character methods remain unchanged) ...
     def is_busy(self, guild_id: str, character_id: str) -> bool:

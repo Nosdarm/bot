@@ -1,6 +1,1 @@
-from .check_models import CheckOutcome, DetailedCheckResult
-
-__all__ = [
-    "CheckOutcome",
-    "DetailedCheckResult",
-]
+from .action_request import ActionRequest
