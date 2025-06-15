@@ -6,7 +6,7 @@ from sqlalchemy import select
 from typing import AsyncIterator, Dict, Any
 import uuid
 
-from bot.main import app # Import your FastAPI app instance
+from main import app # Import your FastAPI app instance
 from bot.database.models import Player, Base
 from bot.api.schemas.player_schemas import PlayerRead
 
@@ -161,4 +161,4 @@ class TestPlayerAPI:
         response = await client.delete(f"/api/v1/guilds/{TEST_GUILD_ID_API}/players/{non_existent_player_id}")
         assert response.status_code == 404
 
-```
+
