@@ -528,3 +528,24 @@ class RPGCharacter(Base):
 
     def __repr__(self):
         return f"<RPGCharacter(id={self.id}, name='{self.name}', class_name='{self.class_name}')>"
+
+
+class UserSettings(Base):
+    __tablename__ = 'user_settings'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, ForeignKey('players.id'), nullable=False)
+    guild_id = Column(String, nullable=False, index=True)
+    language_code = Column(String(10), nullable=True)  # e.g., 'en-US', 'ru-RU'
+    timezone = Column(String(50), nullable=True)  # e.g., 'UTC', 'Europe/Moscow'
+
+    # Relationships
+    player = relationship("Player") # Assuming Player model is defined as "Player"
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'guild_id', name='uq_user_guild_settings'),
+        Index('idx_user_settings_user_guild', 'user_id', 'guild_id')
+    )
+
+    def __repr__(self):
+        return f"<UserSettings(id={self.id}, user_id='{self.user_id}', guild_id='{self.guild_id}', language_code='{self.language_code}')>"
