@@ -7,7 +7,7 @@ from bot.game.managers.combat_manager import CombatManager
 from bot.game.models.combat import Combat, CombatParticipant
 from bot.game.models.character import Character
 from bot.game.models.npc import NPC as NpcModel
-from bot.ai.rules_schema import CoreGameRulesConfig, ExperienceRules, LootRules # Added for testing
+from bot.ai.rules_schema import CoreGameRulesConfig, XPRule, LootTableDefinition, LootTableEntry # MODIFIED
 
 class TestCombatManager(unittest.IsolatedAsyncioTestCase):
 
@@ -40,12 +40,25 @@ class TestCombatManager(unittest.IsolatedAsyncioTestCase):
             # game_log_manager is passed via kwargs in methods usually
         )
 
+        default_loot_table = LootTableDefinition(
+            id="goblin_loot_table", # ID for the table
+            entries=[
+                LootTableEntry(item_template_id="potion_health", weight=1, quantity_dice="1")
+            ]
+        )
         self.rules_config = CoreGameRulesConfig(
-             base_stats={}, equipment_slots={}, checks={}, damage_types={},
-             item_definitions={}, status_effects={},
-             experience_rules=ExperienceRules(base_xp_per_kill=50, xp_distribution_rule="even_split"), # Added
-             loot_rules=LootRules(default_drop_chance=0.5, placeholder_loot_item_id="potion_health", distribution_method="random_assignment_to_winner"), # Added
-             action_conflicts=[], location_interactions={}
+             base_stats={},
+             equipment_slots={},
+             checks={},
+             damage_types={},
+             item_effects={}, # Assuming item_definitions is now item_effects
+             status_effects={},
+             xp_rules=XPRule(base_xp_per_challenge={"goblin_defeated": 50}), # Use NPC template_id as key
+             loot_tables={"goblin_defeated": default_loot_table}, # Use NPC template_id as key for loot table
+             action_conflicts=[],
+             location_interactions={},
+             relation_rules=[], # Added required field
+             relationship_influence_rules=[] # Added required field
         )
 
         self.actor_player = Character(id="player_actor_id", name="ActorPlayer", guild_id="guild1", hp=100, max_health=100, stats={"dexterity": 15})
