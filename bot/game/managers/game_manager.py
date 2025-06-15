@@ -448,18 +448,32 @@ class GameManager:
 
         if not hasattr(self, 'dialogue_manager') or self.dialogue_manager is None:
             from bot.game.managers.dialogue_manager import DialogueManager
+            # Make sure all managers DialogueManager *does* accept and are available are passed.
+            # Based on DialogueManager.__init__ these are:
+            # db_service, settings, character_manager, npc_manager, rule_engine,
+            # event_stage_processor, time_manager, openai_service, relationship_manager,
+            # game_log_manager, quest_manager, notification_service.
+
             self.dialogue_manager = DialogueManager(
                 db_service=self.db_service,
+                settings=self._settings.get('dialogue_settings', {}),
                 character_manager=self.character_manager,
                 npc_manager=self.npc_manager,
+                rule_engine=self.rule_engine,
+                # event_stage_processor is self._event_stage_processor, ensure it's initialized *before* DialogueManager if passed.
+                # For now, let's assume EventStageProcessor might not be ready or strictly needed for DialogueManager init
+                # and rely on DialogueManager's optional nature for these.
+                # The critical fix is removing event_manager.
+                # Let's add the ones that are definitely available and were in its __init__
+                time_manager=self.time_manager,
                 openai_service=self.openai_service,
-                settings=self._settings.get('dialogue_settings', {}),
-                # Add other dependencies like rule_engine, event_manager if needed by DialogueManager's init
-                rule_engine=self.rule_engine, # Assuming it might need it
-                event_manager=self.event_manager # Assuming it might need it
+                relationship_manager=self.relationship_manager, # This itself might not be initialized yet.
+                game_log_manager=self.game_log_manager,
+                quest_manager=self.quest_manager, # This is initialized earlier in this method.
+                notification_service=self.notification_service # This is initialized in _initialize_dependent_managers
+                # event_stage_processor=self._event_stage_processor # Let's defer adding this unless a new error points to it.
             )
             logger.info("GameManager: DialogueManager initialized in _initialize_processors_and_command_system.")
-            # Update CharacterManager and NpcManager if they need DialogueManager post-init
             if self.character_manager and hasattr(self.character_manager, '_dialogue_manager') and self.character_manager._dialogue_manager is None:
                 self.character_manager._dialogue_manager = self.dialogue_manager
             if self.npc_manager and hasattr(self.npc_manager, 'dialogue_manager') and self.npc_manager.dialogue_manager is None:
