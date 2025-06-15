@@ -3,11 +3,12 @@ import json
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch, call
 
+from bot.ai import rules_schema
 from bot.game.managers.combat_manager import CombatManager
 from bot.game.models.combat import Combat, CombatParticipant
 from bot.game.models.character import Character
 from bot.game.models.npc import NPC as NpcModel
-from bot.ai.rules_schema import CoreGameRulesConfig, XPRule # Removed LootRules
+from bot.ai.rules_schema import CoreGameRulesConfig, XPRule, LootTableEntry, LootTableDefinition
 
 class TestCombatManager(unittest.IsolatedAsyncioTestCase):
 
@@ -40,10 +41,10 @@ class TestCombatManager(unittest.IsolatedAsyncioTestCase):
             # game_log_manager is passed via kwargs in methods usually
         )
 
-        default_loot_table = LootTableDefinition(
+        default_loot_table = rules_schema.LootTableDefinition(
             id="goblin_loot_table", # ID for the table
             entries=[
-                LootTableEntry(item_template_id="potion_health", weight=1, quantity_dice="1")
+                rules_schema.LootTableEntry(item_template_id="potion_health", weight=1, quantity_dice="1")
             ]
         )
         self.rules_config = CoreGameRulesConfig(
