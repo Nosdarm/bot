@@ -3,19 +3,21 @@ from unittest.mock import MagicMock, patch
 import json
 
 from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
-from bot.ai.ai_data_models import GenerationContext, GameTerm, ScalingParameter
+from bot.ai.ai_data_models import GenerationContext # ScalingParameter removed
 
 class TestMultilingualPromptGenerator(unittest.TestCase):
 
     def setUp(self):
         self.mock_context_collector = MagicMock()
 
-        self.sample_game_terms = [
-            GameTerm(id="str", name_i18n={"en": "Strength", "ru": "Сила"}, term_type="stat"),
-            GameTerm(id="item_hp_potion", name_i18n={"en": "Health Potion", "ru": "Зелье здоровья"}, term_type="item_template")
+        # GameTerm is removed, using a list of dicts for game_terms_dictionary
+        self.sample_game_terms_data = [
+            {"id": "str", "name_i18n": {"en": "Strength", "ru": "Сила"}, "term_type": "stat"},
+            {"id": "item_hp_potion", "name_i18n": {"en": "Health Potion", "ru": "Зелье здоровья"}, "term_type": "item_template"}
         ]
-        self.sample_scaling_params = [
-            ScalingParameter(parameter_name="npc_health_scale", value=1.2, context="for elite NPCs")
+        # ScalingParameter is removed, using a list of dicts for scaling_parameters
+        self.sample_scaling_params_data = [
+            {"parameter_name": "npc_health_scale", "value": 1.2, "context": "for elite NPCs"}
         ]
         self.sample_generation_context = GenerationContext(
             guild_id="test_guild",
@@ -28,8 +30,8 @@ class TestMultilingualPromptGenerator(unittest.TestCase):
             relationship_data=[{"entity1_id": "p1", "entity2_id": "npc1", "type": "friendly"}],
             active_quests_summary=[{"id": "q1", "name_i18n": {"en": "Active Quest 1"}}],
             game_lore_snippets=[{"id": "lore1", "text_en": "Ancient lore"}],
-            game_terms_dictionary=self.sample_game_terms,
-            scaling_parameters=self.sample_scaling_params,
+            game_terms_dictionary=self.sample_game_terms_data,
+            scaling_parameters=self.sample_scaling_params_data, # Use the list of dicts
             game_rules_summary={"max_level": 50},
             player_context={"player_id": "player1", "level_info": {"character_level": 5}}
         )
