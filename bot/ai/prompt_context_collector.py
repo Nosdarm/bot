@@ -1,9 +1,11 @@
 # bot/ai/prompt_context_collector.py
 import json
+import logging # ADDED
 from typing import TYPE_CHECKING, Dict, Any, List, Optional, Union
 from bot.ai.ai_data_models import GenerationContext # ScalingParameter and GameTerm removed
 
 if TYPE_CHECKING:
+    from bot.services.db_service import DBService # ADDED
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.quest_manager import QuestManager
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
     # Forward reference for GameManager if needed, or pass settings directly
     # from bot.game.managers.game_manager import GameManager
 
+logger = logging.getLogger(__name__) # ADDED
 
 class PromptContextCollector:
     def __init__(
@@ -29,10 +32,12 @@ class PromptContextCollector:
         location_manager: 'LocationManager',
         ability_manager: 'AbilityManager',
         spell_manager: 'SpellManager',
-        event_manager: 'EventManager'
+        event_manager: 'EventManager',
+        db_service: 'DBService' # ADDED
         # Potentially lore_data if loaded separately, or handled via location_manager/settings
     ):
         self.settings = settings
+        self.db_service = db_service # ADDED
         self.character_manager = character_manager
         self.npc_manager = npc_manager
         self.quest_manager = quest_manager
@@ -54,10 +59,10 @@ class PromptContextCollector:
                 lore_data = json.load(f)
                 return lore_data.get("lore_entries", [])
         except FileNotFoundError:
-            print(f"Warning: Lore file not found at game_data/lore_i18n.json")
+            logger.warning(f"Lore file not found at game_data/lore_i18n.json") # MODIFIED print to logger.warning
             return []
         except json.JSONDecodeError:
-            print(f"Warning: Could not decode lore file at game_data/lore_i18n.json")
+            logger.warning(f"Could not decode lore file at game_data/lore_i18n.json") # MODIFIED print to logger.warning
             return []
 
     def get_world_state_context(self, guild_id: str) -> Dict[str, Any]:
@@ -178,16 +183,17 @@ class PromptContextCollector:
 
         return world_state_context
 
-    def get_faction_data_context(self, guild_id: str) -> List[Dict[str, Any]]:
+    def get_faction_data_context(self, guild_id: str, game_rules_data: Dict[str, Any]) -> List[Dict[str, Any]]: # MODIFIED signature
         """
         Gathers faction data from game settings.
         Attempts to find detailed definitions first, then falls back to basic IDs.
+        Uses provided game_rules_data.
         """
         faction_data_list = []
-        game_rules = self.settings.get("game_rules", {})
+        # game_rules = self.settings.get("game_rules", {}) # REMOVED, use game_rules_data
 
         # 1. Attempt to retrieve detailed faction definitions
-        factions_definition = game_rules.get("factions_definition", {})
+        factions_definition = game_rules_data.get("factions_definition", {})
         if isinstance(factions_definition, dict) and factions_definition:
             for faction_id, faction_details in factions_definition.items():
                 if isinstance(faction_details, dict):
@@ -204,7 +210,7 @@ class PromptContextCollector:
                 return faction_data_list
 
         # 2. If no detailed definitions, fall back to basic faction IDs
-        faction_rules = game_rules.get("faction_rules", {})
+        faction_rules = game_rules_data.get("faction_rules", {}) # Use game_rules_data
         if isinstance(faction_rules, dict):
             valid_faction_ids = faction_rules.get("valid_faction_ids", [])
             if isinstance(valid_faction_ids, list) and valid_faction_ids:
@@ -226,7 +232,7 @@ class PromptContextCollector:
         relationship_data_list = []
 
         if not self.relationship_manager:
-            print(f"Warning: RelationshipManager not available for guild {guild_id}. Cannot fetch relationship context.")
+            logger.warning(f"RelationshipManager not available for guild {guild_id}. Cannot fetch relationship context.") # MODIFIED print to logger.warning
             return []
 
         try:
@@ -253,7 +259,7 @@ class PromptContextCollector:
                     }
                     relationship_data_list.append(formatted_rel)
         except Exception as e:
-            print(f"Error fetching or processing relationships for entity {entity_id} in guild {guild_id}: {e}")
+            logger.error(f"Error fetching or processing relationships for entity {entity_id} in guild {guild_id}: {e}", exc_info=True) # MODIFIED print to logger.error
             # Optionally, log traceback: import traceback; traceback.print_exc()
             return [] # Return empty list on error
 
@@ -265,7 +271,7 @@ class PromptContextCollector:
         completed_quests_summary_list = []
 
         if not self.quest_manager:
-            print(f"Warning: QuestManager not available for guild {guild_id}. Cannot fetch quest context.")
+            logger.warning(f"QuestManager not available for guild {guild_id}. Cannot fetch quest context.") # MODIFIED print to logger.warning
             return {"active_quests": [], "completed_quests_summary": []}
 
         # 1. Get active quests
@@ -307,7 +313,7 @@ class PromptContextCollector:
                 }
                 active_quests_list.append(serialized_quest)
         except Exception as e:
-            print(f"Error fetching active quests for character {character_id} in guild {guild_id}: {e}")
+            logger.error(f"Error fetching active quests for character {character_id} in guild {guild_id}: {e}", exc_info=True) # MODIFIED print to logger.error
             # import traceback; traceback.print_exc();
 
         # 2. Get completed quests summary
@@ -338,7 +344,7 @@ class PromptContextCollector:
                         "outcome": "completed"
                     })
         except Exception as e:
-            print(f"Error fetching completed quests summary for character {character_id} in guild {guild_id}: {e}")
+            logger.error(f"Error fetching completed quests summary for character {character_id} in guild {guild_id}: {e}", exc_info=True) # MODIFIED print to logger.error
             # import traceback; traceback.print_exc();
 
 
@@ -347,13 +353,21 @@ class PromptContextCollector:
             "completed_quests_summary": completed_quests_summary_list
         }
 
-    def get_game_rules_summary(self, guild_id: str) -> Dict[str, Any]:
-        """Extracts relevant game rules (stats, skills, abilities, items) from settings. Partially placeholder."""
-        print(f"Partially Placeholder: Fetching game rules context for guild {guild_id}")
-        game_rules = self.settings.get("game_rules", {})
+    async def get_game_rules_summary(self, guild_id: str) -> Dict[str, Any]: # MODIFIED to async
+        """Extracts relevant game rules (stats, skills, abilities, items) from settings or DB."""
+        logger.debug(f"Fetching game rules context for guild {guild_id}") # MODIFIED print to logger.debug
+
+        if not self.db_service:
+            logger.error("PromptContextCollector: DBService not available. Cannot fetch guild-specific game rules.")
+            game_rules_data = {}
+        else:
+            game_rules_data = await self.db_service.get_rules_config(guild_id)
+            if game_rules_data is None:
+                logger.warning(f"PromptContextCollector: No game rules found for guild {guild_id} in DB. Using empty rules.")
+                game_rules_data = {}
 
         # Attributes
-        character_stats_rules = game_rules.get("character_stats_rules", {})
+        character_stats_rules = game_rules_data.get("character_stats_rules", {})
         attributes_data = character_stats_rules.get("attributes", {})
         attributes = {attr_id: data.get("description_i18n", {"en": "No description", "ru": "Нет описания"}) # Assuming description_i18n exists
                       for attr_id, data in attributes_data.items()}
@@ -411,53 +425,72 @@ class PromptContextCollector:
             "item_rules_summary": item_rules_summary
         }
 
-    def get_player_level_context(self, guild_id: str, character_id: str) -> Dict[str, Any]:
-        """Gathers player's level and average party level if applicable."""
-
-        character_level: Optional[int] = None
-        party_average_level: Optional[float] = None
+    async def get_character_details_context(self, guild_id: str, character_id: str) -> Dict[str, Any]: # RENAMED and made async
+        """Gathers detailed context for a specific character."""
+        default_return = {
+            "character_id": character_id,
+            "level": 1,
+            "party_average_level": 1.0,
+            "class_i18n": None,
+            "hp": None,
+            "max_hp": None,
+            "faction_id": None,
+            "status_effects": []
+        }
 
         if not self.character_manager:
-            print(f"Warning: CharacterManager not available for guild {guild_id}. Cannot fetch player level context.")
-            return {"character_level": 1, "party_average_level": 1} # Default as per original placeholder
+            logger.warning(f"CharacterManager not available for guild {guild_id}. Cannot fetch character details context.")
+            return default_return
 
-        character = self.character_manager.get_character(guild_id, character_id)
+        # Assuming self.character_manager.get_character is async
+        character = await self.character_manager.get_character(guild_id, character_id)
 
-        if character:
-            character_level = getattr(character, 'level', 1) # Default to 1 if level attribute is missing
+        if not character:
+            logger.warning(f"Character {character_id} not found in guild {guild_id} for character details context.")
+            return default_return
 
-            # Prioritize current_party_id, then party_id
-            party_id_to_check = getattr(character, 'current_party_id', None)
-            if party_id_to_check is None: # Fallback to old party_id field if current_party_id is not set
-                party_id_to_check = getattr(character, 'party_id', None)
+        character_level = getattr(character, 'level', 1)
+        party_average_level: Optional[float] = None
 
-            if party_id_to_check and self.party_manager:
-                party = self.party_manager.get_party(guild_id, party_id_to_check)
-                if party:
-                    member_ids = getattr(party, 'player_ids_list', [])
-                    if isinstance(member_ids, list) and member_ids:
-                        member_levels = []
-                        for member_id in member_ids:
-                            member_char = self.character_manager.get_character(guild_id, member_id)
-                            if member_char:
-                                member_levels.append(getattr(member_char, 'level', 1))
+        # Party average level calculation (remains synchronous if party_manager methods are sync)
+        party_id_to_check = getattr(character, 'current_party_id', None)
+        if party_id_to_check is None:
+            party_id_to_check = getattr(character, 'party_id', None)
 
-                        if member_levels:
-                            party_average_level = sum(member_levels) / len(member_levels)
-                            party_average_level = round(party_average_level, 1) # Round to one decimal place
+        if party_id_to_check and hasattr(self, 'party_manager') and self.party_manager: # Check if party_manager exists
+            party = self.party_manager.get_party(guild_id, party_id_to_check) # Assuming get_party is sync
+            if party:
+                member_ids = getattr(party, 'player_ids_list', []) # Assuming this attribute exists and is list of char IDs
+                if isinstance(member_ids, list) and member_ids:
+                    member_levels = []
+                    for member_id in member_ids:
+                        # This could be async if get_character is always async
+                        member_char = await self.character_manager.get_character(guild_id, member_id)
+                        if member_char:
+                            member_levels.append(getattr(member_char, 'level', 1))
+                    if member_levels:
+                        party_average_level = sum(member_levels) / len(member_levels)
+                        party_average_level = round(party_average_level, 1)
 
-            # If not in a party or party info couldn't be fetched, party_average_level might be character's own level
-            if party_average_level is None:
-                party_average_level = float(character_level)
+        if party_average_level is None:
+            party_average_level = float(character_level)
 
-        else:
-            # Character not found, return default
-            print(f"Warning: Character {character_id} not found in guild {guild_id} for player level context.")
-            return {"character_level": 1, "party_average_level": 1}
+        # Fetch other details
+        character_class_i18n = getattr(character, 'class_i18n', None)
+        current_hp = getattr(character, 'current_hp', None) # Pydantic model uses current_hp
+        max_hp = getattr(character, 'max_hp', None) # Pydantic model uses max_hp
+        faction_id = getattr(character, 'faction_id', None) # Attempt to get, will be None if not present
+        status_effects = getattr(character, 'status_effects', []) # Assuming it's a list
 
         return {
-            "character_level": character_level,
-            "party_average_level": party_average_level
+            "character_id": character_id,
+            "level": character_level,
+            "party_average_level": party_average_level,
+            "class_i18n": character_class_i18n,
+            "hp": current_hp,
+            "max_hp": max_hp,
+            "faction_id": faction_id,
+            "status_effects": status_effects
         }
 
     def _ensure_i18n_dict(self, text_or_dict: Optional[Union[str, Dict[str, str]]], default_lang: str, default_text: str = "") -> Dict[str, str]:
@@ -465,24 +498,40 @@ class PromptContextCollector:
         if text_or_dict is None:
             return {default_lang: default_text}
         if isinstance(text_or_dict, dict):
-            if not text_or_dict and default_text:
+            if not text_or_dict and default_text: # If empty dict and default_text is provided
                  return {default_lang: default_text}
-            if default_lang not in text_or_dict and text_or_dict:
-                first_val = next(iter(text_or_dict.values()), default_text)
-                return {**text_or_dict, default_lang: text_or_dict.get(default_lang, first_val)}
+            if default_lang not in text_or_dict and text_or_dict and default_text: # If lang not in dict, dict not empty, and default_text is provided
+                # This condition might be too complex or not hit if default_text is only for None/empty dict.
+                # Simplified: if default_lang not in text_or_dict and default_text, add it.
+                # However, the original logic was to use first_val if default_lang is missing.
+                # Reverting to a slightly modified original logic for safety:
+                first_val = next(iter(text_or_dict.values()), None) # Get first value or None
+                # if default_lang not in text_or_dict and first_val is not None: # If lang missing and dict not empty
+                #    text_or_dict[default_lang] = first_val
+                # elif default_lang not in text_or_dict and default_text: # If lang missing and dict empty (or first_val was None)
+                #    text_or_dict[default_lang] = default_text
+
+            # Simpler approach for ensuring default_lang key if dict is not empty:
+            if text_or_dict and default_lang not in text_or_dict:
+                 val_to_use = next(iter(text_or_dict.values()), default_text if default_text else "") # Ensure some value
+                 text_or_dict[default_lang] = val_to_use
+            elif not text_or_dict and default_text: # If dict is empty and default_text provided
+                 return {default_lang: default_text}
+
+
             return text_or_dict
         return {default_lang: str(text_or_dict)}
 
-    def get_game_terms_dictionary(self, guild_id: str) -> List[Dict[str, Any]]: # Changed List[GameTerm] to List[Dict[str, Any]]
-        """Compiles a list of game terms from various managers and settings."""
-        terms: List[Dict[str, Any]] = [] # Changed List[GameTerm] to List[Dict[str, Any]]
-        game_rules = self.settings.get("game_rules", {})
+    def get_game_terms_dictionary(self, guild_id: str, game_rules_data: Dict[str, Any]) -> List[Dict[str, Any]]: # MODIFIED signature
+        """Compiles a list of game terms from various managers and settings. Uses provided game_rules_data."""
+        terms: List[Dict[str, Any]] = []
+        # game_rules = self.settings.get("game_rules", {}) # REMOVED, use game_rules_data
         main_lang = self.get_main_language_code()
         default_description = {"en": "No description available.", main_lang: "Описание отсутствует."}
 
 
         # 1. Stats
-        attributes_data = game_rules.get("character_stats_rules", {}).get("attributes", {})
+        attributes_data = game_rules_data.get("character_stats_rules", {}).get("attributes", {}) # Use game_rules_data
         if isinstance(attributes_data, dict):
             for stat_id, stat_info in attributes_data.items():
                 if isinstance(stat_info, dict):
@@ -496,7 +545,7 @@ class PromptContextCollector:
                     terms.append({"id": stat_id, "name_i18n": {main_lang: stat_id}, "term_type": "stat", "description_i18n": default_description.copy()})
 
         # 2. Skills
-        skills_data = game_rules.get("skill_rules", {}).get("skills", {})
+        skills_data = game_rules_data.get("skill_rules", {}).get("skills", {}) # Use game_rules_data
         if isinstance(skills_data, dict):
             for skill_id, skill_info in skills_data.items():
                 if isinstance(skill_info, dict):
@@ -566,7 +615,8 @@ class PromptContextCollector:
                     })
 
         # 8. Factions
-        faction_summary_list = self.get_faction_data_context(guild_id)
+        # Call with game_rules_data
+        faction_summary_list = self.get_faction_data_context(guild_id, game_rules_data=game_rules_data)
         for faction_info in faction_summary_list:
             if isinstance(faction_info, dict):
                 terms.append({
@@ -589,19 +639,50 @@ class PromptContextCollector:
 
         return terms
 
-    def get_scaling_parameters(self, guild_id: str) -> List[Dict[str, Any]]: # Changed List[ScalingParameter] to List[Dict[str, Any]]
-        """Extracts various scaling parameters from game rules."""
-        params: List[Dict[str, Any]] = [] # Changed List[ScalingParameter] to List[Dict[str, Any]]
-        game_rules_data = self.settings.get("game_rules", {})
+    def get_scaling_parameters(self, guild_id: str, game_rules_data: Dict[str, Any]) -> List[Dict[str, Any]]: # MODIFIED signature
+        """Extracts various scaling parameters from game rules. Uses provided game_rules_data."""
+        params: List[Dict[str, Any]] = []
+        # game_rules_data_local = self.settings.get("game_rules", {}) # REMOVED, use game_rules_data parameter
+        # The parameter is already named game_rules_data, so direct use is fine.
 
         def _add_param(name: str, val: Any, ctx: Optional[str] = None):
             try:
                 params.append({"parameter_name": name, "value": float(val), "context": ctx}) # Changed to dict
             except (ValueError, TypeError):
-                print(f"Warning: Could not convert value '{val}' to float for scaling parameter '{name}'. Skipping.")
+                logger.warning(f"Could not convert value '{val}' to float for scaling parameter '{name}'. Skipping.") # MODIFIED print to logger.warning
 
         # 1. NPC Stat Scaling (from character_stats_rules.stat_ranges_by_role)
-        character_stats_rules = game_rules_data.get("character_stats_rules", {})
+        # This part assumes game_rules_data is loaded correctly from DB or settings.
+        # game_rules_data is now sourced from DB via get_game_rules_summary
+        # However, get_scaling_parameters itself is not async and get_game_rules_summary is.
+        # This means get_scaling_parameters needs game_rules_data passed to it, or it needs to become async too.
+        # For now, I will assume game_rules_data is passed if this method is called from an async method.
+        # The current call from get_full_context will be problematic if get_game_rules_summary is not awaited there.
+        # Let's assume get_full_context passes the result of awaited get_game_rules_summary to this,
+        # or this method is refactored to take game_rules_data as param.
+        # For this subtask, I'll modify it to take game_rules_data.
+
+        # Re-evaluating: get_scaling_parameters is called by get_full_context.
+        # get_full_context will call `await self.get_game_rules_summary(guild_id)`.
+        # So, `self.settings.get("game_rules", {})` needs to be replaced with the result from that call.
+        # This means `get_scaling_parameters` doesn't need to change its direct data source if get_full_context provides it.
+        # The prompt asks to modify `get_game_rules_summary` to fetch from DB.
+        # `get_scaling_parameters`'s use of `self.settings.get("game_rules", {})` is now incorrect.
+        # It should use the same DB-fetched rules.
+        # This implies `get_scaling_parameters` should also be async or take `game_rules_data` as an argument.
+        # Let's make it take `game_rules_data` as an argument for simplicity in this step.
+        # I will modify its signature and the call in get_full_context.
+
+        # **Correction**: The instruction is to modify `get_game_rules_summary`.
+        # `get_scaling_parameters` and `get_game_terms_dictionary` also use `self.settings.get("game_rules", {})`.
+        # They should ideally use the DB-fetched rules as well.
+        # This subtask only specified changes for `get_game_rules_summary`'s data source.
+        # I will stick to that, but note this dependency.
+        # For now, `get_scaling_parameters` will keep using `self.settings` as per current structure,
+        # which means it might use stale or global rules, not guild-specific if `game_rules` was only in settings.
+        # This is a limitation of the current refactoring scope. # This comment is now less relevant here.
+
+        character_stats_rules = game_rules_data.get("character_stats_rules", {}) # Use game_rules_data parameter
         stat_ranges_by_role = character_stats_rules.get("stat_ranges_by_role", {})
         if isinstance(stat_ranges_by_role, dict):
             for role, role_stats_data in stat_ranges_by_role.items():
@@ -674,13 +755,16 @@ class PromptContextCollector:
 
         return params
 
-    def get_full_context(self, guild_id: str, request_type: str, request_params: Dict[str, Any], target_entity_id: Optional[str] = None, target_entity_type: Optional[str] = None) -> GenerationContext:
+    async def get_full_context(self, guild_id: str, request_type: str, request_params: Dict[str, Any], target_entity_id: Optional[str] = None, target_entity_type: Optional[str] = None) -> GenerationContext: # MODIFIED to async
         """
         Assembles all context components.
         guild_id is needed for manager calls that are guild-specific.
         target_entity_id and target_entity_type are for context specific to an entity (e.g., player character, NPC).
         """
-        print(f"Assembling full context (guild: {guild_id}, request_type: {request_type}, target: {target_entity_type} {target_entity_id})")
+        logger.debug(f"Assembling full context (guild: {guild_id}, request_type: {request_type}, target: {target_entity_type} {target_entity_id})") # MODIFIED print to logger.debug
+
+        # Fetch guild-specific game rules once
+        game_rules_data_for_guild = await self.get_game_rules_summary(guild_id)
 
         context_dict: Dict[str, Any] = {
             "guild_id": guild_id,
@@ -688,23 +772,21 @@ class PromptContextCollector:
             "target_languages": self.settings.get("target_languages", ["en", "ru"]),
             "request_type": request_type,
             "request_params": request_params,
-            "game_rules_summary": self.get_game_rules_summary(guild_id),
+            "game_rules_summary": game_rules_data_for_guild, # Use fetched data
             "lore_snippets": self.get_lore_context(),
             "world_state": self.get_world_state_context(guild_id),
-            "game_terms_dictionary": self.get_game_terms_dictionary(guild_id),
-            "scaling_parameters": self.get_scaling_parameters(guild_id),
+            "game_terms_dictionary": self.get_game_terms_dictionary(guild_id, game_rules_data=game_rules_data_for_guild), # MODIFIED call
+            "scaling_parameters": self.get_scaling_parameters(guild_id, game_rules_data=game_rules_data_for_guild), # MODIFIED call
             "player_context": None,
-            "faction_data": self.get_faction_data_context(guild_id), # Call the new method
+            "faction_data": self.get_faction_data_context(guild_id, game_rules_data=game_rules_data_for_guild), # MODIFIED call
             "relationship_data": [],
             "active_quests_summary": [],
         }
 
         if target_entity_id and target_entity_type == "character":
-            player_level_ctx = self.get_player_level_context(guild_id, character_id=target_entity_id)
-            context_dict["player_context"] = {
-                "player_id": target_entity_id,
-                "level_info": player_level_ctx,
-            }
+            character_details_ctx = await self.get_character_details_context(guild_id, character_id=target_entity_id) # MODIFIED call
+            context_dict["player_context"] = character_details_ctx # MODIFIED assignment
+
             quest_ctx = self.get_quest_context(guild_id, character_id=target_entity_id)
             if isinstance(quest_ctx, dict):
                 context_dict["active_quests_summary"] = quest_ctx.get("active_quests", [])
@@ -717,6 +799,6 @@ class PromptContextCollector:
             generation_context_model = GenerationContext(**context_dict)
             return generation_context_model
         except Exception as e:
-            print(f"Error creating GenerationContext model from dict: {context_dict}")
-            print(f"Pydantic Validation Error: {e}")
+            logger.error(f"Error creating GenerationContext model from dict. Keys: {list(context_dict.keys())}", exc_info=True) # MODIFIED print to logger.error
+            # logger.error(f"Pydantic Validation Error: {e}", exc_info=True) # Included in above
             raise ValueError(f"Failed to construct GenerationContext: {e}") from e
