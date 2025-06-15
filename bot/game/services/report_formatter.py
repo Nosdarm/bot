@@ -203,4 +203,4 @@ class ReportFormatter:
 
         return "\n".join(report_lines)
 
-```
+

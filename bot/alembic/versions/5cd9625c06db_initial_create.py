@@ -1,8 +1,8 @@
-"""initial_database_setup
+"""initial_create
 
-Revision ID: b502a7aace97
+Revision ID: 5cd9625c06db
 Revises: 
-Create Date: 2025-06-14 00:31:55.079574
+Create Date: 2025-06-15 14:39:08.233085
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = 'b502a7aace97'
+revision: str = '5cd9625c06db'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -58,12 +58,13 @@ def upgrade() -> None:
     op.create_index(op.f('ix_events_guild_id'), 'events', ['guild_id'], unique=False)
     op.create_table('generated_factions',
     sa.Column('id', sa.String(), nullable=False),
-    sa.Column('guild_id', sa.String(), nullable=False),
     sa.Column('name_i18n', sa.JSON(), nullable=True),
     sa.Column('description_i18n', sa.JSON(), nullable=True),
+    sa.Column('guild_id', sa.String(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('idx_generatedfaction_guild_id', 'generated_factions', ['guild_id'], unique=False)
+    op.create_index(op.f('ix_generated_factions_guild_id'), 'generated_factions', ['guild_id'], unique=False)
     op.create_table('generated_locations',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('name_i18n', sa.JSON(), nullable=True),
@@ -89,11 +90,13 @@ def upgrade() -> None:
     op.create_index('idx_generatednpc_guild_id', 'generated_npcs', ['guild_id'], unique=False)
     op.create_table('generated_quests',
     sa.Column('id', sa.String(), nullable=False),
-    sa.Column('guild_id', sa.String(), nullable=False),
     sa.Column('name_i18n', sa.JSON(), nullable=True),
+    sa.Column('description_i18n', sa.JSON(), nullable=True),
+    sa.Column('guild_id', sa.String(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('idx_generatedquest_guild_id', 'generated_quests', ['guild_id'], unique=False)
+    op.create_index(op.f('ix_generated_quests_guild_id'), 'generated_quests', ['guild_id'], unique=False)
     op.create_table('global_state',
     sa.Column('key', sa.String(), nullable=False),
     sa.Column('value', sa.Text(), nullable=True),
@@ -153,11 +156,12 @@ def upgrade() -> None:
     op.create_index(op.f('ix_locations_guild_id'), 'locations', ['guild_id'], unique=False)
     op.create_table('mobile_groups',
     sa.Column('id', sa.String(), nullable=False),
-    sa.Column('guild_id', sa.String(), nullable=False),
     sa.Column('name_i18n', sa.JSON(), nullable=True),
+    sa.Column('guild_id', sa.String(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('idx_mobilegroup_guild_id', 'mobile_groups', ['guild_id'], unique=False)
+    op.create_index(op.f('ix_mobile_groups_guild_id'), 'mobile_groups', ['guild_id'], unique=False)
     op.create_table('new_items',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('name', sa.String(), nullable=False),
@@ -170,6 +174,32 @@ def upgrade() -> None:
     sa.UniqueConstraint('name'),
     sa.UniqueConstraint('name', name='uq_new_item_name')
     )
+    op.create_table('parties',
+    sa.Column('id', sa.String(), nullable=False),
+    sa.Column('name_i18n', sa.JSON(), nullable=True),
+    sa.Column('player_ids', sa.JSON(), nullable=True),
+    sa.Column('current_location_id', sa.String(), nullable=True),
+    sa.Column('turn_status', sa.String(), nullable=True),
+    sa.Column('guild_id', sa.String(), nullable=False),
+    sa.Column('leader_id', sa.String(), nullable=True),
+    sa.Column('state_variables', sa.JSON(), nullable=True),
+    sa.Column('current_action', sa.String(), nullable=True),
+    sa.ForeignKeyConstraint(['current_location_id'], ['locations.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_parties_guild_id'), 'parties', ['guild_id'], unique=False)
+    op.create_table('pending_conflicts',
+    sa.Column('id', sa.String(), nullable=False),
+    sa.Column('guild_id', sa.String(), nullable=False),
+    sa.Column('conflict_data_json', sa.JSON(), nullable=False),
+    sa.Column('status', sa.String(), nullable=False),
+    sa.Column('resolution_data_json', sa.JSON(), nullable=True),
+    sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('resolved_at', sa.TIMESTAMP(timezone=True), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_pending_conflicts_guild_id'), 'pending_conflicts', ['guild_id'], unique=False)
+    op.create_index(op.f('ix_pending_conflicts_status'), 'pending_conflicts', ['status'], unique=False)
     op.create_table('players',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('discord_id', sa.String(), nullable=True),
@@ -213,44 +243,9 @@ def upgrade() -> None:
     sa.UniqueConstraint('discord_id', 'guild_id', name='uq_player_discord_guild')
     )
     op.create_index(op.f('ix_players_is_active'), 'players', ['is_active'], unique=False)
-    op.create_table('parties',
-    sa.Column('id', sa.String(), nullable=False),
-    sa.Column('name_i18n', sa.JSON(), nullable=True),
-    sa.Column('player_ids', sa.JSON(), nullable=True),
-    sa.Column('current_location_id', sa.String(), nullable=True),
-    sa.Column('turn_status', sa.String(), nullable=True),
-    sa.Column('guild_id', sa.String(), nullable=False),
-    sa.Column('leader_id', sa.String(), nullable=True),
-    sa.Column('state_variables', sa.JSON(), nullable=True),
-    sa.Column('current_action', sa.String(), nullable=True),
-    sa.ForeignKeyConstraint(['current_location_id'], ['locations.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_parties_guild_id'), 'parties', ['guild_id'], unique=False)
-    op.create_foreign_key(
-        'fk_players_current_party_id', 'players', 'parties',
-        ['current_party_id'], ['id']
-    )
-    op.create_foreign_key(
-        'fk_players_party_id', 'players', 'parties',
-        ['party_id'], ['id']
-    )
-    op.create_foreign_key(
-        'fk_parties_leader_id', 'parties', 'players',
-        ['leader_id'], ['id']
-    )
-    op.create_table('pending_conflicts',
-    sa.Column('id', sa.String(), nullable=False),
-    sa.Column('guild_id', sa.String(), nullable=False),
-    sa.Column('conflict_data_json', sa.JSON(), nullable=False),
-    sa.Column('status', sa.String(), nullable=False),
-    sa.Column('resolution_data_json', sa.JSON(), nullable=True),
-    sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('resolved_at', sa.TIMESTAMP(timezone=True), nullable=True),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_pending_conflicts_guild_id'), 'pending_conflicts', ['guild_id'], unique=False)
-    op.create_index(op.f('ix_pending_conflicts_status'), 'pending_conflicts', ['status'], unique=False)
+    op.create_foreign_key('fk_parties_leader_id', 'parties', 'players', ['leader_id'], ['id'])
+    op.create_foreign_key('fk_players_current_party_id', 'players', 'parties', ['current_party_id'], ['id'])
+    op.create_foreign_key('fk_players_party_id', 'players', 'parties', ['party_id'], ['id'])
     op.create_table('questlines',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('guild_id', sa.String(), nullable=False),
@@ -269,7 +264,10 @@ def upgrade() -> None:
     sa.Column('status_i18n', sa.JSON(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_index('idx_relationship_entity1', 'relationships', ['guild_id', 'entity1_id', 'entity1_type'], unique=False)
+    op.create_index('idx_relationship_entity2', 'relationships', ['guild_id', 'entity2_id', 'entity2_type'], unique=False)
     op.create_index('idx_relationship_guild_id', 'relationships', ['guild_id'], unique=False)
+    op.create_index(op.f('ix_relationships_guild_id'), 'relationships', ['guild_id'], unique=False)
     op.create_table('rpg_characters',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('name', sa.String(), nullable=False),
@@ -453,8 +451,20 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['questline_id'], ['questlines.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index('idx_queststep_guild_id', 'quest_steps', ['guild_id'], unique=False)
-    op.create_index('idx_queststep_questline_id', 'quest_steps', ['questline_id'], unique=False)
+    op.create_index('idx_queststep_guild_questline', 'quest_steps', ['guild_id', 'questline_id'], unique=False)
+    op.create_index(op.f('ix_quest_steps_guild_id'), 'quest_steps', ['guild_id'], unique=False)
+    op.create_table('user_settings',
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('user_id', sa.String(), nullable=False),
+    sa.Column('guild_id', sa.String(), nullable=False),
+    sa.Column('language_code', sa.String(length=10), nullable=True),
+    sa.Column('timezone', sa.String(length=50), nullable=True),
+    sa.ForeignKeyConstraint(['user_id'], ['players.id'], ),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('user_id', 'guild_id', name='uq_user_guild_settings')
+    )
+    op.create_index('idx_user_settings_user_guild', 'user_settings', ['user_id', 'guild_id'], unique=False)
+    op.create_index(op.f('ix_user_settings_guild_id'), 'user_settings', ['guild_id'], unique=False)
     op.create_table('inventory',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('player_id', sa.String(), nullable=False),
@@ -488,28 +498,30 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['player_id'], ['players.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index('idx_playernpcmemory_guild_id', 'player_npc_memory', ['guild_id'], unique=False)
+    op.create_index('idx_playernpcmemory_guild_player_npc', 'player_npc_memory', ['guild_id', 'player_id', 'npc_id'], unique=False)
     op.create_index('idx_playernpcmemory_npc_id', 'player_npc_memory', ['npc_id'], unique=False)
     op.create_index('idx_playernpcmemory_player_id', 'player_npc_memory', ['player_id'], unique=False)
+    op.create_index(op.f('ix_player_npc_memory_guild_id'), 'player_npc_memory', ['guild_id'], unique=False)
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     # ### commands auto generated by Alembic - please adjust! ###
-    op.drop_constraint('fk_parties_leader_id', 'parties', type_='foreignkey')
-    op.drop_constraint('fk_players_party_id', 'players', type_='foreignkey')
-    op.drop_constraint('fk_players_current_party_id', 'players', type_='foreignkey')
+    op.drop_index(op.f('ix_player_npc_memory_guild_id'), table_name='player_npc_memory')
     op.drop_index('idx_playernpcmemory_player_id', table_name='player_npc_memory')
     op.drop_index('idx_playernpcmemory_npc_id', table_name='player_npc_memory')
-    op.drop_index('idx_playernpcmemory_guild_id', table_name='player_npc_memory')
+    op.drop_index('idx_playernpcmemory_guild_player_npc', table_name='player_npc_memory')
     op.drop_table('player_npc_memory')
     op.drop_index(op.f('ix_new_character_items_item_id'), table_name='new_character_items')
     op.drop_index(op.f('ix_new_character_items_character_id'), table_name='new_character_items')
     op.drop_table('new_character_items')
     op.drop_table('inventory')
-    op.drop_index('idx_queststep_questline_id', table_name='quest_steps')
-    op.drop_index('idx_queststep_guild_id', table_name='quest_steps')
+    op.drop_index(op.f('ix_user_settings_guild_id'), table_name='user_settings')
+    op.drop_index('idx_user_settings_user_guild', table_name='user_settings')
+    op.drop_table('user_settings')
+    op.drop_index(op.f('ix_quest_steps_guild_id'), table_name='quest_steps')
+    op.drop_index('idx_queststep_guild_questline', table_name='quest_steps')
     op.drop_table('quest_steps')
     op.drop_index(op.f('ix_npcs_guild_id'), table_name='npcs')
     op.drop_table('npcs')
@@ -533,18 +545,25 @@ def downgrade() -> None:
     op.drop_table('skills')
     op.drop_table('rules_config')
     op.drop_table('rpg_characters')
+    op.drop_index(op.f('ix_relationships_guild_id'), table_name='relationships')
     op.drop_index('idx_relationship_guild_id', table_name='relationships')
+    op.drop_index('idx_relationship_entity2', table_name='relationships')
+    op.drop_index('idx_relationship_entity1', table_name='relationships')
     op.drop_table('relationships')
     op.drop_index('idx_questline_guild_id', table_name='questlines')
     op.drop_table('questlines')
+    op.drop_constraint('fk_players_party_id', 'players', type_='foreignkey')
+    op.drop_constraint('fk_players_current_party_id', 'players', type_='foreignkey')
+    op.drop_index(op.f('ix_players_is_active'), table_name='players')
+    op.drop_table('players')
     op.drop_index(op.f('ix_pending_conflicts_status'), table_name='pending_conflicts')
     op.drop_index(op.f('ix_pending_conflicts_guild_id'), table_name='pending_conflicts')
     op.drop_table('pending_conflicts')
+    op.drop_constraint('fk_parties_leader_id', 'parties', type_='foreignkey')
     op.drop_index(op.f('ix_parties_guild_id'), table_name='parties')
     op.drop_table('parties')
-    op.drop_index(op.f('ix_players_is_active'), table_name='players')
-    op.drop_table('players')
     op.drop_table('new_items')
+    op.drop_index(op.f('ix_mobile_groups_guild_id'), table_name='mobile_groups')
     op.drop_index('idx_mobilegroup_guild_id', table_name='mobile_groups')
     op.drop_table('mobile_groups')
     op.drop_index(op.f('ix_locations_guild_id'), table_name='locations')
@@ -556,12 +575,14 @@ def downgrade() -> None:
     op.drop_index('idx_itemproperty_guild_id', table_name='item_properties')
     op.drop_table('item_properties')
     op.drop_table('global_state')
+    op.drop_index(op.f('ix_generated_quests_guild_id'), table_name='generated_quests')
     op.drop_index('idx_generatedquest_guild_id', table_name='generated_quests')
     op.drop_table('generated_quests')
     op.drop_index('idx_generatednpc_guild_id', table_name='generated_npcs')
     op.drop_table('generated_npcs')
     op.drop_index('idx_generatedlocation_guild_id', table_name='generated_locations')
     op.drop_table('generated_locations')
+    op.drop_index(op.f('ix_generated_factions_guild_id'), table_name='generated_factions')
     op.drop_index('idx_generatedfaction_guild_id', table_name='generated_factions')
     op.drop_table('generated_factions')
     op.drop_index(op.f('ix_events_guild_id'), table_name='events')
