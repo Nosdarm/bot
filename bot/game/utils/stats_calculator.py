@@ -4,7 +4,7 @@ Calculates effective character/NPC statistics based on base stats, items, and st
 import json
 from typing import Dict, Any, List, Optional, Union
 
-from bot.ai.rules_schema import CoreGameRulesConfig, StatModifierRule, GrantedAbilityOrSkill
+from bot.ai.rules_schema import CoreGameRulesConfig, StatModifierRule, GrantedAbilityOrSkill, StatusEffectDefinition
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from bot.game.models.character import Character
     from bot.game.models.npc import NPC as NpcModel
     from bot.game.models.item import ItemTemplate # For item_manager.get_item_template
-    from bot.game.models.status_effect import StatusEffectTemplate # For status_manager.get_status_template
+    # from bot.game.models.status_effect import StatusEffectTemplate # For status_manager.get_status_template # Removed, using StatusEffectDefinition from rules_schema
     from bot.game.models.status_effect import StatusEffect as StatusEffectInstance # For active statuses
     # This import was missing in the original file for the __main__ block, adding it here for completeness
     # although the __main__ block itself is commented out.
@@ -74,18 +74,21 @@ async def calculate_effective_stats(
         raw_stats[stat_name.lower()] = value
 
     # Load base skills
-    base_skills_source = {}
-    if entity_type == "Character":
-        skills_json = getattr(entity, 'skills_data_json', '{}')
-        if isinstance(skills_json, str): base_skills_source = json.loads(skills_json or '{}')
-        elif isinstance(skills_json, dict): base_skills_source = skills_json
-    elif entity_type == "NPC":
-        skills_attr = getattr(entity, 'skills', getattr(entity, 'skills_data_json', {}))
-        if isinstance(skills_attr, str): base_skills_source = json.loads(skills_attr or '{}')
-        elif isinstance(skills_attr, dict): base_skills_source = skills_attr
-
-    for skill_name, value in base_skills_source.items():
-        raw_stats[skill_name.lower()] = value
+    raw_skills_data = getattr(entity, 'skills_data', [])
+    if isinstance(raw_skills_data, list):
+        for skill_entry in raw_skills_data:
+            if isinstance(skill_entry, dict) and "skill_id" in skill_entry and "level" in skill_entry:
+                raw_stats[skill_entry["skill_id"].lower()] = skill_entry["level"]
+            elif isinstance(skill_entry, dict) and "skill_name" in skill_entry and "value" in skill_entry: # Older possible format
+                 raw_stats[skill_entry["skill_name"].lower()] = skill_entry["value"]
+    # Fallback or handling for the old 'skills' dictionary if still relevant
+    # For now, prioritizing skills_data as it's the newer format.
+    # If entity.skills (Dict[str, int]) is also populated and should be merged, add:
+    # old_skills_dict = getattr(entity, 'skills', {})
+    # if isinstance(old_skills_dict, dict):
+    #     for skill_name, value in old_skills_dict.items():
+    #         if skill_name.lower() not in raw_stats: # Prioritize skills_data if conflicts
+    #             raw_stats[skill_name.lower()] = value
 
     # --- Stage 1: Apply Flat Bonuses ---
     stats_after_flats = raw_stats.copy()
@@ -199,12 +202,12 @@ async def calculate_effective_stats(
     # The existing derived_stat_rules might provide a generic way.
     # The following calculations are specific overrides or additions as per the subtask.
 
-    # Get effective base stats for calculation (ensure keys are lowercase)
-    eff_base_strength = effective_stats.get("base_strength", 0.0) # Default to 0.0 for calculations
-    eff_base_dexterity = effective_stats.get("base_dexterity", 0.0)
-    eff_base_constitution = effective_stats.get("base_constitution", 0.0)
-    # eff_base_intelligence = effective_stats.get("base_intelligence", 0.0) # Not used in current formulas
-    # eff_base_wisdom = effective_stats.get("base_wisdom", 0.0)
+    # Get effective (fully modified and capped) stats for calculation
+    eff_strength = effective_stats.get("strength", 0.0)
+    eff_dexterity = effective_stats.get("dexterity", 0.0)
+    eff_constitution = effective_stats.get("constitution", 0.0)
+    # eff_intelligence = effective_stats.get("intelligence", 0.0) # Not used in current formulas
+    # eff_wisdom = effective_stats.get("wisdom", 0.0)
     # eff_base_charisma = effective_stats.get("base_charisma", 0.0)
 
     entity_level = getattr(entity, 'level', 1) # Get level from entity, default to 1
@@ -219,19 +222,19 @@ async def calculate_effective_stats(
     max_hp_level_scaling_factor = 5.0
     effective_stats['max_hp'] = round(
         max_hp_base_offset +
-        (eff_base_constitution * max_hp_con_scaling_factor) +
+        (eff_constitution * max_hp_con_scaling_factor) +
         (entity_level * max_hp_level_scaling_factor)
     )
 
     # Attack Calculation
     # Attack = strength + level / 2
     attack_level_divisor = 2.0
-    effective_stats['attack'] = round(eff_base_strength + (entity_level / attack_level_divisor))
+    effective_stats['attack'] = round(eff_strength + (entity_level / attack_level_divisor))
 
     # Defense Calculation
     # Defense = dexterity + level / 2
     defense_level_divisor = 2.0
-    effective_stats['defense'] = round(eff_base_dexterity + (entity_level / defense_level_divisor))
+    effective_stats['defense'] = round(eff_dexterity + (entity_level / defense_level_divisor))
 
     # Note: Current HP (entity.hp) is not managed here.
     # The caller (e.g., CharacterManager) should handle adjusting current HP if max_hp changes.
