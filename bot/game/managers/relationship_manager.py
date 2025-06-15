@@ -285,18 +285,76 @@ class RelationshipManager:
             for change_instruction in changes:
                 try:
                     # ... (Entity resolution logic as before) ...
-                    resolved_entity1_id = eval_locals['event_data'].get(change_instruction.get("entity1_ref")) # Simplified
-                    resolved_entity2_id = eval_locals['event_data'].get(change_instruction.get("entity2_ref")) # Simplified
-                    # ... (Type resolution logic as before) ...
-                    resolved_entity1_type = "Character" # Placeholder
-                    resolved_entity2_type = "NPC" # Placeholder
-                    if not all([resolved_entity1_id, resolved_entity2_id, resolved_entity1_type, resolved_entity2_type]):
-                        logger.warning("%s Could not resolve all entity IDs/types for rule '%s'. Skipping change.", log_prefix, rule_definition.get('name', 'Unnamed Rule')) # Changed
+                    resolved_entity1_id_str = str(eval_locals['event_data'].get(change_instruction.get("entity1_ref")))
+                    resolved_entity2_id_str = str(eval_locals['event_data'].get(change_instruction.get("entity2_ref")))
+
+                    # Get types directly from the rule's change instruction
+                    resolved_entity1_type = change_instruction.get("entity1_type")
+                    resolved_entity2_type = change_instruction.get("entity2_type")
+
+                    if not all([resolved_entity1_id_str, resolved_entity1_type, resolved_entity2_id_str, resolved_entity2_type]) or \
+                       resolved_entity1_id_str == 'None' or resolved_entity2_id_str == 'None': # Added None check for stringified IDs
+                        logger.warning(f"{log_prefix} Could not resolve all entity IDs/types for rule '{rule_definition.get('name', 'Unnamed Rule')}' from change instruction: {change_instruction}. Resolved IDs: e1='{resolved_entity1_id_str}' (type='{resolved_entity1_type}'), e2='{resolved_entity2_id_str}' (type='{resolved_entity2_type}'). Skipping this change.")
                         continue
-                    # ... (Rest of change processing, ensure guild_id in logs for errors/warnings) ...
-                    # Example: logger.error("%s Error processing change instruction for rule '%s': %s", log_prefix, rule_definition.get('name', 'Unnamed Rule'), e, exc_info=True)
-                except Exception as e_instr: # Renamed e
-                    logger.error("%s Error processing change instruction: %s", log_prefix, e_instr, exc_info=True) # Changed
+
+                    relationship_type = change_instruction.get("relationship_type", "neutral")
+                    strength_change_str = str(change_instruction.get("strength_change", "0")) # Ensure it's a string for eval
+
+                    # Evaluate strength_change using event_data context
+                    try:
+                        strength_change = float(eval(strength_change_str, eval_globals, eval_locals))
+                    except Exception as e_eval_strength:
+                        logger.error(f"{log_prefix} Error evaluating strength_change '{strength_change_str}' for rule '{rule_definition.get('name', 'Unnamed Rule')}': {e_eval_strength}. Defaulting to 0.", exc_info=True)
+                        strength_change = 0.0
+
+                    # Create or update the relationship
+                    # The adjust_relationship_strength method finds existing or creates new if not found with 0 base, then adjusts.
+                    # Or, create_or_update_relationship can be used if we want to set absolute strength or provide details.
+                    # For now, let's assume adjust_relationship_strength is suitable if it creates new one with 0 initial strength.
+                    # However, the current adjust_relationship_strength WARNS if not found.
+                    # So, it's better to use create_or_update_relationship or ensure adjust creates.
+
+                    # Let's refine the logic: get existing, if not, create, then adjust.
+                    # Normalizing entity order for lookup/creation
+                    norm_e1_id, norm_e2_id = resolved_entity1_id_str, resolved_entity2_id_str
+                    norm_e1_type, norm_e2_type = resolved_entity1_type, resolved_entity2_type
+                    if norm_e1_id > norm_e2_id:
+                        norm_e1_id, norm_e2_id = norm_e2_id, norm_e1_id
+                        norm_e1_type, norm_e2_type = norm_e2_type, norm_e1_type
+
+                    existing_rel = None
+                    for rel_obj in self._relationships.get(guild_id_str, {}).values():
+                        if rel_obj.entity1_id == norm_e1_id and rel_obj.entity2_id == norm_e2_id and \
+                           rel_obj.entity1_type == norm_e1_type and rel_obj.entity2_type == norm_e2_type and \
+                           rel_obj.relationship_type == relationship_type:
+                            existing_rel = rel_obj
+                            break
+
+                    current_strength = 0.0
+                    if existing_rel:
+                        current_strength = existing_rel.strength
+
+                    new_strength = current_strength + strength_change
+                    new_strength = max(-100.0, min(100.0, new_strength)) # Clamp
+
+                    updated_rel = await self.create_or_update_relationship(
+                        guild_id=guild_id_str,
+                        entity1_id=resolved_entity1_id_str, # Use original resolved IDs for clarity in method call
+                        entity1_type=resolved_entity1_type,
+                        entity2_id=resolved_entity2_id_str,
+                        entity2_type=resolved_entity2_type,
+                        relationship_type=relationship_type,
+                        strength=new_strength,
+                        details_i18n=change_instruction.get("details_i18n") # Pass details if rule provides them
+                    )
+                    if updated_rel:
+                        updated_relationships.append(updated_rel)
+                        logger.info(f"{log_prefix} Relationship between {resolved_entity1_id_str}({resolved_entity1_type}) and {resolved_entity2_id_str}({resolved_entity2_type}) of type '{relationship_type}' changed by {strength_change} to {new_strength} due to rule '{rule_definition.get('name', 'Unnamed Rule')}'.")
+                    else:
+                        logger.error(f"{log_prefix} Failed to create/update relationship for rule '{rule_definition.get('name', 'Unnamed Rule')}' between {resolved_entity1_id_str} and {resolved_entity2_id_str}.")
+
+                except Exception as e_instr:
+                    logger.error("%s Error processing change instruction: %s", log_prefix, e_instr, exc_info=True)
         return updated_relationships
 
     async def get_relationship_strength(self, guild_id: str, entity1_id: str, entity1_type: str, entity2_id: str, entity2_type: str) -> float:

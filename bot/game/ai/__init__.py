@@ -1,2 +1,3 @@
 from .npc_action_planner import NPCActionPlanner
 from .narrative_generator import AINarrativeGenerator
+from .faction_generator import AIFactionGenerator

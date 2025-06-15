@@ -283,3 +283,79 @@ CRITICAL INSTRUCTIONS:
 
         # print(f"DEBUG Narrative Prompts for lang '{lang}':\nSystem: {system_prompt}\nUser: {user_prompt}")
         return system_prompt, user_prompt
+
+    def generate_faction_creation_prompt(
+        self,
+        guild_setting: str,
+        existing_npcs_summary: Optional[str], # Made optional
+        existing_locations_summary: Optional[str], # Made optional
+        lang: str,
+        num_factions: int
+    ) -> Tuple[str, str]:
+        """
+        Generates system and user prompts for creating faction concepts using an LLM.
+
+        Args:
+            guild_setting: Brief description of the game world (e.g., "Dark Fantasy").
+            existing_npcs_summary: Optional string summarizing key existing NPCs.
+            existing_locations_summary: Optional string summarizing key existing locations.
+            lang: The desired language code for the faction details (e.g., "en", "ru").
+            num_factions: The number of distinct faction concepts to generate.
+
+        Returns:
+            A tuple containing (system_prompt, user_prompt).
+        """
+
+        system_prompt_template = self.get_prompt_template(lang, "faction_creation_system")
+        if not system_prompt_template: # Fallback if specific template not found
+            system_prompt_template = (
+                "You are an expert world-builder for a text-based role-playing game. "
+                "Your task is to generate {num_factions} distinct and interesting faction concepts "
+                "suitable for a {guild_setting} world. Ensure the output is in valid JSON format as specified. "
+                "The factions should feel unique and offer potential for conflict or cooperation. "
+                "Leader names should be thematic. Descriptions should be concise but evocative. "
+                "Provide all text in {lang}."
+            )
+
+        system_prompt = system_prompt_template.format(
+            num_factions=num_factions,
+            guild_setting=guild_setting,
+            lang=lang
+        )
+
+        user_prompt_lines = [
+            f"Please generate {num_factions} unique faction concepts for a game set in a '{guild_setting}' world.",
+            f"The primary language for names and descriptions should be: {lang}.",
+            "For each faction, provide the following details in a JSON list format. Each object in the list should represent a faction and have these EXACT keys:",
+            "- `name_i18n`: A dictionary with at least an entry for '{lang}' (e.g., {{'{lang}': 'Faction Name in {lang}'}}) and optionally for 'en' if {lang} is not 'en'.",
+            "- `description_i18n`: A dictionary similar to name_i18n, for the faction's ideology and brief description (e.g., {{'{lang}': 'Description in {lang}'}}).",
+            "- `leader_concept`: A dictionary describing a potential leader, including:",
+            "  - `name`: Suggested name for the leader (in {lang}).",
+            "  - `persona`: A brief (1-2 sentence) description of the leader's personality and role (in {lang}).",
+            "- `goals`: A list of 2-3 short strings describing the faction's primary objectives (in {lang}).",
+            "- `alignment_suggestion`: A suggested alignment (e.g., 'Lawful Good', 'Chaotic Neutral', 'True Neutral', 'Lawful Evil')."
+        ]
+
+        if existing_npcs_summary:
+            user_prompt_lines.append(f"\nConsider these existing NPCs as potential inspiration or connections (but you can create new leaders):\n{existing_npcs_summary}")
+        if existing_locations_summary:
+            user_prompt_lines.append(f"\nConsider these existing locations as potential faction bases or areas of interest:\n{existing_locations_summary}")
+
+        user_prompt_lines.append(
+            "\nExample JSON structure for a single faction object within the list:"
+            "\n```json"
+            "\n{"
+            "\n  \"name_i18n\": {\"{lang}\": \"Солнечный Орден\", \"en\": \"Order of the Sun\"},"
+            "\n  \"description_i18n\": {\"{lang}\": \"Рыцари, посвятившие себя искоренению тьмы.\", \"en\": \"Knights dedicated to eradicating darkness.\"},"
+            "\n  \"leader_concept\": {\"name\": \"Верховный Паладин Елена\", \"persona\": \"Строгая, но справедливая воительница, ведущая своих рыцарей с непоколебимой верой.\"},"
+            "\n  \"goals\": [\"Защитить невинных\", \"Уничтожить нежить\", \"Распространить свет\"],"
+            "\n  \"alignment_suggestion\": \"Lawful Good\""
+            "\n}"
+            "\n```"
+            "\nPlease provide the full JSON list containing all {num_factions} faction objects."
+        )
+
+        user_prompt = "\n".join(user_prompt_lines).format(lang=lang, num_factions=num_factions) # Format lang here for example
+
+        # print(f"DEBUG Faction Creation Prompts for lang '{lang}':\nSystem: {system_prompt}\nUser: {user_prompt}")
+        return system_prompt, user_prompt
