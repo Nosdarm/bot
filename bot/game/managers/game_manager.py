@@ -511,11 +511,11 @@ class GameManager:
 
         if not hasattr(self, '_party_command_handler') or not self._party_command_handler:
             self._party_command_handler = PartyCommandHandler(
-                party_manager=self.party_manager,
                 character_manager=self.character_manager,
-                send_callback_factory=self._get_discord_send_callback,
-                rule_engine=self.rule_engine,
-                party_action_processor=self._party_action_processor # Pass the initialized processor
+                party_manager=self.party_manager,
+                party_action_processor=self._party_action_processor,
+                settings=self._settings,
+                npc_manager=self.npc_manager
             )
             logger.info("GameManager: PartyCommandHandler initialized.")
 
