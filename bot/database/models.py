@@ -271,13 +271,47 @@ class GeneratedFaction(Base):
     guild_id = Column(String, nullable=False, index=True)
     __table_args__ = (Index('idx_generatedfaction_guild_id', 'guild_id'),)
 
+
+# New QuestTable
+class QuestTable(Base):
+    __tablename__ = 'quests'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, nullable=False, index=True)
+    name_i18n = Column(JSONB, nullable=True)
+    description_i18n = Column(JSONB, nullable=True)
+    status = Column(String, default='available', nullable=False)
+    influence_level = Column(String, default='local', nullable=True)
+    prerequisites_json_str = Column(Text, nullable=True) # Stores JSON as string
+    connections_json = Column(JSONB, nullable=True) # Stores parsed JSON
+    rewards_json_str = Column(Text, nullable=True) # Stores JSON as string
+    npc_involvement_json = Column(JSONB, nullable=True) # Stores parsed JSON
+    consequences_json_str = Column(Text, nullable=True) # Stores JSON as string
+    quest_giver_details_i18n = Column(JSONB, nullable=True)
+    consequences_summary_i18n = Column(JSONB, nullable=True)
+    ai_prompt_context_json_str = Column(Text, nullable=True)
+    is_ai_generated = Column(Boolean, default=False, nullable=False)
+    # steps are in QuestStepTable
+    __table_args__ = (Index('idx_quests_guild_id', 'guild_id'),)
+
+
 class GeneratedQuest(Base):
     __tablename__ = 'generated_quests'
-    id = Column(String, primary_key=True)
-    name_i18n = Column(JSON, nullable=True)
-    description_i18n = Column(JSON, nullable=True)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    title_i18n = Column(JSONB, nullable=True) # MODIFIED from name_i18n
+    description_i18n = Column(JSONB, nullable=True) # Ensure JSONB
     guild_id = Column(String, nullable=False, index=True)
+    status = Column(String, default='available', nullable=True) # ADDED
+    suggested_level = Column(Integer, nullable=True) # ADDED
+    rewards_json = Column(Text, nullable=True) # ADDED (Storing as JSON string)
+    prerequisites_json = Column(Text, nullable=True) # ADDED (Storing as JSON string)
+    consequences_json = Column(Text, nullable=True) # ADDED (Storing as JSON string)
+    quest_giver_npc_id = Column(String, nullable=True) # ADDED
+    ai_prompt_context_json = Column(Text, nullable=True) # ADDED (Storing as JSON string)
+    quest_giver_details_i18n = Column(JSONB, nullable=True) # ADDED
+    consequences_summary_i18n = Column(JSONB, nullable=True) # ADDED
+    # stages_json or steps_json_str is omitted, steps will be in QuestStepTable
     __table_args__ = (Index('idx_generatedquest_guild_id', 'guild_id'),)
+
 
 class Item(Base):
     __tablename__ = 'items'
@@ -437,20 +471,46 @@ class ItemProperty(Base):
 
 class Questline(Base):
     __tablename__ = 'questlines'
-    id = Column(String, primary_key=True)
-    guild_id = Column(String, nullable=False)
-    name_i18n = Column(JSON, nullable=True)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())) # Ensure default
+    guild_id = Column(String, nullable=False, index=True) # Ensure index
+    name_i18n = Column(JSONB, nullable=True) # MODIFIED to JSONB
     __table_args__ = (Index('idx_questline_guild_id', 'guild_id'),)
 
-class QuestStep(Base):
-    __tablename__ = 'quest_steps'
-    id = Column(String, primary_key=True)
+
+class QuestStepTable(Base): # RENAMED from QuestStep
+    __tablename__ = 'quest_steps' # Tablename remains quest_steps
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id = Column(String, nullable=False, index=True)
-    questline_id = Column(String, ForeignKey('questlines.id'), nullable=False)
-    step_details_i18n = Column(JSON, nullable=True)
+    # questline_id = Column(String, ForeignKey('questlines.id'), nullable=False) # REMOVED
+    quest_id = Column(String, nullable=False, index=True) # ADDED (No direct FK for now)
+
+    # step_details_i18n = Column(JSON, nullable=True) # REMOVED
+    title_i18n = Column(JSONB, nullable=True) # ADDED
+    description_i18n = Column(JSONB, nullable=True) # ADDED
+    requirements_i18n = Column(JSONB, nullable=True) # ADDED
+
+    required_mechanics_json = Column(Text, default='{}', nullable=False) # ADDED
+    abstract_goal_json = Column(Text, default='{}', nullable=False) # ADDED
+    conditions_json = Column(Text, default='{}', nullable=False) # ADDED
+
+    step_order = Column(Integer, default=0, nullable=False) # ADDED
+    status = Column(String, default='pending', nullable=False) # ADDED
+
+    assignee_type = Column(String, nullable=True) # ADDED
+    assignee_id = Column(String, nullable=True) # ADDED
+
+    consequences_json = Column(Text, default='{}', nullable=False) # ADDED
+
+    linked_location_id = Column(String, ForeignKey('locations.id'), nullable=True) # ADDED
+    linked_npc_id = Column(String, ForeignKey('npcs.id'), nullable=True) # ADDED
+    linked_item_id = Column(String, ForeignKey('items.id'), nullable=True) # ADDED
+    linked_guild_event_id = Column(String, ForeignKey('events.id'), nullable=True) # ADDED
+
     __table_args__ = (
-        Index('idx_queststep_guild_questline', 'guild_id', 'questline_id'),
+        # Index('idx_queststep_guild_questline', 'guild_id', 'questline_id'), # REMOVED
+        Index('idx_queststep_guild_quest', 'guild_id', 'quest_id'), # ADDED
     )
+
 
 class MobileGroup(Base):
     __tablename__ = 'mobile_groups'

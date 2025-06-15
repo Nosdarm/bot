@@ -126,30 +126,32 @@ CRITICAL INSTRUCTIONS:
 Design a complete, structured JSON quest based on the following idea:
 Quest Idea/Trigger: {quest_idea}
 
-The JSON quest structure MUST include:
-- `name_i18n`: {{{lang_example_str}}} (multilingual title for the quest, also accept `title_i18n` as an alias).
-- `description_i18n`: {{{lang_example_str}}} (multilingual description outlining the quest premise).
-- `suggested_level`: Optional integer (appropriate player level, scaled using `player_context.level_info` and `scaling_parameters`).
-- `guild_id`: Optional string (if applicable, the guild associated with this quest).
-- `influence_level`: Optional string (e.g., "local", "regional", "global").
-- `quest_giver_id`: Optional string (ID of an NPC from `game_terms_dictionary` or `faction_data` that gives the quest).
-- `quest_giver_details_i18n`: Optional {{{lang_example_str}}} (multilingual details about the quest giver if not a known NPC).
-- `npc_involvement`: Optional dictionary (e.g., `{{"key_npc_id": "npc_wizard_eldron", "role_in_quest": "informant"}}`).
-- `steps`: An array of step objects. Each step object MUST conform to the following structure:
-    - `title_i18n`: {{{lang_example_str}}} (multilingual title for the step).
-    - `description_i18n`: {{{lang_example_str}}} (multilingual description of what the player needs to do for this step).
-    - `step_order`: integer (sequential order of the step, starting from 0 or 1).
-    - `required_mechanics_json`: string (A valid JSON string detailing specific, concrete game mechanic requirements for this step. Examples: `{{"action": "PLAYER_KILL_NPC", "npc_id": "goblin_scout", "quantity": 3}}`, `{{"action": "PLAYER_ACQUIRE_ITEM", "item_id": "lost_amulet", "quantity": 1}}`, `{{"action": "PLAYER_USE_SKILL", "skill_id": "lockpicking", "target_id": "chest_001", "dc": 15}}`. The structure of this JSON will be interpreted by the game's rule engine. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
-    - `abstract_goal_json`: string (A valid JSON string for more complex, less strictly defined goals that might require narrative judgment or broader log analysis. Examples: `{{"goal": "BEFRIEND_NPC", "npc_id": "merchant_elara"}}`, `{{"goal": "SECURE_AREA", "location_id": "old_watchtower"}}`, `{{"goal": "DELIVER_MESSAGE_TO_NPC", "npc_id": "captain_valerius", "message_summary_i18n": {lang_example_str} }} `. This will be interpreted by a rule engine or another LLM. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
-    - `consequences_json`: string (A valid JSON string for step-specific consequences/rewards upon its completion. Example: `{{"grant_xp": 50, "grant_items": [{{"item_id": "minor_potion_healing", "quantity": 2}}], "spawn_npc": {{ "npc_id": "grateful_child", "location_id": "current" }} }}`. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
-    - `assignee_type`: Optional string (e.g., "player", "party").
-    - `assignee_id`: Optional string (player_id or party_id, if applicable).
-- `prerequisites_json`: string (A valid JSON string describing conditions that must be met before this quest can start. Example: `{{"quests_completed": ["quest_intro_001"], "min_level": 5, "faction_reputation": {{"faction_id": "town_guard", "min_standing": "neutral"}}}}`. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
-- `consequences_json`: string (A valid JSON string describing overall quest outcomes upon final completion or failure. Example: `{{"on_complete": {{ "grant_xp": 500, "grant_gold": 100, "reputation_change": [{{"faction_id": "merchant_guild", "change": 25}}] }}, "on_fail": {{ "reputation_change": [{{"faction_id": "merchant_guild", "change": -10}}] }} }}`. The structure and content of this JSON should be guided by the game's internal rule system (ref: rules 14/45).).
-- `consequences_summary_i18n`: Optional {{{lang_example_str}}} (multilingual summary of overall quest consequences).
+The JSON quest structure MUST include the following fields, aligning with the `GeneratedQuest` Pydantic model:
+- `name_i18n`: {{{lang_example_str}}} (Multilingual title for the quest. If you are more familiar with `title_i18n`, that is an acceptable alias for this field).
+- `description_i18n`: {{{lang_example_str}}} (Multilingual description outlining the quest premise).
+- `steps`: An array of step objects. Each step object MUST conform to the `GeneratedQuestStep` Pydantic model structure:
+    - `title_i18n`: {{{lang_example_str}}} (Multilingual title for the step).
+    - `description_i18n`: {{{lang_example_str}}} (Multilingual description of what the player needs to do for this step).
+    - `step_order`: integer (Sequential order of the step, e.g., 0, 1, 2...).
+    - `required_mechanics_json`: string (A valid JSON string detailing specific game mechanic requirements for this step. This string will be parsed as JSON. Example: `{{"action": "PLAYER_KILL_NPC", "npc_id": "goblin_scout", "quantity": 3}}`).
+    - `abstract_goal_json`: string (A valid JSON string for more complex, narrative, or engine-interpreted goals. Example: `{{"goal": "DISCOVER_LOCATION", "location_id": "hidden_cave_01"}}`).
+    - `consequences_json`: string (A valid JSON string for step-specific consequences or rewards upon its completion. Example: `{{"grant_xp": 50}}`).
+    - `assignee_type`: Optional string (e.g., "player", "party"). Default is null or omit if not applicable.
+    - `assignee_id`: Optional string (Player ID or Party ID, if `assignee_type` is set). Default is null or omit.
+- `consequences_json`: string (A valid JSON string describing overall quest outcomes upon final completion or failure. Example: `{{"on_complete": {{ "grant_xp": 500, "grant_gold": 100}}, "on_fail": {{ "faction_reputation_change": [{{"faction_id": "thieves_guild", "change": -20}}] }} }}`).
+- `prerequisites_json`: string (A valid JSON string describing conditions that must be met before this quest can start. Example: `{{"min_level": 5, "quests_completed": ["main_story_01"]}}`).
+
+Optional fields for the main quest structure (include if relevant and sensible based on the quest idea and context):
+- `guild_id`: Optional string (The ID of the guild this quest is primarily associated with. Use IDs from `game_terms_dictionary` or `faction_data` if a specific guild/faction is a quest giver or central to the quest).
+- `influence_level`: Optional string (Describes the scope of the quest's impact, e.g., "local", "regional", "global", "faction_specific").
+- `npc_involvement`: Optional dictionary (Describes key NPCs and their roles. Example: `{{"quest_giver_id": "npc_elder_maria", "target_npc_id": "npc_bandit_leader_grak", "informant_npc_id": "npc_shady_contact_01"}}`. Use NPC IDs from `game_terms_dictionary`).
+- `quest_giver_details_i18n`: Optional {{{lang_example_str}}} (If the quest giver is not a predefined NPC, provide multilingual details here, like their appearance or role).
+- `consequences_summary_i18n`: Optional {{{lang_example_str}}} (A brief multilingual summary of the overall quest consequences for the player).
+- `suggested_level`: Optional integer (An appropriate player character level for this quest. Determine this by considering the `player_context.level` (if available) from the `<game_context>`, the quest's complexity, and `scaling_parameters`. If `player_context` is not available, use general `scaling_parameters` to suggest a reasonable level).
+
 
 CRITICAL INSTRUCTIONS:
-1.  All `*_json` fields (e.g., `required_mechanics_json`, `abstract_goal_json`, `consequences_json`, `prerequisites_json`) MUST be valid JSON strings. Their internal structure should be a JSON object or array as appropriate for the data they represent.
+1.  All fields ending with `_json` (e.g., `required_mechanics_json`, `abstract_goal_json`, `consequences_json`, `prerequisites_json`) MUST contain valid JSON strings. The content of these strings should be JSON objects or arrays as appropriate for the data they represent.
 2.  Use `game_terms_dictionary` from `<game_context>` for all entity IDs (NPCs, items, locations, skills, abilities, factions).
 3.  Scale `suggested_level`, XP, gold, and item rewards (within step or quest consequences) according to `scaling_parameters` and `player_context` in `<game_context>`.
 4.  All textual fields (titles, descriptions, summaries) MUST be in the specified multilingual JSON format: {{{lang_example_str}}}.

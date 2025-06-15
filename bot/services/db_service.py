@@ -1023,3 +1023,30 @@ class DBService:
         except Exception as e:
             logger.error("DBService: Error setting guild setting '%s' for guild %s: %s", setting_key, guild_id, e, exc_info=True) # Changed
             return False
+
+    async def get_rules_config(self, guild_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches the rules configuration for a specific guild."""
+        if not self.adapter:
+            logger.warning("DBService: Adapter not available for get_rules_config.")
+            return None
+        sql = "SELECT config_data FROM rules_config WHERE guild_id = $1"
+        try:
+            row = await self.adapter.fetchone(sql, (guild_id,))
+            if row and row.get('config_data'):
+                config_data_str = row['config_data']
+                if isinstance(config_data_str, dict): # If adapter already parsed JSON
+                    return config_data_str
+                elif isinstance(config_data_str, str):
+                    return json.loads(config_data_str)
+                else:
+                    logger.warning(f"DBService: Unexpected type for config_data for guild {guild_id}: {type(config_data_str)}")
+                    return None
+            else:
+                logger.info(f"DBService: No rules_config found for guild {guild_id}.")
+                return None
+        except json.JSONDecodeError as e:
+            logger.error(f"DBService: Error decoding config_data JSON for guild {guild_id}: {e}", exc_info=True)
+            return None
+        except Exception as e:
+            logger.error(f"DBService: Error fetching rules_config for guild {guild_id}: {e}", exc_info=True)
+            return None
