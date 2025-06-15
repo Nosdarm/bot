@@ -214,7 +214,7 @@ class CombatManager:
             'id': new_combat_id,
             'guild_id': guild_id_str,
             'location_id': location_id_str,
-            'is_active': True,
+            'status': 'active', # Changed from is_active: True
             'channel_id': kwargs.get('channel_id'),
             'event_id': kwargs.get('event_id'),
             'current_round': 1,
@@ -285,7 +285,7 @@ class CombatManager:
         guild_id_str = str(guild_id)
         combat = self.get_combat(guild_id_str, combat_id)
 
-        if not combat or not getattr(combat, 'is_active', False):
+        if not combat or getattr(combat, 'status', 'completed') not in ('active', 'pending'): # Changed from is_active
             return True # Combat ended or not found, nothing to process
 
         current_actor_id = combat.get_current_actor_id()
@@ -294,7 +294,7 @@ class CombatManager:
             if combat.turn_order:
                 combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
             else:
-                combat.is_active = False
+                combat.status = 'completed' # Changed from is_active = False
                 logger.warning("CombatManager: Combat %s (guild %s) has no participants in turn_order. Ending combat.", combat_id, guild_id_str) # Changed
                 self.mark_combat_dirty(guild_id_str, combat_id)
                 return True # Combat ended
@@ -475,7 +475,7 @@ class CombatManager:
         try:
             combat = self.get_combat(guild_id_str, combat_instance_id)
 
-            if not combat or not getattr(combat, 'is_active', False) or str(getattr(combat, 'guild_id', None)) != guild_id_str:
+            if not combat or getattr(combat, 'status', 'completed') not in ('active', 'pending') or str(getattr(combat, 'guild_id', None)) != guild_id_str: # Changed from is_active
                 log_msg_inactive = f"Action for non-active/mismatched combat {combat_instance_id} in guild {guild_id_str}. Ignoring." # Added guild_id
                 if game_log_manager: await game_log_manager.log_warning(log_msg_inactive, guild_id=guild_id_str, combat_id=combat_instance_id)
                 else: logger.warning("CombatManager: %s", log_msg_inactive) # Changed
@@ -594,7 +594,7 @@ class CombatManager:
                 if game_log_manager: await game_log_manager.log_error(no_re_msg, guild_id=guild_id_str, combat_id=combat_instance_id)
                 else: logger.error("CombatManager: %s", no_re_msg) # Changed
 
-            if combat.is_active and combat.get_current_actor_id() == actor_id:
+            if combat.status == 'active' and combat.get_current_actor_id() == actor_id: # Changed from is_active
                 if combat.turn_order:
                     combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
                     if combat.current_turn_index == 0:
@@ -606,7 +606,7 @@ class CombatManager:
                             if p_data_reset.hp > 0: p_data_reset.acted_this_round = False
                             else: p_data_reset.acted_this_round = True
                 else:
-                    combat.is_active = False
+                    combat.status = 'completed' # Changed from is_active = False
                     no_turn_order_msg = f"Combat {combat_instance_id} (guild {guild_id_str}) has no participants in turn_order after action. Ending combat." # Added guild_id
                     if game_log_manager: await game_log_manager.log_warning(no_turn_order_msg, guild_id=guild_id_str, combat_id=combat_instance_id)
                     else: logger.warning("CombatManager: %s", no_turn_order_msg) # Changed
@@ -762,16 +762,16 @@ class CombatManager:
             else: logger.error(err_msg) # Changed
             return
 
-        if not combat.is_active:
-            info_msg = f"CombatManager: Combat {combat_id} in guild {guild_id_str} already ended." # Added guild_id
+        if combat.status not in ('active', 'pending'): # Changed from is_active
+            info_msg = f"CombatManager: Combat {combat_id} in guild {guild_id_str} already ended (status: {combat.status})." # Added guild_id and status
             if game_log_manager: await game_log_manager.log_info(info_msg, guild_id=guild_id_str, combat_id=combat_id)
             else: logger.info(info_msg) # Changed
             # return # Optionally return
 
-        combat.is_active = False
+        combat.status = 'completed' # Changed from is_active = False
         self.mark_combat_dirty(guild_id_str, combat_id)
 
-        log_message_ending = f"Combat {combat_id} (guild {guild_id_str}) ended. Winners: {winning_entity_ids}." # Added guild_id
+        log_message_ending = f"Combat {combat_id} (guild {guild_id_str}) ended with status 'completed'. Winners: {winning_entity_ids}." # Added guild_id and status
         if game_log_manager: await game_log_manager.log_info(log_message_ending, guild_id=guild_id_str, combat_id=combat_id)
         else: logger.info("CombatManager: %s", log_message_ending) # Changed
 
@@ -803,10 +803,10 @@ class CombatManager:
         rows = []
         try:
             sql = '''
-            SELECT id, guild_id, location_id, is_active, participants,
+            SELECT id, guild_id, location_id, status, participants,
                    current_round, combat_log, state_variables, channel_id, event_id,
                    turn_order, current_turn_index
-            FROM combats WHERE guild_id = $1 AND is_active = TRUE
+            FROM combats WHERE guild_id = $1 AND status IN ('active', 'pending')
             ''' # Removed round_timer as it's not in the INSERT/UPDATE
             rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,))
         except Exception as e:
@@ -821,6 +821,11 @@ class CombatManager:
                 if str(data.get('guild_id')) != guild_id_str:
                     logger.warning("CombatManager: Row for combat %s has mismatched guild_id (%s vs %s). Skipping.", data.get('id'), data.get('guild_id'), guild_id_str) # Changed
                     continue
+
+                # Assuming Combat.from_dict will handle 'status' and doesn't need 'is_active'
+                # If Combat model still uses is_active internally, we would need:
+                # status = data.get('status')
+                # data['is_active'] = status in ('active', 'pending')
 
                 participants_json_str = data.get('participants', '[]')
                 try:
@@ -885,7 +890,7 @@ class CombatManager:
 
             data_tuple = (
                 combat_dict['id'], combat_dict['guild_id'], combat_dict.get('location_id'),
-                combat_dict['is_active'], json.dumps(participants_for_json), # Use processed list
+                combat_dict['status'], json.dumps(participants_for_json), # Changed from is_active
                 combat_dict['current_round'], json.dumps(combat_dict.get('combat_log', [])),
                 json.dumps(combat_dict.get('state_variables', {})), combat_dict.get('channel_id'),
                 combat_dict.get('event_id'),
@@ -913,12 +918,12 @@ class CombatManager:
         if combats_to_upsert_data:
             upsert_sql = '''
             INSERT INTO combats
-            (id, guild_id, location_id, is_active, participants, current_round,
+            (id, guild_id, location_id, status, participants, current_round,
             combat_log, state_variables, channel_id, event_id, turn_order, current_turn_index)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (id) DO UPDATE SET
                 guild_id = EXCLUDED.guild_id, location_id = EXCLUDED.location_id,
-                is_active = EXCLUDED.is_active, participants = EXCLUDED.participants,
+                status = EXCLUDED.status, participants = EXCLUDED.participants, # Changed from is_active
                 current_round = EXCLUDED.current_round,
                 combat_log = EXCLUDED.combat_log, state_variables = EXCLUDED.state_variables,
                 channel_id = EXCLUDED.channel_id, event_id = EXCLUDED.event_id,
