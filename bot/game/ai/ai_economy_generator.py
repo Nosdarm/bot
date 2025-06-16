@@ -7,8 +7,8 @@ try:
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
 except ImportError:
     # Define placeholders if actual imports fail in the subtask environment
-    OpenAIService = Any
-    MultilingualPromptGenerator = Any
+    OpenAIService = Any # typing.Any will be resolved if imported at module level
+    MultilingualPromptGenerator = Any # typing.Any will be resolved if imported at module level
 
 class AIEconomyGenerator:
     """
