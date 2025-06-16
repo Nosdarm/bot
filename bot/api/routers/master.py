@@ -61,7 +61,14 @@ router = APIRouter(
 )
 
 # Import Pydantic models for request/response
-from bot.api.schemas.master_schemas import ResolveConflictRequest, EditNpcRequest
+from bot.api.schemas.master_schemas import (
+    ResolveConflictRequest, EditNpcRequest, EditCharacterRequest, EditItemRequest,
+    LaunchEventRequest, SetRuleRequest, RunSimulationRequest, SimulationReportResponse,
+    CompareReportsRequest, CompareReportsResponse, EventLogResponse, LogEntryItem,
+    AllLocationsResponse, BasicLocationInfo, LocationDetailsResponse, LocationNpcInfo,
+    LocationCharacterInfo, LocationEventInfo, NpcListResponse, NpcDetails,
+    PlayerStatsResponse
+)
 from fastapi.responses import JSONResponse
 import logging # For logging within endpoints
 import traceback # For detailed error logging
