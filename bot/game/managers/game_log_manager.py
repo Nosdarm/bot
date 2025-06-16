@@ -260,6 +260,48 @@ class GameLogManager:
             logger.error("GameLogManager: Failed to fetch log %s from DB for guild %s. Error: %s", log_id, guild_id, e, exc_info=True) # Changed
             return None
 
+    async def get_log_by_detail(self, guild_id: str, event_type: str, detail_key: str, detail_value: Any) -> Optional[Dict[str,Any]]:
+        if self._db_service is None or self._db_service.adapter is None:
+            logger.error("GameLogManager: DB service or adapter not available. Cannot fetch log by detail for guild %s.", guild_id)
+            return None
+
+        # Basic validation for detail_key to prevent trivial SQL injection if it were less controlled.
+        # For "report_id", this is safe.
+        if not detail_key.replace('_','').isalnum(): # Allow underscores
+            logger.error(f"GameLogManager: Invalid detail_key format: {detail_key}")
+            return None
+
+        # The query uses ->> to get the value as text, so detail_value should be stringified for comparison.
+        # This is suitable for simple key-value lookups where value is text or can be unambiguously cast to text.
+        # For more complex JSON queries (e.g., numeric comparisons, existence of keys, array contents),
+        # the query or parameters might need adjustment.
+        sql = f"""
+            SELECT id, timestamp, guild_id, player_id, party_id, event_type,
+                   description_key, description_params_json, location_id,
+                   involved_entities_ids, details, channel_id,
+                   source_entity_id, source_entity_type, target_entity_id, target_entity_type
+            FROM game_logs
+            WHERE guild_id = $1
+              AND event_type = $2
+              AND (details->>'{detail_key}') = $3
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """
+        # Ensure detail_value is passed as a string for the comparison with ->>
+        params = (guild_id, event_type, str(detail_value))
+
+        try:
+            row = await self._db_service.adapter.fetchone(sql, params)
+            if row:
+                return dict(row)
+            return None
+        except Exception as e:
+            logger.error(
+                f"GameLogManager: Failed to fetch log by detail ('{detail_key}'='{detail_value}') for guild {guild_id}, event_type {event_type}. Error: {e}",
+                exc_info=True
+            )
+            return None
+
     # Convenience methods for different log levels
     async def log_debug(self, message: str, guild_id: str, **kwargs: Any) -> None: # Added
         details = {'message': message, **kwargs.pop('details', {})}

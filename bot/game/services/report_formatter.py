@@ -13,6 +13,7 @@ CharacterManager = Any
 NpcManager = Any
 ItemManager = Any
 i18n_utils_actual_module = None # Will be replaced by actual import or remain None
+import json # Added for format_comparison_report fallback
 
 try:
     import bot.utils.i18n_utils as i18n_utils_module_loader
@@ -204,3 +205,178 @@ class ReportFormatter:
         return "\n".join(report_lines)
 
 
+# New SimpleReportFormatter class, adapted from gm_app_cmds.py
+class SimpleReportFormatter:
+    def __init__(self, game_mngr: Any, guild_id: str): # Use Any for GameManager to avoid circular import if GameManager imports this
+        self.game_mngr = game_mngr
+        self.guild_id = guild_id
+        # In a real scenario, ensure i18n utilities are properly accessible here
+        # For now, direct string formatting or a placeholder for i18n.
+        # from bot.utils.i18n_utils import get_i18n_text as i18n_get_text_util # Example
+        # self.i18n_get_text = i18n_get_text_util
+
+    def _get_entity_name(self, entity_id: str, entity_type: str, lang: str = "en") -> str:
+        if not self.game_mngr or not self.guild_id:
+            return f"{entity_type} ID: {entity_id}"
+
+        name, res_name = entity_id, entity_id
+        try:
+            if entity_type.lower() == 'character' and hasattr(self.game_mngr, 'character_manager') and self.game_mngr.character_manager:
+                char = self.game_mngr.character_manager.get_character(self.guild_id, entity_id)
+                if char:
+                    res_name = (char.name_i18n.get(lang, char.name_i18n.get("en", char.id))
+                                if hasattr(char, 'name_i18n') and char.name_i18n else getattr(char, "name", char.id))
+            elif entity_type.lower() == 'npc' and hasattr(self.game_mngr, 'npc_manager') and self.game_mngr.npc_manager:
+                npc = self.game_mngr.npc_manager.get_npc(self.guild_id, entity_id)
+                if npc:
+                    res_name = (npc.name_i18n.get(lang, npc.name_i18n.get("en", npc.id))
+                                if hasattr(npc, 'name_i18n') and npc.name_i18n else getattr(npc, "name", npc.id))
+            elif entity_type.lower() == 'location' and hasattr(self.game_mngr, 'location_manager') and self.game_mngr.location_manager:
+                loc = self.game_mngr.location_manager.get_location_instance(self.guild_id, entity_id)
+                if loc:
+                    res_name = (loc.name_i18n.get(lang, loc.name_i18n.get("en", loc.id))
+                                if hasattr(loc, 'name_i18n') and loc.name_i18n else getattr(loc, "name", loc.id))
+            name = res_name if res_name != entity_id else entity_id
+        except Exception as e:
+            print(f"SimpleReportFormatter._get_entity_name error for {entity_type} {entity_id} in guild {self.guild_id}: {e}")
+        return f"{name} (`{entity_id}`)"
+
+    def format_battle_report(self, report_data: Dict[str, Any], lang: str = "en") -> str:
+        lines = [
+            f"**Battle Report (ID: {report_data.get('battle_instance_id', 'N/A')})**",
+            f"Winning Team: {report_data.get('winning_team', 'N/A')}",
+            f"Total Rounds: {report_data.get('total_rounds', 0)}",
+            "\n**Participants Summary:**"
+        ]
+        participants_summary = report_data.get('participants_summary', [])
+        if not participants_summary:
+            lines.append("No participant data available.")
+        for p_summary in participants_summary:
+            p_name = self._get_entity_name(p_summary.get('id', '?'), p_summary.get('type', '?'), lang)
+            lines.append(
+                f"- {p_name} (Team {p_summary.get('team', '?')}, Type: {p_summary.get('type', '?')}) | "
+                f"Survived: {p_summary.get('survived', False)} | "
+                f"HP: {p_summary.get('hp_remaining', 0)}/{p_summary.get('max_hp', 0)} | "
+                f"Damage Dealt: {p_summary.get('damage_dealt', 0)}"
+            )
+        return "\n".join(lines)
+
+    def format_quest_report(self, report_data: Dict[str, Any], lang: str = "en") -> str:
+        # Assuming quest_id in report_data refers to a template_id that might have i18n name
+        quest_template_id = report_data.get('quest_id', 'Unknown Quest')
+        quest_name = quest_template_id # Fallback
+        if hasattr(self.game_mngr, 'quest_manager') and self.game_mngr.quest_manager:
+            q_tpl = self.game_mngr.quest_manager.get_quest_definition(self.guild_id, quest_template_id)
+            if q_tpl and hasattr(q_tpl, 'name_i18n') and isinstance(q_tpl.name_i18n, dict):
+                quest_name = q_tpl.name_i18n.get(lang, q_tpl.name_i18n.get("en", quest_template_id))
+            elif q_tpl and hasattr(q_tpl, 'name'):
+                 quest_name = q_tpl.name
+
+
+        lines = [
+            f"**Quest Report (Simulation ID: {report_data.get('simulation_instance_id', 'N/A')})**",
+            f"Quest: {quest_name} (`{quest_template_id}`)",
+            f"Final Status: {report_data.get('final_status', 'N/A')}",
+            f"Stages Simulated: {report_data.get('stages_simulated_count', 0)}",
+            f"Final Stage Reached: {report_data.get('final_stage_reached', 'N/A')}"
+        ]
+        # Add more details if present in report_data, e.g., outcomes, rewards
+        return "\n".join(lines)
+
+    def format_action_consequence_report(self, report_data: List[Dict[str, Any]], lang: str = "en") -> str:
+        lines = ["**Action Consequence Analysis**"]
+        if not report_data:
+            lines.append("No consequence data available.")
+            return "\n".join(lines)
+
+        for i, outcome in enumerate(report_data):
+            if outcome.get("error"):
+                lines.append(f"\n**Outcome {i+1} (Error):** {outcome.get('error_message', 'Unknown error')}")
+                continue
+
+            lines.append(f"\n**Outcome {i+1}:** Likelihood: {outcome.get('likelihood', 'N/A')}")
+            # Assuming description might be an i18n key or already localized
+            lines.append(f"  Description: {outcome.get('description', 'N/A')}")
+
+            state_changes = outcome.get('state_changes')
+            if state_changes and isinstance(state_changes, dict):
+                lines.append("  Changes:")
+                for k, v in state_changes.items():
+                    lines.append(f"    - {k}: {v}")
+
+            tags = outcome.get('tags')
+            if tags and isinstance(tags, list):
+                lines.append(f"  Tags: {', '.join(tags)}")
+        return "\n".join(lines)
+
+    def format_generic_report(self, report_data: Any, lang: str = "en") -> str:
+        # Fallback for unknown report types or when detailed formatting is not available
+        try:
+            return f"```json\n{json.dumps(report_data, indent=2, ensure_ascii=False)}\n```"
+        except TypeError:
+            return f"```\n{str(report_data)}\n```"
+
+    def format_comparison_report(self, comparison_details: Dict[str, Any], sim_type: str, lang: str = "en") -> str:
+        lines = [f"**Comparison Report for {sim_type.capitalize()} Simulations**\n"]
+
+        error = comparison_details.get("error")
+        if error:
+            lines.append(f"Error: {error}")
+            return "\n".join(lines)
+
+        report1_metrics = comparison_details.get("report_1_metrics", {})
+        report2_metrics = comparison_details.get("report_2_metrics", {})
+        diff_metrics = comparison_details.get("diff", {})
+
+        lines.append(f"Report 1 ID: {comparison_details.get('report_id_1', 'N/A')}")
+        lines.append(f"Report 2 ID: {comparison_details.get('report_id_2', 'N/A')}\n")
+
+        if sim_type == "battle":
+            lines.append("**Battle Metrics Comparison:**")
+            # Common metrics
+            lines.append(f"- Winning Team: R1: {report1_metrics.get('winning_team', 'N/A')} | R2: {report2_metrics.get('winning_team', 'N/A')}")
+            lines.append(f"- Total Rounds: R1: {report1_metrics.get('total_rounds', 'N/A')} | R2: {report2_metrics.get('total_rounds', 'N/A')}")
+
+            # Diff section for battle
+            if diff_metrics:
+                lines.append("\n**Differences:**")
+                for key, value_diff in diff_metrics.items():
+                    lines.append(f"- {key.replace('_', ' ').capitalize()}: R1: {value_diff.get('report_1')} | R2: {value_diff.get('report_2')}")
+
+            # Could add more detailed sections for participant summaries if needed
+            # E.g. comparing survivor counts, total damage by team etc.
+
+        elif sim_type == "quest":
+            lines.append("**Quest Metrics Comparison:**")
+            lines.append(f"- Final Status: R1: {report1_metrics.get('final_status', 'N/A')} | R2: {report2_metrics.get('final_status', 'N/A')}")
+            lines.append(f"- Stages Simulated: R1: {report1_metrics.get('stages_simulated_count', 'N/A')} | R2: {report2_metrics.get('stages_simulated_count', 'N/A')}")
+            lines.append(f"- Final Stage Reached: R1: {report1_metrics.get('final_stage_reached', 'N/A')} | R2: {report2_metrics.get('final_stage_reached', 'N/A')}")
+            if diff_metrics:
+                lines.append("\n**Differences:**")
+                for key, value_diff in diff_metrics.items():
+                     lines.append(f"- {key.replace('_', ' ').capitalize()}: R1: {value_diff.get('report_1')} | R2: {value_diff.get('report_2')}")
+
+        elif sim_type == "action_consequence":
+            lines.append("**Action Consequence Comparison:**")
+            # Comparing lists of outcomes can be complex. This is a simplified version.
+            # It might list outcomes side-by-side or highlight differing numbers of outcomes.
+            outcomes1 = report1_metrics.get("outcomes", [])
+            outcomes2 = report2_metrics.get("outcomes", [])
+            lines.append(f"- Number of Outcomes: R1: {len(outcomes1)} | R2: {len(outcomes2)}")
+            # Could try to compare outcomes if they have unique IDs or matching descriptions.
+            # For now, just showing counts.
+            if diff_metrics.get("outcome_count_diff") is not None:
+                 lines.append(f"  - Difference in outcome count: {diff_metrics.get('outcome_count_diff')}")
+            # A more detailed comparison would involve iterating through outcomes and matching them.
+
+        else:
+            lines.append(f"Comparison formatting for simulation type '{sim_type}' is not fully implemented.")
+            lines.append(f"Report 1 Data: {json.dumps(report1_metrics, indent=2, ensure_ascii=False)}")
+            lines.append(f"Report 2 Data: {json.dumps(report2_metrics, indent=2, ensure_ascii=False)}")
+
+        return "\n".join(lines)
+
+# Ensure GameManager type hint is forward-referenced if defined later or in a different module not directly imported
+# from typing import TYPE_CHECKING
+# if TYPE_CHECKING:
+#     from bot.game.managers.game_manager import GameManager
