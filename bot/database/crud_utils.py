@@ -1,6 +1,6 @@
 # bot/database/crud_utils.py
 import logging
-from typing import Any, Dict, List, Optional, Type, TypeVar
+from typing import Any, Dict, List, Optional, Type, TypeVar, Callable, Coroutine
 from functools import wraps
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,8 @@ from bot.database.models import Base # Assuming your Base is accessible here
 logger = logging.getLogger(__name__)
 
 ModelType = TypeVar("ModelType", bound=Base)
+AsyncCallable = Callable[..., Coroutine[Any, Any, Any]]
+F = TypeVar('F', bound=AsyncCallable)
 
 # Transactional Decorator
 def transactional_session(session_param_name: str = 'db_session'):
@@ -26,44 +28,30 @@ def transactional_session(session_param_name: str = 'db_session'):
     but manages the transaction block (begin, commit, rollback).
     This version expects the session to be passed into the decorated function.
     """
-    def decorator(func):
+    def decorator(func: F) -> F:
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            # Attempt to find the session in kwargs or args
             db_session: Optional[AsyncSession] = kwargs.get(session_param_name)
             if db_session is None:
-                # Try to find by position if not in kwargs (less robust)
                 try:
-                    # This requires knowing the typical position of db_session.
-                    # A common pattern is for it to be the first or second arg if 'self' is present.
-                    # This is a simplification and might need adjustment based on actual function signatures.
-                    # For a method in a class, args[0] is self.
-                    # If db_session is the first parameter after self:
-                    if args and len(args) > 1 and isinstance(args[1], AsyncSession): # Crude check for 'self, db_session, ...'
+                    if args and len(args) > 1 and isinstance(args[1], AsyncSession):
                         db_session = args[1]
-                    # If it's a standalone function and db_session is the first param:
-                    elif args and isinstance(args[0], AsyncSession): # Crude check for 'db_session, ...'
+                    elif args and isinstance(args[0], AsyncSession):
                         db_session = args[0]
                     else:
                         raise ValueError(f"AsyncSession parameter '{session_param_name}' not found in arguments for {func.__name__}")
                 except (IndexError, ValueError) as e:
                     logger.error(f"Error in transactional_session decorator for {func.__name__}: {e}")
-                    raise # Re-raise, as we can't proceed without a session.
+                    raise
 
-            if not db_session.in_transaction(): # Only start a new transaction if one isn't already active
+            if not db_session.in_transaction():
                 async with db_session.begin():
-                    try:
-                        result = await func(*args, **kwargs)
-                        await db_session.commit()
-                        return result
-                    except Exception:
-                        await db_session.rollback()
-                        raise
-            else: # Already in a transaction, just execute the function
+                    result = await func(*args, **kwargs)
+                    return result
+            else:
                 return await func(*args, **kwargs)
         return wrapper
     return decorator
-
 
 # Guild-Aware CRUD Utility Functions
 
