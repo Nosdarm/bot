@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 ModelType = TypeVar("ModelType", bound=Base)
 AsyncCallable = Callable[..., Coroutine[Any, Any, Any]]
-F = TypeVar('F', bound=AsyncCallable)
+F = TypeVar('F', bound=Callable[..., Coroutine[Any, Any, Any]])
 
 # Transactional Decorator
 def transactional_session(session_param_name: str = 'db_session'):
