@@ -200,9 +200,11 @@ class CharacterManager:
             logger.error("CharacterManager: Database service or adapter is not initialized for guild %s.", guild_id_str) # Added
             raise ConnectionError("Database service or adapter is not initialized in CharacterManager.")
 
-        if self.get_character_by_discord_id(guild_id_str, discord_id):
-            logger.warning("CharacterManager: Character with Discord ID %s already exists in guild %s.", discord_id, guild_id_str) # Added
-            return None
+        # Removed pre-emptive check for get_character_by_discord_id
+        # The database unique constraint (discord_id, guild_id) will handle this.
+        # if self.get_character_by_discord_id(guild_id_str, discord_id):
+        #     logger.warning("CharacterManager: Character with Discord ID %s already exists in guild %s.", discord_id, guild_id_str) # Added
+        #     return None
         if self.get_character_by_name(guild_id_str, name):
             logger.warning("CharacterManager: Character with name '%s' already exists in guild %s.", name, guild_id_str) # Added
             return None
