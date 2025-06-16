@@ -6,7 +6,11 @@ import uuid
 import traceback # Will be removed
 import asyncio
 import logging # Added
+import asyncpg # Driver for PostgreSQL
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union
+
+class CharacterAlreadyExistsError(Exception):
+    pass
 
 from bot.game.models.character import Character
 from builtins import dict, set, list, int
@@ -287,8 +291,19 @@ class CharacterManager:
             self.mark_character_dirty(guild_id_str, char.id)
             logger.info("CharacterManager: Character '%s' (ID: %s) created in guild %s.", char.name, char.id, guild_id_str) # Changed
             return char
+        except asyncpg.exceptions.UniqueViolationError as uve:
+            logger.warning(
+                "CharacterManager: Attempted to create a character that already exists for discord_id %s in guild %s (unique constraint violation). Details: %s",
+                discord_id, guild_id_str, uve
+            )
+            raise CharacterAlreadyExistsError(
+                f"A character already exists for user {discord_id} in guild {guild_id_str}."
+            ) from uve
         except Exception as e:
             logger.error("CharacterManager: Error creating character '%s' in guild %s: %s", name, guild_id_str, e, exc_info=True) # Changed
+            # Optionally, you might want to wrap other exceptions in a generic CharacterCreationError
+            # or let them propagate if they represent different kinds of issues.
+            # For now, we'll re-raise other exceptions as they are.
             raise
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
