@@ -1,16 +1,14 @@
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 import json
 
-# Attempt to import actual services; provide placeholders if not found during subtask execution
-try:
+if TYPE_CHECKING:
     from bot.services.openai_service import OpenAIService
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
-except ImportError:
-    from typing import Any as TypingAny # Import explicitly within the block
-
-    # Define placeholders if actual imports fail in the subtask environment
-    OpenAIService = TypingAny
-    MultilingualPromptGenerator = TypingAny
+else:
+    # For runtime, if these specific imports fail, Pylance won't complain about the init signature
+    # because OpenAIService and MultilingualPromptGenerator are defined.
+    OpenAIService = Any
+    MultilingualPromptGenerator = Any
 
 class AIEconomyGenerator:
     """
