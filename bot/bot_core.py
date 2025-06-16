@@ -25,8 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession # For get_db_session
 from contextlib import asynccontextmanager # For get_db_session
 from typing import AsyncIterator # For get_db_session
 
-logger = logging.getLogger(__name__)
-
 # Direct imports for command modules being converted to Cogs are removed.
 # Old style helper imports might be removed if those helpers are now part of Cogs.
 # from bot.command_modules.game_setup_cmds import is_master_or_admin, is_gm_channel # Now part of GameSetupCog
