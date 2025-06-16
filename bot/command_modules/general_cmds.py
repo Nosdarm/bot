@@ -16,7 +16,8 @@ class GeneralCog(commands.Cog, name="General Commands"):
     async def cmd_ping(self, interaction: Interaction):
         latency_ms = self.bot.latency * 1000
         await interaction.response.send_message(
-            f"Pong! Задержка: {latency_ms:.2f} мс."
+            f"Pong! Задержка: {latency_ms:.2f} мс.",
+            ephemeral=True
         )
         logging.info(f"Command /ping executed by {interaction.user.name} ({interaction.user.id}) in guild {interaction.guild_id or 'DM'}")
 

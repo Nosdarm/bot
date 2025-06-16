@@ -724,7 +724,49 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 if len(cur_msg)+len(ln)+1 > 1950: msgs.append(cur_msg); cur_msg = ""
                 cur_msg += ("\n" if cur_msg else "") + ln
             if cur_msg: msgs.append(cur_msg)
-            for i,part in enumerate(msgs): await interaction.followup.send(f"{'(Часть '+str(i+1)+'/'+str(len(msgs))+')\n' if len(msgs)>1 and i>0 else ''}{part if i==0 and part.startswith(hdr) else (hdr if i==0 else '')+part }",ephemeral=True)
+            for i,part_msg_content in enumerate(msgs): # Renamed part to avoid conflict with part variable in loop
+                prefix = f"(Часть {i+1}/{len(msgs)})\n" if len(msgs) > 1 and i > 0 else ""
+                # Determine if the current part starts with the header or if header needs to be prepended
+                message_to_send: str
+                if i == 0: # First message part
+                    if part_msg_content.startswith(hdr):
+                        message_to_send = part_msg_content
+                    else:
+                        message_to_send = hdr + part_msg_content
+                else: # Subsequent message parts
+                    message_to_send = part_msg_content
+
+                # The original logic for prepending header seems to be more about whether the part *is* the header
+                # or if the header was so long it became its own part.
+                # Let's simplify based on the loop structure:
+                # If it's the first message of potentially many, and it doesn't already include the header (e.g. header was too long)
+                # then prepend header. Otherwise, just send the part.
+                # The original construction was complex. A clearer way:
+                # Send header once, then send parts. Or ensure header is part of msgs[0].
+                # The current msgs list construction seems to handle header inclusion in msgs[0].
+
+                # Simpler logic:
+                # if i == 0: # First message always contains the header or is the header
+                #    message_to_send = part_msg_content
+                # else: # Subsequent messages are just content
+                #    message_to_send = part_msg_content
+                # The prefix for page numbering is separate.
+
+                # Sticking to a direct fix of the f-string backslash issue by reconstructing the message part by part
+                # The original logic was: if len(msgs)>1 and i>0, prefix with "(Часть X/Y)\n".
+                # Then, for the content part: {part if i==0 and part.startswith(hdr) else (hdr if i==0 else '')+part }
+                # This implies 'hdr' might be part of 'part' or not.
+
+                content_part_final: str
+                if i == 0: # First message part
+                    if part_msg_content.startswith(hdr):
+                        content_part_final = part_msg_content
+                    else: # This case implies hdr might be separate or part_msg_content is the actual first content line
+                        content_part_final = hdr + part_msg_content # Assuming hdr should always be with the first content if not already there
+                else: # Subsequent message parts
+                    content_part_final = part_msg_content # Header not prepended to subsequent parts
+
+                await interaction.followup.send(f"{prefix}{content_part_final}", ephemeral=True)
         else:
             loc = gm.location_manager.get_location_instance(gid, location_id)
             if not loc: await interaction.followup.send(f"**Мастер:** Локация `{location_id}` не найдена.", ephemeral=True); return

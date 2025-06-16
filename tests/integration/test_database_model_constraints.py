@@ -10,10 +10,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 
-from bot.database.models import ( # Updated imports
+from bot.database.models import (
     Base, Player, Location, RulesConfig, GeneratedFaction, GeneratedQuest,
-    MobileGroup, PlayerNpcMemory, QuestStep, Relationship, NPC, Questline
-)
+    MobileGroup, PlayerNpcMemory, QuestStepTable, Relationship, NPC, Questline, GuildConfig
+) # Updated QuestStep to QuestStepTable, Added GuildConfig
 
 # --- Test Database Configuration ---
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "postgresql+asyncpg://postgres:test123@localhost:5432/test_kvelin_rpg_bot_constraints")
@@ -396,53 +396,71 @@ class TestPlayerNpcMemoryModel:
             await db_session.flush()
 
 
-# --- Tests for QuestStep ---
+# --- Tests for QuestStepTable (formerly QuestStep) ---
 @pytest.mark.asyncio
-class TestQuestStepModel:
-    async def _setup_questline(self, db_session: AsyncSession, guild_id: str):
-        questline_id = str(uuid.uuid4())
-        test_questline = Questline(id=questline_id, guild_id=guild_id, name_i18n={"en": "Test Questline"})
-        db_session.add(test_questline)
+class TestQuestStepTableModel: # Renamed class
+    async def _setup_dependencies(self, db_session: AsyncSession, guild_id: str):
+        # QuestStepTable depends on GuildConfig (via guild_id FK) and Quests (via quest_id FK)
+
+        # Ensure GuildConfig exists
+        guild_config = GuildConfig(guild_id=guild_id, bot_language="en")
+        db_session.add(guild_config)
+
+        # Create a Quest
+        from bot.database.models import QuestTable # Import QuestTable (formerly Quests)
+        quest_id = str(uuid.uuid4())
+        test_quest = QuestTable(id=quest_id, guild_id=guild_id, name_i18n={"en": "Test Quest for Steps"})
+        db_session.add(test_quest)
+
         await db_session.commit()
-        return questline_id
+        return quest_id
 
     async def test_create_read_delete_quest_step(self, db_session: AsyncSession):
         step_id = str(uuid.uuid4())
         guild_id = UNIQUE_GUILD_ID_1
-        questline_id = await self._setup_questline(db_session, guild_id)
+        quest_id = await self._setup_dependencies(db_session, guild_id)
 
-        new_step = QuestStep(
+        new_step = QuestStepTable( # Use QuestStepTable
             id=step_id,
             guild_id=guild_id,
-            questline_id=questline_id,
-            step_details_i18n={"en": "Complete task A."}
+            quest_id=quest_id, # Changed from questline_id
+            title_i18n={"en": "Step 1"}, # Using new field 'title_i18n'
+            description_i18n={"en": "Complete task A."}
         )
         db_session.add(new_step)
         await db_session.commit()
         await db_session.refresh(new_step)
         assert new_step.id == step_id
 
-        retrieved_step = await db_session.get(QuestStep, step_id)
+        retrieved_step = await db_session.get(QuestStepTable, step_id) # Use QuestStepTable
         assert retrieved_step is not None
+        assert retrieved_step.quest_id == quest_id
 
         await db_session.delete(retrieved_step)
         await db_session.commit()
-        assert await db_session.get(QuestStep, step_id) is None
+        assert await db_session.get(QuestStepTable, step_id) is None # Use QuestStepTable
 
     async def test_quest_step_guild_id_not_nullable(self, db_session: AsyncSession):
         step_id = str(uuid.uuid4())
-        questline_id = await self._setup_questline(db_session, UNIQUE_GUILD_ID_1)
+        quest_id = await self._setup_dependencies(db_session, UNIQUE_GUILD_ID_1)
         with pytest.raises(IntegrityError):
-            new_step = QuestStep(id=step_id, guild_id=None, questline_id=questline_id)
+            new_step = QuestStepTable(id=step_id, guild_id=None, quest_id=quest_id, title_i18n={"en": "Step Fail"}) # Use QuestStepTable
             db_session.add(new_step)
             await db_session.flush()
 
-    async def test_quest_step_questline_id_fk_constraint(self, db_session: AsyncSession):
+    async def test_quest_step_quest_id_fk_constraint(self, db_session: AsyncSession): # Changed from questline_id
         step_id = str(uuid.uuid4())
+        # No need to call _setup_dependencies if we are testing with a non-existent quest_id
+        # Ensure GuildConfig exists for the guild_id we are using
+        guild_config = GuildConfig(guild_id=UNIQUE_GUILD_ID_1, bot_language="en")
+        db_session.add(guild_config)
+        await db_session.commit()
+
         with pytest.raises(IntegrityError):
-            new_step = QuestStep(
+            new_step = QuestStepTable( # Use QuestStepTable
                 id=step_id, guild_id=UNIQUE_GUILD_ID_1,
-                questline_id=str(uuid.uuid4()) # Non-existent questline_id
+                quest_id=str(uuid.uuid4()), # Non-existent quest_id
+                title_i18n={"en": "Step Fail FK"}
             )
             db_session.add(new_step)
             await db_session.flush()

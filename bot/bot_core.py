@@ -21,6 +21,10 @@ from bot.game.services.location_interaction_service import LocationInteractionSe
 from bot.nlu.player_action_parser import parse_player_action
 from bot.services.nlu_data_service import NLUDataService
 
+from sqlalchemy.ext.asyncio import AsyncSession # For get_db_session
+from contextlib import asynccontextmanager # For get_db_session
+from typing import AsyncIterator # For get_db_session
+
 # Direct imports for command modules being converted to Cogs are removed.
 # Old style helper imports might be removed if those helpers are now part of Cogs.
 # from bot.command_modules.game_setup_cmds import is_master_or_admin, is_gm_channel # Now part of GameSetupCog
@@ -60,6 +64,118 @@ class RPGBot(commands.Bot):
         global_openai_service = self.openai_service
         global global_game_manager
         global_game_manager = self.game_manager
+
+    @asynccontextmanager
+    async def get_db_session(self) -> AsyncIterator[AsyncSession]:
+        if not self.game_manager or \
+           not self.game_manager.db_service or \
+           not self.game_manager.db_service.async_session_factory:
+            # Log the state of relevant attributes for debugging
+            gm_exists = bool(self.game_manager)
+            db_service_exists = bool(self.game_manager.db_service) if gm_exists else False
+            factory_exists = bool(self.game_manager.db_service.async_session_factory) if db_service_exists else False
+            logger.error(
+                f"Database session factory not available. "
+                f"GameManager: {gm_exists}, DBService: {db_service_exists}, Factory: {factory_exists}"
+            )
+            raise RuntimeError("Database session factory not available.")
+
+        async with self.game_manager.db_service.async_session_factory() as session:
+            try:
+                yield session
+                # Removed explicit commit; operations should manage commits or use @transactional_session
+            except Exception:
+                logger.debug("Rolling back session in get_db_session due to exception.")
+                await session.rollback()
+                raise
+            # Session is automatically closed by async_session_factory's context manager if it's a sessionmaker
+
+    async def on_guild_join(self, guild: discord.Guild):
+        """Handles the event when the bot joins a new guild."""
+        logger.info(f"Bot joined new guild: {guild.name} (ID: {guild.id})")
+
+        try:
+            async with self.get_db_session() as session:
+                from bot.game.guild_initializer import initialize_new_guild
+                # Ensure guild_id is passed as string, as initialize_new_guild expects str
+                success = await initialize_new_guild(session, str(guild.id), force_reinitialize=False)
+                if success:
+                    logger.info(f"Successfully initialized guild {guild.id} upon joining.")
+                else:
+                    logger.warning(f"Initialization for guild {guild.id} upon joining reported no action or failure (e.g., already initialized).")
+        except RuntimeError as e: # Catch if get_db_session fails
+            logger.error(f"DB session error during on_guild_join for {guild.id}: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Failed to initialize guild {guild.id} upon joining: {e}", exc_info=True)
+
+        # Optional: Send a welcome message
+        # Attempt to find a suitable channel to send a welcome message
+        # (e.g., system channel, a channel named 'general', or the first available text channel)
+        # This part is optional and can be expanded.
+        welcome_channel = guild.system_channel
+        if not welcome_channel and guild.text_channels:
+            # Fallback to a common channel name or the first available text channel
+            common_channel_names = ["general", "welcome", "chat", "основной", "чат"]
+            for channel_name in common_channel_names:
+                channel = discord.utils.get(guild.text_channels, name=channel_name)
+                if channel and channel.permissions_for(guild.me).send_messages:
+                    welcome_channel = channel
+                    break
+            if not welcome_channel: # Still not found, pick first available if any
+                 if guild.text_channels:
+                    welcome_channel = next((tc for tc in guild.text_channels if tc.permissions_for(guild.me).send_messages), None)
+
+
+        if welcome_channel:
+            try:
+                # TODO: Localize this welcome message based on detected guild language or a default.
+                # For now, using a generic English message.
+                # The bot's own default language might be from GuildConfig after init,
+                # but that's a bit circular here. So, using a hardcoded default.
+                bot_lang = "en" # Default for welcome
+                if self.game_manager and self.game_manager._rules_config_cache:
+                    guild_rules = self.game_manager._rules_config_cache.get(str(guild.id))
+                    if guild_rules:
+                        bot_lang = guild_rules.get("default_language", "en")
+
+                welcome_messages = {
+                    "en": (
+                        f"Hello! I'm {self.user.name if self.user else 'your new RPG Bot'}. Thanks for adding me to **{guild.name}**!\n"
+                        "I'm ready to help you embark on exciting text-based adventures.\n"
+                        "To get started, a server admin or 'Master' role might need to run some setup commands "
+                        "(e.g., `/set_game_channel`, `/set_master_channel`).\n"
+                        "Players can usually start with `/character create` or check available commands."
+                    ),
+                    "ru": (
+                        f"Привет! Я {self.user.name if self.user else 'ваш новый RPG Бот'}. Спасибо, что добавили меня на сервер **{guild.name}**!\n"
+                        "Я готов помочь вам отправиться в увлекательные текстовые приключения.\n"
+                        "Для начала, администратору сервера или роли 'Мастер' может потребоваться выполнить некоторые команды настройки "
+                        "(например, `/set_game_channel`, `/set_master_channel`).\n"
+                        "Игроки обычно могут начать с команды `/character create` или проверить доступные команды."
+                    )
+                }
+                await welcome_channel.send(welcome_messages.get(bot_lang, welcome_messages["en"]))
+                logger.info(f"Sent welcome message to {welcome_channel.name} in guild {guild.id}")
+            except discord.Forbidden:
+                logger.warning(f"Missing permissions to send welcome message in {welcome_channel.name} of guild {guild.id}")
+            except Exception as e:
+                logger.error(f"Failed to send welcome message to {welcome_channel.name} in guild {guild.id}: {e}", exc_info=True)
+        else:
+            logger.warning(f"Could not find a suitable channel to send a welcome message in guild {guild.id}.")
+
+
+    async def on_guild_remove(self, guild: discord.Guild):
+        """Handles the event when the bot is removed from a guild."""
+        logger.warning(f"Bot removed from guild: {guild.name} (ID: {guild.id})")
+        # Future: Consider cleanup tasks, like marking guild data as inactive or archiving.
+        # For now, just logging.
+        # If there are guild-specific caches in GameManager or other services, they could be cleared here.
+        if self.game_manager:
+            if self.game_manager._rules_config_cache and str(guild.id) in self.game_manager._rules_config_cache:
+                del self.game_manager._rules_config_cache[str(guild.id)]
+                logger.info(f"Cleared rules_config_cache for removed guild {guild.id}")
+            # Add similar cache clearing for other guild-specific caches if they exist in GameManager or services.
+
 
     async def run_periodic_turn_checks(self):
         await self.wait_until_ready() # Ensure bot is fully ready
@@ -115,7 +231,8 @@ class RPGBot(commands.Bot):
             "bot.command_modules.inventory_cmds",
             "bot.command_modules.party_cmds",
             "bot.command_modules.utility_cmds",
-            "bot.command_modules.character_cmds" # Added new character development cog
+            "bot.command_modules.character_cmds", # Added new character development cog
+            "bot.command_modules.guild_config_cmds" # Added GuildConfig commands cog
         ]
         
         all_cogs_loaded_successfully = True

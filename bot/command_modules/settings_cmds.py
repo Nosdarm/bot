@@ -4,11 +4,12 @@ from discord.ext import commands
 import logging
 from typing import Optional, TYPE_CHECKING
 
-from bot.database import user_settings_crud
-from bot.database.models import UserSettings # For type hinting if needed directly
+from sqlalchemy.future import select # Added for Player query
+from bot.database import user_settings_crud # Still used for timezone
+from bot.database.models import UserSettings, Player # Added Player
 
 if TYPE_CHECKING:
-    from bot.bot_core import RPGBot # Assuming this path for RPGBot
+    from bot.bot_core import RPGBot
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -92,13 +93,24 @@ class SettingsCog(commands.Cog, name="Settings Commands"):
 
         try:
             async with self.bot.get_db_session() as session:
-                await user_settings_crud.create_or_update_user_settings(
-                    session,
-                    user_id=user_id_str,
-                    guild_id=guild_id_str,
-                    language_code=chosen_lang
-                )
-            await interaction.response.send_message(f"Your language has been set to: {language_code.name} ({chosen_lang}).", ephemeral=True)
+                # Fetch the Player object
+                stmt = select(Player).where(Player.discord_id == user_id_str, Player.guild_id == guild_id_str)
+                result = await session.execute(stmt)
+                player = result.scalars().first()
+
+                if player:
+                    player.selected_language = chosen_lang
+                    session.add(player)
+                    await session.commit() # Commit the change to Player table
+                    await interaction.response.send_message(f"Your language has been set to: {language_code.name} ({chosen_lang}).", ephemeral=True)
+                    logger.info(f"Successfully updated Player.selected_language for user {user_id_str} in guild {guild_id_str} to {chosen_lang}.")
+                else:
+                    # Player not found - this might indicate an issue if players are expected to always exist.
+                    logger.warning(f"Player record not found for discord_id {user_id_str} in guild {guild_id_str} when trying to set language.")
+                    await interaction.response.send_message(
+                        "Could not find your player record to update the language. Please contact support if this issue persists.",
+                        ephemeral=True
+                    )
         except Exception as e:
             logger.error(f"Error setting language for user {user_id_str} in guild {guild_id_str}: {e}", exc_info=True)
             await interaction.response.send_message("An error occurred while trying to set your language. Please try again later.", ephemeral=True)
