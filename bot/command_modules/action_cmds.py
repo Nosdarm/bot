@@ -39,26 +39,72 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
             return
 
+        # Check for essential managers for this command
+        # CharacterManager is checked by getting player_char. RuleEngine is used for rules_config.
+        # CharacterActionProcessor (char_action_proc) is assumed to have its internal dependencies (like LocationInteractionService) met.
+        if not game_mngr.character_manager or not game_mngr.rule_engine:
+            logging.warning(f"cmd_interact: Missing CharacterManager or RuleEngine. CM={bool(game_mngr.character_manager)}, RE={bool(game_mngr.rule_engine)}")
+            await interaction.followup.send(get_i18n_text(None, "error_required_modules_missing", interaction.locale.language if interaction.locale and hasattr(interaction.locale, 'language') else "en", "Один или несколько необходимых игровых модулей не доступны."), ephemeral=True)
+            return
+
         player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
-        action_data = {"target_id": target_id, "interaction_type": action_type}
-        result = await char_action_proc.process_action(
-            character_id=player_char.id,
-            action_type="interact",
-            action_data=action_data,
-            context={
-                'guild_id': str(interaction.guild_id), 'author_id': str(interaction.user.id),
-                'channel_id': interaction.channel_id, 'game_manager': game_mngr,
-                'character_manager': game_mngr.character_manager, 'location_manager': game_mngr.location_manager,
-                'item_manager': game_mngr.item_manager, 'npc_manager': game_mngr.npc_manager,
-                'event_manager': game_mngr.event_manager, 'rule_engine': game_mngr.rule_engine,
-                'openai_service': game_mngr.openai_service,
-                'send_to_command_channel': interaction.followup.send
-            }
+        # Prepare action_data for the ActionRequest
+        # 'action_type' from the command is the specific kind of interaction (e.g., "pull_lever", "read_sign")
+        action_data_for_request = {"target_id": target_id, "interaction_type": action_type}
+
+        # Create the ActionRequest
+        action_request = ActionRequest(
+            guild_id=str(interaction.guild_id),
+            actor_id=player_char.id,
+            action_type="PLAYER_INTERACT",  # Generic type for CAP to route to interaction systems
+            action_data=action_data_for_request
         )
+
+        rules_config_data = game_mngr.rule_engine.rules_config_data # Already checked rule_engine exists
+
+        context_for_cap = {
+            'channel_id': interaction.channel_id,
+            'rules_config': rules_config_data,
+        }
+
+        try:
+            result = await char_action_proc.process_action_from_request(
+                action_request=action_request,
+                character=player_char,
+                context=context_for_cap
+            )
+        except Exception as e:
+            logging.error(f"cmd_interact: Error calling process_action_from_request for {player_char.id} on target {target_id}: {e}", exc_info=True)
+            lang_code = player_char.selected_language or (interaction.locale.language if interaction.locale and hasattr(interaction.locale, 'language') else "en")
+            error_msg_text = get_i18n_text(None, "interact_error_exception", lang_code, default_text=f"An unexpected error occurred while trying to interact: {e}")
+            await interaction.followup.send(error_msg_text, ephemeral=True)
+            return
+
+        # Handle the result
+        if result and result.get("message"):
+            is_ephemeral = result.get("data", {}).get("ephemeral", False)
+            view_to_send = discord.utils.MISSING
+            # Hypothetical view creation
+            # if result.get("data") and result["data"].get("components") and hasattr(self.bot, 'get_dynamic_view_from_data'):
+            #    try:
+            #        view_to_send = self.bot.get_dynamic_view_from_data(result["data"]["components"])
+            #    except Exception as ve:
+            #        logging.error(f"cmd_interact: Failed to create view from components: {ve}", exc_info=True)
+
+            await interaction.followup.send(result["message"], view=view_to_send, ephemeral=is_ephemeral)
+
+        elif result and not result.get("success"):
+            lang_code = player_char.selected_language or (interaction.locale.language if interaction.locale and hasattr(interaction.locale, 'language') else "en")
+            error_text = get_i18n_text(None, "interact_error_generic", lang_code, default_text="Could not complete interaction.")
+            await interaction.followup.send(error_text, ephemeral=True)
+        elif not result:
+            lang_code = player_char.selected_language or (interaction.locale.language if interaction.locale and hasattr(interaction.locale, 'language') else "en")
+            fallback_error_text = get_i18n_text(None, "interact_error_unknown", lang_code, default_text="An unknown error occurred while trying to interact.")
+            await interaction.followup.send(fallback_error_text, ephemeral=True)
 
     @app_commands.command(name="fight", description="Атаковать цель (NPC или существо).")
     @app_commands.describe(target_id="ID цели для атаки.")
