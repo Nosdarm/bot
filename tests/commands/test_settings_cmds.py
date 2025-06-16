@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord # For discord.Interaction and app_commands.Choice
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Assuming your Cog and Player model are structured as such
 from bot.command_modules.settings_cmds import SettingsCog, LANGUAGE_CHOICES
