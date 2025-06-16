@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Body, Request, Header
 from typing import Dict, Any, List, Optional
 
 # from sqlalchemy.orm import Session # Not used directly for now
-from bot.api.dependencies import get_db_service # get_current_active_user_id (not used in this endpoint yet)
+from bot.api.dependencies import get_db_session # Changed from get_db_service
 from bot.game.managers.quest_manager import QuestManager
-from bot.services.db_service import DBService
+# from bot.services.db_service import DBService # Not directly used here if get_db_session is from dependencies
 from bot.api.schemas.quest_schemas import PlayerEventPayloadSchema, QuestSchema, AIQuestGenerationRequestSchema # UPDATED Import
 
 # Type hinting for GameManager and sub-components
