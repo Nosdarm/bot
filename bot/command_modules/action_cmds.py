@@ -1,8 +1,13 @@
+import discord # For discord.utils.MISSING
 from discord import Interaction, app_commands
 from discord.ext import commands
 from typing import Optional, TYPE_CHECKING
 import asyncio
+import logging # Added for logging (already present from previous step, but good to confirm)
+
 from bot.utils.i18n_utils import get_i18n_text
+from bot.game.models.action_request import ActionRequest
+
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.game.managers.game_manager import GameManager
@@ -123,19 +128,57 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
 
-        action_data = {"npc_id": npc_id, "initial_message": message_text}
-        result = await char_action_proc.process_action(
-            character_id=player_char.id,
-            action_type="talk",
-            action_data=action_data,
-            context={
-                'guild_id': str(interaction.guild_id), 'author_id': str(interaction.user.id),
-                'channel_id': interaction.channel_id, 'game_manager': game_mngr,
-                'character_manager': game_mngr.character_manager, 'npc_manager': game_mngr.npc_manager,
-                'dialogue_manager': game_mngr.dialogue_manager, 'location_manager': game_mngr.location_manager,
-                'send_to_command_channel': interaction.followup.send
-            }
+        # Prepare action_data for the ActionRequest
+        action_data_for_request = {"npc_id": npc_id, "initial_message": message_text}
+
+        # Create the ActionRequest
+        action_request = ActionRequest(
+            guild_id=str(interaction.guild_id),
+            actor_id=player_char.id,
+            action_type="PLAYER_TALK",
+            action_data=action_data_for_request
         )
+
+        rules_config_data = game_mngr.rule_engine.rules_config_data if game_mngr.rule_engine else None
+
+        context_for_cap = {
+            'channel_id': interaction.channel_id,
+            'rules_config': rules_config_data,
+        }
+
+        try:
+            result = await char_action_proc.process_action_from_request(
+                action_request=action_request,
+                character=player_char,
+                context=context_for_cap
+            )
+        except Exception as e:
+            logging.error(f"cmd_talk: Error calling process_action_from_request for {player_char.id}: {e}", exc_info=True)
+            lang_code = player_char.selected_language or (interaction.locale.language if interaction.locale and hasattr(interaction.locale, 'language') else "en")
+            error_msg_text = get_i18n_text(None, "talk_error_exception", lang_code, default_text=f"An unexpected error occurred while trying to talk: {e}")
+            await interaction.followup.send(error_msg_text, ephemeral=True)
+            return
+
+        if result and result.get("message"):
+            is_ephemeral = result.get("data", {}).get("ephemeral", False)
+            view_to_send = discord.utils.MISSING
+            # Example for view creation if component data is present and a helper exists
+            # if result.get("data") and result["data"].get("components") and hasattr(self.bot, 'get_dynamic_view_from_data'):
+            #    try:
+            #        view_to_send = self.bot.get_dynamic_view_from_data(result["data"]["components"])
+            #    except Exception as ve:
+            #        logging.error(f"cmd_talk: Failed to create view from components: {ve}", exc_info=True)
+
+            await interaction.followup.send(result["message"], view=view_to_send, ephemeral=is_ephemeral)
+
+        elif result and not result.get("success"):
+            lang_code = player_char.selected_language or (interaction.locale.language if interaction.locale and hasattr(interaction.locale, 'language') else "en")
+            error_text = get_i18n_text(None, "talk_error_generic", lang_code, default_text="Could not complete talk action.")
+            await interaction.followup.send(error_text, ephemeral=True)
+        elif not result:
+            lang_code = player_char.selected_language or (interaction.locale.language if interaction.locale and hasattr(interaction.locale, 'language') else "en")
+            fallback_error_text = get_i18n_text(None, "talk_error_unknown", lang_code, default_text="An unknown error occurred while trying to talk.")
+            await interaction.followup.send(fallback_error_text, ephemeral=True)
 
     @app_commands.command(name="end_turn", description="Завершает ход: пропускает время/передает инициативу. Если персонаж бездействует, продвигает время.")
     async def cmd_end_turn(self, interaction: Interaction):
