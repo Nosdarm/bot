@@ -111,7 +111,7 @@ class TestGlobalNpcManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(npcs_list), 2)
         self.assertEqual(npcs_list[0].id, db_npc1.id)
 
-    def test_update_global_npc(self):
+    async def test_update_global_npc(self): # Changed to async def
         npc_id = str(uuid.uuid4())
         guild_id = str(uuid.uuid4())
 
@@ -125,7 +125,8 @@ class TestGlobalNpcManager(unittest.IsolatedAsyncioTestCase):
             current_location_id="new_loc"
         )
 
-        updated_npc = self.manager.update_global_npc(npc_id, pydantic_update_data)
+        # Call the async method
+        updated_npc = await self.manager.update_global_npc(npc_id, pydantic_update_data)
 
         self.mock_session.get.assert_called_with(DBGlobalNpc, npc_id)
         self.mock_session.commit.assert_called_once()
@@ -168,8 +169,13 @@ class TestGlobalNpcManager(unittest.IsolatedAsyncioTestCase):
 
         # Mock get_global_npcs_by_guild to return our test NPC
         self.manager.get_global_npcs_by_guild = MagicMock(return_value=[pydantic_npc])
-        # Mock update_global_npc to check its call
-        self.manager.update_global_npc = MagicMock(return_value=pydantic_npc) # It returns the updated npc
+
+        # Mock update_global_npc as an AsyncMock because it's awaited inside process_tick
+        # It should return the npc object that was passed to it, or a new one if desired for the test.
+        async def mock_update_npc_side_effect(nid, npc_data):
+            return npc_data # Return the modified npc_data
+        self.manager.update_global_npc = AsyncMock(side_effect=mock_update_npc_side_effect)
+
 
         # Call process_tick
         await self.manager.process_tick(guild_id=guild_id, game_time_delta=1.0, location_manager=self.mock_location_manager)
@@ -188,12 +194,14 @@ class TestGlobalNpcManager(unittest.IsolatedAsyncioTestCase):
         # Simulate next tick: move from loc1 to loc2
         pydantic_npc.state_variables["current_patrol_index"] = 1 # Manually set for next phase
         pydantic_npc.current_location_id = "loc1" # Start at loc1, target is loc2
-        self.manager.get_global_npcs_by_guild.return_value = [pydantic_npc]
-        self.manager.update_global_npc.reset_mock()
+        # Ensure the mock is reset and side effect is reassigned if it matters for this specific call
+        self.manager.get_global_npcs_by_guild.return_value = [pydantic_npc] # Re-assign if necessary, though it's the same object
+        self.manager.update_global_npc.reset_mock() # Reset call count etc.
+        self.manager.update_global_npc.side_effect = mock_update_npc_side_effect # Re-assign side effect
 
         await self.manager.process_tick(guild_id=guild_id, game_time_delta=1.0, location_manager=self.mock_location_manager)
 
-        self.manager.update_global_npc.assert_called_once()
+        self.manager.update_global_npc.assert_called_once() # This will now be an AsyncMock
         called_npc_arg_2 = self.manager.update_global_npc.call_args[0][1]
         self.assertEqual(called_npc_arg_2.current_location_id, "loc2") # Moved to loc2
         self.assertEqual(called_npc_arg_2.state_variables["current_patrol_index"], 1) # Index remains 1 until arrival at loc2 in next tick
@@ -211,7 +219,11 @@ class TestGlobalNpcManager(unittest.IsolatedAsyncioTestCase):
             state_variables={"allow_random_move": True}
         )
         self.manager.get_global_npcs_by_guild = MagicMock(return_value=[pydantic_npc])
-        self.manager.update_global_npc = MagicMock(return_value=pydantic_npc)
+
+        async def mock_update_npc_side_effect_random(nid, npc_data):
+            return npc_data
+        self.manager.update_global_npc = AsyncMock(side_effect=mock_update_npc_side_effect_random)
+
 
         # Mock LocationManager's get_location to return a location with an exit
         mock_location_obj = PydanticLocation(id=start_loc_id, guild_id=guild_id, name_i18n={"en":"Start Loc"}, descriptions_i18n={}, exits={"north": {"target_location_id": exit_loc_id}})
