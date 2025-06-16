@@ -170,7 +170,7 @@ class MobileGroupManager:
 
         for group in active_groups:
             group_updated = False
-            # original_location_id = group.current_location_id # Already captured, keep for clarity if needed
+            old_location_id = group.current_location_id # Define before potential change
 
             if group.state_variables is None: # Ensure state_variables is a dict
                 group.state_variables = {}
@@ -190,8 +190,9 @@ class MobileGroupManager:
                     # connected = await location_manager.are_locations_connected(guild_id, group.current_location_id, group.destination_location_id)
                     # if connected: # Or if path exists
 
+                    # old_location_id was captured at the start of the loop for this group
                     group.current_location_id = group.destination_location_id # Arrived
-                    logger.info(f"MobileGroup {group.id} ({group.name_i18n.get('en', 'Unknown')}) moved from {original_location_id} to {group.current_location_id} (Destination) in guild {guild_id}.")
+                    logger.info(f"MobileGroup {group.id} ({group.name_i18n.get('en', 'Unknown')}) moved from {old_location_id} to {group.current_location_id} (Destination) in guild {guild_id}.")
                     group_updated = True
 
                     # Update Member Locations

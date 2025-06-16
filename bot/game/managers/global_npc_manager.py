@@ -191,7 +191,7 @@ class GlobalNpcManager:
 
         for npc in active_npcs:
             npc_updated = False
-            # original_location_id = npc.current_location_id # Already captured before loop in previous version, keep for clarity if needed inside
+            old_location_id = npc.current_location_id # Define before potential change
 
             # Ensure state_variables is a dict
             if npc.state_variables is None:
@@ -234,8 +234,9 @@ class GlobalNpcManager:
                                 chosen_exit_key = random.choice(list(valid_exits.keys()))
                                 new_location_id = valid_exits[chosen_exit_key].get('target_location_id') # Assuming exit structure
                                 if new_location_id and new_location_id != npc.current_location_id :
+                                    # old_location_id was captured at the start of the loop for this npc
                                     npc.current_location_id = new_location_id
-                                    logger.info(f"GlobalNpc {npc.id} ({npc.name_i18n.get('en', 'Unknown')}) randomly moved from {original_location_id} to {new_location_id} in guild {guild_id}.")
+                                    logger.info(f"GlobalNpc {npc.id} ({npc.name_i18n.get('en', 'Unknown')}) randomly moved from {old_location_id} to {new_location_id} in guild {guild_id}.")
                                     npc_updated = True
                                 # else:
                                     # logger.debug(f"GlobalNpc {npc.id} chose an invalid exit or same location, staying put.")
