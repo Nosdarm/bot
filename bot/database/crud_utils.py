@@ -15,6 +15,13 @@ from bot.database.models import Base # Assuming your Base is accessible here
 
 logger = logging.getLogger(__name__)
 
+# Base is imported from bot.database.models and is expected to be a
+# type (class) resulting from SQLAlchemy's declarative_base().
+# If a type checker (like Pylance) reports an error such as
+# "Variable not allowed in type expression" for `Base` on the next line,
+# it may indicate an issue with the type checker's import resolution,
+# environment configuration, or a specific linter bug. The usage of
+# `Base` as a bound here is standard and should be valid.
 ModelType = TypeVar("ModelType", bound=Base)
 AsyncCallable = Callable[..., Coroutine[Any, Any, Any]]
 F = TypeVar('F', bound=Callable[..., Coroutine[Any, Any, Any]])
