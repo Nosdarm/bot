@@ -248,6 +248,7 @@ class NPC(Base):
     behavior_tags = Column(JSON, nullable=True) # Added from v16
     loot_table_id = Column(String, nullable=True) # Added from v16
     effective_stats_json = Column(JSON, nullable=True) # Added new field
+    faction_id = Column(String, nullable=True, index=True) # Added for consistency
 
     location = relationship("Location")
     party = relationship("Party")
@@ -270,6 +271,31 @@ class GeneratedFaction(Base):
     description_i18n = Column(JSON, nullable=True)
     guild_id = Column(String, nullable=False, index=True)
     __table_args__ = (Index('idx_generatedfaction_guild_id', 'guild_id'),)
+
+
+class GlobalNpc(Base):
+    __tablename__ = 'global_npcs'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, nullable=False, index=True)
+    name_i18n = Column(JSON, nullable=False)
+    description_i18n = Column(JSON, nullable=True)
+    current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
+    npc_template_id = Column(String, nullable=True)
+    state_variables = Column(JSON, nullable=True)
+    faction_id = Column(String, nullable=True, index=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+
+    current_location = relationship("Location")
+
+    __table_args__ = (
+        Index('idx_globalnpc_guild_id', 'guild_id'),
+        Index('idx_globalnpc_faction_id', 'faction_id'), # Added index for faction_id
+        Index('idx_globalnpc_is_active', 'is_active'), # Added index for is_active
+    )
+
+    def __repr__(self):
+        return f"<GlobalNpc(id='{self.id}', name_i18n='{self.name_i18n}', guild_id='{self.guild_id}')>"
 
 
 # New QuestTable
@@ -514,10 +540,26 @@ class QuestStepTable(Base): # RENAMED from QuestStep
 
 class MobileGroup(Base):
     __tablename__ = 'mobile_groups'
-    id = Column(String, primary_key=True)
-    name_i18n = Column(JSON, nullable=True)
-    guild_id = Column(String, nullable=False, index=True)
-    __table_args__ = (Index('idx_mobilegroup_guild_id', 'guild_id'),)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, nullable=False, index=True) # Already there
+    name_i18n = Column(JSON, nullable=False) # Updated from nullable=True
+    description_i18n = Column(JSON, nullable=True)
+    current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
+    member_ids = Column(JSON, nullable=True) # List of GlobalNpc IDs or Character IDs
+    destination_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
+    state_variables = Column(JSON, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+
+    current_location = relationship("Location", foreign_keys=[current_location_id])
+    destination_location = relationship("Location", foreign_keys=[destination_location_id])
+
+    __table_args__ = (
+        Index('idx_mobilegroup_guild_id', 'guild_id'),
+        Index('idx_mobilegroup_is_active', 'is_active'), # Added index for is_active
+    )
+
+    def __repr__(self):
+        return f"<MobileGroup(id='{self.id}', name_i18n='{self.name_i18n}', guild_id='{self.guild_id}')>"
 
 class PendingConflict(Base):
     __tablename__ = 'pending_conflicts'

@@ -32,6 +32,8 @@ from bot.game.managers.dialogue_manager import DialogueManager
 from bot.game.managers.quest_manager import QuestManager
 from bot.game.managers.relationship_manager import RelationshipManager
 from bot.game.managers.game_log_manager import GameLogManager
+from bot.game.managers.global_npc_manager import GlobalNpcManager
+from bot.game.managers.mobile_group_manager import MobileGroupManager
 
 # --- Импорт Сервисов ---
 from bot.services.openai_service import OpenAIService
@@ -114,6 +116,8 @@ class WorldSimulationProcessor:
                  relationship_manager: Optional[RelationshipManager] = None,
                  game_log_manager: Optional[GameLogManager] = None,
                  multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None,
+                 global_npc_manager: Optional[GlobalNpcManager] = None,
+                 mobile_group_manager: Optional[MobileGroupManager] = None,
                 ):
         print("Initializing WorldSimulationProcessor...")
         # --- Сохранение всех переданных аргументов в self._... ---
@@ -150,6 +154,8 @@ class WorldSimulationProcessor:
         self._relationship_manager = relationship_manager
         self._game_log_manager = game_log_manager
         self._multilingual_prompt_generator = multilingual_prompt_generator
+        self._global_npc_manager = global_npc_manager
+        self._mobile_group_manager = mobile_group_manager
 
         # TODO: Сохраните другие опциональные менеджеры/сервисы
 
@@ -195,6 +201,8 @@ class WorldSimulationProcessor:
             'character_action_processor': self._character_action_processor,
             'party_action_processor': self._party_action_processor,
             'event_stage_processor': self._event_stage_processor, # StageProcessor нужен сам себе, но также передается другим
+            'global_npc_manager': self._global_npc_manager, # Added
+            'mobile_group_manager': self._mobile_group_manager, # Added
             # TODO: Добавьте другие менеджеры/процессоры, включая NpcActionProcessor
         }
         context_for_managers.update(kwargs) # Добавляем любые дополнительные kwargs, переданные извне
@@ -351,6 +359,8 @@ class WorldSimulationProcessor:
             'item_manager': self._item_manager, 'time_manager': self._time_manager,
             'status_manager': self._status_manager, 'party_manager': self._party_manager,
             'event_manager': self._event_manager,
+            'global_npc_manager': self._global_npc_manager, # Added
+            'mobile_group_manager': self._mobile_group_manager, # Added
             # TODO: Передайте Processors Действий, если они нужны в cleanup
             # 'character_action_processor': self._character_action_processor,
             # 'party_action_processor': self._party_action_processor,
@@ -670,6 +680,25 @@ class WorldSimulationProcessor:
                   try: await self._economy_manager.process_tick(guild_id=guild_id, game_time_delta=game_time_delta, **guild_tick_context)
                   except Exception as e: print(f"WorldSimulationProcessor: Error during EconomyManager process_tick for guild {guild_id}: {e}"); traceback.print_exc()
 
+             # 8.x. Global NPC Simulation
+             if self._global_npc_manager:
+                 try:
+                     # GlobalNpcManager.process_tick should take guild_id, game_time_delta, and **guild_tick_context
+                     await self._global_npc_manager.process_tick(guild_id=guild_id, game_time_delta=game_time_delta, **guild_tick_context)
+                     # print(f"WorldSimulationProcessor: GlobalNpcManager tick processed for guild {guild_id}.") # Optional: for debugging
+                 except Exception as e:
+                     print(f"WorldSimulationProcessor: Error during GlobalNpcManager process_tick for guild {guild_id}: {e}")
+                     traceback.print_exc()
+
+             # 8.y. Mobile Group Simulation
+             if self._mobile_group_manager:
+                 try:
+                     # MobileGroupManager.process_tick should take guild_id, game_time_delta, and **guild_tick_context
+                     await self._mobile_group_manager.process_tick(guild_id=guild_id, game_time_delta=game_time_delta, **guild_tick_context)
+                     # print(f"WorldSimulationProcessor: MobileGroupManager tick processed for guild {guild_id}.") # Optional: for debugging
+                 except Exception as e:
+                     print(f"WorldSimulationProcessor: Error during MobileGroupManager process_tick for guild {guild_id}: {e}")
+                     traceback.print_exc()
 
              # 9. Проверка активных событий на автоматические переходы стадий (по времени, условиям)
              if self._event_manager and self._event_stage_processor:
@@ -970,6 +999,8 @@ class WorldSimulationProcessor:
              'crafting_manager': self._crafting_manager,
              'economy_manager': self._economy_manager,
              'party_manager': self._party_manager,
+             'global_npc_manager': self._global_npc_manager, # Added
+             'mobile_group_manager': self._mobile_group_manager, # Added
              # Добавьте другие менеджеры/сервисы
              # Например, если CharacterViewService нужен RuleEngine, его тоже можно добавить сюда?
              # 'character_view_service': self._character_view_service # CharacterViewService не является зависимостью WSP напрямую
