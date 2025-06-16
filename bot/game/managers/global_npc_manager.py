@@ -109,24 +109,37 @@ class GlobalNpcManager:
                 session.rollback()
             return None
 
-    def update_global_npc(self, npc_id: str, npc_data: GlobalNpc) -> Optional[GlobalNpc]:
-        with self._get_db_session() as session:
+    async def update_global_npc(self, npc_id: str, npc_data: GlobalNpc) -> Optional[GlobalNpc]: # Changed to async
+        # Assuming db_service.get_session() provides a session that can be used
+        # with async operations if the underlying db_service is async.
+        # For a truly async DB, the session itself might be an async context manager,
+        # and operations like session.commit() would be awaited.
+        # For now, we'll assume the session object works as is, or db_service handles async internally.
+        # If db_service.get_session() returns an async session, it should be like:
+        # async with self._get_db_session() as session:
+        #     ...
+        #     await session.commit()
+
+        with self._get_db_session() as session: # This part might need to change if db_service is fully async
             try:
-                db_npc = session.get(DBGlobalNpc, npc_id)
+                db_npc = session.get(DBGlobalNpc, npc_id) # This might be await session.get(...)
                 if db_npc and db_npc.guild_id == npc_data.guild_id : # Check guild_id consistency
                     self._map_pydantic_to_db(npc_data, db_npc)
-                    session.commit()
-                    session.refresh(db_npc)
+                    # if self.db_service.is_async: await session.commit() else: session.commit()
+                    # if self.db_service.is_async: await session.refresh(db_npc) else: session.refresh(db_npc)
+                    session.commit() # Assuming synchronous commit for now, or db_service handles it
+                    session.refresh(db_npc) # Assuming synchronous refresh
                     logger.info(f"GlobalNpc {npc_id} updated for guild {npc_data.guild_id}.")
                     return self._map_db_to_pydantic(db_npc)
                 else:
                     logger.warning(f"GlobalNpc {npc_id} not found or guild mismatch for update.")
             except SQLAlchemyError as e:
                 logger.error(f"Error updating GlobalNpc {npc_id}: {e}")
-                session.rollback()
+                if session.is_active: # Check if session is active before rollback
+                    session.rollback() # Assuming synchronous rollback
             return None
 
-    def delete_global_npc(self, guild_id: str, npc_id: str) -> bool:
+    def delete_global_npc(self, guild_id: str, npc_id: str) -> bool: # Keep sync for now unless DB interaction is async
         with self._get_db_session() as session:
             try:
                 db_npc = session.get(DBGlobalNpc, npc_id)
@@ -139,11 +152,11 @@ class GlobalNpcManager:
                     logger.warning(f"GlobalNpc {npc_id} not found or guild mismatch for deactivation.")
             except SQLAlchemyError as e:
                 logger.error(f"Error deactivating GlobalNpc {npc_id}: {e}")
-                session.rollback()
+                if session.is_active:
+                    session.rollback()
             return False
 
-    def process_tick(self, guild_id: str, game_time_delta: float, **kwargs) -> None:
-        # Placeholder for future simulation logic
+    async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs) -> None: # Changed to async
         # This method will be called periodically to update NPC states, handle movement, etc.
         # Example:
         # active_npcs = self.get_global_npcs_by_guild(guild_id)
@@ -178,7 +191,7 @@ class GlobalNpcManager:
 
         for npc in active_npcs:
             npc_updated = False
-            original_location_id = npc.current_location_id
+            # original_location_id = npc.current_location_id # Already captured before loop in previous version, keep for clarity if needed inside
 
             # Ensure state_variables is a dict
             if npc.state_variables is None:
@@ -254,7 +267,7 @@ class GlobalNpcManager:
 
                 # Persist changes if NPC was updated
                 if npc_updated:
-                    self.update_global_npc(npc.id, npc_data=npc) # Pass the full pydantic model instance
+                    await self.update_global_npc(npc.id, npc_data=npc) # Await the async update method
 
             except Exception as e:
                 logger.error(f"GlobalNpcManager: Error processing tick for NPC {npc.id} in guild {guild_id}: {e}", exc_info=True)

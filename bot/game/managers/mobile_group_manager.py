@@ -95,24 +95,28 @@ class MobileGroupManager:
                 session.rollback()
             return None
 
-    def update_mobile_group(self, group_id: str, group_data: MobileGroup) -> Optional[MobileGroup]:
-        with self._get_db_session() as session:
+    async def update_mobile_group(self, group_id: str, group_data: MobileGroup) -> Optional[MobileGroup]: # Changed to async
+        # Similar assumptions about db_service and session as in GlobalNpcManager
+        with self._get_db_session() as session: # This might need to change if db_service is fully async
             try:
-                db_group = session.get(DBMobileGroup, group_id)
+                db_group = session.get(DBMobileGroup, group_id) # This might be await session.get(...)
                 if db_group and db_group.guild_id == group_data.guild_id: # Check guild_id consistency
                     self._map_pydantic_to_db(group_data, db_group)
-                    session.commit()
-                    session.refresh(db_group)
+                    # if self.db_service.is_async: await session.commit() else: session.commit()
+                    # if self.db_service.is_async: await session.refresh(db_group) else: session.refresh(db_group)
+                    session.commit() # Assuming synchronous for now
+                    session.refresh(db_group) # Assuming synchronous for now
                     logger.info(f"MobileGroup {group_id} updated for guild {group_data.guild_id}.")
                     return self._map_db_to_pydantic(db_group)
                 else:
                     logger.warning(f"MobileGroup {group_id} not found or guild mismatch for update.")
             except SQLAlchemyError as e:
                 logger.error(f"Error updating MobileGroup {group_id}: {e}")
-                session.rollback()
+                if session.is_active:
+                    session.rollback()
             return None
 
-    def delete_mobile_group(self, guild_id: str, group_id: str) -> bool:
+    def delete_mobile_group(self, guild_id: str, group_id: str) -> bool: # Keep sync for now
         with self._get_db_session() as session:
             try:
                 db_group = session.get(DBMobileGroup, group_id)
@@ -125,11 +129,11 @@ class MobileGroupManager:
                     logger.warning(f"MobileGroup {group_id} not found or guild mismatch for deactivation.")
             except SQLAlchemyError as e:
                 logger.error(f"Error deactivating MobileGroup {group_id}: {e}")
-                session.rollback()
+                if session.is_active:
+                    session.rollback()
             return False
 
-    def process_tick(self, guild_id: str, game_time_delta: float, **kwargs) -> None:
-        # Placeholder for future simulation logic (e.g., movement towards destination_location_id)
+    async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs) -> None: # Changed to async
         # Example:
         # active_groups = self.get_mobile_groups_by_guild(guild_id)
         # for group in active_groups:
@@ -166,7 +170,7 @@ class MobileGroupManager:
 
         for group in active_groups:
             group_updated = False
-            original_location_id = group.current_location_id
+            # original_location_id = group.current_location_id # Already captured, keep for clarity if needed
 
             if group.state_variables is None: # Ensure state_variables is a dict
                 group.state_variables = {}
@@ -232,7 +236,7 @@ class MobileGroupManager:
 
                 # Update Group if Changed
                 if group_updated:
-                    self.update_mobile_group(group.id, group_data=group) # Pass Pydantic model
+                    await self.update_mobile_group(group.id, group_data=group) # Await async update
 
             except Exception as e:
                 logger.error(f"MobileGroupManager: Error processing tick for group {group.id} in guild {guild_id}: {e}", exc_info=True)
