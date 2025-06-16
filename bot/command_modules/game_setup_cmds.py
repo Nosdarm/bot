@@ -3,6 +3,8 @@ from discord.ext import commands
 from typing import Optional, TYPE_CHECKING
 import logging  # For logging
 
+from bot.game.managers.character_manager import CharacterAlreadyExistsError
+
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot  # For type hinting self.bot
     from bot.game.managers.game_manager import GameManager
@@ -183,14 +185,24 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
                 )
             else:
                 logging.warning(f"Command /start_new_character failed for {interaction.user.name} ({interaction.user.id}). Reason: Failed to create character.")
+                # This 'else' handles cases where start_new_character_session returns None
+                # for reasons other than CharacterAlreadyExistsError (e.g., other exceptions caught in GameManager,
+                # or if create_character itself returned None for a non-exception reason like a name check).
+                logging.warning(f"Command /start_new_character failed for {interaction.user.name} ({interaction.user.id}). Reason: Failed to create character (GameManager returned None).")
                 await interaction.followup.send(
-                    f"Не удалось создать персонажа '{character_name}'.",
+                    f"Не удалось создать персонажа '{character_name}'.", # Generic failure
                     ephemeral=True
                 )
-        except Exception as e:
-            logging.error(f"Command /start_new_character encountered an exception for {interaction.user.name} ({interaction.user.id}). Exception: {e}", exc_info=True)
+        except CharacterAlreadyExistsError:
+            logging.info(f"User {interaction.user.name} ({interaction.user.id}) tried to create character '{character_name}' in guild {interaction.guild_id} but one already exists.")
             await interaction.followup.send(
-                f"Произошла ошибка при создании персонажа: {e}",
+                "У вас уже есть персонаж в этой игре. Вы не можете создать еще одного.",
+                ephemeral=True
+            )
+        except Exception as e:
+            logging.error(f"Command /start_new_character encountered an unexpected exception for {interaction.user.name} ({interaction.user.id}). Exception: {e}", exc_info=True)
+            await interaction.followup.send(
+                f"Произошла непредвиденная ошибка при создании персонажа: {e}", # Unexpected error
                 ephemeral=True
             )
 
