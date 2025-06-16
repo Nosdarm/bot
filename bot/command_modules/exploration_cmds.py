@@ -7,10 +7,17 @@ import logging
 from discord.ui import View, Button # Corrected import
 from discord import ButtonStyle # Corrected import
 
+# Models and DB utils for /whereami
+from bot.database.models import Player, Location
+from bot.database.crud_utils import get_entity_by_id, get_entity_by_attributes
+
+
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.game.managers.game_manager import GameManager
     from bot.game.character_processors.character_action_processor import CharacterActionProcessor
+
+logger = logging.getLogger(__name__) # Added logger for whereami
 
 class ExplorationCog(commands.Cog, name="Exploration Commands"):
     def __init__(self, bot: "RPGBot"):
@@ -188,48 +195,64 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             logging.error(f"ExplorationCog.cmd_look: Error condition - User: {interaction.user.id}, Guild: {interaction.guild_id}, Channel: {interaction.channel_id}. Error message: '{error_message}'. Result from handle_explore_action: {result}", exc_info=True)
             await interaction.followup.send(error_message, ephemeral=True)
 
-    @app_commands.command(name="move", description="Переместиться в другую локацию.")
-    @app_commands.describe(destination="Название выхода или ID локации назначения.")
-    async def cmd_move(self, interaction: Interaction, destination: str):
-        await interaction.response.defer(ephemeral=False)
+    @app_commands.command(name="move", description="Moves your character to a new location.")
+    @app_commands.describe(target="The direction (e.g., north), location name, or location ID to move to.")
+    async def cmd_move(self, interaction: Interaction, target: str):
+        await interaction.response.defer(ephemeral=True) # Movement result is usually personal
 
-        game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
-        if not game_mngr:
-            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
+        guild_id = str(interaction.guild_id)
+        player_discord_id = str(interaction.user.id)
+        logger.info(f"/move command initiated by {player_discord_id} in guild {guild_id} to target '{target}'.")
+
+        if not self.bot.game_manager:
+            logger.error(f"/move: GameManager not available for user {player_discord_id} in guild {guild_id}.")
+            await interaction.followup.send("The game manager is not available. Please try again later.", ephemeral=True)
             return
 
-        char_action_proc: Optional["CharacterActionProcessor"] = game_mngr._character_action_processor # type: ignore
-        if not char_action_proc:
-            await interaction.followup.send("Обработчик действий персонажа не доступен.", ephemeral=True)
+        game_mngr: "GameManager" = self.bot.game_manager
+
+        if not game_mngr.location_manager:
+            logger.error(f"/move: LocationManager not available for user {player_discord_id} in guild {guild_id}.")
+            await interaction.followup.send("The location manager is not available. Please try again later.", ephemeral=True)
             return
 
-        if not game_mngr.character_manager: # Dependent manager check
-            await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
+        if not game_mngr.db_service:
+            logger.error(f"/move: DBService not available for user {player_discord_id} in guild {guild_id}.")
+            await interaction.followup.send("The database service is not available. Please try again later.", ephemeral=True)
             return
 
-        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
-        if not player_char:
-            await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
-            return
+        loc_mngr = game_mngr.location_manager
+        player_model_pk = None
 
-        action_data = {"destination": destination}
-        result = await char_action_proc.process_action(
-            character_id=player_char.id,
-            action_type="move",
-            action_data=action_data,
-            context={
-                'guild_id': str(interaction.guild_id),
-                'author_id': str(interaction.user.id),
-                'channel_id': interaction.channel_id,
-                'game_manager': game_mngr,
-                'character_manager': game_mngr.character_manager,
-                'location_manager': game_mngr.location_manager,
-                'rule_engine': game_mngr.rule_engine,
-                'time_manager': game_mngr.time_manager,
-                'openai_service': game_mngr.openai_service,
-                'send_to_command_channel': interaction.followup.send
-            }
-        )
+        try:
+            # Fetch Player.id (model's primary key)
+            async with game_mngr.db_service.get_session() as session:
+                player_model_instance = await get_entity_by_attributes(session, Player, {"discord_id": player_discord_id, "guild_id": guild_id})
+                if not player_model_instance:
+                    logger.warning(f"/move: Player not found for discord_id {player_discord_id} in guild {guild_id}.")
+                    await interaction.followup.send("Player not found. Have you registered or started your character?", ephemeral=True)
+                    return
+                player_model_pk = player_model_instance.id
+
+            if not player_model_pk: # Should be caught by above but as a safeguard
+                logger.error(f"/move: Failed to retrieve Player.id for discord_id {player_discord_id} in guild {guild_id}.")
+                await interaction.followup.send("Could not identify your player record. Please try again.", ephemeral=True)
+                return
+
+            # Call LocationManager.handle_move_action
+            success, message = await loc_mngr.handle_move_action(
+                guild_id=guild_id,
+                player_id=player_model_pk, # Pass the Player.id (PK)
+                target_location_identifier=target
+            )
+
+            log_level = logging.INFO if success else logging.WARNING
+            logger.log(log_level, f"/move result for {player_discord_id} (Player PK: {player_model_pk}) in guild {guild_id} to '{target}': Success={success}, Msg='{message}'")
+            await interaction.followup.send(message, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Unexpected error in /move for user {player_discord_id} in guild {guild_id} to '{target}': {e}", exc_info=True)
+            await interaction.followup.send("An unexpected error occurred while trying to move. Please contact an administrator.", ephemeral=True)
 
     @app_commands.command(name="check", description="Проверить что-либо, используя навык (например, предмет, окружение).")
     @app_commands.describe(skill_name="Навык для использования (например, внимательность, знание_магии).", target="Что или кого вы проверяете.")
@@ -272,6 +295,82 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
                 'send_to_command_channel': interaction.followup.send
             }
         )
+
+    @app_commands.command(name="whereami", description="Shows information about your current location.")
+    async def cmd_whereami(self, interaction: Interaction):
+        await interaction.response.defer(ephemeral=True)
+        guild_id = str(interaction.guild_id)
+        discord_id = str(interaction.user.id)
+
+        if not self.bot.game_manager:
+            logger.error(f"/whereami: GameManager not available for user {discord_id} in guild {guild_id}.")
+            await interaction.followup.send("The game manager is not available. Please try again later.", ephemeral=True)
+            return
+
+        game_mngr: "GameManager" = self.bot.game_manager
+        if not game_mngr.db_service:
+            logger.error(f"/whereami: DBService not available for user {discord_id} in guild {guild_id}.")
+            await interaction.followup.send("The database service is not available. Please try again later.", ephemeral=True)
+            return
+
+        try:
+            async with game_mngr.db_service.get_session() as session:
+                player = await get_entity_by_attributes(session, Player, {"discord_id": discord_id, "guild_id": guild_id})
+
+                if not player:
+                    logger.info(f"/whereami: Player not found for discord_id {discord_id} in guild {guild_id}.")
+                    await interaction.followup.send("Player not found. Have you registered or started your character?", ephemeral=True)
+                    return
+
+                if not player.current_location_id:
+                    logger.info(f"/whereami: Player {player.id} has no current_location_id in guild {guild_id}.")
+                    await interaction.followup.send("Your current location is unknown. You might be adrift in the void!", ephemeral=True)
+                    return
+
+                location = await get_entity_by_id(session, Location, player.current_location_id)
+
+                if not location:
+                    logger.warning(f"/whereami: Location data not found for location_id {player.current_location_id} (Player {player.id}, guild {guild_id}).")
+                    await interaction.followup.send(f"Your current location (ID: {player.current_location_id}) data could not be found. This is unusual.", ephemeral=True)
+                    return
+
+            # Determine language for localization
+            # Using game_manager.get_rule which is async
+            player_lang = player.selected_language or await game_mngr.get_rule(guild_id, 'default_language', 'en')
+
+            loc_name = location.name_i18n.get(player_lang, location.name_i18n.get("en", "Unknown Location"))
+            loc_desc = location.descriptions_i18n.get(player_lang, location.descriptions_i18n.get("en", "No description available."))
+
+            embed = discord.Embed(title=f"📍 You are at: {loc_name}", color=discord.Color.dark_green())
+            embed.description = loc_desc
+            embed.add_field(name="Location ID", value=f"`{location.id}`", inline=True)
+            if location.coordinates:
+                 embed.add_field(name="Coordinates", value=f"`{location.coordinates}`", inline=True)
+
+            # Add exits if available in location.exits (assuming exits is a dict like {"north": "loc_id_2"})
+            if location.exits and isinstance(location.exits, dict) and location.exits:
+                exit_str = []
+                for direction, exit_details in location.exits.items():
+                    # Assuming exit_details might be a string (loc_id) or a dict {"id": "loc_id", "name_i18n": {...}}
+                    if isinstance(exit_details, dict) and "name_i18n" in exit_details:
+                        exit_name = exit_details["name_i18n"].get(player_lang, exit_details["name_i18n"].get("en", direction.capitalize()))
+                        exit_str.append(f"**{direction.capitalize()}**: {exit_name}")
+                    else: # Fallback if structure is different or just an ID
+                        exit_str.append(f"**{direction.capitalize()}**: Leads to an unknown area")
+                if exit_str:
+                    embed.add_field(name="Exits", value="\n".join(exit_str), inline=False)
+                else:
+                    embed.add_field(name="Exits", value="None apparent.", inline=False)
+            else:
+                embed.add_field(name="Exits", value="None apparent.", inline=False)
+
+            logger.info(f"/whereami: User {discord_id} in guild {guild_id} is at location {location.id} ('{loc_name}').")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error in /whereami for user {discord_id} in guild {guild_id}: {e}", exc_info=True)
+            await interaction.followup.send("An error occurred while trying to determine your location.", ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ExplorationCog(bot)) # type: ignore
