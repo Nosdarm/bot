@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # bot/bot_core.py
 
 import os
@@ -5,7 +7,6 @@ import json
 import discord
 import asyncio
 import traceback
-import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
