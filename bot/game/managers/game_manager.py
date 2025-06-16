@@ -64,8 +64,14 @@ if TYPE_CHECKING:
     from bot.game.conflict_resolver import ConflictResolver
     from bot.ai.prompt_context_collector import PromptContextCollector
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
+    from bot.ai.ai_response_validator import AIResponseValidator # Added import
     from bot.services.notification_service import NotificationService
     from bot.game.turn_processing_service import TurnProcessingService
+    from bot.game.turn_processor import TurnProcessor # Added for TurnProcessor integration
+    from bot.game.rules.check_resolver import CheckResolver # Added for CheckResolver integration
+    from bot.game.managers.faction_manager import FactionManager # Added for FactionManager integration
+    from bot.game.managers.quest_manager import QuestManager # Ensured direct import for runtime
+    from bot.game.services.location_interaction_service import LocationInteractionService # For Part 2
 
 logger = logging.getLogger(__name__) # Added
 logger.debug("--- Начинается загрузка: game_manager.py") # Changed
@@ -119,6 +125,11 @@ class GameManager:
         self.lore_manager: Optional["LoreManager"] = None
         self.prompt_context_collector: Optional["PromptContextCollector"] = None
         self.multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None
+        self.ai_response_validator: Optional[AIResponseValidator] = None # Added attribute
+        self.turn_processor: Optional[TurnProcessor] = None # Added for TurnProcessor
+        self.check_resolver: Optional[CheckResolver] = None # Added for CheckResolver
+        self.faction_manager: Optional[FactionManager] = None # Added for FactionManager
+        self.location_interaction_service: Optional[LocationInteractionService] = None # For Part 2
         self._on_enter_action_executor: Optional["OnEnterActionExecutor"] = None
         self._stage_description_generator: Optional["StageDescriptionGenerator"] = None
         self._event_stage_processor: Optional["EventStageProcessor"] = None
@@ -225,6 +236,86 @@ class GameManager:
             logger.critical(f"GameManager: CRITICAL - Rules cache for guild {guild_id} is still empty after all attempts. Using emergency fallback.")
             self._rules_config_cache[guild_id] = {"default_bot_language": "en", "emergency_mode": True, "reason": "Final fallback"}
 
+    async def get_rule(self, guild_id: str, key: str, default: Any = None) -> Any:
+        """
+        Retrieves a rule value for a given guild and key from the cache.
+        Loads the cache for the guild if it's not already populated.
+        """
+        if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
+            logger.info(f"GameManager.get_rule: Cache miss for guild {guild_id}. Loading rules config.")
+            await self._load_or_initialize_rules_config(guild_id)
+
+        # After loading, check again
+        if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
+            logger.warning(f"GameManager.get_rule: Rules config still not available for guild {guild_id} after load attempt. Returning default for key '{key}'.")
+            return default
+
+        guild_cache = self._rules_config_cache.get(guild_id, {})
+        value = guild_cache.get(key, default)
+
+        if value is default and key not in guild_cache:
+            logger.info(f"GameManager.get_rule: Key '{key}' not found for guild {guild_id}. Returned default value: {default}.")
+        else:
+            logger.debug(f"GameManager.get_rule: Key '{key}' for guild {guild_id} retrieved. Value: {value}.")
+        return value
+
+    async def update_rule_config(self, guild_id: str, key: str, value: Any) -> bool:
+        """
+        Updates a rule in the cache and database for a given guild.
+        """
+        logger.info(f"GameManager.update_rule_config: Attempting to update rule '{key}' to '{value}' for guild {guild_id}.")
+        if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
+            logger.info(f"GameManager.update_rule_config: Cache for guild {guild_id} not populated. Loading before update.")
+            await self._load_or_initialize_rules_config(guild_id)
+            if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
+                logger.error(f"GameManager.update_rule_config: Failed to load rules config for guild {guild_id}. Cannot update rule '{key}'.")
+                return False
+
+        if not self.db_service:
+            logger.error(f"GameManager.update_rule_config: DBService not available. Cannot update rule '{key}' for guild {guild_id}.")
+            return False
+
+        guild_cache = self._rules_config_cache.get(guild_id, {})
+        original_value = guild_cache.get(key) # Could be None if key didn't exist
+
+        # Update cache first
+        guild_cache[key] = value
+        # Ensure the guild_cache (which is a reference to self._rules_config_cache[guild_id]) is updated in the main cache
+        self._rules_config_cache[guild_id] = guild_cache
+
+        async with self.db_service.get_session() as session:
+            try:
+                from bot.database.models import RulesConfig # Local import for model
+                from sqlalchemy.future import select
+
+                stmt = select(RulesConfig).where(RulesConfig.guild_id == guild_id, RulesConfig.key == key)
+                result = await session.execute(stmt)
+                existing_rule = result.scalars().first()
+
+                if existing_rule:
+                    existing_rule.value = value
+                    session.add(existing_rule)
+                    logger.info(f"GameManager.update_rule_config: Updating existing rule '{key}' for guild {guild_id} in DB.")
+                else:
+                    new_rule = RulesConfig(guild_id=guild_id, key=key, value=value)
+                    session.add(new_rule)
+                    logger.info(f"GameManager.update_rule_config: Creating new rule '{key}' for guild {guild_id} in DB.")
+
+                await session.commit()
+                logger.info(f"GameManager.update_rule_config: Rule '{key}' successfully updated to '{value}' for guild {guild_id} in cache and DB.")
+                return True
+            except Exception as e:
+                logger.error(f"GameManager.update_rule_config: DB error updating rule '{key}' for guild {guild_id}: {e}", exc_info=True)
+                await session.rollback()
+                # Revert cache change
+                if original_value is not None:
+                    guild_cache[key] = original_value
+                else: # Key did not exist before
+                    if key in guild_cache:
+                        del guild_cache[key]
+                self._rules_config_cache[guild_id] = guild_cache # Ensure main cache is updated with reverted guild_cache
+                logger.info(f"GameManager.update_rule_config: Reverted cache for rule '{key}' for guild {guild_id} due to DB error.")
+                return False
 
     async def _initialize_database(self):
         logger.info("GameManager: Initializing database service...") # Changed
@@ -463,6 +554,8 @@ class GameManager:
         # if self.npc_manager and not self.npc_manager.dialogue_manager:
         #    self.npc_manager.dialogue_manager = self.dialogue_manager
 
+        self.faction_manager = FactionManager(game_manager=self)
+        logger.info("GameManager: FactionManager initialized.")
 
         logger.info("GameManager: Dependent managers initialized.")
 
@@ -485,22 +578,73 @@ class GameManager:
         from bot.game.managers.crafting_manager import CraftingManager
         from bot.game.managers.economy_manager import EconomyManager
         # PartyManager already imported and initialized in _initialize_dependent_managers
-        from bot.game.managers.quest_manager import QuestManager # Ensure QuestManager is available
+        from bot.game.managers.quest_manager import QuestManager # Ensure runtime import
         from bot.game.managers.relationship_manager import RelationshipManager
-        from bot.game.managers.dialogue_manager import DialogueManager
+        # DialogueManager already imported (or should be) if it's a dependency for others here
         # GameLogManager already initialized in _initialize_dependent_managers
         from bot.game.managers.ability_manager import AbilityManager
         from bot.game.managers.spell_manager import SpellManager
         from bot.game.conflict_resolver import ConflictResolver
-        from bot.game.turn_processing_service import TurnProcessingService
-
+        # TurnProcessingService already imported
+        # TurnProcessor is imported at the top of the file.
 
         # Initialize managers that might not have been initialized yet or are specific to this stage
-        # QuestManager example (if not already initialized and is needed by UndoManager or others)
+        # Initialize QuestManager with its full dependency list
         if not hasattr(self, 'quest_manager') or self.quest_manager is None:
-            # Assuming QuestManager needs at least db_service. Add other dependencies as required.
-            self.quest_manager = QuestManager(db_service=self.db_service, character_manager=self.character_manager, settings=self._settings.get('quest_settings', {}))
-            logger.info("GameManager: QuestManager initialized in _initialize_processors_and_command_system.")
+            # Ensure dependencies for QuestManager's internal ConsequenceProcessor are met first
+            # RelationshipManager is needed by DialogueManager which might be used by ConsequenceProcessor
+            if not hasattr(self, 'relationship_manager') or self.relationship_manager is None:
+                self.relationship_manager = RelationshipManager(db_service=self.db_service, settings=self._settings.get('relationship_settings', {}))
+                logger.info("GameManager: RelationshipManager initialized (dependency for QuestManager/ConsequenceProcessor).")
+                if self.character_manager and hasattr(self.character_manager, '_relationship_manager') and self.character_manager._relationship_manager is None:
+                    setattr(self.character_manager, '_relationship_manager', self.relationship_manager)
+                    logger.info("GameManager: Updated relationship_manager in CharacterManager.")
+
+            # ConsequenceProcessor initialization (if not already done)
+            if not hasattr(self, 'consequence_processor') or self.consequence_processor is None:
+                from bot.game.services.consequence_processor import ConsequenceProcessor # Local import
+                self.consequence_processor = ConsequenceProcessor(
+                    character_manager=self.character_manager, npc_manager=self.npc_manager,
+                    item_manager=self.item_manager, location_manager=self.location_manager,
+                    event_manager=self.event_manager, quest_manager=None, # Pass None for QM initially if QM needs CP
+                    status_manager=self.status_manager, dialogue_manager=self.dialogue_manager, # DialogueManager might be None here
+                    game_state=None, rule_engine=self.rule_engine, economy_manager=self.economy_manager,
+                    relationship_manager=self.relationship_manager, game_log_manager=self.game_log_manager,
+                    notification_service=self.notification_service, prompt_context_collector=self.prompt_context_collector
+                )
+                logger.info("GameManager: ConsequenceProcessor initialized (dependency for QuestManager).")
+
+            self.quest_manager = QuestManager(
+                db_service=self.db_service,
+                settings=self._settings.get('quest_settings', {}),
+                npc_manager=self.npc_manager,
+                character_manager=self.character_manager,
+                item_manager=self.item_manager,
+                rule_engine=self.rule_engine,
+                relationship_manager=self.relationship_manager,
+                consequence_processor=self.consequence_processor, # Now ensured to be initialized
+                game_log_manager=self.game_log_manager,
+                multilingual_prompt_generator=self.multilingual_prompt_generator,
+                openai_service=self.openai_service,
+                ai_validator=self.ai_response_validator,
+                notification_service=self.notification_service
+                # Note: QuestManager's __init__ also internally initializes its own ConsequenceProcessor
+                # if one is not passed. The one created above will be passed.
+                # It also expects _location_manager, _event_manager, _status_manager for its internal CP.
+                # These are not directly passed to QM constructor by this logic, but QM's internal CP would get them from its own GM ref.
+            )
+            logger.info("GameManager: QuestManager initialized correctly in _initialize_processors_and_command_system.")
+
+            # Update CharacterManager with QuestManager if it has a placeholder
+            if self.character_manager and hasattr(self.character_manager, 'quest_manager') and self.character_manager.quest_manager is None:
+                setattr(self.character_manager, 'quest_manager', self.quest_manager)
+                logger.info("GameManager: Updated quest_manager in CharacterManager.")
+
+            # If ConsequenceProcessor was initialized with QM=None, update it now
+            if self.consequence_processor and hasattr(self.consequence_processor, 'quest_manager') and self.consequence_processor.quest_manager is None:
+                setattr(self.consequence_processor, 'quest_manager', self.quest_manager)
+                logger.info("GameManager: Updated quest_manager in self.consequence_processor.")
+
 
         if not hasattr(self, 'dialogue_manager') or self.dialogue_manager is None:
             from bot.game.managers.dialogue_manager import DialogueManager
@@ -783,6 +927,17 @@ class GameManager:
             )
             logger.info("GameManager: CommandRouter initialized.")
 
+        # Initialize TurnProcessor
+        self.turn_processor = TurnProcessor(game_manager=self)
+        logger.info("GameManager: TurnProcessor initialized.")
+
+        # Initialize CheckResolver
+        self.check_resolver = CheckResolver(game_manager=self)
+        logger.info("GameManager: CheckResolver initialized.")
+
+        # Initialize LocationInteractionService (Part 2 of current subtask)
+        self.location_interaction_service = LocationInteractionService(game_manager=self)
+        logger.info("GameManager: LocationInteractionService initialized.")
 
         logger.info("GameManager: Processors and command system initialized.")
 
@@ -809,9 +964,13 @@ class GameManager:
     async def _initialize_ai_content_services(self):
         logger.info("GameManager: Initializing AI content generation services...") # Changed
         # ... (AI services initialization, replace print with logger.warning if needed)
-        if not self.prompt_context_collector or not self.multilingual_prompt_generator:
-            logger.warning("GameManager: AI prompt services not fully inited due to missing managers.") # Changed
-        logger.info("GameManager: AI content services initialized.") # Changed
+        if not self.prompt_context_collector or not self.multilingual_prompt_generator: # Keep existing checks
+            logger.warning("GameManager: AI prompt services (collector or generator) not fully inited due to missing managers.")
+
+        self.ai_response_validator = AIResponseValidator()
+        logger.info("GameManager: AIResponseValidator initialized.")
+
+        logger.info("GameManager: AI content services initialized.") # Existing log, keep it last in this block
 
     async def _start_background_tasks(self):
         logger.info("GameManager: Starting background tasks...") # Changed

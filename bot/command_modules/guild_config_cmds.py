@@ -1,7 +1,7 @@
 # bot/command_modules/guild_config_cmds.py
 import logging
 import discord
-from discord import app_commands, Interaction, TextChannel
+from discord import app_commands, Interaction, TextChannel, Role
 from discord.ext import commands
 
 from bot.database.models import GuildConfig
@@ -145,6 +145,51 @@ class GuildConfigCmds(commands.Cog):
                 logger.error(f"Error setting bot language for guild {guild_id_str}: {e}", exc_info=True)
                 await interaction.response.send_message(
                     "An error occurred while trying to set the bot language.",
+                    ephemeral=True
+                )
+
+    @app_commands.command(name="set_master_role", description="Sets the Master Role for bot administration commands.")
+    @app_commands.describe(role="The role to be designated as the Master Role.")
+    @is_master_role()
+    async def set_master_role(self, interaction: Interaction, role: discord.Role):
+        """Sets the Master Role for the guild, allowing users with this role to use administrative bot commands."""
+        guild_id_str = str(interaction.guild_id)
+
+        if not guild_id_str: # Should not happen with guild_only=True implicitly
+            await interaction.response.send_message("Error: This command can only be used in a server.", ephemeral=True)
+            return
+
+        logger.info(f"User {interaction.user.id} attempting to set master role to {role.name} ({role.id}) for guild {guild_id_str}.")
+
+        async with self.db_service.get_session() as session:
+            try:
+                # Fetch GuildConfig
+                stmt = select(GuildConfig).where(GuildConfig.guild_id == guild_id_str)
+                result = await session.execute(stmt)
+                guild_config = result.scalars().first()
+
+                if not guild_config:
+                    logger.warning(f"GuildConfig not found for guild {guild_id_str} when trying to set master role.")
+                    await interaction.response.send_message(
+                        "Error: Guild configuration not found. The bot might need to be re-invited or initial setup is pending.",
+                        ephemeral=True
+                    )
+                    return
+
+                guild_config.master_role_id = str(role.id)
+                session.add(guild_config)
+                await session.commit()
+
+                await interaction.response.send_message(
+                    f"Master Role has been set to {role.mention}.",
+                    ephemeral=True
+                )
+                logger.info(f"Master Role set to {role.name} ({role.id}) for guild {guild_id_str} by user {interaction.user.id}.")
+
+            except Exception as e:
+                logger.error(f"Error setting master role for guild {guild_id_str}: {e}", exc_info=True)
+                await interaction.response.send_message(
+                    "An error occurred while trying to set the Master Role.",
                     ephemeral=True
                 )
 

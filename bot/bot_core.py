@@ -183,19 +183,36 @@ class RPGBot(commands.Bot):
         logging.info("Starting periodic turn checks loop.")
         try:
             while not self.is_closed():
-                if self.game_manager and self.game_manager.turn_processing_service:
+                if self.game_manager:
                     logging.debug(f"Periodic turn check: Iterating {len(self.guilds)} guilds.")
                     for guild in self.guilds:
-                        try:
-                            logging.debug(f"Periodic turn check: Running for guild {guild.id}.")
-                            await self.game_manager.turn_processing_service.run_turn_cycle_check(str(guild.id))
-                            logging.debug(f"Periodic turn check: Completed for guild {guild.id}.")
-                        except Exception as e:
-                            logging.error(f"Error during run_turn_cycle_check for guild {guild.id}: {e}", exc_info=True)
-                    logging.debug(f"Periodic turn check: Sleeping for {TURN_CYCLE_INTERVAL_SECONDS} seconds.")
+                        guild_id_str = str(guild.id)
+                        # Call existing TurnProcessingService if it exists
+                        if self.game_manager.turn_processing_service:
+                            try:
+                                logging.debug(f"RPGBot: Calling TurnProcessingService.run_turn_cycle_check for guild {guild_id_str}.")
+                                await self.game_manager.turn_processing_service.run_turn_cycle_check(guild_id_str)
+                                logging.debug(f"RPGBot: TurnProcessingService.run_turn_cycle_check finished for guild {guild_id_str}.")
+                            except Exception as e_tps:
+                                logging.error(f"RPGBot: Error during TurnProcessingService.run_turn_cycle_check for guild {guild_id_str}: {e_tps}", exc_info=True)
+                        else:
+                            logging.warning(f"RPGBot: TurnProcessingService not available for guild {guild_id_str} in periodic check.")
+
+                        # Call new TurnProcessor for submitted actions
+                        if self.game_manager.turn_processor:
+                            try:
+                                logging.debug(f"RPGBot: Calling TurnProcessor.process_turns_for_guild for guild {guild_id_str}.")
+                                await self.game_manager.turn_processor.process_turns_for_guild(guild_id_str)
+                                logging.debug(f"RPGBot: TurnProcessor.process_turns_for_guild finished for guild {guild_id_str}.")
+                            except Exception as e_tp:
+                                logging.error(f"RPGBot: Error during TurnProcessor.process_turns_for_guild for guild {guild_id_str}: {e_tp}", exc_info=True)
+                        else:
+                            logging.warning(f"RPGBot: TurnProcessor not available for guild {guild_id_str} in periodic check.")
+
+                    logging.debug(f"Periodic turn check: Finished iterating guilds. Sleeping for {TURN_CYCLE_INTERVAL_SECONDS} seconds.")
                     await asyncio.sleep(TURN_CYCLE_INTERVAL_SECONDS)
                 else:
-                    logging.warning("Periodic turn check: GameManager or TurnProcessingService not available. Sleeping.")
+                    logging.warning("Periodic turn check: GameManager not available. Sleeping.")
                     await asyncio.sleep(TURN_CYCLE_INTERVAL_SECONDS * 3) # Longer sleep if services not ready
         except asyncio.CancelledError:
             logging.info("Periodic turn checks task was cancelled.")
@@ -233,7 +250,9 @@ class RPGBot(commands.Bot):
             "bot.command_modules.party_cmds",
             "bot.command_modules.utility_cmds",
             "bot.command_modules.character_cmds", # Added new character development cog
-            "bot.command_modules.guild_config_cmds" # Added GuildConfig commands cog
+            "bot.command_modules.guild_config_cmds", # Added GuildConfig commands cog
+            "bot.command_modules.world_state_cmds", # Added WorldState commands cog
+            "bot.command_modules.quest_cmds" # Added Quest commands cog
         ]
         
         all_cogs_loaded_successfully = True

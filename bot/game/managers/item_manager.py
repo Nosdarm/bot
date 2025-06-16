@@ -33,6 +33,10 @@ from bot.game.models.item import Item
 from bot.utils.i18n_utils import get_i18n_text
 from bot.ai.rules_schema import CoreGameRulesConfig, EquipmentSlotDefinition, ItemEffectDefinition, EffectProperty
 
+# Additional imports for generate_and_save_items
+from bot.database.models import ItemTemplate # For DB model
+from sqlalchemy.ext.asyncio import AsyncSession # For type hinting session if passed around
+
 logger = logging.getLogger(__name__)
 logger.debug("DEBUG: item_manager.py module loaded.")
 
@@ -371,5 +375,150 @@ class ItemManager:
 
 
         return False
+
+    async def generate_and_save_items(
+        self,
+        guild_id: str,
+        item_type_suggestion: Optional[str] = None,
+        theme_keywords: Optional[List[str]] = None,
+        num_to_generate: int = 3
+    ) -> List[ItemTemplate]:
+        """
+        Generates new item templates using AI based on suggestions and themes,
+        validates the response, and saves valid item templates to the database.
+
+        Args:
+            guild_id: The ID of the guild for which to generate items.
+            item_type_suggestion: Optional suggestion for the type of items.
+            theme_keywords: Optional list of keywords to guide item theme.
+            num_to_generate: The number of items to attempt to generate.
+
+        Returns:
+            A list of successfully created and saved ItemTemplate objects,
+            or an empty list if generation, validation, or saving fails.
+        """
+        log_prefix = f"ItemGeneration (Guild: {guild_id})"
+        logger.info(f"{log_prefix}: Starting item generation. Type: {item_type_suggestion}, Themes: {theme_keywords}, Num: {num_to_generate}.")
+
+        if not hasattr(self, 'game_manager') or not self.game_manager:
+            logger.error(f"{log_prefix}: GameManager not available on ItemManager instance.")
+            return []
+
+        # 1. Access Services via self.game_manager
+        services_to_check = {
+            "multilingual_prompt_generator": self.game_manager.multilingual_prompt_generator,
+            "openai_service": self.game_manager.openai_service,
+            "ai_response_validator": self.game_manager.ai_response_validator,
+            "db_service": self.db_service # ItemManager has its own self._db_service
+        }
+        for service_name, service_instance in services_to_check.items():
+            if not service_instance:
+                logger.error(f"{log_prefix}: Service '{service_name}' is missing.")
+                return []
+
+        prompt_generator = self.game_manager.multilingual_prompt_generator
+        openai_service = self.game_manager.openai_service
+        validator = self.game_manager.ai_response_validator
+        db_service = self._db_service # Use ItemManager's own db_service
+
+        created_item_templates: List[ItemTemplate] = []
+
+        async with db_service.get_session() as session: # type: ignore
+            try:
+                # 2. Prepare Prompt
+                logger.debug(f"{log_prefix}: Preparing item generation prompt.")
+                # db_session for prepare_item_generation_prompt is the one from this context
+                prompt = await prompt_generator.prepare_item_generation_prompt(
+                    guild_id, session, self.game_manager, item_type_suggestion, theme_keywords, num_to_generate
+                )
+                if not prompt or prompt.startswith("Error:"):
+                    logger.error(f"{log_prefix}: Failed to generate prompt. Details: {prompt}")
+                    return []
+                logger.debug(f"{log_prefix}: Prompt generated (first 300 chars): {prompt[:300]}...")
+
+                # 3. Call OpenAI Service
+                logger.debug(f"{log_prefix}: Requesting completion from OpenAI.")
+                raw_ai_output = await openai_service.get_completion(prompt_text=prompt)
+                if not raw_ai_output:
+                    logger.error(f"{log_prefix}: AI service returned no output.")
+                    return []
+                logger.debug(f"{log_prefix}: Raw AI output received (first 100 chars): {raw_ai_output[:100]}")
+
+                # 4. Validate AI Response
+                logger.debug(f"{log_prefix}: Validating AI response for items.")
+                validated_item_data_list = await validator.parse_and_validate_item_generation_response(
+                    raw_ai_output, guild_id, self.game_manager
+                )
+                if not validated_item_data_list: # Handles None or empty list if validator returns that for "no valid items"
+                    logger.error(f"{log_prefix}: AI response validation failed or returned no valid items. Raw output: {raw_ai_output}")
+                    return []
+                logger.info(f"{log_prefix}: AI item response validated successfully. Found {len(validated_item_data_list)} valid items.")
+
+                # 5. Create and Save ItemTemplate Entities
+                for item_data in validated_item_data_list:
+                    properties_dict = {}
+                    properties_json_string = item_data.get("properties_json")
+                    if properties_json_string:
+                        try:
+                            properties_dict = json.loads(properties_json_string)
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.warning(f"{log_prefix}: Invalid JSON for properties_json for item '{item_data.get('name_i18n', {}).get('en', 'Unknown Item')}'. Error: {e}. Using empty dict for properties. JSON string was: '{properties_json_string}'")
+                            properties_dict = {} # Default to empty if parsing fails
+
+                    template_model_data = {
+                        "id": str(uuid.uuid4()),
+                        "guild_id": guild_id,
+                        "name_i18n": item_data.get("name_i18n"),
+                        "description_i18n": item_data.get("description_i18n"),
+                        "type": item_data.get("item_type"),
+                        # base_value is not a direct field in ItemTemplate, it's part of properties.
+                        # The AI was instructed to put it in properties_json or as a separate field.
+                        # Let's assume it should be part of the properties dict.
+                        # "base_value": item_data.get("base_value"),
+                        "properties": properties_dict,
+                        # rarity is not a direct field in ItemTemplate, it's part of properties.
+                        # "rarity": item_data.get("rarity_level")
+                    }
+
+                    # Add base_value and rarity to properties_dict if they came as separate fields
+                    if "base_value" in item_data:
+                        properties_dict["base_value"] = item_data["base_value"]
+                    if "rarity_level" in item_data:
+                        properties_dict["rarity"] = item_data["rarity_level"] # Store as 'rarity' in properties
+                    template_model_data["properties"] = properties_dict
+
+
+                    # Filter out None values for fields that are nullable in the DB model (ItemTemplate)
+                    # 'type' and 'properties' are nullable in ItemTemplate. name_i18n, description_i18n are not.
+                    if template_model_data["type"] is None:
+                        del template_model_data["type"]
+                    if template_model_data["properties"] is None: # Should be at least {}
+                        template_model_data["properties"] = {}
+
+                    if not template_model_data.get("name_i18n"):
+                        logger.warning(f"{log_prefix}: Skipping item due to missing 'name_i18n'. Data: {item_data}")
+                        continue
+
+                    new_template = ItemTemplate(**template_model_data)
+                    session.add(new_template)
+                    created_item_templates.append(new_template)
+                    logger.debug(f"{log_prefix}: Prepared and added new ItemTemplate {new_template.id} to session.")
+
+                if created_item_templates:
+                    await session.commit()
+                    logger.info(f"{log_prefix}: Successfully generated and saved {len(created_item_templates)} item templates to DB.")
+                    for template in created_item_templates:
+                        await session.refresh(template)
+                else:
+                    logger.info(f"{log_prefix}: No valid item templates were processed to be saved.")
+
+                return created_item_templates
+
+            except Exception as e:
+                logger.error(f"{log_prefix}: Error during item generation and saving pipeline: {e}", exc_info=True)
+                if 'session' in locals() and session.is_active:
+                    await session.rollback() # type: ignore
+                return []
+
 
 logger.debug("DEBUG: item_manager.py module loaded (after overwrite).")

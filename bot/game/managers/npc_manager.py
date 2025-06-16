@@ -8,7 +8,11 @@ import asyncio
 import logging # Added
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awaitable, Union
 
-from bot.game.models.npc import NPC
+from bot.game.models.npc import NPC # This is likely a Pydantic or game object model
+from bot.database.models import GeneratedNpc as DBGeneratedNpc, Location as DBLocation # DB models
+from bot.database.crud_utils import get_entity_by_id # For fetching location for update
+from sqlalchemy.orm.attributes import flag_modified # To mark JSONB field as modified
+
 from builtins import dict, set, list, int, float, str, bool
 
 
@@ -375,5 +379,188 @@ class NpcManager:
     async def revert_npc_inventory_changes(self, guild_id: str, npc_id: str, inventory_changes: List[Dict[str, Any]], **kwargs: Any) -> bool: return True
     async def revert_npc_party_change(self, guild_id: str, npc_id: str, old_party_id: Optional[str], **kwargs: Any) -> bool: return True
     async def revert_npc_state_variables_change(self, guild_id: str, npc_id: str, old_state_variables_json: str, **kwargs: Any) -> bool: return True
+
+    async def generate_and_save_npcs(
+        self,
+        guild_id: str,
+        context_details: Dict[str, Any]
+    ) -> List[DBGeneratedNpc]:
+        """
+        Generates new NPCs using AI based on context_details,
+        validates the response, and saves valid NPCs to the database.
+
+        Args:
+            guild_id: The ID of the guild for which to generate NPCs.
+            context_details: A dictionary containing contextual details to guide NPC generation
+                             (e.g., location_id, faction_id, role_suggestion,
+                              theme_keywords, num_npcs_to_generate).
+
+        Returns:
+            A list of successfully created and saved DBGeneratedNpc objects,
+            or an empty list if any part of the process fails.
+        """
+        log_prefix = f"NpcGeneration (Guild: {guild_id})"
+        num_to_generate = context_details.get("num_npcs_to_generate", 1)
+        logger.info(f"{log_prefix}: Starting NPC generation. Context: {context_details}, Num: {num_to_generate}.")
+
+        if not hasattr(self, 'game_manager') or not self.game_manager:
+            logger.error(f"{log_prefix}: GameManager not available on NpcManager instance.")
+            return []
+
+        # 1. Access Services via self.game_manager
+        services_to_check = {
+            "multilingual_prompt_generator": self.game_manager.multilingual_prompt_generator,
+            "openai_service": self.game_manager.openai_service,
+            "ai_response_validator": self.game_manager.ai_response_validator,
+            "db_service": self._db_service # NpcManager has its own self._db_service
+        }
+        for service_name, service_instance in services_to_check.items():
+            if not service_instance:
+                logger.error(f"{log_prefix}: Service '{service_name}' is missing.")
+                return []
+
+        prompt_generator = self.game_manager.multilingual_prompt_generator
+        openai_service = self.game_manager.openai_service
+        validator = self.game_manager.ai_response_validator
+        db_service = self._db_service
+
+        created_npcs_db: List[DBGeneratedNpc] = []
+        target_location_id = context_details.get("location_id")
+        target_location_instance: Optional[DBLocation] = None
+
+        async with db_service.get_session() as session: # type: ignore
+            try:
+                # Fetch target location if specified, to update its npc_ids list
+                if target_location_id:
+                    target_location_instance = await get_entity_by_id(session, DBLocation, target_location_id)
+                    if not target_location_instance:
+                        logger.warning(f"{log_prefix}: Target location_id '{target_location_id}' provided but location not found. NPCs will be created without being added to this location's list.")
+                    elif target_location_instance.guild_id != guild_id:
+                        logger.warning(f"{log_prefix}: Target location_id '{target_location_id}' (guild {target_location_instance.guild_id}) does not match current guild {guild_id}. NPCs will not be added to this location's list.")
+                        target_location_instance = None # Invalidate if guild mismatch
+
+                # 2. Prepare Prompt
+                logger.debug(f"{log_prefix}: Preparing NPC generation prompt.")
+                prompt = await prompt_generator.prepare_npc_generation_prompt(
+                    guild_id, session, self.game_manager, context_details
+                )
+                if not prompt or prompt.startswith("Error:"):
+                    logger.error(f"{log_prefix}: Failed to generate NPC prompt. Details: {prompt}")
+                    return []
+                logger.debug(f"{log_prefix}: NPC Prompt generated (first 300 chars): {prompt[:300]}...")
+
+                # 3. Call OpenAI Service
+                logger.debug(f"{log_prefix}: Requesting completion from OpenAI for NPCs.")
+                raw_ai_output = await openai_service.get_completion(prompt_text=prompt)
+                if not raw_ai_output:
+                    logger.error(f"{log_prefix}: AI service returned no output for NPC generation.")
+                    return []
+                logger.debug(f"{log_prefix}: Raw AI output for NPCs received (first 100 chars): {raw_ai_output[:100]}")
+
+                # 4. Validate AI Response
+                logger.debug(f"{log_prefix}: Validating AI response for NPCs.")
+                validated_npc_data_list = await validator.parse_and_validate_npc_generation_response(
+                    raw_ai_output, guild_id, self.game_manager
+                )
+                if not validated_npc_data_list:
+                    logger.error(f"{log_prefix}: AI NPC response validation failed or returned no valid NPCs. Raw output: {raw_ai_output}")
+                    return []
+                logger.info(f"{log_prefix}: AI NPC response validated. Found {len(validated_npc_data_list)} valid NPCs.")
+
+                # 5. Create and Save GeneratedNpc Entities
+                for npc_data in validated_npc_data_list:
+                    npc_id = str(uuid.uuid4())
+                    npc_model_data = {
+                        "id": npc_id,
+                        "guild_id": guild_id,
+                        "name_i18n": npc_data.get("name_i18n"),
+                        "description_i18n": npc_data.get("description_i18n"),
+                        "backstory_i18n": npc_data.get("backstory_i18n"),
+                        "persona_i18n": npc_data.get("persona_i18n"),
+                        # The DB model GeneratedNpc does not have a direct 'archetype' field.
+                        # This info would typically go into a JSONB 'details' or 'state_variables' field,
+                        # or a dedicated 'archetype' column if added to the model.
+                        # For now, storing it in a conceptual 'details' field within effective_stats_json or similar if it existed.
+                        # Since GeneratedNpc has no such generic JSONB field in the provided model, we can store it
+                        # as part of persona_i18n or log it, or it needs a model update.
+                        # Let's assume for now it's a top-level attribute in the AI response but not directly mapped to GeneratedNpc.
+                        # We can add it to a new 'details' field if we assume it's JSONB.
+                        # For this pass, we'll include it if GeneratedNpc schema is updated, or omit.
+                        # Current GeneratedNpc model: id, name_i18n, description_i18n, backstory_i18n, persona_i18n, effective_stats_json, guild_id
+                        # We can put archetype and other non-i18n fields into effective_stats_json if it's a general JSONB store.
+                        # Or, the AI prompt should be adjusted to put 'archetype' inside 'persona_i18n' or similar.
+                        # For now, let's include it in a new 'details' field for the model instance, assuming model can take it.
+                        # This will likely fail if 'details' is not on DBGeneratedNpc model.
+                        # "details": {"archetype": npc_data.get("archetype")}, # Example
+                        # initial_dialogue_greeting_i18n can be part of persona or a new field
+                        # faction_id is also not directly on GeneratedNpc DB model.
+                    }
+                    # Add archetype to a conceptual details field if it exists
+                    details_for_npc = {}
+                    if npc_data.get("archetype"):
+                        details_for_npc["archetype"] = npc_data.get("archetype")
+                    if npc_data.get("initial_dialogue_greeting_i18n"):
+                         details_for_npc["initial_dialogue_greeting_i18n"] = npc_data.get("initial_dialogue_greeting_i18n")
+                    if npc_data.get("faction_affiliation_id"): # This is a suggested name/concept
+                         details_for_npc["faction_affiliation_suggestion"] = npc_data.get("faction_affiliation_id")
+
+                    if details_for_npc: # If there are any details to add
+                        # Assuming GeneratedNpc has an 'effective_stats_json' that can store this, or a 'details' field.
+                        # For now, let's try to merge into persona_i18n for simplicity if no generic JSONB field.
+                        # This is not ideal. A 'details' JSONB field on GeneratedNpc would be better.
+                        # Given the current GeneratedNpc model, these extra fields cannot be directly saved.
+                        # We will save what the model supports.
+                        logger.info(f"{log_prefix}: NPC data from AI contains extra fields not directly on GeneratedNpc model: archetype, initial_dialogue, faction_affiliation_id. These will be logged but not directly saved unless model is updated or they are part of a JSONB field.")
+                        logger.debug(f"{log_prefix}: Extra AI fields for NPC {npc_id}: {details_for_npc}")
+
+
+                    # Filter for actual model fields, excluding Nones for nullable fields if desired
+                    final_npc_model_data = {
+                        k: v for k, v in npc_model_data.items() if v is not None
+                    }
+                    if not final_npc_model_data.get("name_i18n"): # Name is required
+                        logger.warning(f"{log_prefix}: Skipping NPC due to missing 'name_i18n'. Data: {npc_data}")
+                        continue
+
+                    new_npc = DBGeneratedNpc(**final_npc_model_data)
+                    session.add(new_npc)
+                    created_npcs_db.append(new_npc)
+                    logger.debug(f"{log_prefix}: Prepared and added new GeneratedNpc {new_npc.id} to session.")
+
+                    if target_location_instance:
+                        if target_location_instance.npc_ids is None:
+                            target_location_instance.npc_ids = []
+                        # Ensure npc_ids is a list, handle if it's somehow a string from DB (should be JSONB list)
+                        if not isinstance(target_location_instance.npc_ids, list):
+                            try:
+                                # Attempt to parse if it's a JSON string representing a list
+                                current_npc_ids = json.loads(str(target_location_instance.npc_ids)) if isinstance(target_location_instance.npc_ids, str) else []
+                                if not isinstance(current_npc_ids, list): current_npc_ids = []
+                                target_location_instance.npc_ids = current_npc_ids
+                            except json.JSONDecodeError:
+                                target_location_instance.npc_ids = [] # Reset if invalid JSON string
+
+                        if npc_id not in target_location_instance.npc_ids:
+                            target_location_instance.npc_ids.append(npc_id)
+                            flag_modified(target_location_instance, "npc_ids") # Mark JSONB as modified
+                            session.add(target_location_instance) # Add location to session to save updated npc_ids
+                            logger.info(f"{log_prefix}: NPC {npc_id} added to location {target_location_id}'s npc_ids list.")
+
+
+                if created_npcs_db:
+                    await session.commit()
+                    logger.info(f"{log_prefix}: Successfully generated and saved {len(created_npcs_db)} NPCs to DB.")
+                    for npc in created_npcs_db:
+                        await session.refresh(npc)
+                else:
+                    logger.info(f"{log_prefix}: No valid NPCs were processed to be saved.")
+
+                return created_npcs_db
+
+            except Exception as e:
+                logger.error(f"{log_prefix}: Error during NPC generation and saving pipeline: {e}", exc_info=True)
+                if 'session' in locals() and session.is_active: # Check if session was defined and is active
+                    await session.rollback() # type: ignore
+                return []
 
 logger.debug("DEBUG: npc_manager.py module loaded.") # Changed

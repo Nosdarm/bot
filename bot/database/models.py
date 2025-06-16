@@ -351,6 +351,9 @@ class GeneratedQuest(Base):
     quest_giver_details_i18n = Column(JSONB, nullable=True) # ADDED
     consequences_summary_i18n = Column(JSONB, nullable=True) # ADDED
     # stages_json or steps_json_str is omitted, steps will be in QuestStepTable
+
+    steps = relationship("QuestStepTable", back_populates="quest", cascade="all, delete-orphan") # ADDED relationship
+
     __table_args__ = (Index('idx_generatedquest_guild_id', 'guild_id'),)
 
 
@@ -530,7 +533,9 @@ class QuestStepTable(Base): # RENAMED from QuestStep
     __tablename__ = 'quest_steps' # Tablename remains quest_steps
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    quest_id = Column(String, ForeignKey('quests.id', ondelete='CASCADE'), nullable=False, index=True) # FK to QuestTable.id
+    quest_id = Column(String, ForeignKey('generated_quests.id', ondelete='CASCADE'), nullable=False, index=True) # CHANGED FK to generated_quests.id
+
+    quest = relationship("GeneratedQuest", back_populates="steps") # ADDED relationship
 
     title_i18n = Column(JSONB, nullable=True) # Already JSONB
     description_i18n = Column(JSONB, nullable=True) # Already JSONB
@@ -731,6 +736,7 @@ class GuildConfig(Base):
     game_channel_id = Column(String, nullable=True) # Not i18n
     master_channel_id = Column(String, nullable=True) # Not i18n
     system_notifications_channel_id = Column(String, nullable=True) # Not i18n
+    master_role_id = Column(String, nullable=True, index=True)
 
     def __repr__(self):
         return f"<GuildConfig(id='{self.id}', guild_id='{self.guild_id}', bot_language='{self.bot_language}')>"

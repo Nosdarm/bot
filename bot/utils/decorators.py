@@ -23,49 +23,48 @@ def is_master_role():
             logger.info(f"is_master_role: User {interaction.user.id} is guild owner in {interaction.guild.id}. Granting access for now.")
             return True
 
-        # Placeholder for actual Master Role ID checking:
-        # This section needs to be implemented based on how Master Role IDs are stored and retrieved.
-        # For example, if master_role_id is stored in GuildConfig or a global bot config:
-        #
-        # master_role_id_str = None
-        # try:
-        #     # Assuming DBService is part of the bot instance or globally accessible
-        #     # This is just an example path, adapt to your DBService access pattern.
-        #     if hasattr(interaction.client, 'db_service') and interaction.client.db_service:
-        #         async with interaction.client.db_service.get_session() as session:
-        #             # This assumes a way to get a specific guild setting, e.g., the master role ID
-        #             # master_role_id_str = await interaction.client.db_service.get_guild_setting(
-        #             #    str(interaction.guild_id), "master_role_id", session=session
-        #             # )
-        #             # Or, if GuildConfig stores it directly:
-        #             from bot.database.models import GuildConfig # Local import to avoid circularity if models use decorators
-        #             from sqlalchemy.future import select
-        #             stmt = select(GuildConfig.master_role_id_for_commands).where(GuildConfig.guild_id == str(interaction.guild_id))
-        #             result = await session.execute(stmt)
-        #             master_role_id_str = result.scalars().first() # Assuming GuildConfig has such a field
-        #     else:
-        #         logger.warning("is_master_role: DBService not found on bot client. Cannot fetch Master Role ID.")
-        #
-        # except Exception as e:
-        #     logger.error(f"is_master_role: Error fetching Master Role ID for guild {interaction.guild.id}: {e}", exc_info=True)
-        #     return False # Fail closed
-        #
-        # if not master_role_id_str:
-        #     logger.warning(f"is_master_role: Master Role ID not configured for guild {interaction.guild.id}.")
-        #     return False
-        #
-        # try:
-        #     master_role_id = int(master_role_id_str)
-        # except ValueError:
-        #     logger.error(f"is_master_role: Master Role ID '{master_role_id_str}' for guild {interaction.guild.id} is not a valid integer.")
-        #     return False
-        #
-        # user_role_ids = {role.id for role in interaction.user.roles}
-        # if master_role_id in user_role_ids:
-        #     logger.info(f"is_master_role: User {interaction.user.id} has Master Role ({master_role_id}) in guild {interaction.guild.id}.")
-        #     return True
+        # Actual Master Role ID checking:
+        master_role_id_str = None
+        try:
+            if not hasattr(interaction.client, 'db_service') or not interaction.client.db_service:
+                logger.warning(f"is_master_role: DBService not found on bot client (user: {interaction.user.id}, guild: {interaction.guild.id}). Cannot fetch Master Role ID.")
+                return False # Fail closed if DB service is not available
 
-        logger.warning(f"is_master_role: User {interaction.user.id} does not have the Master Role (or it's not configured/owner override not met) in guild {interaction.guild.id}.")
-        return False # Default to False if not owner and actual role check isn't implemented/passes
+            # Dynamically import here if necessary, or ensure it's available globally
+            from bot.database.models import GuildConfig
+            from sqlalchemy.future import select
+
+            db_service = interaction.client.db_service
+            async with db_service.get_session() as session:
+                stmt = select(GuildConfig.master_role_id).where(GuildConfig.guild_id == str(interaction.guild.id))
+                result = await session.execute(stmt)
+                master_role_id_str = result.scalars().first()
+
+        except Exception as e:
+            logger.error(f"is_master_role: Error fetching Master Role ID for guild {interaction.guild.id} (user: {interaction.user.id}): {e}", exc_info=True)
+            return False # Fail closed on DB error
+
+        if not master_role_id_str:
+            logger.info(f"is_master_role: Master Role ID not configured for guild {interaction.guild.id} (user: {interaction.user.id}). Access denied (owner check already passed).")
+            return False # No role configured, and user is not owner
+
+        try:
+            master_role_id_int = int(master_role_id_str)
+        except ValueError:
+            logger.error(f"is_master_role: Master Role ID '{master_role_id_str}' for guild {interaction.guild.id} (user: {interaction.user.id}) is not a valid integer. Access denied.")
+            return False
+
+        # Ensure interaction.user is a Member object to access roles
+        if not isinstance(interaction.user, discord.Member):
+            logger.warning(f"is_master_role: interaction.user is not a discord.Member object for user {interaction.user.id} in guild {interaction.guild.id}. Cannot check roles.")
+            return False
+
+        user_role_ids = {role.id for role in interaction.user.roles}
+        if master_role_id_int in user_role_ids:
+            logger.info(f"is_master_role: User {interaction.user.id} has Master Role ({master_role_id_int}) in guild {interaction.guild.id}. Access granted.")
+            return True
+
+        logger.info(f"is_master_role: User {interaction.user.id} does not have the configured Master Role ({master_role_id_int}) in guild {interaction.guild.id}. Access denied.")
+        return False
 
     return app_commands.check(predicate)

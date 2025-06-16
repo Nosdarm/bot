@@ -7,14 +7,18 @@ import logging # Added for logging (already present from previous step, but good
 
 from bot.utils.i18n_utils import get_i18n_text
 from bot.game.models.action_request import ActionRequest
+from bot.database.models import Player # Added for /end_turn
+from bot.database.crud_utils import get_entity_by_attributes, update_entity # Added for /end_turn
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.game.managers.game_manager import GameManager
     from bot.game.character_processors.character_action_processor import CharacterActionProcessor
     from bot.game.party_processors.party_action_processor import PartyActionProcessor
-import asyncio # Should be already here from previous step
-import logging # Added for logging
+# import asyncio # Already imported via discord.ext.commands or discord
+# import logging # Already imported via discord.ext.commands or discord
+
+logger = logging.getLogger(__name__) # Define logger for the module
 
 class ActionModuleCog(commands.Cog, name="Action Commands Module"):
     def __init__(self, bot: "RPGBot"):
@@ -230,53 +234,51 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
     async def cmd_end_turn(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
 
+        guild_id_str = str(interaction.guild_id)
+        discord_id_str = str(interaction.user.id)
+        logger.info(f"/end_turn initiated by {discord_id_str} in guild {guild_id_str}.")
+
         game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
-        if not game_mngr:
-            await interaction.followup.send("GameManager не доступен.", ephemeral=True)
+        if not game_mngr or not game_mngr.db_service:
+            logger.error(f"/end_turn: GameManager or DBService not available for user {discord_id_str} in guild {guild_id_str}.")
+            await interaction.followup.send("Game services are not available. Please try again later.", ephemeral=True)
             return
 
-        # Keep existing boilerplate for GameManager
-        # CharacterManager is retrieved below, as per existing structure.
+        try:
+            async with game_mngr.db_service.get_session() as session:
+                # Fetch the Player model instance
+                player = await get_entity_by_attributes(session, Player, {"discord_id": discord_id_str, "guild_id": guild_id_str})
 
-        turn_processing_service = game_mngr.turn_processing_service
-        if not turn_processing_service:
-            await interaction.followup.send("Сервис обработки ходов не доступен.", ephemeral=True)
-            return
+                if not player:
+                    logger.warning(f"/end_turn: Player not found for discord_id {discord_id_str} in guild {guild_id_str}.")
+                    # TODO: Localize this message
+                    await interaction.followup.send("Player not found. Have you registered or started your character?", ephemeral=True)
+                    return
 
-        if not game_mngr.character_manager: # Check for CharacterManager as it's used next
-            await interaction.followup.send("Менеджер персонажей не доступен.", ephemeral=True)
-            return
+                # Update Player status
+                new_status = "actions_submitted"
+                player.current_game_status = new_status
 
-        guild_id_str = str(interaction.guild_id) # Define guild_id_str here
-        player_char = game_mngr.character_manager.get_character_by_discord_id(guild_id_str, interaction.user.id)
+                # Persist the change for the Player model
+                # update_entity handles session.add(player)
+                await update_entity(session, player, {"current_game_status": new_status})
+                # No specific guild_id needed for update_entity as player object is already specific
 
-        if player_char:
-            # Set status to indicate readiness for periodic processing
-            player_char.current_game_status = 'ожидание_обработки'
-            game_mngr.character_manager.mark_character_dirty(guild_id_str, player_char.id)
-
-            # Optional: Immediately save this status change to DB
-            try:
-                await game_mngr.save_game_state_after_action(guild_id_str)
-                logging.info(f"cmd_end_turn: Player {player_char.id} status updated to 'ожидание_обработки' and saved for guild {guild_id_str}.")
-            except Exception as e:
-                logging.error(f"cmd_end_turn: Error saving player status update for {player_char.id} in guild {guild_id_str}: {e}", exc_info=True)
-                # Decide if we should inform the user of save failure or proceed with optimistic message
+                await session.commit()
+                logger.info(f"/end_turn: Player {player.id} (Discord: {discord_id_str}) status updated to '{new_status}' in guild {guild_id_str}.")
 
             # Inform the user
-            # TODO: Localize "Turn ended. Your actions will be processed shortly."
-            # Assuming get_i18n_text is available and configured for this cog or globally
+            # TODO: Localize "You have ended your turn. Your actions will be processed soon."
             # For now, using a direct string.
-            lang = player_char.selected_language or (interaction.locale.language if interaction.locale else "en")
-            end_turn_confirmation = get_i18n_text(None, "end_turn_confirmation", lang, default_lang="en", default_text="Turn ended. Your actions will be processed shortly.")
+            # lang = player.selected_language or (interaction.locale.language if interaction.locale and hasattr(interaction.locale, 'language') else "en")
+            # end_turn_confirmation = get_i18n_text(None, "end_turn_confirmation", lang, default_lang="en", default_text="You have ended your turn. Your actions will be processed soon.")
+            end_turn_confirmation = "You have ended your turn. Your actions will be processed soon."
             await interaction.followup.send(end_turn_confirmation, ephemeral=True)
-        else:
-            # TODO: Localize "Character not found."
-            lang_for_error = interaction.locale.language if interaction.locale else "en"
-            char_not_found_msg = get_i18n_text(None, "inventory_error_no_character", lang_for_error, default_lang="en", default_text="You need to create a character first! Use `/start_new_character`.")
-            logging.warning(f"cmd_end_turn: Player character not found for Discord user {interaction.user.id} in guild {guild_id_str}.")
-            await interaction.followup.send(char_not_found_msg, ephemeral=True)
-            return
+
+        except Exception as e:
+            logger.error(f"Error in /end_turn for user {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
+            # Rollback is handled by the async_session context manager on exception
+            await interaction.followup.send("An unexpected error occurred while ending your turn.", ephemeral=True)
 
     @app_commands.command(name="end_party_turn", description="ГМ: Завершить ход для всей текущей активной партии.")
     async def cmd_end_party_turn(self, interaction: Interaction):
