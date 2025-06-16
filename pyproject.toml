@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "text-rpg-bot-backend"
+version = "0.1.0"
+description = "Backend for AI-Driven Text RPG Bot"
+authors = ["Jules <jules@ai.dev>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+fastapi = "^0.103.2"
+uvicorn = {extras = ["standard"], version = "^0.23.2"}
+discord = "^2.3.2"
+SQLAlchemy = "^2.0.23"
+psycopg2-binary = "^2.9.9"
+alembic = "^1.12.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
