@@ -97,7 +97,7 @@ class TestMobileGroupManager(unittest.IsolatedAsyncioTestCase):
         self.mock_session.execute.assert_called_once()
         self.assertEqual(len(groups_list), 2)
 
-    def test_update_mobile_group(self):
+    async def test_update_mobile_group(self): # Changed to async def
         group_id = str(uuid.uuid4())
         guild_id = str(uuid.uuid4())
 
@@ -111,7 +111,7 @@ class TestMobileGroupManager(unittest.IsolatedAsyncioTestCase):
             current_location_id="new_loc_updated"
         )
 
-        updated_group = self.manager.update_mobile_group(group_id, pydantic_update_data)
+        updated_group = await self.manager.update_mobile_group(group_id, pydantic_update_data) # Await async call
 
         self.mock_session.commit.assert_called_once()
         self.mock_session.refresh.assert_called_once_with(existing_db_group)
@@ -154,11 +154,19 @@ class TestMobileGroupManager(unittest.IsolatedAsyncioTestCase):
         mock_member_npc = PydanticGlobalNpc(id=member_npc_id, guild_id=guild_id, name_i18n={"en": "Member"}, current_location_id=start_loc)
 
         self.manager.get_mobile_groups_by_guild = MagicMock(return_value=[pydantic_group])
-        self.manager.update_mobile_group = MagicMock(return_value=pydantic_group)
 
-        # Mock GlobalNpcManager calls (assuming they are async as per previous GlobalNpcManager tests)
+        # Mock update_mobile_group as AsyncMock as it's awaited in process_tick
+        async def mock_update_group_side_effect(gid, group_data):
+            return group_data # Return the modified group_data
+        self.manager.update_mobile_group = AsyncMock(side_effect=mock_update_group_side_effect)
+
+        # Ensure GlobalNpcManager's methods are AsyncMocks
         self.mock_global_npc_manager.get_global_npc = AsyncMock(return_value=mock_member_npc)
-        self.mock_global_npc_manager.update_global_npc = AsyncMock(return_value=mock_member_npc)
+        # self.mock_global_npc_manager.update_global_npc needs to be an AsyncMock for the await
+        async def mock_update_npc_side_effect(nid, npc_data):
+            return npc_data
+        self.mock_global_npc_manager.update_global_npc = AsyncMock(side_effect=mock_update_npc_side_effect)
+
 
         await self.manager.process_tick(
             guild_id=guild_id,
@@ -192,7 +200,10 @@ class TestMobileGroupManager(unittest.IsolatedAsyncioTestCase):
             state_variables={"allow_random_patrol": True}
         )
         self.manager.get_mobile_groups_by_guild = MagicMock(return_value=[pydantic_group])
-        self.manager.update_mobile_group = MagicMock(return_value=pydantic_group)
+
+        async def mock_update_group_side_effect_random(gid, group_data):
+            return group_data
+        self.manager.update_mobile_group = AsyncMock(side_effect=mock_update_group_side_effect_random)
 
         # Mock LocationManager's get_all_locations
         mock_loc_current = PydanticLocation(id=start_loc, guild_id=guild_id, name_i18n={"en":"Current"}, descriptions_i18n={})
