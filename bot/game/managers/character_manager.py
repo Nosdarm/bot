@@ -420,16 +420,23 @@ class CharacterManager:
             try:
                 char_id = str(data.get('id'))
                 data['effective_stats_json'] = data.get('effective_stats_json', '{}')
-                for k, v_type, d_val_str in [('stats','{}',dict), ('inventory','[]',list), ('action_queue','[]',list),
+                for k, d_val_str, v_type in [('stats','{}',dict), ('inventory','[]',list), ('action_queue','[]',list),
                                    ('state_variables','{}',dict), ('status_effects','[]',list),
                                    ('skills_data_json','[]',list), ('abilities_data_json','[]',list),
                                    ('spells_data_json','[]',list), ('flags_json','{}',dict),
                                    ('active_quests','[]',list), ('known_spells','[]',list),
                                    ('spell_cooldowns','{}',dict)]:
                     raw_val = data.get(k)
-                    parsed_val = v_type()
-                    if isinstance(raw_val, (str, bytes)): parsed_val = json.loads(raw_val or d_val_str)
-                    elif isinstance(raw_val, v_type): parsed_val = raw_val
+                    # v_type is now correctly dict or list, d_val_str is '{}' or '[]'
+                    parsed_val = v_type() # This will call dict() or list()
+                    if isinstance(raw_val, (str, bytes)):
+                        parsed_val = json.loads(raw_val or d_val_str)
+                    elif isinstance(raw_val, v_type):
+                        parsed_val = raw_val
+                    # If raw_val is None and not a string/bytes or already the correct type,
+                    # parsed_val will remain the empty dict/list created by v_type().
+                    # This behavior seems acceptable.
+
                     data[k.replace('_json','')] = parsed_val
                     if '_json' in k and k in data: del data[k]
                 current_action_json = data.get('current_action')
