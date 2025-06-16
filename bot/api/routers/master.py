@@ -85,7 +85,7 @@ from fastapi import Path, Query, Body # Ensure these are imported at the top of 
 )
 async def resolve_conflict(
     request: Request,
-    # guild_id: str is implicitly available from router prefix and used by check_master_permissions dependency.
+    guild_id: str, # Added: guild_id is part of the path prefix and FastAPI provides it here
     conflict_id: str = Path(..., description="The unique identifier of the conflict to be resolved.", example="conflict_abc123"),
     payload: ResolveConflictRequest = Body(..., description="Payload containing the outcome type and parameters for the resolution.")
 ):
@@ -158,7 +158,7 @@ async def resolve_conflict(
 )
 async def edit_npc(
     request: Request,
-    # guild_id: str is implicit from router prefix
+    guild_id: str, # Added
     npc_id: str = Path(..., description="The unique ID of the NPC to edit.", example="npc_goblin_shaman_001"),
     payload: EditNpcRequest = Body(..., description="Specifies the NPC attribute to change and its new value.")
 ):
@@ -324,7 +324,7 @@ async def edit_npc(
 )
 async def edit_character(
     request: Request,
-    # guild_id: str implicit from router prefix
+    guild_id: str, # Added
     character_id: str = Path(..., description="The Character UUID (string) or Discord User ID (numeric string) of the player character to edit.", example="char_uuid_player1_abc"),
     payload: EditCharacterRequest = Body(..., description="Specifies the character attribute to change and its new value.")
 ):
@@ -506,7 +506,7 @@ async def edit_character(
 )
 async def edit_item_instance(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     item_instance_id: str = Path(..., description="The unique ID of the item instance to be edited.", example="item_instance_xyz789"),
     payload: EditItemRequest = Body(..., description="Specifies the item attribute to change and its new value.")
 ):
@@ -650,7 +650,7 @@ async def edit_item_instance(
 )
 async def launch_event(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     payload: LaunchEventRequest = Body(..., description="Details of the event to launch, including the template ID and optional overrides for location, channel, and involved players.")
 ):
     """
@@ -748,7 +748,7 @@ async def launch_event(
 )
 async def set_rule(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     payload: SetRuleRequest = Body(..., description="The game rule key (using dot-notation for nesting) and its new value. The value can be any valid JSON type (string, number, boolean, array, object).")
 ):
     """
@@ -896,7 +896,7 @@ import json # Required for get_entity in set_rule, and potentially in view_simul
 )
 async def run_simulation(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     payload: RunSimulationRequest = Body(..., description="Specifies the type of simulation to run, its parameters, and the desired language for the report output.")
 ):
     """
@@ -1045,7 +1045,7 @@ async def run_simulation(
 )
 async def get_simulation_report(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     report_id: str = Path(..., description="The unique ID of the simulation report to retrieve. This ID is returned by the `/simulations/run` endpoint.", example="sim_report_uuid_123"),
     language: Optional[str] = Query('en', description="Language code for localizing the formatted report output. Defaults to 'en'.")
 ):
@@ -1155,7 +1155,7 @@ from bot.game.services.report_formatter import ReportFormatter # For more detail
 )
 async def get_event_log(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     event_type_filter: Optional[str] = Query(None, description="Filter logs by a specific event type (e.g., 'PLAYER_MOVE', 'NPC_INTERACTION', 'master_api_edit_npc').", example="PLAYER_MOVE"),
     limit: int = Query(50, ge=1, le=200, description="Maximum number of log entries to return per page.", example=50),
     offset: int = Query(0, ge=0, description="Offset for paginating through log entries, starting from 0.", example=0),
@@ -1270,7 +1270,7 @@ async def get_event_log(
 )
 async def get_all_locations_map(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     language: Optional[str] = Query('en', description="Language code for localizing location names. Defaults to 'en'.", example="ru")
 ):
     """
@@ -1329,7 +1329,7 @@ async def get_all_locations_map(
 )
 async def get_location_details(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     location_id: str = Path(..., description="The unique ID of the location for which to retrieve detailed information.", example="loc_town_square"),
     language: Optional[str] = Query('en', description="Language for localizing names and descriptions within the location details. Defaults to 'en'.")
 ):
@@ -1470,7 +1470,7 @@ async def get_location_details(
 )
 async def get_guild_npcs(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     location_id_filter: Optional[str] = Query(None, description="Optional ID of a specific location to filter the NPC list by. If not provided, NPCs from all locations are listed.", example="loc_market_square"),
     language: Optional[str] = Query('en', description="Language for localizing NPC names and their current location names. Defaults to 'en'.")
 ):
@@ -1558,7 +1558,7 @@ async def get_guild_npcs(
 )
 async def get_player_stats(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     character_id_or_discord_id: str = Path(..., description="The Character UUID (string) or Discord User ID (numeric string) of the player character whose stats are to be retrieved.", example="char_player_fighter_007"),
     language: Optional[str] = Query('en', description="Language for localizing names (character, class, location). Defaults to 'en'.")
 ):
@@ -1672,7 +1672,7 @@ async def get_player_stats(
 )
 async def compare_simulation_reports(
     request: Request,
-    # guild_id: str implicit
+    guild_id: str, # Added
     payload: CompareReportsRequest = Body(..., description="Specifies the IDs of the two simulation reports to compare and the desired language for the comparison summary output.")
 ):
     """
