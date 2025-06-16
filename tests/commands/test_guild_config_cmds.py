@@ -2,6 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord # For discord.Interaction, TextChannel, app_commands.Choice
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.command_modules.guild_config_cmds import GuildConfigCmds, LANGUAGE_CHOICES
 from bot.database.models import GuildConfig
