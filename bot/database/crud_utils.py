@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # bot/database/crud_utils.py
 import logging
 from typing import Any, Dict, List, Optional, Type, TypeVar, Callable, Coroutine
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 # it may indicate an issue with the type checker's import resolution,
 # environment configuration, or a specific linter bug. The usage of
 # `Base` as a bound here is standard and should be valid.
-ModelType = TypeVar("ModelType", bound=Base)
+ModelType = TypeVar("ModelType", bound="Base")
 AsyncCallable = Callable[..., Coroutine[Any, Any, Any]]
 F = TypeVar('F', bound=Callable[..., Coroutine[Any, Any, Any]])
 
