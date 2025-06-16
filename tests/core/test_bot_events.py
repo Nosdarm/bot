@@ -2,6 +2,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord
+import logging
+
 
 from bot.bot_core import RPGBot # The class we are testing
 # Assuming GameManager and DBService are complex dependencies, mock them simply
