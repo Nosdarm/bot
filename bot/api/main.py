@@ -28,6 +28,7 @@ from bot.api.routers import rpg_character_api
 from bot.api.routers import item_router  # New Item router
 from bot.api.routers import inventory_router  # New Inventory router
 from bot.api.routers import quest_router # ADDED: Import the new quest router
+from bot.api.routers import master as master_router # ADDED: Import the new master router
 # from bot.api.dependencies import create_db_and_tables # If you want to create tables on startup
 
 # Configure basic logging
@@ -167,6 +168,14 @@ app.include_router(
     quest_router.router,
     prefix="/api/v1", # The /quests prefix is defined within the router itself
     tags=["Quests"]
+)
+
+# ADDED: Include the Master router
+# The prefix "/guilds/{guild_id}/master" is defined within the master_router itself.
+app.include_router(
+    master_router.router,
+    prefix="/api/v1", # Base prefix for all API v1 routes
+    tags=["Master Tools"] # Tag for Swagger UI grouping
 )
 
 @app.on_event("startup")

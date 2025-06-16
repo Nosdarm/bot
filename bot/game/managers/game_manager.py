@@ -998,6 +998,23 @@ class GameManager:
             logger.error("GameManager: Error calling get_active_channel_ids_for_guild for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
             return []
 
+    async def get_master_role_id(self, guild_id: str) -> Optional[str]:
+        """Fetches the master role ID for the given guild."""
+        if not self.db_service:
+            logger.warning("GameManager: DBService not available. Cannot get master_role_id for guild %s.", guild_id)
+            return None
+        try:
+            role_id = await self.db_service.get_guild_setting(guild_id, 'master_role_id')
+            if role_id and isinstance(role_id, str):
+                return role_id
+            elif role_id:
+                logger.warning("GameManager: master_role_id for guild %s was not a string: %s. Returning as str.", guild_id, role_id)
+                return str(role_id) # Attempt to cast, though settings should store as string
+            return None
+        except Exception as e:
+            logger.error("GameManager: Error fetching master_role_id for guild %s: %s", guild_id, e, exc_info=True)
+            return None
+
     async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
         if guild_id: # Guild-specific language setting is not supported by this global config
             logger.warning("GameManager (set_default_bot_language): Received guild_id '%s', but rules_config for language is currently global. Change will affect all guilds.", guild_id) # Changed
