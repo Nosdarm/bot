@@ -1,12 +1,13 @@
 from sqlalchemy import Column, Integer, String, JSON, ForeignKey, Boolean, Text, PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.declarative.api import DeclarativeMeta
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from typing import Dict, Any
 
-Base = declarative_base()
+Base: DeclarativeMeta = declarative_base()
 
 class Player(Base):
     __tablename__ = 'players'
