@@ -1024,6 +1024,31 @@ class DBService:
             logger.error("DBService: Error setting guild setting '%s' for guild %s: %s", setting_key, guild_id, e, exc_info=True) # Changed
             return False
 
+    async def get_guild_setting(self, guild_id: str, key: str) -> Optional[Any]:
+        """Fetches a specific setting for a guild."""
+        if not self.adapter:
+            logger.warning("DBService: Adapter not available. Cannot get guild setting '%s' for guild %s.", key, guild_id)
+            return None
+
+        sql = "SELECT value FROM guild_settings WHERE guild_id = $1 AND key = $2"
+        try:
+            row = await self.adapter.fetchone(sql, (guild_id, key))
+            if row and row.get('value') is not None:
+                value_str = row['value']
+                if isinstance(value_str, str):
+                    try:
+                        return json.loads(value_str)
+                    except json.JSONDecodeError:
+                        logger.error("DBService: Error decoding JSON for guild setting '%s' for guild %s: %s", key, guild_id, value_str, exc_info=True)
+                        return value_str # Return as string if not valid JSON
+                return value_str # Should ideally be parsed by adapter, but handle if not
+            else:
+                logger.info("DBService: Guild setting '%s' not found for guild %s.", key, guild_id)
+                return None
+        except Exception as e:
+            logger.error("DBService: Error fetching guild setting '%s' for guild %s: %s", key, guild_id, e, exc_info=True)
+            return None
+
     async def get_rules_config(self, guild_id: str) -> Optional[Dict[str, Any]]:
         """Fetches the rules configuration for a specific guild."""
         if not self.adapter:
