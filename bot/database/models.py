@@ -590,6 +590,54 @@ class RPGCharacter(Base):
         return f"<RPGCharacter(id={self.id}, name='{self.name}', class_name='{self.class_name}')>"
 
 
+class Shop(Base):
+    __tablename__ = 'shops'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, nullable=False, index=True)
+    name_i18n = Column(JSON, nullable=False)
+    description_i18n = Column(JSON, nullable=True)
+    type_i18n = Column(JSON, nullable=True)  # e.g., "General Store", "Blacksmith"
+    inventory = Column(JSON, nullable=True)  # Structure: {"item_template_id_1": {"quantity": 10, "buy_price": 100, "sell_price": 50, "restock_rules": {...}}, ...}
+    owner_id = Column(String, ForeignKey('npcs.id'), nullable=True)
+    location_id = Column(String, ForeignKey('locations.id'), nullable=True)
+    economic_parameters_override = Column(JSON, nullable=True)  # e.g., custom markups, available item types/rarities
+
+    # Relationships
+    owner = relationship("NPC")
+    location = relationship("Location")
+
+    __table_args__ = (
+        Index('idx_shop_guild_id', 'guild_id'),
+    )
+
+    def __repr__(self):
+        return f"<Shop(id='{self.id}', name_i18n='{self.name_i18n}', guild_id='{self.guild_id}')>"
+
+
+class Currency(Base):
+    __tablename__ = 'currencies'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, nullable=False, index=True)
+    name_i18n = Column(JSON, nullable=False)
+    symbol_i18n = Column(JSON, nullable=True)
+    exchange_rate_to_standard = Column(Float, nullable=False, default=1.0)
+    is_default = Column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (
+        Index('idx_currency_guild_id', 'guild_id'),
+        # As discussed, skipping complex unique constraint on (guild_id, name_i18n) for now.
+        # UniqueConstraint('guild_id', 'name_i18n', name='uq_currency_guild_name'), # Example if JSON unique constraint was simple
+        # The partial unique constraint for is_default=True is DB specific and complex.
+        # For now, this logic should be handled at the application level.
+        # UniqueConstraint('guild_id', 'is_default', name='uq_guild_default_currency', postgresql_where=(is_default == True)), # Example for PostgreSQL
+    )
+
+    def __repr__(self):
+        return f"<Currency(id='{self.id}', name_i18n='{self.name_i18n}', guild_id='{self.guild_id}', is_default={self.is_default})>"
+
+
 class UserSettings(Base):
     __tablename__ = 'user_settings'
 
