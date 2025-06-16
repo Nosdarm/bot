@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # bot/database/crud_utils.py
 import logging
 from typing import Any, Dict, List, Optional, Type, TypeVar, Callable, Coroutine
