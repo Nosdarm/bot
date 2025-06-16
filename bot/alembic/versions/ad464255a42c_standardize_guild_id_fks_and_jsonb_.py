@@ -184,8 +184,4 @@ def downgrade() -> None:
     # UserSettings.guild_id FK is handled by the loop.
     # This is a very large migration, and it's likely that some auto-generated constraint names (like `characters_player_id_fkey`) might not match exactly what was in the database if it wasn't managed by Alembic with `op.f()` naming previously. I've added comments about this in the downgrade path.
 
-The `postgresql_using` clause is critical for `JSON` to `JSONB` (and vice-versa) conversions.
 
-Given the complexity and number of changes, this script is a best effort to cover all specified modifications. Testing this migration thoroughly in a development environment would be essential.
-
-I'll now submit the report.
