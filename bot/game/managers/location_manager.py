@@ -30,6 +30,11 @@ if TYPE_CHECKING:
     from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor
     from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator
     from bot.ai.rules_schema import CoreGameRulesConfig
+    # Imports for generate_and_update_location_description
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from bot.database.crud_utils import get_entity_by_id as crud_get_entity_by_id_for_gen_desc # Alias to avoid conflict in this file
+    # Location model already imported
+    # GameManager, MultilingualPromptGenerator, OpenAIService, AIResponseValidator will be accessed via game_manager param
 
 logger = logging.getLogger(__name__)
 
@@ -632,5 +637,302 @@ class LocationManager:
         logger.info("LocationManager: Reverting is_active status for location %s to %s in guild %s.", location_id, old_is_active_status, guild_id)
 
         return False
+
+    async def handle_move_action(self, guild_id: str, player_id: str, target_location_identifier: str) -> tuple[bool, str]:
+        """
+        Handles a player's attempt to move to a new location.
+
+        Args:
+            guild_id: The ID of the guild.
+            player_id: The ID of the player (Player.id, not discord_id).
+            target_location_identifier: The identifier for the target location (exit key, name, or ID).
+
+        Returns:
+            A tuple (success: bool, message: str).
+        """
+        from bot.database.models import Player # Local import for models
+        from bot.database.crud_utils import get_entity_by_id as crud_get_entity_by_id # Alias to avoid conflict
+        # update_entity is not directly used as we modify and add the entity to session
+
+        logger.info(f"handle_move_action: Attempting move for player {player_id} in guild {guild_id} to '{target_location_identifier}'.")
+
+        if not self._db_service:
+            logger.error("handle_move_action: DBService is not available.")
+            return False, "Database service is unavailable."
+
+        async with self._db_service.get_session() as session:
+            try:
+                # 1. Load Player
+                player = await crud_get_entity_by_id(session, Player, player_id)
+                if not player:
+                    logger.warning(f"handle_move_action: Player {player_id} not found in guild {guild_id}.")
+                    return False, "Player not found."
+
+                if player.guild_id != guild_id: # Ensure player belongs to the guild
+                    logger.error(f"handle_move_action: Player {player_id} (guild {player.guild_id}) attempted move in incorrect guild {guild_id}.")
+                    return False, "Player data mismatch."
+
+                # 2. Load Current Location
+                if not player.current_location_id:
+                    logger.warning(f"handle_move_action: Player {player_id} has no current_location_id.")
+                    return False, "Your current location is unknown."
+
+                current_location = self.get_location_instance(guild_id, player.current_location_id)
+                if not current_location: # get_location_instance returns Location model or None
+                    logger.warning(f"handle_move_action: Current location {player.current_location_id} for player {player_id} not found in cache/manager.")
+                    # Attempt to load from DB directly if manager cache missed
+                    current_location_db = await crud_get_entity_by_id(session, Location, player.current_location_id)
+                    if not current_location_db:
+                        logger.error(f"handle_move_action: Current location {player.current_location_id} for player {player_id} also not found in DB.")
+                        return False, "Your current location data is missing."
+                    current_location = current_location_db # Use DB loaded one
+
+                current_location_name = current_location.name_i18n.get(player.selected_language, current_location.name_i18n.get("en", "Unknown"))
+
+                # 3. Resolve Target Location ID
+                target_location_id: Optional[str] = None
+                resolved_by = ""
+
+                # Attempt 1: Check Exits by Direction/Keyword (exact match on exit key)
+                if current_location.exits and target_location_identifier.lower() in current_location.exits:
+                    exit_data = current_location.exits[target_location_identifier.lower()]
+                    if isinstance(exit_data, dict) and "id" in exit_data:
+                        target_location_id = exit_data["id"]
+                        resolved_by = f"exit key '{target_location_identifier.lower()}'"
+                    elif isinstance(exit_data, str): # Simple exit format: "north": "loc_id_2"
+                        target_location_id = exit_data
+                        resolved_by = f"simple exit key '{target_location_identifier.lower()}'"
+
+                # Attempt 2: Check Exits by i18n Name
+                if not target_location_id and current_location.exits:
+                    for direction, exit_info_dict in current_location.exits.items():
+                        if isinstance(exit_info_dict, dict) and "name_i18n" in exit_info_dict:
+                            name_i18n = exit_info_dict["name_i18n"]
+                            if isinstance(name_i18n, dict):
+                                for lang_code, name_val in name_i18n.items():
+                                    if name_val.lower() == target_location_identifier.lower():
+                                        target_location_id = exit_info_dict.get("id")
+                                        resolved_by = f"exit name '{target_location_identifier}' (lang: {lang_code}, dir: {direction})"
+                                        break
+                            if target_location_id: break
+
+                # Attempt 3: Assume it's a static_name or direct ID if not resolved by exits
+                if not target_location_id:
+                    # Check by static_name (exact match)
+                    # This requires querying all locations, less efficient. For now, assume ID if not an exit.
+                    # For a full implementation, querying by static_name or even i18n name from all locations would go here.
+                    # For this MVP, we'll simplify: if not an exit, assume it's a direct ID.
+                    # A more robust solution would differentiate between name and ID.
+                    # Let's assume if it's not an exit key/name, it must be a direct ID for now.
+                    # This means player must know the ID or use an exit.
+                    # A check if target_location_identifier is a valid UUID might be good here if IDs are UUIDs.
+                    if len(target_location_identifier) > 5: # Arbitrary length to guess it might be an ID
+                        potential_target_loc = self.get_location_instance(guild_id, target_location_identifier)
+                        if potential_target_loc: # Check if this ID exists as a location
+                             target_location_id = target_location_identifier
+                             resolved_by = f"direct ID '{target_location_identifier}'"
+                        else: # Try DB as well
+                            potential_target_loc_db = await crud_get_entity_by_id(session, Location, target_location_identifier)
+                            if potential_target_loc_db:
+                                target_location_id = target_location_identifier
+                                resolved_by = f"direct ID from DB'{target_location_identifier}'"
+
+
+                if not target_location_id:
+                    logger.info(f"handle_move_action: Could not resolve target '{target_location_identifier}' from {current_location.id} for player {player_id}.")
+                    return False, f"You can't find a way to '{target_location_identifier}' from here."
+
+                logger.info(f"handle_move_action: Resolved target_location_id: {target_location_id} (by {resolved_by}) for player {player_id}.")
+
+                # 4. Fetch Target Location Object
+                target_location = self.get_location_instance(guild_id, target_location_id)
+                if not target_location:
+                    target_location_db = await crud_get_entity_by_id(session, Location, target_location_id)
+                    if not target_location_db:
+                        logger.warning(f"handle_move_action: Target location {target_location_id} does not exist for player {player_id}.")
+                        return False, "The place you're trying to go doesn't seem to exist."
+                    target_location = target_location_db
+
+                target_location_name = target_location.name_i18n.get(player.selected_language, target_location.name_i18n.get("en", "Unknown"))
+
+                # 5. Validate Path (Simplified: check if resolved target_id is in current_location.exits values)
+                is_valid_exit = False
+                if current_location.exits:
+                    for exit_key, exit_data_val in current_location.exits.items():
+                        if isinstance(exit_data_val, dict) and exit_data_val.get("id") == target_location_id:
+                            is_valid_exit = True
+                            break
+                        elif isinstance(exit_data_val, str) and exit_data_val == target_location_id: # Simple exit format
+                            is_valid_exit = True
+                            break
+
+                if not is_valid_exit and resolved_by not in [f"direct ID '{target_location_identifier}'", f"direct ID from DB'{target_location_identifier}'"]: # Allow direct ID moves if not an exit explicitly.
+                                                                                                    # This part might need refinement based on game rules (e.g. teleport vs walk)
+                    logger.warning(f"handle_move_action: Player {player_id} cannot move from {current_location.id} to {target_location_id}. Not a direct exit.")
+                    return False, f"You can't seem to get to '{target_location_name}' from {current_location_name} that way."
+
+                # 6. Update Player's Location
+                original_location_id = player.current_location_id
+                player.current_location_id = target_location_id
+                session.add(player) # Add player to session to mark for update
+
+                # 7. Party Movement (Simplified)
+                party_moved_message_suffix = ""
+                if player.current_party_id:
+                    party = await crud_get_entity_by_id(session, Party, player.current_party_id)
+                    if party and party.guild_id == guild_id:
+                        party.current_location_id = target_location_id
+                        session.add(party)
+                        party_moved_message_suffix = " Your party follows you."
+                        logger.info(f"handle_move_action: Party {party.id} also moved to {target_location_id} with player {player_id}.")
+                    elif party: # Party guild mismatch
+                        logger.error(f"handle_move_action: Player {player_id} in party {party.id} (guild {party.guild_id}) but player move is in guild {guild_id}. Party not moved.")
+                    else: # Party not found
+                        logger.warning(f"handle_move_action: Player {player_id} has party ID {player.current_party_id} but party not found. Party not moved.")
+
+                # 8. Log Movement Event (Assuming GameLogManager is available via self.game_manager_instance)
+                # This part needs GameLogManager to be accessible. For now, direct call.
+                # If self.game_log_manager is not set up, this will fail.
+                # It should be passed during LocationManager initialization.
+                # For this subtask, we'll assume it's available as self._game_log_manager.
+                # If LocationManager has no direct _game_log_manager, this needs to be adapted.
+                # Based on __init__, it does not have it.
+                # Let's assume it's available via a hypothetical self.game_manager.game_log_manager
+                if hasattr(self, '_character_manager') and self._character_manager and hasattr(self._character_manager, '_game_manager_instance') and self._character_manager._game_manager_instance and hasattr(self._character_manager._game_manager_instance, 'game_log_manager'):
+                    game_log_manager = self._character_manager._game_manager_instance.game_log_manager
+                    await game_log_manager.log_event(
+                        guild_id=guild_id,
+                        player_id=player.id, # This is Player.id
+                        character_id=None, # If Character model is distinct and also being moved
+                        event_type="player_move",
+                        details={
+                            "from_location_id": original_location_id,
+                            "to_location_id": target_location_id,
+                            "method": target_location_identifier,
+                            "resolved_target_name": target_location_name
+                        }
+                        # message_key="log_player_moved" # If using i18n keys for logs
+                    )
+                else:
+                    logger.warning("handle_move_action: GameLogManager not found, skipping move log.")
+
+                await session.commit()
+                logger.info(f"handle_move_action: Player {player_id} successfully moved from {original_location_id} to {target_location_id} ('{target_location_name}').")
+
+                # Mark relevant location instances dirty in cache
+                if original_location_id:
+                    self.mark_location_instance_dirty(guild_id, original_location_id)
+                self.mark_location_instance_dirty(guild_id, target_location_id)
+
+                return True, f"You have moved from {current_location_name} to {target_location_name}.{party_moved_message_suffix}"
+
+            except Exception as e:
+                logger.error(f"handle_move_action: Error during move for player {player_id} to '{target_location_identifier}': {e}", exc_info=True)
+                await session.rollback()
+                return False, "An unexpected error occurred while trying to move."
+
+    async def generate_and_update_location_description(
+        self,
+        guild_id: str,
+        location_id: str,
+        game_manager: "GameManager", # Forward reference for GameManager
+        player_id: Optional[str] = None
+    ) -> bool:
+        """
+        Generates a new description for a location using AI and updates the location record.
+        """
+        logger.info(f"generate_and_update_location_description called for guild {guild_id}, location {location_id}, player {player_id}")
+
+        # 1. Access Services via GameManager
+        if not hasattr(game_manager, 'multilingual_prompt_generator') or not game_manager.multilingual_prompt_generator:
+            logger.error("MultilingualPromptGenerator not available via GameManager.")
+            return False
+        prompt_generator = game_manager.multilingual_prompt_generator
+
+        if not hasattr(game_manager, 'openai_service') or not game_manager.openai_service:
+            logger.error("OpenAIService not available via GameManager.")
+            return False
+        openai_service = game_manager.openai_service
+
+        if not hasattr(game_manager, 'ai_response_validator') or not game_manager.ai_response_validator:
+            logger.error("AIResponseValidator not available via GameManager. This needs to be setup in GameManager.")
+            # This is a critical dependency. If this log appears, GameManager.__init__/setup needs to create an AIResponseValidator instance.
+            return False
+        validator = game_manager.ai_response_validator
+
+        if not hasattr(game_manager, 'db_service') or not game_manager.db_service:
+            logger.error("DBService not available via GameManager.")
+            return False
+        db_service = game_manager.db_service
+
+        async with db_service.get_session() as session:
+            try:
+                # 2. Prepare Prompt
+                logger.debug(f"Preparing location description prompt for loc {location_id} in guild {guild_id}")
+                prompt = await prompt_generator.prepare_location_description_prompt(
+                    guild_id, location_id, session, game_manager, player_id
+                )
+                if not prompt or prompt.startswith("Error:") or prompt.startswith("Cannot generate"):
+                    logger.error(f"Failed to generate prompt for location {location_id}: {prompt}")
+                    return False
+                logger.debug(f"Prompt generated for loc {location_id}:\n{prompt[:300]}...") # Log beginning of prompt
+
+                # 3. Call OpenAI Service
+                logger.debug(f"Requesting completion from OpenAI for loc {location_id}")
+                raw_ai_output = await openai_service.get_completion(prompt_text=prompt) # Ensure named arg if method expects it
+                if not raw_ai_output:
+                    logger.error(f"AI service returned no output for location {location_id} prompt.")
+                    return False
+                logger.debug(f"Raw AI output received for loc {location_id} (first 100 chars): {raw_ai_output[:100]}")
+
+                # 4. Validate AI Response
+                logger.debug(f"Validating AI response for loc {location_id}")
+                validated_descriptions = await validator.parse_and_validate_location_description_response(
+                    raw_ai_output, guild_id, game_manager
+                )
+                if not validated_descriptions:
+                    logger.error(f"AI response validation failed for location {location_id}. Raw output: {raw_ai_output}")
+                    return False
+                logger.info(f"AI response validated successfully for loc {location_id}. Descriptions: {validated_descriptions}")
+
+                # 5. Update Location Entity
+                location_to_update = await crud_get_entity_by_id_for_gen_desc(session, Location, location_id)
+                if not location_to_update:
+                    logger.error(f"Location {location_id} not found in DB for update after AI generation.")
+                    return False
+
+                if location_to_update.guild_id != guild_id:
+                    logger.error(f"Mismatch: Location {location_id} (guild {location_to_update.guild_id}) does not belong to target guild {guild_id}.")
+                    return False
+
+                # Merge descriptions: AI descriptions overwrite existing ones for the same language codes.
+                if not location_to_update.descriptions_i18n:
+                    location_to_update.descriptions_i18n = {}
+
+                for lang_code, desc_text in validated_descriptions.items():
+                    location_to_update.descriptions_i18n[lang_code] = desc_text
+
+                logger.debug(f"Updated descriptions_i18n for loc {location_id}: {location_to_update.descriptions_i18n}")
+
+                # Add to session to mark as dirty for SQLAlchemy's Unit of Work
+                session.add(location_to_update)
+                # The update_entity utility might not be needed if we directly modify the tracked ORM object.
+                # However, if update_entity is preferred for consistency or specific update patterns:
+                # await update_entity(session, location_to_update, {'descriptions_i18n': location_to_update.descriptions_i18n})
+                # For direct modification of a tracked instance, session.add() is enough before commit.
+
+                await session.commit()
+                logger.info(f"Successfully updated location {location_id} with new AI-generated description.")
+
+                # Mark cache dirty
+                self.mark_location_instance_dirty(guild_id, location_id)
+                return True
+
+            except Exception as e:
+                logger.error(f"Error in generate_and_update_location_description for loc {location_id}: {e}", exc_info=True)
+                if 'session' in locals() and session.is_active: # Check if session was defined and is active
+                    await session.rollback()
+                return False
+
 
 logger.debug("DEBUG: location_manager.py module loaded (after overwrite).")

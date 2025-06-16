@@ -1,173 +1,136 @@
-"""
-Manages character interactions with interactive elements within game locations.
+import logging
+from typing import Optional, List, Dict, Any, Tuple, TYPE_CHECKING
 
-This service is responsible for interpreting player actions that target specific
-interactive objects or features in a location (e.g., levers, doors, chests,
-hidden switches). It uses `CoreGameRulesConfig.location_interactions` to
-determine the outcomes of such interactions, which may involve skill checks,
-item requirements, and state changes.
-"""
-from __future__ import annotations
-from typing import TYPE_CHECKING, Dict, Any, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from bot.database.models import Player, Location
+from bot.database.crud_utils import get_entity_by_id # Assuming player_id and location_id are PKs
 
 if TYPE_CHECKING:
-    from bot.services.db_service import DBService
-    from bot.game.managers.character_manager import CharacterManager
-    from bot.game.managers.item_manager import ItemManager
-    from bot.game.managers.status_manager import StatusManager
-    # from bot.game.rules.check_resolver import CheckResolver # If CheckResolver is a class
-    from bot.game.rules.check_resolver import resolve_check as CheckResolver # If it's a function
-    from bot.services.notification_service import NotificationService
-    from bot.ai.rules_schema import CoreGameRulesConfig
+    from bot.game.managers.game_manager import GameManager
+
+logger = logging.getLogger(__name__)
 
 class LocationInteractionService:
-    def __init__(self,
-                 db_service: DBService,
-                 character_manager: CharacterManager,
-                 item_manager: ItemManager,
-                 status_manager: StatusManager,
-                 check_resolver: CheckResolver, # Type hint based on import
-                 notification_service: Optional[NotificationService] = None,
-                 game_log_manager: Optional[Any] = None # Optional GameLogManager
-                 ):
-        """
-        Initializes the LocationInteractionService.
+    def __init__(self, game_manager: "GameManager"):
+        self.game_manager = game_manager
+        if not self.game_manager:
+            logger.critical("LocationInteractionService initialized without a valid GameManager instance!")
+        logger.info("LocationInteractionService initialized.")
 
-        Args:
-            db_service: Service for database interactions.
-            character_manager: Manages character data and state.
-            item_manager: Manages item instances and templates.
-            status_manager: Manages status effects on characters.
-            check_resolver: Function or class instance to resolve game checks.
-            notification_service: Optional service for sending messages to players.
-            game_log_manager: Optional service for logging game events.
-        """
-        self.db_service = db_service
-        self.character_manager = character_manager
-        self.item_manager = item_manager
-        self.status_manager = status_manager
-        self.check_resolver = check_resolver
-        self.notification_service = notification_service
-        self.game_log_manager = game_log_manager
-        print("LocationInteractionService initialized.")
-
-    async def process_interaction(
+    async def handle_intra_location_action(
         self,
         guild_id: str,
-        character_id: str,
-        action_data: Dict[str, Any],
-        rules_config: CoreGameRulesConfig
-    ) -> Dict[str, Any]:
+        player_id: str, # This is Player.id (PK)
+        action_data: Dict[str, Any]
+    ) -> Tuple[bool, str]:
         """
-        Processes a character's interaction with an element in a location.
-
-        This method is a placeholder for the full interaction logic. It will
-        eventually determine the specific `LocationInteractionDefinition` based on
-        the `action_data` (intent and entities, especially an entity of type
-        'interactive_object_id'), check item requirements, perform skill checks
-        using `self.check_resolver`, and apply success or failure outcomes
-        (e.g., grant items, update character/location state, send messages).
-
-        Args:
-            guild_id: The ID of the guild where the interaction occurs.
-            character_id: The ID of the character performing the interaction.
-            action_data: A dictionary containing the parsed player action, including
-                         intent (e.g., "INTERACT_OBJECT", "USE_SKILL_ON_OBJECT") and
-                         entities (e.g., `{'type': 'interactive_object_id', 'id': 'door_A'}`).
-            rules_config: The `CoreGameRulesConfig` containing definitions for
-                          location interactions.
-
-        Returns:
-            A dictionary representing the result of the action, typically including:
-            `success` (bool), `message` (str), and `state_changed` (bool).
-            Currently returns a placeholder message.
+        Placeholder method to handle actions within a location.
+        Currently, it loads player and location and returns a placeholder message.
+        Actual interaction logic (e.g., with features, items, NPCs in the location) will be added later.
         """
-        intent = action_data.get("intent")
-        entities = action_data.get("entities", [])
-        original_text = action_data.get("original_text", "")
+        log_prefix = f"IntraLocationAction (Guild: {guild_id}, Player: {player_id})"
+        logger.info(f"{log_prefix}: Received action. Data: {action_data}")
 
-        # TODO: Implement full logic based on intent and entities.
-        # This will involve:
-        # 1. Identifying the specific LocationInteractionDefinition from rules_config.location_interactions.
-        #    - This might be based on an entity ID (e.g., player targets "lever_A").
-        #    - Or it might be based on intent + location (e.g., "search" in "room_12" might trigger "search_hidden_cache_room_12").
-        # 2. Checking for required items if specified in the interaction definition.
-        # 3. Performing a skill check if `interaction_def.check_type` is set, using self.check_resolver.
-        # 4. Based on check success/failure, applying `success_outcome` or `failure_outcome`.
-        #    - Outcomes can include:
-        #        - Granting items (self.item_manager)
-        #        - Revealing exits (modifying location state via LocationManager or directly if state is on Character)
-        #        - Triggering traps (could involve StatusManager or CombatManager)
-        #        - Updating state variables (on character, location, or globally)
-        #        - Displaying messages (via NotificationService or by returning messages in result)
-        # 5. Returning a detailed action_execution_result.
+        if not self.game_manager or not self.game_manager.db_service:
+            logger.error(f"{log_prefix}: GameManager or DBService not available.")
+            return False, "Core services are unavailable. Please try again later."
 
-        if self.game_log_manager:
-            await self.game_log_manager.log_event(
-                guild_id, "location_interaction_process_start",
-                f"LIS: Processing interaction '{intent}' for char {character_id}. Entities: {entities}",
-                {"character_id": character_id, "action_data": action_data}
-            )
+        db_service = self.game_manager.db_service
 
-        # Placeholder result
-        message = f"LocationInteractionService: Interaction '{intent}' for '{original_text}' is a placeholder."
-        if intent == "search": # Example: "search" or "explore" might be simple
-            message = f"You search the area. (Placeholder - LIS)"
-            # In a real scenario, this might find hidden LocationInteractionDefinition based on area + search action.
+        async with db_service.get_session() as session:
+            try:
+                # Load Player
+                player = await get_entity_by_id(session, Player, player_id)
+                if not player:
+                    logger.warning(f"{log_prefix}: Player not found.")
+                    return False, "Player not found. Have you registered?"
+                if player.guild_id != guild_id:
+                    logger.error(f"{log_prefix}: Player {player_id} guild mismatch (player actual: {player.guild_id}).")
+                    return False, "Player data mismatch."
 
-        # Example: Find a specific interactive object entity
-        interactive_object_entity = next((e for e in entities if e.get("type") == "interactive_object_id"), None) # Assuming NLU provides this type
-        if not interactive_object_entity and intent in ["use_skill", "interact_object"]: # Fallback for more generic targets
-             interactive_object_entity = next((e for e in entities if e.get("type") not in ["skill_name", "player", "npc"]), None)
+                # Load Current Location of the Player
+                if not player.current_location_id:
+                    logger.warning(f"{log_prefix}: Player {player_id} has no current_location_id.")
+                    return False, "Your current location is unknown."
 
+                location = await get_entity_by_id(session, Location, player.current_location_id)
+                if not location:
+                    logger.warning(f"{log_prefix}: Current location {player.current_location_id} for player {player_id} not found in DB.")
+                    return False, "Your current location data seems to be missing."
+                if location.guild_id != guild_id: # Should be redundant if player.current_location_id is always valid for the guild
+                    logger.error(f"{log_prefix}: Location {location.id} guild mismatch (location actual: {location.guild_id}).")
+                    return False, "Location data mismatch."
 
-        if interactive_object_entity:
-            interaction_id = interactive_object_entity.get("id") # This ID should match a key in rules_config.location_interactions
-            interaction_def = rules_config.location_interactions.get(interaction_id)
+                # Extract Intent and Target Name
+                intent = action_data.get("intent")
+                target_object_name = ""
+                entities = action_data.get("entities", [])
+                if entities and isinstance(entities, list):
+                    for entity in entities: # Iterate to find the target object/NPC name
+                        if entity.get("type") in ["target_object_name", "target_npc_name", "target_location_identifier"]: # target_location_identifier for completeness if NLU provides it for features
+                            target_object_name = entity.get("name", "").lower().strip()
+                            break # Use the first one found
 
-            if interaction_def:
-                # TODO: Full logic here
-                # 1. Check required_items
-                # 2. Perform check_type if interaction_def.check_type
-                # 3. Apply outcome
-                message = f"You interact with '{interaction_def.description_i18n.get('en', interaction_id)}'. (Placeholder outcome)"
-                # This is where check_resolver would be called, outcomes applied, etc.
-                # For now, just acknowledge the interaction.
-                return {"success": True, "message": message, "state_changed": True, "interaction_id": interaction_id}
-            else:
-                message = f"You try to interact with '{interactive_object_entity.get('name', interaction_id)}', but nothing specific happens. (No definition found)"
-                return {"success": False, "message": message, "state_changed": False}
+                if not intent:
+                    logger.warning(f"{log_prefix}: Action intent unclear. Data: {action_data}")
+                    return False, "Your action's intent is unclear."
 
-        return {"success": False, "message": f"LocationInteractionService: Interaction '{intent}' for '{original_text}' - no specific interactive element processed.", "state_changed": False}
+                location_name_for_log = location.name_i18n.get('en', location.id) if location.name_i18n else location.id
+                logger.info(f"{log_prefix}: Player {player.id} attempts to '{intent}' with target '{target_object_name}' in location {location.id} ('{location_name_for_log}').")
 
-if __name__ == '__main__':
-    # This block is for basic testing of the service structure.
-    # A more complete test would require mocking all dependencies.
-    class MockDBService: pass
-    class MockCharacterManager: pass
-    class MockItemManager: pass
-    class MockStatusManager: pass
-    class MockCheckResolver: pass # Or use the actual function if it's stateless
+                # Handle "examine_object" Intent
+                if intent == "examine_object":
+                    if not target_object_name:
+                        return False, "What exactly do you want to examine?"
 
-    mock_db = MockDBService()
-    mock_char_mngr = MockCharacterManager()
-    mock_item_mngr = MockItemManager()
-    mock_status_mngr = MockStatusManager()
-    # If resolve_check is a standalone function:
-    # from bot.game.rules.check_resolver import resolve_check as mock_check_resolver_func
-    # lis = LocationInteractionService(mock_db, mock_char_mngr, mock_item_mngr, mock_status_mngr, mock_check_resolver_func)
+                    normalized_target_key = target_object_name.lower().strip().replace(" ", "_") # Added strip()
+                    logger.debug(f"{log_prefix}: Normalized target key for examine: '{normalized_target_key}' from raw '{target_object_name}'.")
 
-    # If CheckResolver is a class to be instantiated:
-    # mock_check_resolver_instance = MockCheckResolver()
-    # lis = LocationInteractionService(mock_db, mock_char_mngr, mock_item_mngr, mock_status_mngr, mock_check_resolver_instance)
+                    player_lang = player.selected_language or await self.game_manager.get_rule(guild_id, 'default_language', 'en')
 
-    print("LocationInteractionService can be instantiated (mock dependencies).")
-    # To run process_interaction, more setup (like CoreGameRulesConfig) would be needed.
-    # Example (conceptual, won't run without CoreGameRulesConfig and proper mocks):
-    # async def test_interaction():
-    #     rules_dict = {"location_interactions": {"lever_A": {"description_i18n": {"en": "A rusty lever"}, "success_outcome": {"type": "display_message", "message_i18n": {"en": "It creaks!"}}}}}
-    #     mock_rules = CoreGameRulesConfig.parse_obj(rules_dict)
-    #     action = {"intent": "interact_object", "entities": [{"type": "interactive_object_id", "id": "lever_A"}]}
-    #     # result = await lis.process_interaction("guild1", "char1", action, mock_rules)
-    #     # print(result)
-    # asyncio.run(test_interaction())
+                    description_to_send = None
+                    description_found = False
+
+                    if location.details_i18n and isinstance(location.details_i18n, dict):
+                        # Try player's language first
+                        lang_specific_details = location.details_i18n.get(player_lang)
+                        if isinstance(lang_specific_details, dict):
+                            description = lang_specific_details.get(normalized_target_key)
+                            if description and isinstance(description, str) and description.strip():
+                                description_to_send = description
+                                description_found = True
+                                logger.info(f"{log_prefix}: Found description for '{normalized_target_key}' in location.details_i18n (lang: {player_lang}).")
+
+                        # If not found in player's language, try English as fallback (if player_lang is not 'en')
+                        if not description_found and player_lang != 'en':
+                            en_details = location.details_i18n.get('en')
+                            if isinstance(en_details, dict):
+                                description = en_details.get(normalized_target_key)
+                                if description and isinstance(description, str) and description.strip():
+                                    description_to_send = description
+                                    description_found = True
+                                    logger.info(f"{log_prefix}: Found description for '{normalized_target_key}' in location.details_i18n (lang: en fallback).")
+
+                    if not description_found:
+                         # Fallback if details_i18n is missing or doesn't contain the key in any relevant language.
+                         logger.info(f"{log_prefix}: No specific examinable detail found for '{normalized_target_key}' (raw: '{target_object_name}').")
+                         # Use the raw target_object_name for the feedback message to the user for clarity.
+                         return False, f"You look closely at the {target_object_name}, but can't discern any specific details, or it's not something you can examine here."
+
+                    return True, description_to_send
+
+                elif intent in ["take_item", "use_item", "open_container", "search_container_or_area", "initiate_dialogue"]:
+                    if not target_object_name and intent != "search_container_or_area": # search can be general
+                         return False, f"What do you want to {intent.replace('_', ' ')}?"
+                    target_display_name = target_object_name if target_object_name else "the area"
+                    logger.info(f"{log_prefix}: Intent '{intent}' for target '{target_display_name}' is under development.")
+                    return True, f"You attempt to {intent.replace('_', ' ')} '{target_display_name}'. This specific action is still under development."
+
+                else:
+                    logger.warning(f"{log_prefix}: Unknown or unsupported intent '{intent}'.")
+                    return False, f"You're not sure how to '{intent}'."
+
+            except Exception as e:
+                logger.error(f"{log_prefix}: Error during intra-location action: {e}", exc_info=True)
+                return False, "An unexpected error occurred while performing your action."

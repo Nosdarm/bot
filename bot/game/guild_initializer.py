@@ -6,7 +6,7 @@ from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from bot.database.models import RulesConfig, GeneratedFaction, Location, GuildConfig
+from bot.database.models import RulesConfig, GeneratedFaction, Location, GuildConfig, WorldState
 
 logger = logging.getLogger(__name__)
 
@@ -132,8 +132,50 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
             deep_forest_id = f"loc_deep_forest_{guild_id_str[:4]}_{str(uuid.uuid4())[:4]}"
 
             default_locations_data = [
-                {"id": village_square_id, "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"}, "descriptions_i18n": {"en": "Bustling center...", "ru": "Шумный центр..."}, "static_name": f"internal_village_square_{guild_id_str}", "exits": {"north": {"id": forest_edge_id, "name_i18n": {"en": "Forest Edge", "ru": "Опушка Леса"}}, "east": {"id": village_tavern_id, "name_i18n": {"en": "The Prancing Pony Tavern", "ru": "Таверна 'Гарцующий Пони'"}}, "west": {"id": village_shop_id, "name_i18n": {"en": "General Store", "ru": "Универсальный Магазин"}}}},
-                {"id": village_tavern_id, "name_i18n": {"en": "The Prancing Pony Tavern", "ru": "Таверна 'Гарцующий Пони'"}, "descriptions_i18n": {"en": "Cozy tavern...", "ru": "Уютная таверна..."}, "static_name": f"internal_village_tavern_{guild_id_str}", "exits": {"west": {"id": village_square_id, "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"}}}},
+                {
+                    "id": village_square_id,
+                    "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"},
+                    "descriptions_i18n": {"en": "The village square is a hub of activity during the day, though quieter now. A large oak tree stands in the center, its branches providing shade. An old well sits nearby, and a weathered notice board is posted next to it.", "ru": "Деревенская площадь - центр активности днем, хотя сейчас здесь тише. В центре стоит большой дуб, его ветви дают тень. Рядом находится старый колодец, а возле него - выветрившаяся доска объявлений."},
+                    "static_name": f"internal_village_square_{guild_id_str}",
+                    "exits": {
+                        "north": {"id": forest_edge_id, "name_i18n": {"en": "Forest Edge", "ru": "Опушка Леса"}},
+                        "east": {"id": village_tavern_id, "name_i18n": {"en": "The Prancing Pony Tavern", "ru": "Таверна 'Гарцующий Пони'"}},
+                        "west": {"id": village_shop_id, "name_i18n": {"en": "General Store", "ru": "Универсальный Магазин"}}
+                    },
+                    "details_i18n": {
+                        "en": {
+                            "old_well": "The well is built from weathered grey stones, covered in patches of green moss. Peering inside, you see darkness and hear the faint drip of water, suggesting it might still hold water.",
+                            "notice_board": "A sturdy wooden board, clearly old but still functional. Several notices are pinned to it: a faded poster offering a reward for 'information leading to the capture of the bandit Gnarlfang', a newer-looking bill advertising a local farmer's lost pig, and a small, elegantly written card announcing a traveling merchant will be visiting soon.",
+                            "market_stall_ruins": "The charred and blackened timbers are all that remain of what were once bustling market stalls. The ground is littered with ash and a few broken, burnt remnants of goods. The air still smells faintly of smoke."
+                        },
+                        "ru": {
+                            "old_well": "Колодец сложен из выветрившихся серых камней, покрытых пятнами зеленого мха. Заглянув внутрь, вы видите тьму и слышите слабое капание воды, что говорит о том, что в нем еще может быть вода.",
+                            "notice_board": "Крепкая деревянная доска, явно старая, но все еще функциональная. К ней приколото несколько объявлений: выцветший плакат, предлагающий награду за 'информацию, ведущую к поимке бандита Змеезуба', более свежий листок о пропавшей свинье местного фермера и небольшая, элегантно написанная карточка, объявляющая о скором визите странствующего торговца.",
+                            "market_stall_ruins": "Обгоревшие и почерневшие бревна - все, что осталось от некогда оживленных рыночных прилавков. Земля усеяна пеплом и несколькими сломанными, обгоревшими остатками товаров. В воздухе все еще слегка пахнет дымом."
+                        }
+                    },
+                    "type_i18n": {"en": "Area", "ru": "Область"}
+                },
+                {
+                    "id": village_tavern_id,
+                    "name_i18n": {"en": "The Prancing Pony Tavern", "ru": "Таверна 'Гарцующий Пони'"},
+                    "descriptions_i18n": {"en": "A cozy-looking tavern with warm light spilling from its windows. The sound of merry chatter and clinking mugs can be heard from within. A sign depicting a cheerfully leaping pony hangs above the door.", "ru": "Уютно выглядящая таверна, из окон которой льется теплый свет. Изнутри доносятся звуки веселой болтовни и звяканья кружек. Над дверью висит вывеска с изображением весело прыгающего пони."},
+                    "static_name": f"internal_village_tavern_{guild_id_str}",
+                    "exits": {"west": {"id": village_square_id, "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"}}},
+                    "details_i18n": {
+                        "en": {
+                            "bar_counter": "The long wooden bar counter is worn smooth by countless tankards and elbows. Several empty glasses and a damp rag sit upon it. Behind it, shelves hold a variety of bottles.",
+                            "fireplace": "A large stone fireplace dominates one wall, though it is currently unlit. The hearth is clean, ready for a fire.",
+                            "common_table": "A sturdy, round wooden table surrounded by several mismatched chairs. It looks like a popular spot for patrons."
+                        },
+                        "ru": {
+                            "bar_counter": "Длинная деревянная стойка бара отполирована до блеска бесчисленными кружками и локтями. На ней стоят несколько пустых стаканов и влажная тряпка. За стойкой на полках расставлены разнообразные бутылки.",
+                            "fireplace": "Большой каменный камин доминирует на одной из стен, хотя в данный момент он не разожжен. Очаг чист и готов к разведению огня.",
+                            "common_table": "Крепкий круглый деревянный стол, окруженный несколькими разномастными стульями. Похоже, это популярное место среди посетителей."
+                        }
+                    },
+                    "type_i18n": {"en": "Building Interior", "ru": "Интерьер Здания"}
+                },
                 {"id": village_shop_id, "name_i18n": {"en": "General Store", "ru": "Универсальный Магазин"}, "descriptions_i18n": {"en": "Various goods...", "ru": "Различные товары..."}, "static_name": f"internal_village_shop_{guild_id_str}", "exits": {"east": {"id": village_square_id, "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"}}}},
                 {"id": forest_edge_id, "name_i18n": {"en": "Forest Edge", "ru": "Опушка Леса"}, "descriptions_i18n": {"en": "Edge of a forest...", "ru": "Край леса..."}, "static_name": f"internal_forest_edge_{guild_id_str}", "exits": {"south": {"id": village_square_id, "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"}}, "north": {"id": deep_forest_id, "name_i18n": {"en": "Deep Forest", "ru": "Глубокий Лес"}}}},
                 {"id": deep_forest_id, "name_i18n": {"en": "Deep Forest", "ru": "Глубокий Лес"}, "descriptions_i18n": {"en": "Heart of the woods...", "ru": "Сердце леса..."}, "static_name": f"internal_deep_forest_{guild_id_str}", "exits": {"south": {"id": forest_edge_id, "name_i18n": {"en": "Forest Edge", "ru": "Опушка Леса"}}}}
@@ -144,14 +186,46 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                     id=loc_data["id"], guild_id=guild_id_str, name_i18n=loc_data["name_i18n"],
                     descriptions_i18n=loc_data["descriptions_i18n"], static_name=loc_data["static_name"],
                     is_active=True, exits=loc_data.get("exits", {}), inventory={}, state_variables={},
-                    static_connections={}, details_i18n={}, tags_i18n={}, atmosphere_i18n={},
-                    features_i18n={}, type_i18n={"en": "Area", "ru": "Область"}
+                    static_connections={}, details_i18n=loc_data.get("details_i18n", {}),
+                    tags_i18n=loc_data.get("tags_i18n", {}),
+                    atmosphere_i18n=loc_data.get("atmosphere_i18n", {}),
+                    features_i18n=loc_data.get("features_i18n", {}),
+                    type_i18n=loc_data.get("type_i18n", {"en": "Area", "ru": "Область"})
                 ))
             if locations_to_add:
                 db_session.add_all(locations_to_add)
                 logger.info(f"Added {len(locations_to_add)} default locations for guild {guild_id_str}.")
         else:
             logger.info(f"Skipping Factions/Locations initialization for guild {guild_id_str} as it's not new or forced.")
+
+        # Initialize WorldState
+        logger.info(f"Attempting to initialize WorldState for guild {guild_id_str}.")
+        if force_reinitialize:
+            logger.info(f"Force reinitialize: Deleting existing WorldState for guild {guild_id_str}.")
+            existing_world_state_stmt = select(WorldState).where(WorldState.guild_id == guild_id_str)
+            result = await db_session.execute(existing_world_state_stmt)
+            existing_world_state = result.scalars().first()
+            if existing_world_state:
+                await db_session.delete(existing_world_state)
+                await db_session.flush()
+                logger.info(f"Deleted existing WorldState for guild {guild_id_str}.")
+
+        world_state_stmt = select(WorldState).where(WorldState.guild_id == guild_id_str)
+        result = await db_session.execute(world_state_stmt)
+        world_state = result.scalars().first()
+
+        if not world_state:
+            logger.info(f"No existing WorldState found for guild {guild_id_str} or it was deleted; creating new one.")
+            new_world_state = WorldState(
+                guild_id=guild_id_str,
+                global_narrative_state_i18n={},
+                current_era_i18n={},
+                custom_flags={}
+            )
+            db_session.add(new_world_state)
+            logger.info(f"New WorldState created and added to session for guild {guild_id_str}.")
+        else:
+            logger.info(f"WorldState already exists for guild {guild_id_str}. No action taken.")
 
         await db_session.commit()
         logger.info(f"Successfully initialized/updated default data for guild_id: {guild_id_str}")

@@ -7,9 +7,19 @@ from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union
 from copy import deepcopy
 from sqlalchemy import sql
 
-from ..models.quest import Quest
-from ..models.quest_step import QuestStep # ADDED
+from ..models.quest import Quest # This is likely the Pydantic model
+from ..models.quest_step import QuestStep # This is likely the Pydantic model
+# Need DB models for saving
+from bot.database.models import GeneratedQuest as DBGeneratedQuest, QuestStepTable as DBQuestStepTable
 from bot.ai.ai_data_models import GenerationContext # Uncommented and confirmed path
+from sqlalchemy.ext.asyncio import AsyncSession # Added for type hinting
+
+# Specific model imports for accept_quest
+from bot.database.models import Player
+# DBGeneratedQuest and DBQuestStepTable are already imported
+
+# CRUD utils for accept_quest
+from bot.database.crud_utils import get_entity_by_id, get_entities_by_conditions
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
@@ -24,6 +34,8 @@ if TYPE_CHECKING:
     from bot.services.openai_service import OpenAIService
     from bot.ai.ai_response_validator import AIResponseValidator
     from bot.services.notification_service import NotificationService
+    # For game_manager access if needed, though QuestManager usually is part of it
+    from bot.game.managers.game_manager import GameManager
 
 import logging
 logger = logging.getLogger(__name__)
@@ -104,7 +116,138 @@ class QuestManager:
         self._all_quests: Dict[str, Dict[str, "Quest"]] = {}
         self.campaign_data: Dict[str, Any] = self._settings.get("campaign_data", {})
         self._default_lang = self._settings.get("default_language", "en")
+
+        # Add game_manager reference if available through settings or passed in __init__
+        # For now, assuming it's not directly available or needed for basic accept_quest
+        # If needed for rules, it would require __init__ modification or passing GameManager instance.
+        # self.game_manager: Optional["GameManager"] = None # Placeholder if it were to be added
+
         logger.info("QuestManager initialized.")
+
+    async def accept_quest(self, guild_id: str, player_id_pk: str, quest_id_to_accept: str) -> tuple[bool, str]:
+        """
+        Allows a player to accept a quest.
+        Checks prerequisites, finds the first step, and updates player's active quests.
+        """
+        if not self._db_service:
+            logger.error(f"DBService not available in QuestManager for accept_quest. Guild: {guild_id}")
+            return False, "Quest system is currently unavailable."
+
+        async with self._db_service.get_session() as session:
+            try:
+                # Load Player
+                player = await get_entity_by_id(session, Player, player_id_pk, guild_id)
+                if not player:
+                    logger.warning(f"accept_quest: Player {player_id_pk} not found in guild {guild_id}.")
+                    return False, "Player not found."
+
+                # Load Quest to Accept
+                # Using DBGeneratedQuest as that's the alias for GeneratedQuest model
+                quest_to_accept = await get_entity_by_id(session, DBGeneratedQuest, quest_id_to_accept, guild_id)
+                if not quest_to_accept:
+                    logger.warning(f"accept_quest: Quest {quest_id_to_accept} not found in guild {guild_id}.")
+                    return False, "Quest not found or is not available."
+
+                # Initialize player.active_quests
+                active_quests_list = []
+                if player.active_quests:
+                    if isinstance(player.active_quests, str):
+                        try:
+                            active_quests_list = json.loads(player.active_quests)
+                        except json.JSONDecodeError:
+                            logger.error(f"Failed to decode active_quests JSON for player {player.id} in guild {guild_id}. Data: {player.active_quests}", exc_info=True)
+                            # Keep active_quests_list as empty, effectively overwriting corrupted data.
+                    elif isinstance(player.active_quests, list):
+                        active_quests_list = list(player.active_quests) # Ensure it's a mutable list
+
+                    if not isinstance(active_quests_list, list): # Double check if it became non-list
+                        logger.warning(f"Player {player.id} active_quests was not a list after parsing ({type(active_quests_list)}), resetting.")
+                        active_quests_list = []
+
+                # Check if Quest Already Active
+                for entry in active_quests_list:
+                    if isinstance(entry, dict) and entry.get("quest_id") == quest_id_to_accept:
+                        return False, "You are already on this quest."
+
+                # Prerequisite Checks
+                if quest_to_accept.prerequisites_json:
+                    try:
+                        prereqs = json.loads(quest_to_accept.prerequisites_json)
+                        if isinstance(prereqs, dict):
+                            min_level = prereqs.get("min_level")
+                            if isinstance(min_level, (int, float)) and player.level < min_level:
+                                return False, f"You are not high enough level for this quest. Requires level {min_level}."
+
+                            # TODO: Add checks for completed_quests, required_items etc.
+                            # required_quests = prereqs.get("completed_quests", [])
+                            # if required_quests:
+                            #    player_completed_quests = ... (need a way to get player's completed quest IDs)
+                            #    if not all(q_id in player_completed_quests for q_id in required_quests):
+                            #        return False, "You haven't completed the necessary prerequisite quests."
+
+                        else:
+                            logger.warning(f"Parsed prerequisites_json for quest {quest_id_to_accept} is not a dict: {prereqs}")
+                    except json.JSONDecodeError:
+                        logger.error(f"Failed to parse prerequisites_json for quest {quest_id_to_accept}: {quest_to_accept.prerequisites_json}", exc_info=True)
+                        # Potentially block quest acceptance if prereqs are unreadable and strictness is desired.
+                        # return False, "This quest has unreadable prerequisites. Please contact an admin."
+
+
+                if quest_to_accept.suggested_level and player.level < quest_to_accept.suggested_level:
+                    logger.info(f"Player {player.id} (level {player.level}) accepting quest {quest_id_to_accept} below suggested level {quest_to_accept.suggested_level}.")
+                    # This is a soft warning, not blocking.
+
+                # Find First Quest Step
+                # Using DBQuestStepTable as that's the alias for QuestStepTable model
+                first_step_candidates = await get_entities_by_conditions(
+                    session,
+                    DBQuestStepTable,
+                    guild_id, # Assuming get_entities_by_conditions can take guild_id for context or filtering if needed by underlying queries
+                    conditions=[DBQuestStepTable.quest_id == quest_id_to_accept],
+                    order_by=[DBQuestStepTable.step_order.asc()] # Use .asc() for ordering
+                )
+
+                if not first_step_candidates:
+                    logger.error(f"Quest {quest_id_to_accept} has no defined steps in guild {guild_id}.")
+                    return False, "This quest has no objectives defined. Please contact an admin."
+
+                first_step = first_step_candidates[0]
+
+                # Add to player.active_quests
+                new_active_quest_entry = {
+                    "quest_id": quest_id_to_accept,
+                    "current_step_id": first_step.id,
+                    "status": "in_progress", # Using snake_case for status consistency
+                    "step_progress": {}, # For any future step-specific data like counters
+                    "started_at": time.time() # Optional: timestamp when quest was accepted
+                }
+                active_quests_list.append(new_active_quest_entry)
+                player.active_quests = json.dumps(active_quests_list) # SQLAlchemy handles JSONB conversion
+
+                session.add(player) # Add player to session to save changes to active_quests
+                await session.commit()
+
+                # Log Event (Conceptual)
+                if self._game_log_manager:
+                    # Ensure game_log_manager.log_event is async or called appropriately
+                    asyncio.create_task(self._game_log_manager.log_event(
+                        guild_id,
+                        "QUEST_ACCEPTED",
+                        {"quest_id": quest_id_to_accept, "player_id": player.id, "first_step_id": first_step.id},
+                        player_id_pk # Pass primary key if that's what log_event expects for player_id
+                    ))
+
+                player_lang = player.selected_language or self._default_lang # Use player's lang or manager's default
+
+                quest_title = quest_to_accept.title_i18n.get(player_lang, quest_to_accept.title_i18n.get('en', "Unnamed Quest")) if quest_to_accept.title_i18n else "Unnamed Quest"
+                step_title = first_step.title_i18n.get(player_lang, first_step.title_i18n.get('en', "First Objective")) if first_step.title_i18n else "First Objective"
+
+                return True, f"Quest '{quest_title}' accepted! Your first objective: {step_title}."
+
+            except Exception as e:
+                logger.error(f"Error in accept_quest for player {player_id_pk}, quest {quest_id_to_accept}, guild {guild_id}: {e}", exc_info=True)
+                await session.rollback()
+                return False, "An unexpected error occurred while trying to accept the quest."
 
     async def get_active_quests_for_character(self, guild_id: str, character_id: str) -> List[Quest]:
         """Retrieves active Quest Pydantic objects for a character in a guild."""
@@ -1114,3 +1257,146 @@ class QuestManager:
 
         logger.info("Quest %s failed for char %s in guild %s.", quest_id_str, character_id_str, guild_id_str)
         return True
+
+    async def generate_and_save_quest(
+        self,
+        guild_id: str,
+        context_details: Dict[str, Any]
+    ) -> Optional[DBGeneratedQuest]:
+        """
+        Generates a new quest using AI based on context_details,
+        validates the response, and saves the valid quest and its steps to the database.
+
+        Args:
+            guild_id: The ID of the guild for which to generate the quest.
+            context_details: A dictionary containing contextual details to guide quest generation
+                             (e.g., player_id, location_id, theme, difficulty_hint).
+
+        Returns:
+            The successfully created and saved DBGeneratedQuest object (with steps potentially
+            accessible via relationship after refresh, though this method focuses on saving),
+            or None if any part of the process fails.
+        """
+        log_prefix = f"QuestGeneration (Guild: {guild_id})"
+        logger.info(f"{log_prefix}: Starting quest generation with context: {context_details}.")
+
+        # 1. Access Services via self.game_manager
+        if not self.game_manager: # Should have been caught by __init__ critical log
+            logger.error(f"{log_prefix}: GameManager not available.")
+            return None
+
+        # Check for individual services on game_manager
+        services_to_check = {
+            "multilingual_prompt_generator": self.game_manager.multilingual_prompt_generator,
+            "openai_service": self.game_manager.openai_service,
+            "ai_response_validator": self.game_manager.ai_response_validator,
+            "db_service": self.game_manager.db_service # or self._db_service if preferred
+        }
+        for service_name, service_instance in services_to_check.items():
+            if not service_instance:
+                logger.error(f"{log_prefix}: Service '{service_name}' is missing from GameManager.")
+                return None
+
+        prompt_generator = self.game_manager.multilingual_prompt_generator
+        openai_service = self.game_manager.openai_service
+        validator = self.game_manager.ai_response_validator
+        db_service = self.game_manager.db_service # Using game_manager's instance for consistency
+
+        created_quest_db: Optional[DBGeneratedQuest] = None
+
+        async with db_service.get_session() as session:
+            try:
+                # 2. Prepare Prompt
+                logger.debug(f"{log_prefix}: Preparing quest generation prompt.")
+                prompt = await prompt_generator.prepare_quest_generation_prompt(
+                    guild_id, session, self.game_manager, context_details
+                )
+                if not prompt or prompt.startswith("Error:"):
+                    logger.error(f"{log_prefix}: Failed to generate prompt. Details: {prompt}")
+                    return None
+                logger.debug(f"{log_prefix}: Prompt generated (first 300 chars): {prompt[:300]}...")
+
+                # 3. Call OpenAI Service
+                logger.debug(f"{log_prefix}: Requesting completion from OpenAI.")
+                raw_ai_output = await openai_service.get_completion(prompt_text=prompt)
+                if not raw_ai_output:
+                    logger.error(f"{log_prefix}: AI service returned no output.")
+                    return None
+                logger.debug(f"{log_prefix}: Raw AI output received (first 100 chars): {raw_ai_output[:100]}")
+
+                # 4. Validate AI Response
+                logger.debug(f"{log_prefix}: Validating AI response for quest.")
+                # This returns a Dict[str, Any] representing the 'quest_data' part of the AI response
+                validated_quest_data = await validator.parse_and_validate_quest_generation_response(
+                    raw_ai_output, guild_id, self.game_manager
+                )
+                if not validated_quest_data:
+                    logger.error(f"{log_prefix}: AI response validation failed for quest. Raw output: {raw_ai_output}")
+                    return None
+                logger.info(f"{log_prefix}: AI quest response validated successfully.")
+
+                # 5. Create and Save Quest and Step Entities
+                main_quest_id = str(uuid.uuid4())
+
+                quest_model_data = {
+                    "id": main_quest_id,
+                    "guild_id": guild_id,
+                    "title_i18n": validated_quest_data.get("title_i18n"),
+                    "description_i18n": validated_quest_data.get("description_i18n"),
+                    "suggested_level": validated_quest_data.get("suggested_level"),
+                    "rewards_json": validated_quest_data.get("rewards_json"), # Already validated as JSON string
+                    "prerequisites_json": validated_quest_data.get("prerequisites_json"), # Already validated as JSON string
+                    "consequences_json": validated_quest_data.get("consequences_json"), # Already validated as JSON string
+                    "quest_giver_details_i18n": validated_quest_data.get("quest_giver_details_i18n"),
+                    "status": "available", # Default status for new quests
+                    # Ensure any other fields expected by DBGeneratedQuest model are included or have defaults
+                }
+                # Filter out None values for fields that are nullable in the DB model
+                quest_model_data = {k: v for k, v in quest_model_data.items() if v is not None}
+
+
+                new_quest_db = DBGeneratedQuest(**quest_model_data)
+                session.add(new_quest_db)
+                logger.debug(f"{log_prefix}: Prepared main quest {main_quest_id} for saving.")
+
+                created_steps_db: List[DBQuestStepTable] = []
+                for i, step_data in enumerate(validated_quest_data.get("steps", [])):
+                    step_model_data = {
+                        "id": str(uuid.uuid4()),
+                        "guild_id": guild_id,
+                        "quest_id": main_quest_id,
+                        "title_i18n": step_data.get("title_i18n"),
+                        "description_i18n": step_data.get("description_i18n"),
+                        "required_mechanics_json": step_data.get("required_mechanics_json"), # Validated JSON string
+                        "abstract_goal_json": step_data.get("abstract_goal_json"), # Validated JSON string
+                        "consequences_json": step_data.get("consequences_json"), # Validated JSON string
+                        "step_order": step_data.get("step_order", i), # Use provided order or default to index
+                        "status": "pending", # Default status for new steps
+                    }
+                    # Filter out None values for fields that are nullable in the DB model
+                    step_model_data = {k: v for k, v in step_model_data.items() if v is not None}
+
+                    new_step_db = DBQuestStepTable(**step_model_data)
+                    session.add(new_step_db)
+                    created_steps_db.append(new_step_db)
+
+                logger.debug(f"{log_prefix}: Prepared {len(created_steps_db)} steps for quest {main_quest_id}.")
+
+                await session.commit()
+                logger.info(f"{log_prefix}: Successfully generated and saved quest '{main_quest_id}' with {len(created_steps_db)} steps to DB.")
+
+                # Refresh the main quest object to load relationships (like steps) if configured
+                await session.refresh(new_quest_db)
+                # To access steps via new_quest_db.steps, the relationship needs to be loaded,
+                # which might require specific loader options or another refresh with those options.
+                # For now, returning the main quest object.
+
+                created_quest_db = new_quest_db
+
+            except Exception as e:
+                logger.error(f"{log_prefix}: Error during quest generation and saving pipeline: {e}", exc_info=True)
+                if 'session' in locals() and session.is_active: # Check if session was defined and is active
+                    await session.rollback()
+                return None # Explicitly return None on error
+
+        return created_quest_db
