@@ -20,11 +20,12 @@ from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 from bot.game.models.character import Character
 from bot.services.notification_service import NotificationService # Added runtime import
+from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError
 
 if TYPE_CHECKING:
     from discord import Message
     # from bot.game.models.character import Character # Already imported
-    from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError
+    # from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError # Moved to global
     from bot.game.managers.event_manager import EventManager
     from bot.game.managers.location_manager import LocationManager
     from bot.game.rules.rule_engine import RuleEngine
