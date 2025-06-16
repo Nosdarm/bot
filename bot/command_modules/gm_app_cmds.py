@@ -747,4 +747,4 @@ async def setup(bot: commands.Bot):
     print("GMAppCog loaded.")
     await bot.add_cog(GMAppCog(bot)) # type: ignore
     print("GMAppCog loaded.")
-```
+
