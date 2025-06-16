@@ -20,11 +20,12 @@ from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 from bot.game.models.character import Character
 from bot.services.notification_service import NotificationService # Added runtime import
+from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError
 
 if TYPE_CHECKING:
     from discord import Message
     # from bot.game.models.character import Character # Already imported
-    from bot.game.managers.character_manager import CharacterManager
+    # from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError # Moved to global
     from bot.game.managers.event_manager import EventManager
     from bot.game.managers.location_manager import LocationManager
     from bot.game.rules.rule_engine import RuleEngine
@@ -1057,14 +1058,22 @@ class GameManager:
         try:
             character = await self.character_manager.create_character(discord_id=user_id, name=character_name, guild_id=guild_id)
             if character:
-                char_id_log = getattr(character, 'id', "N/A"); char_name_log = getattr(character, 'name', "N/A")
-                char_loc_id_log = getattr(character, 'current_location_id', "N/A") # Adjusted attribute
-                logger.info("GameManager: Successfully started new character session for guild %s. Character ID: %s, Name: %s, Location ID: %s.", guild_id, char_id_log, char_name_log, char_loc_id_log) # Changed
+                char_id_log = getattr(character, 'id', "N/A")
+                char_name_log = getattr(character, 'name', "N/A")
+                char_loc_id_log = getattr(character, 'current_location_id', "N/A")
+                logger.info("GameManager: Successfully started new character session for guild %s. Character ID: %s, Name: %s, Location ID: %s.", guild_id, char_id_log, char_name_log, char_loc_id_log)
+                return character # Return character on success
             else:
-                logger.error("GameManager: Failed to start new character session for user %s in guild %s, character creation failed.", user_id, guild_id) # Changed
-            return character
+                # This case implies create_character returned None for reasons other than an exception
+                # (e.g., pre-check like name already taken if that logic exists and returns None).
+                logger.warning("GameManager: Character creation returned None for user %s in guild %s (e.g. name conflict or other pre-DB check).", user_id, guild_id)
+                return None # Return None if create_character returns None without exception
+        except CharacterAlreadyExistsError: # Specific exception first
+            logger.warning("GameManager: Character creation explicitly failed for user %s in guild %s because the character already exists.", user_id, guild_id)
+            raise # Re-raise for the command layer to handle
         except Exception as e:
-            logger.error("GameManager: Error in start_new_character_session for user %s in guild %s: %s", user_id, guild_id, e, exc_info=True) # Changed
-            return None
+            # This catches other unexpected errors from create_character
+            logger.error("GameManager: Unhandled error in start_new_character_session during character creation for user %s in guild %s: %s", user_id, guild_id, e, exc_info=True)
+            return None # Return None for other types of exceptions, maintaining previous behavior for generic errors
 
 logger.debug("DEBUG: Finished loading game_manager.py from: %s", __file__) # Changed
