@@ -5,6 +5,8 @@ import uuid
 import logging # Added
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 import asyncio
+from sqlalchemy.ext.asyncio import AsyncSession # Added for type hinting
+from sqlalchemy import text # Added for session.execute
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
@@ -53,7 +55,8 @@ class GameLogManager:
         source_entity_type: Optional[str] = None, # New
         target_entity_id: Optional[str] = None, # New
         target_entity_type: Optional[str] = None, # New
-        generate_narrative: bool = False # New parameter
+        generate_narrative: bool = False, # New parameter
+        session: Optional[AsyncSession] = None # New parameter for transaction participation
     ) -> None:
         if self._db_service is None or self._db_service.adapter is None:
             log_message_fallback = (
@@ -154,7 +157,10 @@ class GameLogManager:
         )
 
         try:
-            await self._db_service.adapter.execute(sql, params)
+            if session:
+                await session.execute(text(sql), params)
+            else:
+                await self._db_service.adapter.execute(sql, params)
             logger.debug("GameLogManager: Logged event %s (desc_key: %s) to DB for guild %s. ID: %s", event_type, description_key or 'N/A', guild_id, log_id)
 
             if self._relationship_event_processor:
