@@ -17,7 +17,7 @@ from bot.database.models import Base # Assuming your Base is accessible here
 
 logger = logging.getLogger(__name__)
 
-ModelType = TypeVar("ModelType", bound=Base)
+ModelType = TypeVar("ModelType", bound=Any)
 AsyncCallable = Callable[..., Coroutine[Any, Any, Any]]
 F = TypeVar('F', bound=Callable[..., Coroutine[Any, Any, Any]])
 
