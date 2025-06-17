@@ -48,6 +48,7 @@ class Player(Base):
     spell_cooldowns = Column(JSONB, nullable=True) # Standardized to JSONB
     inventory = Column(JSONB, nullable=True) # Standardized to JSONB
     effective_stats_json = Column(JSONB, nullable=True) # Standardized to JSONB
+    equipment_slots_json = Column(JSONB, nullable=True, default=lambda: {}, comment="Stores mapping of equipment slot_id to item_instance_id, e.g., {\"hand_main\": \"item_uuid_123\"}")
     is_active = Column(Boolean, default=True, nullable=False, index=True)
 
     location = relationship("Location")

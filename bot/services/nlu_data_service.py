@@ -11,6 +11,7 @@ class GameEntity(TypedDict):
     type: str
     lang: str
     parent_location_id: Optional[str] # For location_feature, location_tag
+    intent_context: Optional[str] # Added for action verbs
 
 # For the __main__ block, we'll create a MockDBService
 class MockDBService:
@@ -106,6 +107,7 @@ ENTITY_CONFIG: Dict[str, Dict[str, Any]] = {
     "skill": {"table": "skills", "name_field": "name_i18n", "type_name": "skill", "guild_column": None},
     "status": {"table": "statuses", "name_field": "name_i18n", "type_name": "status", "guild_column": "guild_id"},
     "event": {"table": "events", "name_field": "name_i18n", "type_name": "event", "guild_column": "guild_id"},
+    "generated_faction": {"table": "generated_factions", "name_field": "name_i18n", "type_name": "faction", "guild_column": "guild_id"},
 }
 
 class NLUDataService:
@@ -236,6 +238,41 @@ class NLUDataService:
                                     ))
             except Exception as e:
                 print(f"NLUDataService: Database error for table {table_name} (guild {guild_id}, lang {language}): {e}")
+
+        # Fetch action verbs from RuleConfig
+        try:
+            from bot.database.models import RulesConfig # Import RulesConfig model
+            action_verbs_rule_key = f"nlu.action_verbs.{language}"
+            action_verbs_config_row = await self.db_service.get_entities_by_conditions(
+                table_name='rules_config', # Direct table name
+                conditions={'guild_id': guild_id, 'key': action_verbs_rule_key},
+                single_entity=True
+            )
+            action_verbs_config = None
+            if action_verbs_config_row and 'value' in action_verbs_config_row:
+                action_verbs_config = action_verbs_config_row['value']
+
+            if isinstance(action_verbs_config, dict):
+                if "action_verb" not in all_entities:
+                    all_entities["action_verb"] = []
+                for intent, verbs in action_verbs_config.items():
+                    if isinstance(verbs, list):
+                        for verb_phrase in verbs:
+                            all_entities["action_verb"].append(GameEntity(
+                                id=f"verb_{intent}_{verb_phrase.replace(' ', '_').lower()}",
+                                name=verb_phrase,
+                                type="action_verb",
+                                lang=language,
+                                parent_location_id=None, # Not applicable for verbs
+                                intent_context=intent # Store intent here
+                            ))
+            else:
+                print(f"NLUDataService: No action verb configuration found for guild {guild_id}, lang {language} (key: {action_verbs_rule_key}) or data is not a dict.")
+        except ImportError:
+            print(f"NLUDataService: Could not import RulesConfig model, skipping action verb loading.")
+        except Exception as e:
+            print(f"NLUDataService: Error fetching or processing action verbs for guild {guild_id}, lang {language}: {e}")
+
 
         self._cache[cache_key] = {'timestamp': current_time, 'data': all_entities}
         if not any(all_entities.values()):

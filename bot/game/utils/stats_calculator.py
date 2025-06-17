@@ -1,264 +1,196 @@
-"""
-Calculates effective character/NPC statistics based on base stats, items, and status effects.
-"""
-import json
-from typing import Dict, Any, List, Optional, Union
+import logging
+from typing import Dict, Union, TYPE_CHECKING, Any, List # Add List
+import copy # For deepcopy
 
-from bot.ai.rules_schema import CoreGameRulesConfig, StatModifierRule, GrantedAbilityOrSkill, StatusEffectDefinition
+# Assuming Player and NPC models are correctly imported where this function is called
+# or passed as type hints effectively.
+from bot.database.models import Player, NPC, Item, Status # Added Item, Status, NPC
+# For NPC, if it's defined in bot.game.models.npc (not bot.database.models.NPC)
+# from bot.game.models.npc import NPC # Adjust if NPC model path is different
 
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from bot.services.db_service import DBService
-    from bot.game.managers.character_manager import CharacterManager
-    from bot.game.managers.npc_manager import NpcManager
-    from bot.game.managers.item_manager import ItemManager
-    from bot.game.managers.status_manager import StatusManager
-    from bot.game.models.character import Character
-    from bot.game.models.npc import NPC as NpcModel
-    from bot.game.models.item import ItemTemplate # For item_manager.get_item_template
-    # from bot.game.models.status_effect import StatusEffectTemplate # For status_manager.get_status_template # Removed, using StatusEffectDefinition from rules_schema
-    from bot.game.models.status_effect import StatusEffect as StatusEffectInstance # For active statuses
-    # This import was missing in the original file for the __main__ block, adding it here for completeness
-    # although the __main__ block itself is commented out.
-    from unittest.mock import MagicMock
+    from bot.game.managers.game_manager import GameManager
+    # from bot.database.models import NPC # Already imported above
 
+logger = logging.getLogger(__name__)
 
 async def calculate_effective_stats(
-    db_service: "DBService",
+    entity: Union[Player, "NPC"], # Use "NPC" in quotes for forward reference if defined later or causing circular issues
     guild_id: str,
-    entity_id: str,
-    entity_type: str,
-    rules_config_data: CoreGameRulesConfig,
-    character_manager: "CharacterManager",
-    npc_manager: "NpcManager",
-    item_manager: "ItemManager",
-    status_manager: "StatusManager"
+    game_manager: 'GameManager'
 ) -> Dict[str, Any]:
     """
-    Calculates effective stats for an entity by applying bonuses in the correct order:
-    1. Base Stats & Skills.
-    2. Flat Bonuses (from items, then statuses).
-    3. Percentage Increase Bonuses (from items, then statuses, applied to sum of base + flats).
-    4. Multiplier Bonuses (from items, then statuses, applied to sum of base + flats + percentages).
-    5. Stat Caps.
-    6. Derived Stats.
-    7. Collects granted abilities/skills throughout.
+    Calculates the effective stats for a given entity (Player or NPC)
+    by applying modifiers from equipment, status effects, etc.
     """
-    raw_stats: Dict[str, Any] = {} # Holds initial stats + skills
-    granted_abilities_skills: List[GrantedAbilityOrSkill] = []
-
-    entity: Optional[Union["Character", "NpcModel"]] = None
-    if entity_type.lower() == "character" or entity_type.lower() == "player":
-        entity = await character_manager.get_character(guild_id, entity_id)
-        entity_type = "Character"
-    elif entity_type.lower() == "npc":
-        entity = await npc_manager.get_npc(guild_id, entity_id)
-        entity_type = "NPC"
-    else:
-        raise ValueError(f"Unknown entity_type: {entity_type}. Expected 'Character' or 'NPC'.")
-
-    if not entity:
-        print(f"Error: Entity {entity_id} of type {entity_type} not found in guild {guild_id}.")
+    if not entity or not hasattr(entity, 'stats'):
+        logger.warning(f"StatsCalculator: Entity {getattr(entity, 'id', 'Unknown')} has no base 'stats' attribute.")
         return {}
 
-    # Initialize with base stat definitions (default values)
-    for stat_id_key, stat_def in rules_config_data.base_stats.items():
-        raw_stats[stat_id_key.lower()] = stat_def.default_value
+    entity_type_str = "unknown"
+    if isinstance(entity, Player):
+        entity_type_str = "player"
+    elif isinstance(entity, NPC): # Assuming NPC model is imported
+        entity_type_str = "npc"
+    else:
+        logger.warning(f"StatsCalculator: Unknown entity type for {getattr(entity, 'id', 'Unknown')} in stats calculation. Type: {type(entity)}")
+        # Fallback or raise error depending on desired strictness
+        # For now, let it proceed, but equipment/status fetching might fail or be incorrect.
 
-    # Override with entity's stored base stats
-    base_stats_from_entity = getattr(entity, 'stats', {})
-    if isinstance(base_stats_from_entity, str):
-        try: base_stats_from_entity = json.loads(base_stats_from_entity)
-        except json.JSONDecodeError: base_stats_from_entity = {}
-    for stat_name, value in base_stats_from_entity.items():
-        raw_stats[stat_name.lower()] = value
+    # Start with a deep copy of base stats
+    # Ensure entity.stats is a dict. It's JSONB, so it should be loaded as dict.
+    if isinstance(entity.stats, dict):
+        effective_stats = copy.deepcopy(entity.stats)
+    else:
+        logger.warning(f"StatsCalculator: entity.stats for {entity.id} is not a dict, type: {type(entity.stats)}. Initializing empty stats.")
+        effective_stats = {}
 
-    # Load base skills
-    raw_skills_data = getattr(entity, 'skills_data', [])
-    if isinstance(raw_skills_data, list):
-        for skill_entry in raw_skills_data:
-            if isinstance(skill_entry, dict) and "skill_id" in skill_entry and "level" in skill_entry:
-                raw_stats[skill_entry["skill_id"].lower()] = skill_entry["level"]
-            elif isinstance(skill_entry, dict) and "skill_name" in skill_entry and "value" in skill_entry: # Older possible format
-                 raw_stats[skill_entry["skill_name"].lower()] = skill_entry["value"]
-    # Fallback or handling for the old 'skills' dictionary if still relevant
-    # For now, prioritizing skills_data as it's the newer format.
-    # If entity.skills (Dict[str, int]) is also populated and should be merged, add:
-    # old_skills_dict = getattr(entity, 'skills', {})
-    # if isinstance(old_skills_dict, dict):
-    #     for skill_name, value in old_skills_dict.items():
-    #         if skill_name.lower() not in raw_stats: # Prioritize skills_data if conflicts
-    #             raw_stats[skill_name.lower()] = value
+    # Ensure base attributes are integers, default to 10 if missing or invalid
+    base_attributes = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+    for attr in base_attributes:
+        val = effective_stats.get(attr, 10)
+        try:
+            effective_stats[attr] = int(val)
+        except (ValueError, TypeError):
+            logger.warning(f"StatsCalculator: Invalid base value for {attr} ('{val}') for entity {entity.id}. Defaulting to 10.")
+            effective_stats[attr] = 10
 
-    # --- Stage 1: Apply Flat Bonuses ---
-    stats_after_flats = raw_stats.copy()
+    # Initialize accumulators for bonuses that are not direct stat modifications
+    # but contribute to derived stats (like AC from multiple armor pieces)
+    # These are temporary and will be summed into final derived stats.
+    bonuses = {
+        "armor_class_bonus": 0,
+        "attack_bonus_melee": 0,
+        "attack_bonus_ranged": 0,
+        "damage_bonus_melee": 0,
+        "damage_bonus_ranged": 0,
+        # Add other specific bonus types as needed
+    }
 
-    # Get item modifiers
-    equipped_item_instances = []
-    if hasattr(entity, 'inventory'):
-        raw_inventory = getattr(entity, 'inventory')
-        if isinstance(raw_inventory, str): raw_inventory = json.loads(raw_inventory or '[]')
-        if isinstance(raw_inventory, list):
-            equipped_item_instances = [item for item in raw_inventory if isinstance(item, dict) and item.get("equipped")]
+    # 1. Equipment Modifiers
+    if game_manager.equipment_manager and game_manager.item_manager:
+        try:
+            # This method would need to be implemented in EquipmentManager
+            equipped_items: List[Item] = [] # Type hint with SQLAlchemy Item
+            if hasattr(game_manager.equipment_manager, 'get_equipped_item_instances'):
+                 equipped_items = await game_manager.equipment_manager.get_equipped_item_instances(
+                    entity_id=str(entity.id), # Ensure ID is string
+                    entity_type=entity_type_str, # Pass determined entity_type
+                    guild_id=guild_id
+                )
+            else:
+                logger.debug(f"StatsCalculator: EquipmentManager missing 'get_equipped_item_instances' for entity {entity.id}")
 
-    item_modifiers_all: List[StatModifierRule] = []
-    for item_instance_data in equipped_item_instances:
-        template_id = item_instance_data.get("template_id")
-        item_template: Optional["ItemTemplate"] = await item_manager.get_item_template(guild_id, template_id) if template_id else None
-        if item_template and item_template.properties: # Check if properties exist
-            # Access modifiers and granted abilities/skills from the properties dictionary
-            stat_modifiers_data = item_template.properties.get('stat_modifiers')
-            if isinstance(stat_modifiers_data, list):
-                    # Convert dicts back to StatModifierRule objects if necessary, or ensure they are stored as such
-                    for mod_data in stat_modifiers_data:
-                        if isinstance(mod_data, dict):
-                            item_modifiers_all.append(StatModifierRule(**mod_data))
-                        elif isinstance(mod_data, StatModifierRule): # If already objects
-                            item_modifiers_all.append(mod_data)
+            for item in equipped_items: # item is now expected to be an SQLAlchemy Item model instance
+                if hasattr(item, 'properties') and isinstance(item.properties, dict): # Accessing properties directly
+                    for prop_key, prop_value in item.properties.items():
+                        if prop_key.startswith("modifies_stat_"):
+                            stat_name = prop_key.replace("modifies_stat_", "")
+                            effective_stats[stat_name] = effective_stats.get(stat_name, 0) + int(prop_value)
+                        elif prop_key.startswith("grants_bonus_"): # e.g., grants_bonus_armor_class
+                            bonus_type = prop_key.replace("grants_bonus_", "") # e.g. "armor_class"
+                            # Ensure the key matches keys in 'bonuses' dict
+                            full_bonus_key = f"{bonus_type}_bonus" # e.g. "armor_class_bonus" - this might need adjustment based on actual item prop keys
+                            if bonus_type in bonuses : # e.g. item has "grants_bonus_armor_class" -> bonus_type = "armor_class", but bonuses stores "armor_class_bonus"
+                                 key_to_use = bonus_type + "_bonus" if bonus_type + "_bonus" in bonuses else bonus_type
+                                 bonuses[key_to_use] = bonuses.get(key_to_use, 0) + int(prop_value)
+                            elif full_bonus_key in bonuses:
+                                bonuses[full_bonus_key] = bonuses.get(full_bonus_key, 0) + int(prop_value)
+                            else:
+                                logger.warning(f"StatsCalculator: Unknown bonus type '{bonus_type}' or '{full_bonus_key}' from item {getattr(item, 'id', 'Unknown')} for entity {entity.id}")
 
-            grants_data = item_template.properties.get('grants_abilities_or_skills')
-            if isinstance(grants_data, list):
-                for grant_data in grants_data:
-                    if isinstance(grant_data, dict):
-                        granted_abilities_skills.append(GrantedAbilityOrSkill(**grant_data))
-                    elif isinstance(grant_data, GrantedAbilityOrSkill): # If already objects
-                        granted_abilities_skills.append(grant_data)
+        except Exception as e:
+            logger.error(f"StatsCalculator: Error applying equipment modifiers for entity {entity.id}: {e}", exc_info=True)
+    else:
+        logger.debug(f"StatsCalculator: EquipmentManager or ItemManager not available for entity {entity.id}.")
 
-    # Apply flat item bonuses
-    for mod_rule in item_modifiers_all:
-        if mod_rule.bonus_type == "flat":
-            stat_key = mod_rule.stat_name.lower()
-            stats_after_flats[stat_key] = stats_after_flats.get(stat_key, 0.0) + mod_rule.value
+    # 2. Status Effect Modifiers
+    if game_manager.status_manager:
+        try:
+            active_statuses: List[Status] = [] # Type hint with SQLAlchemy Status
+            if hasattr(game_manager.status_manager, 'get_active_statuses_for_entity'):
+                active_statuses = await game_manager.status_manager.get_active_statuses_for_entity(
+                    entity_id=str(entity.id),
+                    entity_type=entity_type_str, # Pass determined entity_type
+                    guild_id=guild_id
+                )
+            else:
+                logger.debug(f"StatsCalculator: StatusManager missing 'get_active_statuses_for_entity' for entity {entity.id}")
 
-    # Get status effect modifiers
-    active_status_instances: List["StatusEffectInstance"] = await status_manager.get_active_statuses_for_entity(guild_id, entity_id, entity_type)
-    status_modifiers_all: List[StatModifierRule] = []
-    for status_instance in active_status_instances:
-            # Changed status_instance.template_id to status_instance.status_type
-            # Also, status_template type hint should be StatusEffectDefinition from rules_schema
-            status_template: Optional[StatusEffectDefinition] = await status_manager.get_status_template(guild_id, status_instance.status_type)
-            # This block needs to be aligned with the line above
-            if status_template:
-                if hasattr(status_template, 'stat_modifiers') and isinstance(status_template.stat_modifiers, list):
-                    status_modifiers_all.extend(status_template.stat_modifiers)
-                if hasattr(status_template, 'grants_abilities_or_skills') and isinstance(status_template.grants_abilities_or_skills, list):
-                    granted_abilities_skills.extend(status_template.grants_abilities_or_skills)
+            for status in active_statuses: # status is now expected to be an SQLAlchemy Status model instance
+                if hasattr(status, 'effects') and isinstance(status.effects, dict): # Accessing effects directly
+                    # Example status.effects structure: {"stat_change": {"strength": -2, "dexterity": 2}, "ac_bonus": 1, "attack_melee_bonus": 1}
+                    for effect_type, effect_detail in status.effects.items():
+                        if effect_type == "stat_change" and isinstance(effect_detail, dict):
+                            for stat_name, mod_value in effect_detail.items():
+                                effective_stats[stat_name] = effective_stats.get(stat_name, 0) + int(mod_value)
+                        elif effect_type.endswith("_bonus"):
+                            # Maps "ac_bonus" from status to "armor_class_bonus" in `bonuses` dict
+                            # Maps "attack_melee_bonus" to "attack_bonus_melee" (swapping order)
+                            formatted_bonus_key = effect_type # default
+                            if effect_type == "ac_bonus":
+                                formatted_bonus_key = "armor_class_bonus"
+                            elif effect_type == "attack_melee_bonus":
+                                formatted_bonus_key = "attack_bonus_melee"
+                            elif effect_type == "attack_ranged_bonus":
+                                formatted_bonus_key = "attack_bonus_ranged"
+                            elif effect_type == "damage_melee_bonus":
+                                formatted_bonus_key = "damage_bonus_melee"
+                            elif effect_type == "damage_ranged_bonus":
+                                formatted_bonus_key = "damage_bonus_ranged"
 
-    # Apply flat status bonuses
-    for mod_rule in status_modifiers_all:
-        if mod_rule.bonus_type == "flat":
-            stat_key = mod_rule.stat_name.lower()
-            stats_after_flats[stat_key] = stats_after_flats.get(stat_key, 0.0) + mod_rule.value
+                            if formatted_bonus_key in bonuses:
+                                bonuses[formatted_bonus_key] += int(effect_detail)
+                            else:
+                                logger.warning(f"StatsCalculator: Unhandled bonus key '{formatted_bonus_key}' (from status effect_type '{effect_type}') from status {getattr(status, 'name', 'Unknown')} for entity {entity.id}")
+        except Exception as e:
+            logger.error(f"StatsCalculator: Error applying status effect modifiers for entity {entity.id}: {e}", exc_info=True)
+    else:
+        logger.debug(f"StatsCalculator: StatusManager not available for entity {entity.id}.")
 
-    # --- Stage 2: Apply Percentage Increases ---
-    stats_after_percentages = stats_after_flats.copy()
+    # 3. Passive Ability Modifiers (Placeholder)
+    # ... (conceptual placeholder as in prompt)
 
-    # Item percentage increases
-    for mod_rule in item_modifiers_all:
-        if mod_rule.bonus_type == "percentage_increase":
-            stat_key = mod_rule.stat_name.lower()
-            base_value_for_calc = stats_after_flats.get(stat_key, 0.0) # Applied to (Base + All Flats)
-            stats_after_percentages[stat_key] = stats_after_percentages.get(stat_key, 0.0) + (base_value_for_calc * (mod_rule.value / 100.0))
+    # 4. Derived Stats Calculation
+    con_val = effective_stats.get("constitution", 10)
+    dex_val = effective_stats.get("dexterity", 10)
+    str_val = effective_stats.get("strength", 10)
+    int_val = effective_stats.get("intelligence", 10)
 
-    # Status percentage increases
-    for mod_rule in status_modifiers_all:
-        if mod_rule.bonus_type == "percentage_increase":
-            stat_key = mod_rule.stat_name.lower()
-            base_value_for_calc = stats_after_flats.get(stat_key, 0.0) # Applied to (Base + All Flats)
-            stats_after_percentages[stat_key] = stats_after_percentages.get(stat_key, 0.0) + (base_value_for_calc * (mod_rule.value / 100.0))
+    con_mod = (con_val - 10) // 2
+    dex_mod = (dex_val - 10) // 2
+    str_mod = (str_val - 10) // 2
+    int_mod = (int_val - 10) // 2
 
-    # --- Stage 3: Apply Multipliers ---
-    stats_after_multipliers = stats_after_percentages.copy()
+    base_hp_rule = await game_manager.get_rule(guild_id, "rules.combat.base_hp", 10)
+    hp_per_con_point_rule = await game_manager.get_rule(guild_id, "rules.combat.hp_per_con_point", 2)
+    effective_stats["max_hp"] = int(base_hp_rule) + (con_val * int(hp_per_con_point_rule)) + effective_stats.get("bonus_max_hp", 0)
 
-    # Item multipliers
-    for mod_rule in item_modifiers_all:
-        if mod_rule.bonus_type == "multiplier":
-            stat_key = mod_rule.stat_name.lower()
-            base_value_for_calc = stats_after_percentages.get(stat_key, 0.0) # Applied to (Base + Flats + Percentages)
-            stats_after_multipliers[stat_key] = base_value_for_calc * mod_rule.value
+    base_ac_rule = await game_manager.get_rule(guild_id, "rules.combat.base_ac", 10)
+    effective_stats["armor_class"] = int(base_ac_rule) + dex_mod + bonuses.get("armor_class_bonus", 0)
 
-    # Status multipliers
-    for mod_rule in status_modifiers_all:
-        if mod_rule.bonus_type == "multiplier":
-            stat_key = mod_rule.stat_name.lower()
-            base_value_for_calc = stats_after_percentages.get(stat_key, 0.0) # Applied to (Base + Flats + Percentages)
-            stats_after_multipliers[stat_key] = stats_after_multipliers.get(stat_key, base_value_for_calc) * mod_rule.value
+    level = int(effective_stats.get("level", getattr(entity, 'level', 1))) # Get level from stats or entity default 1
+    if not isinstance(level, int) or level < 1: level = 1 # Ensure level is at least 1 for calculations
+
+    proficiency_bonus_per_level_rule = await game_manager.get_rule(guild_id, "rules.character.proficiency_bonus_per_level", 0.25)
+    base_proficiency_bonus = await game_manager.get_rule(guild_id, "rules.character.base_proficiency_bonus", 2)
+    proficiency_bonus = int(base_proficiency_bonus) + int((level -1) * float(proficiency_bonus_per_level_rule))
 
 
-    effective_stats = stats_after_multipliers
+    effective_stats["attack_bonus_melee"] = str_mod + proficiency_bonus + bonuses.get("attack_bonus_melee", 0)
+    effective_stats["attack_bonus_ranged"] = dex_mod + proficiency_bonus + bonuses.get("attack_bonus_ranged", 0)
+    effective_stats["damage_bonus_melee"] = str_mod + bonuses.get("damage_bonus_melee", 0) # Typically Str/Dex mod for damage, no PB
+    effective_stats["damage_bonus_ranged"] = dex_mod + bonuses.get("damage_bonus_ranged", 0)
 
-    # --- Stage 4: Apply Caps ---
-    for stat_id_key, stat_def in rules_config_data.base_stats.items():
-        stat_key = stat_id_key.lower()
-        if stat_key in effective_stats:
-            current_value = float(effective_stats[stat_key])
-            min_val = float(stat_def.min_value)
-            max_val = float(stat_def.max_value)
-            effective_stats[stat_key] = max(min_val, min(current_value, max_val))
-            if isinstance(stat_def.default_value, int):
-                 effective_stats[stat_key] = round(effective_stats[stat_key])
 
-    # --- Stage 5: Calculate Derived Stats ---
-    # The existing derived_stat_rules might provide a generic way.
-    # The following calculations are specific overrides or additions as per the subtask.
+    spell_dc_base_rule = await game_manager.get_rule(guild_id, "rules.magic.spell_dc_base", 8)
+    effective_stats["spell_save_dc"] = int(spell_dc_base_rule) + proficiency_bonus + int_mod
+    # Example for spell attack bonus
+    effective_stats["spell_attack_bonus"] = proficiency_bonus + int_mod
 
-    # Get effective (fully modified and capped) stats for calculation
-    eff_strength = effective_stats.get("strength", 0.0)
-    eff_dexterity = effective_stats.get("dexterity", 0.0)
-    eff_constitution = effective_stats.get("constitution", 0.0)
-    # eff_intelligence = effective_stats.get("intelligence", 0.0) # Not used in current formulas
-    # eff_wisdom = effective_stats.get("wisdom", 0.0)
-    # eff_base_charisma = effective_stats.get("base_charisma", 0.0)
 
-    entity_level = getattr(entity, 'level', 1) # Get level from entity, default to 1
-    if not isinstance(entity_level, (int, float)) or entity_level < 1:
-        entity_level = 1 # Ensure level is a positive number for calculations
+    # Add proficiency bonus itself to stats if needed by other systems
+    effective_stats["proficiency_bonus"] = proficiency_bonus
 
-    # Max HP Calculation
-    # Max HP = 10 (base_offset) + constitution * 2 (scaling_factor) + level * 5 (level_factor)
-    # These factors could also come from rules_config_data if a more generic system is desired later.
-    max_hp_base_offset = 10.0
-    max_hp_con_scaling_factor = 2.0
-    max_hp_level_scaling_factor = 5.0
-    effective_stats['max_hp'] = round(
-        max_hp_base_offset +
-        (eff_constitution * max_hp_con_scaling_factor) +
-        (entity_level * max_hp_level_scaling_factor)
-    )
-
-    # Attack Calculation
-    # Attack = strength + level / 2
-    attack_level_divisor = 2.0
-    effective_stats['attack'] = round(eff_strength + (entity_level / attack_level_divisor))
-
-    # Defense Calculation
-    # Defense = dexterity + level / 2
-    defense_level_divisor = 2.0
-    effective_stats['defense'] = round(eff_dexterity + (entity_level / defense_level_divisor))
-
-    # Note: Current HP (entity.hp) is not managed here.
-    # The caller (e.g., CharacterManager) should handle adjusting current HP if max_hp changes.
-
-    # Process any other generic derived_stat_rules from config, if they don't conflict.
-    # The current derived_stat_rules logic for max_hp was:
-    # if rules_config_data.derived_stat_rules:
-    #     con_val = effective_stats.get("constitution", ...)
-    #     hp_per_con = rules_config_data.derived_stat_rules.get('hp_per_constitution_point', 10.0)
-    #     base_hp_offset_config = rules_config_data.derived_stat_rules.get('base_hp_offset', 0.0)
-    #     max_hp_base_default_obj = rules_config_data.base_stats.get("MAX_HP")
-    #     max_hp_base_default = max_hp_base_default_obj.default_value if max_hp_base_default_obj else 0.0
-    #     # Only apply if max_hp is still at its default (i.e., not set by specific items/effects directly)
-    #     if effective_stats.get("max_hp") == max_hp_base_default:
-    #          effective_stats['max_hp'] = round(float(con_val) * hp_per_con + base_hp_offset_config)
-    # The new specific formulas for max_hp, attack, defense take precedence as per the task.
-    # If other derived stats were defined in derived_stat_rules, their calculation could be added here.
-
-    effective_stats['granted_abilities_skills'] = [gas.model_dump(mode='python') for gas in granted_abilities_skills]
+    logger.debug(f"StatsCalculator: Calculated effective stats for entity {entity.id}: {effective_stats}")
     return effective_stats
-
-# --- Main Test Block (Commented out as per plan) ---
-# if __name__ == '__main__':
-#     from unittest.mock import MagicMock # Added import
-#     # ... (Test code would need significant mocking of managers) ...
-#     # print("Stats Calculator module loaded. Run tests via unittest framework.")
-print("Stats Calculator module loaded.")
