@@ -98,7 +98,59 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                 "default_language": "en",
                 "command_prefixes": ["!"],
                 "max_party_size": 4,
-                "action_cooldown_seconds": 30
+                "action_cooldown_seconds": 30,
+                # New rules for check_resolver
+                "checks.skill_stealth.attribute": "dexterity",
+                "checks.skill_perception.attribute": "wisdom",
+                "checks.skill_athletics.attribute": "strength",
+                "checks.skill_acrobatics.attribute": "dexterity",
+                "checks.skill_intimidation.attribute": "charisma",
+                "checks.skill_persuasion.attribute": "charisma",
+                "checks.skill_deception.attribute": "charisma",
+                "checks.skill_insight.attribute": "wisdom",
+                "checks.skill_survival.attribute": "wisdom",
+                "checks.skill_medicine.attribute": "wisdom",
+                "checks.skill_investigation.attribute": "intelligence",
+                "checks.skill_arcana.attribute": "intelligence",
+                "checks.skill_history.attribute": "intelligence",
+                "checks.skill_religion.attribute": "intelligence",
+                "checks.skill_nature.attribute": "intelligence",
+                "checks.skill_animal_handling.attribute": "wisdom",
+                "checks.skill_sleight_of_hand.attribute": "dexterity",
+                "checks.save_strength.attribute": "strength",
+                "checks.save_dexterity.attribute": "dexterity",
+                "checks.save_constitution.attribute": "constitution",
+                "checks.save_intelligence.attribute": "intelligence",
+                "checks.save_wisdom.attribute": "wisdom",
+                "checks.save_charisma.attribute": "charisma",
+                "checks.attack_melee_default.attribute": "strength",
+                "checks.attack_ranged_default.attribute": "dexterity",
+                "checks.spell_attack_primary.attribute": "intelligence",
+                # NLU Action Verbs
+                "nlu.action_verbs.en": {
+                    "move": ["go", "walk", "travel", "head", "proceed", "run", "sprint", "dash", "stroll"],
+                    "look": ["look", "examine", "inspect", "view", "observe", "scan", "check", "peer", "gaze"],
+                    "attack": ["attack", "fight", "hit", "strike", "assault", "bash", "slash"],
+                    "talk": ["talk", "speak", "chat", "ask", "converse", "address", "question"],
+                    "use": ["use", "apply", "consume", "drink", "read", "equip", "activate"],
+                    "pickup": ["pickup", "take", "get", "collect", "grab", "acquire"],
+                    "drop": ["drop", "leave", "discard"],
+                    "open": ["open", "unseal"],
+                    "close": ["close", "seal"],
+                    "search": ["search", "explore area", "look around", "investigate area"]
+                },
+                "nlu.action_verbs.ru": {
+                    "move": ["иди", "идти", "двигайся", "шагай", "ступай", "отправляйся", "переместись", "беги", "мчись"],
+                    "look": ["смотри", "осмотри", "глянь", "исследуй", "проверь", "оглядись", "взгляни", "рассмотри"],
+                    "attack": ["атакуй", "дерись", "ударь", "бей", "напади", "руби", "коли"],
+                    "talk": ["говори", "поговори", "спроси", "болтай", "общайся", "разговаривай", "задай вопрос"],
+                    "use": ["используй", "примени", "выпей", "съешь", "прочти", "надень", "экипируй", "активируй"],
+                    "pickup": ["подбери", "возьми", "собери", "хватай", "получи", "забери"],
+                    "drop": ["брось", "выброси", "оставь"],
+                    "open": ["открой", "распечатай"],
+                    "close": ["закрой", "запечатай"],
+                    "search": ["ищи", "обыщи", "осмотри местность", "исследуй внимательно"]
+                }
             }
             rules_to_add = []
             for key, value in default_rules.items():

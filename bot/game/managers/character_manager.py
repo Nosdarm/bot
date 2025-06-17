@@ -15,6 +15,8 @@ class CharacterAlreadyExistsError(Exception):
 from bot.game.models.character import Character
 from builtins import dict, set, list, int
 
+from bot.game.utils import stats_calculator # Added import
+
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
     from bot.game.managers.item_manager import ItemManager
@@ -95,34 +97,30 @@ class CharacterManager:
                 logger.error("CharacterManager: Character %s not found in guild %s for effective stats recalc.", character_id, guild_id) # Changed
                 return
 
-        if not (self._rule_engine and self._item_manager and self._status_manager and
-                  self._npc_manager and self._db_service and hasattr(self._rule_engine, 'rules_config_data')):
-            missing_deps = [dep_name for dep_name, dep in [
-                ("rule_engine", self._rule_engine), ("item_manager", self._item_manager),
-                ("status_manager", self._status_manager), ("npc_manager", self._npc_manager),
-                ("db_service", self._db_service)
-            ] if dep is None]
-            if self._rule_engine and not hasattr(self._rule_engine, 'rules_config_data'):
-                missing_deps.append("rule_engine.rules_config_data")
+        char_model_to_use = char_model # Use existing fetched char_model
 
-            logger.warning("CharacterManager: Could not recalculate effective_stats for char %s in guild %s due to missing dependencies: %s.", character_id, guild_id, missing_deps) # Changed
-            setattr(char_model, 'effective_stats_json', "{}")
+        if not self._game_manager:
+            logger.warning("CharacterManager: GameManager not available, cannot recalculate effective_stats for char %s in guild %s.", character_id, guild_id)
+            setattr(char_model_to_use, 'effective_stats_json', json.dumps({"error": "game_manager_unavailable"}))
             return
 
-        from bot.game.utils import stats_calculator
+        # stats_calculator.calculate_effective_stats will handle checks for its needed sub-managers from game_manager
         try:
-            rules_config = self._rule_engine.rules_config_data
             effective_stats_dict = await stats_calculator.calculate_effective_stats(
-                db_service=self._db_service, guild_id=guild_id, entity_id=character_id,
-                entity_type="Character", rules_config_data=rules_config,
-                character_manager=self, npc_manager=self._npc_manager,
-                item_manager=self._item_manager, status_manager=self._status_manager
+                entity=char_model_to_use,
+                guild_id=guild_id,
+                game_manager=self._game_manager
             )
-            setattr(char_model, 'effective_stats_json', json.dumps(effective_stats_dict))
-            # logger.debug("CharacterManager: Recalculated effective_stats for character %s in guild %s.", character_id, guild_id) # Changed
+            # Ensure effective_stats_json attribute exists before setting
+            if not hasattr(char_model_to_use, 'effective_stats_json'):
+                 logger.warning(f"CharacterManager: Character model for {character_id} does not have 'effective_stats_json' attribute. Stat calculation done but not stored on model directly.")
+                 # Storing it anyway as per original logic, assuming the model should have it or this is intended to add it dynamically
+            setattr(char_model_to_use, 'effective_stats_json', json.dumps(effective_stats_dict or {}))
+            logger.debug("CharacterManager: Recalculated effective_stats for character %s in guild %s.", character_id, guild_id)
         except Exception as es_ex:
             logger.error("CharacterManager: ERROR recalculating effective_stats for char %s in guild %s: %s", character_id, guild_id, es_ex, exc_info=True) # Changed
-            setattr(char_model, 'effective_stats_json', "{}")
+            if hasattr(char_model_to_use, 'effective_stats_json'):
+                setattr(char_model_to_use, 'effective_stats_json', json.dumps({"error": "calculation_failed"}))
 
     async def trigger_stats_recalculation(self, guild_id: str, character_id: str) -> None:
         """Public method to trigger effective stats recalculation and mark character dirty."""
@@ -344,10 +342,10 @@ class CharacterManager:
                 current_action, action_queue, party_id, state_variables, hp, max_health,
                 is_alive, status_effects, level, xp, unspent_xp, active_quests, known_spells,
                 spell_cooldowns, skills_data_json, abilities_data_json, spells_data_json, flags_json,
-                character_class, selected_language, current_game_status, collected_actions_json, current_party_id, effective_stats_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+                character_class, selected_language, current_game_status, collected_actions_json, current_party_id, effective_stats_json, equipment_slots_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
             ON CONFLICT (id) DO UPDATE SET
-                discord_id=EXCLUDED.discord_id, name_i18n=EXCLUDED.name_i18n, guild_id=EXCLUDED.guild_id, current_location_id=EXCLUDED.current_location_id, stats=EXCLUDED.stats, inventory=EXCLUDED.inventory, current_action=EXCLUDED.current_action, action_queue=EXCLUDED.action_queue, party_id=EXCLUDED.party_id, state_variables=EXCLUDED.state_variables, hp=EXCLUDED.hp, max_health=EXCLUDED.max_health, is_alive=EXCLUDED.is_alive, status_effects=EXCLUDED.status_effects, level=EXCLUDED.level, xp=EXCLUDED.experience, unspent_xp=EXCLUDED.unspent_xp, active_quests=EXCLUDED.active_quests, known_spells=EXCLUDED.known_spells, spell_cooldowns=EXCLUDED.spell_cooldowns, skills_data_json=EXCLUDED.skills_data_json, abilities_data_json=EXCLUDED.abilities_data_json, spells_data_json=EXCLUDED.spells_data_json, flags_json=EXCLUDED.flags_json, character_class=EXCLUDED.character_class, selected_language=EXCLUDED.selected_language, current_game_status=EXCLUDED.current_game_status, collected_actions_json=EXCLUDED.collected_actions_json, current_party_id=EXCLUDED.current_party_id, effective_stats_json=EXCLUDED.effective_stats_json;
+                discord_id=EXCLUDED.discord_id, name_i18n=EXCLUDED.name_i18n, guild_id=EXCLUDED.guild_id, current_location_id=EXCLUDED.current_location_id, stats=EXCLUDED.stats, inventory=EXCLUDED.inventory, current_action=EXCLUDED.current_action, action_queue=EXCLUDED.action_queue, party_id=EXCLUDED.party_id, state_variables=EXCLUDED.state_variables, hp=EXCLUDED.hp, max_health=EXCLUDED.max_health, is_alive=EXCLUDED.is_alive, status_effects=EXCLUDED.status_effects, level=EXCLUDED.level, xp=EXCLUDED.experience, unspent_xp=EXCLUDED.unspent_xp, active_quests=EXCLUDED.active_quests, known_spells=EXCLUDED.known_spells, spell_cooldowns=EXCLUDED.spell_cooldowns, skills_data_json=EXCLUDED.skills_data_json, abilities_data_json=EXCLUDED.abilities_data_json, spells_data_json=EXCLUDED.spells_data_json, flags_json=EXCLUDED.flags_json, character_class=EXCLUDED.character_class, selected_language=EXCLUDED.selected_language, current_game_status=EXCLUDED.current_game_status, collected_actions_json=EXCLUDED.collected_actions_json, current_party_id=EXCLUDED.current_party_id, effective_stats_json=EXCLUDED.effective_stats_json, equipment_slots_json=EXCLUDED.equipment_slots_json;
             '''
             data_to_upsert = []
             processed_dirty_ids = set()
@@ -368,7 +366,7 @@ class CharacterManager:
                         json.dumps(char_data.get('abilities_data', [])), json.dumps(char_data.get('spells_data', [])),
                         json.dumps(char_data.get('flags', {})), char_data.get('character_class'), char_data.get('selected_language'),
                         char_data.get('current_game_status'), char_data.get('collected_actions_json'), char_data.get('current_party_id'),
-                        effective_stats_j
+                        effective_stats_j, json.dumps(char_data.get('equipment_slots_json', {}))
                     )
                     data_to_upsert.append(db_params)
                     processed_dirty_ids.add(char_obj.id)
@@ -405,7 +403,7 @@ class CharacterManager:
                    is_alive, status_effects, race, mp, attack, defense, level, xp AS experience, unspent_xp,
                    collected_actions_json, selected_language, current_game_status, current_party_id,
                    skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json,
-                   active_quests, known_spells, spell_cooldowns, effective_stats_json
+                   active_quests, known_spells, spell_cooldowns, effective_stats_json, equipment_slots_json
             FROM players WHERE guild_id = $1
             '''
             rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,))
@@ -427,7 +425,7 @@ class CharacterManager:
                                    ('skills_data_json','[]',list), ('abilities_data_json','[]',list),
                                    ('spells_data_json','[]',list), ('flags_json','{}',dict),
                                    ('active_quests','[]',list), ('known_spells','[]',list),
-                                   ('spell_cooldowns','{}',dict)]:
+                                   ('spell_cooldowns','{}',dict), ('equipment_slots_json','{}',dict)]: # Added equipment_slots_json
                     raw_val = data.get(k)
                     # v_type is now correctly dict or list, d_val_str is '{}' or '[]'
                     parsed_val = v_type() # This will call dict() or list()

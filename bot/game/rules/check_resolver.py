@@ -1,212 +1,216 @@
-import logging
-from typing import Tuple, List, Any, Optional, TYPE_CHECKING
+import logging # Added
+from typing import Optional, Dict, Any, TYPE_CHECKING, Union, List
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from bot.database.models import Player
-from bot.database.crud_utils import get_entity_by_id
-from bot.game.rules.dice_roller import roll_dice
+from bot.database.models import Player, NPC # Assuming NPC model is in bot.database.models
+from bot.game.models.check_models import CheckResult
+from bot.game.rules import dice_roller # From step 1
+from bot.game.utils.stats_calculator import calculate_effective_stats # Added import
 
 if TYPE_CHECKING:
     from bot.game.managers.game_manager import GameManager
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # Added
 
-class CheckResolver:
-    def __init__(self, game_manager: "GameManager"):
-        self.game_manager = game_manager
-        if not self.game_manager:
-            logger.critical("CheckResolver initialized without a valid GameManager instance!")
+async def resolve_check(
+    guild_id: str,
+    check_type: str, # e.g., "strength_save", "skill_stealth", "attack_melee_strength"
+    performing_entity_id: str,
+    performing_entity_type: str, # "player" or "npc"
+    game_manager: 'GameManager',
+    target_entity_id: Optional[str] = None,
+    target_entity_type: Optional[str] = None,
+    difficulty_dc: Optional[int] = None,
+    base_roll_str: str = "1d20",
+    additional_modifiers: Optional[Dict[str, int]] = None, # e.g., {"bless_spell": 1, "item_bonus": 2}
+    context_notes: Optional[str] = None # Optional notes for the description
+) -> CheckResult:
+    """
+    Resolves a generic attribute or skill check.
+    """
+    if not game_manager or not game_manager.db_service:
+        # This should ideally not happen if GameManager is properly initialized
+        raise ValueError("GameManager or DBService not available for resolve_check.")
 
-    async def resolve_simple_check(
-        self,
-        db_session: AsyncSession,
-        guild_id: str,
-        player_id: str,
-        skill_name: str,
-        difficulty_class: int
-    ) -> Tuple[bool, int, int]:
-        """
-        Resolves a simple skill check for a player against a difficulty class (DC).
-        A skill check is typically 1d20 + skill_modifier vs DC.
+    # 1. Fetch Performing Entity
+    entity: Optional[Union[Player, NPC]] = None
+    entity_name_for_log = performing_entity_id # Default name for logging if entity fetch fails
 
-        Args:
-            db_session: The active SQLAlchemy async session.
-            guild_id: The ID of the guild where the check is happening.
-            player_id: The ID of the player performing the check.
-            skill_name: The name of the skill or attribute to use for the modifier
-                        (e.g., "perception", "strength", "lockpicking_skill").
-            difficulty_class: The DC the player needs to meet or exceed.
-
-        Returns:
-            A tuple (success: bool, total_result: int, dice_roll_value: int).
-            - success: True if total_result >= difficulty_class, False otherwise.
-            - total_result: The sum of the d20 roll and the skill modifier.
-            - dice_roll_value: The raw value rolled on the d20.
-
-        Raises:
-            ValueError: If the player is not found or guild ID mismatch.
-        """
-        logger.debug(f"Resolving simple check for player {player_id} in guild {guild_id}: skill '{skill_name}', DC {difficulty_class}.")
-
-        player = await get_entity_by_id(db_session, Player, player_id)
-        if not player:
-            logger.error(f"Player {player_id} not found while resolving check for guild {guild_id}.")
-            raise ValueError(f"Player {player_id} not found.")
-
-        if player.guild_id != guild_id:
-            logger.error(f"Player {player_id} (guild {player.guild_id}) does not belong to the specified guild {guild_id} for check.")
-            raise ValueError(f"Player {player_id} guild mismatch for check.")
-
-        logger.debug(f"Player {player.id} loaded. Stats: {player.stats}, Skills JSON: {player.skills_data_json}")
-
-        skill_modifier = 0
-        # Check skills_data_json first, then fallback to stats
-        # This assumes skills_data_json stores final, ready-to-use modifiers for specific skills.
-        # And player.stats stores base attributes which might also be used as "skills".
-        source_of_modifier = "None"
-
-        if player.skills_data_json and isinstance(player.skills_data_json, dict):
-            skill_value_from_json = player.skills_data_json.get(skill_name)
-            if isinstance(skill_value_from_json, (int, float)):
-                skill_modifier = int(skill_value_from_json)
-                source_of_modifier = "skills_data_json"
-                logger.debug(f"Retrieved skill modifier {skill_modifier} for '{skill_name}' from player.skills_data_json.")
-
-        if source_of_modifier == "None" and player.stats and isinstance(player.stats, dict):
-            # If not found in skills_data_json or skills_data_json is None, check stats
-            stat_value = player.stats.get(skill_name)
-            if isinstance(stat_value, (int, float)):
-                skill_modifier = int(stat_value)
-                source_of_modifier = "stats"
-                logger.debug(f"Retrieved skill modifier {skill_modifier} for '{skill_name}' from player.stats.")
-
-        if source_of_modifier == "None":
-             logger.debug(f"No modifier found for '{skill_name}' in skills_data_json or stats for player {player_id}. Modifier remains 0.")
-
-
-        try:
-            _, d20_rolls = roll_dice("1d20")
-            dice_roll_value = d20_rolls[0]
-            logger.debug(f"Rolled 1d20: {dice_roll_value}")
-        except ValueError as e:
-            logger.error(f"Error rolling '1d20' for check: {e}", exc_info=True)
-            raise # Re-raise if dice rolling itself fails critically
-
-        total_result = dice_roll_value + skill_modifier
-        logger.debug(f"Total check result: {dice_roll_value} (roll) + {skill_modifier} (modifier from {source_of_modifier}) = {total_result}")
-
-        success = total_result >= difficulty_class
-
-        crit_success_on_nat_20 = await self.game_manager.get_rule(guild_id, "crit_success_on_natural_20", default=True)
-        crit_failure_on_nat_1 = await self.game_manager.get_rule(guild_id, "crit_failure_on_natural_1", default=True)
-        # Example: A rule that says Nat 20 only auto-succeeds if DC is not excessively high
-        nat_20_auto_succeeds_max_dc = await self.game_manager.get_rule(guild_id, "natural_20_auto_succeeds_max_dc", default=None)
-
-        if dice_roll_value == 20 and crit_success_on_nat_20:
-            if nat_20_auto_succeeds_max_dc is None or difficulty_class <= nat_20_auto_succeeds_max_dc:
-                if not success: # If it wasn't already a success (e.g. very high DC but still beatable with high mod)
-                    logger.info(f"Natural 20! Overriding check result to SUCCESS for player {player_id} on '{skill_name}' check against DC {difficulty_class}.")
-                success = True
-            else:
-                logger.info(f"Natural 20 rolled by player {player_id}, but DC {difficulty_class} exceeds auto-success threshold {nat_20_auto_succeeds_max_dc}. Standard success rules apply.")
-
-        if dice_roll_value == 1 and crit_failure_on_nat_1:
-            if success: # If it somehow would have succeeded (e.g. very low DC and high mod)
-                 logger.info(f"Natural 1! Overriding check result to FAILURE for player {player_id} on '{skill_name}' check against DC {difficulty_class}.")
-            success = False
-
-        if success:
-            logger.info(f"Check SUCCESS for player {player_id}, skill '{skill_name}', DC {difficulty_class}: Roll={dice_roll_value}, Mod={skill_modifier}, Total={total_result}.")
+    if performing_entity_type.lower() == "player":
+        entity = await game_manager.get_player_model_by_id(guild_id, performing_entity_id)
+        if entity: entity_name_for_log = getattr(entity, 'name_i18n', {}).get('en', performing_entity_id)
+    elif performing_entity_type.lower() == "npc":
+        if game_manager.npc_manager:
+             entity = await game_manager.npc_manager.get_npc(guild_id, performing_entity_id)
+             if entity: entity_name_for_log = getattr(entity, 'name_i18n', {}).get('en', performing_entity_id)
         else:
-            logger.info(f"Check FAILED for player {player_id}, skill '{skill_name}', DC {difficulty_class}: Roll={dice_roll_value}, Mod={skill_modifier}, Total={total_result}.")
+            raise NotImplementedError(f"NPC Manager not available in GameManager, cannot fetch NPC for resolve_check.")
 
-        return success, total_result, dice_roll_value
+    if not entity:
+        raise ValueError(f"Performing entity {performing_entity_type} {performing_entity_id} not found in guild {guild_id}.")
 
-# Example usage (for testing, not part of the class itself)
-async def example_check_resolver_usage(game_manager_mock, session_mock, player_id_mock):
-    if not game_manager_mock:
-        print("Mock GameManager not provided for example.")
-        return
+    # 2. Get Effective Stats
+    effective_stats = await calculate_effective_stats(entity, guild_id, game_manager)
 
-    resolver = CheckResolver(game_manager=game_manager_mock)
+    # 3. Determine Primary Attribute/Skill and Base Modifier
+    details_log_dict: Dict[str, Any] = { # Initialize details_log_dict earlier
+        "entity_id": performing_entity_id,
+        "entity_type": performing_entity_type,
+        "entity_name": entity_name_for_log,
+        "check_type": check_type,
+    }
+
+    primary_stat_key_used = None
+    primary_stat_name = None
+
+    # Try to get skill mapping first
+    skill_rule_key = f"checks.{check_type}.skill"
+    defined_skill = await game_manager.get_rule(guild_id, skill_rule_key)
+
+    if defined_skill and isinstance(defined_skill, str):
+        primary_stat_name = defined_skill
+        primary_stat_key_used = skill_rule_key
+        details_log_dict["stat_determination_method"] = f"RuleConfig: skill_key='{skill_rule_key}'"
+    else:
+        # If no skill mapping, try attribute mapping
+        attribute_rule_key = f"checks.{check_type}.attribute"
+        defined_attribute = await game_manager.get_rule(guild_id, attribute_rule_key)
+        if defined_attribute and isinstance(defined_attribute, str):
+            primary_stat_name = defined_attribute
+            primary_stat_key_used = attribute_rule_key
+            details_log_dict["stat_determination_method"] = f"RuleConfig: attribute_key='{attribute_rule_key}'"
+        else:
+            # Fallback if no specific rule is found
+            primary_stat_name = "strength" # Default fallback attribute
+            details_log_dict["stat_determination_method"] = f"Fallback: No specific rule for '{check_type}', defaulted to '{primary_stat_name}'."
+            logger.warning(f"CheckResolver: No RuleConfig for check_type '{check_type}' (keys: '{skill_rule_key}', '{attribute_rule_key}'). Defaulted to '{primary_stat_name}'.")
+
+    details_log_dict["assumed_primary_stat"] = primary_stat_name
+    stat_value = effective_stats.get(primary_stat_name, 10)
+    if not isinstance(stat_value, int):
+        try:
+            stat_value = int(stat_value)
+        except (ValueError, TypeError):
+            stat_value = 10
+
+    base_modifier = (stat_value - 10) // 2
+
+    details_log_dict["stat_value_used"] = stat_value
+    details_log_dict["base_modifier_calc"] = f"({stat_value} - 10) // 2 = {base_modifier}"
+
+    # 4. Calculate Total Modifier
+    total_modifier = base_modifier
+    modifier_breakdown = {f"base_{primary_stat_name}": base_modifier} # Use primary_stat_name
+
+    if additional_modifiers:
+        for source, mod_val in additional_modifiers.items():
+            total_modifier += mod_val
+            modifier_breakdown[source] = mod_val
+
+    details_log_dict["modifier_sources"] = modifier_breakdown
+    details_log_dict["total_modifier_applied"] = total_modifier
+
+    # 5. Perform Dice Roll
     try:
-        print("\n--- Example Check Resolver Usage ---")
+        roll_sum, individual_rolls = dice_roller.roll_dice(base_roll_str)
+    except ValueError as e:
+        raise ValueError(f"Invalid base_roll_str '{base_roll_str}' for check: {e}") from e
 
-        test_cases = [
-            {"skill": "perception", "dc": 15, "expected_source": "stats"},
-            {"skill": "lockpicking", "dc": 18, "expected_source": "skills_data_json"},
-            {"skill": "strength", "dc": 10, "expected_source": "stats"},
-            {"skill": "diplomacy", "dc": 12, "expected_source": "None"}, # Assuming diplomacy isn't in stats or skills_data_json
-        ]
+    details_log_dict["dice_roll_str"] = base_roll_str
+    details_log_dict["individual_rolls"] = individual_rolls
+    details_log_dict["raw_roll_sum"] = roll_sum
 
-        for tc in test_cases:
-            print(f"\nTest Case: Player {player_id_mock}, Skill: {tc['skill']}, DC: {tc['dc']}")
-            success, total, roll = await resolver.resolve_simple_check(session_mock, "test_guild", player_id_mock, tc['skill'], tc['dc'])
-            print(f"  Result: Success={success}, Total={total} (Roll={roll})")
-            # For more detailed testing, one could assert the modifier source based on tc['expected_source']
-            # by inspecting logs or enhancing return value for tests.
+    # 6. Calculate Total Roll Value
+    total_roll_value = roll_sum + total_modifier
+    details_log_dict["final_roll_value_calc"] = f"{roll_sum} (roll) + {total_modifier} (mod) = {total_roll_value}"
 
-    except ValueError as ve:
-        print(f"ValueError in example: {ve}")
-    except Exception as e:
-        print(f"An unexpected error occurred in example: {e}")
-        import traceback
-        traceback.print_exc()
+    # 7. Determine Success
+    succeeded = False
+    target_defense_value_for_check: Optional[int] = None
+    # Use entity_name_for_log which has a fallback if i18n name isn't there
+    description_parts = [
+        f"{check_type.replace('_', ' ').title()} for {entity_name_for_log}:",
+        f"{roll_sum} (roll {base_roll_str})",
+    ]
+    if total_modifier >= 0:
+        description_parts.append(f"+ {total_modifier} (mod)")
+    else:
+        description_parts.append(f"- {abs(total_modifier)} (mod)")
+    description_parts.append(f"= {total_roll_value}")
 
-if __name__ == '__main__':
-    import asyncio # Added import for asyncio.run
-    logging.basicConfig(level=logging.DEBUG) # Ensure logging is configured for the test output
+    if difficulty_dc is not None:
+        succeeded = total_roll_value >= difficulty_dc
+        description_parts.append(f"vs DC {difficulty_dc}")
+        details_log_dict["target_dc"] = difficulty_dc
+        target_defense_value_for_check = difficulty_dc # For consistent CheckResult population
+    elif target_entity_id and target_entity_type:
+        target_entity: Optional[Union[Player, NPC]] = None
+        target_entity_name_for_log = target_entity_id
 
-    # Mock Player and GameManager for standalone testing
-    class MockPlayer(Player): # Define a more complete mock Player
-        def __init__(self, id, guild_id, stats, skills_data_json): # Match expected attributes
-            self.id = id
-            self.guild_id = guild_id
-            self.stats = stats
-            self.skills_data_json = skills_data_json # This was the attribute name used in resolve_simple_check
-            self.selected_language = "en" # Default language for any i18n needs
+        if target_entity_type.lower() == "player":
+            target_entity = await game_manager.get_player_model_by_id(guild_id, target_entity_id)
+            if target_entity: target_entity_name_for_log = getattr(target_entity, 'name_i18n', {}).get('en', target_entity_id)
+        elif target_entity_type.lower() == "npc":
+            if game_manager.npc_manager:
+                target_entity = await game_manager.npc_manager.get_npc(guild_id, target_entity_id)
+                if target_entity: target_entity_name_for_log = getattr(target_entity, 'name_i18n', {}).get('en', target_entity_id)
+            else:
+                logger.error(f"CheckResolver: NpcManager not available, cannot fetch target NPC {target_entity_id}.")
 
-    class MockGameManager:
-        def __init__(self):
-            self._rules = {
-                ("test_guild", "crit_success_on_natural_20"): True,
-                ("test_guild", "crit_failure_on_natural_1"): True,
-                ("test_guild", "natural_20_auto_succeeds_max_dc"): 25, # e.g. Nat 20 won't beat a DC 30
-            }
-        async def get_rule(self, guild_id, key, default=None):
-            return self._rules.get((guild_id, key), default)
+        if not target_entity:
+            logger.error(f"CheckResolver: Target entity {target_entity_type} {target_entity_id} not found for opposed check.")
+            succeeded = False # Fail if target not found
+            description_parts.append(f"vs Target {target_entity_name_for_log} (Not Found)")
+            details_log_dict["opposition_type"] = "error_target_not_found"
+        else:
+            target_effective_stats = await calculate_effective_stats(target_entity, guild_id, game_manager)
 
-    # Mock database session and get_entity_by_id
-    mock_player_instance = MockPlayer(
-        id="test_player_1",
-        guild_id="test_guild",
-        stats={"perception": 3, "strength": 2}, # Base attributes
-        skills_data_json={"lockpicking": 5, "stealth": 1} # Specific skill modifiers
+            opposed_by_stat_key = f"checks.{check_type}.opposed_by_stat"
+            opposed_by_skill_key = f"checks.{check_type}.opposed_by_skill"
+
+            defined_opposing_stat_name = await game_manager.get_rule(guild_id, opposed_by_stat_key)
+            defined_opposing_skill_name = await game_manager.get_rule(guild_id, opposed_by_skill_key)
+
+            if defined_opposing_stat_name and isinstance(defined_opposing_stat_name, str):
+                target_defense_value_for_check = target_effective_stats.get(defined_opposing_stat_name, 10)
+                succeeded = total_roll_value >= target_defense_value_for_check
+                description_parts.append(f"vs Target {target_entity_name_for_log}'s {defined_opposing_stat_name.replace('_',' ').title()} {target_defense_value_for_check}")
+                details_log_dict["opposition_type"] = "stat"
+                details_log_dict["opposing_stat_name"] = defined_opposing_stat_name
+                details_log_dict["target_defense_value"] = target_defense_value_for_check
+            elif defined_opposing_skill_name and isinstance(defined_opposing_skill_name, str):
+                target_skill_value = target_effective_stats.get(defined_opposing_skill_name, 10)
+                if not isinstance(target_skill_value, int): target_skill_value = 10
+                target_skill_modifier = (target_skill_value - 10) // 2
+                target_defense_value_for_check = 10 + target_skill_modifier # Passive check
+                succeeded = total_roll_value >= target_defense_value_for_check
+                description_parts.append(f"vs Target {target_entity_name_for_log}'s Passive {defined_opposing_skill_name.replace('_',' ').title()} {target_defense_value_for_check}")
+                details_log_dict["opposition_type"] = "passive_skill"
+                details_log_dict["opposing_skill_name"] = defined_opposing_skill_name
+                details_log_dict["target_defense_value"] = target_defense_value_for_check
+            else:
+                logger.warning(f"CheckResolver: No RuleConfig for opposition for check_type '{check_type}' against target. Defaulting to failure. Searched keys: '{opposed_by_stat_key}', '{opposed_by_skill_key}'.")
+                succeeded = False
+                description_parts.append(f"vs Target {target_entity_name_for_log} (Undefined Opposition)")
+                details_log_dict["opposition_type"] = "undefined"
+    else:
+        description_parts.append("(no DC or target specified; outcome may depend on context)")
+        succeeded = False # Or True, depending on interpretation for checks without explicit targets.
+
+    description_parts.append(f"-> {'Success' if succeeded else 'Failure'}")
+    if context_notes:
+        description_parts.append(f"({context_notes})")
+
+    final_description = " ".join(description_parts)
+    details_log_dict["outcome_description"] = final_description
+    details_log_dict["succeeded"] = succeeded
+
+    return CheckResult(
+        succeeded=succeeded,
+        roll_value=roll_sum,
+        modifier_applied=total_modifier,
+        total_roll_value=total_roll_value,
+        dc_value=difficulty_dc,
+        opposed_roll_value=target_defense_value_for_check, # Use the calculated target value
+        description=final_description,
+        details_log=details_log_dict
     )
-
-    async def mock_get_entity_by_id_for_test(session, model, entity_id, **kwargs):
-        if model == Player and entity_id == "test_player_1":
-            return mock_player_instance
-        return None
-
-    # Temporarily patch the actual get_entity_by_id for this test run
-    original_get_entity_by_id = get_entity_by_id
-    # Need to assign to the module where CheckResolver imports it from
-    import bot.database.crud_utils as crud_utils_module
-    crud_utils_module.get_entity_by_id = mock_get_entity_by_id_for_test
-
-    class MockAsyncSession: # Minimal mock for 'async with'
-        async def __aenter__(self): return self
-        async def __aexit__(self, exc_type, exc, tb): pass
-
-    async def main_test_run():
-        gm_mock = MockGameManager()
-        session_mock = MockAsyncSession()
-        await example_check_resolver_usage(gm_mock, session_mock, "test_player_1")
-
-    try:
-        asyncio.run(main_test_run())
-    finally:
-        # Restore original function
-        crud_utils_module.get_entity_by_id = original_get_entity_by_id
