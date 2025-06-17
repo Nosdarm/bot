@@ -124,6 +124,7 @@ class Location(Base):
     channel_id = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
     ai_metadata_json = Column(JSONB, nullable=True, comment="Stores metadata for AI generation purposes") # New field
+    points_of_interest_json = Column(JSONB, nullable=True, comment="List of Points of Interest objects/dictionaries")
 
     __table_args__ = (
         UniqueConstraint('guild_id', 'static_id', name='uq_location_guild_static_id'),
@@ -145,6 +146,8 @@ class Location(Base):
                                     'npc_ids', 'event_triggers'] # Added new fields, and existing ones like npc_ids
         for field in json_fields_default_dict:
             data.setdefault(field, {})
+
+        data.setdefault('points_of_interest_json', []) # Default to empty list for PoIs
 
         if data.get('is_active') is None:
             data['is_active'] = True
@@ -174,7 +177,8 @@ class Location(Base):
             "npc_ids": self.npc_ids or [], # Ensure list for npc_ids
             "event_triggers": self.event_triggers or [], # Ensure list for event_triggers
             "type_i18n": self.type_i18n or {},
-            "coordinates": self.coordinates or {}
+            "coordinates": self.coordinates or {},
+            "points_of_interest_json": self.points_of_interest_json or []
         }
 
 class Timer(Base):
@@ -660,6 +664,38 @@ class PendingConflict(Base):
     resolution_data_json = Column(JSONB, nullable=True) # Standardized
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     resolved_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class PendingGeneration(Base):
+    __tablename__ = 'pending_generations'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+
+    request_type = Column(String, nullable=False, index=True) # e.g., "npc_generation", "quest_generation", "location_generation"
+    request_params_json = Column(JSONB, nullable=True) # Parameters used for the AI request
+
+    raw_ai_output_text = Column(Text, nullable=True) # Raw output from AI
+    parsed_data_json = Column(JSONB, nullable=True) # Validated and parsed data, if successful
+    validation_issues_json = Column(JSONB, nullable=True) # List of validation errors
+
+    status = Column(String, nullable=False, default="pending_validation", index=True)
+    # Possible statuses: "pending_validation", "failed_validation", "pending_moderation", "approved", "rejected", "applied"
+
+    created_by_user_id = Column(String, nullable=True) # Discord user ID of the requester
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    moderated_by_user_id = Column(String, nullable=True) # Discord user ID of the moderator
+    moderated_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    moderator_notes_i18n = Column(JSONB, nullable=True) # Moderator's notes/edits
+
+    # Potential index for querying by status and guild
+    __table_args__ = (
+        Index('idx_pendinggeneration_guild_status', 'guild_id', 'status'),
+    )
+
+    def __repr__(self):
+        return f"<PendingGeneration(id='{self.id}', guild_id='{self.guild_id}', type='{self.request_type}', status='{self.status}')>"
 
 
 class NewItem(Base):
