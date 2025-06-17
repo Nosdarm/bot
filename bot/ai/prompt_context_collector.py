@@ -35,6 +35,7 @@ class PromptContextCollector:
         ability_manager: 'AbilityManager',
         spell_manager: 'SpellManager',
         event_manager: 'EventManager',
+        party_manager: Optional['PartyManager'] = None, # Added
         db_service: 'DBService' # ADDED
         # Potentially lore_data if loaded separately, or handled via location_manager/settings
     ):
@@ -49,7 +50,7 @@ class PromptContextCollector:
         self.ability_manager = ability_manager
         self.spell_manager = spell_manager
         self.event_manager = event_manager
-        self.party_manager = kwargs.get('party_manager') # Added, make it part of __init__ proper if always required
+        self.party_manager = party_manager # Changed from kwargs
 
     def get_main_language_code(self) -> str:
         """Determines the main language code for the bot."""
