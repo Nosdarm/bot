@@ -32,11 +32,21 @@ if TYPE_CHECKING:
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.rules.rule_engine import RuleEngine
     from bot.api.schemas.rule_config_schemas import RuleConfigData
+    # For new master AI commands
+    from bot.database.models import PendingGeneration
+    import datetime # Ensure datetime is directly available
+    from bot.utils.decorators import is_master_role # Assuming decorator location
+    from bot.ai.ai_response_validator import parse_and_validate_ai_response # For edit_ai
 
 
 class GMAppCog(commands.Cog, name="GM App Commands"):
+    master_group = app_commands.Group(name="master", description="Команды для Мастера Игры.", guild_only=True)
+
     def __init__(self, bot: "RPGBot"):
         self.bot = bot
+
+    # Existing commands like gm_simulate, resolve_conflict etc. remain here...
+    # ... (Make sure to place the new master_group commands after existing ones or logically grouped)
 
     @app_commands.command(name="gm_simulate", description="ГМ: Запустить один шаг симуляции мира.")
     async def cmd_gm_simulate(self, interaction: Interaction):
@@ -786,7 +796,297 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GMAppCog(bot)) # type: ignore
-    print("GMAppCog loaded.")
-    await bot.add_cog(GMAppCog(bot)) # type: ignore
-    print("GMAppCog loaded.")
+    print("GMAppCog loaded.") # Removed duplicate load
+
+    # --- New Master AI Review Commands ---
+    @master_group.command(name="review_ai", description="Просмотреть ожидающие или неудачные AI генерации.")
+    @app_commands.describe(pending_id="ID конкретной записи для просмотра (необязательно).")
+    @is_master_role()
+    async def cmd_master_review_ai(self, interaction: Interaction, pending_id: Optional[str] = None):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild_id_str = str(interaction.guild_id)
+        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
+
+        if not game_mngr or not game_mngr.db_service:
+            await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
+            return
+
+        if not pending_id:
+            # List recent pending/failed generations
+            try:
+                # Fetch records with specific statuses, ordered by creation date
+                pending_records = await game_mngr.db_service.get_entities_by_conditions(
+                    PendingGeneration,
+                    conditions={
+                        "guild_id": guild_id_str,
+                        "status": {"in_": ["pending_moderation", "failed_validation"]}
+                    },
+                    order_by=[PendingGeneration.created_at.desc()], # type: ignore
+                    limit=10
+                )
+                if not pending_records:
+                    await interaction.followup.send("Нет записей AI генераций, ожидающих модерации или с ошибками валидации.", ephemeral=True)
+                    return
+
+                embed = discord.Embed(title="Ожидающие/Неудачные AI Генерации", color=discord.Color.orange())
+                for record in pending_records:
+                    status_emoji = "🟠" if record.status == "pending_moderation" else "🔴"
+                    field_value = (
+                        f"**Тип:** {record.request_type}\n"
+                        f"**Статус:** {status_emoji} {record.status}\n"
+                        f"**Создано:** {record.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if record.created_at else 'N/A'}\n"
+                        f"**Автор:** <@{record.created_by_user_id}> (ID: {record.created_by_user_id})"
+                    )
+                    embed.add_field(name=f"ID: `{record.id}`", value=field_value, inline=False)
+
+                if len(embed.fields) == 0: # Should be caught by "not pending_records" but as a safeguard
+                     await interaction.followup.send("Не найдено записей для отображения.", ephemeral=True)
+                     return
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+            except Exception as e:
+                logging.error(f"Error listing pending AI generations: {e}", exc_info=True)
+                await interaction.followup.send("Произошла ошибка при получении списка генераций.", ephemeral=True)
+            return
+
+        # Display details for a specific pending_id
+        try:
+            record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
+                PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
+            )
+
+            if not record:
+                await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
+                return
+
+            embed = discord.Embed(title=f"Детали AI Генерации: {record.id}", color=discord.Color.blue())
+            embed.add_field(name="Guild ID", value=f"`{record.guild_id}`", inline=False)
+            embed.add_field(name="Тип Запроса", value=record.request_type, inline=True)
+            embed.add_field(name="Статус", value=record.status, inline=True)
+            embed.add_field(name="Автор Запроса", value=f"<@{record.created_by_user_id}> (`{record.created_by_user_id}`)" if record.created_by_user_id else "N/A", inline=True)
+            embed.add_field(name="Время Создания", value=record.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if record.created_at else "N/A", inline=False)
+
+            if record.request_params_json:
+                try:
+                    params_str = json.dumps(record.request_params_json, indent=2, ensure_ascii=False)
+                    embed.add_field(name="Параметры Запроса", value=f"```json\n{params_str[:1000]}{'...' if len(params_str)>1000 else ''}\n```", inline=False)
+                except Exception:
+                    embed.add_field(name="Параметры Запроса", value="Не удалось отобразить (ошибка форматирования).", inline=False)
+
+            if record.raw_ai_output_text:
+                embed.add_field(name="Raw AI Output (сниппет)", value=f"```\n{record.raw_ai_output_text[:1000]}{'...' if len(record.raw_ai_output_text)>1000 else ''}\n```", inline=False)
+
+            if record.parsed_data_json:
+                try:
+                    parsed_str = json.dumps(record.parsed_data_json, indent=2, ensure_ascii=False)
+                    embed.add_field(name="Обработанные Данные", value=f"```json\n{parsed_str[:1000]}{'...' if len(parsed_str)>1000 else ''}\n```", inline=False)
+                except Exception:
+                     embed.add_field(name="Обработанные Данные", value="Не удалось отобразить (ошибка форматирования).", inline=False)
+
+            if record.validation_issues_json:
+                try:
+                    issues_str = json.dumps(record.validation_issues_json, indent=2, ensure_ascii=False)
+                    embed.add_field(name="Ошибки Валидации", value=f"```json\n{issues_str[:1000]}{'...' if len(issues_str)>1000 else ''}\n```", inline=False)
+                except Exception:
+                    embed.add_field(name="Ошибки Валидации", value="Не удалось отобразить (ошибка форматирования).", inline=False)
+
+            if record.moderated_by_user_id:
+                embed.add_field(name="Модератор", value=f"<@{record.moderated_by_user_id}> (`{record.moderated_by_user_id}`)", inline=True)
+                embed.add_field(name="Время Модерации", value=record.moderated_at.strftime('%Y-%m-%d %H:%M:%S UTC') if record.moderated_at else "N/A", inline=True)
+            if record.moderator_notes_i18n:
+                notes_str = json.dumps(record.moderator_notes_i18n, indent=2, ensure_ascii=False)
+                embed.add_field(name="Заметки Модератора", value=f"```json\n{notes_str[:1000]}{'...' if len(notes_str)>1000 else ''}\n```", inline=False)
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logging.error(f"Error reviewing AI generation {pending_id}: {e}", exc_info=True)
+            await interaction.followup.send(f"Произошла ошибка при просмотре записи: {e}", ephemeral=True)
+
+    @master_group.command(name="approve_ai", description="Одобрить AI генерацию для применения в игре.")
+    @app_commands.describe(pending_id="ID записи для одобрения.")
+    @is_master_role()
+    async def cmd_master_approve_ai(self, interaction: Interaction, pending_id: str):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild_id_str = str(interaction.guild_id)
+        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
+
+        if not game_mngr or not game_mngr.db_service:
+            await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
+            return
+
+        try:
+            record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
+                PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
+            )
+            if not record:
+                await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
+                return
+
+            if record.status not in ["pending_moderation", "failed_validation"]:
+                await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть одобрена сейчас.", ephemeral=True)
+                return
+
+            updates = {
+                "status": "approved",
+                "moderated_by_user_id": str(interaction.user.id),
+                "moderated_at": datetime.datetime.utcnow()
+            }
+            success = await game_mngr.db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
+
+            if success:
+                logging.info(f"AI Generation {pending_id} approved by {interaction.user.id}. Attempting to apply content.")
+
+                application_success = await game_mngr.apply_approved_generation(pending_gen_id=pending_id, guild_id=guild_id_str)
+
+                if application_success:
+                    await interaction.followup.send(f"AI генерация `{pending_id}` (тип: {record.request_type}) одобрена и успешно применена.", ephemeral=True)
+                else:
+                    # The apply_approved_generation method itself handles setting status to "application_failed" or "application_pending_logic"
+                    await interaction.followup.send(f"AI генерация `{pending_id}` (тип: {record.request_type}) одобрена, но возникла ошибка при применении контента или логика применения для данного типа еще не реализована. Проверьте статус записи (`/master review_ai {pending_id}`).", ephemeral=True)
+            else:
+                await interaction.followup.send(f"Не удалось обновить статус записи `{pending_id}` на 'approved'.", ephemeral=True)
+
+        except Exception as e:
+            logging.error(f"Error approving AI generation {pending_id}: {e}", exc_info=True)
+            await interaction.followup.send(f"Произошла ошибка при одобрении записи: {e}", ephemeral=True)
+
+    @master_group.command(name="reject_ai", description="Отклонить AI генерацию.")
+    @app_commands.describe(pending_id="ID записи для отклонения.", reason="Причина отклонения (необязательно).")
+    @is_master_role()
+    async def cmd_master_reject_ai(self, interaction: Interaction, pending_id: str, reason: Optional[str] = None):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild_id_str = str(interaction.guild_id)
+        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
+
+        if not game_mngr or not game_mngr.db_service:
+            await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
+            return
+
+        try:
+            record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
+                PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
+            )
+            if not record:
+                await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
+                return
+
+            if record.status not in ["pending_moderation", "failed_validation"]:
+                await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть отклонена сейчас.", ephemeral=True)
+                return
+
+            updates: Dict[str, Any] = {
+                "status": "rejected",
+                "moderated_by_user_id": str(interaction.user.id),
+                "moderated_at": datetime.datetime.utcnow()
+            }
+            if reason:
+                # Store reason in a simple way, assuming 'en' or guild's main lang.
+                # A more complex system might use player's selected lang for notes.
+                main_lang = await game_mngr.get_rule(guild_id_str, "default_language", "en") or "en"
+                updates["moderator_notes_i18n"] = record.moderator_notes_i18n or {} # Ensure dict exists
+                updates["moderator_notes_i18n"]["rejection_reason"] = {main_lang: reason}
+
+
+            success = await game_mngr.db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
+
+            if success:
+                logging.info(f"AI Generation {pending_id} rejected by {interaction.user.id}. Reason: {reason or 'N/A'}")
+                await interaction.followup.send(f"AI генерация `{pending_id}` (тип: {record.request_type}) отклонена.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"Не удалось обновить статус записи `{pending_id}`.", ephemeral=True)
+
+        except Exception as e:
+            logging.error(f"Error rejecting AI generation {pending_id}: {e}", exc_info=True)
+            await interaction.followup.send(f"Произошла ошибка при отклонении записи: {e}", ephemeral=True)
+
+    @master_group.command(name="edit_ai", description="Редактировать JSON данные ожидающей AI-генерации и повторно валидировать.")
+    @app_commands.describe(
+        pending_id="ID записи для редактирования.",
+        json_data="Новые JSON данные для поля 'parsed_data_json'."
+    )
+    @is_master_role()
+    async def cmd_master_edit_ai(self, interaction: Interaction, pending_id: str, json_data: str):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild_id_str = str(interaction.guild_id)
+        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
+
+        if not game_mngr or not game_mngr.db_service:
+            await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
+            return
+
+        try:
+            record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
+                PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
+            )
+            if not record:
+                await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
+                return
+
+            if record.status not in ["pending_moderation", "failed_validation"]:
+                await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть отредактирована.", ephemeral=True)
+                return
+
+            new_parsed_data: Optional[Dict[str, Any]] = None
+            try:
+                new_parsed_data = json.loads(json_data)
+            except json.JSONDecodeError as e:
+                await interaction.followup.send(f"Предоставленные JSON данные некорректны: {e}", ephemeral=True)
+                return
+
+            if not isinstance(new_parsed_data, dict) and not (record.request_type in ["list_of_quests", "list_of_npcs", "list_of_items"] and isinstance(new_parsed_data, list)):
+                 await interaction.followup.send(f"Отредактированные JSON данные должны быть объектом (или списком для типов list_*). Получен: {type(new_parsed_data).__name__}", ephemeral=True)
+                 return
+
+
+            # Re-validate the edited data (which is now passed as raw string to the validator)
+            # The validator will parse it again.
+            validated_data_after_edit, validation_issues_after_edit = await parse_and_validate_ai_response(
+                raw_ai_output_text=json_data, # Pass the new string data
+                guild_id=guild_id_str,
+                request_type=record.request_type,
+                game_manager=game_mngr
+            )
+
+            updates: Dict[str, Any] = {
+                "parsed_data_json": validated_data_after_edit, # This will be the model_dump or the parsed input if pydantic failed
+                "validation_issues_json": validation_issues_after_edit,
+                "status": "pending_moderation" if not validation_issues_after_edit else "failed_validation",
+                "moderated_by_user_id": str(interaction.user.id), # Mark as edited by this user
+                "moderated_at": datetime.datetime.utcnow()
+            }
+
+            # Add/update edit history in moderator_notes_i18n
+            notes = record.moderator_notes_i18n or {}
+            if not isinstance(notes, dict): notes = {} # Ensure notes is a dict
+            edit_history = notes.setdefault("edit_history", [])
+            if not isinstance(edit_history, list): edit_history = [] # Ensure edit_history is a list
+
+            edit_history.append({
+                "timestamp": datetime.datetime.utcnow().isoformat(),
+                "editor_id": str(interaction.user.id),
+                "action": "edited_data",
+                "previous_status": record.status,
+                "new_status": updates["status"]
+            })
+            notes["edit_history"] = edit_history
+            updates["moderator_notes_i18n"] = notes
+
+            success = await game_mngr.db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
+
+            if success:
+                msg = f"Данные для ID `{pending_id}` обновлены. Новый статус: {updates['status']}."
+                if validation_issues_after_edit:
+                    issues_summary = "; ".join([f"{issue['loc']}: {issue['msg']}" for issue in validation_issues_after_edit[:3]])
+                    msg += f"\nОбнаружены следующие проблемы валидации (показаны первые 3): {issues_summary}"
+                    if len(validation_issues_after_edit) > 3:
+                        msg += "..."
+                logging.info(f"AI Generation {pending_id} edited by {interaction.user.id}. New status: {updates['status']}.")
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.followup.send(f"Не удалось обновить запись `{pending_id}` в базе данных.", ephemeral=True)
+
+        except Exception as e:
+            logging.error(f"Error editing AI generation {pending_id}: {e}", exc_info=True)
+            await interaction.followup.send(f"Произошла ошибка при редактировании записи: {e}", ephemeral=True)
 
