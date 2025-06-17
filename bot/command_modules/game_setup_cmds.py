@@ -13,6 +13,10 @@ from bot.game.managers.character_manager import CharacterAlreadyExistsError
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot  # For type hinting self.bot
     from bot.game.managers.game_manager import GameManager
+    from bot.database.models import Player, Location # Added
+    from bot.services.db_service import DBService # Added
+    from bot.game.managers.location_manager import LocationManager # Added
+    import uuid # Added
 
 # Helper functions - will become methods or static methods in the Cog
 # These functions are used by commands in this Cog.
@@ -441,3 +445,130 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
 async def setup(bot: commands.Bot):
     await bot.add_cog(GameSetupCog(bot))  # type: ignore
     print("GameSetupCog loaded.")
+
+    @app_commands.command(name="start", description="Начать новое приключение и создать вашего персонажа.")
+    async def cmd_start(self, interaction: Interaction):
+        logging.info(f"Command /start received from {interaction.user.name} ({interaction.user.id}) in guild {interaction.guild.id if interaction.guild else 'DM'}")
+        if not interaction.guild:
+            await interaction.response.send_message("Эту команду можно использовать только на сервере.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        game_mngr: "GameManager" = self.bot.game_manager
+        if not game_mngr:
+            logging.error(f"/start command by {interaction.user.name} ({interaction.user.id}): GameManager not found.")
+            await interaction.followup.send("Менеджер игры недоступен. Пожалуйста, попробуйте позже или свяжитесь с администратором.", ephemeral=True)
+            return
+
+        db_service: "DBService" = game_mngr.db_service
+        if not db_service:
+            logging.error(f"/start command by {interaction.user.name} ({interaction.user.id}): DBService not found.")
+            await interaction.followup.send("Сервис базы данных недоступен. Пожалуйста, попробуйте позже или свяжитесь с администратором.", ephemeral=True)
+            return
+
+        loc_mngr: "LocationManager" = game_mngr.location_manager
+        if not loc_mngr:
+            logging.error(f"/start command by {interaction.user.name} ({interaction.user.id}): LocationManager not found.")
+            await interaction.followup.send("Менеджер локаций недоступен. Пожалуйста, попробуйте позже или свяжитесь с администратором.", ephemeral=True)
+            return
+
+        guild_id_str = str(interaction.guild.id)
+        discord_id_str = str(interaction.user.id)
+
+        try:
+            # Check for existing Player
+            existing_player_data = await db_service.get_entity_by_conditions(
+                table_name='players',
+                conditions={'discord_id': discord_id_str, 'guild_id': guild_id_str},
+                model_class=Player,
+                single_entity=True
+            )
+
+            if existing_player_data:
+                logging.info(f"/start command by {discord_id_str} in guild {guild_id_str}: Player already exists.")
+                await interaction.followup.send("У вас уже есть персонаж на этом сервере!", ephemeral=True)
+                return
+
+            # Determine Starting Location
+            # Assumption: "village_square" is a known static_id for the starting location.
+            # This might need to be fetched from rules or a fixed configuration if it changes.
+            starting_location: Optional[Location] = await loc_mngr.get_location_by_static_id(guild_id_str, "village_square")
+            if not starting_location:
+                logging.error(f"/start command for guild {guild_id_str}: Starting location with static_id 'village_square' not found.")
+                await interaction.followup.send("Не удалось найти стартовую локацию. Обратитесь к администратору.", ephemeral=True)
+                return
+
+            starting_location_id = starting_location.id
+
+            # Determine Languages
+            guild_main_lang = await game_mngr.get_rule(guild_id_str, 'default_language', 'en')
+            player_selected_lang = guild_main_lang
+
+            # Prepare Player Data
+            player_name = interaction.user.display_name
+            name_i18n_dict = {'en': player_name}
+            if guild_main_lang != 'en' and guild_main_lang is not None : # Ensure guild_main_lang is not None
+                name_i18n_dict[guild_main_lang] = player_name
+
+            player_id = str(uuid.uuid4())
+
+            player_data = {
+                "id": player_id,
+                "discord_id": discord_id_str,
+                "guild_id": guild_id_str,
+                "name_i18n": name_i18n_dict,
+                "current_location_id": starting_location_id,
+                "selected_language": player_selected_lang,
+                "xp": 0,
+                "level": 1,
+                "unspent_xp": 0,
+                "gold": 10, # Starting gold, can be made a rule
+                "current_game_status": "active", # Or "new", "tutorial"
+                "is_alive": True,
+                "is_active": True,
+                "stats": {}, # e.g., {"strength": 10, "dexterity": 10, ...} - can be rules-based
+                "hp": 100.0, # Default HP, can be rules-based
+                "max_health": 100.0, # Default Max HP
+                "mp": 50, # Default MP
+                "attack": 5, # Default attack
+                "defense": 5, # Default defense
+                "race": None, # To be set later
+                "character_class": None, # To be set later
+                "collected_actions_json": {}, # Or [] if it's a list
+                "action_queue": {}, # Or []
+                "state_variables": {},
+                "status_effects": {}, # Or []
+                "skills_data_json": {},
+                "abilities_data_json": {},
+                "spells_data_json": {},
+                "flags_json": {},
+                "active_quests": {}, # Or []
+                "known_spells": {}, # Or []
+                "spell_cooldowns": {},
+                "inventory": {}, # Or []
+                "effective_stats_json": {},
+                "party_id": None,
+                "current_party_id": None,
+                "current_action": None
+            }
+
+            # Create Player Entity
+            new_player = await db_service.create_entity(model_class=Player, entity_data=player_data)
+
+            if new_player:
+                logging.info(f"New player created for {discord_id_str} in guild {guild_id_str}. Player ID: {player_id}")
+                # TODO: Use i18n for this message
+                welcome_message = (
+                    f"Добро пожаловать в приключение, {player_name}!\n"
+                    f"Ваш персонаж был успешно создан. Вы начинаете в локации: {starting_location.name_i18n.get(player_selected_lang, starting_location.name_i18n.get('en', 'Неизвестная локация'))}.\n"
+                    f"Удачи!"
+                )
+                await interaction.followup.send(welcome_message, ephemeral=True)
+            else:
+                logging.error(f"Failed to create player for {discord_id_str} in guild {guild_id_str}.")
+                await interaction.followup.send("Произошла ошибка при создании вашего персонажа. Пожалуйста, попробуйте еще раз.", ephemeral=True)
+
+        except Exception as e:
+            logging.error(f"Error in /start command for {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
+            await interaction.followup.send("Произошла непредвиденная ошибка. Пожалуйста, сообщите администратору.", ephemeral=True)
