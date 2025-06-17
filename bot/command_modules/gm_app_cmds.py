@@ -2,6 +2,7 @@ import discord # Ensure discord is imported for discord.Interaction
 from discord import Interaction, app_commands
 from discord.ext import commands
 import traceback
+import logging
 from bot.command_modules.game_setup_cmds import is_master_or_admin_check
 # Removed duplicate import of is_master_or_admin_check
 import json # For parsing parameters_json
@@ -794,10 +795,6 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 if loc_evts: details.extend(["\n**События:**"]+[f"- {fmt._get_entity_name(evt.id,'event',lang)}" for evt in loc_evts])
             msg="\n".join(details); await interaction.followup.send(msg[:1950]+("..." if len(msg)>1950 else ""),ephemeral=True)
 
-async def setup(bot: commands.Bot):
-    await bot.add_cog(GMAppCog(bot)) # type: ignore
-    print("GMAppCog loaded.") # Removed duplicate load
-
     # --- New Master AI Review Commands ---
     @master_group.command(name="review_ai", description="Просмотреть ожидающие или неудачные AI генерации.")
     @app_commands.describe(pending_id="ID конкретной записи для просмотра (необязательно).")
@@ -1090,3 +1087,6 @@ async def setup(bot: commands.Bot):
             logging.error(f"Error editing AI generation {pending_id}: {e}", exc_info=True)
             await interaction.followup.send(f"Произошла ошибка при редактировании записи: {e}", ephemeral=True)
 
+async def setup(bot: commands.Bot):
+    await bot.add_cog(GMAppCog(bot)) # type: ignore
+    print("GMAppCog loaded.") # Removed duplicate load
