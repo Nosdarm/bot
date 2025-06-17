@@ -633,4 +633,61 @@ class LocationManager:
 
         return False
 
+    async def get_location_by_static_id(self, guild_id: str, static_id: str) -> Optional[Location]:
+        """
+        Retrieves a location instance by its static_id for a specific guild.
+        Checks cache first, then database.
+        """
+        guild_id_str = str(guild_id)
+        static_id_str = str(static_id)
+        logger.debug(f"LocationManager: Attempting to get location by static_id '{static_id_str}' for guild '{guild_id_str}'.")
+
+        # Check cache first
+        guild_cache = self._location_instances.get(guild_id_str, {})
+        for loc_id, loc_data_dict in guild_cache.items():
+            if isinstance(loc_data_dict, dict) and loc_data_dict.get('static_id') == static_id_str:
+                logger.info(f"LocationManager: Found location with static_id '{static_id_str}' in cache for guild '{guild_id_str}'. ID: {loc_id}")
+                try:
+                    return Location.from_dict(loc_data_dict)
+                except Exception as e:
+                    logger.error(f"LocationManager: Error converting cached data to Location object for static_id '{static_id_str}', guild '{guild_id_str}'. Error: {e}", exc_info=True)
+                    # Potentially remove or invalidate this cache entry if it's problematic
+                    return None # Or proceed to DB check
+
+        logger.debug(f"LocationManager: Location with static_id '{static_id_str}' not found in cache for guild '{guild_id_str}'. Checking database.")
+
+        # If not in cache, check database
+        if self._db_service:
+            try:
+                location_row_dict = await self._db_service.get_entity_by_conditions(
+                    table_name='locations',
+                    conditions={'guild_id': guild_id_str, 'static_id': static_id_str},
+                    model_class=Location, # Requesting model instance directly if db_service supports it
+                    single_entity=True
+                )
+
+                if location_row_dict:
+                    logger.info(f"LocationManager: Found location with static_id '{static_id_str}' in database for guild '{guild_id_str}'.")
+                    if isinstance(location_row_dict, Location): # if db_service returned a model instance
+                        # Optionally, update cache here if desired, though load_state is the primary cache population method.
+                        # self._location_instances.setdefault(guild_id_str, {})[location_row_dict.id] = location_row_dict.to_dict()
+                        return location_row_dict
+                    elif isinstance(location_row_dict, dict): # if db_service returned a dict
+                        # self._location_instances.setdefault(guild_id_str, {})[location_row_dict['id']] = location_row_dict # Cache the dict
+                        return Location.from_dict(location_row_dict)
+                    else:
+                        logger.error(f"LocationManager: DB service returned unexpected type {type(location_row_dict)} for static_id '{static_id_str}', guild '{guild_id_str}'.")
+                        return None
+                else:
+                    logger.info(f"LocationManager: Location with static_id '{static_id_str}' not found in database for guild '{guild_id_str}'.")
+                    return None
+            except Exception as e:
+                logger.error(f"LocationManager: Database error when fetching location by static_id '{static_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+                return None
+        else:
+            logger.warning("LocationManager: DBService not available. Cannot fetch location by static_id from database.")
+            return None
+
+        return None # Should be unreachable if logic is correct, but as a fallback.
+
 logger.debug("DEBUG: location_manager.py module loaded (after overwrite).")

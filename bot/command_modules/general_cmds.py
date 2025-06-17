@@ -6,7 +6,9 @@ from discord.ext import commands
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.game.managers.game_manager import GameManager
-    from bot.game.models.character import Character
+    # Character model might not be directly needed here anymore
+    # from bot.game.models.character import Character
+    from bot.database.models import Player # Import Player if type hinting the player object
 
 class GeneralCog(commands.Cog, name="General Commands"):
     def __init__(self, bot: "RPGBot"):
@@ -43,39 +45,51 @@ class GeneralCog(commands.Cog, name="General Commands"):
 
         game_mngr: "GameManager" = bot_instance.game_manager
 
-        if not game_mngr.character_manager:
-            logging.error(f"/lang command by {interaction.user.name} ({interaction.user.id}) failed: CharacterManager not found.")
-            await interaction.followup.send("Менеджер персонажей недоступен. Пожалуйста, попробуйте позже или свяжитесь с администратором.", ephemeral=True)
+        # CharacterManager check is no longer needed if we are fetching Player directly
+        # if not game_mngr.character_manager:
+        #     logging.error(f"/lang command by {interaction.user.name} ({interaction.user.id}) failed: CharacterManager not found.")
+        #     await interaction.followup.send("Менеджер персонажей недоступен. Пожалуйста, попробуйте позже или свяжитесь с администратором.", ephemeral=True)
+        #     return
+
+        if not game_mngr.db_service: # Ensure db_service is available for saving
+            logging.error(f"/lang command by {interaction.user.name} ({interaction.user.id}) failed: DBService not found in GameManager.")
+            await interaction.followup.send("Сервис базы данных недоступен. Пожалуйста, попробуйте позже или свяжитесь с администратором.", ephemeral=True)
             return
 
         try:
-            player_char: Optional["Character"] = game_mngr.character_manager.get_character_by_discord_id(
-                guild_id=str(interaction.guild_id),
-                discord_user_id=interaction.user.id
+            # Fetch the Player object
+            player: Optional["Player"] = await game_mngr.get_player_by_discord_id(
+                discord_id=str(interaction.user.id),
+                guild_id=str(interaction.guild_id)
             )
 
-            if not player_char:
-                logging.info(f"/lang command by {interaction.user.name} ({interaction.user.id}): Character not found in guild {interaction.guild_id}.")
-                await interaction.followup.send("Ваш персонаж не найден. Пожалуйста, создайте персонажа, например, командой /start_new_character.", ephemeral=True)
+            if not player:
+                logging.info(f"/lang command by {interaction.user.name} ({interaction.user.id}): Player profile not found in guild {interaction.guild_id}.")
+                await interaction.followup.send("Ваш профиль игрока не найден. Пожалуйста, создайте его сначала (например, используя /start или команду создания персонажа).", ephemeral=True)
                 return
 
-            success = await game_mngr.character_manager.save_character_field(
-                guild_id=str(interaction.guild_id),
-                character_id=player_char.id,
+            # Update Player.selected_language
+            # The player object from get_player_by_discord_id might be a SQLAlchemy model instance or a Pydantic model.
+            # If it's a SQLAlchemy model from a session, direct assignment and session commit (handled by update_player_field) is one way.
+            # update_player_field abstracts the direct DB interaction.
+
+            success = await game_mngr.db_service.update_player_field(
+                player_id=player.id, # Assumes player.id is the PK of the Player model
                 field_name='selected_language',
-                value=language_code
+                value=language_code,
+                guild_id_str=str(interaction.guild_id) # Pass guild_id_str if required by update_player_field
             )
 
             if success:
-                if hasattr(player_char, 'selected_language'):
-                    player_char.selected_language = language_code
+                # Optionally update the language on the fetched player object in memory if it's used further
+                # player.selected_language = language_code
 
                 language_map = {"ru": "Русский", "en": "English"}
                 user_friendly_language = language_map.get(language_code, language_code)
-                logging.info(f"/lang command executed by {interaction.user.name} ({interaction.user.id}), set language to {language_code} for character {player_char.id}.")
+                logging.info(f"/lang command executed by {interaction.user.name} ({interaction.user.id}), set language to {language_code} for player {player.id}.")
                 await interaction.followup.send(f"Ваш язык успешно изменен на {user_friendly_language}.", ephemeral=True)
             else:
-                logging.error(f"/lang command by {interaction.user.name} ({interaction.user.id}) for character {player_char.id}: Failed to save language {language_code} to DB.")
+                logging.error(f"/lang command by {interaction.user.name} ({interaction.user.id}) for player {player.id}: Failed to save language {language_code} to DB.")
                 await interaction.followup.send("Не удалось сохранить ваш выбор языка. Попробуйте снова или свяжитесь с администратором.", ephemeral=True)
 
         except Exception as e:

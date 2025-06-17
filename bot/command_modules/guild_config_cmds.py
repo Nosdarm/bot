@@ -27,19 +27,21 @@ class GuildConfigCmds(commands.Cog):
 
     async def _update_guild_channel_config(self, interaction: Interaction, channel_type: str, channel: TextChannel) -> None:
         """Helper function to update a specific channel type in GuildConfig."""
-        guild_id = str(interaction.guild_id)
-        if not guild_id:
+        guild_id_str = str(interaction.guild_id)
+        if not guild_id_str:
             await interaction.response.send_message("Error: This command can only be used in a server.", ephemeral=True)
             return
 
         async with self.db_service.get_session() as session:
             try:
-                guild_config = await session.get(GuildConfig, {"guild_id": guild_id}) # Assuming guild_id is PK for get
-                # If GuildConfig's PK is 'id' (UUID), we need to fetch by 'guild_id' (Discord ID)
-                # Let's assume a method to get by guild_id or query directly
+                # GuildConfig's PK is guild_id (String), so pass guild_id_str directly to session.get
+                guild_config = await session.get(GuildConfig, guild_id_str)
+
                 if not guild_config:
-                    # Try querying if get by PK didn't work as expected or if PK is 'id'
-                    stmt = discord.Select(GuildConfig).where(GuildConfig.guild_id == guild_id)
+                    # This might happen if the guild was never initialized properly.
+                    # Attempt a select as a fallback, though guild_initializer should prevent this.
+                    logger.warning(f"GuildConfig not found with session.get for guild {guild_id_str}. Attempting select.")
+                    stmt = select(GuildConfig).where(GuildConfig.guild_id == guild_id_str)
                     result = await session.execute(stmt)
                     guild_config = result.scalars().first()
 
@@ -58,10 +60,10 @@ class GuildConfigCmds(commands.Cog):
                     f"{channel_type.replace('_', ' ').capitalize()} has been set to {channel.mention}.",
                     ephemeral=True
                 )
-                logger.info(f"{channel_type} set to {channel.id} for guild {guild_id} by {interaction.user.id}.")
+                logger.info(f"{channel_type} set to {channel.id} for guild {guild_id_str} by {interaction.user.id}.")
 
             except Exception as e:
-                logger.error(f"Error updating {channel_type} for guild {guild_id}: {e}", exc_info=True)
+                logger.error(f"Error updating {channel_type} for guild {guild_id_str}: {e}", exc_info=True)
                 await interaction.response.send_message(
                     f"An error occurred while setting the {channel_type.replace('_', ' ')}.",
                     ephemeral=True
@@ -81,12 +83,12 @@ class GuildConfigCmds(commands.Cog):
         """Sets the master channel for the guild."""
         await self._update_guild_channel_config(interaction, "master_channel_id", channel)
 
-    @app_commands.command(name="set_system_notifications_channel", description="Sets the channel for important system notifications.")
+    @app_commands.command(name="set_system_channel", description="Sets the channel for important system notifications and events.")
     @app_commands.describe(channel="The text channel for system notifications.")
     @is_master_role() # Apply decorator
-    async def set_system_notifications_channel(self, interaction: Interaction, channel: TextChannel):
-        """Sets the system notifications channel for the guild."""
-        await self._update_guild_channel_config(interaction, "system_notifications_channel_id", channel)
+    async def set_system_channel(self, interaction: Interaction, channel: TextChannel):
+        """Sets the system notifications/events channel for the guild."""
+        await self._update_guild_channel_config(interaction, "system_channel_id", channel)
 
     @app_commands.command(name="set_bot_language", description="Sets the default language for the bot in this server.")
     @app_commands.describe(language="Choose the default language for the bot.")
