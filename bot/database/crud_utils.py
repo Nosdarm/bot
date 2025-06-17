@@ -61,35 +61,50 @@ async def create_entity(
     db_session: AsyncSession,
     model_class: Type[ModelType],
     data: Dict[str, Any],
-    guild_id: str
+    guild_id: Optional[str] = None  # Made optional
 ) -> Optional[ModelType]:
     """
     Creates a new entity with guild_id awareness.
-    `guild_id` is automatically added to `data` if not present.
+    Uses session.info["current_guild_id"] if available and guild_id param/data is not set.
+    Verifies guild_id consistency if multiple sources provide it.
     """
-    logger.debug(f"Creating entity for model {model_class.__name__} in guild {guild_id} with data: {data}")
+    session_guild_id = db_session.info.get("current_guild_id")
+    final_guild_id: Optional[str] = None
 
-    # Ensure guild_id is part of the data for creation
-    if 'guild_id' not in data and hasattr(model_class, 'guild_id'):
-        data['guild_id'] = guild_id
-    elif hasattr(model_class, 'guild_id') and str(data.get('guild_id')) != str(guild_id):
-        logger.error(f"Data guild_id {data.get('guild_id')} does not match provided guild_id {guild_id} for {model_class.__name__}.")
-        raise ValueError("guild_id in data conflicts with the guild_id parameter.")
+    if guild_id is not None: # Explicit parameter takes precedence
+        final_guild_id = str(guild_id)
+        if session_guild_id and final_guild_id != str(session_guild_id):
+            logger.error(f"Explicit guild_id '{final_guild_id}' conflicts with session's current_guild_id '{session_guild_id}' for {model_class.__name__}.")
+            raise ValueError("Explicit guild_id conflicts with session's current_guild_id.")
+    elif 'guild_id' in data: # guild_id from data
+        final_guild_id = str(data['guild_id'])
+        if session_guild_id and final_guild_id != str(session_guild_id):
+            logger.error(f"Data guild_id '{final_guild_id}' conflicts with session's current_guild_id '{session_guild_id}' for {model_class.__name__}.")
+            raise ValueError("Data guild_id conflicts with session's current_guild_id.")
+    elif session_guild_id: # guild_id from session.info
+        final_guild_id = str(session_guild_id)
+        logger.debug(f"Using guild_id '{final_guild_id}' from session.info for new {model_class.__name__}.")
+
+    if final_guild_id is None and hasattr(model_class, 'guild_id'):
+        logger.error(f"guild_id not provided and not found in session.info for guild-aware model {model_class.__name__}.")
+        raise ValueError(f"guild_id must be provided for guild-aware model {model_class.__name__}.")
+
+    if hasattr(model_class, 'guild_id'):
+        data['guild_id'] = final_guild_id # Set or overwrite data['guild_id'] with the verified one
+
+    logger.debug(f"Creating entity for model {model_class.__name__} in guild {final_guild_id or 'N/A'} with data: {data}")
 
     try:
         entity = model_class(**data)
         db_session.add(entity)
         await db_session.flush()  # Flush to get auto-generated IDs, if any, and to check constraints early
-        # Commit is expected to be handled by the transactional decorator or the calling context
-        logger.info(f"Successfully created entity (ID: {getattr(entity, 'id', 'N/A')}) of type {model_class.__name__} for guild {guild_id}.")
+        logger.info(f"Successfully created entity (ID: {getattr(entity, 'id', 'N/A')}) of type {model_class.__name__} for guild {final_guild_id or 'N/A'}.")
         return entity
     except IntegrityError as e:
-        # logger.error(f"Integrity error creating entity of type {model_class.__name__} for guild {guild_id}: {e}", exc_info=True)
-        # Rollback should be handled by the transactional decorator / context
-        raise # Re-raise for the transactional layer to handle rollback
+        raise
     except Exception as e:
-        logger.error(f"Unexpected error creating entity of type {model_class.__name__} for guild {guild_id}: {e}", exc_info=True)
-        raise # Re-raise
+        logger.error(f"Unexpected error creating entity of type {model_class.__name__} for guild {final_guild_id or 'N/A'}: {e}", exc_info=True)
+        raise
 
 
 async def get_entity_by_id(
@@ -101,32 +116,36 @@ async def get_entity_by_id(
 ) -> Optional[ModelType]:
     """
     Fetches a single entity by its primary key and guild_id.
+    Verifies guild_id against session.info["current_guild_id"] if present.
     """
     logger.debug(f"Fetching {model_class.__name__} by {id_field_name}: {entity_id} for guild {guild_id}")
+
+    session_guild_id = db_session.info.get("current_guild_id")
+    if session_guild_id and str(guild_id) != str(session_guild_id):
+        logger.error(f"Requested guild_id '{guild_id}' conflicts with session's current_guild_id '{session_guild_id}' for {model_class.__name__} ID {entity_id}.")
+        raise ValueError("Requested guild_id conflicts with session's current_guild_id.")
 
     if not hasattr(model_class, id_field_name):
         logger.error(f"Model {model_class.__name__} does not have an ID field named '{id_field_name}'.")
         return None
-    if not hasattr(model_class, 'guild_id'):
-        logger.error(f"Model {model_class.__name__} is not guild-aware (missing 'guild_id' attribute). Cannot perform guild-scoped get.")
-        # Or, if some models are intentionally not guild_aware but accessed via this generic util,
-        # then guild_id check could be optional. For now, assume guild-awareness.
-        return None
 
-    stmt = select(model_class).where(
-        getattr(model_class, id_field_name) == entity_id,
-        model_class.guild_id == guild_id # type: ignore
-    )
+    query_conditions = [getattr(model_class, id_field_name) == entity_id]
+    if hasattr(model_class, 'guild_id'):
+        query_conditions.append(model_class.guild_id == guild_id) # type: ignore
+    elif guild_id is not None: # guild_id provided but model doesn't have guild_id field
+        logger.warning(f"guild_id '{guild_id}' provided for model {model_class.__name__} which is not guild-aware. Ignoring guild_id in query.")
+
+    stmt = select(model_class).where(*query_conditions)
     try:
         result = await db_session.execute(stmt)
         entity = result.scalars().first()
         if entity:
-            logger.debug(f"Found {model_class.__name__} with {id_field_name} {entity_id} for guild {guild_id}.")
+            logger.debug(f"Found {model_class.__name__} with {id_field_name} {entity_id} for guild {guild_id if hasattr(model_class, 'guild_id') else 'N/A'}.")
         else:
-            logger.debug(f"{model_class.__name__} with {id_field_name} {entity_id} not found for guild {guild_id}.")
+            logger.debug(f"{model_class.__name__} with {id_field_name} {entity_id} not found for guild {guild_id if hasattr(model_class, 'guild_id') else 'N/A'}.")
         return entity
     except Exception as e:
-        logger.error(f"Error fetching {model_class.__name__} by {id_field_name} {entity_id} for guild {guild_id}: {e}", exc_info=True)
+        logger.error(f"Error fetching {model_class.__name__} by {id_field_name} {entity_id} for guild {guild_id if hasattr(model_class, 'guild_id') else 'N/A'}: {e}", exc_info=True)
         return None
 
 
@@ -141,14 +160,24 @@ async def get_entities(
 ) -> List[ModelType]:
     """
     Fetches multiple entities for a given guild_id, with optional filters, ordering, and pagination.
+    Verifies guild_id against session.info["current_guild_id"] if present.
     """
     logger.debug(f"Fetching entities of type {model_class.__name__} for guild {guild_id} with conditions: {conditions}")
 
-    if not hasattr(model_class, 'guild_id'):
-        logger.error(f"Model {model_class.__name__} is not guild-aware. Cannot perform guild-scoped get_entities.")
-        return []
+    session_guild_id = db_session.info.get("current_guild_id")
+    if session_guild_id and str(guild_id) != str(session_guild_id):
+        logger.error(f"Requested guild_id '{guild_id}' conflicts with session's current_guild_id '{session_guild_id}' for {model_class.__name__} listing.")
+        raise ValueError("Requested guild_id conflicts with session's current_guild_id.")
 
-    stmt = select(model_class).where(model_class.guild_id == guild_id) # type: ignore
+    query_conditions = []
+    if hasattr(model_class, 'guild_id'):
+        query_conditions.append(model_class.guild_id == guild_id) # type: ignore
+    elif guild_id is not None:
+         logger.warning(f"guild_id '{guild_id}' provided for model {model_class.__name__} which is not guild-aware. Ignoring guild_id in query main condition.")
+
+    stmt = select(model_class)
+    if query_conditions: # Apply guild_id condition if model is guild_aware
+        stmt = stmt.where(*query_conditions)
 
     if conditions:
         for condition in conditions:
@@ -167,10 +196,10 @@ async def get_entities(
     try:
         result = await db_session.execute(stmt)
         entities = result.scalars().all()
-        logger.debug(f"Found {len(entities)} entities of type {model_class.__name__} for guild {guild_id}.")
+        logger.debug(f"Found {len(entities)} entities of type {model_class.__name__} for guild {guild_id if hasattr(model_class, 'guild_id') else 'N/A'}.")
         return list(entities)
     except Exception as e:
-        logger.error(f"Error fetching entities of type {model_class.__name__} for guild {guild_id}: {e}", exc_info=True)
+        logger.error(f"Error fetching entities of type {model_class.__name__} for guild {guild_id if hasattr(model_class, 'guild_id') else 'N/A'}: {e}", exc_info=True)
         return []
 
 
@@ -178,107 +207,123 @@ async def update_entity(
     db_session: AsyncSession,
     entity_instance: ModelType,
     data: Dict[str, Any],
-    guild_id: str # For verification
+    guild_id: str # For verification against entity's actual guild_id
 ) -> Optional[ModelType]:
     """
-    Updates an existing entity instance with guild_id verification.
+    Updates an existing entity instance. Verifies against entity's guild_id and session.info.
     """
-    if not hasattr(entity_instance, 'guild_id'):
-        logger.error(f"Entity of type {type(entity_instance).__name__} is not guild-aware. Update aborted.")
-        # Consider raising an error or returning None based on desired strictness
-        return None
+    entity_actual_guild_id = str(getattr(entity_instance, 'guild_id', None)) if hasattr(entity_instance, 'guild_id') else None
 
-    if str(getattr(entity_instance, 'guild_id')) != str(guild_id):
-        logger.error(
-            f"Attempt to update entity for guild {getattr(entity_instance, 'guild_id')} "
-            f"with conflicting guild_id parameter {guild_id}. Update aborted for entity ID {getattr(entity_instance, 'id', 'N/A')}."
-        )
-        # This is a critical error, should probably raise an exception
-        raise ValueError(f"Guild ID mismatch: Entity belongs to guild {getattr(entity_instance, 'guild_id')}, operation specified for guild {guild_id}.")
+    if entity_actual_guild_id is None and hasattr(entity_instance, 'guild_id'):
+        logger.error(f"Entity {type(entity_instance).__name__} ID {getattr(entity_instance, 'id', 'N/A')} has None for guild_id. Update aborted.")
+        raise ValueError("Entity to be updated has a None guild_id.")
 
-    logger.debug(f"Updating entity (ID: {getattr(entity_instance, 'id', 'N/A')}) of type {type(entity_instance).__name__} in guild {guild_id} with data: {data}")
+    if entity_actual_guild_id and entity_actual_guild_id != str(guild_id):
+        logger.error(f"Attempt to update entity for guild {entity_actual_guild_id} with conflicting verification guild_id parameter {guild_id}.")
+        raise ValueError(f"Verification guild_id mismatch: Entity belongs to {entity_actual_guild_id}, operation specified for {guild_id}.")
+
+    session_guild_id = db_session.info.get("current_guild_id")
+    if session_guild_id and entity_actual_guild_id and str(entity_actual_guild_id) != str(session_guild_id):
+        logger.error(f"Entity's guild_id '{entity_actual_guild_id}' conflicts with session's current_guild_id '{session_guild_id}'.")
+        raise ValueError("Entity's guild_id conflicts with session's current_guild_id.")
+
+    # If model is not guild-aware, session_guild_id check is not strictly necessary unless we enforce all ops are guild-scoped
+    if not hasattr(entity_instance, 'guild_id') and session_guild_id:
+        logger.warning(f"Updating non-guild-aware entity {type(entity_instance).__name__} within guild-scoped transaction {session_guild_id}.")
+
+
+    logger.debug(f"Updating entity (ID: {getattr(entity_instance, 'id', 'N/A')}) of type {type(entity_instance).__name__} in guild {entity_actual_guild_id or 'N/A'} with data: {data}")
     try:
         for key, value in data.items():
-            if key == 'guild_id' and str(value) != str(guild_id): # Prevent changing guild_id via update data
-                logger.warning(f"Attempt to change 'guild_id' during update of {type(entity_instance).__name__} was ignored.")
+            if hasattr(entity_instance, 'guild_id') and key == 'guild_id' and str(value) != entity_actual_guild_id:
+                logger.warning(f"Attempt to change 'guild_id' during update of {type(entity_instance).__name__} was ignored. Current: {entity_actual_guild_id}, Attempted: {value}")
                 continue
             setattr(entity_instance, key, value)
 
-        db_session.add(entity_instance) # Add to session, it's now dirty
-        await db_session.flush() # Flush to check constraints early
-        # Commit is expected to be handled by the transactional decorator or the calling context
-        logger.info(f"Successfully updated entity (ID: {getattr(entity_instance, 'id', 'N/A')}) of type {type(entity_instance).__name__} for guild {guild_id}.")
+        db_session.add(entity_instance)
+        await db_session.flush()
+        logger.info(f"Successfully updated entity (ID: {getattr(entity_instance, 'id', 'N/A')}) of type {type(entity_instance).__name__} for guild {entity_actual_guild_id or 'N/A'}.")
         return entity_instance
     except IntegrityError as e:
-        # logger.error(f"Integrity error updating entity of type {type(entity_instance).__name__}: {e}", exc_info=True)
-        raise # Re-raise for the transactional layer to handle rollback
+        raise
     except Exception as e:
         logger.error(f"Unexpected error updating entity of type {type(entity_instance).__name__}: {e}", exc_info=True)
-        raise # Re-raise
+        raise
 
 
 async def delete_entity(
     db_session: AsyncSession,
     entity_instance: ModelType,
-    guild_id: str # For verification
+    guild_id: str # For verification against entity's actual guild_id
 ) -> bool:
     """
-    Deletes an existing entity instance with guild_id verification.
+    Deletes an existing entity instance. Verifies against entity's guild_id and session.info.
     """
-    if not hasattr(entity_instance, 'guild_id'):
-        logger.error(f"Entity of type {type(entity_instance).__name__} is not guild-aware. Delete aborted.")
-        return False
+    entity_actual_guild_id = str(getattr(entity_instance, 'guild_id', None)) if hasattr(entity_instance, 'guild_id') else None
 
-    if str(getattr(entity_instance, 'guild_id')) != str(guild_id):
-        logger.error(
-            f"Attempt to delete entity for guild {getattr(entity_instance, 'guild_id')} "
-            f"with conflicting guild_id parameter {guild_id}. Delete aborted for entity ID {getattr(entity_instance, 'id', 'N/A')}."
-        )
-        raise ValueError(f"Guild ID mismatch: Entity belongs to guild {getattr(entity_instance, 'guild_id')}, delete operation specified for guild {guild_id}.")
+    if entity_actual_guild_id is None and hasattr(entity_instance, 'guild_id'):
+        logger.error(f"Entity {type(entity_instance).__name__} ID {getattr(entity_instance, 'id', 'N/A')} has None for guild_id. Delete aborted.")
+        raise ValueError("Entity to be deleted has a None guild_id.")
 
-    logger.debug(f"Deleting entity (ID: {getattr(entity_instance, 'id', 'N/A')}) of type {type(entity_instance).__name__} from guild {guild_id}")
+    if entity_actual_guild_id and entity_actual_guild_id != str(guild_id):
+        logger.error(f"Attempt to delete entity for guild {entity_actual_guild_id} with conflicting verification guild_id {guild_id}.")
+        raise ValueError(f"Verification guild_id mismatch for delete: Entity is in {entity_actual_guild_id}, operation for {guild_id}.")
+
+    session_guild_id = db_session.info.get("current_guild_id")
+    if session_guild_id and entity_actual_guild_id and str(entity_actual_guild_id) != str(session_guild_id):
+        logger.error(f"Entity's guild_id '{entity_actual_guild_id}' for delete conflicts with session's current_guild_id '{session_guild_id}'.")
+        raise ValueError("Entity's guild_id for delete conflicts with session's current_guild_id.")
+
+    if not hasattr(entity_instance, 'guild_id') and session_guild_id:
+        logger.warning(f"Deleting non-guild-aware entity {type(entity_instance).__name__} within guild-scoped transaction {session_guild_id}.")
+
+    logger.debug(f"Deleting entity (ID: {getattr(entity_instance, 'id', 'N/A')}) of type {type(entity_instance).__name__} from guild {entity_actual_guild_id or 'N/A'}")
     try:
         await db_session.delete(entity_instance)
-        await db_session.flush() # To ensure delete operation is processed by SQLAlchemy
-        # Commit is expected to be handled by the transactional decorator or the calling context
-        logger.info(f"Successfully deleted entity (ID: {getattr(entity_instance, 'id', 'N/A')}) of type {type(entity_instance).__name__} from guild {guild_id}.")
+        await db_session.flush()
+        logger.info(f"Successfully deleted entity (ID: {getattr(entity_instance, 'id', 'N/A')}) of type {type(entity_instance).__name__} from guild {entity_actual_guild_id or 'N/A'}.")
         return True
     except Exception as e:
         logger.error(f"Error deleting entity (ID: {getattr(entity_instance, 'id', 'N/A')}) of type {type(entity_instance).__name__}: {e}", exc_info=True)
-        # Rollback should be handled by the transactional decorator / context
-        raise # Re-raise
+        raise
 
 
 async def get_entity_by_attributes(
     db_session: AsyncSession,
     model_class: Type[ModelType],
     attributes: Dict[str, Any],
-    guild_id: str
+    guild_id: str # Mandatory for query construction for guild-aware models
 ) -> Optional[ModelType]:
     """
     Fetches a single entity based on a dictionary of attributes and guild_id.
+    Verifies guild_id against session.info["current_guild_id"] if present.
     """
     logger.debug(f"Fetching {model_class.__name__} by attributes {attributes} for guild {guild_id}")
 
-    if not hasattr(model_class, 'guild_id'):
-        logger.error(f"Model {model_class.__name__} is not guild-aware. Cannot perform guild-scoped get_entity_by_attributes.")
-        return None
+    session_guild_id = db_session.info.get("current_guild_id")
+    if session_guild_id and str(guild_id) != str(session_guild_id):
+        logger.error(f"Requested guild_id '{guild_id}' conflicts with session's current_guild_id '{session_guild_id}' for {model_class.__name__} attribute search.")
+        raise ValueError("Requested guild_id conflicts with session's current_guild_id for attribute search.")
 
-    conditions = [(getattr(model_class, k) == v) for k, v in attributes.items()]
-    conditions.append(model_class.guild_id == guild_id) # type: ignore
+    query_conditions = [(getattr(model_class, k) == v) for k, v in attributes.items()]
 
-    stmt = select(model_class).where(*conditions)
+    if hasattr(model_class, 'guild_id'):
+        query_conditions.append(model_class.guild_id == guild_id) # type: ignore
+    elif guild_id is not None: # Model not guild_aware but guild_id was passed
+        logger.warning(f"guild_id '{guild_id}' provided for model {model_class.__name__} which is not guild-aware. Ignoring guild_id in query conditions.")
+
+    stmt = select(model_class).where(*query_conditions)
 
     try:
         result = await db_session.execute(stmt)
         entity = result.scalars().first()
         if entity:
-            logger.debug(f"Found {model_class.__name__} with attributes {attributes} for guild {guild_id}.")
+            logger.debug(f"Found {model_class.__name__} with attributes {attributes} for guild {guild_id if hasattr(model_class, 'guild_id') else 'N/A'}.")
         else:
-            logger.debug(f"{model_class.__name__} with attributes {attributes} not found for guild {guild_id}.")
+            logger.debug(f"{model_class.__name__} with attributes {attributes} not found for guild {guild_id if hasattr(model_class, 'guild_id') else 'N/A'}.")
         return entity
     except Exception as e:
-        logger.error(f"Error fetching {model_class.__name__} by attributes for guild {guild_id}: {e}", exc_info=True)
+        logger.error(f"Error fetching {model_class.__name__} by attributes for guild {guild_id if hasattr(model_class, 'guild_id') else 'N/A'}: {e}", exc_info=True)
         return None
 
 # Example of an async context manager for transactions (alternative to decorator)
