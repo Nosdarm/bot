@@ -35,8 +35,8 @@ class PromptContextCollector:
         ability_manager: 'AbilityManager',
         spell_manager: 'SpellManager',
         event_manager: 'EventManager',
-        party_manager: Optional['PartyManager'] = None, # Added
-        db_service: 'DBService' # ADDED
+        db_service: 'DBService', # ADDED
+        party_manager: Optional['PartyManager'] = None # Added
         # Potentially lore_data if loaded separately, or handled via location_manager/settings
     ):
         self.settings = settings

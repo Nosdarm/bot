@@ -10,6 +10,9 @@ from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awai
 
 # Use NPC from database.models if that's what calculate_effective_stats expects
 from bot.database.models import NPC # Changed from bot.game.models.npc
+from bot.database.models import GeneratedNpc as DBGeneratedNpc
+from bot.database.models import Location as DBLocation
+from sqlalchemy.orm.attributes import flag_modified
 from bot.game.utils import stats_calculator # Added
 import json # Already present, ensure it is used if needed by new methods
 

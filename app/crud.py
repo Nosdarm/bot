@@ -1,10 +1,10 @@
 from sqlalchemy.orm import Session
-from typing import Type
+from typing import Any, Type
 from app.db import Base  # Base is defined in db.py
 from app.models import Player, GuildConfig # Specific models
 # SessionLocal is not directly used here, but imported in db.py for transactional_session
 
-def get_entity_by_id(db: Session, model: Type[Base], entity_id: int, guild_id: int | None = None):
+def get_entity_by_id(db: Session, model: Type[Any], entity_id: int, guild_id: int | None = None):
     """
     Fetches an entity by its primary key (id).
     If guild_id is provided and the model has a 'guild_id' attribute,
@@ -17,7 +17,7 @@ def get_entity_by_id(db: Session, model: Type[Base], entity_id: int, guild_id: i
             query = query.filter(model.guild_id == guild_id)
     return query.first()
 
-def create_entity(db: Session, model: Type[Base], data: dict, guild_id: int | None = None):
+def create_entity(db: Session, model: Type[Any], data: dict, guild_id: int | None = None):
     """
     Creates a new entity.
     If guild_id is provided and the model has a 'guild_id' attribute,
@@ -42,7 +42,7 @@ def create_entity(db: Session, model: Type[Base], data: dict, guild_id: int | No
     # db.refresh(db_entity) # Refresh is handled by transactional_session
     return db_entity
 
-def update_entity(db: Session, db_entity: Base, data: dict):
+def update_entity(db: Session, db_entity: Any, data: dict):
     """
     Updates an existing entity.
     It's assumed db_entity is already correctly scoped for guild_id if necessary.
@@ -57,7 +57,7 @@ def update_entity(db: Session, db_entity: Base, data: dict):
     # db.refresh(db_entity) # Refresh is handled by transactional_session
     return db_entity
 
-def delete_entity(db: Session, db_entity: Base):
+def delete_entity(db: Session, db_entity: Any):
     """
     Deletes an entity.
     Commit should be handled by the calling transactional context.
