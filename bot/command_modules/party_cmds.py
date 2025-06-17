@@ -2,7 +2,7 @@ import discord
 import traceback
 from discord import app_commands, Interaction
 from discord.ext import commands
-from typing import Optional, TYPE_CHECKING, cast
+from typing import Optional, TYPE_CHECKING, cast, List
 
 # Direct import for isinstance check in setup
 from bot.bot_core import RPGBot

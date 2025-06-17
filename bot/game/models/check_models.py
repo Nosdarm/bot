@@ -1,47 +1,74 @@
-from enum import Enum
-from dataclasses import dataclass, field # Added field import
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any, List # Ensure List is imported if any field uses it
+from pydantic import BaseModel
 
-class CheckOutcome(Enum):
-    CRITICAL_SUCCESS = "critical_success"  # Actor achieved critical success
-    SUCCESS = "success"  # Actor succeeded
-    FAILURE = "failure"  # Actor failed
-    CRITICAL_FAILURE = "critical_failure"  # Actor critically failed
+class CheckResult(BaseModel):
+    """
+    Represents the outcome of a dice roll check (e.g., skill check, attack roll).
+    """
+    succeeded: bool
+    roll_value: int  # The raw value from the die (e.g., from 1d20)
+    modifier_applied: int  # The sum of all modifiers applied to the roll
+    total_roll_value: int  # roll_value + modifier_applied
 
-    # Specific outcomes for opposed checks, can be used to clarify
-    # Alternatively, is_success = True/False and actor_crit_status/target_crit_status can convey this
-    ACTOR_WINS_OPPOSED = "actor_wins_opposed"
-    TARGET_WINS_OPPOSED = "target_wins_opposed"
-    TIE_OPPOSED = "tie_opposed"
+    dc_value: Optional[int] = None  # The difficulty class if it was a check against a DC
+    opposed_roll_value: Optional[int] = None # The result of an opponent's roll if it was an opposed check
 
-@dataclass
-class DetailedCheckResult:
-    check_type: str
-    entity_doing_check_id: str # Actor
-    target_entity_id: Optional[str] # Target of the check (can be an entity or an object/DC)
+    description: str  # A human-readable summary of the check and its outcome
+                      # e.g., "Stealth Check: 12 (roll) + 3 (mod) = 15 vs DC 18 -> Failure"
+                      # e.g., "Attack Roll: 18 (roll) + 7 (mod) = 25 vs AC 20 -> Success"
 
-    # For DC-based checks
-    difficulty_dc: Optional[int] = None
+    # Structured details for logging or more detailed feedback
+    # Example: {"base_stat_name": "dexterity", "base_stat_value": 16, "base_modifier": 3,
+    #           "bonuses": {"item_boots_of_elvenkind": 2, "status_blessed": 1}, "penalties": {},
+    #           "final_modifier_calc": "3 (base) + 2 (item) + 1 (status) = 6"}
+    # For this task, an empty dict is fine as a default or if details are simple.
+    # The CheckResolver will be responsible for populating this.
+    details_log: Dict[str, Any] = {}
 
-    # Actor's roll details (entity_doing_check)
-    actor_roll_formula: str = "1d20"
-    actor_rolls: List[int] = field(default_factory=list)
-    actor_modifier_applied: int = 0
-    actor_modifier_details: List[Dict[str, Any]] = field(default_factory=list)
-    actor_total_roll_value: int = 0
-    actor_crit_status: Optional[str] = None # e.g., "critical_success", "critical_failure", None
+    # Optional: Could add individual_rolls if it's useful to store them here too
+    # individual_dice_rolls: Optional[List[int]] = None
 
-    # Target's roll details (for opposed checks)
-    target_roll_formula: Optional[str] = None
-    target_rolls: Optional[List[int]] = field(default_factory=list) # Use default_factory for mutable types
-    target_modifier_applied: Optional[int] = None
-    target_modifier_details: Optional[List[Dict[str, Any]]] = field(default_factory=list) # Use default_factory
-    target_total_roll_value: Optional[int] = None
-    target_crit_status: Optional[str] = None # e.g., "critical_success", "critical_failure", None
+    class Config:
+        # Pydantic V2 Config
+        # extra = 'forbid' # Or 'ignore' if you want to be less strict about extra fields from an internal dict
 
-    # Overall outcome
-    outcome: CheckOutcome = CheckOutcome.FAILURE # Default outcome
-    is_success: bool = False # From the perspective of the actor (entity_doing_check)
-    is_critical: bool = False # Was there any critical effect in the check (either actor or target if applicable)?
+        # Pydantic V1 Config (if project uses V1)
+        # anystr_strip_whitespace = True
+        pass
 
-    description: str = "Check result pending."
+if __name__ == '__main__':
+    # Example Usage:
+    # Success against DC
+    success_dc = CheckResult(
+        succeeded=True,
+        roll_value=15,
+        modifier_applied=2,
+        total_roll_value=17,
+        dc_value=15,
+        description="Strength Check: 15 (roll) + 2 (mod) = 17 vs DC 15 -> Success",
+        details_log={"base_stat": "strength", "modifier_sources": ["base_str_mod"]}
+    )
+    print("Success DC Check:", success_dc.model_dump_json(indent=2))
+
+    # Failure against DC
+    failure_dc = CheckResult(
+        succeeded=False,
+        roll_value=8,
+        modifier_applied=1,
+        total_roll_value=9,
+        dc_value=12,
+        description="Dexterity Check: 8 (roll) + 1 (mod) = 9 vs DC 12 -> Failure"
+    )
+    print("\nFailure DC Check:", failure_dc.model_dump_json(indent=2))
+
+    # Opposed check example (assuming success)
+    opposed_success = CheckResult(
+        succeeded=True,
+        roll_value=16,
+        modifier_applied=4,
+        total_roll_value=20,
+        opposed_roll_value=18,
+        description="Grapple Check: 16 (roll) + 4 (mod) = 20 vs Opponent's 18 -> Success",
+        details_log={"skill": "athletics"}
+    )
+    print("\nOpposed Success Check:", opposed_success.model_dump_json(indent=2))

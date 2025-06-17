@@ -7,7 +7,8 @@ import asyncio
 import logging # Added
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union
 
-from bot.game.models.status_effect import StatusEffect
+from bot.game.models.status_effect import StatusEffect # Pydantic model
+from bot.database.models import Status as SQLAlchemyStatus # SQLAlchemy model
 from bot.services.db_service import DBService
 from bot.game.utils.stats_calculator import calculate_effective_stats
 from bot.utils.i18n_utils import get_i18n_text
@@ -213,3 +214,49 @@ class StatusManager:
         guild_id_str, status_effect_id_str = str(guild_id), str(status_effect_id)
         if guild_id_str in self._status_effects and status_effect_id_str in self._status_effects[guild_id_str]:
             self._dirty_status_effects.setdefault(guild_id_str, set()).add(status_effect_id_str)
+
+    async def get_active_statuses_for_entity(self, entity_id: str, entity_type: str, guild_id: str) -> List[SQLAlchemyStatus]:
+        """
+        Retrieves all active status effects for a given entity from the database.
+        """
+        log_prefix = f"StatusManager.get_active_statuses(guild='{guild_id}', target='{entity_type} {entity_id}'):"
+        if not self._db_service:
+            logger.error(f"{log_prefix} DBService not available.")
+            return []
+        if not self._time_manager:
+            logger.error(f"{log_prefix} TimeManager not available.")
+            return []
+
+        try:
+            current_time = self._time_manager.get_current_game_time(guild_id) # Synchronous call
+
+            all_statuses_for_entity: List[SQLAlchemyStatus] = await self._db_service.get_entities_by_conditions(
+                model_class=SQLAlchemyStatus,
+                conditions={'guild_id': guild_id, 'target_id': entity_id, 'target_type': entity_type}
+            )
+
+            if not all_statuses_for_entity:
+                logger.debug(f"{log_prefix} No statuses found in DB for entity.")
+                return []
+
+            active_statuses: List[SQLAlchemyStatus] = []
+            for status in all_statuses_for_entity:
+                if status.duration_turns is None or status.duration_turns == 0: # Permanent or condition-based
+                    active_statuses.append(status)
+                    logger.debug(f"{log_prefix} Status '{status.name}' (ID: {status.id}) is active (permanent/conditional).")
+                elif status.applied_at is not None and status.duration_turns is not None:
+                    if current_time < (status.applied_at + status.duration_turns):
+                        active_statuses.append(status)
+                        logger.debug(f"{log_prefix} Status '{status.name}' (ID: {status.id}) is active. Ends at {status.applied_at + status.duration_turns}, current time {current_time}.")
+                    else:
+                        logger.debug(f"{log_prefix} Status '{status.name}' (ID: {status.id}) has expired. Ended at {status.applied_at + status.duration_turns}, current time {current_time}.")
+                else:
+                    # If duration is not None/0, but applied_at is None, it's indeterminate; treat as inactive or log warning
+                    logger.warning(f"{log_prefix} Status '{status.name}' (ID: {status.id}) has duration but no applied_at time. Treating as inactive.")
+
+            logger.info(f"{log_prefix} Found {len(active_statuses)} active statuses out of {len(all_statuses_for_entity)} total for entity.")
+            return active_statuses
+
+        except Exception as e:
+            logger.error(f"{log_prefix} Error fetching or filtering statuses: {e}", exc_info=True)
+            return []

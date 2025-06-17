@@ -3,7 +3,7 @@ import json
 import discord
 from discord import Interaction, app_commands
 from discord.ext import commands
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Any
 
 from bot.database.models import WorldState
 from bot.database.crud_utils import get_entity_by_attributes # update_entity might not be needed if session.add() is used

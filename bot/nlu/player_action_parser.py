@@ -7,6 +7,23 @@ from spacy.matcher import PhraseMatcher # Import PhraseMatcher
 # from bot.services.nlu_data_service import NLUDataService
 from bot.game.managers.game_log_manager import GameLogManager
 
+# Standardized Intent Strings
+INTENT_MAP = {
+    "move": "INTENT_MOVE",
+    "look": "INTENT_LOOK",
+    "attack": "INTENT_ATTACK",
+    "talk": "INTENT_TALK",
+    "use_skill": "INTENT_USE_SKILL",
+    "pickup": "INTENT_PICKUP",
+    "use_item": "INTENT_USE_ITEM",
+    "search": "INTENT_SEARCH",
+    "open": "INTENT_OPEN",
+    "close": "INTENT_CLOSE",
+    "drop": "INTENT_DROP",
+    # Add other intents as they become supported (e.g., equip, unequip, craft)
+}
+INTENT_UNKNOWN = "INTENT_UNKNOWN"
+
 
 # --- SpaCy Model Loading ---
 NLP_EN = None
@@ -52,6 +69,9 @@ INTENT_KEYWORDS_EN = {
     "pickup": ["pickup", "take", "get", "collect", "grab"],
     "use_item": ["use", "apply", "consume", "equip"],
     "search": ["search", "explore", "look for", "find"],
+    "open": ["open", "unseal"],
+    "close": ["close", "seal"],
+    "drop": ["drop", "leave", "discard"],
 }
 
 INTENT_KEYWORDS_RU = {
@@ -63,58 +83,12 @@ INTENT_KEYWORDS_RU = {
     "pickup": ["подбери", "возьми", "собери", "хватай", "получи", "взять"],
     "use_item": ["используй", "примени", "съешь", "надень", "экипируй", "использовать"],
     "search": ["ищи", "обыщи", "исследуй", "найди", "поищи", "искать"],
+    "open": ["открой", "распечатай"],
+    "close": ["закрой", "запечатай"],
+    "drop": ["брось", "выброси", "оставь"],
 }
 
-# Keywords for intra-location interactions
-# Using phrases as keys, mapped to intent. Longer phrases should be ordered first if there's ambiguity.
-INTERACTION_KEYWORDS_EN = {
-    "look at": "examine_object",
-    "examine": "examine_object",
-    "inspect": "examine_object",
-    "pick up": "take_item",
-    "take": "take_item",
-    "get": "take_item", # 'get' is broad, but in "get X", X is likely an item
-    "use": "use_item", # Broad, might need context. "use X on Y" is more complex.
-    "open": "open_container",
-    "search": "search_container_or_area", # Overlaps with general search, context might be needed
-    "talk to": "initiate_dialogue",
-}
-
-INTERACTION_KEYWORDS_RU = {
-    "посмотреть на": "examine_object",
-    "осмотреть": "examine_object",
-    "исследовать": "examine_object", # Can also be general look/search
-    "подобрать": "take_item",
-    "взять": "take_item",
-    "получить": "take_item", # 'получить' is broad
-    "использовать": "use_item",
-    "открыть": "open_container",
-    "обыскать": "search_container_or_area", # Overlaps
-    "поговорить с": "initiate_dialogue",
-}
-
-
-# (Old PATTERNS_EN, PATTERNS_RU, and _find_matching_db_entity can be removed if not used by new logic)
-# For now, they are kept as they are not in the direct path of parse_player_action's SpaCy logic.
-# If they are confirmed unused after full SpaCy implementation, they can be cleaned up.
-PATTERNS_EN = {
-    "move_to_location": re.compile(r"(?:move|go|walk|head|travel)\s+(?:to\s+)?(.+)", re.IGNORECASE),
-    "move_direction": re.compile(r"(?:move|go|walk|head|travel)\s+(north|south|east|west|up|down|forward|backward|left|right)", re.IGNORECASE),
-    "attack_target": re.compile(r"(?:attack|fight|hit|strike)\s+(.+)", re.IGNORECASE),
-    # ... (other patterns can be kept or removed as needed)
-}
-PATTERNS_RU = {
-     "move_to_location": re.compile(r"(?:иди|двигайся|переместись|отправляйся)\s+(?:в\s+|на\s+)?(.+)", re.IGNORECASE),
-    # ...
-}
-def _find_matching_db_entity(text_entity_name: str, db_entities: List[Dict[str, Any]], entity_type_name: str) -> Optional[Dict[str, str]]:
-    if not db_entities: return None
-    text_entity_name_lower = text_entity_name.lower()
-    for db_entity in db_entities:
-        if db_entity['name'].lower() == text_entity_name_lower:
-            return {"type": entity_type_name, "id": db_entity['id'], "name": db_entity['name']}
-    return None
-
+# Old Regex patterns and _find_matching_db_entity are removed as SpaCy PhraseMatcher is primary.
 
 async def parse_player_action(
     text: str,
@@ -172,144 +146,136 @@ async def parse_player_action(
             "type": matched_entity_data['type'],
             "lang": matched_entity_data['lang']
         })
-    action_data['entities'] = recognized_entities
+    action_data['entities'] = recognized_entities # Keep all initially, action_verb will be filtered
 
-    # --- Old Regex/Keyword logic has been removed ---
+    # --- 2. Intent Classification ---
+    # Prioritize Action Verbs from Recognized Entities
+    verb_entities_to_remove_indices = []
+    for i, entity in enumerate(recognized_entities):
+        if entity.get('type') == 'action_verb':
+            raw_intent = entity.get('intent_context') # From NLUDataService's GameEntity
+            if raw_intent:
+                action_data['intent'] = INTENT_MAP.get(raw_intent, INTENT_UNKNOWN)
+                verb_entities_to_remove_indices.append(i)
+                # For now, use the first action_verb found. Could be extended for priority.
+                break
 
-    # --- 2. Intent Classification (Rule-Based) ---
-    lemmatized_tokens = [token.lemma_.lower() for token in doc]
-    current_general_keywords = INTENT_KEYWORDS_EN if language == "en" else INTENT_KEYWORDS_RU
-    current_interaction_keywords = INTERACTION_KEYWORDS_EN if language == "en" else INTERACTION_KEYWORDS_RU
+    # Remove action_verb entities from the final entity list
+    if verb_entities_to_remove_indices:
+        action_data['entities'] = [entity for i, entity in enumerate(recognized_entities) if i not in verb_entities_to_remove_indices]
 
-    # --- Start: New Interaction Intent Logic ---
-    # Prioritize longer, more specific phrases from INTERACTION_KEYWORDS
-    # Sort keywords by length descending to match longer phrases first
-    # For example, "look at" before "look" if "look" is also an interaction keyword.
 
-    # Normalize raw text for phrase matching
-    normalized_raw_text = raw_input_text.lower().strip()
-
-    sorted_interaction_phrases = sorted(current_interaction_keywords.keys(), key=len, reverse=True)
-
-    for phrase in sorted_interaction_phrases:
-        if normalized_raw_text.startswith(phrase):
-            intent = current_interaction_keywords[phrase]
-            action_data['intent'] = intent
-
-            target_name = normalized_raw_text[len(phrase):].strip()
-
-            # Basic article/preposition stripping for target_name if needed (mostly for English)
-            if language == "en":
-                if target_name.startswith("the "): target_name = target_name[4:]
-                elif target_name.startswith("an "): target_name = target_name[3:]
-                elif target_name.startswith("a "): target_name = target_name[2:]
-                # Could add "to ", "with " etc. if the keyword phrase itself doesn't include them.
-
-            if target_name:
-                entity_type = "target_object_name"
-                if intent == "initiate_dialogue": # "talk to" implies NPC
-                    entity_type = "target_npc_name"
-
-                action_data['entities'].append({
-                    "id": None, # ID will be resolved by game logic based on name and context
-                    "name": target_name,
-                    "type": entity_type,
-                    "lang": language
-                })
-            # If an interaction intent is matched, we might decide to return early,
-            # or let it fall through to general keyword matching if no target was found.
-            # For now, if a phrase matches, we assume this is the primary intent.
-            if action_data['intent']:
-                break # Found specific interaction intent, stop checking other interaction phrases.
-    
-    # --- End: New Interaction Intent Logic ---
-
-    # Fallback or additional intent classification using general keywords (mostly single-word verbs)
-    # This existing logic will only run if no specific interaction phrase was matched above.
+    # Fallback to Keyword-Based Intent Classification if no intent from action_verb
     if not action_data['intent']:
-        def has_general_keyword(lemmas: List[str], intent_key: str) -> bool:
-            return any(lemma in current_general_keywords.get(intent_key, []) for lemma in lemmas)
+        lemmatized_tokens = [token.lemma_.lower() for token in doc]
+        current_keywords = INTENT_KEYWORDS_EN if language == "en" else INTENT_KEYWORDS_RU
 
-        if has_general_keyword(lemmatized_tokens, "use_item") or has_general_keyword(lemmatized_tokens, "use_skill"):
+        def has_keyword(lemmas: List[str], intent_key: str) -> bool:
+            return any(lemma in current_keywords.get(intent_key, []) for lemma in lemmas)
+
+        # Order matters for fallback: more specific checks first
+        if has_keyword(lemmatized_tokens, "use_skill"):
+            # Could add check: if any(e['type'] == 'skill' for e in recognized_entities):
+            action_data['intent'] = INTENT_MAP.get("use_skill")
+
+        elif has_keyword(lemmatized_tokens, "use_item"): # "use" is a common keyword
             item_entity = next((e for e in recognized_entities if e['type'] == 'item'), None)
-            skill_entity = next((e for e in recognized_entities if e['type'] == 'skill'), None)
-            if skill_entity: action_data['intent'] = "use_skill"
-            elif item_entity: action_data['intent'] = "use_item"
-            # If no specific item/skill entity found, but "use" keyword present, it's ambiguous.
-            # The prompt for item generation specified "use" for use_item.
+            if item_entity:
+                action_data['intent'] = INTENT_MAP.get("use_item")
+            # If "use" but no item, it might be caught by a more generic "use" action_verb later if defined
+            # or remain unclassified by keywords.
 
-        if not action_data['intent'] and has_general_keyword(lemmatized_tokens, "attack"):
-            if any(e['type'] == 'npc' for e in recognized_entities): action_data['intent'] = "attack"
+        elif has_keyword(lemmatized_tokens, "attack"):
+            if any(e['type'] == 'npc' for e in recognized_entities) or any(e['type'] == 'player' for e in recognized_entities): # Allow attacking players too
+                action_data['intent'] = INTENT_MAP.get("attack")
 
-        # "talk to" is handled by INTERACTION_KEYWORDS. If just "talk" (lemma) is found, it might be ambiguous
-        # or could be a general "talk" intent without a specific target yet.
-        # For now, let's assume "talk" (single word) without a target is not specific enough
-        # unless an NPC entity was already recognized by PhraseMatcher.
-        if not action_data['intent'] and has_general_keyword(lemmatized_tokens, "talk"):
-             if any(e['type'] == 'npc' for e in recognized_entities): action_data['intent'] = "initiate_dialogue" # or just "talk"
+        elif has_keyword(lemmatized_tokens, "talk"):
+            if any(e['type'] == 'npc' for e in recognized_entities): # Usually talk to NPCs
+                action_data['intent'] = INTENT_MAP.get("talk")
 
-        if not action_data['intent'] and has_general_keyword(lemmatized_tokens, "pickup"):
-            if any(e['type'] == 'item' for e in recognized_entities): action_data['intent'] = "take_item" # Changed to match interaction key
+        elif has_keyword(lemmatized_tokens, "pickup"):
+            if any(e['type'] == 'item' for e in recognized_entities):
+                action_data['intent'] = INTENT_MAP.get("pickup")
 
-        if not action_data['intent'] and has_general_keyword(lemmatized_tokens, "move"):
-            action_data['intent'] = "move"
-            # Attempt to extract a target identifier after the move verb
-        # This is a simple approach; more complex NLU would involve dependency parsing.
+        elif has_keyword(lemmatized_tokens, "drop"):
+             if any(e['type'] == 'item' for e in recognized_entities):
+                action_data['intent'] = INTENT_MAP.get("drop")
 
-        move_verb_indices = [i for i, token in enumerate(doc) if token.lemma_.lower() in current_keywords.get("move", [])]
+        elif has_keyword(lemmatized_tokens, "move"):
+            action_data['intent'] = INTENT_MAP.get("move")
+            # Add direction entities if specific direction words are found
+            for token in doc:
+                direction_lemma = token.lemma_.lower()
+                if direction_lemma in ["north", "south", "east", "west", "up", "down", "север", "юг", "восток", "запад", "вверх", "вниз"]:
+                    # Ensure direction entity isn't already added by PhraseMatcher (if directions are in NLUDataService)
+                    if not any(e['type'] == 'direction' and e['name'] == direction_lemma for e in action_data['entities']):
+                        action_data['entities'].append({"id": None, "name": direction_lemma, "type": "direction", "lang": language, "intent_context": None})
+                    break
 
-        target_identifier = ""
-        if move_verb_indices:
-            # Take the text after the first identified move verb
-            # This is a simplification. A proper solution might need to find the main verb of the sentence.
-            first_move_verb_idx = move_verb_indices[0]
+        elif has_keyword(lemmatized_tokens, "look"):
+            action_data['intent'] = INTENT_MAP.get("look")
 
-            # Start looking for target from the token after the verb
-            target_start_idx = first_move_verb_idx + 1
+        elif has_keyword(lemmatized_tokens, "search"):
+            action_data['intent'] = INTENT_MAP.get("search")
 
-            # Basic preposition skipping (optional, can be refined)
-            # Example: "go to the forest" -> "the forest"
-            # Example: "иди в лес" -> "лес"
-            prepositions_to_skip_en = ["to", "into", "towards"]
-            prepositions_to_skip_ru = ["в", "на", "к", "до"]
-            prepositions_to_skip = prepositions_to_skip_en if language == "en" else prepositions_to_skip_ru
+        elif has_keyword(lemmatized_tokens, "open"):
+            action_data['intent'] = INTENT_MAP.get("open")
 
-            if target_start_idx < len(doc) and doc[target_start_idx].lemma_.lower() in prepositions_to_skip:
-                target_start_idx += 1
-                # Optional: skip articles like "the", "a", "an" after preposition
-                if language == "en" and target_start_idx < len(doc) and doc[target_start_idx].lemma_.lower() in ["the", "a", "an"]:
-                    target_start_idx +=1
-
-            if target_start_idx < len(doc):
-                # Join the rest of the tokens to form the target identifier
-                target_identifier = doc[target_start_idx:].text.strip()
-
-        if target_identifier:
-            # Check if any recognized game entity matches the extracted target_identifier
-            # This is useful if NLUDataService provided location names that were matched by PhraseMatcher
-            # And those location names are part of the target_identifier.
-            # For example, if text is "go to Dark Forest" and "Dark Forest" is a recognized entity.
-
-            # For now, we directly use the target_identifier.
-            # LocationManager's handle_move_action will resolve if it's a direction, exit name, or location ID/name.
-            action_data['entities'].append({
-                "id": None, # ID will be resolved by LocationManager if it's a known location
-                "name": target_identifier,
-                "type": "target_location_identifier", # A generic type for the move target
-                "lang": language
-            })
-        else:
-            # If no specific target is extracted after the move verb, it might be an implicit "move forward" or error.
-            # For now, if "move" intent is there but no target, we don't add a specific entity.
-            # LocationManager might handle this as an error or a default action if applicable.
-            pass
+        elif has_keyword(lemmatized_tokens, "close"):
+            action_data['intent'] = INTENT_MAP.get("close")
 
 
-    if not action_data['intent'] and has_keyword(lemmatized_tokens, "look"):
-        action_data['intent'] = "look"
+    # If still no intent, set to UNKNOWN
+    if not action_data['intent']:
+        action_data['intent'] = INTENT_UNKNOWN
+
+    # --- 3. Identify Primary Target Entity (Simplified) ---
+    action_data['primary_target_entity'] = None
+    current_intent = action_data['intent']
+    # Use action_data['entities'] as it's already filtered from action_verbs
+    remaining_entities = action_data['entities']
+
+    if current_intent in [INTENT_MAP.get("attack"), INTENT_MAP.get("talk")]:
+        # Prioritize NPC, then Player as targets
+        target_types = ["npc", "player"]
+        for t_type in target_types:
+            potential_targets = [e for e in remaining_entities if e['type'] == t_type]
+            if len(potential_targets) == 1:
+                action_data['primary_target_entity'] = potential_targets[0]
+                break # Found primary target
+            elif len(potential_targets) > 1:
+                # Ambiguous target, could log or set a special marker
+                # For now, primary_target_entity remains None if ambiguous
+                print(f"NLU Parser: Ambiguous target for {current_intent}. Options: {potential_targets}") # Replace with logger
+                break
+
+    elif current_intent in [INTENT_MAP.get("look"), INTENT_MAP.get("pickup"), INTENT_MAP.get("use_item"), INTENT_MAP.get("open"), INTENT_MAP.get("close"), INTENT_MAP.get("drop")]:
+        # Broader set of types for these interactions
+        # Order can define priority if multiple types are present (e.g., prefer item over feature if both matched same text)
+        target_types = ["item", "location_feature", "npc", "player", "location_tag", "location"]
+        found_targets = []
+        for t_type in target_types:
+            potential_targets = [e for e in remaining_entities if e['type'] == t_type]
+            if potential_targets:
+                found_targets.extend(potential_targets)
         
-    if not action_data['intent'] and has_keyword(lemmatized_tokens, "search"):
-        action_data['intent'] = "search"
+        if len(found_targets) == 1:
+            action_data['primary_target_entity'] = found_targets[0]
+        elif len(found_targets) > 1:
+            # Ambiguity: if "look sword" and "sword" is an item and also a feature name.
+            # Simple approach: take the first one found based on target_types priority.
+            # A more advanced system might use proximity to verb or other heuristics.
+            action_data['primary_target_entity'] = found_targets[0]
+            print(f"NLU Parser: Ambiguous target for {current_intent}, selected first based on type priority. Options: {found_targets}") # Replace with logger
+
+
+    elif current_intent == INTENT_MAP.get("move"):
+        # For move, the primary target might be a location or a direction.
+        # Directions are already in 'entities'. If a location is also there, prefer it.
+        location_target = next((e for e in remaining_entities if e['type'] == 'location'), None)
+        if location_target:
+            action_data['primary_target_entity'] = location_target
+        # If no location entity, but there's a direction entity, that's handled by game logic via action_data['entities']
 
     # --- Logging ---
     if game_log_manager:

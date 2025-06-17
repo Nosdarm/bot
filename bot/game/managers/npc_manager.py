@@ -8,10 +8,10 @@ import asyncio
 import logging # Added
 from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Callable, Awaitable, Union
 
-from bot.game.models.npc import NPC # This is likely a Pydantic or game object model
-from bot.database.models import GeneratedNpc as DBGeneratedNpc, Location as DBLocation # DB models
-from bot.database.crud_utils import get_entity_by_id # For fetching location for update
-from sqlalchemy.orm.attributes import flag_modified # To mark JSONB field as modified
+# Use NPC from database.models if that's what calculate_effective_stats expects
+from bot.database.models import NPC # Changed from bot.game.models.npc
+from bot.game.utils import stats_calculator # Added
+import json # Already present, ensure it is used if needed by new methods
 
 from builtins import dict, set, list, int, float, str, bool
 
@@ -19,6 +19,7 @@ from builtins import dict, set, list, int, float, str, bool
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
     from bot.game.managers.item_manager import ItemManager
+    from bot.game.managers.game_manager import GameManager # Added for type hint
     from bot.game.managers.status_manager import StatusManager
     from bot.game.managers.party_manager import PartyManager
     from bot.game.managers.character_manager import CharacterManager
@@ -46,6 +47,7 @@ class NpcManager:
     _dirty_npcs: Dict[str, Set[str]]
     _deleted_npc_ids: Dict[str, Set[str]]
     _npc_archetypes: Dict[str, Dict[str, Any]]
+    _game_manager: Optional['GameManager'] # Added
 
     def __init__(
         self,
@@ -64,11 +66,13 @@ class NpcManager:
         openai_service: Optional["OpenAIService"] = None,
         ai_validator: Optional["AIResponseValidator"] = None,
         campaign_loader: Optional["CampaignLoader"] = None,
-        notification_service: Optional["NotificationService"] = None
+        notification_service: Optional["NotificationService"] = None,
+        game_manager: Optional['GameManager'] = None # Added
     ):
         logger.info("Initializing NpcManager...") # Changed
         self._db_service = db_service
         self._settings = settings
+        self._game_manager = game_manager # Added
         self._campaign_loader = campaign_loader
         self._npc_archetypes = {}
         self._item_manager = item_manager
@@ -189,51 +193,66 @@ class NpcManager:
             logger.error(f"NpcManager: Unexpected error creating NPC from AI concept in guild {guild_id_str}: {e}. Concept: {str(npc_concept)[:200]}", exc_info=True)
             return None
 
-    async def _recalculate_and_store_effective_stats(self, guild_id: str, npc_id: str, npc_model: Optional[NPC] = None) -> None:
-        """Helper to recalculate and store effective stats for an NPC."""
-        log_prefix = f"NpcManager._recalculate_and_store_effective_stats(guild='{guild_id}', npc='{npc_id}'):" # Added
-        if not npc_model:
-            npc_model = self.get_npc(guild_id, npc_id)
-            if not npc_model:
-                logger.error("%s NPC not found for effective stats recalc.", log_prefix) # Changed
-                return
-
-        if not (self._rule_engine and self._item_manager and self._status_manager and
-                  self._character_manager and self._db_service and hasattr(self._rule_engine, 'rules_config_data')):
-            missing_deps = [dep_name for dep_name, dep in [
-                ("rule_engine", self._rule_engine), ("item_manager", self._item_manager),
-                ("status_manager", self._status_manager), ("character_manager", self._character_manager),
-                ("db_service", self._db_service)
-            ] if dep is None]
-            if self._rule_engine and not hasattr(self._rule_engine, 'rules_config_data'):
-                missing_deps.append("rule_engine.rules_config_data")
-            logger.warning("%s Could not recalculate effective_stats due to missing dependencies: %s.", log_prefix, missing_deps) # Changed
-            setattr(npc_model, 'effective_stats_json', "{}")
+    async def _recalculate_and_store_effective_stats_for_npc(self, guild_id: str, npc_id: str, npc_model: Optional[NPC] = None) -> None:
+        if not self._game_manager:
+            logger.error(f"NpcManager: GameManager not available for effective stats recalc for NPC {npc_id}.")
             return
 
-        from bot.game.utils import stats_calculator
-        try:
-            rules_config = self._rule_engine.rules_config_data
-            effective_stats_dict = await stats_calculator.calculate_effective_stats(
-                db_service=self._db_service, guild_id=guild_id, entity_id=npc_id,
-                entity_type="NPC", rules_config_data=rules_config,
-                character_manager=self._character_manager, npc_manager=self,
-                item_manager=self._item_manager, status_manager=self._status_manager
-            )
-            setattr(npc_model, 'effective_stats_json', json.dumps(effective_stats_dict))
-            # logger.debug("%s Recalculated effective_stats.", log_prefix) # Can be noisy
-        except Exception as es_ex:
-            logger.error("%s ERROR recalculating effective_stats: %s", log_prefix, es_ex, exc_info=True) # Changed
-            setattr(npc_model, 'effective_stats_json', "{}")
+        npc_to_use = npc_model
+        if not npc_to_use:
+            # Assuming self.get_npc returns the model instance directly from cache or DB
+            # If it's a method that fetches from DB and is async, it should be awaited.
+            # For now, assuming get_npc is synchronous and returns from cache.
+            # If get_npc needs to be async, this method needs to be refactored or get_npc called before.
+            npc_instance_from_cache = self.get_npc(guild_id, npc_id)
+            if not npc_instance_from_cache : # Check if it's a valid NPC model instance
+                logger.error(f"NpcManager: NPC {npc_id} not found in guild {guild_id} for effective stats recalc.")
+                return
+            npc_to_use = npc_instance_from_cache # Assign if valid
 
-    async def trigger_stats_recalculation(self, guild_id: str, npc_id: str) -> None:
-        npc = self.get_npc(guild_id, npc_id)
-        if npc:
-            await self._recalculate_and_store_effective_stats(guild_id, npc_id, npc)
-            self.mark_npc_dirty(guild_id, npc_id)
-            logger.info("NpcManager: Stats recalculation triggered for NPC %s in guild %s and marked dirty.", npc_id, guild_id) # Changed
+        if not npc_to_use: # Double check after potential fetch
+            logger.error(f"NpcManager: NPC {npc_id} could not be obtained for effective stats recalc in guild {guild_id}.")
+            return
+
+        if not hasattr(npc_to_use, 'effective_stats_json'):
+            logger.warning(f"NpcManager: NPC model for {npc_id} (type: {type(npc_to_use)}) does not have 'effective_stats_json' attribute.")
+            # Depending on strictness, you might want to return or proceed cautiously.
+            # If the attribute is expected to always exist on a valid model, this is an issue.
+            # For now, let's assume it's a dynamic attribute that might be added.
+            # setattr(npc_to_use, 'effective_stats_json', json.dumps({})) # Initialize if missing
+
+        try:
+            effective_stats_dict = await stats_calculator.calculate_effective_stats(
+                entity=npc_to_use,
+                guild_id=guild_id,
+                game_manager=self._game_manager
+            )
+            setattr(npc_to_use, 'effective_stats_json', json.dumps(effective_stats_dict or {}))
+            # self.mark_npc_dirty(guild_id, npc_id) # If NpcManager has a dirty marking mechanism
+            logger.debug(f"NpcManager: Recalculated effective_stats for NPC {npc_id} in guild {guild_id}.")
+        except Exception as e:
+            logger.error(f"NpcManager: ERROR recalculating effective_stats for NPC {npc_id} in guild {guild_id}: {e}", exc_info=True)
+            if hasattr(npc_to_use, 'effective_stats_json'): # Check again before setting error state
+                setattr(npc_to_use, 'effective_stats_json', json.dumps({"error": "calculation_failed"}))
+
+    async def trigger_npc_stats_recalculation(self, guild_id: str, npc_id: str) -> None:
+        # Assuming self.get_npc is synchronous and returns from cache.
+        # If get_npc needs to be async, this method should be async and await get_npc.
+        npc = self.get_npc(guild_id, npc_id) # This might return a dict or a model instance
+
+        # We need the model instance for _recalculate_and_store_effective_stats_for_npc
+        # If get_npc returns a dict, we might need another method to get the model instance
+        # or ensure get_npc always returns the model instance.
+        # For now, assuming get_npc returns the actual NPC model object (or None).
+
+        if npc and isinstance(npc, NPC): # Ensure it's the model instance
+            await self._recalculate_and_store_effective_stats_for_npc(guild_id, npc_id, npc)
+            self.mark_npc_dirty(guild_id, npc_id) # Mark dirty after successful recalc
+            logger.info(f"NpcManager: Stats recalculation triggered and completed for NPC {npc_id} in guild {guild_id}.")
+        elif npc: # It's not None, but not an NPC model instance
+             logger.warning(f"NpcManager: trigger_npc_stats_recalculation - NPC {npc_id} found but is not a model instance (type: {type(npc)}). Cannot recalc.")
         else:
-            logger.warning("NpcManager: trigger_stats_recalculation - NPC %s not found in guild %s.", npc_id, guild_id) # Changed
+            logger.warning(f"NpcManager: trigger_npc_stats_recalculation - NPC {npc_id} not found in guild {guild_id}.")
 
     def _load_npc_archetypes(self):
         logger.info("NpcManager: Loading NPC archetypes...")
