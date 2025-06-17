@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 from bot.game.models.item import Item
 from bot.utils.i18n_utils import get_i18n_text
 from bot.ai.rules_schema import CoreGameRulesConfig, EquipmentSlotDefinition, ItemEffectDefinition, EffectProperty
+from bot.database.models import Item as SQLAlchemyItem # Added for new method
 
 logger = logging.getLogger(__name__)
 logger.debug("DEBUG: item_manager.py module loaded.")
@@ -371,5 +372,25 @@ class ItemManager:
 
 
         return False
+
+    async def get_item_sqlalchemy_instance_by_id(self, guild_id: str, item_instance_id: str) -> Optional[SQLAlchemyItem]:
+        """
+        Fetches a single item instance (SQLAlchemy model) by its ID from the database.
+        """
+        if not self._db_service:
+            logger.error(f"ItemManager: DBService not available, cannot fetch item instance {item_instance_id}.")
+            return None
+        try:
+            # Ensure model_class is the SQLAlchemy model, not Pydantic
+            item_model_instance = await self._db_service.get_entity_by_pk(
+                table_name='items',
+                pk_value=item_instance_id,
+                guild_id=guild_id,
+                model_class=SQLAlchemyItem
+            )
+            return item_model_instance
+        except Exception as e:
+            logger.error(f"ItemManager: Error fetching SQLAlchemy item instance {item_instance_id} for guild {guild_id}: {e}", exc_info=True)
+            return None
 
 logger.debug("DEBUG: item_manager.py module loaded (after overwrite).")

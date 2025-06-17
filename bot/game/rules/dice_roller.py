@@ -1,58 +1,87 @@
 import random
 import re
+from typing import Tuple, List, Optional
 
-def roll_dice(dice_string: str) -> tuple[int, list[int]]:
+def roll_dice(dice_string: str) -> Tuple[int, List[int]]:
     """
-    Rolls dice based on a dice string in the format "NdX+M" or "NdX-M".
+    Parses a dice string (e.g., "2d6", "1d20+5", "d100-2") and returns the total sum
+    and a list of individual die rolls.
 
     Args:
-        dice_string: The string representing the dice to roll.
-            N is the number of dice (optional, defaults to 1).
-            X is the number of sides per die (required).
-            M is the modifier (optional, defaults to 0).
+        dice_string: The dice string to parse.
+                     Examples: "2d6", "d20", "1d20+5", "3d8-2".
 
     Returns:
         A tuple containing:
-            - The total sum of the rolls plus the modifier (integer).
-            - A list of individual die results (list of integers).
+            - total_sum (int): The sum of all dice rolls plus any modifiers.
+            - individual_rolls (List[int]): A list of the outcomes of each die rolled.
 
     Raises:
-        ValueError: If the dice_string is invalid.
+        ValueError: If the dice string format is invalid.
     """
-    # Regex explanation:
-    # ^                  : Start of the string
-    # (\d*)              : Optional number of dice (Group 1, num_dice_str). Allows empty string e.g. "d20"
-    # d                  : Literal 'd' separating number of dice from sides
-    # (\d+)              : Number of sides (Group 2, num_sides_str). Must be present.
-    # (?:([+-])(\d+))?   : Optional non-capturing group for modifier
-    #   ([+-])           : Operator + or - (Group 3, operator)
-    #   (\d+)            : Modifier value (Group 4, modifier_str)
-    # $                  : End of the string
-    pattern = re.compile(r"^(\d*)d(\d+)(?:([+-])(\d+))?$")
-    match = pattern.match(dice_string)
+    dice_string = dice_string.lower().strip()
+
+    # Regex to capture (num_dice)d(die_sides)(modifier_sign)(modifier_value)
+    # Handles optional num_dice (defaults to 1), optional modifier
+    match = re.fullmatch(r'(\d*)d(\d+)([+-]\d+)?', dice_string)
 
     if not match:
-        raise ValueError(
-            "Invalid dice string format. Expected format: NdX+M or NdX-M"
-        )
+        raise ValueError(f"Invalid dice string format: '{dice_string}'. Examples: '2d6', 'd20+3', '1d100-5'.")
 
-    num_dice_str, num_sides_str, operator, modifier_str = match.groups()
+    num_dice_str, die_sides_str, modifier_str = match.groups()
 
     num_dice = int(num_dice_str) if num_dice_str else 1
-    num_sides = int(num_sides_str)
+    die_sides = int(die_sides_str)
 
-    if num_sides == 0:
-        raise ValueError("Number of sides cannot be zero.")
+    if num_dice <= 0:
+        raise ValueError("Number of dice must be positive.")
+    if num_dice > 1000: # Practical limit to prevent abuse/performance issues
+        raise ValueError("Cannot roll more than 1000 dice at once.")
+    if die_sides <= 0:
+        raise ValueError("Die sides must be positive.")
+    if die_sides > 1000: # Practical limit
+        raise ValueError("Die sides cannot exceed 1000.")
 
     modifier = 0
-    if operator and modifier_str:
-        modifier_value = int(modifier_str)
-        if operator == "-":
-            modifier = -modifier_value
-        else:
-            modifier = modifier_value
+    if modifier_str:
+        modifier = int(modifier_str)
 
-    rolls = [random.randint(1, num_sides) for _ in range(num_dice)]
-    total_sum = sum(rolls) + modifier
+    individual_rolls: List[int] = []
+    current_sum = 0
 
-    return total_sum, rolls
+    for _ in range(num_dice):
+        roll = random.randint(1, die_sides)
+        individual_rolls.append(roll)
+        current_sum += roll
+
+    total_sum = current_sum + modifier
+
+    return total_sum, individual_rolls
+
+if __name__ == '__main__':
+    # Test cases
+    test_inputs = {
+        "2d6": (range(2, 13), 2),
+        "d20": (range(1, 21), 1),
+        "1d20+5": (range(6, 26), 1),
+        "3d8-2": (range(1, 23), 3), # 3*1-2=1, 3*8-2=22
+        "1d4": (range(1, 5), 1),
+        "d100": (range(1, 101), 1),
+        "5d10+10": (range(15, 61), 5) # 5*1+10=15, 5*10+10=60
+    }
+    for dice_str, (expected_range, num_rolls) in test_inputs.items():
+        try:
+            total, rolls = roll_dice(dice_str)
+            print(f"Rolling {dice_str}: Total = {total}, Rolls = {rolls}")
+            assert total >= min(expected_range) and total <= max(expected_range), f"Total out of range for {dice_str}"
+            assert len(rolls) == num_rolls, f"Incorrect number of rolls for {dice_str}"
+        except ValueError as e:
+            print(f"Error rolling {dice_str}: {e}")
+
+    error_cases = ["2d", "d", "2d6+d4", "abc", "1d0", "0d6", "1001d6", "1d1001"]
+    for dice_str in error_cases:
+        try:
+            roll_dice(dice_str)
+            print(f"Error: Expected ValueError for '{dice_str}' but got no error.")
+        except ValueError as e:
+            print(f"Correctly caught error for '{dice_str}': {e}")
