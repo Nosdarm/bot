@@ -387,19 +387,24 @@ class RPGBot(commands.Bot):
                 nlu_data_service=nlu_data_svc
             )
 
-            if parsed_action:
-                intent, entities = parsed_action
-                action_to_store = {"intent": intent, "entities": entities, "original_text": message.content}
+            if parsed_action: # parsed_action is now a comprehensive dictionary
+                action_to_store = parsed_action # Directly use the parsed_action dictionary
 
                 current_actions_str = player.collected_actions_json
                 current_actions_list = []
                 if current_actions_str:
                     try:
-                        current_actions_list = json.loads(current_actions_str)
-                    except json.JSONDecodeError:
+                        loaded_actions = json.loads(current_actions_str)
+                        if isinstance(loaded_actions, list):
+                            current_actions_list = loaded_actions
+                        else:
+                            logger.warning(f"Player {player.id} collected_actions_json was not a list: {type(loaded_actions)}. Resetting to empty list.")
+                            current_actions_list = []
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSONDecodeError for player {player.id} collected_actions_json: {e}. Data: '{current_actions_str}'. Resetting to empty list.")
                         current_actions_list = []
-                    if not isinstance(current_actions_list, list):
-                        current_actions_list = []
+                else:
+                    current_actions_list = [] # Initialize if player.collected_actions_json is None or empty
 
                 current_actions_list.append(action_to_store)
                 player.collected_actions_json = json.dumps(current_actions_list)
