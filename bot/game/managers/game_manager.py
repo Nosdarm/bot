@@ -19,6 +19,7 @@ from discord import Client
 from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 from bot.game.models.character import Character
+from bot.database.models import RulesConfig, Player # Added Player import
 from bot.services.notification_service import NotificationService # Added runtime import
 from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError
 
@@ -1243,7 +1244,10 @@ class GameManager:
             logger.warning("GameManager: DBService not available. Cannot get master_role_id for guild %s.", guild_id)
             return None
         try:
-            role_id = await self.db_service.get_guild_setting(guild_id, 'master_role_id')
+            # This could use the new get_rule method if master_role_id is stored in RulesConfig
+            # For now, assuming get_guild_setting is a separate mechanism or will be refactored.
+            # role_id = await self.get_rule(guild_id, 'master_role_id')
+            role_id = await self.db_service.get_guild_setting(guild_id, 'master_role_id') # Kept existing logic
             if role_id and isinstance(role_id, str):
                 return role_id
             elif role_id:
@@ -1254,94 +1258,251 @@ class GameManager:
             logger.error("GameManager: Error fetching master_role_id for guild %s: %s", guild_id, e, exc_info=True)
             return None
 
-    async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
-        if not guild_id:
-            logger.error("GameManager (set_default_bot_language): guild_id must be provided to set default language.")
-            return False # Or handle as a global default update if that's desired later
-
-        if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
-            logger.info(f"GameManager: RulesConfig cache for guild {guild_id} not populated. Loading it now.")
-            await self._load_or_initialize_rules_config(guild_id)
-            # Check again after loading
-            if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
-                 logger.error(f"GameManager: Failed to load or initialize RulesConfig for guild {guild_id}. Cannot set language.")
-                 return False
+    async def get_player_model_by_discord_id(self, guild_id: str, discord_id: str) -> Optional[Player]:
+        """
+        Retrieves a Player model instance by their Discord ID and Guild ID.
+        """
+        guild_id_str = str(guild_id)
+        discord_id_str = str(discord_id)
+        logger.debug(f"GameManager: Attempting to get Player model for discord_id '{discord_id_str}' in guild '{guild_id_str}'.")
 
         if not self.db_service:
-            logger.error(f"GameManager: DBService not available. Cannot save default bot language for guild {guild_id}.")
-            return False
-
-        # Get the current language for this guild's cache, if it exists
-        original_language = self._rules_config_cache[guild_id].get('default_language')
-
-        # Update the cache first
-        self._rules_config_cache[guild_id]['default_language'] = language
+            logger.error("GameManager: DBService not available. Cannot fetch Player by Discord ID.")
+            return None
 
         try:
-            # Persist the change to the database for the specific key "default_language"
-            # This assumes a method like update_or_create_entity_by_key or similar
-            # For now, using a generic update_entity if it can handle composite keys or specific conditions,
-            # or using a more specific method if available (like the planned update_rule_config utility).
-            # Let's assume db_service.update_entity can take conditions.
-            # If RulesConfig uses (guild_id, key) as PK, then entity_id might be a composite.
-            # For now, we'll assume a way to update based on guild_id and key.
-            # This might need a new DBService method or use the upcoming utility functions.
+            player_obj = await self.db_service.get_entity_by_conditions(
+                table_name='players',
+                conditions={'guild_id': guild_id_str, 'discord_id': discord_id_str},
+                model_class=Player,
+                single_entity=True
+            )
+            if player_obj:
+                logger.info(f"GameManager: Found Player model for discord_id '{discord_id_str}' in guild '{guild_id_str}'. Player ID: {player_obj.id}")
+                return player_obj
+            else:
+                logger.info(f"GameManager: Player model not found for discord_id '{discord_id_str}' in guild '{guild_id_str}'.")
+                return None
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Player by discord_id '{discord_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return None
 
-            # Using a placeholder for the actual update logic, which should be an upsert.
-            # This will be refined when `update_rule_config` utility is implemented.
-            # For now, let's simulate an update or create.
+    async def get_player_model_by_id(self, guild_id: str, player_id: str) -> Optional[Player]:
+        """
+        Retrieves a Player model instance by their internal Player ID and Guild ID.
+        """
+        guild_id_str = str(guild_id) # Ensure guild_id is string, though db_service might handle it
+        player_id_str = str(player_id)
+        logger.debug(f"GameManager: Attempting to get Player model for player_id '{player_id_str}' in guild '{guild_id_str}'.")
 
-            # Check if the rule already exists
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot fetch Player by ID.")
+            return None
+
+        try:
+            player_obj = await self.db_service.get_entity_by_pk(
+                table_name='players',
+                pk_value=player_id_str,
+                guild_id=guild_id_str, # Pass guild_id if your db_service.get_entity_by_pk supports/requires it for namespacing or checks
+                model_class=Player
+            )
+            if player_obj:
+                logger.info(f"GameManager: Found Player model for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+                return player_obj
+            else:
+                logger.info(f"GameManager: Player model not found for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+                return None
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Player by player_id '{player_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return None
+
+    async def get_player_model_by_discord_id(self, guild_id: str, discord_id: str) -> Optional[Player]:
+        """
+        Retrieves a Player model instance by their Discord ID and Guild ID.
+        """
+        guild_id_str = str(guild_id)
+        discord_id_str = str(discord_id)
+        logger.debug(f"GameManager: Attempting to get Player model for discord_id '{discord_id_str}' in guild '{guild_id_str}'.")
+
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot fetch Player by Discord ID.")
+            return None
+
+        try:
+            player_obj = await self.db_service.get_entity_by_conditions(
+                table_name='players',
+                conditions={'guild_id': guild_id_str, 'discord_id': discord_id_str},
+                model_class=Player,
+                single_entity=True
+            )
+            if player_obj:
+                logger.info(f"GameManager: Found Player model for discord_id '{discord_id_str}' in guild '{guild_id_str}'. Player ID: {player_obj.id}")
+                return player_obj
+            else:
+                logger.info(f"GameManager: Player model not found for discord_id '{discord_id_str}' in guild '{guild_id_str}'.")
+                return None
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Player by discord_id '{discord_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return None
+
+    async def get_player_model_by_id(self, guild_id: str, player_id: str) -> Optional[Player]:
+        """
+        Retrieves a Player model instance by their internal Player ID and Guild ID.
+        """
+        guild_id_str = str(guild_id)
+        player_id_str = str(player_id)
+        logger.debug(f"GameManager: Attempting to get Player model for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot fetch Player by ID.")
+            return None
+
+        try:
+            player_obj = await self.db_service.get_entity_by_pk(
+                table_name='players', # In DBService, model_class implies table name, but good to be explicit if needed
+                pk_value=player_id_str,
+                guild_id=guild_id_str,
+                model_class=Player
+            )
+            if player_obj:
+                logger.info(f"GameManager: Found Player model for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+                return player_obj
+            else:
+                logger.info(f"GameManager: Player model not found for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+                return None
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Player by player_id '{player_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return None
+
+    async def get_players_in_location(self, guild_id: str, location_id: str) -> List[Player]:
+        """
+        Retrieves a list of Player model instances currently in a specific location.
+        """
+        guild_id_str = str(guild_id)
+        location_id_str = str(location_id)
+        logger.debug(f"GameManager: Attempting to get Players in location_id '{location_id_str}' for guild '{guild_id_str}'.")
+
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot fetch Players in location.")
+            return []
+
+        try:
+            players_list = await self.db_service.get_entities_by_conditions(
+                table_name='players',
+                conditions={'guild_id': guild_id_str, 'current_location_id': location_id_str},
+                model_class=Player
+            )
+            if players_list:
+                logger.info(f"GameManager: Found {len(players_list)} Players in location '{location_id_str}' for guild '{guild_id_str}'.")
+                return players_list
+            else:
+                logger.info(f"GameManager: No Players found in location '{location_id_str}' for guild '{guild_id_str}'.")
+                return []
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Players in location '{location_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return []
+
+    async def get_rule(self, guild_id: str, key: str, default: Optional[Any] = None) -> Optional[Any]:
+        """
+        Retrieves a specific rule value for a guild from the cache.
+        Loads the guild's rules if not already cached.
+        """
+        if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
+            logger.info(f"GameManager: Rules for guild {guild_id} not in cache for key '{key}'. Loading.")
+            await self._load_or_initialize_rules_config(guild_id)
+
+        # After attempting to load, check again. _load_or_initialize_rules_config should populate it.
+        if self._rules_config_cache and guild_id in self._rules_config_cache:
+            rule_value = self._rules_config_cache[guild_id].get(key, default)
+            logger.debug(f"GameManager: Rule '{key}' for guild {guild_id} retrieved. Value: '{rule_value}', Default: '{default}'")
+            return rule_value
+        else:
+            # This case implies _load_or_initialize_rules_config failed to populate the cache for this guild
+            logger.warning(f"GameManager: Rules for guild {guild_id} could not be loaded or initialized. Returning default for key '{key}'.")
+            return default
+
+    async def update_rule_config(self, guild_id: str, key: str, value: Any) -> bool:
+        """
+        Updates or creates a rule in the database and then updates the cache.
+        """
+        logger.info(f"GameManager: Attempting to update rule '{key}' to '{value}' for guild {guild_id}.")
+        if not self.db_service:
+            logger.error(f"GameManager: DBService not available. Cannot update rule '{key}' for guild {guild_id}.")
+            return False
+
+        try:
+            # Check if the rule already exists in DB
             existing_rule_entry = await self.db_service.get_entity_by_conditions(
                 table_name='rules_config',
-                conditions={'guild_id': guild_id, 'key': 'default_language'},
+                conditions={'guild_id': guild_id, 'key': key},
+                model_class=RulesConfig,
                 single_entity=True
             )
 
+            db_success: bool = False
             if existing_rule_entry:
-                success = await self.db_service.update_entities_by_conditions(
+                # Update existing entry
+                # Ensure 'value' is appropriate for JSONB if db_service doesn't handle serialization
+                update_result = await self.db_service.update_entities_by_conditions(
                     table_name='rules_config',
-                    conditions={'guild_id': guild_id, 'key': 'default_language'},
-                    updates={'value': language}
+                    conditions={'guild_id': guild_id, 'key': key},
+                    updates={'value': value}
                 )
+                db_success = bool(update_result) # Assuming truthy non-None means success
+                if not db_success:
+                    logger.warning(f"GameManager: update_entities_by_conditions returned falsy for rule '{key}', guild {guild_id}.")
+
             else: # Create new entry
                 new_rule_data = {
                     'guild_id': guild_id,
-                    'key': 'default_language',
-                    'value': language
-                    # id will be auto-generated by the model default
+                    'key': key,
+                    'value': value
                 }
-                # Assuming create_entity returns the ID or the entity itself on success
-                created_id = await self.db_service.create_entity(
+                created_entity = await self.db_service.create_entity(
                     table_name='rules_config',
                     entity_data=new_rule_data,
-                    # id_field='id' # Assuming 'id' is the primary key name if needed by create_entity
+                    model_class=RulesConfig
                 )
-                success = created_id is not None
+                db_success = created_entity is not None
 
-            if success:
-                logger.info(f"GameManager: Default bot language for guild {guild_id} successfully updated to '{language}' and saved.")
-                # If RuleEngine becomes guild-aware, this is where its cache for this guild would be updated.
-                # For now, MultilingualPromptGenerator might need guild-specific language if it supports it.
-                # Current Mpg.update_main_bot_language is global.
-                if self.multilingual_prompt_generator and guild_id == self._active_guild_ids[0]: # Temporary: only update if it's the "main" guild for MPG
-                    self.multilingual_prompt_generator.update_main_bot_language(language)
-                    logger.info(f"GameManager: Updated main_bot_language in MultilingualPromptGenerator (due to update for guild {guild_id}).")
+            if db_success:
+                logger.info(f"GameManager: Rule '{key}' for guild {guild_id} successfully updated/created in DB. Value: '{value}'.")
+                # Ensure cache structure exists then update
+                if self._rules_config_cache is None:
+                    self._rules_config_cache = {}
+                if guild_id not in self._rules_config_cache:
+                    logger.info(f"GameManager: Initializing cache for guild {guild_id} during update of rule '{key}'.")
+                    self._rules_config_cache[guild_id] = {}
+
+                self._rules_config_cache[guild_id][key] = value
+                logger.debug(f"GameManager: Cache for guild {guild_id} updated for rule '{key}'. New cache: {self._rules_config_cache[guild_id]}")
                 return True
             else:
-                logger.error(f"GameManager: Failed to save default bot language update for guild {guild_id} to database. Reverting cache.")
-                if original_language is not None:
-                    self._rules_config_cache[guild_id]['default_language'] = original_language
-                # If original_language was None and we added the key, remove it
-                elif 'default_language' in self._rules_config_cache[guild_id] and language == self._rules_config_cache[guild_id]['default_language']:
-                    del self._rules_config_cache[guild_id]['default_language']
+                logger.error(f"GameManager: Failed to save rule '{key}' (value: '{value}') for guild {guild_id} to database.")
                 return False
         except Exception as e:
-            logger.error(f"GameManager: Exception while saving default bot language for guild {guild_id}: {e}. Reverting cache.", exc_info=True)
-            if original_language is not None:
-                self._rules_config_cache[guild_id]['default_language'] = original_language
-            elif 'default_language' in self._rules_config_cache[guild_id] and language == self._rules_config_cache[guild_id]['default_language']:
-                 del self._rules_config_cache[guild_id]['default_language']
+            logger.error(f"GameManager: Exception while saving rule '{key}' for guild {guild_id}: {e}. Cache not changed.", exc_info=True)
+            return False
+
+    async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
+        if not guild_id:
+            logger.error("GameManager (set_default_bot_language): guild_id must be provided to set default language.")
+            return False
+
+        success = await self.update_rule_config(guild_id, "default_language", language)
+
+        if success:
+            if self.multilingual_prompt_generator:
+                # This logic for MPG might need refinement if it's supposed to handle multiple guilds
+                # or if the "main" guild concept is different.
+                if self._active_guild_ids and guild_id == self._active_guild_ids[0]:
+                    self.multilingual_prompt_generator.update_main_bot_language(language)
+                    logger.info(f"GameManager: Updated main_bot_language in MultilingualPromptGenerator (due to update for guild {guild_id}).")
+                elif not self._active_guild_ids:
+                     logger.warning("GameManager: No active_guild_ids defined, MPG main language not updated via set_default_bot_language.")
+            return True
+        else:
+            logger.error(f"GameManager: Failed to set default bot language to '{language}' for guild {guild_id} using update_rule_config.")
             return False
 
     async def trigger_manual_simulation_tick(self, server_id: int) -> None: # server_id is likely guild_id
@@ -1390,5 +1551,125 @@ class GameManager:
             # This catches other unexpected errors from create_character
             logger.error("GameManager: Unhandled error in start_new_character_session during character creation for user %s in guild %s: %s", user_id, guild_id, e, exc_info=True)
             return None # Return None for other types of exceptions, maintaining previous behavior for generic errors
+
+    async def handle_move_action(self, guild_id: str, player_id: str, target_location_identifier: str) -> bool:
+        """
+        Handles a player's request to move to a new location.
+        Returns True if the move was successful, False otherwise.
+        """
+        guild_id_str = str(guild_id)
+        player_id_str = str(player_id)
+        logger.info(f"GameManager: Handling move action for player {player_id_str} in guild {guild_id_str} to '{target_location_identifier}'.")
+
+        if not self.db_service or not self.location_manager:
+            logger.error("GameManager: DBService or LocationManager not available. Cannot handle move action.")
+            return False
+
+        # 1. Fetch Player
+        player = await self.get_player_model_by_id(guild_id_str, player_id_str)
+        if not player:
+            logger.error(f"GameManager: Player {player_id_str} not found in guild {guild_id_str} for move action.")
+            return False
+        if not player.current_location_id:
+            logger.error(f"GameManager: Player {player_id_str} in guild {guild_id_str} has no current_location_id. Cannot move.")
+            return False
+
+        # 2. Fetch Current Location
+        # get_location_instance returns a Location model object directly because Location.from_dict is used inside it
+        current_location = await self.location_manager.get_location_instance(guild_id_str, player.current_location_id)
+        if not current_location:
+            logger.error(f"GameManager: Data inconsistency. Current location {player.current_location_id} for player {player_id_str} (guild {guild_id_str}) not found.")
+            return False
+
+        # 3. Resolve Target Location Identifier
+        target_location = await self.location_manager.get_location_by_static_id(guild_id_str, target_location_identifier)
+
+        if not target_location:
+            logger.debug(f"GameManager: Target location '{target_location_identifier}' not found by static_id for guild {guild_id_str}. Trying by name...")
+            # Fallback: search by name in location_manager's cache
+            # LocationManager._location_instances stores dicts, not Location objects directly.
+            # We need to convert them to Location objects to check name_i18n properly or access name_i18n from dict.
+
+            # Accessing protected member _location_instances for this fallback is not ideal but used as per prompt.
+            # A public method in LocationManager to search by name would be better.
+            cached_locations = self.location_manager._location_instances.get(guild_id_str, {}).values()
+            found_by_name: List[Location] = []
+            for loc_data_dict in cached_locations:
+                if isinstance(loc_data_dict.get('name_i18n'), dict):
+                    if any(name.lower() == target_location_identifier.lower() for name in loc_data_dict['name_i18n'].values()):
+                        try:
+                            # Convert dict to Location model instance to ensure consistent object type
+                            found_by_name.append(Location.from_dict(loc_data_dict))
+                        except Exception as e:
+                            logger.warning(f"GameManager: Error converting cached location data {loc_data_dict.get('id')} to Location object: {e}")
+
+            if len(found_by_name) == 1:
+                target_location = found_by_name[0]
+                logger.info(f"GameManager: Target location resolved by name to '{target_location.id}' for identifier '{target_location_identifier}'.")
+            elif len(found_by_name) > 1:
+                logger.warning(f"GameManager: Ambiguous target location name '{target_location_identifier}' for player {player_id_str}. Multiple matches found. Move failed.")
+                # For now, fail on ambiguity. Could potentially ask user to clarify via command response.
+                return False
+
+        if not target_location:
+            logger.warning(f"GameManager: Target location '{target_location_identifier}' for player {player_id_str} not found by static_id or name. Move failed.")
+            return False
+
+        # 4. Check Connectivity
+        if not current_location.neighbor_locations_json or not isinstance(current_location.neighbor_locations_json, dict):
+            logger.warning(f"GameManager: Player {player_id_str} current location {current_location.id} has no valid neighbor_locations_json. Cannot move.")
+            return False
+
+        if target_location.id not in current_location.neighbor_locations_json:
+            logger.info(f"GameManager: Player {player_id_str} cannot move from {current_location.id} to {target_location.id}. Not directly connected.")
+            return False
+
+        # Check if player is trying to move to the same location
+        if current_location.id == target_location.id:
+            logger.info(f"GameManager: Player {player_id_str} is already at location {target_location.id}. Move action considered successful but no change.")
+            # Depending on game rules, you might want to return False or handle this differently.
+            # For now, let's say it's not an error, but no actual move occurs.
+            return True # Or False if moving to same spot is an invalid action.
+
+        # 5. Update Player Location
+        old_location_id = player.current_location_id
+        update_success = await self.db_service.update_player_field(
+            player_id=player.id,
+            field_name='current_location_id',
+            value=target_location.id,
+            guild_id_str=guild_id_str
+        )
+
+        if not update_success:
+            logger.error(f"GameManager: Failed to update player {player_id_str}'s location in DB to {target_location.id}.")
+            return False
+
+        logger.info(f"GameManager: Player {player_id_str} successfully moved from {old_location_id} to {target_location.id}.")
+        # player.current_location_id = target_location.id # Update local object if it were cached by GM
+
+        # 6. Log Event
+        if self.game_log_manager:
+            try:
+                await self.game_log_manager.log_event(
+                    guild_id=guild_id_str,
+                    event_type="player_move",
+                    details_json={
+                        'player_id': player_id_str,
+                        'old_location_id': old_location_id,
+                        'new_location_id': target_location.id,
+                        'method': 'direct_move_command' # Indicates this was a direct move, not part of another action
+                    },
+                    player_id=player_id_str, # Associate log with the player
+                    location_id=target_location.id # New location for context
+                )
+            except Exception as log_e:
+                logger.error(f"GameManager: Failed to log player move event: {log_e}", exc_info=True)
+
+        # TODO: Future: Trigger on_enter/on_exit events for locations if applicable.
+        # This would involve calling methods on LocationManager or an EventProcessor.
+        # e.g., await self.location_manager.handle_entity_departure(guild_id_str, player.id, "Player", old_location_id)
+        # e.g., await self.location_manager.handle_entity_arrival(guild_id_str, player.id, "Player", target_location.id)
+
+        return True
 
 logger.debug("DEBUG: Finished loading game_manager.py from: %s", __file__) # Changed
