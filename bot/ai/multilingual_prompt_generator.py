@@ -225,6 +225,130 @@ CRITICAL INSTRUCTIONS:
 """
         return self._build_full_prompt_for_openai(task_prompt, generation_context)
 
+    async def prepare_ai_prompt(
+        self,
+        guild_id: str,
+        location_id: str, # Assuming location is usually a primary context point
+        specific_task_instruction: str,
+        player_id: Optional[str] = None,
+        party_id: Optional[str] = None,
+        additional_request_params: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Prepares a generalized prompt for the AI based on provided context parameters.
+        This method is intended to be a versatile way to generate prompts for various
+        in-game situations not covered by more specific prompt generators.
+        """
+        if not self.context_collector:
+            # In a real application, proper logging should be used.
+            # print("ERROR: PromptContextCollector not available in MultilingualPromptGenerator.")
+            # Consider raising an exception or returning a specific error indicator.
+            raise ValueError("PromptContextCollector is not initialized in MultilingualPromptGenerator.")
+
+        # 1. Prepare request_params for get_full_context
+        request_params: Dict[str, Any] = {"location_id": location_id}
+        if player_id:
+            request_params["player_id"] = player_id
+        if party_id:
+            request_params["party_id"] = party_id
+
+        if additional_request_params:
+            request_params.update(additional_request_params)
+
+        # 2. Determine request_type and target_entity (can be refined)
+        request_type = "general_task" # Default type
+        target_entity_id = None
+        target_entity_type = None
+
+        if player_id:
+            target_entity_id = player_id
+            target_entity_type = "character" # Consistent with PromptContextCollector
+            request_type = "player_specific_task" # More specific if player is involved
+        elif party_id: # Only if player_id didn't take precedence
+            target_entity_id = party_id
+            target_entity_type = "party" # PCC might need specific handling for party deep context
+            request_type = "party_specific_task"
+
+        # If a specific entity is mentioned in additional_request_params, that could also set target_entity
+        # For example, if additional_request_params = {"npc_id": "some_npc"}, then:
+        # target_entity_id = additional_request_params["npc_id"]
+        # target_entity_type = "npc"
+        # request_type = "npc_interaction_task"
+        # This logic can be expanded based on common patterns.
+
+        # 3. Call get_full_context
+        # Assuming get_main_language_code is available in context_collector or self
+        # For GenerationContext, lang is the primary language for the response format.
+        # The actual bot language (self.main_bot_language) is used for _get_base_system_prompt via generation_context.target_languages
+
+        # The 'lang' for GenerationContext should typically be the main bot language or a specific target language for this request.
+        # Let's use self.main_bot_language as the primary language for the context object itself.
+        # The target_languages field within GenerationContext will guide the multilingual output.
+        current_bot_lang = self.main_bot_language
+
+        # The GenerationContext itself doesn't have a 'lang' field, but its target_languages field is used.
+        # The 'lang' parameter for get_full_context in PCC was for event language, which is not directly applicable here.
+        # PCC's get_full_context takes guild_id, request_type, request_params, target_entity_id, target_entity_type.
+        # The lang for GenerationContext will be derived from settings or main_bot_language for its internal formatting.
+
+        # Re-checking GenerationContext: it has `lang: str` for the main language of the request.
+        # It also has `target_languages: List[str]` which is handled by _get_base_system_prompt.
+        # So, we need to pass a `lang` to get_full_context.
+
+        # The `event` field in GenerationContext is a dict. For a general task, it can be empty.
+        # We need to ensure `request_params` is correctly passed to `get_full_context`.
+        # The PCC.get_full_context expects `request_params` to be a dict.
+        # The `GenerationContext` will then be built from the `context_dict` inside PCC.get_full_context.
+
+        # The `event` parameter for `GenerationContext` in `get_full_context` is the first argument.
+        # For a general task, we might not have a specific "event" dict.
+        # We can pass the specific_task_instruction or key elements as part of the event if needed,
+        # or just an empty dict. Let's pass minimal event info.
+        event_info_for_context = {
+            "type": request_type,
+            "task_instruction": specific_task_instruction,
+            "source_entity_id": player_id or party_id # Who is initiating this task
+        }
+
+        generation_context_obj: GenerationContext = await self.context_collector.get_full_context(
+            guild_id=guild_id,
+            # lang=current_bot_lang, # get_full_context doesn't take lang, GenerationContext does. PCC sets it.
+            request_type=request_type, # This is for PCC to know how to structure context
+            request_params=request_params, # This contains player_id, party_id, location_id
+            target_entity_id=target_entity_id,
+            target_entity_type=target_entity_type
+            # event_data=event_info_for_context # Pass event_info here if PCC uses it for GenerationContext.event
+        )
+        # The above call to get_full_context will internally create the GenerationContext object.
+        # We need to ensure its `event` field is populated if specific_task_instruction should be part of it.
+        # Let's ensure the GenerationContext has the task instruction.
+        # We can add it to request_params or handle it when building the user prompt.
+        # The current structure of get_full_context populates GenerationContext.event from request_params.event
+        # So, let's add it to request_params.
+        if "event" not in request_params: # Ensure event key exists for PCC
+            request_params["event"] = {}
+        request_params["event"]["type"] = request_type # Overwrite or set event type in request_params
+        request_params["event"]["specific_task_instruction"] = specific_task_instruction
+        if player_id: request_params["event"]["player_id"] = player_id
+        if party_id: request_params["event"]["party_id"] = party_id
+
+
+        # Re-call get_full_context with updated request_params that include the task if necessary
+        # Or, more simply, pass specific_task_instruction directly to _build_full_prompt_for_openai
+        # The GenerationContext object is built inside get_full_context.
+
+        # Let's re-evaluate: get_full_context builds the GenerationContext.
+        # The specific_task_instruction is for the <task> part of the user prompt, not necessarily part of GenerationContext.event
+        # unless the context itself needs to vary based on the task instruction (which it might).
+        # For now, specific_task_instruction is separate.
+
+        # 4. Call _build_full_prompt_for_openai
+        full_prompt_dict = self._build_full_prompt_for_openai(specific_task_instruction, generation_context_obj)
+
+        # 5. Return User Prompt
+        return full_prompt_dict.get("user", "")
+
+
     def get_prompt_template(self, lang: str, template_key: str) -> Optional[str]:
         """
         Placeholder: Retrieves a prompt template string.

@@ -112,3 +112,53 @@ def get_i18n_text(data_dict: Dict[str, Any], field_prefix: str, lang: str, defau
 # consider passing an absolute base_path to load_translations() explicitly when initializing services.
 if not _loaded:
      load_translations()
+
+import logging # Added for get_entity_localized_text
+from typing import Optional, Any # Added for get_entity_localized_text
+
+logger_i18n = logging.getLogger(__name__) # Added for get_entity_localized_text
+
+def get_entity_localized_text(entity: Any, field_name: str, lang: str, default_lang: str = "en") -> Optional[str]:
+    """
+    Retrieves localized text from an entity's i18n field.
+
+    Args:
+        entity: The entity object (e.g., Location, Character, ItemTemplate).
+        field_name: The name of the i18n attribute on the entity (e.g., "name_i18n", "descriptions_i18n").
+        lang: The desired language code (e.g., "ru", "en").
+        default_lang: The fallback language if the desired language is not found.
+
+    Returns:
+        The localized string if found, otherwise None.
+    """
+    if not entity:
+        logger_i18n.warning(f"get_entity_localized_text: Received null or empty entity for field '{field_name}'.")
+        return None
+
+    i18n_data = getattr(entity, field_name, None)
+
+    if not isinstance(i18n_data, dict):
+        # logger_i18n.debug(f"get_entity_localized_text: Field '{field_name}' on entity {type(entity)} is not a dict or not found. Value: {i18n_data}")
+        return None # Not an error, could be a non-i18n field or field does not exist
+
+    if not i18n_data: # Empty dictionary
+        # logger_i18n.debug(f"get_entity_localized_text: Field '{field_name}' on entity {type(entity)} is an empty dict.")
+        return None
+
+    text_value = i18n_data.get(lang)
+    if text_value is not None:
+        return str(text_value)
+
+    text_value_default = i18n_data.get(default_lang)
+    if text_value_default is not None:
+        # logger_i18n.debug(f"get_entity_localized_text: Key '{lang}' not found for field '{field_name}' on entity {type(entity)}. Using default_lang '{default_lang}'.")
+        return str(text_value_default)
+
+    # Last resort: try the first available language if specific and default are missing
+    try:
+        first_available_value = next(iter(i18n_data.values()))
+        # logger_i18n.debug(f"get_entity_localized_text: Key '{lang}' and default_lang '{default_lang}' not found for field '{field_name}' on entity {type(entity)}. Using first available value.")
+        return str(first_available_value)
+    except StopIteration: # Empty dict after all, though checked before
+        # logger_i18n.debug(f"get_entity_localized_text: Field '{field_name}' on entity {type(entity)} became empty during lookup, or initial check failed.")
+        return None

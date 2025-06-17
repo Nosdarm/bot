@@ -13,7 +13,7 @@ class Player(Base):
     __tablename__ = 'players'
 
     id = Column(String, primary_key=True)
-    discord_id = Column(String, nullable=True) # Discord User ID
+    discord_id = Column(String, nullable=False) # Discord User ID
     name_i18n = Column(JSONB) # Standardized to JSONB
     current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
     selected_language = Column(String, nullable=True)
@@ -104,49 +104,77 @@ class Character(Base):
 class Location(Base):
     __tablename__ = 'locations'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    static_name = Column(String, nullable=True) # Not i18n as it's an internal static name
-    name_i18n = Column(JSONB, nullable=False) # Standardized to JSONB
-    descriptions_i18n = Column(JSONB, nullable=False) # Standardized to JSONB
-    type_i18n = Column(JSONB, nullable=False) # Standardized to JSONB
-    coordinates = Column(JSONB, nullable=True) # Standardized to JSONB
-    static_connections = Column(JSONB, nullable=True) # Standardized to JSONB
+    static_id = Column(String, nullable=True, index=True) # Renamed from static_name, added index
+    name_i18n = Column(JSONB, nullable=False)
+    descriptions_i18n = Column(JSONB, nullable=False)
+    type_i18n = Column(JSONB, nullable=False)
+    coordinates = Column(JSONB, nullable=True)
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    exits = Column(JSONB, nullable=True) # Standardized to JSONB
-    inventory = Column(JSONB, nullable=True) # Standardized to JSONB
-    npc_ids = Column(JSONB, nullable=True, default=lambda: []) # Standardized to JSONB
-    event_triggers = Column(JSONB, nullable=True, default=lambda: []) # Standardized to JSONB
+    neighbor_locations_json = Column(JSONB, nullable=True, comment="Stores {target_location_id: 'connection_type_i18n_key'}") # New field
+    inventory = Column(JSONB, nullable=True)
+    npc_ids = Column(JSONB, nullable=True, default=lambda: [])
+    event_triggers = Column(JSONB, nullable=True, default=lambda: [])
     template_id = Column(String, nullable=True)
-    state_variables = Column(JSONB, nullable=True) # Standardized to JSONB
+    state_variables = Column(JSONB, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
-    details_i18n = Column(JSONB, nullable=True) # Standardized to JSONB
-    tags_i18n = Column(JSONB, nullable=True) # Standardized to JSONB
-    atmosphere_i18n = Column(JSONB, nullable=True) # Standardized to JSONB
-    features_i18n = Column(JSONB, nullable=True) # Standardized to JSONB
+    details_i18n = Column(JSONB, nullable=True)
+    tags_i18n = Column(JSONB, nullable=True)
+    atmosphere_i18n = Column(JSONB, nullable=True)
+    features_i18n = Column(JSONB, nullable=True)
     channel_id = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
+    ai_metadata_json = Column(JSONB, nullable=True, comment="Stores metadata for AI generation purposes") # New field
+
+    __table_args__ = (
+        UniqueConstraint('guild_id', 'static_id', name='uq_location_guild_static_id'),
+    )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Location':
         if 'id' not in data or 'guild_id' not in data:
             raise ValueError("Location data must include 'id' and 'guild_id'.")
+
         i18n_fields = ['name_i18n', 'descriptions_i18n', 'details_i18n',
                        'tags_i18n', 'atmosphere_i18n', 'features_i18n']
-        for field in i18n_fields: data.setdefault(field, {})
-        json_fields_default_dict = ['exits', 'inventory', 'state_variables', 'static_connections']
-        for field in json_fields_default_dict: data.setdefault(field, {})
-        if data.get('is_active') is None: data['is_active'] = True
+        for field in i18n_fields:
+            data.setdefault(field, {})
+
+        # Updated list of JSON fields that should default to {} if not present
+        json_fields_default_dict = ['inventory', 'state_variables',
+                                    'neighbor_locations_json', 'ai_metadata_json',
+                                    'npc_ids', 'event_triggers'] # Added new fields, and existing ones like npc_ids
+        for field in json_fields_default_dict:
+            data.setdefault(field, {})
+
+        if data.get('is_active') is None:
+            data['is_active'] = True
+
+        # Remove old fields if they are still lingering in input data, though cls(**data) would ignore them if not in model
+        data.pop('exits', None)
+        data.pop('static_connections', None)
+        if 'static_name' in data and 'static_id' not in data: # Handle potential old data key
+            data['static_id'] = data.pop('static_name')
+
         return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id, "guild_id": self.guild_id, "template_id": self.template_id,
-            "static_name": self.static_name, "name_i18n": self.name_i18n or {},
+            "static_id": self.static_id, "name_i18n": self.name_i18n or {},
             "descriptions_i18n": self.descriptions_i18n or {}, "details_i18n": self.details_i18n or {},
             "tags_i18n": self.tags_i18n or {}, "atmosphere_i18n": self.atmosphere_i18n or {},
-            "features_i18n": self.features_i18n or {}, "static_connections": self.static_connections or {},
-            "exits": self.exits or {}, "inventory": self.inventory or {},
-            "state_variables": self.state_variables or {}, "is_active": self.is_active,
-            "channel_id": self.channel_id, "image_url": self.image_url,
+            "features_i18n": self.features_i18n or {},
+            "neighbor_locations_json": self.neighbor_locations_json or {}, # Added new field
+            "inventory": self.inventory or {},
+            "state_variables": self.state_variables or {},
+            "ai_metadata_json": self.ai_metadata_json or {}, # Added new field
+            "is_active": self.is_active,
+            "channel_id": self.channel_id,
+            "image_url": self.image_url,
+            "npc_ids": self.npc_ids or [], # Ensure list for npc_ids
+            "event_triggers": self.event_triggers or [], # Ensure list for event_triggers
+            "type_i18n": self.type_i18n or {},
+            "coordinates": self.coordinates or {}
         }
 
 class Timer(Base):
@@ -190,7 +218,7 @@ class Party(Base):
 class RulesConfig(Base):
     __tablename__ = 'rules_config'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id'), nullable=False, index=True)
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     key = Column(String, nullable=False, index=True)
     value = Column(JSONB, nullable=True)
 
@@ -340,7 +368,7 @@ class GeneratedQuest(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     title_i18n = Column(JSONB, nullable=True) # MODIFIED from name_i18n
     description_i18n = Column(JSONB, nullable=True) # Ensure JSONB
-    guild_id = Column(String, nullable=False, index=True)
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     status = Column(String, default='available', nullable=True) # ADDED
     suggested_level = Column(Integer, nullable=True) # ADDED
     rewards_json = Column(Text, nullable=True) # ADDED (Storing as JSON string)
@@ -503,6 +531,42 @@ class Status(Base):
     effects = Column(JSONB, nullable=True) # Actual effects, e.g. {"stat_change": {"strength": -2}}, standardized
     name_i18n = Column(JSONB, nullable=True) # Display name of status, standardized
     description_i18n = Column(JSONB, nullable=True) # Display description, standardized
+
+
+class CraftingRecipe(Base):
+    __tablename__ = 'crafting_recipes'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+
+    name_i18n = Column(JSONB, nullable=False)
+    description_i18n = Column(JSONB, nullable=True)
+
+    # Ingredients: List of {"item_template_id": "template_uuid", "quantity": int}
+    ingredients_json = Column(JSONB, nullable=False, default=lambda: [])
+
+    output_item_template_id = Column(String, ForeignKey('item_templates.id'), nullable=False)
+    output_quantity = Column(Integer, default=1, nullable=False)
+
+    required_skill_id = Column(String, ForeignKey('skills.id'), nullable=True)
+    required_skill_level = Column(Integer, nullable=True)
+
+    # Could store things like {"required_tool_template_id": "tool_uuid", "required_location_type": "forge"}
+    other_requirements_json = Column(JSONB, nullable=True, default=lambda: {})
+
+    # For AI generation hints, e.g., {"style": "elven", "complexity": "medium"}
+    ai_metadata_json = Column(JSONB, nullable=True, default=lambda: {})
+
+    # __table_args__ can include an index on output_item_template_id or required_skill_id if frequent lookups are expected
+    __table_args__ = (
+        Index('idx_craftingrecipe_guild_output_item', 'guild_id', 'output_item_template_id'),
+        Index('idx_craftingrecipe_guild_skill', 'guild_id', 'required_skill_id'),
+    )
+
+    def __repr__(self):
+        name_en = self.name_i18n.get('en', 'Unnamed Recipe') if isinstance(self.name_i18n, dict) else 'Unnamed Recipe (i18n error)'
+        return f"<CraftingRecipe(id='{self.id}', name_en='{name_en}', guild_id='{self.guild_id}')>"
+
 
 class CraftingQueue(Base):
     __tablename__ = 'crafting_queues'
@@ -730,16 +794,15 @@ class UserSettings(Base):
 class GuildConfig(Base):
     __tablename__ = 'guild_configs'
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())) # Internal UUID PK
-    guild_id = Column(String, unique=True, nullable=False, index=True) # Discord Guild ID, used for FKs from other tables
+    guild_id = Column(String, primary_key=True, nullable=False, index=True) # Discord Guild ID, used for FKs from other tables
     bot_language = Column(String, default='en', nullable=False) # Not i18n, it's a language code
     game_channel_id = Column(String, nullable=True) # Not i18n
     master_channel_id = Column(String, nullable=True) # Not i18n
-    system_notifications_channel_id = Column(String, nullable=True) # Not i18n
-    master_role_id = Column(String, nullable=True, index=True)
+    system_channel_id = Column(String, nullable=True) # Renamed from system_notifications_channel_id
+    notification_channel_id = Column(String, nullable=True) # Added new field
 
     def __repr__(self):
-        return f"<GuildConfig(id='{self.id}', guild_id='{self.guild_id}', bot_language='{self.bot_language}')>"
+        return f"<GuildConfig(guild_id='{self.guild_id}', bot_language='{self.bot_language}')>"
 
 
 # New WorldState model

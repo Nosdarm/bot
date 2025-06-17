@@ -128,10 +128,12 @@ class GenerationContext(BaseModel):
     event: Dict[str, Any] = {} # Or a more specific Pydantic model if event_data has a known structure
     guild_id: str
     lang: str
+    primary_location_details: Optional[Dict[str, Any]] = None
+    party_context: Optional[Dict[str, Any]] = None
     # Optional: Include other context fields that might be relevant for generation
     # player_id: Optional[str] = None
     # character_id: Optional[str] = None
-    # location_id: Optional[str] = None
+    # location_id: Optional[str] = None # This would be the ID, primary_location_details is the fetched data
     # world_state: Optional[Dict[str, Any]] = None # Snapshot of relevant world state
 
 class ValidationIssue(BaseModel):
