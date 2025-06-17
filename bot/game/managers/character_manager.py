@@ -195,101 +195,188 @@ class CharacterManager:
     ) -> Optional["Character"]:
         guild_id_str = str(guild_id)
         if self._db_service is None or self._db_service.adapter is None:
-            logger.error("CharacterManager: Database service or adapter is not initialized for guild %s.", guild_id_str) # Added
+            logger.error("CharacterManager: Database service or adapter is not initialized for guild %s.", guild_id_str)
             raise ConnectionError("Database service or adapter is not initialized in CharacterManager.")
 
-        # Removed pre-emptive check for get_character_by_discord_id
-        # The database unique constraint (discord_id, guild_id) will handle this.
-        # if self.get_character_by_discord_id(guild_id_str, discord_id):
-        #     logger.warning("CharacterManager: Character with Discord ID %s already exists in guild %s.", discord_id, guild_id_str) # Added
-        #     return None
-        if self.get_character_by_name(guild_id_str, name):
-            logger.warning("CharacterManager: Character with name '%s' already exists in guild %s.", name, guild_id_str) # Added
+        if not self._game_manager:
+            logger.error("CharacterManager: GameManager not available. Cannot fetch starting rules.")
+            raise ValueError("GameManager not available for character creation.")
+
+        if self.get_character_by_name(guild_id_str, name): # Check by name first
+            logger.warning("CharacterManager: Character with name '%s' already exists in guild %s.", name, guild_id_str)
             return None
 
+        # Pre-emptive check for Discord ID to provide a cleaner error than DB constraint failure
+        # This check should ideally be done using a DB query for atomicity, but for now, using cache.
+        if self.get_character_by_discord_id(guild_id_str, discord_id):
+            logger.warning("CharacterManager: Character with Discord ID %s already exists in guild %s (cache check).", discord_id, guild_id_str)
+            raise CharacterAlreadyExistsError(f"A character already exists for user {discord_id} in this guild.")
+
+
         new_id = str(uuid.uuid4())
-        stats = {
-            "base_strength": 10,
-            "base_dexterity": 10,
-            "base_constitution": 10,
-            "base_intelligence": 10,
-            "base_wisdom": 10,
-            "base_charisma": 10
-        }
-        # Note: The rule_engine might override these if it generates stats with these specific keys.
-        # If rule_engine provides a dict with different keys (e.g. 'strength' instead of 'base_strength'),
-        # they would be merged or replaced depending on how 'generated_stats' is assigned to 'stats'.
-        # For this change, we assume the goal is to ensure these base_stat keys are present initially.
-        if self._rule_engine and hasattr(self._rule_engine, 'generate_initial_character_stats'):
-            try:
-                generated_stats = self._rule_engine.generate_initial_character_stats()
-                if isinstance(generated_stats, dict): stats = generated_stats
-            except Exception as e:
-                logger.error("CharacterManager: Error generating initial stats for new char in guild %s: %s", guild_id_str, e, exc_info=True) # Changed
+
+        # Fetch starting rules
+        starting_base_stats = await self._game_manager.get_rule(guild_id_str, "starting_base_stats", default={"strength": 8, "dexterity": 8, "constitution": 8, "intelligence": 8, "wisdom": 8, "charisma": 8})
+        starting_items_rules = await self._game_manager.get_rule(guild_id_str, "starting_items", default=[])
+        starting_skills_rules = await self._game_manager.get_rule(guild_id_str, "starting_skills", default=[])
+        starting_abilities_rules = await self._game_manager.get_rule(guild_id_str, "starting_abilities", default=[])
+        starting_character_class = await self._game_manager.get_rule(guild_id_str, "starting_character_class", default="commoner")
+        starting_race = await self._game_manager.get_rule(guild_id_str, "starting_race", default="human")
+        starting_mp = await self._game_manager.get_rule(guild_id_str, "starting_mp", default=10)
+        starting_attack_base = await self._game_manager.get_rule(guild_id_str, "starting_attack_base", default=1)
+        starting_defense_base = await self._game_manager.get_rule(guild_id_str, "starting_defense_base", default=0)
+
+        # HP and Max Health might also come from rules or be calculated based on stats (e.g., constitution)
+        # For now, using kwargs or defaults as before, but this is an area for future rule integration.
+        base_hp = kwargs.get('hp', 100.0)
+        base_max_health = kwargs.get('max_health', 100.0)
+
+
+        # Prepare stats for Player model (ensure keys match Player.stats expectations, e.g., "base_strength")
+        # The rule "starting_base_stats" should directly provide {"strength": val, ...}
+        # We need to map this to {"base_strength": val, ...} if Player.stats expects that.
+        # Assuming Player.stats expects keys like "base_strength", "base_dexterity", etc.
+        player_stats_data = {}
+        for key, value in starting_base_stats.items():
+            player_stats_data[f"base_{key}"] = value
+
+        # Add attack and defense to stats if they are stored there, or handle as separate Player fields.
+        # Assuming they might be part of the 'stats' JSONB for flexibility:
+        player_stats_data["attack_base"] = starting_attack_base
+        player_stats_data["defense_base"] = starting_defense_base
+        # If Player model has distinct `attack` and `defense` columns, those should be used directly in `data`.
 
         default_player_language = "en"
         if hasattr(self, '_game_manager') and self._game_manager and hasattr(self._game_manager, 'get_default_bot_language'):
-            try: default_player_language = self._game_manager.get_default_bot_language()
-            except Exception: default_player_language = "en" # Fallback
+            try: default_player_language = self._game_manager.get_default_bot_language(guild_id_str) # Pass guild_id
+            except Exception: default_player_language = "en"
 
         resolved_initial_location_id = initial_location_id
-        if resolved_initial_location_id is None and self._settings:
+        if resolved_initial_location_id is None and self._settings: # Fallback to settings if not provided
             guild_settings = self._settings.get('guilds', {}).get(guild_id_str, {})
             default_loc_id = guild_settings.get('default_start_location_id') or self._settings.get('default_start_location_id')
             if default_loc_id: resolved_initial_location_id = str(default_loc_id)
         elif initial_location_id: resolved_initial_location_id = str(initial_location_id)
 
-        name_i18n_data = {"en": name, "ru": name} # Assuming default, should be configurable
-        data: Dict[str, Any] = {
-            'id': new_id, 'discord_id': discord_id, 'name': name, 'name_i18n': name_i18n_data,
-            'guild_id': guild_id_str, 'current_location_id': resolved_initial_location_id,
-            'stats': stats, 'inventory': [], 'current_action': None, 'action_queue': [],
-            'party_id': None, 'state_variables': {}, 'hp': 100.0, 'max_health': 100.0,
-            'is_alive': True, 'status_effects': [], 'level': level, 'experience': experience,
-            'unspent_xp': unspent_xp, 'selected_language': default_player_language,
-            'collected_actions_json': None, 'skills_data_json': json.dumps([]),
-            'abilities_data_json': json.dumps([]), 'spells_data_json': json.dumps([]),
-            'character_class': kwargs.get('character_class', 'Adventurer'),
-            'flags_json': json.dumps({}), 'effective_stats_json': "{}"
-        }
-        model_data = data.copy()
-        model_data['discord_user_id'] = model_data.pop('discord_id')
-        for k_json in ['skills_data_json', 'abilities_data_json', 'spells_data_json', 'flags_json', 'effective_stats_json']:
-            if k_json in model_data: del model_data[k_json]
-        model_data['skills_data']=[]; model_data['abilities_data']=[]; model_data['spells_data']=[]; model_data['flags']={}
+        # Prepare skills and abilities data
+        skills_list_for_json = starting_skills_rules # Assumes rule format matches Player model's expected JSON structure
+        abilities_list_for_json = starting_abilities_rules # Same assumption
 
+        name_i18n_data = {"en": name, "ru": name} # Basic default, consider making this rule-based too
+        data: Dict[str, Any] = {
+            'id': new_id,
+            'discord_id': discord_id,
+            'name': name,
+            'name_i18n': name_i18n_data,
+            'guild_id': guild_id_str,
+            'current_location_id': resolved_initial_location_id,
+            'stats': player_stats_data, # Using fetched and prepared stats
+            'inventory': [], # Starting items will be handled after player creation
+            'current_action': None,
+            'action_queue': [],
+            'party_id': None,
+            'state_variables': {},
+            'hp': base_hp, # Use base_hp from earlier
+            'max_health': base_max_health, # Use base_max_health
+            'mp': starting_mp, # From rules
+            'attack': starting_attack_base, # From rules - assuming 'attack' field exists on Player model
+            'defense': starting_defense_base, # From rules - assuming 'defense' field exists on Player model
+            'race': starting_race, # From rules - assuming 'race' field exists
+            'is_alive': True,
+            'status_effects': [],
+            'level': level,
+            'experience': experience,
+            'unspent_xp': unspent_xp,
+            'selected_language': default_player_language,
+            'collected_actions_json': None,
+            'skills_data_json': json.dumps(skills_list_for_json),
+            'abilities_data_json': json.dumps(abilities_list_for_json),
+            'spells_data_json': json.dumps([]), # No specific starting spells rule mentioned, default to empty
+            'character_class': starting_character_class, # From rules
+            'flags_json': json.dumps({}),
+            'effective_stats_json': "{}" # Will be recalculated
+        }
+
+        # Prepare for Character.from_dict (expects different field names for some)
+        model_data_init = data.copy()
+        model_data_init['discord_user_id'] = model_data_init.pop('discord_id')
+        # Remove fields that are JSON strings in DB but parsed in Character model
+        for k_json in ['skills_data_json', 'abilities_data_json', 'spells_data_json', 'flags_json', 'effective_stats_json']:
+            if k_json in model_data_init: del model_data_init[k_json]
+        # Add parsed versions for Character model
+        model_data_init['skills_data'] = skills_list_for_json
+        model_data_init['abilities_data'] = abilities_list_for_json
+        model_data_init['spells_data'] = []
+        model_data_init['flags'] = {}
+
+
+        # Construct SQL INSERT statement and parameters
+        # This needs to be robust to Player model changes. For now, list common fields.
+        # Assume 'race', 'mp', 'attack', 'defense' are direct columns on Player table.
+        # If they are part of 'stats' JSONB, then 'stats' field in SQL needs to include them.
+        # For this iteration, let's assume they are direct columns for clarity.
+        # A more dynamic way to build this SQL would be better in the long run.
         sql = """
         INSERT INTO players (
             id, discord_id, name_i18n, guild_id, current_location_id, stats, inventory,
             current_action, action_queue, party_id, state_variables,
-            hp, max_health, is_alive, status_effects, level, xp, unspent_xp,
+            hp, max_health, mp, attack, defense, race, character_class, -- Added mp, attack, defense, race
+            is_alive, status_effects, level, xp, unspent_xp,
             selected_language, collected_actions_json,
-            skills_data_json, abilities_data_json, spells_data_json, character_class, flags_json, effective_stats_json, is_active
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+            skills_data_json, abilities_data_json, spells_data_json, flags_json, effective_stats_json, is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
         RETURNING id;
         """
+        # Parameter order must match VALUES clause
         db_params = (
             data['id'], str(data['discord_id']), json.dumps(data['name_i18n']), data['guild_id'],
             data['current_location_id'], json.dumps(data['stats']), json.dumps(data['inventory']),
             json.dumps(data['current_action']) if data['current_action'] is not None else None,
             json.dumps(data['action_queue']), data['party_id'], json.dumps(data['state_variables']),
-            data['hp'], data['max_health'], data['is_alive'], json.dumps(data['status_effects']),
+            data['hp'], data['max_health'], data['mp'], data['attack'], data['defense'], data['race'], data['character_class'],
+            data['is_alive'], json.dumps(data['status_effects']),
             data['level'], data['experience'], data['unspent_xp'], data['selected_language'],
             data['collected_actions_json'], data['skills_data_json'], data['abilities_data_json'],
-            data['spells_data_json'], data['character_class'], data['flags_json'], data['effective_stats_json'], True
+            data['spells_data_json'], data['flags_json'], data['effective_stats_json'], True
         )
+
         try:
             await self._db_service.adapter.execute_insert(sql, db_params)
-            char = Character.from_dict(model_data)
-            setattr(char, 'effective_stats_json', data['effective_stats_json'])
+            char = Character.from_dict(model_data_init) # Use prepared model_data_init
+            setattr(char, 'effective_stats_json', data['effective_stats_json']) # Set this as it's not in model_data_init
 
             self._characters.setdefault(guild_id_str, {})[char.id] = char
             if char.discord_user_id is not None:
                  self._discord_to_char_map.setdefault(guild_id_str, {})[char.discord_user_id] = char.id
 
+            # Handle starting items
+            if self._item_manager:
+                for item_info in starting_items_rules:
+                    template_id = item_info.get("template_id")
+                    quantity = item_info.get("quantity", 1)
+                    state_vars = item_info.get("state_variables") # Optional state for the item
+                    if template_id:
+                        try:
+                            # Assuming ItemManager.create_and_add_item_to_player_inventory exists and handles DB operations
+                            # This method would need to accept a session if called within a larger transaction.
+                            # For now, assuming it manages its own or this create_character is not within an outer transaction.
+                            await self._item_manager.create_and_add_item_to_player_inventory(
+                                guild_id=guild_id_str,
+                                player_id=char.id,
+                                item_template_id=template_id,
+                                quantity=quantity,
+                                state_variables=state_vars
+                                # session=db_session_from_guild_transaction_if_available # Future consideration
+                            )
+                            logger.info(f"Granted starting item {template_id} (x{quantity}) to character {char.id}")
+                        except Exception as item_ex:
+                            logger.error(f"Error granting starting item {template_id} to char {char.id}: {item_ex}", exc_info=True)
+            else:
+                logger.warning("ItemManager not available. Cannot grant starting items to character %s.", char.id)
+
             await self._recalculate_and_store_effective_stats(guild_id_str, char.id, char)
             self.mark_character_dirty(guild_id_str, char.id)
-            logger.info("CharacterManager: Character '%s' (ID: %s) created in guild %s.", char.name, char.id, guild_id_str) # Changed
+            logger.info("CharacterManager: Character '%s' (ID: %s) created in guild %s.", char.name, char.id, guild_id_str)
             return char
         except asyncpg.exceptions.UniqueViolationError as uve:
             logger.warning(
