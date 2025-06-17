@@ -6,6 +6,7 @@ import traceback # Will be removed
 import os
 import io
 import logging # Added
+import uuid # Added for quest generation
 from alembic.config import Config
 from alembic import command
 from typing import Optional, Dict, Any, Callable, Awaitable, List, Set, TYPE_CHECKING
@@ -19,9 +20,10 @@ from discord import Client
 from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 from bot.game.models.character import Character
-from bot.database.models import RulesConfig, Player # Added Player import
+from bot.database.models import RulesConfig, Player, PendingGeneration, GuildConfig, Location, QuestTable, QuestStepTable # Added QuestTable, QuestStepTable
 from bot.services.notification_service import NotificationService # Added runtime import
 from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError
+from bot.ai.ai_response_validator import parse_and_validate_ai_response # Added
 
 if TYPE_CHECKING:
     from discord import Message
@@ -1512,5 +1514,402 @@ class GameManager:
         # e.g., await self.location_manager.handle_entity_arrival(guild_id_str, player.id, "Player", target_location.id)
 
         return True
+
+    async def trigger_ai_generation(
+        self,
+        guild_id: str,
+        request_type: str,
+        request_params: Dict[str, Any],
+        created_by_user_id: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Triggers an AI generation task, stores the pending request, and notifies for moderation if needed.
+        Returns the ID of the PendingGeneration record, or None if the process fails early.
+        """
+        logger.info(f"GameManager: Triggering AI generation for guild {guild_id}, type '{request_type}', params: {request_params}")
+
+        if not all([self.multilingual_prompt_generator, self.openai_service, self.db_service]):
+            logger.error("GameManager: AI generation services (prompt generator, OpenAI, DBService) not fully available. Cannot trigger generation.")
+            return None
+
+        # Determine specific task instruction for the prompt generator
+        specific_task_instruction = ""
+        if request_type == "location_content_generation":
+            specific_task_instruction = "Generate detailed content for a game location based on the provided context and parameters, including name, atmospheric description, points of interest, and connections."
+        elif request_type == "npc_profile_generation":
+            specific_task_instruction = "Generate a complete NPC profile based on the provided context and parameters, including template_id, name, role, archetype, backstory, personality, motivation, visual description, dialogue hints, stats, skills, abilities, spells, inventory, faction affiliations, and relationships."
+        elif request_type == "quest_generation":
+            specific_task_instruction = "Generate a complete quest structure based on the provided context and parameters, including name, description, steps (with mechanics, goals, consequences), overall consequences, and prerequisites."
+        else:
+            specific_task_instruction = "Perform the requested AI generation task based on the provided context and parameters."
+
+        # Location ID is a required parameter for prepare_ai_prompt
+        location_id_for_prompt = request_params.get("location_id")
+        if not location_id_for_prompt:
+            # For some request types, location_id might be optional or derived differently.
+            # This needs careful consideration based on how prompts are built.
+            # For now, if prepare_ai_prompt strictly requires it, we must ensure it's present.
+            # If it's a new location being generated, perhaps a placeholder or parent location ID is used.
+            logger.warning(f"GameManager: location_id not found in request_params for AI generation type '{request_type}'. Prepare_ai_prompt might fail or use a default.")
+            # If location_id is absolutely critical for all prompt types, could return None here.
+            # For now, let prepare_ai_prompt handle it if it can.
+
+        prompt_str = await self.multilingual_prompt_generator.prepare_ai_prompt(
+            guild_id=guild_id,
+            location_id=str(location_id_for_prompt) if location_id_for_prompt else "", # Pass empty string if None, prepare_ai_prompt needs str
+            player_id=request_params.get("player_id"),
+            party_id=request_params.get("party_id"),
+            specific_task_instruction=specific_task_instruction,
+            additional_request_params=request_params
+        )
+
+        raw_ai_output = await self.openai_service.get_completion(prompt_str)
+
+        pending_status = "pending_validation"
+        parsed_data_dict: Optional[Dict[str, Any]] = None
+        validation_issues_list: Optional[List[Dict[str, Any]]] = None
+
+        if not raw_ai_output:
+            logger.error(f"GameManager: AI generation failed for type '{request_type}', guild {guild_id}. No output from OpenAI service.")
+            pending_status = "failed_validation"
+            validation_issues_list = [{"type": "generation_error", "msg": "AI service returned no output."}]
+        else:
+            parsed_data_dict, validation_issues_list = await parse_and_validate_ai_response(
+                raw_ai_output_text=raw_ai_output,
+                guild_id=guild_id,
+                request_type=request_type,
+                game_manager=self
+            )
+            if validation_issues_list:
+                pending_status = "failed_validation"
+            else: # Pydantic validation passed
+                pending_status = "pending_moderation" # Requires human review after structural validation
+
+        pending_gen_data = {
+            "guild_id": guild_id,
+            "request_type": request_type,
+            "request_params_json": json.dumps(request_params) if request_params else None,
+            "raw_ai_output_text": raw_ai_output,
+            "parsed_data_json": parsed_data_dict, # This is already a dict from parse_and_validate
+            "validation_issues_json": validation_issues_list,
+            "status": pending_status,
+            "created_by_user_id": created_by_user_id
+        }
+
+        pending_gen_record = await self.db_service.create_entity(
+            model_class=PendingGeneration,
+            entity_data=pending_gen_data
+            # guild_id is part of entity_data, db_service.create_entity might not need it separately
+        )
+
+        if not pending_gen_record or not pending_gen_record.id:
+            logger.error(f"GameManager: Failed to create PendingGeneration record in DB for type '{request_type}', guild {guild_id}.")
+            return None
+
+        logger.info(f"GameManager: PendingGeneration record {pending_gen_record.id} created with status '{pending_status}' for type '{request_type}', guild {guild_id}.")
+
+        if pending_status == "pending_moderation" and self.notification_service:
+            guild_config_obj: Optional[GuildConfig] = await self.db_service.get_entity_by_pk(GuildConfig, pk_value=guild_id) # Fetch by PK
+            if guild_config_obj:
+                notification_channel_id_to_use = guild_config_obj.notification_channel_id or \
+                                                 guild_config_obj.master_channel_id or \
+                                                 guild_config_obj.system_channel_id
+
+                if notification_channel_id_to_use:
+                    try:
+                        await self.notification_service.send_notification(
+                            target_channel_id=int(notification_channel_id_to_use),
+                            message=f"New content of type '{request_type}' (Request ID: {pending_gen_record.id}) is pending moderation."
+                        )
+                        logger.info(f"Sent moderation pending notification to channel {notification_channel_id_to_use} for PG ID {pending_gen_record.id}.")
+                    except ValueError:
+                        logger.error(f"Invalid channel ID format for notification: {notification_channel_id_to_use}")
+                    except Exception as e:
+                        logger.error(f"Failed to send moderation notification for PG ID {pending_gen_record.id}: {e}", exc_info=True)
+                else:
+                    logger.warning(f"No suitable notification channel configured for guild {guild_id} to send moderation pending message for PG ID {pending_gen_record.id}.")
+            else:
+                logger.warning(f"Could not fetch GuildConfig for guild {guild_id} to send moderation notification for PG ID {pending_gen_record.id}.")
+
+        return pending_gen_record.id
+
+    async def apply_approved_generation(self, pending_gen_id: str, guild_id: str) -> bool:
+        """
+        Applies an approved AI generation to the game state.
+        Currently handles "npc_profile_generation".
+        """
+        logger.info(f"GameManager: Applying approved generation {pending_gen_id} for guild {guild_id}.")
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot apply generation.")
+            return False
+
+        # Fetch PendingGeneration record safely
+        record: Optional[PendingGeneration] = await self.db_service.get_entity_by_conditions(
+            PendingGeneration,
+            conditions={'id': pending_gen_id, 'guild_id': guild_id},
+            single_entity=True
+        )
+
+        if not record:
+            logger.error(f"GameManager: PendingGeneration record {pending_gen_id} not found or does not belong to guild {guild_id}.")
+            return False
+
+        if record.status != "approved":
+            logger.warning(f"GameManager: PendingGeneration record {pending_gen_id} is not in 'approved' status (current: {record.status}). Cannot apply.")
+            return False
+
+        if not record.parsed_data_json or not isinstance(record.parsed_data_json, dict):
+            logger.error(f"GameManager: Parsed data for {pending_gen_id} is missing or invalid. Cannot apply.")
+            record.status = "application_failed"
+            record.validation_issues_json = (record.validation_issues_json or []) + [{"type": "application_error", "msg": "Parsed data missing or invalid for application."}] # type: ignore
+            await self.db_service.update_entity_by_pk(PendingGeneration, record.id, {"status": record.status, "validation_issues_json": record.validation_issues_json}, guild_id=guild_id)
+            return False
+
+        application_successful = False
+        try:
+            if record.request_type == "npc_profile_generation":
+                npc_data = record.parsed_data_json
+                request_params = json.loads(record.request_params_json) if record.request_params_json else {}
+
+                # Prepare data for NPC model
+                npc_id = str(uuid.uuid4())
+
+                # Default health/max_health, can be overridden by stats from AI
+                default_hp = 100.0
+                stats_data = npc_data.get("stats", {})
+                health = float(stats_data.get("hp", default_hp)) if "hp" in stats_data else float(stats_data.get("health", default_hp)) # common variations
+                max_health_val = float(stats_data.get("max_hp", default_hp)) if "max_hp" in stats_data else float(stats_data.get("max_health", health))
+
+
+                npc_db_data = {
+                    "id": npc_id,
+                    "guild_id": guild_id,
+                    "name_i18n": npc_data.get("name_i18n"),
+                    "description_i18n": npc_data.get("visual_description_i18n"), # Mapping visual desc to main desc
+                    "backstory_i18n": npc_data.get("backstory_i18n"),
+                    "persona_i18n": npc_data.get("personality_i18n"), # Mapping personality to persona
+                    "stats": stats_data,
+                    "inventory": npc_data.get("inventory", []), # Expects list of dicts from pydantic model
+                    "archetype": npc_data.get("archetype"),
+                    "template_id": npc_data.get("template_id"), # This is AI generated template_id for this NPC
+                    "location_id": request_params.get("initial_location_id"), # from original request
+                    "health": health,
+                    "max_health": max_health_val,
+                    "is_alive": True,
+                    "faction_id": None, # Default, can be complex
+                    # Ensure other nullable fields default to None or their DB default if not in npc_data
+                    "motives": npc_data.get("motivation_i18n"), # Mapping motivation to motives
+                    "skills_data": npc_data.get("skills"),
+                    "abilities_data": {"ids": npc_data.get("abilities", [])}, # Example structure
+                    "equipment_data": {}, # Needs definition based on how equipment is handled
+                    "state_variables": {}, # Default empty
+                    "is_temporary": request_params.get("is_temporary", False)
+                }
+
+                # Handle faction_id (simplified: take first if exists)
+                faction_affiliations = npc_data.get("faction_affiliations")
+                if faction_affiliations and isinstance(faction_affiliations, list) and len(faction_affiliations) > 0:
+                    first_faction = faction_affiliations[0]
+                    if isinstance(first_faction, dict) and "faction_id" in first_faction:
+                        npc_db_data["faction_id"] = first_faction["faction_id"]
+
+                from bot.database.models import NPC # Local import to avoid circularity at top level
+                new_npc = await self.db_service.create_entity(model_class=NPC, entity_data=npc_db_data)
+
+                if new_npc:
+                    logger.info(f"GameManager: Successfully applied NPC generation {pending_gen_id}. New NPC ID: {new_npc.id}")
+                    record.status = "applied"
+                    application_successful = True
+                else:
+                    logger.error(f"GameManager: Failed to create NPC in DB for {pending_gen_id}.")
+                    record.status = "application_failed"
+                    record.validation_issues_json = (record.validation_issues_json or []) + [{"type": "application_error", "msg": "NPC database creation failed."}] # type: ignore
+
+            elif record.request_type == "location_content_generation":
+                logger.info(f"GameManager: Applying 'location_content_generation' for PG ID: {pending_gen_id}")
+                location_gen_data = record.parsed_data_json # This is a dict from GeneratedLocationContent.model_dump()
+                request_params = json.loads(record.request_params_json) if record.request_params_json else {}
+
+                new_loc_id = str(uuid.uuid4())
+                guild_id_str = record.guild_id
+
+                # Prepare neighbor_locations_json from connections_data
+                neighbor_locations = {}
+                connections_data = location_gen_data.get("connections", [])
+                if isinstance(connections_data, list):
+                    for conn in connections_data:
+                        if isinstance(conn, dict):
+                            target_id = conn.get("to_location_id")
+                            # Use 'en' path description as a simple key, or create a more robust key if needed
+                            path_desc_key = conn.get("path_description_i18n", {}).get("en", f"path_to_{target_id}")
+                            if target_id:
+                                neighbor_locations[target_id] = path_desc_key
+
+                # Prepare points_of_interest_json (assuming this field will be added to Location model)
+                points_of_interest_data = location_gen_data.get("points_of_interest", [])
+
+                # Prepare ai_metadata_json
+                ai_metadata = {
+                    "original_request_params": request_params,
+                    "ai_generated_template_id": location_gen_data.get("template_id")
+                }
+
+                # Ensure static_id: use AI's template_id, or generate a new one if missing/empty
+                static_id_val = location_gen_data.get("template_id")
+                if not static_id_val or not static_id_val.strip():
+                    static_id_val = f"ai_loc_{new_loc_id[:12]}" # Shorter to fit typical DB limits if any
+
+                location_db_data = {
+                    "id": new_loc_id,
+                    "guild_id": guild_id_str,
+                    "name_i18n": location_gen_data.get("name_i18n", {"en": "Unnamed AI Location"}),
+                    "descriptions_i18n": location_gen_data.get("atmospheric_description_i18n", {"en": "No description provided."}),
+                    "static_id": static_id_val,
+                    "template_id": location_gen_data.get("template_id"), # This might be redundant if static_id is the same
+                    "type_i18n": location_gen_data.get("type_i18n", {"en": "AI Generated Area", "ru": "Сгенерированная область"}),
+                    "neighbor_locations_json": neighbor_locations,
+                    "points_of_interest_json": points_of_interest_data, # Data for the new field
+                    "ai_metadata_json": ai_metadata,
+                    "inventory": {}, # Default
+                    "npc_ids": [],   # Default
+                    "event_triggers": [], # Default
+                    "state_variables": {}, # Default
+                    "coordinates": location_gen_data.get("coordinates", {}), # If AI provides, else default
+                    "is_active": True,
+                    "channel_id": None, # Usually not set by AI directly
+                    "image_url": None   # Usually not set by AI directly
+                }
+
+                # Location model needs to be imported at the top of the file
+                # from bot.database.models import Location
+                new_location = await self.db_service.create_entity(model_class=Location, entity_data=location_db_data)
+
+                if new_location:
+                    logger.info(f"GameManager: Successfully applied Location generation {pending_gen_id}. New Location ID: {new_location.id}, Static ID: {new_location.static_id}")
+                    record.status = "applied"
+                    application_successful = True
+                else:
+                    logger.error(f"GameManager: Failed to create Location in DB for {pending_gen_id}.")
+                    record.status = "application_failed"
+                    record.validation_issues_json = (record.validation_issues_json or []) + [{"type": "application_error", "msg": "Location database creation failed."}] # type: ignore
+
+            elif record.request_type == "quest_generation":
+                logger.info(f"GameManager: Applying 'quest_generation' for PG ID: {pending_gen_id}")
+                application_successful = False # Initialize for this block
+                quest_gen_data = record.parsed_data_json
+                guild_id_str = record.guild_id
+
+                async with self.db_service.get_session() as session: # Start transaction
+                    try:
+                        new_quest_id = str(uuid.uuid4())
+
+                        # Prepare QuestTable data
+                        quest_db_data = {
+                            "id": new_quest_id,
+                            "guild_id": guild_id_str,
+                            "name_i18n": quest_gen_data.get("name_i18n", quest_gen_data.get("title_i18n", {"en": "Untitled Quest"})),
+                            "description_i18n": quest_gen_data.get("description_i18n", {"en": "No description."}),
+                            "status": "available", # Default status
+                            "influence_level": quest_gen_data.get("influence_level"),
+                            "prerequisites_json_str": json.dumps(quest_gen_data.get("prerequisites_json")) if quest_gen_data.get("prerequisites_json") else None,
+                            "rewards_json_str": json.dumps(quest_gen_data.get("rewards_json", quest_gen_data.get("consequences_json"))) if quest_gen_data.get("rewards_json", quest_gen_data.get("consequences_json")) else None,
+                            "consequences_json_str": json.dumps(quest_gen_data.get("consequences_json")) if quest_gen_data.get("consequences_json") else None,
+                            "npc_involvement_json": quest_gen_data.get("npc_involvement", {}),
+                            "quest_giver_details_i18n": quest_gen_data.get("quest_giver_details_i18n"),
+                            "consequences_summary_i18n": quest_gen_data.get("consequences_summary_i18n"),
+                            "is_ai_generated": True,
+                            "ai_prompt_context_json_str": json.dumps(quest_gen_data.get("ai_prompt_context_json")) if quest_gen_data.get("ai_prompt_context_json") else None,
+                        }
+
+                        new_quest = await self.db_service.create_entity(
+                            model_class=QuestTable,
+                            entity_data=quest_db_data,
+                            session=session,
+                            guild_id=guild_id_str
+                        )
+
+                        if not new_quest:
+                            logger.error(f"GameManager: Failed to create QuestTable record for PG ID {pending_gen_id}. Transaction will be rolled back.")
+                            # application_successful remains False
+                        else:
+                            logger.info(f"GameManager: QuestTable record {new_quest.id} created for PG ID {pending_gen_id}.")
+                            steps_data = quest_gen_data.get("steps", [])
+                            all_steps_created = True
+                            for step_data in steps_data:
+                                new_step_id = str(uuid.uuid4())
+                                step_db_data = {
+                                    "id": new_step_id,
+                                    "guild_id": guild_id_str,
+                                    "quest_id": new_quest.id,
+                                    "title_i18n": step_data.get("title_i18n"),
+                                    "description_i18n": step_data.get("description_i18n"),
+                                    "requirements_i18n": step_data.get("requirements_i18n", {}),
+                                    "required_mechanics_json": json.dumps(step_data.get("required_mechanics_json", {})) if step_data.get("required_mechanics_json") else json.dumps({}),
+                                    "abstract_goal_json": json.dumps(step_data.get("abstract_goal_json", {})) if step_data.get("abstract_goal_json") else json.dumps({}),
+                                    "conditions_json": json.dumps(step_data.get("conditions_json", {})) if step_data.get("conditions_json") else json.dumps({}),
+                                    "consequences_json": json.dumps(step_data.get("consequences_json", {})) if step_data.get("consequences_json") else json.dumps({}),
+                                    "step_order": step_data.get("step_order", 0),
+                                    "status": step_data.get("status", "pending"),
+                                    "assignee_type": step_data.get("assignee_type"),
+                                    "assignee_id": step_data.get("assignee_id")
+                                }
+                                new_step = await self.db_service.create_entity(
+                                    model_class=QuestStepTable,
+                                    entity_data=step_db_data,
+                                    session=session,
+                                    guild_id=guild_id_str
+                                )
+                                if not new_step:
+                                    logger.error(f"GameManager: Failed to create QuestStepTable record for quest {new_quest.id} (PG ID {pending_gen_id}). Transaction will be rolled back.")
+                                    all_steps_created = False
+                                    break
+
+                            if all_steps_created:
+                                await session.commit() # Commit transaction
+                                application_successful = True # Set true only after successful commit
+                                logger.info(f"GameManager: Successfully applied Quest generation {pending_gen_id} with {len(steps_data)} steps. New Quest ID: {new_quest.id}")
+                            else:
+                                # application_successful remains False, transaction will rollback automatically
+                                logger.error(f"GameManager: Quest step creation failed, quest {new_quest.id} (PG ID {pending_gen_id}) will be rolled back.")
+
+                    except Exception as transaction_e:
+                        logger.error(f"GameManager: Exception during quest application transaction for PG ID {pending_gen_id}: {transaction_e}", exc_info=True)
+                        application_successful = False # Ensure this is false on any exception within try
+                        # Transaction will rollback automatically due to 'async with' context manager if commit wasn't reached or exception occurred after commit (though less likely for commit itself to raise often)
+
+                # Update record status based on transaction outcome, outside the transaction block
+                if application_successful: # This is True only if commit was successful
+                    record.status = "applied"
+                else:
+                    record.status = "application_failed"
+                    # Add a generic error if not already set by specific failures inside the transaction
+                    current_issues = record.validation_issues_json if isinstance(record.validation_issues_json, list) else []
+                    if not any(issue.get("type") == "application_error" for issue in current_issues): # type: ignore
+                        current_issues.append({"type": "application_error", "msg": "Quest application transaction failed or was rolled back."}) # type: ignore
+                        record.validation_issues_json = current_issues
+
+            else:
+                logger.warning(f"GameManager: Application logic for request_type '{record.request_type}' (PG ID: {pending_gen_id}) not yet implemented.")
+                record.status = "application_pending_logic"
+                application_successful = False # Or True if you consider "pending_logic" a successful handoff
+
+        except Exception as e: # Catch exceptions outside the transaction block or if transaction itself fails to start
+            logger.error(f"GameManager: General exception during application of {pending_gen_id} ({record.request_type}): {e}", exc_info=True)
+            record.status = "application_failed" # Ensure status reflects failure
+            current_issues = record.validation_issues_json if isinstance(record.validation_issues_json, list) else []
+            current_issues.append({"type": "application_error", "msg": f"Outer exception during application: {str(e)}"}) # type: ignore
+            record.validation_issues_json = current_issues
+            application_successful = False
+
+        # Save updated PendingGeneration status (outside transaction block)
+        update_payload = {"status": record.status}
+        # Ensure validation_issues_json is included in the update if it was modified
+        if hasattr(record, 'validation_issues_json') and record.validation_issues_json is not None:
+             update_payload["validation_issues_json"] = record.validation_issues_json
+
+        # Use a new session for this update as the previous one might have been rolled back or closed.
+        await self.db_service.update_entity_by_pk(PendingGeneration, record.id, update_payload, guild_id=guild_id)
+
+        return application_successful
 
 logger.debug("DEBUG: Finished loading game_manager.py from: %s", __file__) # Changed
