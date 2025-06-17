@@ -19,6 +19,7 @@ from discord import Client
 from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 from bot.game.models.character import Character
+from bot.database.models import RulesConfig, Player # Added Player import
 from bot.services.notification_service import NotificationService # Added runtime import
 from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError
 
@@ -1084,7 +1085,10 @@ class GameManager:
             logger.warning("GameManager: DBService not available. Cannot get master_role_id for guild %s.", guild_id)
             return None
         try:
-            role_id = await self.db_service.get_guild_setting(guild_id, 'master_role_id')
+            # This could use the new get_rule method if master_role_id is stored in RulesConfig
+            # For now, assuming get_guild_setting is a separate mechanism or will be refactored.
+            # role_id = await self.get_rule(guild_id, 'master_role_id')
+            role_id = await self.db_service.get_guild_setting(guild_id, 'master_role_id') # Kept existing logic
             if role_id and isinstance(role_id, str):
                 return role_id
             elif role_id:
@@ -1095,94 +1099,165 @@ class GameManager:
             logger.error("GameManager: Error fetching master_role_id for guild %s: %s", guild_id, e, exc_info=True)
             return None
 
-    async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
-        if not guild_id:
-            logger.error("GameManager (set_default_bot_language): guild_id must be provided to set default language.")
-            return False # Or handle as a global default update if that's desired later
-
-        if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
-            logger.info(f"GameManager: RulesConfig cache for guild {guild_id} not populated. Loading it now.")
-            await self._load_or_initialize_rules_config(guild_id)
-            # Check again after loading
-            if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
-                 logger.error(f"GameManager: Failed to load or initialize RulesConfig for guild {guild_id}. Cannot set language.")
-                 return False
+    async def get_player_model_by_discord_id(self, guild_id: str, discord_id: str) -> Optional[Player]:
+        """
+        Retrieves a Player model instance by their Discord ID and Guild ID.
+        """
+        guild_id_str = str(guild_id)
+        discord_id_str = str(discord_id)
+        logger.debug(f"GameManager: Attempting to get Player model for discord_id '{discord_id_str}' in guild '{guild_id_str}'.")
 
         if not self.db_service:
-            logger.error(f"GameManager: DBService not available. Cannot save default bot language for guild {guild_id}.")
-            return False
-
-        # Get the current language for this guild's cache, if it exists
-        original_language = self._rules_config_cache[guild_id].get('default_language')
-
-        # Update the cache first
-        self._rules_config_cache[guild_id]['default_language'] = language
+            logger.error("GameManager: DBService not available. Cannot fetch Player by Discord ID.")
+            return None
 
         try:
-            # Persist the change to the database for the specific key "default_language"
-            # This assumes a method like update_or_create_entity_by_key or similar
-            # For now, using a generic update_entity if it can handle composite keys or specific conditions,
-            # or using a more specific method if available (like the planned update_rule_config utility).
-            # Let's assume db_service.update_entity can take conditions.
-            # If RulesConfig uses (guild_id, key) as PK, then entity_id might be a composite.
-            # For now, we'll assume a way to update based on guild_id and key.
-            # This might need a new DBService method or use the upcoming utility functions.
+            player_obj = await self.db_service.get_entity_by_conditions(
+                table_name='players',
+                conditions={'guild_id': guild_id_str, 'discord_id': discord_id_str},
+                model_class=Player,
+                single_entity=True
+            )
+            if player_obj:
+                logger.info(f"GameManager: Found Player model for discord_id '{discord_id_str}' in guild '{guild_id_str}'. Player ID: {player_obj.id}")
+                return player_obj
+            else:
+                logger.info(f"GameManager: Player model not found for discord_id '{discord_id_str}' in guild '{guild_id_str}'.")
+                return None
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Player by discord_id '{discord_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return None
 
-            # Using a placeholder for the actual update logic, which should be an upsert.
-            # This will be refined when `update_rule_config` utility is implemented.
-            # For now, let's simulate an update or create.
+    async def get_player_model_by_id(self, guild_id: str, player_id: str) -> Optional[Player]:
+        """
+        Retrieves a Player model instance by their internal Player ID and Guild ID.
+        """
+        guild_id_str = str(guild_id) # Ensure guild_id is string, though db_service might handle it
+        player_id_str = str(player_id)
+        logger.debug(f"GameManager: Attempting to get Player model for player_id '{player_id_str}' in guild '{guild_id_str}'.")
 
-            # Check if the rule already exists
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot fetch Player by ID.")
+            return None
+
+        try:
+            player_obj = await self.db_service.get_entity_by_pk(
+                table_name='players',
+                pk_value=player_id_str,
+                guild_id=guild_id_str, # Pass guild_id if your db_service.get_entity_by_pk supports/requires it for namespacing or checks
+                model_class=Player
+            )
+            if player_obj:
+                logger.info(f"GameManager: Found Player model for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+                return player_obj
+            else:
+                logger.info(f"GameManager: Player model not found for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+                return None
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Player by player_id '{player_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return None
+
+    async def get_rule(self, guild_id: str, key: str, default: Optional[Any] = None) -> Optional[Any]:
+        """
+        Retrieves a specific rule value for a guild from the cache.
+        Loads the guild's rules if not already cached.
+        """
+        if self._rules_config_cache is None or guild_id not in self._rules_config_cache:
+            logger.info(f"GameManager: Rules for guild {guild_id} not in cache for key '{key}'. Loading.")
+            await self._load_or_initialize_rules_config(guild_id)
+
+        # After attempting to load, check again. _load_or_initialize_rules_config should populate it.
+        if self._rules_config_cache and guild_id in self._rules_config_cache:
+            rule_value = self._rules_config_cache[guild_id].get(key, default)
+            logger.debug(f"GameManager: Rule '{key}' for guild {guild_id} retrieved. Value: '{rule_value}', Default: '{default}'")
+            return rule_value
+        else:
+            # This case implies _load_or_initialize_rules_config failed to populate the cache for this guild
+            logger.warning(f"GameManager: Rules for guild {guild_id} could not be loaded or initialized. Returning default for key '{key}'.")
+            return default
+
+    async def update_rule_config(self, guild_id: str, key: str, value: Any) -> bool:
+        """
+        Updates or creates a rule in the database and then updates the cache.
+        """
+        logger.info(f"GameManager: Attempting to update rule '{key}' to '{value}' for guild {guild_id}.")
+        if not self.db_service:
+            logger.error(f"GameManager: DBService not available. Cannot update rule '{key}' for guild {guild_id}.")
+            return False
+
+        try:
+            # Check if the rule already exists in DB
             existing_rule_entry = await self.db_service.get_entity_by_conditions(
                 table_name='rules_config',
-                conditions={'guild_id': guild_id, 'key': 'default_language'},
+                conditions={'guild_id': guild_id, 'key': key},
+                model_class=RulesConfig,
                 single_entity=True
             )
 
+            db_success: bool = False
             if existing_rule_entry:
-                success = await self.db_service.update_entities_by_conditions(
+                # Update existing entry
+                # Ensure 'value' is appropriate for JSONB if db_service doesn't handle serialization
+                update_result = await self.db_service.update_entities_by_conditions(
                     table_name='rules_config',
-                    conditions={'guild_id': guild_id, 'key': 'default_language'},
-                    updates={'value': language}
+                    conditions={'guild_id': guild_id, 'key': key},
+                    updates={'value': value}
                 )
+                db_success = bool(update_result) # Assuming truthy non-None means success
+                if not db_success:
+                    logger.warning(f"GameManager: update_entities_by_conditions returned falsy for rule '{key}', guild {guild_id}.")
+
             else: # Create new entry
                 new_rule_data = {
                     'guild_id': guild_id,
-                    'key': 'default_language',
-                    'value': language
-                    # id will be auto-generated by the model default
+                    'key': key,
+                    'value': value
                 }
-                # Assuming create_entity returns the ID or the entity itself on success
-                created_id = await self.db_service.create_entity(
+                created_entity = await self.db_service.create_entity(
                     table_name='rules_config',
                     entity_data=new_rule_data,
-                    # id_field='id' # Assuming 'id' is the primary key name if needed by create_entity
+                    model_class=RulesConfig
                 )
-                success = created_id is not None
+                db_success = created_entity is not None
 
-            if success:
-                logger.info(f"GameManager: Default bot language for guild {guild_id} successfully updated to '{language}' and saved.")
-                # If RuleEngine becomes guild-aware, this is where its cache for this guild would be updated.
-                # For now, MultilingualPromptGenerator might need guild-specific language if it supports it.
-                # Current Mpg.update_main_bot_language is global.
-                if self.multilingual_prompt_generator and guild_id == self._active_guild_ids[0]: # Temporary: only update if it's the "main" guild for MPG
-                    self.multilingual_prompt_generator.update_main_bot_language(language)
-                    logger.info(f"GameManager: Updated main_bot_language in MultilingualPromptGenerator (due to update for guild {guild_id}).")
+            if db_success:
+                logger.info(f"GameManager: Rule '{key}' for guild {guild_id} successfully updated/created in DB. Value: '{value}'.")
+                # Ensure cache structure exists then update
+                if self._rules_config_cache is None:
+                    self._rules_config_cache = {}
+                if guild_id not in self._rules_config_cache:
+                    logger.info(f"GameManager: Initializing cache for guild {guild_id} during update of rule '{key}'.")
+                    self._rules_config_cache[guild_id] = {}
+
+                self._rules_config_cache[guild_id][key] = value
+                logger.debug(f"GameManager: Cache for guild {guild_id} updated for rule '{key}'. New cache: {self._rules_config_cache[guild_id]}")
                 return True
             else:
-                logger.error(f"GameManager: Failed to save default bot language update for guild {guild_id} to database. Reverting cache.")
-                if original_language is not None:
-                    self._rules_config_cache[guild_id]['default_language'] = original_language
-                # If original_language was None and we added the key, remove it
-                elif 'default_language' in self._rules_config_cache[guild_id] and language == self._rules_config_cache[guild_id]['default_language']:
-                    del self._rules_config_cache[guild_id]['default_language']
+                logger.error(f"GameManager: Failed to save rule '{key}' (value: '{value}') for guild {guild_id} to database.")
                 return False
         except Exception as e:
-            logger.error(f"GameManager: Exception while saving default bot language for guild {guild_id}: {e}. Reverting cache.", exc_info=True)
-            if original_language is not None:
-                self._rules_config_cache[guild_id]['default_language'] = original_language
-            elif 'default_language' in self._rules_config_cache[guild_id] and language == self._rules_config_cache[guild_id]['default_language']:
-                 del self._rules_config_cache[guild_id]['default_language']
+            logger.error(f"GameManager: Exception while saving rule '{key}' for guild {guild_id}: {e}. Cache not changed.", exc_info=True)
+            return False
+
+    async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
+        if not guild_id:
+            logger.error("GameManager (set_default_bot_language): guild_id must be provided to set default language.")
+            return False
+
+        success = await self.update_rule_config(guild_id, "default_language", language)
+
+        if success:
+            if self.multilingual_prompt_generator:
+                # This logic for MPG might need refinement if it's supposed to handle multiple guilds
+                # or if the "main" guild concept is different.
+                if self._active_guild_ids and guild_id == self._active_guild_ids[0]:
+                    self.multilingual_prompt_generator.update_main_bot_language(language)
+                    logger.info(f"GameManager: Updated main_bot_language in MultilingualPromptGenerator (due to update for guild {guild_id}).")
+                elif not self._active_guild_ids:
+                     logger.warning("GameManager: No active_guild_ids defined, MPG main language not updated via set_default_bot_language.")
+            return True
+        else:
+            logger.error(f"GameManager: Failed to set default bot language to '{language}' for guild {guild_id} using update_rule_config.")
             return False
 
     async def trigger_manual_simulation_tick(self, server_id: int) -> None: # server_id is likely guild_id
