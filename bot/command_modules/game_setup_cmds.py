@@ -5,6 +5,7 @@ from typing import Optional, TYPE_CHECKING
 import logging  # For logging
 import uuid # For Player ID
 from sqlalchemy.exc import IntegrityError # For checking if Player already exists
+from sqlalchemy import select # Added import
 
 from bot.database.models import Player # Import Player model
 from bot.database.crud_utils import create_entity # Import create_entity
