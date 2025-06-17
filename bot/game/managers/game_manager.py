@@ -1157,6 +1157,92 @@ class GameManager:
             logger.error(f"GameManager: Database error when fetching Player by player_id '{player_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
             return None
 
+    async def get_player_model_by_discord_id(self, guild_id: str, discord_id: str) -> Optional[Player]:
+        """
+        Retrieves a Player model instance by their Discord ID and Guild ID.
+        """
+        guild_id_str = str(guild_id)
+        discord_id_str = str(discord_id)
+        logger.debug(f"GameManager: Attempting to get Player model for discord_id '{discord_id_str}' in guild '{guild_id_str}'.")
+
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot fetch Player by Discord ID.")
+            return None
+
+        try:
+            player_obj = await self.db_service.get_entity_by_conditions(
+                table_name='players',
+                conditions={'guild_id': guild_id_str, 'discord_id': discord_id_str},
+                model_class=Player,
+                single_entity=True
+            )
+            if player_obj:
+                logger.info(f"GameManager: Found Player model for discord_id '{discord_id_str}' in guild '{guild_id_str}'. Player ID: {player_obj.id}")
+                return player_obj
+            else:
+                logger.info(f"GameManager: Player model not found for discord_id '{discord_id_str}' in guild '{guild_id_str}'.")
+                return None
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Player by discord_id '{discord_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return None
+
+    async def get_player_model_by_id(self, guild_id: str, player_id: str) -> Optional[Player]:
+        """
+        Retrieves a Player model instance by their internal Player ID and Guild ID.
+        """
+        guild_id_str = str(guild_id)
+        player_id_str = str(player_id)
+        logger.debug(f"GameManager: Attempting to get Player model for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot fetch Player by ID.")
+            return None
+
+        try:
+            player_obj = await self.db_service.get_entity_by_pk(
+                table_name='players', # In DBService, model_class implies table name, but good to be explicit if needed
+                pk_value=player_id_str,
+                guild_id=guild_id_str,
+                model_class=Player
+            )
+            if player_obj:
+                logger.info(f"GameManager: Found Player model for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+                return player_obj
+            else:
+                logger.info(f"GameManager: Player model not found for player_id '{player_id_str}' in guild '{guild_id_str}'.")
+                return None
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Player by player_id '{player_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return None
+
+    async def get_players_in_location(self, guild_id: str, location_id: str) -> List[Player]:
+        """
+        Retrieves a list of Player model instances currently in a specific location.
+        """
+        guild_id_str = str(guild_id)
+        location_id_str = str(location_id)
+        logger.debug(f"GameManager: Attempting to get Players in location_id '{location_id_str}' for guild '{guild_id_str}'.")
+
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot fetch Players in location.")
+            return []
+
+        try:
+            players_list = await self.db_service.get_entities_by_conditions(
+                table_name='players',
+                conditions={'guild_id': guild_id_str, 'current_location_id': location_id_str},
+                model_class=Player
+            )
+            if players_list:
+                logger.info(f"GameManager: Found {len(players_list)} Players in location '{location_id_str}' for guild '{guild_id_str}'.")
+                return players_list
+            else:
+                logger.info(f"GameManager: No Players found in location '{location_id_str}' for guild '{guild_id_str}'.")
+                return []
+        except Exception as e:
+            logger.error(f"GameManager: Database error when fetching Players in location '{location_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+            return []
+
     async def get_rule(self, guild_id: str, key: str, default: Optional[Any] = None) -> Optional[Any]:
         """
         Retrieves a specific rule value for a guild from the cache.
@@ -1306,5 +1392,125 @@ class GameManager:
             # This catches other unexpected errors from create_character
             logger.error("GameManager: Unhandled error in start_new_character_session during character creation for user %s in guild %s: %s", user_id, guild_id, e, exc_info=True)
             return None # Return None for other types of exceptions, maintaining previous behavior for generic errors
+
+    async def handle_move_action(self, guild_id: str, player_id: str, target_location_identifier: str) -> bool:
+        """
+        Handles a player's request to move to a new location.
+        Returns True if the move was successful, False otherwise.
+        """
+        guild_id_str = str(guild_id)
+        player_id_str = str(player_id)
+        logger.info(f"GameManager: Handling move action for player {player_id_str} in guild {guild_id_str} to '{target_location_identifier}'.")
+
+        if not self.db_service or not self.location_manager:
+            logger.error("GameManager: DBService or LocationManager not available. Cannot handle move action.")
+            return False
+
+        # 1. Fetch Player
+        player = await self.get_player_model_by_id(guild_id_str, player_id_str)
+        if not player:
+            logger.error(f"GameManager: Player {player_id_str} not found in guild {guild_id_str} for move action.")
+            return False
+        if not player.current_location_id:
+            logger.error(f"GameManager: Player {player_id_str} in guild {guild_id_str} has no current_location_id. Cannot move.")
+            return False
+
+        # 2. Fetch Current Location
+        # get_location_instance returns a Location model object directly because Location.from_dict is used inside it
+        current_location = await self.location_manager.get_location_instance(guild_id_str, player.current_location_id)
+        if not current_location:
+            logger.error(f"GameManager: Data inconsistency. Current location {player.current_location_id} for player {player_id_str} (guild {guild_id_str}) not found.")
+            return False
+
+        # 3. Resolve Target Location Identifier
+        target_location = await self.location_manager.get_location_by_static_id(guild_id_str, target_location_identifier)
+
+        if not target_location:
+            logger.debug(f"GameManager: Target location '{target_location_identifier}' not found by static_id for guild {guild_id_str}. Trying by name...")
+            # Fallback: search by name in location_manager's cache
+            # LocationManager._location_instances stores dicts, not Location objects directly.
+            # We need to convert them to Location objects to check name_i18n properly or access name_i18n from dict.
+
+            # Accessing protected member _location_instances for this fallback is not ideal but used as per prompt.
+            # A public method in LocationManager to search by name would be better.
+            cached_locations = self.location_manager._location_instances.get(guild_id_str, {}).values()
+            found_by_name: List[Location] = []
+            for loc_data_dict in cached_locations:
+                if isinstance(loc_data_dict.get('name_i18n'), dict):
+                    if any(name.lower() == target_location_identifier.lower() for name in loc_data_dict['name_i18n'].values()):
+                        try:
+                            # Convert dict to Location model instance to ensure consistent object type
+                            found_by_name.append(Location.from_dict(loc_data_dict))
+                        except Exception as e:
+                            logger.warning(f"GameManager: Error converting cached location data {loc_data_dict.get('id')} to Location object: {e}")
+
+            if len(found_by_name) == 1:
+                target_location = found_by_name[0]
+                logger.info(f"GameManager: Target location resolved by name to '{target_location.id}' for identifier '{target_location_identifier}'.")
+            elif len(found_by_name) > 1:
+                logger.warning(f"GameManager: Ambiguous target location name '{target_location_identifier}' for player {player_id_str}. Multiple matches found. Move failed.")
+                # For now, fail on ambiguity. Could potentially ask user to clarify via command response.
+                return False
+
+        if not target_location:
+            logger.warning(f"GameManager: Target location '{target_location_identifier}' for player {player_id_str} not found by static_id or name. Move failed.")
+            return False
+
+        # 4. Check Connectivity
+        if not current_location.neighbor_locations_json or not isinstance(current_location.neighbor_locations_json, dict):
+            logger.warning(f"GameManager: Player {player_id_str} current location {current_location.id} has no valid neighbor_locations_json. Cannot move.")
+            return False
+
+        if target_location.id not in current_location.neighbor_locations_json:
+            logger.info(f"GameManager: Player {player_id_str} cannot move from {current_location.id} to {target_location.id}. Not directly connected.")
+            return False
+
+        # Check if player is trying to move to the same location
+        if current_location.id == target_location.id:
+            logger.info(f"GameManager: Player {player_id_str} is already at location {target_location.id}. Move action considered successful but no change.")
+            # Depending on game rules, you might want to return False or handle this differently.
+            # For now, let's say it's not an error, but no actual move occurs.
+            return True # Or False if moving to same spot is an invalid action.
+
+        # 5. Update Player Location
+        old_location_id = player.current_location_id
+        update_success = await self.db_service.update_player_field(
+            player_id=player.id,
+            field_name='current_location_id',
+            value=target_location.id,
+            guild_id_str=guild_id_str
+        )
+
+        if not update_success:
+            logger.error(f"GameManager: Failed to update player {player_id_str}'s location in DB to {target_location.id}.")
+            return False
+
+        logger.info(f"GameManager: Player {player_id_str} successfully moved from {old_location_id} to {target_location.id}.")
+        # player.current_location_id = target_location.id # Update local object if it were cached by GM
+
+        # 6. Log Event
+        if self.game_log_manager:
+            try:
+                await self.game_log_manager.log_event(
+                    guild_id=guild_id_str,
+                    event_type="player_move",
+                    details_json={
+                        'player_id': player_id_str,
+                        'old_location_id': old_location_id,
+                        'new_location_id': target_location.id,
+                        'method': 'direct_move_command' # Indicates this was a direct move, not part of another action
+                    },
+                    player_id=player_id_str, # Associate log with the player
+                    location_id=target_location.id # New location for context
+                )
+            except Exception as log_e:
+                logger.error(f"GameManager: Failed to log player move event: {log_e}", exc_info=True)
+
+        # TODO: Future: Trigger on_enter/on_exit events for locations if applicable.
+        # This would involve calling methods on LocationManager or an EventProcessor.
+        # e.g., await self.location_manager.handle_entity_departure(guild_id_str, player.id, "Player", old_location_id)
+        # e.g., await self.location_manager.handle_entity_arrival(guild_id_str, player.id, "Player", target_location.id)
+
+        return True
 
 logger.debug("DEBUG: Finished loading game_manager.py from: %s", __file__) # Changed
