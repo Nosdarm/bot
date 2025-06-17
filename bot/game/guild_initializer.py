@@ -150,7 +150,17 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                     "open": ["открой", "распечатай"],
                     "close": ["закрой", "запечатай"],
                     "search": ["ищи", "обыщи", "осмотри местность", "исследуй внимательно"]
-                }
+                },
+                # Character Creation Defaults
+                "starting_base_stats": {"strength": 10, "dexterity": 10, "constitution": 10, "intelligence": 10, "wisdom": 10, "charisma": 10},
+                "starting_items": [{"template_id": "dagger_common", "quantity": 1}, {"template_id": "bread_common", "quantity": 2}],
+                "starting_skills": [{"skill_id": "survival", "level": 1}],
+                "starting_abilities": ["basic_strike_ability"],
+                "starting_character_class": "adventurer",
+                "starting_race": "human",
+                "starting_mp": 50,
+                "starting_attack_base": 5,
+                "starting_defense_base": 0
             }
             rules_to_add = []
             for key, value in default_rules.items():
