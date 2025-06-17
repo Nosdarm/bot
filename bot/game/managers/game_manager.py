@@ -26,6 +26,7 @@ from bot.services.notification_service import NotificationService # Added runtim
 from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError
 from bot.ai.ai_response_validator import parse_and_validate_ai_response # Added
 from sqlalchemy.future import select # For direct queries if needed, though session.get is preferred.
+from bot.database.guild_transaction import GuildTransaction # Added import
 
 if TYPE_CHECKING:
     from discord import Message
@@ -1584,164 +1585,149 @@ class GameManager:
         # Store current_location_id from player initially to handle "move to same location" case for event triggering
         # This variable is defined outside the transaction block to be accessible by the final event trigger.
         initial_player_location_id_for_event: Optional[str] = None
+        # Capture current_location_obj outside transaction for the "move to same location" check after transaction
+        current_location_obj_for_final_check: Optional[Location] = None
 
 
-        async with self.db_service.get_session() as session:
-            async with session.begin():
-                # 1. Fetch Player
-                player = await session.get(Player, player_id_str)
-                if not player or str(player.guild_id) != guild_id_str:
-                    logger.error(f"GameManager: Player {player_id_str} not found in guild {guild_id_str} or guild mismatch.")
-                    return False # Exits transaction, rolls back
+        # Ensure self.db_service.async_session_factory is the correct session factory callable
+        if not self.db_service or not hasattr(self.db_service, 'async_session_factory'):
+            logger.error("GameManager: DBService or async_session_factory not available. Cannot start GuildTransaction.")
+            return False
 
-                initial_player_location_id_for_event = player.current_location_id # Capture for potential "same location" event
+        session_factory = self.db_service.async_session_factory
+        async with GuildTransaction(session_factory, guild_id_str) as session:
+            # 1. Fetch Player
+            player = await session.get(Player, player_id_str)
+            # GuildTransaction's pre-commit hook will verify player.guild_id if it's set by session.add(player) later.
+            # However, for read operations and initial checks, explicit verification is good.
+            if not player or str(player.guild_id) != guild_id_str:
+                logger.error(f"GameManager: Player {player_id_str} not found in guild {guild_id_str} or guild mismatch.")
+                return False # Exits transaction, rolls back
 
-                if not player.current_location_id:
-                    logger.error(f"GameManager: Player {player_id_str} in guild {guild_id_str} has no current_location_id. Cannot move.")
-                    return False # Exits transaction, rolls back
+            initial_player_location_id_for_event = player.current_location_id
 
-                # 2. Fetch Current Location (from cache, as per subtask for current_location_obj)
-                # LocationManager.get_location_instance is cache-only as per subtask.
-                # It returns a Location model instance.
-                current_location_obj = self.location_manager.get_location_instance(guild_id_str, player.current_location_id)
-                if not current_location_obj: # This implies cache miss or invalid ID. Given it's player's current loc, it should be valid.
-                    logger.error(f"GameManager: Data inconsistency. Current location {player.current_location_id} (Player: {player_id_str}, Guild: {guild_id_str}) not found in LocationManager cache.")
-                    # This is a critical error if the player's current location isn't even in the cache.
-                    return False # Exits transaction, rolls back
+            if not player.current_location_id:
+                logger.error(f"GameManager: Player {player_id_str} in guild {guild_id_str} has no current_location_id. Cannot move.")
+                return False
 
-                # 3. Resolve Target Location (cache, then DB with session)
-                target_location_obj = await self.location_manager.get_location_by_static_id(guild_id_str, target_location_identifier, session=session)
+            current_location_obj = self.location_manager.get_location_instance(guild_id_str, player.current_location_id)
+            current_location_obj_for_final_check = current_location_obj # Capture for use after transaction
+            if not current_location_obj:
+                logger.error(f"GameManager: Data inconsistency. Current location {player.current_location_id} (Player: {player_id_str}, Guild: {guild_id_str}) not found in LocationManager cache.")
+                return False
 
-                if not target_location_obj:
-                    logger.debug(f"GameManager: Target location '{target_location_identifier}' (static_id) not found for guild {guild_id_str}. Trying by name (cache lookup)...")
-                    # Fallback to name search (this part should be primarily cache-based as per current LocationManager structure)
-                    # The subtask's LocationManager.get_location_by_static_id was modified for session use.
-                    # The name fallback here is assumed to be cache-only for now.
-                    # If this name lookup needs DB access, it has to use the 'session' too.
-                    cached_locations = self.location_manager._location_instances.get(guild_id_str, {}).values()
-                    found_by_name: List[Location] = []
-                    for loc_data_dict in cached_locations:
-                        if isinstance(loc_data_dict.get('name_i18n'), dict):
-                            if any(name.lower() == target_location_identifier.lower() for name in loc_data_dict['name_i18n'].values()):
-                                try:
-                                    # Convert dict from cache to Location model instance
-                                    found_by_name.append(Location.from_dict(loc_data_dict))
-                                except Exception as e:
-                                    logger.warning(f"GameManager: Error converting cached location data {loc_data_dict.get('id')} to Location object: {e}")
+            target_location_obj = await self.location_manager.get_location_by_static_id(guild_id_str, target_location_identifier, session=session)
 
-                    if len(found_by_name) == 1:
-                        target_location_obj = found_by_name[0]
-                        logger.info(f"GameManager: Target location resolved by name to '{target_location_obj.id}' for identifier '{target_location_identifier}'.")
-                    elif len(found_by_name) > 1:
-                        logger.warning(f"GameManager: Ambiguous target location name '{target_location_identifier}' for player {player_id_str}. Multiple matches found. Move failed.")
-                        return False # Exits transaction
+            if not target_location_obj:
+                logger.debug(f"GameManager: Target location '{target_location_identifier}' (static_id) not found for guild {guild_id_str}. Trying by name (cache lookup)...")
+                cached_locations = self.location_manager._location_instances.get(guild_id_str, {}).values()
+                found_by_name: List[Location] = []
+                for loc_data_dict in cached_locations:
+                    if isinstance(loc_data_dict.get('name_i18n'), dict):
+                        if any(name.lower() == target_location_identifier.lower() for name in loc_data_dict['name_i18n'].values()):
+                            try:
+                                found_by_name.append(Location.from_dict(loc_data_dict))
+                            except Exception as e:
+                                logger.warning(f"GameManager: Error converting cached location data {loc_data_dict.get('id')} to Location object: {e}")
 
-                if not target_location_obj:
-                    logger.warning(f"GameManager: Target location '{target_location_identifier}' for player {player_id_str} not found by static_id or name. Move failed.")
-                    return False # Exits transaction
+                if len(found_by_name) == 1:
+                    target_location_obj = found_by_name[0]
+                    logger.info(f"GameManager: Target location resolved by name to '{target_location_obj.id}' for identifier '{target_location_identifier}'.")
+                elif len(found_by_name) > 1:
+                    logger.warning(f"GameManager: Ambiguous target location name '{target_location_identifier}' for player {player_id_str}. Multiple matches found. Move failed.")
+                    return False
 
-                # 4. Check Connectivity (using fetched model objects)
-                if not current_location_obj.neighbor_locations_json or not isinstance(current_location_obj.neighbor_locations_json, dict):
-                    logger.warning(f"GameManager: Player {player_id_str} current location {current_location_obj.id} has no valid neighbor_locations_json. Cannot move.")
-                    return False # Exits transaction
+            if not target_location_obj:
+                logger.warning(f"GameManager: Target location '{target_location_identifier}' for player {player_id_str} not found. Move failed.")
+                return False
 
-                if target_location_obj.id not in current_location_obj.neighbor_locations_json:
-                    logger.info(f"GameManager: Player {player_id_str} cannot move from {current_location_obj.id} to {target_location_obj.id}. Not directly connected.")
-                    return False # Exits transaction
+            if not current_location_obj.neighbor_locations_json or not isinstance(current_location_obj.neighbor_locations_json, dict):
+                logger.warning(f"GameManager: Player {player_id_str} current location {current_location_obj.id} has no valid neighbor_locations_json. Cannot move.")
+                return False
 
-                # Handle moving to the same location
-                if current_location_obj.id == target_location_obj.id:
-                    logger.info(f"GameManager: Player {player_id_str} is already at location {target_location_obj.id}. No state change, but triggering on_enter.")
-                    event_entity_id = player.id
-                    event_entity_type = "Player"
-                    event_target_location_id = target_location_obj.id
-                    # No database changes, so transaction will commit cleanly.
-                    # The _on_enter_location task will be created outside the transaction.
-                    return True
+            if target_location_obj.id not in current_location_obj.neighbor_locations_json:
+                logger.info(f"GameManager: Player {player_id_str} cannot move from {current_location_obj.id} to {target_location_obj.id}. Not directly connected.")
+                return False
 
-                old_location_id = player.current_location_id
-                party_moved_as_primary = False # Flag to track if party movement was the primary action
-
-                # 5. Party Movement Logic
-                if player.current_party_id:
-                    party = await session.get(Party, player.current_party_id)
-                    if party and str(party.guild_id) == guild_id_str:
-                        party_movement_rules = await self.get_rule(guild_id_str, "party_movement_rules", default={})
-                        is_leader = (player.id == party.leader_id)
-                        allow_leader_only_move = party_movement_rules.get("allow_leader_only_move", True)
-                        can_player_move_party = is_leader or not allow_leader_only_move
-
-                        if can_player_move_party:
-                            party.current_location_id = target_location_obj.id
-                            session.add(party)
-                            logger.info(f"Party {party.id} location updated to {target_location_obj.id} by player {player.id}.")
-
-                            event_entity_id = party.id # Party is the primary entity for the event
-                            event_entity_type = "Party"
-                            party_moved_as_primary = True
-
-                            if party_movement_rules.get("teleport_all_members", True):
-                                if party.player_ids_json and isinstance(party.player_ids_json, list):
-                                    for member_id_str in party.player_ids_json:
-                                        # Player initiating the move is already handled by party move or will be handled individually
-                                        # if teleport_all_members is false for the leader.
-                                        # The key is that their location gets set to target_location_obj.id.
-                                        # If member is current player, their location is updated with the party.
-                                        member_player = await session.get(Player, member_id_str)
-                                        if member_player and str(member_player.guild_id) == guild_id_str:
-                                            member_player.current_location_id = target_location_obj.id
-                                            session.add(member_player)
-                                            logger.info(f"Party member {member_player.id} teleported to {target_location_obj.id} with party {party.id}.")
-                                        else:
-                                            logger.warning(f"Party member {member_id_str} not found or guild mismatch during party teleport.")
-                        else: # Player cannot move the party (not leader, or rule disallows)
-                            logger.info(f"Player {player.id} cannot move party {party.id} due to rules. Player will move individually.")
-                            # Player moves individually in this case, party_moved_as_primary remains False.
-                    elif party: # Party ID exists but party not found for guild
-                        logger.error(f"GameManager: Player {player.id} has party ID {player.current_party_id} but party not found or guild mismatch.")
-                        # Depending on rules, this could be a hard fail or allow individual move.
-                        # For now, assume individual move is still possible.
-                    # else: Player has party ID but party object not found by session.get - critical error or stale ID.
-
-                # 6. Update Player Location (if not already moved with the party as a member)
-                # If party moved and teleported all members, the current player (if a member) was already updated.
-                # If player is moving individually (no party, or couldn't move party, or party doesn't teleport all), update player.
-                player_needs_individual_move = True
-                if party_moved_as_primary and party_movement_rules.get("teleport_all_members", True):
-                    if player.id in (party.player_ids_json if party and party.player_ids_json else []):
-                        player_needs_individual_move = False # Already moved with party
-
-                if player_needs_individual_move:
-                    player.current_location_id = target_location_obj.id
-                    session.add(player)
-                    logger.info(f"Player {player.id} location updated individually to {target_location_obj.id}.")
-
-                # Determine event entity if not already set by party movement
-                if not party_moved_as_primary:
-                    event_entity_id = player.id
-                    event_entity_type = "Player"
-
+            if current_location_obj.id == target_location_obj.id:
+                logger.info(f"GameManager: Player {player_id_str} is already at location {target_location_obj.id}. No state change, but triggering on_enter.")
+                event_entity_id = player.id
+                event_entity_type = "Player"
                 event_target_location_id = target_location_obj.id
+                return True
 
-                # 7. Log Event
-                await self.game_log_manager.log_event(
-                    guild_id=guild_id_str,
-                    event_type="player_move",
-                    details_json={
-                        'player_id': player_id_str,
-                        'party_id': player.current_party_id if player.current_party_id else None,
-                        'old_location_id': old_location_id,
-                        'new_location_id': target_location_obj.id,
-                        'method': 'direct_move_command',
-                        'party_moved_as_primary': party_moved_as_primary
-                    },
-                    player_id=player_id_str,
-                    location_id=target_location_obj.id, # Log with new location
-                    session=session
-                )
-                # Transaction commits here if no exceptions, otherwise rolls back.
+            old_location_id = player.current_location_id
+            party_moved_as_primary = False
 
-        # After transaction block
+            if player.current_party_id:
+                party = await session.get(Party, player.current_party_id)
+                if party and str(party.guild_id) == guild_id_str: # Guild check for party
+                    party_movement_rules = await self.get_rule(guild_id_str, "party_movement_rules", default={})
+                    is_leader = (player.id == party.leader_id)
+                    allow_leader_only_move = party_movement_rules.get("allow_leader_only_move", True)
+                    can_player_move_party = is_leader or not allow_leader_only_move
+
+                    if can_player_move_party:
+                        party.current_location_id = target_location_obj.id
+                        # GuildTransaction will auto-set party.guild_id if it's None and session.info has current_guild_id
+                        # and verify it if it's already set.
+                        session.add(party)
+                        logger.info(f"Party {party.id} location updated to {target_location_obj.id} by player {player.id}.")
+
+                        event_entity_id = party.id
+                        event_entity_type = "Party"
+                        party_moved_as_primary = True
+
+                        if party_movement_rules.get("teleport_all_members", True):
+                            if party.player_ids_json and isinstance(party.player_ids_json, list):
+                                for member_id_str in party.player_ids_json:
+                                    member_player = await session.get(Player, member_id_str)
+                                    if member_player and str(member_player.guild_id) == guild_id_str: # Guild check for member
+                                        member_player.current_location_id = target_location_obj.id
+                                        session.add(member_player)
+                                        logger.info(f"Party member {member_player.id} teleported to {target_location_obj.id} with party {party.id}.")
+                                    else:
+                                        logger.warning(f"Party member {member_id_str} not found or guild mismatch during party teleport.")
+                    elif party:
+                        logger.error(f"GameManager: Player {player.id} has party ID {player.current_party_id} but party guild mismatch (Party Guild: {party.guild_id}, Expected: {guild_id_str}).")
+                        # This is a data integrity issue. Decide if player can move individually or fail.
+                        # For now, assume failure to prevent further issues.
+                        return False
+
+
+            player_needs_individual_move = True
+            if party_moved_as_primary and party_movement_rules.get("teleport_all_members", True):
+                if player.id in (party.player_ids_json if party and party.player_ids_json else []): # Check party again for safety
+                    player_needs_individual_move = False
+
+            if player_needs_individual_move:
+                player.current_location_id = target_location_obj.id
+                session.add(player)
+                logger.info(f"Player {player.id} location updated individually to {target_location_obj.id}.")
+
+            if not party_moved_as_primary:
+                event_entity_id = player.id
+                event_entity_type = "Player"
+
+            event_target_location_id = target_location_obj.id
+
+            await self.game_log_manager.log_event(
+                guild_id=guild_id_str,
+                event_type="player_move",
+                details_json={
+                    'player_id': player_id_str,
+                    'party_id': player.current_party_id if player.current_party_id else None,
+                    'old_location_id': old_location_id,
+                    'new_location_id': target_location_obj.id,
+                    'method': 'direct_move_command',
+                    'party_moved_as_primary': party_moved_as_primary
+                },
+                player_id=player_id_str,
+                location_id=target_location_obj.id,
+                session=session
+            )
+
+        # After GuildTransaction block
         if event_entity_id and event_target_location_id:
             asyncio.create_task(self._on_enter_location(guild_id_str, event_entity_id, event_entity_type, event_target_location_id))
             return True
