@@ -1,6 +1,10 @@
 import json
 import logging
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from pydantic import BaseModel, ValidationError as PydanticValidationError # Ensure Pydantic's ValidationError is imported
+from typing import Tuple, TYPE_CHECKING, Any, Dict, Optional, List # Added Tuple, TYPE_CHECKING
+
+# Import the new Pydantic models for AI outputs
+from .ai_data_models import GeneratedLocationContent, GeneratedNpcProfile, GeneratedQuest as GeneratedQuestData # Use alias for GeneratedQuest
 
 if TYPE_CHECKING:
     from bot.game.managers.game_manager import GameManager # For type hinting
@@ -625,57 +629,195 @@ class AIResponseValidator:
                 logger.warning(f"{npc_log_prefix}: NPC data is not a dictionary. Skipping. Data: {npc_data}")
                 continue
 
-            processed_npc: Dict[str, Any] = {}
-            current_npc_valid = True
+            validated_data_for_block_validator = item_data_dict # Default to original if no Pydantic
 
-            # Validate Required i18n fields
-            for field_name in required_i18n_fields:
-                i18n_content = self._validate_i18n_field(npc_data, field_name, bot_language, npc_log_prefix, is_required=True)
-                if i18n_content is None:
-                    current_npc_valid = False; break
-                processed_npc[field_name] = i18n_content
-            if not current_npc_valid: continue # Skip this NPC if a required i18n field failed
+            if pydantic_model_class: # If Pydantic model is defined for this structure
+                try:
+                    # Using Pydantic v2 .model_validate()
+                    pydantic_instance = pydantic_model_class.model_validate(item_data_dict)
+                    # Using Pydantic v2 .model_dump()
+                    validated_data_for_block_validator = pydantic_instance.model_dump(exclude_none=True) # Get dict from Pydantic model
+                except ValidationError as pydantic_error:
+                    for error in pydantic_error.errors():
+                        field_path = ".".join(map(str, error['loc'])) if error['loc'] else "unknown_field"
+                        entity_issues.append(ValidationIssue(
+                            field=field_path,
+                            issue_type=error['type'],
+                            message=error['msg'],
+                            severity="error" # Pydantic errors are typically structural/type errors
+                        ))
+                    # If Pydantic validation fails, we create a ValidatedEntity with these issues
+                    # and skip the block_validator_func for this item.
+                    status = self._calculate_entity_status(entity_issues)
+                    validated_entities.append(ValidatedEntity(
+                        entity_id=item_id_for_error, # Use ID from original data if possible
+                        entity_type=entity_type_for_placeholder,
+                        data=item_data_dict, # Original data that failed Pydantic
+                        validation_status=status, # Should be "requires_moderation"
+                        issues=entity_issues
+                    ))
+                    continue # Move to the next item in the list
 
-            # Validate Required 'archetype' string field
-            archetype = npc_data.get("archetype")
-            if not isinstance(archetype, str) or not archetype.strip():
-                logger.warning(f"{npc_log_prefix}: 'archetype' is missing or empty. Data: {npc_data}")
-                current_npc_valid = False
-            else:
-                processed_npc["archetype"] = archetype.strip()
-            if not current_npc_valid: continue
+            # If Pydantic validation passed (or no Pydantic model for this type), run the block validator
+            if block_validator_func:
+                # Pass the (potentially Pydantic-validated and dumped) dict to the block validator
+                # along with any issues already found (e.g., from Pydantic, though typically we'd not mix if Pydantic fails hard)
+                # For now, assume block_validator_func starts with an empty list of issues or gets Pydantic issues if we want to merge.
+                # Here, we only call block_validator_func if Pydantic succeeded, so entity_issues is empty.
+                validated_entity_obj = block_validator_func(
+                    validated_data_for_block_validator, # This is dict from Pydantic model or original dict
+                    generation_context=generation_context,
+                    game_terms=game_terms_from_context
+                )
+                # The block_validator_func might add its own issues.
+                # If Pydantic found issues and we didn't 'continue', we'd merge them:
+                # validated_entity_obj.issues.extend(entity_issues)
+                # validated_entity_obj.validation_status = self._calculate_entity_status(validated_entity_obj.issues)
+                validated_entities.append(validated_entity_obj)
+            elif not pydantic_model_class : # No Pydantic and no block validator for this type (should not happen with current logic)
+                 global_issues.append(ValidationIssue(field="validator_logic", issue_type="internal_error", message=f"No validator for {expected_structure}", severity="error"))
 
-            # Validate Optional i18n fields
-            for field_name in optional_i18n_fields:
-                if field_name in npc_data: # Field is present
-                    i18n_content = self._validate_i18n_field(npc_data, field_name, bot_language, npc_log_prefix, is_required=False)
-                    if i18n_content is None: # Present but malformed
-                        current_npc_valid = False; break
-                    if i18n_content: # Not None and not {} (empty dict for valid absence)
-                        processed_npc[field_name] = i18n_content
-            if not current_npc_valid: continue
 
-            # Validate Optional 'faction_affiliation_id' string field
-            faction_affiliation_id = npc_data.get("faction_affiliation_id")
-            if faction_affiliation_id is not None: # If present
-                if not isinstance(faction_affiliation_id, str): # Allow empty string, but must be string
-                    logger.warning(f"{npc_log_prefix}: Optional 'faction_affiliation_id' is present but not a string. Data: {npc_data}")
-                    current_npc_valid = False
-                else:
-                    processed_npc["faction_affiliation_id"] = faction_affiliation_id # Store even if empty string
-            if not current_npc_valid: continue
+        final_overall_status = "success"
+        if any(gi.severity == "error" for gi in global_issues): final_overall_status = "error"
+        elif any(entity.validation_status == "requires_moderation" for entity in validated_entities): final_overall_status = "requires_moderation"
+        elif any(entity.validation_status == "success_with_autocorrections" for entity in validated_entities): final_overall_status = "success_with_autocorrections"
 
-            if current_npc_valid:
-                validated_npcs.append(processed_npc)
-                logger.debug(f"{npc_log_prefix}: NPC object successfully validated: {processed_npc.get('name_i18n',{}).get(bot_language, 'Unknown NPC')}")
-            else: # Should have been caught by 'continue' statements
-                logger.warning(f"{npc_log_prefix}: NPC failed validation (unexpectedly reached here). Skipping. Data: {npc_data}")
+        return ParsedAiData(
+            overall_status=final_overall_status, entities=validated_entities,
+            global_errors=[f"GLOBAL ({issue.severity.upper()}) {issue.field}: {issue.message}" for issue in global_issues],
+            raw_ai_output=ai_json_string
+        )
 
-        if not npc_data_list: # Already handled
-             pass
-        elif not validated_npcs: # npc_data_list was not empty, but nothing validated
-            logger.warning(f"{log_main_prefix}: No valid NPC objects found after processing {len(npc_data_list)} items.")
-            return None
 
-        logger.info(f"{log_main_prefix}: Successfully parsed and validated {len(validated_npcs)} NPCs out of {len(npc_data_list)} received.")
-        return validated_npcs
+async def parse_and_validate_ai_response(
+    raw_ai_output_text: str,
+    guild_id: str, # guild_id might be used by semantic validators in the future
+    request_type: str,
+    game_manager: Optional['GameManager'] = None # Optional for now, for semantic validation later
+) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    """
+    Parses raw AI output text, validates it against a Pydantic model based on request_type,
+    and prepares for further semantic validation.
+
+    Args:
+        raw_ai_output_text: The raw JSON string output from the AI.
+        guild_id: The guild ID, for context.
+        request_type: The type of request (e.g., "location_content_generation") to determine the Pydantic model.
+        game_manager: GameManager instance, for potential future semantic validation.
+
+    Returns:
+        A tuple: (validated_data_dict, validation_issues_list).
+        - validated_data_dict: Dictionary representation of the validated Pydantic model if successful,
+                               or the raw parsed JSON if Pydantic validation failed. None if JSON parsing failed.
+        - validation_issues_list: List of error dicts if validation failed, else None.
+    """
+    logger.debug(f"Parsing and validating AI response for request_type: {request_type}, guild_id: {guild_id}")
+
+    parsed_json_data: Optional[Dict[str, Any]] = None
+    validation_issues: List[Dict[str, Any]] = []
+
+    # 1. JSON Parsing
+    try:
+        parsed_json_data = json.loads(raw_ai_output_text)
+        if not isinstance(parsed_json_data, dict) and not (request_type in ["list_of_quests", "list_of_npcs", "list_of_items"] and isinstance(parsed_json_data, list)): # Allow list for specific list types
+            # This check might need refinement based on whether top-level can be a list for some request_types
+            logger.error(f"AI output is not a JSON object or expected list. Type: {type(parsed_json_data)}")
+            validation_issues.append({
+                "type": "invalid_json_structure",
+                "loc": ["input_string"],
+                "msg": "AI output must be a JSON object (or a list for certain request types)."
+            })
+            return parsed_json_data, validation_issues # Return parsed data for moderator to see
+    except json.JSONDecodeError as e:
+        logger.error(f"JSONDecodeError parsing AI output: {e}. Raw text: '{raw_ai_output_text[:200]}...'")
+        validation_issues.append({
+            "type": "json_decode_error",
+            "loc": ["input_string"],
+            "msg": f"Invalid JSON: {str(e)}"
+        })
+        return None, validation_issues
+
+    # 2. Pydantic Validation
+    request_type_to_model_map: Dict[str, Optional[BaseModel]] = {
+        "location_content_generation": GeneratedLocationContent,
+        "npc_profile_generation": GeneratedNpcProfile,
+        "quest_generation": GeneratedQuestData,
+        # Add other request_types and their corresponding Pydantic models here
+        # "list_of_quests": GeneratedQuestData, # If expecting a list, Pydantic handles List[GeneratedQuestData]
+    }
+
+    PydanticModel = request_type_to_model_map.get(request_type)
+
+    if PydanticModel is None:
+        logger.warning(f"Unknown request_type for Pydantic validation: {request_type}")
+        validation_issues.append({
+            "type": "unknown_request_type",
+            "loc": ["request_type"],
+            "msg": f"No Pydantic model configured for request_type: {request_type}"
+        })
+        return parsed_json_data, validation_issues
+
+    try:
+        # If the expected structure is a list of items (e.g., "list_of_quests")
+        # Pydantic can validate List[ModelType] directly if model is defined for list items
+        # For now, assuming top-level is a single object unless specified otherwise
+        # This part might need adjustment if AI is expected to return a list for some request_types
+        if request_type in ["list_of_quests", "list_of_npcs", "list_of_items"]: # Example list types
+            if not isinstance(parsed_json_data, list):
+                logger.error(f"Expected a list for request_type '{request_type}', but got {type(parsed_json_data)}")
+                validation_issues.append({
+                    "type": "invalid_structure_for_list_type",
+                    "loc": ["input_string"],
+                    "msg": f"Expected a JSON list for '{request_type}'."
+                })
+                return parsed_json_data, validation_issues
+            # Validate each item in the list
+            validated_items = [PydanticModel(**item) for item in parsed_json_data]
+            model_instance_dict = [item.model_dump() for item in validated_items]
+        else: # Single object expected
+            if not isinstance(parsed_json_data, dict): # Should have been caught by initial JSON check if not a list type
+                 logger.error(f"Expected a JSON object for request_type '{request_type}', but got {type(parsed_json_data)}")
+                 validation_issues.append({
+                    "type": "invalid_structure_for_object_type",
+                    "loc": ["input_string"],
+                    "msg": f"Expected a JSON object for '{request_type}'."
+                })
+                 return parsed_json_data, validation_issues
+
+            model_instance = PydanticModel(**parsed_json_data)
+            model_instance_dict = model_instance.model_dump()
+
+        logger.info(f"Pydantic validation successful for request_type: {request_type}")
+
+        # 3. Semantic Validation (Placeholder)
+        # Here, you would call more advanced validation logic, potentially using game_manager
+        # For example, checking if referenced item IDs exist, if stats are within reasonable bounds for a level, etc.
+        if game_manager:
+            logger.info(f"Semantic validation pending for type {request_type} (GameManager available).")
+            # Example: issues = await game_manager.semantic_validator.validate(model_instance_dict, request_type, guild_id)
+            # if issues: return model_instance_dict, issues
+        else:
+            logger.info(f"Semantic validation skipped for type {request_type} (GameManager not available).")
+
+        return model_instance_dict, None # Success
+
+    except PydanticValidationError as e:
+        formatted_errors = []
+        for error in e.errors():
+            formatted_errors.append({
+                "type": error['type'],
+                "loc": list(error['loc']) if error['loc'] else ["unknown_field"],
+                "msg": error['msg'],
+                "input": error.get('input', 'N/A')
+            })
+        logger.warning(f"Pydantic validation failed for request_type: {request_type}. Errors: {formatted_errors}")
+        return parsed_json_data, formatted_errors # Return original parsed data and errors
+    except Exception as e_gen: # Catch any other unexpected errors during model instantiation
+        logger.error(f"Generic error during Pydantic model instantiation for {request_type}: {e_gen}", exc_info=True)
+        validation_issues.append({
+            "type": "model_instantiation_error",
+            "loc": ["parsing_logic"],
+            "msg": f"Unexpected error: {str(e_gen)}"
+        })
+        return parsed_json_data, validation_issues
