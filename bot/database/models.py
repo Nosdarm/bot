@@ -368,7 +368,7 @@ class GeneratedQuest(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     title_i18n = Column(JSONB, nullable=True) # MODIFIED from name_i18n
     description_i18n = Column(JSONB, nullable=True) # Ensure JSONB
-    guild_id = Column(String, nullable=False, index=True)
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     status = Column(String, default='available', nullable=True) # ADDED
     suggested_level = Column(Integer, nullable=True) # ADDED
     rewards_json = Column(Text, nullable=True) # ADDED (Storing as JSON string)
@@ -528,6 +528,42 @@ class Status(Base):
     effects = Column(JSONB, nullable=True) # Actual effects, e.g. {"stat_change": {"strength": -2}}, standardized
     name_i18n = Column(JSONB, nullable=True) # Display name of status, standardized
     description_i18n = Column(JSONB, nullable=True) # Display description, standardized
+
+
+class CraftingRecipe(Base):
+    __tablename__ = 'crafting_recipes'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+
+    name_i18n = Column(JSONB, nullable=False)
+    description_i18n = Column(JSONB, nullable=True)
+
+    # Ingredients: List of {"item_template_id": "template_uuid", "quantity": int}
+    ingredients_json = Column(JSONB, nullable=False, default=lambda: [])
+
+    output_item_template_id = Column(String, ForeignKey('item_templates.id'), nullable=False)
+    output_quantity = Column(Integer, default=1, nullable=False)
+
+    required_skill_id = Column(String, ForeignKey('skills.id'), nullable=True)
+    required_skill_level = Column(Integer, nullable=True)
+
+    # Could store things like {"required_tool_template_id": "tool_uuid", "required_location_type": "forge"}
+    other_requirements_json = Column(JSONB, nullable=True, default=lambda: {})
+
+    # For AI generation hints, e.g., {"style": "elven", "complexity": "medium"}
+    ai_metadata_json = Column(JSONB, nullable=True, default=lambda: {})
+
+    # __table_args__ can include an index on output_item_template_id or required_skill_id if frequent lookups are expected
+    __table_args__ = (
+        Index('idx_craftingrecipe_guild_output_item', 'guild_id', 'output_item_template_id'),
+        Index('idx_craftingrecipe_guild_skill', 'guild_id', 'required_skill_id'),
+    )
+
+    def __repr__(self):
+        name_en = self.name_i18n.get('en', 'Unnamed Recipe') if isinstance(self.name_i18n, dict) else 'Unnamed Recipe (i18n error)'
+        return f"<CraftingRecipe(id='{self.id}', name_en='{name_en}', guild_id='{self.guild_id}')>"
+
 
 class CraftingQueue(Base):
     __tablename__ = 'crafting_queues'

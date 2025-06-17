@@ -15,8 +15,10 @@ if TYPE_CHECKING:
     from bot.game.managers.ability_manager import AbilityManager
     from bot.game.managers.spell_manager import SpellManager
     from bot.game.managers.event_manager import EventManager
+    from bot.game.managers.party_manager import PartyManager # Added
     # Forward reference for GameManager if needed, or pass settings directly
     # from bot.game.managers.game_manager import GameManager
+    from bot.database.models import Location as LocationModel # For type hinting if needed
 
 logger = logging.getLogger(__name__) # ADDED
 
@@ -47,6 +49,7 @@ class PromptContextCollector:
         self.ability_manager = ability_manager
         self.spell_manager = spell_manager
         self.event_manager = event_manager
+        self.party_manager = kwargs.get('party_manager') # Added, make it part of __init__ proper if always required
 
     def get_main_language_code(self) -> str:
         """Determines the main language code for the bot."""
@@ -776,16 +779,70 @@ class PromptContextCollector:
             "lore_snippets": self.get_lore_context(),
             "world_state": self.get_world_state_context(guild_id),
             "game_terms_dictionary": self.get_game_terms_dictionary(guild_id, game_rules_data=game_rules_data_for_guild), # MODIFIED call
-            "scaling_parameters": self.get_scaling_parameters(guild_id, game_rules_data=game_rules_data_for_guild), # MODIFIED call
-            "player_context": None,
-            "faction_data": self.get_faction_data_context(guild_id, game_rules_data=game_rules_data_for_guild), # MODIFIED call
+            "scaling_parameters": self.get_scaling_parameters(guild_id, game_rules_data=game_rules_data_for_guild),
+            "player_context": None, # Specific character context
+            "faction_data": self.get_faction_data_context(guild_id, game_rules_data=game_rules_data_for_guild),
             "relationship_data": [],
             "active_quests_summary": [],
+            "primary_location_details": None, # New field
+            "party_context": None # New field
         }
 
+        # Add Primary Location Details if location_id is provided
+        location_id_from_params = request_params.get("location_id")
+        if location_id_from_params and self.location_manager:
+            location_instance: Optional[LocationModel] = await self.location_manager.get_location_instance(guild_id, str(location_id_from_params))
+            if location_instance:
+                context_dict["primary_location_details"] = location_instance.to_dict()
+                logger.debug(f"Added primary_location_details for location_id: {location_id_from_params}")
+            else:
+                logger.warning(f"Could not fetch details for primary_location_id: {location_id_from_params}")
+
+        # Add Party Context if party_id is provided
+        party_id_from_params = request_params.get("party_id")
+        if party_id_from_params and self.party_manager and self.character_manager:
+            # Assuming party_manager.get_party returns a Pydantic model or similar object
+            # that has id, name_i18n, and a list of player/character IDs (e.g., player_ids or member_ids)
+            party_obj = self.party_manager.get_party(guild_id, str(party_id_from_params)) # This might need to be async
+
+            if party_obj:
+                party_context_data = {
+                    "party_id": getattr(party_obj, 'id', str(party_id_from_params)),
+                    "name_i18n": getattr(party_obj, 'name_i18n', {}),
+                    "member_details": [],
+                    "average_level": None
+                }
+                member_levels = []
+                # Assuming party_obj.player_ids is the list of member character/player IDs
+                member_ids_list = getattr(party_obj, 'player_ids', [])
+                if not isinstance(member_ids_list, list): # Handle if it's player_ids_list or other name
+                    member_ids_list = getattr(party_obj, 'player_ids_list', [])
+
+
+                for member_id in member_ids_list:
+                    if not member_id: continue
+                    # Fetch character details (Pydantic model from CharacterManager)
+                    char_obj = await self.character_manager.get_character(guild_id, str(member_id))
+                    if char_obj:
+                        party_context_data["member_details"].append({
+                            "id": char_obj.id,
+                            "name_i18n": char_obj.name_i18n,
+                            "level": char_obj.level
+                        })
+                        member_levels.append(char_obj.level)
+
+                if member_levels:
+                    party_context_data["average_level"] = round(sum(member_levels) / len(member_levels), 1)
+
+                context_dict["party_context"] = party_context_data
+                logger.debug(f"Added party_context for party_id: {party_id_from_params}")
+            else:
+                logger.warning(f"Could not fetch party details for party_id: {party_id_from_params}")
+
+
         if target_entity_id and target_entity_type == "character":
-            character_details_ctx = await self.get_character_details_context(guild_id, character_id=target_entity_id) # MODIFIED call
-            context_dict["player_context"] = character_details_ctx # MODIFIED assignment
+            character_details_ctx = await self.get_character_details_context(guild_id, character_id=target_entity_id)
+            context_dict["player_context"] = character_details_ctx
 
             quest_ctx = self.get_quest_context(guild_id, character_id=target_entity_id)
             if isinstance(quest_ctx, dict):
@@ -794,6 +851,13 @@ class PromptContextCollector:
 
         elif target_entity_id and target_entity_type == "npc":
             context_dict["relationship_data"] = self.get_relationship_context(guild_id, entity_id=target_entity_id, entity_type="npc")
+
+        # Ensure all keys from GenerationContext are present before creating the model
+        # This is mostly for new optional keys, as Pydantic handles missing optionals.
+        for key in GenerationContext.model_fields.keys():
+            if key not in context_dict:
+                context_dict[key] = None
+
 
         try:
             generation_context_model = GenerationContext(**context_dict)

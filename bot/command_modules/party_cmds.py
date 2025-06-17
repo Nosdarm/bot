@@ -129,48 +129,86 @@ class PartyCog(commands.Cog, name="Party Commands"):
             await interaction.followup.send("Произошла непредвиденная ошибка при создании группы.", ephemeral=True)
 
 
-    @party_group.command(name="disband", description="Disband your current party (leader only).")
+    @party_group.command(name="disband", description="Распустить текущую группу (только для лидера).")
     async def cmd_party_disband(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
-        # Assuming self.bot is already RPGBot
+
         bot_instance: RPGBot = self.bot
         if not hasattr(bot_instance, 'game_manager') or bot_instance.game_manager is None:
-            await interaction.followup.send("Error: Core game services not initialized.", ephemeral=True); return
+            logger_party_cmds.error("GameManager not initialized for /party disband.")
+            await interaction.followup.send("Ошибка: Игровые сервисы не полностью инициализированы.", ephemeral=True)
+            return
 
         game_mngr: "GameManager" = bot_instance.game_manager
-        if not game_mngr.character_manager or not game_mngr.party_manager:
-            await interaction.followup.send("Error: Character or Party services are not fully initialized.", ephemeral=True); return
+        db_service: "DBService" = game_mngr.db_service
 
-        char_manager: "CharacterManager" = game_mngr.character_manager
-        party_manager: "PartyManager" = game_mngr.party_manager
+        if not db_service:
+            logger_party_cmds.error("DBService not available for /party disband.")
+            await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
+            return
+
         guild_id_str = str(interaction.guild_id)
-        discord_user_id_int = interaction.user.id
+        discord_id_str = str(interaction.user.id)
+
         try:
-            player_char: Optional["Character"] = char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
-            if not player_char or not player_char.id:
-                await interaction.followup.send("You need a character.", ephemeral=True); return
+            player: Optional[Player] = await game_mngr.get_player_model_by_discord_id(guild_id=guild_id_str, discord_id=discord_id_str)
+            if not player:
+                await interaction.followup.send("Ваш профиль игрока не найден.", ephemeral=True)
+                return
 
-            current_party_id = getattr(player_char, 'current_party_id', None)
-            if not current_party_id:
-                await interaction.followup.send("Not in a party.", ephemeral=True); return
+            party_id_to_disband = player.current_party_id
+            if not party_id_to_disband:
+                await interaction.followup.send("Вы не состоите в группе, чтобы ее распускать.", ephemeral=True)
+                return
 
-            party_to_disband: Optional["Party"] = party_manager.get_party(guild_id_str, current_party_id) # Use Party
-            if not party_to_disband:
-                await char_manager.set_current_party_id(guild_id_str, player_char.id, None) # Clear inconsistent data
-                await interaction.followup.send("Party info inconsistent, cleared your status.", ephemeral=True); return
+            target_party: Optional[PartyModel] = await db_service.get_entity_by_pk(PartyModel, pk_value=party_id_to_disband, guild_id=guild_id_str)
 
-            if party_to_disband.leader_id != player_char.id:
-                await interaction.followup.send("Only the party leader can disband the party.", ephemeral=True); return
+            if not target_party:
+                logger_party_cmds.warning(f"Player {player.id} (discord {discord_id_str}) had current_party_id {party_id_to_disband}, but party not found in DB. Clearing player's party status.")
+                await db_service.update_player_field(player.id, 'current_party_id', None, guild_id_str=guild_id_str)
+                await interaction.followup.send("Ваша группа не найдена (возможно, уже была распущена). Ваш статус обновлен.", ephemeral=True)
+                return
 
-            context_kwargs = {"guild_id": guild_id_str, "character_manager": char_manager}
-            disband_success = await party_manager.remove_party(current_party_id, guild_id_str, **context_kwargs)
-            if disband_success:
-                party_name_display = getattr(party_to_disband, 'name_i18n', {}).get(player_char.selected_language or 'en', current_party_id) if hasattr(party_to_disband, 'name_i18n') else getattr(party_to_disband, 'name', current_party_id)
-                await interaction.followup.send(f"Party '{party_name_display}' disbanded.", ephemeral=False)
+            if target_party.leader_id != player.id:
+                await interaction.followup.send("Только лидер группы может ее распустить.", ephemeral=True)
+                return
+
+            party_name_for_feedback = target_party.id # Default to ID
+            if target_party.name_i18n:
+                party_name_for_feedback = target_party.name_i18n.get(player.selected_language, target_party.name_i18n.get("en", target_party.id))
+
+            player_ids_to_update = target_party.player_ids if target_party.player_ids is not None else []
+
+            # Update all members to set their current_party_id to None
+            # This includes the leader
+            all_members_updated = True
+            for member_id in player_ids_to_update:
+                member_update_success = await db_service.update_player_field(
+                    player_id=member_id,
+                    field_name='current_party_id',
+                    value=None,
+                    guild_id_str=guild_id_str
+                )
+                if not member_update_success:
+                    all_members_updated = False
+                    logger_party_cmds.error(f"Failed to update current_party_id for member {member_id} of disbanded party {target_party.id}.")
+
+            if not all_members_updated:
+                logger_party_cmds.warning(f"Not all members of party {target_party.id} could be updated to clear their current_party_id. Proceeding with party deletion.")
+
+            # Delete the party
+            delete_success = await db_service.delete_entity_by_pk(PartyModel, target_party.id, guild_id=guild_id_str)
+
+            if delete_success:
+                logger_party_cmds.info(f"Party '{party_name_for_feedback}' (ID: {target_party.id}) disbanded by leader {player.id} (discord {discord_id_str}).")
+                await interaction.followup.send(f"Группа '{party_name_for_feedback}' успешно распущена.", ephemeral=False)
             else:
-                await interaction.followup.send("Error disbanding party.", ephemeral=True)
+                logger_party_cmds.error(f"Failed to delete party {target_party.id} from DB after clearing member statuses.")
+                await interaction.followup.send("Не удалось удалить группу из базы данных, хотя статус участников мог быть обновлен. Обратитесь к администратору.", ephemeral=True)
+
         except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True); traceback.print_exc()
+            logger_party_cmds.error(f"Error in /party disband for user {discord_id_str}, guild {guild_id_str}: {e}", exc_info=True)
+            await interaction.followup.send("Произошла непредвиденная ошибка при роспуске группы.", ephemeral=True)
 
 
     @party_group.command(name="join", description="Присоединиться к существующей группе.")
@@ -307,60 +345,101 @@ class PartyCog(commands.Cog, name="Party Commands"):
             logger_party_cmds.error(f"Error in /party join for user {discord_id_str}, guild {guild_id_str}: {e}", exc_info=True)
             await interaction.followup.send("Произошла непредвиденная ошибка при попытке присоединиться к группе.", ephemeral=True)
 
-    @party_group.command(name="leave", description="Leave your current party.")
+    @party_group.command(name="leave", description="Покинуть текущую группу.")
     async def cmd_party_leave(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
-        # Assuming self.bot is already RPGBot
+
         bot_instance: RPGBot = self.bot
         if not hasattr(bot_instance, 'game_manager') or bot_instance.game_manager is None:
-            await interaction.followup.send("Error: Core game services not initialized.", ephemeral=True); return
+            logger_party_cmds.error("GameManager not initialized for /party leave.")
+            await interaction.followup.send("Ошибка: Игровые сервисы не полностью инициализированы.", ephemeral=True)
+            return
 
         game_mngr: "GameManager" = bot_instance.game_manager
-        if not game_mngr.character_manager or not game_mngr.party_manager or not game_mngr.location_manager:
-            await interaction.followup.send("Error: Character, Party or Location services are not fully initialized.", ephemeral=True); return
+        db_service: "DBService" = game_mngr.db_service
 
-        char_manager: "CharacterManager" = game_mngr.character_manager
-        party_manager: "PartyManager" = game_mngr.party_manager
-        loc_manager: "LocationManager" = game_mngr.location_manager
+        if not db_service:
+            logger_party_cmds.error("DBService not available for /party leave.")
+            await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
+            return
+
         guild_id_str = str(interaction.guild_id)
-        discord_user_id_int = interaction.user.id
+        discord_id_str = str(interaction.user.id)
         try:
-            player_char: Optional["Character"] = char_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int) # Use Character
-            if not player_char or not player_char.id:
-                await interaction.followup.send("You need a character.", ephemeral=True); return
+            player: Optional[Player] = await game_mngr.get_player_model_by_discord_id(guild_id=guild_id_str, discord_id=discord_id_str)
+            if not player:
+                await interaction.followup.send("Ваш профиль игрока не найден.", ephemeral=True)
+                return
 
-            current_party_id = getattr(player_char, 'current_party_id', None)
-            if not current_party_id:
-                await interaction.followup.send("Not in a party.", ephemeral=True); return
+            party_id_to_leave = player.current_party_id
+            if not party_id_to_leave:
+                await interaction.followup.send("Вы не состоите в какой-либо группе.", ephemeral=True)
+                return
 
-            party_to_leave: Optional["Party"] = party_manager.get_party(guild_id_str, current_party_id) # Use Party
-            if not party_to_leave:
-                await char_manager.set_current_party_id(guild_id_str, player_char.id, None)
-                await interaction.followup.send("Party info inconsistent, cleared your status.", ephemeral=True); return
+            target_party: Optional[PartyModel] = await db_service.get_entity_by_pk(PartyModel, pk_value=party_id_to_leave, guild_id=guild_id_str)
 
-            current_location_id = getattr(player_char, 'current_location_id', None)
-            if not current_location_id:
-                 await interaction.followup.send("Character not in a valid location.", ephemeral=True); return
+            if not target_party:
+                logger_party_cmds.warning(f"Player {player.id} had current_party_id {party_id_to_leave}, but party not found in DB. Clearing player's party status.")
+                await db_service.update_player_field(player.id, 'current_party_id', None, guild_id_str=guild_id_str)
+                await interaction.followup.send("Ваша группа не найдена (возможно, была распущена). Ваш статус обновлен.", ephemeral=True)
+                return
 
-            party_location_id = getattr(party_to_leave, 'current_location_id', None)
-            if party_location_id is None: # Explicit None check
-                 await interaction.followup.send(f"Party '{current_party_id}' is not currently at a known location.", ephemeral=True); return
+            player_ids_list = target_party.player_ids if target_party.player_ids is not None else []
+            original_leader_id = target_party.leader_id
+            party_name_for_feedback = target_party.name_i18n.get(player.selected_language, target_party.name_i18n.get("en", target_party.id)) if target_party.name_i18n else target_party.id
 
-            if current_location_id != party_location_id:
-                player_loc_name = loc_manager.get_location_name(guild_id_str, current_location_id) or current_location_id
-                party_loc_name = loc_manager.get_location_name(guild_id_str, party_location_id) or party_location_id # party_location_id is now checked not to be None
-                await interaction.followup.send(f"Must be in same location to leave. You: '{player_loc_name}', Party: '{party_loc_name}'.", ephemeral=True); return
 
-            context_kwargs = {"guild_id": guild_id_str, "character_manager": char_manager}
-            leave_success = await party_manager.remove_member_from_party(current_party_id, player_char.id, guild_id_str, context_kwargs)
-            if leave_success:
-                await char_manager.set_current_party_id(guild_id_str, player_char.id, None) # No context needed for set_current_party_id as it's direct attribute
-                party_name_display = getattr(party_to_leave, 'name_i18n', {}).get(player_char.selected_language or 'en', current_party_id) if hasattr(party_to_leave, 'name_i18n') else getattr(party_to_leave, 'name', current_party_id)
-                await interaction.followup.send(f"Left '{party_name_display}'.", ephemeral=False)
+            player_successfully_removed_from_list = False
+            if player.id in player_ids_list:
+                player_ids_list.remove(player.id)
+                player_successfully_removed_from_list = True
             else:
-                await interaction.followup.send("Error leaving party.", ephemeral=True)
+                logger_party_cmds.warning(f"Player {player.id} (discord {discord_id_str}) trying to leave party {target_party.id}, but was not in its player_ids list: {player_ids_list}. Clearing player's party status regardless.")
+
+            party_deleted = False
+            party_updates_payload = {}
+
+            if not player_ids_list:
+                delete_success = await db_service.delete_entity_by_pk(PartyModel, target_party.id, guild_id=guild_id_str)
+                if delete_success:
+                    party_deleted = True
+                    logger_party_cmds.info(f"Party {target_party.id} ('{party_name_for_feedback}') disbanded as last member (Player {player.id}) left.")
+                    await interaction.followup.send(f"Группа '{party_name_for_feedback}' распущена, так как вы были последним участником.", ephemeral=False)
+                else:
+                    logger_party_cmds.error(f"Failed to delete empty party {target_party.id} after player {player.id} left.")
+                    await db_service.update_player_field(player.id, 'current_party_id', None, guild_id_str=guild_id_str)
+                    await interaction.followup.send("Вы покинули группу, но произошла ошибка при ее роспуске. Обратитесь к администратору.", ephemeral=True)
+                    return
+
+            elif original_leader_id == player.id and player_successfully_removed_from_list:
+                party_updates_payload['leader_id'] = player_ids_list[0]
+                party_updates_payload['player_ids'] = player_ids_list
+                logger_party_cmds.info(f"Player {player.id} (leader) left party {target_party.id}. New leader is {player_ids_list[0]}. Updated player_ids: {player_ids_list}")
+
+            elif player_successfully_removed_from_list:
+                party_updates_payload['player_ids'] = player_ids_list
+                logger_party_cmds.info(f"Player {player.id} left party {target_party.id}. Updated player_ids: {player_ids_list}")
+
+            player_update_success = await db_service.update_player_field(player.id, 'current_party_id', None, guild_id_str=guild_id_str)
+            if not player_update_success:
+                 logger_party_cmds.error(f"CRITICAL: Failed to update player {player.id}'s current_party_id to None after leaving/disbanding party {party_id_to_leave}.")
+
+            if not party_deleted and party_updates_payload:
+                update_party_db_success = await db_service.update_entity_by_pk(PartyModel, target_party.id, party_updates_payload, guild_id=guild_id_str)
+                if not update_party_db_success:
+                    logger_party_cmds.error(f"Failed to update party {target_party.id} in DB after player {player.id} left. Payload: {party_updates_payload}")
+                    await interaction.followup.send("Вы покинули группу, но произошла ошибка при обновлении информации о группе. Обратитесь к администратору.", ephemeral=True)
+                    return
+
+            if not party_deleted:
+                if player_successfully_removed_from_list:
+                    await interaction.followup.send(f"Вы успешно покинули группу '{party_name_for_feedback}'.", ephemeral=False)
+                elif not player_successfully_removed_from_list and player_update_success :
+                     await interaction.followup.send(f"Ваш статус в группе был очищен (вы не числились в составе группы '{party_name_for_feedback}').", ephemeral=True)
+
         except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True); traceback.print_exc()
+            logger_party_cmds.error(f"Error in /party leave for user {discord_id_str}, guild {guild_id_str}: {e}", exc_info=True)
+            await interaction.followup.send(f"Произошла непредвиденная ошибка при выходе из группы.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
