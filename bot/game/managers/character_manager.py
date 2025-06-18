@@ -907,4 +907,4 @@ class CharacterManager:
             "xp_for_next_level": xp_for_next_level
         }
 
-[end of bot/game/managers/character_manager.py]
+
