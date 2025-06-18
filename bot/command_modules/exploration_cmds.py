@@ -195,77 +195,80 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
             logging.error(f"ExplorationCog.cmd_look: Error condition - User: {interaction.user.id}, Guild: {interaction.guild_id}, Channel: {interaction.channel_id}. Error message: '{error_message}'. Result from handle_explore_action: {result}", exc_info=True)
             await interaction.followup.send(error_message, ephemeral=True)
 
-    @app_commands.command(name="move", description="Переместиться в соседнюю локацию.")
-    @app_commands.describe(target="Название или ID локации для перемещения")
+    @app_commands.command(name="move", description="Move to a connected location.") # English description
+    @app_commands.describe(target="The name or static ID of the location to move to.")
+    @app_commands.guild_only() # Explicitly guild_only
     async def cmd_move(self, interaction: Interaction, target: str):
-        await interaction.response.defer(ephemeral=True) # Default to ephemeral, success can be non-ephemeral
+        await interaction.response.defer(ephemeral=True)
 
-        if not interaction.guild_id:
-            await interaction.followup.send("Эта команда может быть использована только на сервере.", ephemeral=True)
-            return
+        guild_id_str = str(interaction.guild_id) # guild_id is guaranteed by @app_commands.guild_only()
+        discord_id_str = str(interaction.user.id)
 
         game_mngr: Optional["GameManager"] = self.bot.game_manager # type: ignore
         if not game_mngr:
-            logging.error(f"GameManager not available for /move command by {interaction.user.id}")
-            await interaction.followup.send("GameManager не доступен. Пожалуйста, попробуйте позже.", ephemeral=True)
+            logger.error(f"GameManager not available for /move command by {discord_id_str} in guild {guild_id_str}")
+            await interaction.followup.send("GameManager is not available. Please try again later.", ephemeral=True)
             return
 
-        if not game_mngr.location_manager: # LocationManager is needed for location name
-            logging.error(f"LocationManager not available for /move command by {interaction.user.id}")
-            await interaction.followup.send("Менеджер локаций не доступен. Пожалуйста, попробуйте позже.", ephemeral=True)
+        if not game_mngr.character_manager or not game_mngr.location_manager:
+            logger.error(f"CharacterManager or LocationManager not available for /move command by {discord_id_str} in guild {guild_id_str}")
+            await interaction.followup.send("Required game services are not available. Please try again later.", ephemeral=True)
             return
 
         try:
-            player: Optional["Player"] = await game_mngr.get_player_model_by_discord_id(
-                guild_id=str(interaction.guild_id),
-                discord_id=str(interaction.user.id)
+            # Fetch Player to get active_character_id
+            player_account: Optional[Player] = await game_mngr.get_player_model_by_discord_id(
+                guild_id=guild_id_str,
+                discord_id=discord_id_str
             )
 
-            if not player:
-                await interaction.followup.send("Сначала вам нужно создать персонажа командой /start.", ephemeral=True)
+            if not player_account:
+                await interaction.followup.send("You need to have a player profile to move. Use `/start` to create one.", ephemeral=True)
                 return
 
-            if not player.id: # Should not happen if player object is valid
-                await interaction.followup.send("Ошибка данных игрока: отсутствует ID.", ephemeral=True)
+            if not player_account.active_character_id:
+                await interaction.followup.send("You do not have an active character selected. Use `/character select` or `/character create`.", ephemeral=True)
                 return
 
+            active_character_id = player_account.active_character_id
+
+            # Call GameManager's handle_move_action with character_id
             success = await game_mngr.handle_move_action(
-                guild_id=str(interaction.guild_id),
-                player_id=player.id,
+                guild_id=guild_id_str,
+                character_id=active_character_id, # Use character_id
                 target_location_identifier=target
             )
 
             if success:
-                # Re-fetch player to get updated current_location_id reliably
-                updated_player: Optional[Player] = await game_mngr.get_player_model_by_id(str(interaction.guild_id), player.id)
-                if not updated_player or not updated_player.current_location_id:
-                    logging.error(f"Move successful for player {player.id} but failed to refetch updated player or location ID.")
-                    await interaction.followup.send("Перемещение выполнено, но не удалось получить информацию о новой локации.", ephemeral=True)
+                # Re-fetch character and then their location for confirmation message
+                # CharacterManager's get_character method should return the updated character from cache or DB
+                updated_character = await game_mngr.character_manager.get_character(guild_id_str, active_character_id)
+
+                if not updated_character or not updated_character.current_location_id:
+                    logging.error(f"Move successful for character {active_character_id} but failed to refetch updated character or location ID.")
+                    await interaction.followup.send("Movement processed, but could not confirm new location details.", ephemeral=True)
                     return
 
-                new_location: Optional[Location] = await game_mngr.location_manager.get_location_instance(str(interaction.guild_id), updated_player.current_location_id)
+                new_location = await game_mngr.location_manager.get_location_instance(guild_id_str, updated_character.current_location_id)
 
                 if new_location:
-                    # Assuming i18n_utils is imported in this file or accessible via self.bot or game_mngr
-                    # For now, let's assume direct import if not already present
-                    from bot.utils import i18n_utils # Ensure this import is at the top of the file
+                    from bot.utils import i18n_utils
 
-                    player_lang = updated_player.selected_language or await game_mngr.get_rule(str(interaction.guild_id), "default_language", "en") or "en"
+                    player_lang = player_account.selected_language or await game_mngr.get_rule(guild_id_str, "default_language", "en") or "en"
                     loc_name = i18n_utils.get_entity_localized_text(new_location, 'name_i18n', player_lang)
-                    if not loc_name: # Fallback if localized name not found
+                    if not loc_name:
                         loc_name = new_location.static_id or new_location.id
 
-                    await interaction.followup.send(f"Вы переместились в '{loc_name}'.", ephemeral=False) # Non-ephemeral for success
+                    await interaction.followup.send(f"You have moved to '{loc_name}'.", ephemeral=False)
                 else:
-                    logging.error(f"Move successful for player {player.id} to {updated_player.current_location_id}, but new location object not found.")
-                    await interaction.followup.send("Вы переместились, но не удалось получить детали новой локации.", ephemeral=True)
+                    logging.error(f"Move successful for character {active_character_id} to {updated_character.current_location_id}, but new location object not found.")
+                    await interaction.followup.send("Movement processed, but could not retrieve details of the new location.", ephemeral=True)
             else:
-                # More specific errors could be returned by handle_move_action in the future
-                await interaction.followup.send("Не удалось переместиться. Убедитесь, что локация существует и доступна из вашего текущего местоположения.", ephemeral=True)
+                await interaction.followup.send(f"Could not move to '{target}'. It might be an invalid destination or not connected.", ephemeral=True)
 
         except Exception as e:
-            logging.error(f"Unexpected error in /move command for user {interaction.user.id}: {e}", exc_info=True)
-            await interaction.followup.send("Произошла непредвиденная ошибка при попытке перемещения.", ephemeral=True)
+            logging.error(f"Unexpected error in /move command for user {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
+            await interaction.followup.send("An unexpected error occurred while trying to move.", ephemeral=True)
 
     @app_commands.command(name="check", description="Проверить что-либо, используя навык (например, предмет, окружение).")
     @app_commands.describe(skill_name="Навык для использования (например, внимательность, знание_магии).", target="Что или кого вы проверяете.")
