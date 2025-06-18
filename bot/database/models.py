@@ -293,6 +293,7 @@ class NPC(Base):
     loot_table_id = Column(String, nullable=True)
     effective_stats_json = Column(JSONB, nullable=True)
     faction_id = Column(String, nullable=True, index=True)
+    schedule_json = Column(JSONB, nullable=True) # Added for NPC schedules
 
     location = relationship("Location")
     party = relationship("Party")
@@ -798,6 +799,70 @@ class WorldState(Base):
 
     def __repr__(self):
         return f"<WorldState(id='{self.id}', guild_id='{self.guild_id}')>"
+
+
+class StoryLog(Base):
+    __tablename__ = 'story_logs'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    timestamp = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    location_id = Column(String, ForeignKey('locations.id'), nullable=True, index=True)
+    event_type = Column(String, nullable=False, index=True)
+
+    entity_ids_json = Column(JSONB, nullable=True, comment='Stores IDs of entities involved, e.g., {"character_ids": [], "npc_ids": [], "item_ids": []}')
+    details_json = Column(JSONB, nullable=True, comment='Stores detailed, structured information about the event')
+
+    # Optional relationships if direct querying from StoryLog to these tables is common
+    # location = relationship("Location", foreign_keys=[location_id])
+    # guild = relationship("GuildConfig", foreign_keys=[guild_id])
+
+    __table_args__ = (
+        Index('idx_storylog_guild_timestamp', 'guild_id', 'timestamp'),
+        Index('idx_storylog_guild_event_type', 'guild_id', 'event_type'),
+    )
+
+    def __repr__(self):
+        return f"<StoryLog(id='{self.id}', guild_id='{self.guild_id}', type='{self.event_type}', ts='{self.timestamp}')>"
+
+
+class Relationship(Base):
+    __tablename__ = 'relationships'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+
+    # Entity 1
+    entity1_type = Column(String, nullable=False, index=True) # E.g., "CHARACTER", "NPC", "FACTION", "PARTY"
+    entity1_id = Column(String, nullable=False, index=True)   # ID of the first entity
+
+    # Entity 2
+    entity2_type = Column(String, nullable=False, index=True) # E.g., "CHARACTER", "NPC", "FACTION", "PARTY"
+    entity2_id = Column(String, nullable=False, index=True)   # ID of the second entity
+
+    # Relationship details
+    type = Column(String, nullable=False, index=True) # E.g., "personal_disposition", "faction_standing", "familial_bond"
+                                                      # This describes the single relationship allowed by the unique constraint below.
+    value = Column(Integer, nullable=False, default=0) # Numerical value (e.g., -100 to 100 for disposition)
+
+    # Optional: Link to a StoryLog entry that caused or last significantly modified this relationship
+    source_log_id = Column(String, ForeignKey('story_logs.id', ondelete='SET NULL'), nullable=True, index=True)
+
+    # Optional: For storing more nuanced details about the relationship if 'value' and 'type' aren't enough
+    details_json = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('guild_id', 'entity1_type', 'entity1_id', 'entity2_type', 'entity2_id', name='uq_relationship_between_entities'),
+        Index('idx_relationship_guild_entity1', 'guild_id', 'entity1_type', 'entity1_id'),
+        Index('idx_relationship_guild_entity2', 'guild_id', 'entity2_type', 'entity2_id'),
+        # Index on type can be useful for querying all relationships of a certain type
+        Index('idx_relationship_guild_type', 'guild_id', 'type'),
+    )
+
+    def __repr__(self):
+        return f"<Relationship(id='{self.id}', guild='{self.guild_id}', {self.entity1_type}:{self.entity1_id} <-> {self.entity2_type}:{self.entity2_id}, type='{self.type}', val={self.value})>"
+
 
 # Relationship on NewCharacterItem to Character needs to be updated if Character model name or back_populates changes.
 # Check Character model: `new_items_association = relationship("NewCharacterItem", back_populates="character", cascade="all, delete-orphan")`

@@ -135,63 +135,51 @@ class LocationManager:
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         guild_id_str = str(guild_id)
         self._diagnostic_log.append(f"DEBUG_LM: ENTERING load_state for guild_id: {guild_id_str}")
-        db_service = kwargs.get('db_service', self._db_service)
-        if db_service is None or db_service.adapter is None:
-             self._diagnostic_log.append(f"DEBUG_LM: DBService not available for load_state in guild {guild_id_str}.")
-             self._clear_guild_state_cache(guild_id_str)
-             return
+        if not self._db_service or not hasattr(self._db_service, 'get_session_factory'):
+            self._diagnostic_log.append(f"DEBUG_LM: DBService or session factory not available for load_state in guild {guild_id_str}.")
+            self._clear_guild_state_cache(guild_id_str)
+            return
 
         self._clear_guild_state_cache(guild_id_str) # Ensure clean start for the guild
 
-        rows = []
+        from bot.database.crud_utils import get_entities
+        from bot.database.guild_transaction import GuildTransaction
+        from bot.database.models import Location # Ensure Location SQLAlchemy model is imported
+
+        loaded_instances_count = 0
         try:
-            sql = """
-            SELECT id, guild_id, template_id, name_i18n, descriptions_i18n,
-                   details_i18n, tags_i18n, atmosphere_i18n, features_i18n,
-                   exits, state_variables, channel_id, image_url, is_active
-            FROM locations WHERE guild_id = $1
-            """
-            rows = await db_service.adapter.fetchall(sql, (guild_id_str,))
-            self._diagnostic_log.append(f"DEBUG_LM: Fetched {len(rows)} rows from DB for guild {guild_id_str}.")
+            async with GuildTransaction(self._db_service.get_session_factory, guild_id_str, commit_on_exit=False) as session: # commit_on_exit=False for read-only
+                all_locations_in_guild = await get_entities(session, Location, guild_id=guild_id_str)
+
+                guild_instances_cache = self._location_instances.setdefault(guild_id_str, {})
+                for loc_model_instance in all_locations_in_guild:
+                    try:
+                        # Convert SQLAlchemy model to dict to store in cache, if cache stores dicts
+                        # The current cache self._location_instances expects Dict[str, Dict[str, Dict[str, Any]]]
+                        instance_data_dict = loc_model_instance.to_dict() # Assuming Location model has to_dict()
+
+                        # The old code deserialized JSON strings from raw rows.
+                        # If loc_model_instance.to_dict() already provides Python dicts/lists for JSONB fields,
+                        # then no further deserialization is needed. This is typical for SQLAlchemy models.
+                        # We just need to ensure the cache stores what it expects.
+                        # The current cache stores dicts, so loc_model_instance.to_dict() is appropriate.
+
+                        guild_instances_cache[loc_model_instance.id] = instance_data_dict
+                        loaded_instances_count += 1
+                    except Exception as e_proc:
+                        self._diagnostic_log.append(f"DEBUG_LM: Error processing location model instance (ID: {loc_model_instance.id}) for guild {guild_id_str}: {e_proc}")
+                        logger.error("LocationManager: Error processing location model instance (ID: %s) for guild %s: %s", loc_model_instance.id, guild_id_str, e_proc, exc_info=True)
+
+            self._diagnostic_log.append(f"DEBUG_LM: Successfully loaded {loaded_instances_count} instances for guild {guild_id_str} using crud_utils.")
+            logger.info("LocationManager.load_state: Successfully loaded %s instances for guild %s using crud_utils.", loaded_instances_count, guild_id_str)
+
+        except ValueError as ve: # Catch GuildTransaction specific errors
+            self._diagnostic_log.append(f"DEBUG_LM: GuildTransaction integrity error during load_state for guild {guild_id_str}: {ve}")
+            logger.error(f"LocationManager: GuildTransaction integrity error during load_state for guild {guild_id_str}: {ve}", exc_info=True)
         except Exception as e:
             self._diagnostic_log.append(f"DEBUG_LM: CRITICAL DB error loading instances for guild {guild_id_str}: {e}")
             logger.critical("LocationManager: CRITICAL DB error loading instances for guild %s: %s", guild_id_str, e, exc_info=True)
-            return # Do not proceed if DB fetch fails
 
-        loaded_instances_count = 0
-        guild_instances_cache = self._location_instances.setdefault(guild_id_str, {})
-        for row in rows:
-            instance_data = dict(row)
-            instance_id = str(instance_data.get('id'))
-            self._diagnostic_log.append(f"DEBUG_LM: Processing row for instance_id: {instance_id}")
-            try:
-                # Deserialize JSON fields
-                for json_field in ['name_i18n', 'descriptions_i18n', 'details_i18n', 'tags_i18n', 'atmosphere_i18n', 'features_i18n', 'exits', 'state_variables']:
-                    field_val = instance_data.get(json_field)
-                    if isinstance(field_val, str):
-                        try:
-                            instance_data[json_field] = json.loads(field_val)
-                        except json.JSONDecodeError:
-                            self._diagnostic_log.append(f"DEBUG_LM: JSONDecodeError for field {json_field} in instance {instance_id}. Using default.")
-                            instance_data[json_field] = {} if 'i18n' in json_field or json_field == 'exits' or json_field == 'state_variables' else ""
-                    elif field_val is None: # Ensure a default dict if field is null
-                         instance_data[json_field] = {} if 'i18n' in json_field or json_field == 'exits' or json_field == 'state_variables' else ""
-
-
-                # Basic validation
-                if not instance_data.get('template_id'): # Must have a template_id
-                    self._diagnostic_log.append(f"DEBUG_LM: Instance {instance_id} missing template_id. Skipping.")
-                    continue
-
-                # Store the processed dictionary
-                guild_instances_cache[instance_id] = instance_data
-                loaded_instances_count += 1
-            except Exception as e:
-                self._diagnostic_log.append(f"DEBUG_LM: Error processing instance row (ID: {instance_id}) for guild {guild_id_str}: {e}")
-                logger.error("LocationManager: Error processing instance row (ID: %s) for guild %s: %s", instance_id, guild_id_str, e, exc_info=True)
-
-        self._diagnostic_log.append(f"DEBUG_LM: Successfully loaded {loaded_instances_count} instances for guild {guild_id_str}.")
-        logger.info("LocationManager.load_state: Successfully loaded %s instances for guild %s.", loaded_instances_count, guild_id_str)
 
     async def _ensure_persistent_location_exists(self, guild_id: str, location_template_id: str) -> Optional[Dict[str, Any]]:
         # ... (logic as before, add guild_id context to logs)
@@ -201,38 +189,97 @@ class LocationManager:
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         guild_id_str = str(guild_id)
         logger.debug("LocationManager: Saving state for guild %s.", guild_id_str)
-        if self._db_service is None or self._db_service.adapter is None:
-            logger.error("LocationManager: DBService not available for save_state in guild %s.", guild_id_str)
+
+        if not self._db_service or not hasattr(self._db_service, 'get_session_factory'):
+            logger.error(f"LocationManager: DB service or session factory not available for save_state in guild {guild_id_str}.")
             return
 
+        from bot.database.guild_transaction import GuildTransaction
+        from bot.database.models import Location # Ensure Location SQLAlchemy model is imported
+        from sqlalchemy import delete as sqlalchemy_delete
+
         deleted_ids_for_guild = list(self._deleted_instances.get(guild_id_str, set()))
-        if deleted_ids_for_guild:
-            # ... (deletion logic) ...
-            pass
+        dirty_ids_for_guild = list(self._dirty_instances.get(guild_id_str, set()))
 
-        dirty_instances_data = []
-        dirty_ids_to_clear = set()
-        if guild_id_str in self._dirty_instances:
-            for instance_id in list(self._dirty_instances[guild_id_str]): # Iterate copy
-                instance_data = self._location_instances.get(guild_id_str, {}).get(instance_id)
-                if instance_data:
-                    # ... (prepare data_tuple for upsert) ...
-                    # dirty_instances_data.append(data_tuple)
-                    dirty_ids_to_clear.add(instance_id)
-                else: # Was marked dirty but not found in cache (should not happen if logic is correct)
-                    logger.warning("LocationManager: Instance %s marked dirty for guild %s but not found in active cache. Skipping save.", instance_id, guild_id_str)
-                    dirty_ids_to_clear.add(instance_id) # Still remove from dirty set
+        processed_dirty_ids_in_transaction = set()
 
-        if dirty_instances_data:
-            # ... (upsert logic) ...
-            pass
+        if not deleted_ids_for_guild and not dirty_ids_for_guild:
+            logger.debug(f"LocationManager: No dirty or deleted location instances to save for guild {guild_id_str}.")
+            return
 
-        if guild_id_str in self._dirty_instances:
-            self._dirty_instances[guild_id_str].difference_update(dirty_ids_to_clear)
-            if not self._dirty_instances[guild_id_str]:
-                del self._dirty_instances[guild_id_str]
+        try:
+            async with GuildTransaction(self._db_service.get_session_factory, guild_id_str) as session:
+                if deleted_ids_for_guild:
+                    # For safety, it's better to ensure these IDs actually belong to the guild.
+                    # The mark_location_instance_deleted method should ensure this.
+                    stmt = sqlalchemy_delete(Location).where(
+                        Location.id.in_(deleted_ids_for_guild),
+                        Location.guild_id == guild_id_str # Double check guild_id for safety on bulk delete
+                    )
+                    await session.execute(stmt)
+                    logger.info(f"LocationManager: Executed delete for {len(deleted_ids_for_guild)} location instances in DB for guild {guild_id_str}: {deleted_ids_for_guild}")
 
-        logger.debug("LocationManager: Save state complete for guild %s.", guild_id_str)
+                guild_cache = self._location_instances.get(guild_id_str, {})
+                for instance_id in dirty_ids_for_guild:
+                    instance_data_dict = guild_cache.get(instance_id)
+                    if instance_data_dict:
+                        if not isinstance(instance_data_dict, dict):
+                            logger.error(f"LocationManager: Cached instance data for {instance_id} in guild {guild_id_str} is not a dict. Skipping save. Data: {instance_data_dict}")
+                            continue
+
+                        # Ensure guild_id in data matches, though GuildTransaction will also check
+                        if str(instance_data_dict.get('guild_id')) != guild_id_str:
+                            logger.error(f"CRITICAL: Location instance {instance_id} in guild {guild_id_str} cache has mismatched guild_id {instance_data_dict.get('guild_id')}. Skipping save.")
+                            continue
+
+                        # Convert dict to Location model instance for merging
+                        # Location.from_dict might not be suitable if it creates a new object without PK for merge.
+                        # We need to fetch then update, or use merge correctly with an object that has its PK.
+                        # Option 1: Fetch then update (safer for ensuring guild_id match on existing row)
+                        # existing_loc = await session.get(Location, instance_id)
+                        # if existing_loc and str(existing_loc.guild_id) == guild_id_str:
+                        #     for key, value in instance_data_dict.items():
+                        #         if hasattr(existing_loc, key): # Make sure attribute exists
+                        #             setattr(existing_loc, key, value)
+                        #     session.add(existing_loc) # Add to session to mark as dirty for SQLAlchemy's UOW
+                        # elif not existing_loc: # New location
+                        #     new_loc = Location(**instance_data_dict) # Ensure all required fields are present
+                        #     session.add(new_loc)
+                        # else: logger.error(...)
+
+                        # Option 2: Merge (simpler if instance_data_dict contains the PK 'id')
+                        # Create a model instance from the dict for merge.
+                        # The `Location.from_dict` might be more for initial creation.
+                        # A simple `Location(**instance_data_dict)` might work if all fields align.
+                        # For merge to work correctly, the object must have its primary key set.
+                        if 'id' not in instance_data_dict:
+                            logger.error(f"LocationManager: Instance data for {instance_id} is missing 'id'. Skipping merge.")
+                            continue
+
+                        # Create a new Location object or ensure the dict can be directly merged
+                        # This assumes instance_data_dict is a full representation that can be merged.
+                        # SQLAlchemy's merge will insert if PK not found, or update if found.
+                        loc_to_merge = Location(**instance_data_dict) # This might fail if dict keys don't match model fields exactly or types are wrong
+                        await session.merge(loc_to_merge)
+                        processed_dirty_ids_in_transaction.add(instance_id)
+                    else:
+                        logger.warning(f"LocationManager: Instance {instance_id} marked dirty for guild {guild_id_str} but not found in active cache. Skipping save.")
+
+            # Cleanup local dirty/deleted sets only after successful transaction
+            if guild_id_str in self._deleted_instances:
+                self._deleted_instances[guild_id_str].clear() # Clears all, assuming all were processed
+
+            if guild_id_str in self._dirty_instances:
+                self._dirty_instances[guild_id_str].difference_update(processed_dirty_ids_in_transaction)
+                if not self._dirty_instances[guild_id_str]:
+                    del self._dirty_instances[guild_id_str]
+            logger.info(f"LocationManager: Successfully saved state for guild {guild_id_str}.")
+
+        except ValueError as ve: # Catch GuildTransaction specific errors
+            logger.error(f"LocationManager: GuildTransaction integrity error during save_state for guild {guild_id_str}: {ve}", exc_info=True)
+        except Exception as e:
+            logger.error(f"LocationManager: Error during save_state for guild {guild_id_str}: {e}", exc_info=True)
+
 
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
         logger.info("LocationManager: Rebuilding runtime caches for guild %s.", guild_id)
@@ -678,39 +725,34 @@ class LocationManager:
             except Exception as e:
                 logger.error(f"LocationManager: Database error (using provided session) when fetching location by static_id '{static_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
                 return None
-        elif self._db_service: # Use internal DB service if no session provided
+        elif self._db_service and hasattr(self._db_service, 'get_session_factory'):
+            from bot.database.crud_utils import get_entity_by_attributes
+            from bot.database.guild_transaction import GuildTransaction
             try:
-                # Assuming get_entity_by_conditions can return a model instance or dict
-                location_data = await self._db_service.get_entity_by_conditions(
-                    table_name='locations', # Redundant if model_class is used and db_service handles it
-                    conditions={'guild_id': guild_id_str, 'static_id': static_id_str},
-                    model_class=Location,
-                    single_entity=True
-                )
+                async with GuildTransaction(self._db_service.get_session_factory, guild_id_str, commit_on_exit=False) as crud_session:
+                    location_model_instance = await get_entity_by_attributes(
+                        crud_session,
+                        Location,
+                        attributes={'static_id': static_id_str}, # guild_id is implicitly handled by get_entity_by_attributes when session from GuildTransaction is used, or explicitly passed
+                        guild_id=guild_id_str # Explicitly pass guild_id for clarity and safety
+                    )
 
-                if location_data:
-                    logger.info(f"LocationManager: Found location with static_id '{static_id_str}' in database (using internal db_service) for guild '{guild_id_str}'.")
-                    if isinstance(location_data, Location):
-                        location_model_instance = location_data
-                    elif isinstance(location_data, dict):
-                        location_model_instance = Location.from_dict(location_data)
-                    else:
-                        logger.error(f"LocationManager: DB service returned unexpected type {type(location_data)} for static_id '{static_id_str}', guild '{guild_id_str}'.")
-                        return None
-
-                    if location_model_instance:
-                        # Update cache
-                        self._location_instances.setdefault(guild_id_str, {})[location_model_instance.id] = location_model_instance.to_dict()
-                        return location_model_instance
-                    return None
+                if location_model_instance:
+                    logger.info(f"LocationManager: Found location with static_id '{static_id_str}' in database (using crud_utils) for guild '{guild_id_str}'.")
+                    # Update cache
+                    self._location_instances.setdefault(guild_id_str, {})[location_model_instance.id] = location_model_instance.to_dict()
+                    return location_model_instance
                 else:
-                    logger.info(f"LocationManager: Location with static_id '{static_id_str}' not found in database (using internal db_service) for guild '{guild_id_str}'.")
+                    logger.info(f"LocationManager: Location with static_id '{static_id_str}' not found in database (using crud_utils) for guild '{guild_id_str}'.")
                     return None
+            except ValueError as ve: # Catch GuildTransaction specific errors
+                 logger.error(f"LocationManager: GuildTransaction integrity error fetching location by static_id '{static_id_str}' for guild '{guild_id_str}': {ve}", exc_info=True)
+                 return None
             except Exception as e:
-                logger.error(f"LocationManager: Database error (using internal db_service) when fetching location by static_id '{static_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
+                logger.error(f"LocationManager: Database error (using crud_utils) when fetching location by static_id '{static_id_str}' for guild '{guild_id_str}': {e}", exc_info=True)
                 return None
         else:
-            logger.warning("LocationManager: DBService not available and no session provided. Cannot fetch location by static_id from database.")
+            logger.warning("LocationManager: DBService or session factory not available and no session provided. Cannot fetch location by static_id from database.")
             return None
 
         return None # Fallback
