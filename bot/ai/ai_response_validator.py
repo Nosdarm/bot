@@ -39,12 +39,60 @@ class AIResponseValidator:
             )
         return None
 
-    def _semantic_validate_npc_profile(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str) -> List[ValidationIssue]:
+    def _semantic_validate_npc_profile(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str, game_manager: Optional['GameManager']) -> List[ValidationIssue]:
         issues: List[ValidationIssue] = []
 
+        # Validate stat IDs against game_terms
         for stat_key in data_dict.get('stats', {}).keys():
             issue = self._check_id_in_terms(stat_key, "stat", game_terms, ["stats", stat_key])
             if issue: issues.append(issue)
+
+        # Validate stat value ranges if game_manager is available
+        if game_manager:
+            npc_archetype = data_dict.get('archetype')
+            npc_stats = data_dict.get('stats', {})
+
+            # Fetch stat range rules once
+            all_npc_stat_ranges = game_manager.get_rule(guild_id, "npc_stat_ranges", default={})
+            archetype_specific_ranges = all_npc_stat_ranges.get(npc_archetype, {}) if npc_archetype else {}
+            global_stat_limits = game_manager.get_rule(guild_id, "npc_global_stat_limits", default={})
+
+            for stat_key, stat_value in npc_stats.items():
+                if not isinstance(stat_value, (int, float)):
+                    issues.append(ValidationIssue(
+                        loc=["stats", stat_key], type="semantic.stat_value_not_numeric",
+                        msg=f"Stat '{stat_key}' value '{stat_value}' is not a number.",
+                        input_value=stat_value, severity="warning"
+                    ))
+                    continue
+
+                # Check archetype-specific range first
+                stat_rule = archetype_specific_ranges.get(stat_key)
+                # If not found, check global range
+                if not stat_rule:
+                    stat_rule = global_stat_limits.get(stat_key)
+
+                if stat_rule and isinstance(stat_rule, dict):
+                    min_val = stat_rule.get('min')
+                    max_val = stat_rule.get('max')
+
+                    if min_val is not None and stat_value < min_val:
+                        issues.append(ValidationIssue(
+                            loc=["stats", stat_key], type="semantic.stat_out_of_range.min",
+                            msg=f"Stat '{stat_key}' value {stat_value} is below minimum {min_val} for archetype '{npc_archetype or 'global'}'.",
+                            input_value=stat_value, severity="warning",
+                            suggestion=f"Value should be >= {min_val}."
+                        ))
+                    if max_val is not None and stat_value > max_val:
+                        issues.append(ValidationIssue(
+                            loc=["stats", stat_key], type="semantic.stat_out_of_range.max",
+                            msg=f"Stat '{stat_key}' value {stat_value} is above maximum {max_val} for archetype '{npc_archetype or 'global'}'.",
+                            input_value=stat_value, severity="warning",
+                            suggestion=f"Value should be <= {max_val}."
+                        ))
+        else:
+            logger.info(f"GameManager not available for NPC stat range validation in guild {guild_id}.")
+
 
         for skill_key in data_dict.get('skills', {}).keys():
             issue = self._check_id_in_terms(skill_key, "skill", game_terms, ["skills", skill_key])
@@ -100,17 +148,20 @@ class AIResponseValidator:
             pass
         return issues
 
-    def _semantic_validate_location_content(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str) -> List[ValidationIssue]:
+    def _semantic_validate_location_content(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str, game_manager: Optional['GameManager']) -> List[ValidationIssue]:
         issues: List[ValidationIssue] = []
+        # Existing semantic checks for location content (e.g., PoI item/NPC IDs, connections)
         for i, poi in enumerate(data_dict.get('points_of_interest', [])):
-            for j, item_id in enumerate(poi.get('contained_item_ids', [])):
+            for j, item_id in enumerate(poi.get('contained_item_ids', [])): # This field might not exist on current PoI model
                 issue = self._check_id_in_terms(item_id, "item_template", game_terms, ["points_of_interest", i, "contained_item_ids", j])
                 if issue: issues.append(issue)
-            for k, npc_id in enumerate(poi.get('npc_ids', [])):
-                issue = self._check_id_in_terms(npc_id, "npc_archetype", game_terms, ["points_of_interest", i, "npc_ids", k])
+
+            # Example: If PoIs can have NPCs directly listed by archetype for generation
+            for k, npc_archetype_id in enumerate(poi.get('npc_archetypes_to_spawn', [])): # Assuming such a field could exist
+                issue = self._check_id_in_terms(npc_archetype_id, "npc_archetype", game_terms, ["points_of_interest", i, "npc_archetypes_to_spawn", k])
                 if issue: issues.append(issue)
 
-        for i, conn in enumerate(data_dict.get('connections', [])):
+        for i, conn in enumerate(data_dict.get('connections', [])): # This field might not exist on current Location model
             to_loc_id = conn.get('to_location_id')
             if to_loc_id and not any(term.get('id') == to_loc_id and term.get('term_type') in ["location_template", "location"] for term in game_terms):
                  issues.append(ValidationIssue(
@@ -141,7 +192,52 @@ class AIResponseValidator:
                         ability_id = properties["grants_ability"]
                         issue = self._check_id_in_terms(ability_id, "ability", game_terms, ["properties_json", "grants_ability"])
                         if issue: issues.append(issue)
-            except json.JSONDecodeError: pass
+            except json.JSONDecodeError:
+                # This was already handled by the main JSON decode, but if properties_json itself is a string needing further parsing
+                issues.append(ValidationIssue(
+                    loc=["properties_json"], type="json_decode_error.string_content",
+                    msg=f"Content of 'properties_json' is not valid JSON.",
+                    input_value=properties_json_str[:100], severity="error"
+                ))
+
+        # Item value validation
+        if game_manager:
+            item_type = data_dict.get('item_type') # Assuming item_type is a simple string like "weapon", "potion"
+            rarity_level = data_dict.get('rarity_tag') # Assuming a field like "rarity_tag": "common", "rare"
+            base_value = data_dict.get('base_value')
+
+            if item_type and rarity_level and isinstance(base_value, (int, float)):
+                all_item_value_ranges = game_manager.get_rule(guild_id, "item_value_ranges", default={})
+                type_ranges = all_item_value_ranges.get(item_type, {})
+                rarity_specific_rule = type_ranges.get(rarity_level)
+
+                if rarity_specific_rule and isinstance(rarity_specific_rule, dict):
+                    min_val = rarity_specific_rule.get('min')
+                    max_val = rarity_specific_rule.get('max')
+
+                    if min_val is not None and base_value < min_val:
+                        issues.append(ValidationIssue(
+                            loc=["base_value"], type="semantic.value_out_of_range.min",
+                            msg=f"Item base_value {base_value} is below minimum {min_val} for type '{item_type}' rarity '{rarity_level}'.",
+                            input_value=base_value, severity="warning",
+                            suggestion=f"Value should be >= {min_val}."
+                        ))
+                    if max_val is not None and base_value > max_val:
+                        issues.append(ValidationIssue(
+                            loc=["base_value"], type="semantic.value_out_of_range.max",
+                            msg=f"Item base_value {base_value} is above maximum {max_val} for type '{item_type}' rarity '{rarity_level}'.",
+                            input_value=base_value, severity="warning",
+                            suggestion=f"Value should be <= {max_val}."
+                        ))
+            elif base_value is not None and not isinstance(base_value, (int, float)):
+                 issues.append(ValidationIssue(
+                    loc=["base_value"], type="semantic.value_not_numeric",
+                    msg=f"Item base_value '{base_value}' is not a number.",
+                    input_value=base_value, severity="warning"
+                ))
+        else:
+            logger.info(f"GameManager not available for item value range validation in guild {guild_id}.")
+
         return issues
 
     async def parse_and_validate_ai_response(
@@ -149,7 +245,7 @@ class AIResponseValidator:
         raw_ai_output_text: str,
         guild_id: str,
         request_type: str,
-        game_manager: Optional['GameManager'] = None
+        game_manager: Optional['GameManager'] = None # game_manager is now passed here
     ) -> Tuple[Optional[Dict[str, Any]], Optional[List[ValidationIssue]]]:
         logger.debug(f"Parsing and validating AI response for request_type: {request_type}, guild_id: {guild_id}")
 
@@ -214,16 +310,15 @@ class AIResponseValidator:
                 # Note: get_game_terms_dictionary is synchronous. Ability/spell defs are passed via kwargs from get_full_context.
                 # For direct use here, we might need a way to pass those, or accept that semantic checks for them might be limited.
                 game_terms = game_manager.prompt_context_collector.get_game_terms_dictionary(guild_id, game_rules_data=game_rules_data)
-                # scaling_params = game_manager.prompt_context_collector.get_scaling_parameters(guild_id, game_rules_data=game_rules_data) # Not used yet
 
                 if request_type == "npc_profile_generation":
-                    semantic_issues.extend(self._semantic_validate_npc_profile(model_instance_dict, game_terms, guild_id))
+                    semantic_issues.extend(self._semantic_validate_npc_profile(model_instance_dict, game_terms, guild_id, game_manager))
                 elif request_type == "quest_generation":
-                    semantic_issues.extend(self._semantic_validate_quest_data(model_instance_dict, game_terms, guild_id))
+                    semantic_issues.extend(self._semantic_validate_quest_data(model_instance_dict, game_terms, guild_id)) # Pass game_manager if needed
                 elif request_type == "location_content_generation":
-                    semantic_issues.extend(self._semantic_validate_location_content(model_instance_dict, game_terms, guild_id))
+                    semantic_issues.extend(self._semantic_validate_location_content(model_instance_dict, game_terms, guild_id, game_manager)) # Pass game_manager if needed
                 elif request_type == "item_profile_generation":
-                    semantic_issues.extend(self._semantic_validate_item_profile(model_instance_dict, game_terms, guild_id))
+                    semantic_issues.extend(self._semantic_validate_item_profile(model_instance_dict, game_terms, guild_id, game_manager))
 
                 if semantic_issues: logger.info(f"Semantic validation found {len(semantic_issues)} issues for {request_type}.")
             except Exception as e_sem:
