@@ -178,4 +178,100 @@ class InventoryManager:
                 total_quantity += item_stack.get('quantity', 0)
         return total_quantity
 
+    async def add_item_to_character_inventory(
+        self,
+        guild_id: str,
+        character_id: str,
+        item_template_id: str,
+        quantity: int = 1,
+        state_variables: Optional[Dict[str, Any]] = None,
+        session: Optional[Any] = None # Using Any for AsyncSession to avoid direct import if not already there
+    ) -> bool:
+        """
+        Adds item(s) to a character's inventory by creating Item model instances
+        and updating the Character.inventory_json field.
+        Manages SQLAlchemy session if one is not provided.
+        """
+        from sqlalchemy.ext.asyncio import AsyncSession # Local import for type safety
+        from bot.database.models import Item, Character # SQLAlchemy models
+        from sqlalchemy.orm.attributes import flag_modified
+
+        if not self._character_manager or not self._character_manager._db_service: # Check if CharacterManager has db_service
+            logger.error("InventoryManager: CharacterManager or its DBService not available. Cannot add item.")
+            return False
+
+        if quantity <= 0:
+            logger.warning(f"InventoryManager: Attempted to add non-positive quantity ({quantity}) of item {item_template_id} for character {character_id}.")
+            return False
+
+        # Use provided session or create a new one
+        provided_session = session is not None
+        db_session: AsyncSession = session if provided_session else self._character_manager._db_service.get_session() # type: ignore
+
+        try:
+            async with db_session.begin_nested() if provided_session else db_session.begin() as transaction: # type: ignore
+                # Verify item_template_id (using ItemManager's existing method)
+                item_template = self._item_manager.get_item_template(item_template_id) # This is sync and uses cache/rules_config
+                if not item_template:
+                    logger.error(f"InventoryManager: Item template '{item_template_id}' not found. Cannot add item to character {character_id}.")
+                    if not provided_session: await transaction.rollback() # type: ignore
+                    return False
+
+                # Fetch the Character model
+                character_model = await db_session.get(Character, character_id)
+                if not character_model or str(character_model.guild_id) != guild_id:
+                    logger.error(f"InventoryManager: Character {character_id} not found in guild {guild_id}. Cannot add item.")
+                    if not provided_session: await transaction.rollback() # type: ignore
+                    return False
+
+                new_item_ids_or_data = []
+                for _ in range(quantity):
+                    new_item_instance = Item(
+                        id=str(uuid.uuid4()),
+                        template_id=item_template_id,
+                        guild_id=guild_id,
+                        owner_id=character_id,
+                        owner_type="character",
+                        state_variables=state_variables if state_variables else {}, # Ensure it's a dict
+                        name_i18n=item_template.get("name_i18n"), # Copy from template
+                        description_i18n=item_template.get("description_i18n"), # Copy from template
+                        properties=item_template.get("properties", {}) # Copy from template
+                        # quantity on Item model is usually 1 for non-stackable, or for each unique instance.
+                        # Stacking logic within Character.inventory_json would be separate if needed there.
+                        # For this, we create 'quantity' distinct Item rows.
+                    )
+                    db_session.add(new_item_instance)
+                    # For Character.inventory_json, we'll store a list of item instance IDs.
+                    # Or a list of dicts like {"item_id": new_item_instance.id, "template_id": item_template_id}
+                    # Storing just IDs is simpler if full item details are fetched via Item table.
+                    new_item_ids_or_data.append(new_item_instance.id)
+
+                logger.info(f"InventoryManager: Created {quantity} Item instances for template {item_template_id} for character {character_id}.")
+
+                # Update Character.inventory_json
+                if character_model.inventory_json is None or not isinstance(character_model.inventory_json, list):
+                    character_model.inventory_json = []
+
+                # Append new item IDs to the existing list
+                character_model.inventory_json.extend(new_item_ids_or_data)
+
+                flag_modified(character_model, "inventory_json") # Mark JSONB field as modified for SQLAlchemy
+                db_session.add(character_model)
+
+                if not provided_session:
+                    await transaction.commit() # type: ignore
+
+                logger.info(f"InventoryManager: Successfully added {quantity} of item {item_template_id} to character {character_id}'s inventory_json.")
+                return True
+
+        except Exception as e:
+            logger.error(f"InventoryManager: Error adding item {item_template_id} to character {character_id}: {e}", exc_info=True)
+            if not provided_session and 'transaction' in locals() and transaction.is_active: # type: ignore
+                await transaction.rollback() # type: ignore
+            return False
+        finally:
+            if not provided_session:
+                await db_session.close()
+
+
 logger.debug("DEBUG: inventory_manager.py module loaded.") # Changed

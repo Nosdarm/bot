@@ -122,6 +122,7 @@ class Location(Base):
     image_url = Column(String, nullable=True)
     ai_metadata_json = Column(JSONB, nullable=True, comment="Stores metadata for AI generation purposes")
     points_of_interest_json = Column(JSONB, nullable=True, comment="List of Points of Interest objects/dictionaries")
+    on_enter_events_json = Column(JSONB, nullable=True, default=lambda: [])
 
     __table_args__ = (
         UniqueConstraint('guild_id', 'static_id', name='uq_location_guild_static_id'),
@@ -144,6 +145,7 @@ class Location(Base):
             data.setdefault(field, {})
 
         data.setdefault('points_of_interest_json', [])
+        data.setdefault('on_enter_events_json', [])
 
         if data.get('is_active') is None:
             data['is_active'] = True
@@ -173,7 +175,8 @@ class Location(Base):
             "event_triggers": self.event_triggers or [],
             "type_i18n": self.type_i18n or {},
             "coordinates": self.coordinates or {},
-            "points_of_interest_json": self.points_of_interest_json or []
+            "points_of_interest_json": self.points_of_interest_json or [],
+            "on_enter_events_json": self.on_enter_events_json or []
         }
 
 class Timer(Base):

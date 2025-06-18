@@ -99,6 +99,130 @@ class NpcManager:
         self._load_npc_archetypes()
         logger.info("NpcManager initialized.") # Changed
 
+    def get_npc_template(self, guild_id: str, template_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves an NPC template (archetype) by its ID.
+        Guild_id is not strictly used as archetypes are currently global,
+        but included for API consistency.
+        """
+        # Archetypes are loaded into self._npc_archetypes
+        # Key might be just template_id if they are global, or could be namespaced if loaded per guild.
+        # Assuming self._npc_archetypes stores them directly by template_id for now.
+        template = self._npc_archetypes.get(template_id)
+        if not template:
+            logger.warning(f"NpcManager: NPC template/archetype '{template_id}' not found for guild '{guild_id}'.")
+            return None
+        # Ensure a copy is returned so modifications don't affect the cached template
+        return template.copy()
+
+    async def spawn_npc_in_location(
+        self,
+        guild_id: str,
+        location_id: str,
+        npc_template_id: str,
+        is_temporary: bool = True,
+        initial_state: Optional[Dict[str, Any]] = None,
+        session: Optional[Any] = None  # Using Any for AsyncSession
+    ) -> Optional[NPC]:
+        """
+        Spawns an NPC in a given location based on a template.
+        Manages SQLAlchemy session if one is not provided.
+        """
+        from sqlalchemy.ext.asyncio import AsyncSession # Local import for type safety
+        # Models are already imported at the top: NPC, Location as DBLocation
+        from sqlalchemy.orm.attributes import flag_modified
+
+        if not self._db_service:
+            logger.error("NpcManager: DBService not available. Cannot spawn NPC.")
+            return None
+
+        # Use provided session or create a new one
+        provided_session = session is not None
+        db_session: AsyncSession = session if provided_session else self._db_service.get_session() # type: ignore
+
+        try:
+            async with db_session.begin_nested() if provided_session else db_session.begin() as transaction: # type: ignore
+                npc_template = self.get_npc_template(guild_id, npc_template_id)
+                if not npc_template:
+                    logger.error(f"NpcManager: NPC template '{npc_template_id}' not found for guild {guild_id}. Cannot spawn NPC.")
+                    if not provided_session: await transaction.rollback() # type: ignore
+                    return None
+
+                # Prepare NPC data from template, overridden by initial_state
+                npc_data = npc_template.copy() # Start with template defaults
+                if initial_state:
+                    npc_data.update(initial_state) # Override with initial_state
+
+                new_npc_id = str(uuid.uuid4())
+
+                # Ensure stats are correctly structured (e.g., JSONB expects a dict)
+                stats_to_set = npc_data.get("stats", {})
+                if not isinstance(stats_to_set, dict):
+                    logger.warning(f"NpcManager: NPC stats for template {npc_template_id} are not a dict: {stats_to_set}. Defaulting to empty dict.")
+                    stats_to_set = {}
+
+                # Default HP/MaxHP from stats or template, or fallback
+                default_hp_from_stats = stats_to_set.get("hp", stats_to_set.get("health", 100.0))
+                max_hp_from_stats = stats_to_set.get("max_hp", stats_to_set.get("max_health", default_hp_from_stats))
+
+
+                new_npc_instance = NPC(
+                    id=new_npc_id,
+                    guild_id=guild_id,
+                    location_id=location_id,
+                    template_id=npc_template_id,
+                    name_i18n=npc_data.get("name_i18n", {"en": "Unnamed NPC"}),
+                    description_i18n=npc_data.get("description_i18n"),
+                    backstory_i18n=npc_data.get("backstory_i18n"),
+                    persona_i18n=npc_data.get("persona_i18n"),
+                    stats=stats_to_set, # Should be a dict for JSONB
+                    health=float(npc_data.get("health", default_hp_from_stats)),
+                    max_health=float(npc_data.get("max_health", max_hp_from_stats)),
+                    is_temporary=is_temporary,
+                    is_alive=npc_data.get("is_alive", True),
+                    archetype=npc_data.get("archetype"),
+                    # Other fields like inventory, faction_id, etc., can be added similarly
+                    inventory=npc_data.get("inventory", {}), # Assuming JSONB dict
+                    faction_id=npc_data.get("faction_id"),
+                    state_variables=npc_data.get("state_variables", {}) # Assuming JSONB dict
+                )
+                db_session.add(new_npc_instance)
+                logger.info(f"NpcManager: Created NPC instance {new_npc_id} (template: {npc_template_id}) for location {location_id}.")
+
+                # Update Location's npc_ids
+                location_model = await db_session.get(DBLocation, location_id)
+                if not location_model or str(location_model.guild_id) != guild_id:
+                    logger.error(f"NpcManager: Location {location_id} not found in guild {guild_id}. Cannot add NPC to location's list.")
+                    # Decide if this is fatal for NPC spawn. For now, let NPC spawn but log error.
+                elif location_model:
+                    if location_model.npc_ids is None or not isinstance(location_model.npc_ids, list):
+                        location_model.npc_ids = []
+
+                    if new_npc_id not in location_model.npc_ids:
+                        location_model.npc_ids.append(new_npc_id)
+                        flag_modified(location_model, "npc_ids") # Mark JSONB field as modified
+                        db_session.add(location_model)
+                        logger.info(f"NpcManager: Added NPC {new_npc_id} to location {location_id}'s npc_ids list.")
+
+                # Add to NpcManager's internal cache
+                if guild_id not in self._npcs:
+                    self._npcs[guild_id] = {}
+                self._npcs[guild_id][new_npc_id] = new_npc_instance # Cache the SQLAlchemy model instance
+
+                if not provided_session:
+                    await transaction.commit() # type: ignore
+
+                return new_npc_instance
+
+        except Exception as e:
+            logger.error(f"NpcManager: Error spawning NPC from template {npc_template_id} in location {location_id}: {e}", exc_info=True)
+            if not provided_session and 'transaction' in locals() and transaction.is_active: # type: ignore
+                await transaction.rollback() # type: ignore
+            return None
+        finally:
+            if not provided_session:
+                await db_session.close()
+
     async def create_npc_from_ai_concept(
         self,
         guild_id: str,
