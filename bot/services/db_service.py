@@ -809,60 +809,94 @@ class DBService:
             raise
 
 
-    async def create_entity(self, table_name: str, data: Dict[str, Any], id_field: str = 'id') -> Optional[str]:
-        # import uuid # Moved to top
-        # import json # Already imported
-        # To check adapter type
-        # from bot.database.sqlite_adapter import SQLiteAdapter # No longer needed here
-        # import uuid # Moved to top
+    async def create_entity(
+        self,
+        model_class: Optional[type] = None, # SQLAlchemy model class
+        entity_data: Optional[Dict[str, Any]] = None, # Data for the entity
+        session: Optional[Any] = None, # AsyncSession
+        # Old parameters for low-level creation, keep for compatibility if needed, but prioritize model-based
+        table_name: Optional[str] = None,
+        data: Optional[Dict[str, Any]] = None, # Alias for entity_data if table_name is used
+        id_field: str = 'id'
+    ) -> Optional[Any]: # Returns model instance if model_class provided, else ID string
+        from bot.database import crud_utils # Local import
 
-        original_guild_id = data.get('guild_id', 'N/A') # For logging
-
-        if id_field == 'id' and 'id' not in data:
-            data['id'] = str(uuid.uuid4())
-
-        # The ID that will be used for the entity, generated if not provided.
-        entity_id = data.get(id_field)
-        if not entity_id: # Should not happen if id_field is 'id' due to above block, but as a safeguard.
-            logger.error("DBService: Entity ID missing in create_entity after generation attempt for table %s.", table_name)
+        actual_data = entity_data if entity_data is not None else data
+        if actual_data is None:
+            logger.error("DBService.create_entity: entity_data (or data) must be provided.")
             return None
 
-        processed_data = {}
-        for key, value in data.items():
-            if isinstance(value, (dict, list)):
-                processed_data[key] = json.dumps(value)
-            else:
-                processed_data[key] = value
-        
-        columns = ', '.join(processed_data.keys())
-        placeholders = ', '.join([f'${i+1}' for i in range(len(processed_data))])
-        sql_base = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+        if model_class and session:
+            # Preferred path: using crud_utils with a model and session
+            # crud_utils.create_entity expects guild_id to be in actual_data or session.info
+            # It returns the model instance.
+            try:
+                # Ensure guild_id is present in actual_data or session.info for crud_utils
+                # This might need adjustment based on how guild_id is managed by caller
+                created_model_instance = await crud_utils.create_entity(
+                    session=session,
+                    model_class=model_class,
+                    data=actual_data
+                )
+                logger.info(f"DBService: Created entity via crud_utils for model {model_class.__name__}, ID: {getattr(created_model_instance, 'id', 'N/A')}")
+                return created_model_instance
+            except Exception as e:
+                logger.error(f"DBService: Error using crud_utils.create_entity for {model_class.__name__}: {e}", exc_info=True)
+                return None
+        elif model_class and not session:
+            # Model-based creation but no session provided - use crud_utils with its own session
+            logger.debug(f"DBService.create_entity: model_class {model_class.__name__} provided but no session. Using internal session with crud_utils.")
+            async with self.get_session() as internal_session: # type: ignore
+                async with internal_session.begin():
+                    try:
+                        created_model_instance = await crud_utils.create_entity(
+                            session=internal_session,
+                            model_class=model_class,
+                            data=actual_data
+                        )
+                        logger.info(f"DBService: Created entity via crud_utils (internal session) for model {model_class.__name__}, ID: {getattr(created_model_instance, 'id', 'N/A')}")
+                        return created_model_instance
+                    except Exception as e:
+                        logger.error(f"DBService: Error using crud_utils.create_entity (internal session) for {model_class.__name__}: {e}", exc_info=True)
+                        return None
+        elif table_name and data:
+            # Legacy path: low-level table-based creation (session not supported here directly)
+            logger.warning("DBService.create_entity: Using legacy table-based creation. Session parameter is ignored.")
+            original_guild_id = data.get('guild_id', 'N/A')
 
-        sql_to_execute = sql_base
-        use_returning_clause = self.adapter.supports_returning_id_on_insert
+            if id_field == 'id' and 'id' not in data:
+                data['id'] = str(uuid.uuid4())
 
-        if use_returning_clause and id_field in processed_data: # id_field must be in processed_data to be returned
-            sql_to_execute += f" RETURNING {id_field}"
-        
-        try:
-            if use_returning_clause:
-                # This path is for adapters that support RETURNING (e.g., Postgres)
-                returned_val = await self.adapter.execute_insert(sql_to_execute, tuple(processed_data.values()))
-                if returned_val:
-                    logger.info("DBService: Created entity in table '%s' with ID '%s' (using RETURNING, Guild: %s).", table_name, returned_val, original_guild_id)
-                    return returned_val
+            entity_id_val = data.get(id_field)
+            if not entity_id_val:
+                logger.error("DBService: Entity ID missing in legacy create_entity for table %s.", table_name)
+                return None
+
+            processed_data = {k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in data.items()}
+
+            columns = ', '.join(processed_data.keys())
+            placeholders = ', '.join([f'${i+1}' for i in range(len(processed_data))])
+            sql_base = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+            sql_to_execute = sql_base
+            use_returning_clause = self.adapter.supports_returning_id_on_insert
+
+            if use_returning_clause and id_field in processed_data:
+                sql_to_execute += f" RETURNING {id_field}"
+
+            try:
+                if use_returning_clause:
+                    returned_val = await self.adapter.execute_insert(sql_to_execute, tuple(processed_data.values()))
+                    logger.info("DBService: Created entity (legacy) in table '%s' with ID '%s' (RETURNING, Guild: %s).", table_name, returned_val or entity_id_val, original_guild_id)
+                    return returned_val or entity_id_val # Return what adapter gave, or original if None
                 else:
-                    # Fallback if RETURNING didn't work as expected but no exception (should not happen with Postgres)
-                    logger.warning("DBService: Created entity in table '%s', RETURNING used but no value returned. Fallback to input ID '%s' (Guild: %s).", table_name, entity_id, original_guild_id)
-                    return entity_id # Return the generated/input ID as a fallback
-            else:
-                # This path is for adapters that do not use RETURNING here (e.g., SQLite)
-                # execute_insert for SQLiteAdapter is now expected to return None.
-                await self.adapter.execute_insert(sql_to_execute, tuple(processed_data.values()))
-                logger.info("DBService: Created entity in table '%s' with ID '%s' (no RETURNING, Guild: %s).", table_name, entity_id, original_guild_id)
-                return entity_id # Return the generated/input ID
-        except Exception as e:
-            logger.error("DBService: Error creating entity in table '%s' (ID: %s, Guild: %s): %s", table_name, entity_id, original_guild_id, e, exc_info=True)
+                    await self.adapter.execute_insert(sql_to_execute, tuple(processed_data.values()))
+                    logger.info("DBService: Created entity (legacy) in table '%s' with ID '%s' (no RETURNING, Guild: %s).", table_name, entity_id_val, original_guild_id)
+                    return entity_id_val
+            except Exception as e:
+                logger.error("DBService: Error in legacy create_entity for table '%s' (ID: %s, Guild: %s): %s", table_name, entity_id_val, original_guild_id, e, exc_info=True)
+                return None
+        else:
+            logger.error("DBService.create_entity: Invalid parameters. Must provide (model_class and entity_data) or (table_name and data).")
             return None
 
     async def get_entity(self, table_name: str, entity_id: str, guild_id: Optional[str] = None, id_field: str = 'id') -> Optional[Dict[str, Any]]:
@@ -895,25 +929,19 @@ class DBService:
 
 
     async def update_entity(self, table_name: str, entity_id: str, data: Dict[str, Any], guild_id: Optional[str] = None, id_field: str = 'id') -> bool:
-        # import json # Already imported
-        # To check adapter type
-        # from bot.database.sqlite_adapter import SQLiteAdapter # Already moved to top and not needed here specifically
-
+        # This is a low-level method. For model-based updates with session, use update_entity_by_pk or crud_utils.update_entity
         if not data:
-            logger.warning("DBService: No data provided for updating entity '%s' in table '%s'.", entity_id, table_name) # Added
+            logger.warning(f"DBService: No data provided for updating entity '{entity_id}' in table '{table_name}'.")
             return False
 
-        # processed_data = {} # Not used here with current logic
         param_idx = 1
         set_clauses = []
         params_list = []
-
-        # is_sqlite = isinstance(self.adapter, SQLiteAdapter) # Replaced by property
-        json_cast_str = self.adapter.json_column_type_cast or "" # Empty string if None
+        json_cast_str = self.adapter.json_column_type_cast or ""
 
         for key, value in data.items():
             if isinstance(value, (dict, list)):
-                params_list.append(json.dumps(value)) # Value is always JSON string for dict/list
+                params_list.append(json.dumps(value))
                 set_clauses.append(f"{key} = ${param_idx}{json_cast_str}")
             else:
                 params_list.append(value)
@@ -925,35 +953,77 @@ class DBService:
         params_list.append(entity_id)
         param_idx +=1
 
-        log_guild_id = guild_id if guild_id else "N/A (or not applicable)"
+        log_guild_id = guild_id if guild_id else "N/A"
         if guild_id:
             sql += f" AND guild_id = ${param_idx}"
             params_list.append(guild_id)
-            # param_idx +=1 # Not needed after this
 
         try:
             result_status = await self.adapter.execute(sql, tuple(params_list))
-            if isinstance(result_status, str) and "UPDATE" in result_status.upper():
-                parts = result_status.upper().split()
-                if len(parts) > 1 and parts[0] == "UPDATE":
-                    try:
-                        affected_rows = int(parts[1])
-                        if affected_rows > 0:
-                            logger.info("DBService: Successfully updated entity '%s' in table '%s' (Guild: %s). %s rows affected.", entity_id, table_name, log_guild_id, affected_rows) # Added
-                            return True
-                        else:
-                            logger.info("DBService: Update for entity '%s' in table '%s' (Guild: %s) affected 0 rows (already correct value or ID not found).", entity_id, table_name, log_guild_id) # Added
-                            return True
-                    except ValueError:
-                        logger.info("DBService: Update for entity '%s' in table '%s' (Guild: %s) completed with status: %s.", entity_id, table_name, log_guild_id, result_status) # Added
-                        return True
-                logger.info("DBService: Update for entity '%s' in table '%s' (Guild: %s) completed with status: %s.", entity_id, table_name, log_guild_id, result_status) # Added
+            # Simplified success check, assuming execute raises on failure or returns specific non-success codes
+            if isinstance(result_status, str) and "UPDATE" in result_status.upper() and int(result_status.split(" ")[1]) >= 0:
+                logger.info(f"DBService: Update entity '{entity_id}' in table '{table_name}' (Guild: {log_guild_id}) completed. Status: {result_status}.")
                 return True
-            logger.warning("DBService: Update for entity '%s' in table '%s' (Guild: %s) resulted in unexpected status: %s.", entity_id, table_name, log_guild_id, result_status) # Added
-            return True
+            logger.warning(f"DBService: Update for entity '{entity_id}' in table '{table_name}' (Guild: {log_guild_id}) resulted in unexpected status: {result_status}.")
+            return False # Or True if partial success/no change is OK
         except Exception as e:
-            logger.error("DBService: Error updating entity '%s' in table '%s' (Guild: %s): %s", entity_id, table_name, log_guild_id, e, exc_info=True) # Changed
+            logger.error(f"DBService: Error updating entity '{entity_id}' in table '{table_name}' (Guild: {log_guild_id}): {e}", exc_info=True)
             return False
+
+    async def update_entity_by_pk(
+        self,
+        model_class: type, # SQLAlchemy model class
+        pk_value: Any,
+        updates: Dict[str, Any],
+        guild_id: Optional[str] = None, # For verification if entity has guild_id
+        session: Optional[Any] = None # AsyncSession
+    ) -> bool:
+        """
+        Updates an entity identified by its primary key using SQLAlchemy session and crud_utils.
+        """
+        from bot.database import crud_utils # Local import
+
+        if not updates:
+            logger.warning(f"DBService.update_entity_by_pk: No updates provided for {model_class.__name__} with PK {pk_value}.")
+            return False
+
+        db_session_managed_locally = False
+        if session is None:
+            session = self.get_session() # type: ignore
+            db_session_managed_locally = True
+
+        if not session:
+            logger.error(f"DBService.update_entity_by_pk: Could not obtain a database session for {model_class.__name__} PK {pk_value}.")
+            return False
+
+        try:
+            async with session.begin_nested() if not db_session_managed_locally else session.begin(): # type: ignore
+                updated_model = await crud_utils.update_entity(
+                    session=session,
+                    model_class=model_class,
+                    entity_id=pk_value, # crud_utils.update_entity expects entity_id (PK value)
+                    data=updates,
+                    guild_id_for_verification=guild_id # Pass guild_id for verification
+                )
+                if updated_model:
+                    logger.info(f"DBService: Successfully updated {model_class.__name__} with PK {pk_value} via crud_utils.")
+                    if db_session_managed_locally:
+                        await session.commit() # type: ignore
+                    return True
+                else:
+                    logger.warning(f"DBService: crud_utils.update_entity returned None for {model_class.__name__} PK {pk_value}. Update may have failed or entity not found.")
+                    if db_session_managed_locally:
+                        await session.rollback() # type: ignore
+                    return False
+        except Exception as e:
+            logger.error(f"DBService: Error using crud_utils.update_entity for {model_class.__name__} PK {pk_value}: {e}", exc_info=True)
+            if db_session_managed_locally and session.is_active: # type: ignore
+                await session.rollback() # type: ignore
+            return False
+        finally:
+            if db_session_managed_locally and session: # type: ignore
+                await session.close() # type: ignore
+
 
     async def delete_entity(self, table_name: str, entity_id: str, guild_id: Optional[str] = None, id_field: str = 'id') -> bool:
         sql = f"DELETE FROM {table_name} WHERE {id_field} = $1"

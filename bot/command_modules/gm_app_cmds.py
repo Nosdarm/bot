@@ -936,13 +936,18 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
                 application_success = await game_mngr.apply_approved_generation(pending_gen_id=pending_id, guild_id=guild_id_str)
 
+                # Fetch the record again to get the latest status set by apply_approved_generation
+                updated_record_after_apply: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
+                    PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
+                )
+                current_status_after_apply = updated_record_after_apply.status if updated_record_after_apply else record.status
+
                 if application_success:
-                    await interaction.followup.send(f"AI генерация `{pending_id}` (тип: {record.request_type}) одобрена и успешно применена.", ephemeral=True)
+                    await interaction.followup.send(f"✅ AI Content ID `{pending_id}` (Type: {record.request_type}) approved and successfully applied.", ephemeral=True)
                 else:
-                    # The apply_approved_generation method itself handles setting status to "application_failed" or "application_pending_logic"
-                    await interaction.followup.send(f"AI генерация `{pending_id}` (тип: {record.request_type}) одобрена, но возникла ошибка при применении контента или логика применения для данного типа еще не реализована. Проверьте статус записи (`/master review_ai {pending_id}`).", ephemeral=True)
+                    await interaction.followup.send(f"⚠️ AI Content ID `{pending_id}` (Type: {record.request_type}) was approved, but application failed or is pending further logic. Status: {current_status_after_apply}. Check logs or use `/master review_ai id:{pending_id}`.", ephemeral=True)
             else:
-                await interaction.followup.send(f"Не удалось обновить статус записи `{pending_id}` на 'approved'.", ephemeral=True)
+                await interaction.followup.send(f"❌ Failed to update status for AI Content ID `{pending_id}` to 'approved'.", ephemeral=True)
 
         except Exception as e:
             logging.error(f"Error approving AI generation {pending_id}: {e}", exc_info=True)
@@ -989,9 +994,9 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
             if success:
                 logging.info(f"AI Generation {pending_id} rejected by {interaction.user.id}. Reason: {reason or 'N/A'}")
-                await interaction.followup.send(f"AI генерация `{pending_id}` (тип: {record.request_type}) отклонена.", ephemeral=True)
+                await interaction.followup.send(f"🚫 AI Content ID `{pending_id}` (Type: {record.request_type}) has been rejected. Reason: {reason or 'N/A'}", ephemeral=True)
             else:
-                await interaction.followup.send(f"Не удалось обновить статус записи `{pending_id}`.", ephemeral=True)
+                await interaction.followup.send(f"❌ Failed to update status for AI Content ID `{pending_id}` to 'rejected'.", ephemeral=True)
 
         except Exception as e:
             logging.error(f"Error rejecting AI generation {pending_id}: {e}", exc_info=True)
@@ -1072,16 +1077,16 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             success = await game_mngr.db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
 
             if success:
-                msg = f"Данные для ID `{pending_id}` обновлены. Новый статус: {updates['status']}."
+                msg = f"⚙️ AI Content ID `{pending_id}` (Type: {record.request_type}) data updated. New validation status: {updates['status']}."
                 if validation_issues_after_edit:
-                    issues_summary = "; ".join([f"{issue['loc']}: {issue['msg']}" for issue in validation_issues_after_edit[:3]])
-                    msg += f"\nОбнаружены следующие проблемы валидации (показаны первые 3): {issues_summary}"
+                    issues_summary = "; ".join([f"{issue.get('loc', 'N/A')}: {issue.get('msg', 'Unknown issue')}" for issue in validation_issues_after_edit[:3]])
+                    msg += f"\nValidation Issues (first 3): {issues_summary}"
                     if len(validation_issues_after_edit) > 3:
                         msg += "..."
                 logging.info(f"AI Generation {pending_id} edited by {interaction.user.id}. New status: {updates['status']}.")
                 await interaction.followup.send(msg, ephemeral=True)
             else:
-                await interaction.followup.send(f"Не удалось обновить запись `{pending_id}` в базе данных.", ephemeral=True)
+                await interaction.followup.send(f"❌ Failed to save edits for AI Content ID `{pending_id}`.", ephemeral=True)
 
         except Exception as e:
             logging.error(f"Error editing AI generation {pending_id}: {e}", exc_info=True)
