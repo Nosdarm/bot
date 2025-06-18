@@ -274,4 +274,4 @@ class ValidatedAiResponse(BaseModel):
 
 # Note: GenerationContext was removed as it was minimal and not directly part of this subtask's focus on AI output models.
 # If needed, it can be re-added or defined elsewhere.
-```
+
