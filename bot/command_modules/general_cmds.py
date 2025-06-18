@@ -14,12 +14,11 @@ class GeneralCog(commands.Cog, name="General Commands"):
     def __init__(self, bot: "RPGBot"):
         self.bot = bot
 
-    @app_commands.command(name="ping", description="Проверяет задержку ответа бота.")
+    @app_commands.command(name="ping", description="Checks the bot's responsiveness and latency.")
     async def cmd_ping(self, interaction: Interaction):
         latency_ms = self.bot.latency * 1000
         await interaction.response.send_message(
-            f"Pong! Задержка: {latency_ms:.2f} мс.",
-            ephemeral=True
+            f"Pong! Latency: {latency_ms:.2f}ms"
         )
         logging.info(f"Command /ping executed by {interaction.user.name} ({interaction.user.id}) in guild {interaction.guild_id or 'DM'}")
 
