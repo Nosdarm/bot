@@ -260,3 +260,105 @@ class StatusManager:
         except Exception as e:
             logger.error(f"{log_prefix} Error fetching or filtering statuses: {e}", exc_info=True)
             return []
+
+    async def apply_status_to_character(
+        self,
+        guild_id: str,
+        character_id: str,
+        status_id_or_key: str,
+        duration_turns: Optional[int] = None,
+        source_id: Optional[str] = None,
+        source_type: Optional[str] = None,
+        session: Optional[Any] = None  # Using Any for AsyncSession to avoid direct import
+    ) -> bool:
+        """
+        Applies a status effect to a character by updating Character.status_effects_json.
+        Manages SQLAlchemy session if one is not provided.
+        """
+        from sqlalchemy.ext.asyncio import AsyncSession  # Local import for type safety
+        from bot.database.models import Character # SQLAlchemy Character model
+        from sqlalchemy.orm.attributes import flag_modified
+        import time # For applied_at timestamp if using real time instead of turns
+
+        if not self._db_service:
+            logger.error("StatusManager: DBService not available. Cannot apply status.")
+            return False
+
+        status_definition = self.get_status_template(status_id_or_key)
+        if not status_definition:
+            logger.error(f"StatusManager: Status definition for '{status_id_or_key}' not found. Cannot apply status to character {character_id}.")
+            return False
+
+        provided_session = session is not None
+        db_session: AsyncSession = session if provided_session else self._db_service.get_session() # type: ignore
+
+        try:
+            async with db_session.begin_nested() if provided_session else db_session.begin() as transaction: # type: ignore
+                character_model = await db_session.get(Character, character_id)
+                if not character_model or str(character_model.guild_id) != guild_id:
+                    logger.error(f"StatusManager: Character {character_id} not found in guild {guild_id}. Cannot apply status '{status_id_or_key}'.")
+                    if not provided_session: await transaction.rollback() # type: ignore
+                    return False
+
+                # Determine duration: use provided, then template default, then None
+                final_duration = duration_turns
+                if final_duration is None: # If not explicitly passed
+                    final_duration = status_definition.get('default_duration_turns') # Get from template
+
+                current_game_turn = None
+                if self._time_manager:
+                    current_game_turn = self._time_manager.get_current_turn(guild_id) # Assuming this is synchronous or fetched appropriately
+                else:
+                    logger.warning("StatusManager: TimeManager not available. Cannot set 'applied_at_turn'.")
+
+                applied_status_data = {
+                    "status_id": status_id_or_key,
+                    "name_i18n": status_definition.get("name_i18n", {"en": status_id_or_key}),
+                    "description_i18n": status_definition.get("description_i18n", {"en": "No description."}),
+                    "effects_detail": status_definition.get("effects", []), # Store actual effects
+                    "duration_turns": final_duration,
+                    "applied_at_turn": current_game_turn,
+                    "source_id": source_id,
+                    "source_type": source_type,
+                    "instance_id": str(uuid.uuid4()) # Unique ID for this application instance
+                }
+
+                if character_model.status_effects_json is None or not isinstance(character_model.status_effects_json, list):
+                    character_model.status_effects_json = []
+
+                character_model.status_effects_json.append(applied_status_data)
+                flag_modified(character_model, "status_effects_json")
+                db_session.add(character_model)
+
+                if not provided_session:
+                    await transaction.commit() # type: ignore
+
+                logger.info(f"StatusManager: Applied status '{status_id_or_key}' to character {character_id} in guild {guild_id}.")
+
+                # Trigger stat recalculation if CharacterManager is available
+                if self._character_manager:
+                    # This call might need to be awaited if _recalculate_and_store_effective_stats becomes fully async
+                    # and if the session from this method needs to be passed down.
+                    # For now, assuming it can operate with the character model being in the session.
+                    await self._character_manager._recalculate_and_store_effective_stats(guild_id, character_id, char_model=character_model)
+                    # If the session was internally managed here, the char_model changes (including new effective_stats)
+                    # would need another commit or be part of the same transaction.
+                    # If CharacterManager's method uses its own session, it's fine.
+                    # Best if _recalculate_and_store_effective_stats can use the passed session or if CharacterManager.save_state is called after.
+                    # For now, the char_model is already in the session being managed here.
+                    # If the session was provided, the caller of apply_status_to_character is responsible for the final commit.
+                    if not provided_session: # If we own the session, commit again after recalc if it made further changes not covered by session.add(character_model)
+                         async with db_session.begin() as recalc_transaction: # type: ignore
+                              db_session.add(character_model) # Ensure it's re-added if recalc modified it
+                              await recalc_transaction.commit() # type: ignore
+
+                return True
+
+        except Exception as e:
+            logger.error(f"StatusManager: Error applying status '{status_id_or_key}' to character {character_id}: {e}", exc_info=True)
+            if not provided_session and 'transaction' in locals() and transaction.is_active: # type: ignore
+                await transaction.rollback() # type: ignore
+            return False
+        finally:
+            if not provided_session:
+                await db_session.close()

@@ -251,7 +251,21 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                     "neighbor_locations_json": {
                         village_square_id: "path_to_village_square",
                         deep_forest_id: "path_to_deep_forest"
-                    }
+                    },
+                    "on_enter_events_json": [
+                        {
+                            "event_type": "AMBIENT_MESSAGE",
+                            "chance": 0.5,
+                            "message_i18n": {"en": "The wind rustles the leaves ominously here.", "ru": "Ветер зловеще шелестит здесь листьями."}
+                        },
+                        {
+                            "event_type": "ITEM_DISCOVERY",
+                            "chance": 0.1,
+                            "items": [{"item_template_id": "healing_herb_common", "quantity": 1}],
+                            "message_i18n": {"en": "You spot a medicinal herb growing by a tree.", "ru": "Вы замечаете у дерева целебную траву."},
+                            "discovery_target": "entering_character"
+                        }
+                    ]
                 },
                 {
                     "id": deep_forest_id,
@@ -260,7 +274,26 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                     "static_id": f"internal_deep_forest_{guild_id_str}", # Renamed
                     "neighbor_locations_json": {
                         forest_edge_id: "path_to_forest_edge"
-                    }
+                    },
+                    "on_enter_events_json": [
+                        {
+                            "event_type": "NPC_APPEARANCE",
+                            "chance": 0.05,
+                            "npc_template_id": "wolf_forest",
+                            "spawn_count": 1,
+                            "is_temporary": True,
+                            "message_i18n": {"en": "A lone wolf eyes you warily from the deeper shadows.", "ru": "Одинокий волк настороженно смотрит на вас из глубоких теней."}
+                        },
+                        {
+                            "event_type": "SIMPLE_HAZARD",
+                            "chance": 0.03,
+                            "effect_type": "damage",
+                            "damage_amount": 2,
+                            "damage_type": "minor_scratch",
+                            "message_i18n": {"en": "You brush against a thorny vine, receiving a small scratch.", "ru": "Вы задеваете колючую лозу и получаете небольшую царапину."},
+                            "target": "entering_character"
+                        }
+                    ]
                 }
             ]
             locations_to_add = []
@@ -281,7 +314,9 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                     tags_i18n=loc_data.get("tags_i18n", {}),
                     atmosphere_i18n=loc_data.get("atmosphere_i18n", {}),
                     features_i18n=loc_data.get("features_i18n", {}),
-                    type_i18n=loc_data.get("type_i18n", {"en": "Area", "ru": "Область"}) # Ensure default type
+                    type_i18n=loc_data.get("type_i18n", {"en": "Area", "ru": "Область"}), # Ensure default type
+                    points_of_interest_json=loc_data.get("points_of_interest_json", []),
+                    on_enter_events_json=loc_data.get("on_enter_events_json", [])
                 ))
             if locations_to_add:
                 db_session.add_all(locations_to_add)
