@@ -19,7 +19,8 @@ from dotenv import load_dotenv
 from bot.services.openai_service import OpenAIService
 from bot.game.managers.game_manager import GameManager
 from bot.game.services.location_interaction_service import LocationInteractionService # Added for GameManager setup
-from bot.nlu.player_action_parser import parse_player_action
+from bot.nlu.player_action_parser import parse_player_action, INTENT_MAP # Import INTENT_MAP
+from bot.database.models import Player, Character # For type hinting if needed, though GameManager methods return these
 from bot.services.nlu_data_service import NLUDataService
 
 from sqlalchemy.ext.asyncio import AsyncSession # For get_db_session
