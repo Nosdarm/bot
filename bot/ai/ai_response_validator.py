@@ -1,758 +1,262 @@
 import json
 import logging
-from pydantic import BaseModel, ValidationError as PydanticValidationError # Ensure Pydantic's ValidationError is imported
-from typing import Tuple, TYPE_CHECKING, Any, Dict, Optional, List # Added Tuple, TYPE_CHECKING
+from pydantic import BaseModel, ValidationError as PydanticValidationError
+from typing import Tuple, TYPE_CHECKING, Any, Dict, Optional, List, Union # Added Union
 
-# Import the new Pydantic models for AI outputs
-from .ai_data_models import GeneratedLocationContent, GeneratedNpcProfile, GeneratedQuest as GeneratedQuestData # Use alias for GeneratedQuest
+from .ai_data_models import (
+    GeneratedLocationContent,
+    GeneratedNpcProfile,
+    GeneratedQuestData,
+    GeneratedItemProfile,
+    ValidationIssue # Import the updated ValidationIssue model
+)
 
 if TYPE_CHECKING:
-    from bot.game.managers.game_manager import GameManager # For type hinting
+    from bot.game.managers.game_manager import GameManager
 
 logger = logging.getLogger(__name__)
 
 class AIResponseValidator:
     def __init__(self):
-        # The validator might not need to store game_manager or db_service
-        # if they are passed directly to its methods, as planned for this subtask.
         pass
 
-    async def parse_and_validate_location_description_response(
+    # _create_validation_issue is removed as per plan. ValidationIssue instances will be created directly.
+
+    def _check_id_in_terms(self, entity_id: Optional[str], expected_term_type: str, game_terms: List[Dict[str, Any]], field_path: Union[str, List[Union[str,int]]]) -> Optional[ValidationIssue]:
+        if not entity_id:
+            return None
+
+        loc_path = [field_path] if isinstance(field_path, str) else field_path
+
+        if not any(term.get('id') == entity_id and term.get('term_type') == expected_term_type for term in game_terms):
+            return ValidationIssue(
+                loc=loc_path,
+                type="semantic.invalid_id_reference",
+                msg=f"Invalid ID: '{entity_id}' not found as a known '{expected_term_type}'.",
+                input_value=entity_id,
+                severity="warning",
+                suggestion=f"Ensure the ID exists in game_terms as type '{expected_term_type}' or is a standard placeholder if allowed."
+            )
+        return None
+
+    def _semantic_validate_npc_profile(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str) -> List[ValidationIssue]:
+        issues: List[ValidationIssue] = []
+
+        for stat_key in data_dict.get('stats', {}).keys():
+            issue = self._check_id_in_terms(stat_key, "stat", game_terms, ["stats", stat_key])
+            if issue: issues.append(issue)
+
+        for skill_key in data_dict.get('skills', {}).keys():
+            issue = self._check_id_in_terms(skill_key, "skill", game_terms, ["skills", skill_key])
+            if issue: issues.append(issue)
+
+        for i, ability_id in enumerate(data_dict.get('abilities', [])):
+            issue = self._check_id_in_terms(ability_id, "ability", game_terms, ["abilities", i])
+            if issue: issues.append(issue)
+
+        for i, spell_id in enumerate(data_dict.get('spells', [])):
+            issue = self._check_id_in_terms(spell_id, "spell", game_terms, ["spells", i])
+            if issue: issues.append(issue)
+
+        for i, item_entry in enumerate(data_dict.get('inventory', [])):
+            item_tpl_id = item_entry.get('item_template_id')
+            issue = self._check_id_in_terms(item_tpl_id, "item_template", game_terms, ["inventory", i, "item_template_id"])
+            if issue: issues.append(issue)
+
+        for i, faction_entry in enumerate(data_dict.get('faction_affiliations', [])):
+            faction_id = faction_entry.get('faction_id')
+            issue = self._check_id_in_terms(faction_id, "faction", game_terms, ["faction_affiliations", i, "faction_id"])
+            if issue: issues.append(issue)
+
+        archetype = data_dict.get('archetype')
+        if archetype:
+            issue = self._check_id_in_terms(archetype, "npc_archetype", game_terms, "archetype")
+            if issue: issues.append(issue)
+        return issues
+
+    def _semantic_validate_quest_data(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str) -> List[ValidationIssue]:
+        issues: List[ValidationIssue] = []
+        npc_involvement = data_dict.get('npc_involvement', {})
+        if isinstance(npc_involvement, dict):
+            for role, npc_id in npc_involvement.items():
+                issue = self._check_id_in_terms(npc_id, "npc_archetype", game_terms, ["npc_involvement", role])
+                if issue: issues.append(issue)
+
+        for json_field_name in ["rewards_json", "prerequisites_json"]:
+            json_str = data_dict.get(json_field_name)
+            if json_str:
+                try:
+                    content = json.loads(json_str)
+                    if isinstance(content, dict) and "items" in content and isinstance(content["items"], list):
+                        for i, item_ref in enumerate(content["items"]):
+                            if isinstance(item_ref, dict) and "item_id" in item_ref:
+                                item_id = item_ref["item_id"]
+                                issue = self._check_id_in_terms(item_id, "item_template", game_terms, [json_field_name, "items", i, "item_id"])
+                                if issue: issues.append(issue)
+                except json.JSONDecodeError: pass
+
+        for i, step in enumerate(data_dict.get('steps', [])):
+            # Placeholder for deeper step validation (e.g., checking IDs within step's JSON fields)
+            pass
+        return issues
+
+    def _semantic_validate_location_content(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str) -> List[ValidationIssue]:
+        issues: List[ValidationIssue] = []
+        for i, poi in enumerate(data_dict.get('points_of_interest', [])):
+            for j, item_id in enumerate(poi.get('contained_item_ids', [])):
+                issue = self._check_id_in_terms(item_id, "item_template", game_terms, ["points_of_interest", i, "contained_item_ids", j])
+                if issue: issues.append(issue)
+            for k, npc_id in enumerate(poi.get('npc_ids', [])):
+                issue = self._check_id_in_terms(npc_id, "npc_archetype", game_terms, ["points_of_interest", i, "npc_ids", k])
+                if issue: issues.append(issue)
+
+        for i, conn in enumerate(data_dict.get('connections', [])):
+            to_loc_id = conn.get('to_location_id')
+            if to_loc_id and not any(term.get('id') == to_loc_id and term.get('term_type') in ["location_template", "location"] for term in game_terms):
+                 issues.append(ValidationIssue(
+                    loc=["connections", i, "to_location_id"],
+                    type="semantic.unknown_location_reference",
+                    msg=f"Connected location ID '{to_loc_id}' does not match any known location template or instance ID.",
+                    input_value=to_loc_id,
+                    severity="info",
+                    suggestion="If this is a new location, ensure its full definition is also provided or generated."
+                ))
+        return issues
+
+    def _semantic_validate_item_profile(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str) -> List[ValidationIssue]:
+        issues: List[ValidationIssue] = []
+        # item_type = data_dict.get('item_type') # Placeholder for item_type validation
+        # equip_slot = data_dict.get('equipable_slot') # Placeholder for equip_slot validation
+
+        properties_json_str = data_dict.get('properties_json')
+        if properties_json_str:
+            try:
+                properties = json.loads(properties_json_str)
+                if isinstance(properties, dict):
+                    if "grants_skill" in properties:
+                        skill_id = properties["grants_skill"]
+                        issue = self._check_id_in_terms(skill_id, "skill", game_terms, ["properties_json", "grants_skill"])
+                        if issue: issues.append(issue)
+                    if "grants_ability" in properties:
+                        ability_id = properties["grants_ability"]
+                        issue = self._check_id_in_terms(ability_id, "ability", game_terms, ["properties_json", "grants_ability"])
+                        if issue: issues.append(issue)
+            except json.JSONDecodeError: pass
+        return issues
+
+    async def parse_and_validate_ai_response(
         self,
         raw_ai_output_text: str,
         guild_id: str,
-        game_manager: "GameManager"
-    ) -> Optional[Dict[str, str]]:
-        """
-        Parses the AI's raw text output (expected to be JSON) for a location description,
-        validates its structure and essential content.
+        request_type: str,
+        game_manager: Optional['GameManager'] = None
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[List[ValidationIssue]]]:
+        logger.debug(f"Parsing and validating AI response for request_type: {request_type}, guild_id: {guild_id}")
 
-        Args:
-            raw_ai_output_text: The raw string output from the AI.
-            guild_id: The ID of the guild for which the description was generated.
-            game_manager: An instance of GameManager to fetch guild-specific rules (like language).
+        parsed_json_data: Optional[Dict[str, Any]] = None
+        pydantic_issues: List[ValidationIssue] = []
+        semantic_issues: List[ValidationIssue] = []
+        model_instance_dict: Optional[Dict[str, Any]] = None
 
-        Returns:
-            A dictionary containing the i18n descriptions (e.g., {"en": "desc", "ru": "описание"})
-            if parsing and validation are successful, otherwise None.
-        """
-        logger.debug(f"Attempting to parse and validate AI location description for guild {guild_id}. Raw output (first 100 chars): '{raw_ai_output_text[:100]}'")
-
-        # 1. Parse JSON
         try:
-            parsed_data = json.loads(raw_ai_output_text)
+            parsed_json_data = json.loads(raw_ai_output_text)
         except json.JSONDecodeError as e:
-            logger.warning(f"Validation Error (guild {guild_id}): AI output is not valid JSON. Error: {e}. Raw: '{raw_ai_output_text}'")
-            return None
-
-        logger.debug(f"Successfully parsed JSON for guild {guild_id}.")
-
-        # 2. Structural Validation
-        if not isinstance(parsed_data, dict):
-            logger.warning(f"Validation Error (guild {guild_id}): Parsed data is not a dictionary. Type: {type(parsed_data)}. Data: {parsed_data}")
-            return None
-
-        if 'description_i18n' not in parsed_data:
-            logger.warning(f"Validation Error (guild {guild_id}): Missing top-level key 'description_i18n'. Data: {parsed_data}")
-            return None
-
-        descriptions_i18n = parsed_data['description_i18n']
-        if not isinstance(descriptions_i18n, dict):
-            logger.warning(f"Validation Error (guild {guild_id}): 'description_i18n' is not a dictionary. Type: {type(descriptions_i18n)}. Data: {parsed_data}")
-            return None
-
-        logger.debug(f"Structural validation passed for guild {guild_id}.")
-
-        # 3. Semantic Validation
-        try:
-            bot_language = await game_manager.get_rule(guild_id, 'default_language', 'en')
-        except Exception as e:
-            logger.error(f"Semantic Validation Error (guild {guild_id}): Could not fetch bot_language using game_manager.get_rule. Error: {e}", exc_info=True)
-            return None # Cannot proceed without knowing the expected primary language
-
-        # Check for primary bot language key
-        if bot_language not in descriptions_i18n:
-            logger.warning(f"Validation Error (guild {guild_id}): Missing required language key '{bot_language}' in 'description_i18n'. Data: {descriptions_i18n}")
-            return None
-
-        if not descriptions_i18n[bot_language] or not isinstance(descriptions_i18n[bot_language], str) or not descriptions_i18n[bot_language].strip():
-            logger.warning(f"Validation Error (guild {guild_id}): Description for primary language '{bot_language}' is missing, not a string, or empty. Value: '{descriptions_i18n.get(bot_language)}'")
-            return None
-
-        # Check for 'en' key (required fallback)
-        if 'en' not in descriptions_i18n:
-            logger.warning(f"Validation Error (guild {guild_id}): Missing required language key 'en' (English) in 'description_i18n'. Data: {descriptions_i18n}")
-            return None
-
-        if not descriptions_i18n['en'] or not isinstance(descriptions_i18n['en'], str) or not descriptions_i18n['en'].strip():
-            logger.warning(f"Validation Error (guild {guild_id}): Description for English ('en') is missing, not a string, or empty. Value: '{descriptions_i18n.get('en')}'")
-            return None
-
-        logger.info(f"Semantic validation passed for guild {guild_id}. Required languages '{bot_language}' and 'en' are present and non-empty.")
-
-        # 4. Successful Validation
-        # Return only the descriptions_i18n dictionary, ensuring values are stripped.
-        validated_descriptions = {}
-        for lang_code, desc_text in descriptions_i18n.items():
-            if isinstance(desc_text, str) and desc_text.strip():
-                validated_descriptions[lang_code] = desc_text.strip()
-            else:
-                # Log if a non-required language has an empty/invalid description, but don't fail validation for it.
-                if lang_code != bot_language and lang_code != 'en':
-                    logger.warning(f"Validation Warning (guild {guild_id}): Language code '{lang_code}' had an empty or non-string description. It will be excluded from the final result. Original value: '{desc_text}'")
-
-        # Final check to ensure the required languages are still valid after stripping and filtering
-        if not (bot_language in validated_descriptions and validated_descriptions[bot_language]):
-            logger.error(f"Critical Validation Error (guild {guild_id}): Primary language '{bot_language}' description became empty after processing. Initial: '{descriptions_i18n.get(bot_language)}'")
-            return None
-        if not ('en' in validated_descriptions and validated_descriptions['en']):
-            logger.error(f"Critical Validation Error (guild {guild_id}): English ('en') description became empty after processing. Initial: '{descriptions_i18n.get('en')}'")
-            return None
-
-        logger.info(f"Successfully parsed and validated location description for guild {guild_id}. Returning: {validated_descriptions}")
-        return validated_descriptions
-
-    async def parse_and_validate_faction_generation_response(
-        self,
-        raw_ai_output_text: str,
-        guild_id: str,
-        game_manager: "GameManager"
-    ) -> Optional[List[Dict[str, Any]]]:
-        """
-        Parses the AI's raw text output (expected to be JSON) for faction generation,
-        validates its structure and essential content for each faction.
-
-        Args:
-            raw_ai_output_text: The raw string output from the AI.
-            guild_id: The ID of the guild for which factions were generated.
-            game_manager: An instance of GameManager to fetch guild-specific rules (like language).
-
-        Returns:
-            A list of validated faction data dictionaries if successful, otherwise None.
-            Each faction dictionary will contain the i18n fields.
-        """
-        logger.debug(f"Attempting to parse and validate AI faction generation response for guild {guild_id}. Raw output (first 100 chars): '{raw_ai_output_text[:100]}'")
-
-        # 1. Parse Main JSON
-        try:
-            parsed_data = json.loads(raw_ai_output_text)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Faction Validation Error (guild {guild_id}): AI output is not valid JSON. Error: {e}. Raw: '{raw_ai_output_text}'")
-            return None
-
-        if not isinstance(parsed_data, dict):
-            logger.warning(f"Faction Validation Error (guild {guild_id}): Parsed data is not a dictionary. Type: {type(parsed_data)}. Data: {parsed_data}")
-            return None
-
-        if 'new_factions' not in parsed_data:
-            logger.warning(f"Faction Validation Error (guild {guild_id}): Missing top-level key 'new_factions'. Data: {parsed_data}")
-            return None
-
-        faction_data_list = parsed_data['new_factions']
-        if not isinstance(faction_data_list, list):
-            logger.warning(f"Faction Validation Error (guild {guild_id}): 'new_factions' is not a list. Type: {type(faction_data_list)}. Data: {parsed_data}")
-            return None
-
-        if not faction_data_list: # AI returned an empty list
-            logger.warning(f"Faction Validation Info (guild {guild_id}): 'new_factions' list is empty. No factions to validate.")
-            return [] # Return empty list, as the structure is valid but no data
-
-        logger.debug(f"Successfully parsed JSON for faction generation for guild {guild_id}. Found {len(faction_data_list)} potential factions.")
-
-        # 2. Fetch Guild Language
-        try:
-            bot_language = await game_manager.get_rule(guild_id, 'default_language', 'en')
-        except Exception as e:
-            logger.error(f"Faction Validation Error (guild {guild_id}): Could not fetch bot_language using game_manager.get_rule. Error: {e}", exc_info=True)
-            return None
-
-        # 3. Iterate and Validate Each Faction Object
-        validated_factions: List[Dict[str, Any]] = []
-        required_i18n_fields = ["name_i18n", "ideology_i18n", "description_i18n"]
-        optional_i18n_fields = ["leader_concept_i18n", "resource_notes_i18n"]
-
-        for i, faction_data in enumerate(faction_data_list):
-            log_prefix = f"Faction Validation (guild {guild_id}, faction item {i+1})"
-            if not isinstance(faction_data, dict):
-                logger.warning(f"{log_prefix}): Item is not a dictionary. Skipping. Data: {faction_data}")
-                continue
-
-            current_faction_valid = True
-            processed_faction: Dict[str, Any] = {}
-
-            # Validate Required i18n fields
-            for field_name in required_i18n_fields:
-                field_value = faction_data.get(field_name)
-                if not isinstance(field_value, dict):
-                    logger.warning(f"{log_prefix}: Required field '{field_name}' is missing or not a dictionary. Data: {faction_data}")
-                    current_faction_valid = False; break
-
-                lang_specific_content = {}
-                # Check bot_language
-                if bot_language not in field_value or not isinstance(field_value[bot_language], str) or not field_value[bot_language].strip():
-                    logger.warning(f"{log_prefix}: Required field '{field_name}' missing or empty for bot language '{bot_language}'. Data: {field_value}")
-                    current_faction_valid = False; break
-                lang_specific_content[bot_language] = field_value[bot_language].strip()
-
-                # Check 'en'
-                if 'en' not in field_value or not isinstance(field_value['en'], str) or not field_value['en'].strip():
-                    logger.warning(f"{log_prefix}: Required field '{field_name}' missing or empty for English ('en'). Data: {field_value}")
-                    current_faction_valid = False; break
-                lang_specific_content['en'] = field_value['en'].strip()
-
-                processed_faction[field_name] = lang_specific_content
-
-            if not current_faction_valid:
-                logger.warning(f"{log_prefix}: Failed required field validation. Skipping this faction object.")
-                continue # Skip to next faction in faction_data_list
-
-            # Validate Optional i18n fields (if present, must be valid)
-            for field_name in optional_i18n_fields:
-                if field_name in faction_data:
-                    field_value = faction_data.get(field_name)
-                    if not isinstance(field_value, dict): # If present, must be a dict
-                        logger.warning(f"{log_prefix}: Optional field '{field_name}' is present but not a dictionary. Invalidating. Data: {field_value}")
-                        current_faction_valid = False; break
-
-                    lang_specific_content = {}
-                    # Check bot_language
-                    if bot_language not in field_value or not isinstance(field_value[bot_language], str) or not field_value[bot_language].strip():
-                        logger.warning(f"{log_prefix}: Optional field '{field_name}' present but missing/empty for bot language '{bot_language}'. Invalidating. Data: {field_value}")
-                        current_faction_valid = False; break
-                    lang_specific_content[bot_language] = field_value[bot_language].strip()
-
-                    # Check 'en'
-                    if 'en' not in field_value or not isinstance(field_value['en'], str) or not field_value['en'].strip():
-                        logger.warning(f"{log_prefix}: Optional field '{field_name}' present but missing/empty for English ('en'). Invalidating. Data: {field_value}")
-                        current_faction_valid = False; break
-                    lang_specific_content['en'] = field_value['en'].strip()
-
-                    processed_faction[field_name] = lang_specific_content
-
-            if not current_faction_valid:
-                logger.warning(f"{log_prefix}: Failed optional field validation. Skipping this faction object.")
-                continue
-
-            # Non-i18n fields can be added here if any (e.g. "alignment_suggestion" from prompt)
-            # For example, if "alignment_suggestion" was part of the prompt for the AI to generate:
-            # if "alignment_suggestion" in faction_data and isinstance(faction_data["alignment_suggestion"], str):
-            #    processed_faction["alignment_suggestion"] = faction_data["alignment_suggestion"]
-            # else:
-            #    logger.warning(f"{log_prefix}: 'alignment_suggestion' missing or not a string. Skipping field.")
-
-
-            if current_faction_valid: # Re-check, as optional field validation might have failed it
-                validated_factions.append(processed_faction)
-                logger.debug(f"{log_prefix}: Faction object successfully validated and processed.")
-
-        # 4. Final Check
-        if not validated_factions:
-            logger.warning(f"Faction Validation (guild {guild_id}): No valid faction objects found in the AI response after processing {len(faction_data_list)} items.")
-            return None # Or return [] if an empty list is acceptable for "valid structure, no valid items"
-
-        logger.info(f"Successfully parsed and validated {len(validated_factions)} factions for guild {guild_id}.")
-        return validated_factions
-
-    @staticmethod
-    def _validate_i18n_field(
-        data: Dict[str, Any],
-        field_name: str,
-        bot_language: str,
-        log_prefix: str,
-        english_required: bool = True,
-        is_required: bool = True
-    ) -> Optional[Dict[str, str]]:
-        """Helper to validate a generic i18n field."""
-        if field_name not in data:
-            if is_required:
-                logger.warning(f"{log_prefix}: Required i18n field '{field_name}' is missing.")
-                return None
-            return {} # Optional field, not present, return empty dict to signify valid absence
-
-        field_value = data.get(field_name)
-        if not isinstance(field_value, dict):
-            logger.warning(f"{log_prefix}: Field '{field_name}' is not a dictionary. Value: {field_value}")
-            return None
-
-        processed_i18n_content = {}
-        # Check bot_language
-        if bot_language not in field_value or not isinstance(field_value[bot_language], str) or not field_value[bot_language].strip():
-            if is_required or (field_name in data and field_value): # If optional but malformed
-                 logger.warning(f"{log_prefix}: Field '{field_name}' missing or empty for bot language '{bot_language}'. Value: {field_value.get(bot_language)}")
-                 return None
-        elif field_value[bot_language].strip(): # Only add if valid content
-            processed_i18n_content[bot_language] = field_value[bot_language].strip()
-
-        # Check 'en' if required
-        if english_required:
-            if 'en' not in field_value or not isinstance(field_value['en'], str) or not field_value['en'].strip():
-                if is_required or (field_name in data and field_value): # If optional but malformed
-                    logger.warning(f"{log_prefix}: Field '{field_name}' missing or empty for English ('en'). Value: {field_value.get('en')}")
-                    return None
-            elif field_value['en'].strip(): # Only add if valid content
-                 processed_i18n_content['en'] = field_value['en'].strip()
-
-        # If it's a required field, it must have at least one valid language entry (either bot_language or en if bot_language is en)
-        if is_required and not processed_i18n_content:
-            logger.warning(f"{log_prefix}: Required field '{field_name}' resulted in no valid language entries after stripping. Original: {field_value}")
-            return None
-
-        return processed_i18n_content
-
-    @staticmethod
-    def _validate_json_string_field(
-        data: Dict[str, Any],
-        field_name: str,
-        log_prefix: str,
-        is_required: bool = True
-    ) -> Optional[str]:
-        """Helper to validate a field that should contain a JSON string."""
-        if field_name not in data:
-            if is_required:
-                logger.warning(f"{log_prefix}: Required JSON string field '{field_name}' is missing.")
-                return None
-            return None # Optional field, not present
-
-        field_value = data.get(field_name)
-        if field_value is None and not is_required: # Allowed for optional fields
-             return None
-
-        if not isinstance(field_value, str):
-            logger.warning(f"{log_prefix}: Field '{field_name}' is not a string. Expected JSON string. Value: {field_value}")
-            return None
-
-        if not field_value.strip() and not is_required: # Allow empty string for optional fields, treat as None
-            return None
-
-        try:
-            json.loads(field_value) # Check if it's valid JSON
-            return field_value # Return the original string if valid
-        except json.JSONDecodeError as e:
-            logger.warning(f"{log_prefix}: Field '{field_name}' is not a valid JSON string. Error: {e}. Value: {field_value}")
-            return None
-
-    async def parse_and_validate_quest_generation_response(
-        self,
-        raw_ai_output_text: str,
-        guild_id: str,
-        game_manager: "GameManager"
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Parses and validates the AI's JSON output for quest generation.
-        """
-        log_main_prefix = f"Quest Validation (Guild: {guild_id})"
-        logger.debug(f"{log_main_prefix}: Attempting to parse and validate AI quest generation response. Raw output (first 100 chars): '{raw_ai_output_text[:100]}'")
-
-        try:
-            parsed_data = json.loads(raw_ai_output_text)
-        except json.JSONDecodeError as e:
-            logger.warning(f"{log_main_prefix}: AI output is not valid JSON. Error: {e}. Raw: '{raw_ai_output_text}'")
-            return None
-
-        if not isinstance(parsed_data, dict) or "quest_data" not in parsed_data:
-            logger.warning(f"{log_main_prefix}: Parsed data is not a dict or missing 'quest_data' key. Data: {parsed_data}")
-            return None
-
-        quest_data = parsed_data["quest_data"]
-        if not isinstance(quest_data, dict):
-            logger.warning(f"{log_main_prefix}: 'quest_data' is not a dictionary. Type: {type(quest_data)}. Data: {quest_data}")
-            return None
-
-        logger.debug(f"{log_main_prefix}: Successfully parsed JSON and found 'quest_data'.")
-
-        try:
-            bot_language = await game_manager.get_rule(guild_id, 'default_language', 'en')
-        except Exception as e:
-            logger.error(f"{log_main_prefix}: Could not fetch bot_language. Error: {e}", exc_info=True)
-            return None
-
-        validated_main_quest: Dict[str, Any] = {}
-
-        # Validate Main Quest Data
-        main_quest_log_prefix = f"{log_main_prefix} MainQuest"
-
-        title = self._validate_i18n_field(quest_data, "title_i18n", bot_language, main_quest_log_prefix)
-        if title is None: return None
-        validated_main_quest["title_i18n"] = title
-
-        description = self._validate_i18n_field(quest_data, "description_i18n", bot_language, main_quest_log_prefix)
-        if description is None: return None
-        validated_main_quest["description_i18n"] = description
-
-        suggested_level = quest_data.get("suggested_level")
-        if not isinstance(suggested_level, int) or suggested_level <= 0:
-            logger.warning(f"{main_quest_log_prefix}: 'suggested_level' is missing, not an int, or not positive. Value: {suggested_level}")
-            return None
-        validated_main_quest["suggested_level"] = suggested_level
-
-        rewards_json = self._validate_json_string_field(quest_data, "rewards_json", main_quest_log_prefix, is_required=True)
-        if rewards_json is None: return None # Must be valid JSON string if present
-        validated_main_quest["rewards_json"] = rewards_json
-
-
-        # Optional Main Quest Fields
-        opt_giver = self._validate_i18n_field(quest_data, "quest_giver_details_i18n", bot_language, main_quest_log_prefix, is_required=False)
-        if opt_giver is None and "quest_giver_details_i18n" in quest_data : return None # Present but invalid
-        if opt_giver: validated_main_quest["quest_giver_details_i18n"] = opt_giver
-
-        opt_prereqs = self._validate_json_string_field(quest_data, "prerequisites_json", main_quest_log_prefix, is_required=False)
-        if opt_prereqs is None and "prerequisites_json" in quest_data and quest_data["prerequisites_json"] is not None: return None # Present but invalid (or not null and invalid)
-        if opt_prereqs: validated_main_quest["prerequisites_json"] = opt_prereqs
-
-        opt_conseq = self._validate_json_string_field(quest_data, "consequences_json", main_quest_log_prefix, is_required=False)
-        if opt_conseq is None and "consequences_json" in quest_data and quest_data["consequences_json"] is not None: return None # Present but invalid
-        if opt_conseq: validated_main_quest["consequences_json"] = opt_conseq
-
-        # Validate Quest Steps
-        if "steps" not in quest_data or not isinstance(quest_data["steps"], list) or not quest_data["steps"]:
-            logger.warning(f"{main_quest_log_prefix}: 'steps' array is missing, not a list, or empty. Quest requires steps.")
-            return None
-
-        validated_steps: List[Dict[str, Any]] = []
-        for i, step_data in enumerate(quest_data["steps"]):
-            step_log_prefix = f"{log_main_prefix} Step {i+1}"
-            if not isinstance(step_data, dict):
-                logger.warning(f"{step_log_prefix}: Step data is not a dictionary. Skipping. Data: {step_data}")
-                return None # Strict: one bad step fails all
-
-            processed_step: Dict[str, Any] = {}
-
-            step_title = self._validate_i18n_field(step_data, "title_i18n", bot_language, step_log_prefix)
-            if step_title is None: return None # Strict: one bad step field fails all
-            processed_step["title_i18n"] = step_title
-
-            step_desc = self._validate_i18n_field(step_data, "description_i18n", bot_language, step_log_prefix)
-            if step_desc is None: return None
-            processed_step["description_i18n"] = step_desc
-
-            req_mech = self._validate_json_string_field(step_data, "required_mechanics_json", step_log_prefix, is_required=True)
-            if req_mech is None: return None
-            processed_step["required_mechanics_json"] = req_mech
-
-            # Optional step fields
-            abs_goal = self._validate_json_string_field(step_data, "abstract_goal_json", step_log_prefix, is_required=False)
-            if abs_goal is None and "abstract_goal_json" in step_data and step_data["abstract_goal_json"] is not None: return None
-            if abs_goal: processed_step["abstract_goal_json"] = abs_goal
-
-            step_conseq = self._validate_json_string_field(step_data, "consequences_json", step_log_prefix, is_required=False)
-            if step_conseq is None and "consequences_json" in step_data and step_data["consequences_json"] is not None: return None
-            if step_conseq: processed_step["consequences_json"] = step_conseq
-
-            # Other non-validated fields like step_order can be copied if needed, assuming AI provides them correctly.
-            if "step_order" in step_data and isinstance(step_data["step_order"], int):
-                 processed_step["step_order"] = step_data["step_order"]
-            else: # Default step_order if not provided or invalid
-                 logger.warning(f"{step_log_prefix}: 'step_order' missing or invalid, defaulting to index {i}.")
-                 processed_step["step_order"] = i
-
-
-            validated_steps.append(processed_step)
-
-        if not validated_steps: # Should have been caught by earlier check if quest_data["steps"] was empty
-            logger.warning(f"{main_quest_log_prefix}: No valid steps found after processing.")
-            return None
-
-        validated_main_quest["steps"] = validated_steps
-        logger.info(f"{log_main_prefix}: Successfully parsed and validated quest data with {len(validated_steps)} steps.")
-        return validated_main_quest
-
-    async def parse_and_validate_item_generation_response(
-        self,
-        raw_ai_output_text: str,
-        guild_id: str,
-        game_manager: "GameManager"
-    ) -> Optional[List[Dict[str, Any]]]:
-        """
-        Parses the AI's raw text output (expected to be JSON) for item generation,
-        validates its structure and essential content for each item.
-
-        Args:
-            raw_ai_output_text: The raw string output from the AI.
-            guild_id: The ID of the guild for which items were generated.
-            game_manager: An instance of GameManager to fetch guild-specific rules (like language).
-
-        Returns:
-            A list of validated item data dictionaries if successful, otherwise None.
-        """
-        log_main_prefix = f"ItemValidation (Guild: {guild_id})"
-        logger.debug(f"{log_main_prefix}: Attempting to parse and validate AI item generation response. Raw output (first 100 chars): '{raw_ai_output_text[:100]}'")
-
-        try:
-            parsed_data = json.loads(raw_ai_output_text)
-        except json.JSONDecodeError as e:
-            logger.warning(f"{log_main_prefix}: AI output is not valid JSON. Error: {e}. Raw: '{raw_ai_output_text}'")
-            return None
-
-        if not isinstance(parsed_data, dict) or "new_items" not in parsed_data:
-            logger.warning(f"{log_main_prefix}: Parsed data is not a dict or missing 'new_items' key. Data: {parsed_data}")
-            return None
-
-        item_data_list = parsed_data.get("new_items")
-        if not isinstance(item_data_list, list):
-            logger.warning(f"{log_main_prefix}: 'new_items' is not a list. Type: {type(item_data_list)}. Data: {parsed_data}")
-            return None
-
-        if not item_data_list:
-            logger.info(f"{log_main_prefix}: 'new_items' list is empty. No items to validate.")
-            return []
-
-        logger.debug(f"{log_main_prefix}: Successfully parsed JSON. Found {len(item_data_list)} potential items.")
-
-        try:
-            bot_language = await game_manager.get_rule(guild_id, 'default_language', 'en')
-        except Exception as e:
-            logger.error(f"{log_main_prefix}: Could not fetch bot_language. Error: {e}", exc_info=True)
-            return None
-
-        validated_items: List[Dict[str, Any]] = []
-
-        for i, item_data in enumerate(item_data_list):
-            item_log_prefix = f"{log_main_prefix} Item {i+1}"
-            if not isinstance(item_data, dict):
-                logger.warning(f"{item_log_prefix}: Item data is not a dictionary. Skipping. Data: {item_data}")
-                continue
-
-            processed_item: Dict[str, Any] = {}
-            current_item_valid = True
-
-            # Required i18n fields
-            name_i18n = self._validate_i18n_field(item_data, "name_i18n", bot_language, item_log_prefix)
-            if name_i18n is None: current_item_valid = False
-            else: processed_item["name_i18n"] = name_i18n
-
-            desc_i18n = self._validate_i18n_field(item_data, "description_i18n", bot_language, item_log_prefix)
-            if desc_i18n is None: current_item_valid = False
-            else: processed_item["description_i18n"] = desc_i18n
-
-            # Required string fields
-            item_type = item_data.get("item_type")
-            if not isinstance(item_type, str) or not item_type.strip():
-                logger.warning(f"{item_log_prefix}: 'item_type' is missing or empty. Data: {item_data}")
-                current_item_valid = False
-            else:
-                processed_item["item_type"] = item_type.strip()
-
-            # Required integer field
-            base_value = item_data.get("base_value")
-            if not isinstance(base_value, int): # Allow 0 as a valid value
-                logger.warning(f"{item_log_prefix}: 'base_value' is missing or not an integer. Data: {item_data}")
-                current_item_valid = False
-            else:
-                processed_item["base_value"] = base_value
-
-            # Required JSON string field
-            properties_json = self._validate_json_string_field(item_data, "properties_json", item_log_prefix, is_required=True)
-            if properties_json is None: current_item_valid = False # If required and invalid/missing
-            else: processed_item["properties_json"] = properties_json
-
-
-            # Optional string field
-            rarity_level = item_data.get("rarity_level")
-            if rarity_level is not None: # If present, it must be a non-empty string
-                if not isinstance(rarity_level, str) or not rarity_level.strip():
-                    logger.warning(f"{item_log_prefix}: Optional 'rarity_level' is present but empty or not a string. Data: {item_data}")
-                    current_item_valid = False
-                else:
-                    processed_item["rarity_level"] = rarity_level.strip()
-
-            if current_item_valid:
-                validated_items.append(processed_item)
-                logger.debug(f"{item_log_prefix}: Item object successfully validated and processed: {processed_item.get('name_i18n',{}).get(bot_language, 'Unknown Item')}")
-            else:
-                logger.warning(f"{item_log_prefix}: Item failed validation. Skipping. Data: {item_data}")
-
-        if not item_data_list: # This case is already handled (returns [] if item_data_list is empty)
-             pass
-        elif not validated_items: # item_data_list was not empty, but nothing validated
-            logger.warning(f"{log_main_prefix}: No valid item objects found after processing {len(item_data_list)} items.")
-            return None
-
-        logger.info(f"{log_main_prefix}: Successfully parsed and validated {len(validated_items)} items out of {len(item_data_list)} received.")
-        return validated_items
-
-    async def parse_and_validate_npc_generation_response(
-        self,
-        raw_ai_output_text: str,
-        guild_id: str,
-        game_manager: "GameManager"
-    ) -> Optional[List[Dict[str, Any]]]:
-        """
-        Parses the AI's raw text output (expected to be JSON) for NPC generation,
-        validates its structure and essential content for each NPC.
-
-        Args:
-            raw_ai_output_text: The raw string output from the AI.
-            guild_id: The ID of the guild for which NPCs were generated.
-            game_manager: An instance of GameManager to fetch guild-specific rules (like language).
-
-        Returns:
-            A list of validated NPC data dictionaries if successful, otherwise None.
-        """
-        log_main_prefix = f"NPCValidation (Guild: {guild_id})"
-        logger.debug(f"{log_main_prefix}: Attempting to parse and validate AI NPC generation response. Raw output (first 100 chars): '{raw_ai_output_text[:100]}'")
-
-        try:
-            parsed_data = json.loads(raw_ai_output_text)
-        except json.JSONDecodeError as e:
-            logger.warning(f"{log_main_prefix}: AI output is not valid JSON. Error: {e}. Raw: '{raw_ai_output_text}'")
-            return None
-
-        if not isinstance(parsed_data, dict) or "new_npcs" not in parsed_data:
-            logger.warning(f"{log_main_prefix}: Parsed data is not a dict or missing 'new_npcs' key. Data: {parsed_data}")
-            return None
-
-        npc_data_list = parsed_data.get("new_npcs")
-        if not isinstance(npc_data_list, list):
-            logger.warning(f"{log_main_prefix}: 'new_npcs' is not a list. Type: {type(npc_data_list)}. Data: {parsed_data}")
-            return None
-
-        if not npc_data_list:
-            logger.info(f"{log_main_prefix}: 'new_npcs' list is empty. No NPCs to validate.")
-            return []
-
-        logger.debug(f"{log_main_prefix}: Successfully parsed JSON. Found {len(npc_data_list)} potential NPCs.")
-
-        try:
-            bot_language = await game_manager.get_rule(guild_id, 'default_language', 'en')
-        except Exception as e:
-            logger.error(f"{log_main_prefix}: Could not fetch bot_language. Error: {e}", exc_info=True)
-            return None
-
-        validated_npcs: List[Dict[str, Any]] = []
-
-        required_i18n_fields = ["name_i18n", "description_i18n", "backstory_i18n", "persona_i18n"]
-        optional_i18n_fields = ["initial_dialogue_greeting_i18n"]
-
-
-
-async def parse_and_validate_ai_response(
-    raw_ai_output_text: str,
-    guild_id: str, # guild_id might be used by semantic validators in the future
-    request_type: str,
-    game_manager: Optional['GameManager'] = None # Optional for now, for semantic validation later
-) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    """
-    Parses raw AI output text, validates it against a Pydantic model based on request_type,
-    and prepares for further semantic validation.
-
-    Args:
-        raw_ai_output_text: The raw JSON string output from the AI.
-        guild_id: The guild ID, for context.
-        request_type: The type of request (e.g., "location_content_generation") to determine the Pydantic model.
-        game_manager: GameManager instance, for potential future semantic validation.
-
-    Returns:
-        A tuple: (validated_data_dict, validation_issues_list).
-        - validated_data_dict: Dictionary representation of the validated Pydantic model if successful,
-                               or the raw parsed JSON if Pydantic validation failed. None if JSON parsing failed.
-        - validation_issues_list: List of error dicts if validation failed, else None.
-    """
-    logger.debug(f"Parsing and validating AI response for request_type: {request_type}, guild_id: {guild_id}")
-
-    parsed_json_data: Optional[Dict[str, Any]] = None
-    validation_issues: List[Dict[str, Any]] = []
-
-    # 1. JSON Parsing
-    try:
-        parsed_json_data = json.loads(raw_ai_output_text)
-        if not isinstance(parsed_json_data, dict) and not (request_type in ["list_of_quests", "list_of_npcs", "list_of_items"] and isinstance(parsed_json_data, list)): # Allow list for specific list types
-            # This check might need refinement based on whether top-level can be a list for some request_types
-            logger.error(f"AI output is not a JSON object or expected list. Type: {type(parsed_json_data)}")
-            validation_issues.append({
-                "type": "invalid_json_structure",
-                "loc": ["input_string"],
-                "msg": "AI output must be a JSON object (or a list for certain request types)."
-            })
-            return parsed_json_data, validation_issues # Return parsed data for moderator to see
-    except json.JSONDecodeError as e:
-        logger.error(f"JSONDecodeError parsing AI output: {e}. Raw text: '{raw_ai_output_text[:200]}...'")
-        validation_issues.append({
-            "type": "json_decode_error",
-            "loc": ["input_string"],
-            "msg": f"Invalid JSON: {str(e)}"
-        })
-        return None, validation_issues
-
-    # 2. Pydantic Validation
-    request_type_to_model_map: Dict[str, Optional[BaseModel]] = {
-        "location_content_generation": GeneratedLocationContent,
-        "npc_profile_generation": GeneratedNpcProfile,
-        "quest_generation": GeneratedQuestData,
-        # Add other request_types and their corresponding Pydantic models here
-        # "list_of_quests": GeneratedQuestData, # If expecting a list, Pydantic handles List[GeneratedQuestData]
-    }
-
-    PydanticModel = request_type_to_model_map.get(request_type)
-
-    if PydanticModel is None:
-        logger.warning(f"Unknown request_type for Pydantic validation: {request_type}")
-        validation_issues.append({
-            "type": "unknown_request_type",
-            "loc": ["request_type"],
-            "msg": f"No Pydantic model configured for request_type: {request_type}"
-        })
-        return parsed_json_data, validation_issues
-
-    try:
-        # If the expected structure is a list of items (e.g., "list_of_quests")
-        # Pydantic can validate List[ModelType] directly if model is defined for list items
-        # For now, assuming top-level is a single object unless specified otherwise
-        # This part might need adjustment if AI is expected to return a list for some request_types
-        if request_type in ["list_of_quests", "list_of_npcs", "list_of_items"]: # Example list types
-            if not isinstance(parsed_json_data, list):
-                logger.error(f"Expected a list for request_type '{request_type}', but got {type(parsed_json_data)}")
-                validation_issues.append({
-                    "type": "invalid_structure_for_list_type",
-                    "loc": ["input_string"],
-                    "msg": f"Expected a JSON list for '{request_type}'."
-                })
-                return parsed_json_data, validation_issues
-            # Validate each item in the list
-            validated_items = [PydanticModel(**item) for item in parsed_json_data]
-            model_instance_dict = [item.model_dump() for item in validated_items]
-        else: # Single object expected
-            if not isinstance(parsed_json_data, dict): # Should have been caught by initial JSON check if not a list type
-                 logger.error(f"Expected a JSON object for request_type '{request_type}', but got {type(parsed_json_data)}")
-                 validation_issues.append({
-                    "type": "invalid_structure_for_object_type",
-                    "loc": ["input_string"],
-                    "msg": f"Expected a JSON object for '{request_type}'."
-                })
-                 return parsed_json_data, validation_issues
-
-            model_instance = PydanticModel(**parsed_json_data)
-            model_instance_dict = model_instance.model_dump()
-
-        logger.info(f"Pydantic validation successful for request_type: {request_type}")
-
-        # 3. Semantic Validation (Placeholder)
-        # Here, you would call more advanced validation logic, potentially using game_manager
-        # For example, checking if referenced item IDs exist, if stats are within reasonable bounds for a level, etc.
+            logger.error(f"JSONDecodeError: {e}. Raw: '{raw_ai_output_text[:200]}...'")
+            pydantic_issues.append(ValidationIssue(loc=["input_string"], type="json_decode_error", msg=str(e), input_value=raw_ai_output_text[:200]))
+            return None, pydantic_issues
+
+        request_type_to_model_map: Dict[str, Any] = {
+            "location_content_generation": GeneratedLocationContent,
+            "npc_profile_generation": GeneratedNpcProfile,
+            "quest_generation": GeneratedQuestData,
+            "item_profile_generation": GeneratedItemProfile,
+        }
+        PydanticModel = request_type_to_model_map.get(request_type)
+
+        if PydanticModel is None:
+            logger.warning(f"Unknown request_type for Pydantic: {request_type}")
+            pydantic_issues.append(ValidationIssue(loc=["request_type"], type="unknown_request_type", msg=f"No Pydantic model for {request_type}", input_value=request_type))
+            return parsed_json_data, pydantic_issues
+
+        validation_context = {}
+        target_languages = ['en']
         if game_manager:
-            logger.info(f"Semantic validation pending for type {request_type} (GameManager available).")
-            # Example: issues = await game_manager.semantic_validator.validate(model_instance_dict, request_type, guild_id)
-            # if issues: return model_instance_dict, issues
+            try:
+                guild_main_lang = await game_manager.get_rule(guild_id, "default_language", "en")
+                target_languages = sorted(list(set([guild_main_lang, "en"])))
+                validation_context["target_languages"] = target_languages
+            except Exception as e: logger.error(f"Failed to get guild language for context: {e}", exc_info=True)
         else:
-            logger.info(f"Semantic validation skipped for type {request_type} (GameManager not available).")
+            logger.warning("GameManager not provided. i18n validation may use default 'en'.")
+        validation_context.setdefault("target_languages", ['en'])
 
-        return model_instance_dict, None # Success
 
-    except PydanticValidationError as e:
-        formatted_errors = []
-        for error in e.errors():
-            formatted_errors.append({
-                "type": error['type'],
-                "loc": list(error['loc']) if error['loc'] else ["unknown_field"],
-                "msg": error['msg'],
-                "input": error.get('input', 'N/A')
-            })
-        logger.warning(f"Pydantic validation failed for request_type: {request_type}. Errors: {formatted_errors}")
-        return parsed_json_data, formatted_errors # Return original parsed data and errors
-    except Exception as e_gen: # Catch any other unexpected errors during model instantiation
-        logger.error(f"Generic error during Pydantic model instantiation for {request_type}: {e_gen}", exc_info=True)
-        validation_issues.append({
-            "type": "model_instantiation_error",
-            "loc": ["parsing_logic"],
-            "msg": f"Unexpected error: {str(e_gen)}"
-        })
-        return parsed_json_data, validation_issues
+        try:
+            if not isinstance(parsed_json_data, dict):
+                 logger.error(f"Expected JSON object for '{request_type}', got {type(parsed_json_data).__name__}")
+                 pydantic_issues.append(ValidationIssue(loc=["input_string"], type="invalid_structure.not_dict", msg=f"Expected JSON object, got {type(parsed_json_data).__name__}.", input_value=parsed_json_data))
+            else:
+                model_instance = PydanticModel.model_validate(parsed_json_data, context=validation_context)
+                model_instance_dict = model_instance.model_dump()
+                logger.info(f"Pydantic validation successful for {request_type}")
+
+        except PydanticValidationError as e:
+            for error in e.errors():
+                pydantic_issues.append(ValidationIssue(loc=list(error['loc']), type=error['type'], msg=error['msg'], input_value=error.get('input')))
+            logger.warning(f"Pydantic validation failed for {request_type}. Errors: {pydantic_issues}")
+        except Exception as e_gen:
+            logger.error(f"Generic error during Pydantic processing for {request_type}: {e_gen}", exc_info=True)
+            pydantic_issues.append(ValidationIssue(loc=["validation_logic"], type="model_processing_error", msg=f"Unexpected error: {str(e_gen)}"))
+
+        if not pydantic_issues and model_instance_dict is not None and game_manager and game_manager.prompt_context_collector:
+            try:
+                game_rules_data = await game_manager.prompt_context_collector.get_game_rules_summary(guild_id)
+                # Note: get_game_terms_dictionary is synchronous. Ability/spell defs are passed via kwargs from get_full_context.
+                # For direct use here, we might need a way to pass those, or accept that semantic checks for them might be limited.
+                game_terms = game_manager.prompt_context_collector.get_game_terms_dictionary(guild_id, game_rules_data=game_rules_data)
+                # scaling_params = game_manager.prompt_context_collector.get_scaling_parameters(guild_id, game_rules_data=game_rules_data) # Not used yet
+
+                if request_type == "npc_profile_generation":
+                    semantic_issues.extend(self._semantic_validate_npc_profile(model_instance_dict, game_terms, guild_id))
+                elif request_type == "quest_generation":
+                    semantic_issues.extend(self._semantic_validate_quest_data(model_instance_dict, game_terms, guild_id))
+                elif request_type == "location_content_generation":
+                    semantic_issues.extend(self._semantic_validate_location_content(model_instance_dict, game_terms, guild_id))
+                elif request_type == "item_profile_generation":
+                    semantic_issues.extend(self._semantic_validate_item_profile(model_instance_dict, game_terms, guild_id))
+
+                if semantic_issues: logger.info(f"Semantic validation found {len(semantic_issues)} issues for {request_type}.")
+            except Exception as e_sem:
+                logger.error(f"Error during semantic validation for {request_type}: {e_sem}", exc_info=True)
+                semantic_issues.append(ValidationIssue(loc=["semantic_validation_process"], type="semantic.internal_error", msg=f"Error: {str(e_sem)}"))
+        elif not game_manager or not game_manager.prompt_context_collector:
+            logger.info("GameManager or PromptContextCollector not available, skipping semantic validation.")
+
+        all_issues = pydantic_issues + semantic_issues
+        data_to_return = model_instance_dict if model_instance_dict else parsed_json_data
+
+        return data_to_return, all_issues if all_issues else None
+
+    # --- Deprecated Methods ---
+    async def parse_and_validate_location_description_response(self, raw_ai_output_text: str, guild_id: str, game_manager: "GameManager") -> Optional[Dict[str, str]]:
+        logger.warning("Deprecated: Use parse_and_validate_ai_response with request_type='location_content_generation'.")
+        data, issues = await self.parse_and_validate_ai_response(raw_ai_output_text, guild_id, "location_content_generation", game_manager)
+        if data and not issues and isinstance(data.get("atmospheric_description_i18n"), dict): return data["atmospheric_description_i18n"]
+        return None
+
+    async def parse_and_validate_faction_generation_response(self, raw_ai_output_text: str, guild_id: str, game_manager: "GameManager") -> Optional[List[Dict[str, Any]]]:
+        logger.warning("Deprecated. Faction generation validation needs specific Pydantic model and request_type.")
+        return None
+
+    async def parse_and_validate_quest_generation_response(self, raw_ai_output_text: str, guild_id: str, game_manager: "GameManager") -> Optional[Dict[str, Any]]:
+        logger.warning("Deprecated: Use parse_and_validate_ai_response with request_type='quest_generation'.")
+        data, issues = await self.parse_and_validate_ai_response(raw_ai_output_text, guild_id, "quest_generation", game_manager)
+        return data if data and not issues else None
+
+    async def parse_and_validate_item_generation_response(self, raw_ai_output_text: str, guild_id: str, game_manager: "GameManager") -> Optional[List[Dict[str, Any]]]:
+        logger.warning("Deprecated. For single item, use request_type='item_profile_generation'. For lists, new type needed.")
+        return None
+
+    async def parse_and_validate_npc_generation_response(self, raw_ai_output_text: str, guild_id: str, game_manager: "GameManager") -> Optional[List[Dict[str, Any]]]:
+        logger.warning("Deprecated. For single NPC, use request_type='npc_profile_generation'. For lists, new type needed.")
+        return None
