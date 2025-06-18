@@ -793,6 +793,388 @@ class RuleEngine:
         
         return available_options
 
+    # --- New Stealth and Thievery Skill Check Methods ---
+
+    async def resolve_stealth_check(
+        self,
+        character_id: str,
+        guild_id: str,
+        location_id: str,
+        # npc_ids_in_location: List[str], # Future: for opposed checks
+        **kwargs: Any
+    ) -> DetailedCheckResult:
+        """
+        Resolves a stealth check for a character.
+        Considers character's stealth skill and location-based factors.
+        """
+        character = await self._character_manager.get_character(guild_id, character_id)
+        if not character:
+            return DetailedCheckResult(success=False, message="Character not found.", roll_details={})
+
+        skills_data = character.skills_data_json or {}
+        stealth_skill = skills_data.get("stealth", 0)
+
+        # Get stealth rules from self._rules_data
+        stealth_rules = self._rules_data.get("stealth_rules", {})
+        base_dc = stealth_rules.get("base_detection_dc", 15) # Default DC if no NPCs or specific location awareness
+        # Location awareness modifier (conceptual)
+        # location = await self._location_manager.get_location(guild_id, location_id)
+        # awareness_modifier = location.state_variables.get("awareness_level", 0) if location else 0
+        # current_dc = base_dc + awareness_modifier
+        current_dc = base_dc # Simplified for now
+
+        # TODO: Opposed checks against NPCs perception
+        # For now, simple check against location DC
+
+        success, total_roll, d20_roll, crit_status = await self.resolve_skill_check(
+            character, "stealth", current_dc, context=kwargs
+        )
+
+        # awareness_level_change = 0
+        # consequences = []
+        # if not success:
+        #     awareness_level_change = stealth_rules.get("awareness_increase_on_fail", 1)
+        #     consequences.append("Detected by someone or something.")
+
+        return DetailedCheckResult(
+            success=success,
+            message=f"Stealth check {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}",
+            roll_details={"skill": "stealth", "roll": d20_roll, "total_roll": total_roll, "dc": current_dc, "crit_status": crit_status},
+            # custom_outcomes={
+            #     "awareness_level_change": awareness_level_change,
+            #     "consequences": consequences
+            # }
+        )
+
+    async def resolve_pickpocket_attempt(
+        self,
+        character_id: str,
+        guild_id: str,
+        target_npc_id: str,
+        # item_to_steal_id: Optional[str] = None, # Future: item difficulty
+        **kwargs: Any
+    ) -> DetailedCheckResult:
+        """
+        Resolves a pickpocket attempt by a character on an NPC.
+        """
+        character = await self._character_manager.get_character(guild_id, character_id)
+        if not character:
+            return DetailedCheckResult(success=False, message="Character not found for pickpocket.", roll_details={})
+
+        target_npc = await self._npc_manager.get_npc(guild_id, target_npc_id)
+        if not target_npc:
+            return DetailedCheckResult(success=False, message="Target NPC not found for pickpocket.", roll_details={})
+
+        skills_data = character.skills_data_json or {}
+        pickpocket_skill = skills_data.get("pickpocket", 0)
+
+        pickpocket_rules = self._rules_data.get("pickpocket_rules", {})
+        base_dc = pickpocket_rules.get("base_dc", 12)
+        npc_perception_modifier = 0 # Simplified, could be based on target_npc.stats.perception or awareness
+
+        # item_difficulty_modifier = 0 # Future
+        # if item_to_steal_id:
+        #     item = await self._item_manager.get_item_template(item_to_steal_id) # or get instance
+        #     item_difficulty_modifier = item.difficulty_class if item else 0
+
+        current_dc = base_dc + npc_perception_modifier # + item_difficulty_modifier
+
+        success, total_roll, d20_roll, crit_status = await self.resolve_skill_check(
+            character, "pickpocket", current_dc, context=kwargs
+        )
+
+        detected = False
+        item_id_stolen = None
+
+        if not success:
+            detected = True # Simple assumption: failure means detection
+            # Critical failure might have worse consequences (e.g. hostility)
+            if crit_status == "critical_failure":
+                detected = True # Already true, but could add more effects
+                # consequences.append("NPC becomes hostile!")
+        # else:
+            # item_id_stolen = "some_item_id" # TODO: Logic to determine what item is stolen
+
+        return DetailedCheckResult(
+            success=success,
+            message=f"Pickpocket attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}",
+            roll_details={"skill": "pickpocket", "roll": d20_roll, "total_roll": total_roll, "dc": current_dc, "crit_status": crit_status},
+            custom_outcomes={
+                "detected": detected,
+                "item_id_stolen": item_id_stolen if success else None
+            }
+        )
+
+    # --- New Crafting and Gathering Skill Check Methods ---
+
+    async def resolve_gathering_attempt(
+        self,
+        character_id: str,
+        guild_id: str,
+        poi_data: Dict[str, Any],
+        character_skills: Dict[str, int],
+        character_inventory: List[Dict[str, Any]], # List of item dicts
+        **kwargs: Any
+    ) -> DetailedCheckResult:
+        """
+        Resolves a gathering attempt from a resource node PoI.
+        """
+        character = await self._character_manager.get_character(guild_id, character_id)
+        if not character:
+            return DetailedCheckResult(success=False, message_key="error_character_not_found", roll_details={})
+
+        resource_details = poi_data.get("resource_details")
+        if not resource_details:
+            return DetailedCheckResult(success=False, message_key="gathering_fail_invalid_node_data", roll_details={})
+
+        gathering_skill_id = resource_details.get("gathering_skill_id")
+        gathering_dc = resource_details.get("gathering_dc", 15)
+        required_tool_category = resource_details.get("required_tool_category")
+        base_yield_formula = resource_details.get("base_yield_formula", "1")
+        primary_resource_id = resource_details.get("resource_item_template_id")
+
+        secondary_resource_id = resource_details.get("secondary_resource_item_template_id")
+        secondary_yield_formula = resource_details.get("secondary_resource_yield_formula", "1")
+        secondary_chance = resource_details.get("secondary_resource_chance", 0.0)
+
+        if not primary_resource_id or not gathering_skill_id:
+            return DetailedCheckResult(success=False, message_key="gathering_fail_incomplete_node_data", roll_details={})
+
+        # 1. Tool Check
+        if required_tool_category:
+            has_required_tool = False
+            # This assumes items in inventory have a "tags" list or a "category" field.
+            # For MVP, let's assume a simple check for an item with a 'name' or 'id' that matches the category for simplicity,
+            # or more realistically, that items have a `tool_category` property if they are tools.
+            # The subtask says "The system will check if the player has any item of this category".
+            # We need to define how item categories are stored on items.
+            # Assuming item dicts in character_inventory have 'properties: {"tool_category": "pickaxe"}' or similar.
+            for item_dict in character_inventory:
+                item_properties = item_dict.get("properties", {})
+                if isinstance(item_properties, dict) and item_properties.get("tool_category") == required_tool_category:
+                    has_required_tool = True
+                    break
+            if not has_required_tool:
+                return DetailedCheckResult(success=False, message_key=f"gathering_fail_no_tool_{required_tool_category}", roll_details={})
+
+        # 2. Skill Check
+        # We need the Character object for resolve_skill_check
+        success, total_roll, d20_roll, crit_status = await self.resolve_skill_check(
+            character, gathering_skill_id, gathering_dc, context=kwargs
+        )
+
+        if not success:
+            return DetailedCheckResult(
+                success=False,
+                message_key=f"gathering_fail_skill_check_{gathering_skill_id}",
+                roll_details={"skill": gathering_skill_id, "roll": d20_roll, "total_roll": total_roll, "dc": gathering_dc, "crit_status": crit_status}
+            )
+
+        # 3. Calculate Yield
+        yielded_items = []
+        try:
+            primary_yield_roll = await self.resolve_dice_roll(base_yield_formula)
+            primary_quantity = primary_yield_roll.get("total", 0)
+            if primary_quantity > 0:
+                yielded_items.append({"item_template_id": primary_resource_id, "quantity": primary_quantity})
+
+            if secondary_resource_id and random.random() < secondary_chance:
+                secondary_yield_roll = await self.resolve_dice_roll(secondary_yield_formula)
+                secondary_quantity = secondary_yield_roll.get("total", 0)
+                if secondary_quantity > 0:
+                    yielded_items.append({"item_template_id": secondary_resource_id, "quantity": secondary_quantity})
+
+        except ValueError as e: # Invalid dice string
+             # Log error, potentially yield 0 or a default amount
+            print(f"Error resolving dice roll for gathering: {e}")
+            return DetailedCheckResult(success=False, message_key="gathering_fail_yield_calculation_error", roll_details={})
+
+
+        return DetailedCheckResult(
+            success=True,
+            message_key=f"gathering_success_{gathering_skill_id}",
+            roll_details={"skill": gathering_skill_id, "roll": d20_roll, "total_roll": total_roll, "dc": gathering_dc, "crit_status": crit_status},
+            custom_outcomes={"yielded_items": yielded_items}
+        )
+
+    async def resolve_crafting_attempt(
+        self,
+        character_id: str,
+        guild_id: str,
+        recipe_data: Dict[str, Any],
+        character_skills: Dict[str, int],
+        character_inventory: List[Dict[str, Any]], # List of item dicts, each with 'template_id' and 'quantity'
+        current_location_data: Dict[str, Any], # Contains 'tags' list and 'properties' like 'station_type'
+        **kwargs: Any
+    ) -> DetailedCheckResult:
+        """
+        Resolves a crafting attempt based on a recipe. (MVP: Requirement checks only)
+        """
+        # Ensure managers are available if direct character object is needed
+        if not self._character_manager: # Or any other required manager
+            return DetailedCheckResult(success=False, message_key="error_internal_server_error", custom_outcomes={"details": "CharacterManager not available"})
+
+        character = await self._character_manager.get_character(guild_id, character_id)
+        if not character:
+            return DetailedCheckResult(success=False, message_key="error_character_not_found")
+
+        recipe_id = recipe_data.get("id", "unknown_recipe")
+        ingredients = recipe_data.get("ingredients_json", []) # List of {"item_template_id": "x", "quantity": y}
+        outputs = recipe_data.get("outputs_json", []) # List of {"item_template_id": "x", "quantity": y}
+        required_skill_id = recipe_data.get("required_skill_id")
+        required_skill_level = recipe_data.get("required_skill_level", 0)
+
+        other_requirements = recipe_data.get("other_requirements_json", {})
+        required_tools_specific = other_requirements.get("required_tools", []) # list of item_template_ids
+        required_crafting_station = other_requirements.get("crafting_station_type")
+        required_location_tags = other_requirements.get("required_location_tags", [])
+        # requires_event_flag = other_requirements.get("requires_event_flag") # Not checked in MVP
+
+        # 1. Skill Level Check
+        if required_skill_id and character_skills.get(required_skill_id, 0) < required_skill_level:
+            return DetailedCheckResult(success=False, message_key="crafting_fail_skill_too_low", custom_outcomes={"recipe_id": recipe_id, "required_skill": required_skill_id, "required_level": required_skill_level})
+
+        # 2. Ingredient Check
+        consumed_items_for_outcome = []
+        inventory_map = {item['template_id']: item['quantity'] for item in character_inventory}
+        for ingredient in ingredients:
+            ing_id = ingredient["item_template_id"]
+            ing_qty = ingredient["quantity"]
+            if inventory_map.get(ing_id, 0) < ing_qty:
+                return DetailedCheckResult(success=False, message_key="crafting_fail_missing_ingredients", custom_outcomes={"recipe_id": recipe_id, "missing_item_id": ing_id, "required_quantity": ing_qty})
+            consumed_items_for_outcome.append({"item_template_id": ing_id, "quantity": ing_qty})
+
+        # 3. Specific Tool Check (player must have specific items)
+        if required_tools_specific:
+            for tool_template_id in required_tools_specific:
+                if not any(item['template_id'] == tool_template_id for item in character_inventory):
+                    return DetailedCheckResult(success=False, message_key="crafting_fail_missing_specific_tool", custom_outcomes={"recipe_id": recipe_id, "missing_tool_id": tool_template_id})
+
+        # 4. Crafting Station Check
+        if required_crafting_station:
+            # Location data needs a way to specify its station type. Assume current_location_data has a "station_type" or similar.
+            # For example, from a PoI that is a crafting station: current_location_data.get("active_poi_station_type")
+            # Or, location itself has a station type: current_location_data.get("properties", {}).get("station_type")
+            location_station_type = current_location_data.get("properties", {}).get("station_type") # Example access
+            if location_station_type != required_crafting_station:
+                 return DetailedCheckResult(success=False, message_key="crafting_fail_wrong_station", custom_outcomes={"recipe_id": recipe_id, "required_station": required_crafting_station, "current_station": location_station_type or "none"})
+
+        # 5. Location Tags Check
+        if required_location_tags:
+            location_tags = current_location_data.get("tags", []) # Assuming location has a 'tags' list
+            if not all(tag in location_tags for tag in required_location_tags):
+                return DetailedCheckResult(success=False, message_key="crafting_fail_location_tags", custom_outcomes={"recipe_id": recipe_id, "required_tags": required_location_tags})
+
+        # MVP: If all checks pass, crafting is successful.
+        # Future: Add skill check roll against recipe DC for success chance/quality.
+
+        # For MVP, assume first output is the primary.
+        crafted_item_details = outputs[0] if outputs else None
+        if not crafted_item_details:
+            return DetailedCheckResult(success=False, message_key="crafting_fail_no_output_defined", custom_outcomes={"recipe_id": recipe_id})
+
+
+        return DetailedCheckResult(
+            success=True,
+            message_key="crafting_success",
+            custom_outcomes={
+                "recipe_id": recipe_id,
+                "crafted_item": crafted_item_details, # {"item_template_id": "x", "quantity": y}
+                "consumed_items": consumed_items_for_outcome
+                # "xp_gained": calculated_xp (future)
+            }
+        )
+
+    async def resolve_lockpick_attempt(
+        self,
+        character_id: str,
+        guild_id: str,
+        poi_data: Dict[str, Any], # Point of Interest data containing lock details
+        **kwargs: Any
+    ) -> DetailedCheckResult:
+        """
+        Resolves a lockpicking attempt by a character on a lock (part of a PoI).
+        """
+        character = await self._character_manager.get_character(guild_id, character_id)
+        if not character:
+            return DetailedCheckResult(success=False, message="Character not found for lockpicking.", roll_details={})
+
+        skills_data = character.skills_data_json or {}
+        lockpicking_skill = skills_data.get("lockpicking", 0)
+
+        lock_details = poi_data.get("lock_details", {}) # As per documentation plan
+        lock_dc = lock_details.get("dc", 15) # Default if not specified in PoI
+
+        # lockpicking_rules = self._rules_data.get("lockpicking_rules", {})
+        # tool_quality_modifier = 0 # Future enhancement
+        # multiple_attempts_penalty = 0 # Future
+
+        current_dc = lock_dc # + tool_quality_modifier + multiple_attempts_penalty
+
+        success, total_roll, d20_roll, crit_status = await self.resolve_skill_check(
+            character, "lockpicking", current_dc, context=kwargs
+        )
+
+        # tool_broken = False # Future
+        # if crit_status == "critical_failure" and lockpicking_rules.get("break_tools_on_crit_fail", False):
+        #     tool_broken = True
+
+        return DetailedCheckResult(
+            success=success,
+            message=f"Lockpicking attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}",
+            roll_details={"skill": "lockpicking", "roll": d20_roll, "total_roll": total_roll, "dc": current_dc, "crit_status": crit_status},
+            # custom_outcomes={
+            #     "tool_broken": tool_broken,
+            #     "attempts_used": 1 # Simplified
+            # }
+        )
+
+    async def resolve_disarm_trap_attempt(
+        self,
+        character_id: str,
+        guild_id: str,
+        poi_data: Dict[str, Any], # Point of Interest data containing trap details
+        **kwargs: Any
+    ) -> DetailedCheckResult:
+        """
+        Resolves a trap disarming attempt by a character.
+        """
+        character = await self._character_manager.get_character(guild_id, character_id)
+        if not character:
+            return DetailedCheckResult(success=False, message="Character not found for disarming trap.", roll_details={})
+
+        skills_data = character.skills_data_json or {}
+        disarm_skill = skills_data.get("disarm_traps", 0)
+
+        trap_details = poi_data.get("trap_details") # As per documentation plan
+        if not trap_details:
+            return DetailedCheckResult(success=False, message="Trap details not found in PoI data.", roll_details={})
+
+        disarm_dc = trap_details.get("disarm_dc", 15) # Default if not specified
+
+        # disarm_rules = self._rules_data.get("disarm_trap_rules", {})
+
+        success, total_roll, d20_roll, crit_status = await self.resolve_skill_check(
+            character, "disarm_traps", disarm_dc, context=kwargs
+        )
+
+        trap_triggered_on_fail = False
+        if not success:
+            # Check for critical failure triggering the trap
+            # if crit_status == "critical_failure" and disarm_rules.get("trigger_on_crit_fail", True):
+            #     trap_triggered_on_fail = True
+            # elif disarm_rules.get("trigger_on_any_fail", False): # Simpler rule: any failure triggers
+            #     trap_triggered_on_fail = True
+            trap_triggered_on_fail = True # Simplified: any failure triggers for now
+
+        return DetailedCheckResult(
+            success=success,
+            message=f"Disarm trap attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {disarm_dc}",
+            roll_details={"skill": "disarm_traps", "roll": d20_roll, "total_roll": total_roll, "dc": disarm_dc, "crit_status": crit_status},
+            custom_outcomes={
+                "trap_triggered_on_fail": trap_triggered_on_fail
+            }
+        )
 
     # --- Existing methods below this line are assumed to be complete as per previous tasks ---
     # (resolve_dice_roll, resolve_steal_attempt, resolve_hide_attempt, resolve_item_use,
