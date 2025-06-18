@@ -21,9 +21,10 @@ from discord import Client
 from bot.services.db_service import DBService
 from bot.ai.rules_schema import GameRules
 from bot.game.models.character import Character
-from bot.database.models import RulesConfig, Player, PendingGeneration, GuildConfig, Location, QuestTable, QuestStepTable, Party # Added Party, Player, Location
+from bot.database.models import RulesConfig, Player, PendingGeneration, GuildConfig, Location, QuestTable, QuestStepTable, Party, Character # Added Party, Player, Location, Character
 from bot.services.notification_service import NotificationService # Added runtime import
 from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError
+import random # Added for _on_enter_location
 from bot.ai.ai_response_validator import parse_and_validate_ai_response # Added
 from sqlalchemy.future import select # For direct queries if needed, though session.get is preferred.
 from bot.database.guild_transaction import GuildTransaction # Added import
@@ -1559,9 +1560,177 @@ class GameManager:
 
     async def _on_enter_location(self, guild_id: str, entity_id: str, entity_type: str, location_id: str):
         """
-        Placeholder for logic to execute when an entity enters a location.
+        Handles logic to execute when an entity enters a location, processing defined on_enter_events.
         """
         logger.info(f"Entity {entity_id} (Type: {entity_type}) entered location {location_id} in guild {guild_id}.")
+
+        if not self.location_manager or not self.character_manager:
+            logger.error(f"_on_enter_location: Essential managers (LocationManager, CharacterManager) not available for guild {guild_id}. Aborting.")
+            return
+
+        location_obj = self.location_manager.get_location_instance(guild_id, location_id) # Using synchronous cache access
+
+        if not location_obj:
+            logger.warning(f"_on_enter_location: Location {location_id} not found for guild {guild_id}.")
+            return
+
+        if not location_obj.on_enter_events_json or not isinstance(location_obj.on_enter_events_json, list) or not location_obj.on_enter_events_json:
+            logger.debug(f"_on_enter_location: No on_enter_events defined or events list is empty for location {location_id} in guild {guild_id}.")
+            return
+
+        acting_character: Optional[Character] = None
+        if entity_type == "Character":
+            # Assuming CharacterManager.get_character returns the SQLAlchemy model or a compatible dict/object
+            # For this example, direct use of DBService or session.get might be more aligned if CharacterManager returns game model
+            # However, the prompt implies CharacterManager.get_character exists.
+            # If CharacterManager.get_character returns a game model, it needs player_id for language.
+            # For now, let's assume it returns a model that can give us player_id.
+            # This part might need adjustment based on actual CharacterManager.get_character implementation.
+            # For MVP, direct session.get might be safer if CharacterManager is complex.
+            async with self.db_service.get_session() as session: # type: ignore
+                acting_character_model = await session.get(Character, entity_id)
+                if acting_character_model and str(acting_character_model.guild_id) == guild_id:
+                    acting_character = acting_character_model # Assign to the broader scope variable
+                else:
+                    logger.error(f"_on_enter_location: Character {entity_id} not found in guild {guild_id} for event processing.")
+                    # No return here yet, some events might not need a character
+        elif entity_type == "Party":
+            if self.party_manager:
+                # party_obj = await self.party_manager.get_party(guild_id, entity_id) # Assuming this returns Party model
+                async with self.db_service.get_session() as session: # type: ignore
+                    party_obj_model = await session.get(Party, entity_id)
+                    if party_obj_model and str(party_obj_model.guild_id) == guild_id and party_obj_model.leader_id:
+                        leader_char_model = await session.get(Character, party_obj_model.leader_id)
+                        if leader_char_model and str(leader_char_model.guild_id) == guild_id:
+                            acting_character = leader_char_model
+                        else:
+                            logger.error(f"_on_enter_location: Party leader {party_obj_model.leader_id} for party {entity_id} not found in guild {guild_id}.")
+                    elif not party_obj_model or str(party_obj_model.guild_id) != guild_id:
+                        logger.error(f"_on_enter_location: Party {entity_id} not found or guild mismatch for event processing.")
+                    elif not party_obj_model.leader_id:
+                        logger.warning(f"_on_enter_location: Party {entity_id} has no leader. Cannot determine acting character for events.")
+            else:
+                logger.warning("_on_enter_location: PartyManager not available. Cannot determine acting character for Party entry.")
+
+        player_language = "en" # Default
+        if acting_character and acting_character.player_id:
+            player_account = await self.get_player_model_by_id(guild_id, acting_character.player_id) # Fetches Player account model
+            if player_account and player_account.selected_language:
+                player_language = player_account.selected_language
+
+        # Ensure location_obj.channel_id is valid before creating callback
+        send_callback: Optional[SendToChannelCallback] = None
+        if location_obj.channel_id:
+            try:
+                send_callback = self._get_discord_send_callback(int(location_obj.channel_id))
+            except ValueError:
+                logger.error(f"_on_enter_location: Invalid channel_id format '{location_obj.channel_id}' for location {location_id}.")
+
+        if not send_callback: # Fallback or if no channel_id
+            logger.info(f"_on_enter_location: No valid send_callback for location {location_id}. Messages will be logged.")
+            # Define a dummy send_callback that logs if real one isn't available
+            async def log_send_callback(message_content: str, **kwargs):
+                logger.info(f"[LOG_SEND_CALLBACK] Location: {location_id}, Message: {message_content}")
+            send_callback = log_send_callback
+
+
+        for event_config in location_obj.on_enter_events_json:
+            if not isinstance(event_config, dict):
+                logger.warning(f"_on_enter_location: Skipping invalid event_config (not a dict) in location {location_id}: {event_config}")
+                continue
+
+            chance = event_config.get("chance", 1.0)
+            if random.random() > chance:
+                continue
+
+            event_type = event_config.get("event_type")
+            message_i18n = event_config.get("message_i18n", {})
+            localized_message = message_i18n.get(player_language, message_i18n.get("en", "An event occurs."))
+
+            if event_type == "AMBIENT_MESSAGE":
+                await send_callback(localized_message)
+
+            elif event_type == "ITEM_DISCOVERY":
+                if not acting_character:
+                    logger.warning(f"_on_enter_location: ITEM_DISCOVERY event in {location_id} needs an acting_character, but none found for entity {entity_id} ({entity_type}). Skipping.")
+                    continue
+                if not self.item_manager or not self.inventory_manager:
+                    logger.warning(f"_on_enter_location: ItemManager or InventoryManager not available for ITEM_DISCOVERY event in {location_id}. Skipping.")
+                    continue
+
+                items_to_grant = event_config.get("items", [])
+                discovered_item_names = []
+                for item_info in items_to_grant:
+                    template_id = item_info.get("item_template_id")
+                    quantity = item_info.get("quantity", 1)
+                    state_vars = item_info.get("state_variables")
+                    if template_id:
+                        # grant_success = await self.inventory_manager.add_item_to_character_inventory(guild_id, acting_character.id, template_id, quantity, state_variables=state_vars)
+                        # For MVP, logging the grant action
+                        logger.info(f"_on_enter_location: ITEM_DISCOVERY: Character {acting_character.id} would be granted {quantity}x {template_id} (state: {state_vars}) in {location_id}.")
+                        grant_success = True # Assume success for logging
+
+                        if grant_success:
+                            item_template_obj = await self.item_manager.get_item_template(guild_id, template_id)
+                            item_name = item_template_obj.name_i18n.get(player_language, item_template_obj.name_i18n.get("en", template_id)) if item_template_obj else template_id
+                            discovered_item_names.append(f"{quantity}x {item_name}")
+
+                if discovered_item_names:
+                    final_item_message = localized_message.replace("[item_name]", ", ".join(discovered_item_names)).replace("[items_list]", ", ".join(discovered_item_names))
+                    await send_callback(final_item_message)
+
+            elif event_type == "NPC_APPEARANCE":
+                if not self.npc_manager:
+                    logger.warning(f"_on_enter_location: NpcManager not available for NPC_APPEARANCE event in {location_id}. Skipping.")
+                    continue
+
+                npc_template_id = event_config.get("npc_template_id")
+                spawn_count = event_config.get("spawn_count", 1)
+                # is_temporary = event_config.get("is_temporary", True) # Not used in MVP logging
+                # initial_state = event_config.get("initial_state") # Not used in MVP logging
+                if npc_template_id:
+                    for _ in range(spawn_count):
+                        # spawned_npc = await self.npc_manager.spawn_npc_in_location(guild_id, location_id, npc_template_id, is_temporary, initial_state_variables=initial_state)
+                        logger.info(f"_on_enter_location: NPC_APPEARANCE: NPC template {npc_template_id} would spawn in {location_id} for guild {guild_id}.")
+
+                    npc_template_for_name = await self.npc_manager.get_npc_template(guild_id, npc_template_id)
+                    npc_name = npc_template_for_name.name_i18n.get(player_language, npc_template_id) if npc_template_for_name else npc_template_id
+                    final_npc_message = localized_message.replace("[npc_name]", npc_name).replace("[npc_count]", str(spawn_count))
+                    await send_callback(final_npc_message)
+
+            elif event_type == "SIMPLE_HAZARD":
+                if not acting_character:
+                    logger.warning(f"_on_enter_location: SIMPLE_HAZARD event in {location_id} needs an acting_character, but none found for entity {entity_id} ({entity_type}). Skipping.")
+                    continue
+
+                effect_type = event_config.get("effect_type")
+                if effect_type == "damage":
+                    if not self.character_manager: # Should have been checked at start, but double check for safety
+                         logger.warning(f"_on_enter_location: CharacterManager not available for SIMPLE_HAZARD (damage) in {location_id}. Skipping.")
+                         continue
+                    amount = event_config.get("damage_amount", 0)
+                    damage_type = event_config.get("damage_type", "generic")
+                    # await self.character_manager.update_health(guild_id, acting_character.id, -amount) # Negative for damage
+                    logger.info(f"_on_enter_location: SIMPLE_HAZARD: Character {acting_character.id} would take {amount} {damage_type} damage in {location_id}.")
+                    final_hazard_message = localized_message.replace("[damage_amount]", str(amount)).replace("[damage_type]", damage_type)
+                    await send_callback(final_hazard_message)
+                elif effect_type == "status_effect":
+                    if not self.status_manager:
+                         logger.warning(f"_on_enter_location: StatusManager not available for SIMPLE_HAZARD (status_effect) in {location_id}. Skipping.")
+                         continue
+                    status_id = event_config.get("status_effect_id")
+                    # duration = event_config.get("status_duration_turns") # Not used in MVP logging
+                    if status_id:
+                        # await self.status_manager.apply_status_to_character(guild_id, acting_character.id, status_id, duration_turns=duration)
+                        logger.info(f"_on_enter_location: SIMPLE_HAZARD: Character {acting_character.id} would get status {status_id} in {location_id}.")
+                        final_hazard_message = localized_message.replace("[status_effect_name]", status_id) # Placeholder, ideally fetch status name
+                        await send_callback(final_hazard_message)
+                else:
+                    logger.warning(f"_on_enter_location: Unknown SIMPLE_HAZARD effect_type '{effect_type}' in {location_id}. Message: {localized_message}")
+                    await send_callback(localized_message) # Send original message if effect is unclear
+
+            else:
+                logger.warning(f"_on_enter_location: Unknown event_type '{event_type}' in location {location_id} for guild {guild_id}.")
 
     async def handle_move_action(self, guild_id: str, character_id: str, target_location_identifier: str) -> bool:
         """
