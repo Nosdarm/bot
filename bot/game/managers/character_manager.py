@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from bot.database.models import Player, Character # New SQLAlchemy models
-from builtins import dict, set, list, int # Should be fine, but often not needed explicitly
+# from bot.game.models.character import Character # Old Pydantic model - REMOVED
+from builtins import dict, set, list, int
 
 from bot.game.utils import stats_calculator
 
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
     from bot.game.managers.combat_manager import CombatManager
     from bot.game.managers.dialogue_manager import DialogueManager
     from bot.game.rules.rule_engine import RuleEngine
-    # from bot.game.models.npc import NPC # Assuming NPC is also a SQLAlchemy model if used here
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.managers.npc_manager import NPCManager
@@ -93,7 +93,7 @@ class CharacterManager:
         logger.info("CharacterManager initialized with new cache structure.")
 
     async def _recalculate_and_store_effective_stats(self, guild_id: str, character_id: str, char_model: Optional[Character] = None) -> None:
-        if not char_model:
+        if not char_model: # char_model is now SQLAlchemy Character
             char_model = self.get_character(guild_id, character_id)
             if not char_model:
                 logger.error(f"CharacterManager: Character {character_id} not found in guild {guild_id} for effective stats recalc.")
@@ -101,7 +101,7 @@ class CharacterManager:
 
         if not self._game_manager:
             logger.warning(f"CharacterManager: GameManager not available, cannot recalculate effective_stats for char {character_id} in guild {guild_id}.")
-            char_model.effective_stats_json = json.dumps({"error": "game_manager_unavailable"})
+            char_model.effective_stats_json = json.dumps({"error": "game_manager_unavailable"}) # Directly set on SQLAlchemy model
             return
         try:
             effective_stats_dict = await stats_calculator.calculate_effective_stats(
@@ -116,7 +116,7 @@ class CharacterManager:
             char_model.effective_stats_json = json.dumps({"error": "calculation_failed"})
 
     async def trigger_stats_recalculation(self, guild_id: str, character_id: str) -> None:
-        char = self.get_character(guild_id, character_id)
+        char = self.get_character(guild_id, character_id) # Fetches SQLAlchemy Character
         if char:
             await self._recalculate_and_store_effective_stats(guild_id, character_id, char)
             self.mark_character_dirty(guild_id, character_id)
@@ -124,7 +124,7 @@ class CharacterManager:
         else:
             logger.warning(f"CharacterManager: trigger_stats_recalculation - Character {character_id} not found in guild {guild_id}.")
 
-    def get_character(self, guild_id: str, character_id: str) -> Optional[Character]:
+    def get_character(self, guild_id: str, character_id: str) -> Optional[Character]: # Returns SQLAlchemy Character
         guild_chars = self._characters.get(str(guild_id))
         if guild_chars:
              return guild_chars.get(character_id)
@@ -171,18 +171,19 @@ class CharacterManager:
             logger.debug(f"Player for Discord ID {discord_user_id} has no active character set in guild {guild_id_str}.")
             return None
 
-    def get_character_by_name(self, guild_id: str, name: str) -> Optional[Character]:
+    def get_character_by_name(self, guild_id: str, name: str) -> Optional[Character]: # Returns SQLAlchemy Character
          guild_chars = self._characters.get(str(guild_id))
          if guild_chars:
-              for char_model in guild_chars.values():
+              for char_model in guild_chars.values(): # char_model is SQLAlchemy Character
                   if isinstance(char_model.name_i18n, dict):
                       if any(n.lower() == name.lower() for n in char_model.name_i18n.values()):
                           return char_model
+                  # Fallback for older data if name_i18n was stored as string by mistake
                   elif isinstance(char_model.name_i18n, str) and char_model.name_i18n.lower() == name.lower():
                       return char_model
          return None
 
-    def get_all_characters(self, guild_id: str) -> List[Character]:
+    def get_all_characters(self, guild_id: str) -> List[Character]: # Returns List of SQLAlchemy Character
         guild_chars = self._characters.get(str(guild_id))
         if guild_chars:
              return list(guild_chars.values())
@@ -194,7 +195,7 @@ class CharacterManager:
         characters_in_location = []
         guild_chars = self._characters.get(guild_id_str)
         if guild_chars:
-             for char_model in guild_chars.values():
+             for char_model in guild_chars.values(): # char_model is SQLAlchemy Character
                  if str(char_model.current_location_id) == location_id_str:
                       characters_in_location.append(char_model)
         return characters_in_location
@@ -203,11 +204,13 @@ class CharacterManager:
         return self._entities_with_active_action.get(str(guild_id), set()).copy()
 
     def is_busy(self, guild_id: str, character_id: str) -> bool:
-        char = self.get_character(guild_id, character_id)
+        char = self.get_character(guild_id, character_id) # Fetches SQLAlchemy Character
         if not char: return False
-        if char.current_action_json or (char.action_queue_json and json.loads(char.action_queue_json)): return True
+        # Accessing JSON fields directly from SQLAlchemy model
+        if char.current_action_json or (char.action_queue_json and json.loads(char.action_queue_json or "[]")): return True
+
         if char.current_party_id is not None and self._party_manager and hasattr(self._party_manager, 'is_party_busy'):
-            if char.current_party_id:
+            if char.current_party_id: # Ensure it's not None before passing
                 return self._party_manager.is_party_busy(str(guild_id), char.current_party_id)
         return False
 
@@ -216,13 +219,13 @@ class CharacterManager:
         player_id: str,
         character_name: str,
         guild_id_verification: str,
+        session: AsyncSession, # Expect session to be passed, typically from GuildTransaction
         initial_location_id: Optional[str] = None,
         level: int = 1,
         experience: int = 0,
         unspent_xp: int = 0,
-        session: AsyncSession,
         **kwargs: Any
-    ) -> Optional[Character]:
+    ) -> Optional[Character]: # Returns SQLAlchemy Character
         if not self._game_manager:
             logger.error("CharacterManager: GameManager not available for create_character.")
             raise ValueError("GameManager not available for character creation.")
@@ -251,6 +254,7 @@ class CharacterManager:
 
         new_char_id = str(uuid.uuid4())
 
+        # Fetch starting rules
         starting_base_stats_rule = await self._game_manager.get_rule(guild_id_str, "starting_base_stats", default={"strength": 8,"dexterity": 8,"constitution": 8,"intelligence": 8,"wisdom": 8,"charisma": 8})
         starting_items_rules = await self._game_manager.get_rule(guild_id_str, "starting_items", default=[])
         starting_skills_rules = await self._game_manager.get_rule(guild_id_str, "starting_skills", default=[])
@@ -273,8 +277,8 @@ class CharacterManager:
                 if loc_obj:
                     resolved_initial_location_id = loc_obj.id
                 else:
-                    logger.error(f"Default starting location '{default_loc_static_id}' (static_id) not found for guild {guild_id_str}. Character will have no location.")
-                    resolved_initial_location_id = None
+                    logger.error(f"Default starting location '{default_loc_static_id}' (static_id) not found for guild {guild_id_str}.")
+                    resolved_initial_location_id = None # Or raise error
             else:
                 logger.error("LocationManager not available, cannot resolve default starting location.")
                 resolved_initial_location_id = None
@@ -282,13 +286,14 @@ class CharacterManager:
         char_data_dict = {
             "id": new_char_id, "player_id": player_id, "guild_id": guild_id_str,
             "name_i18n": {"en": character_name},
-            "character_class_key": starting_character_class_key,
-            "race_key": starting_race_key,
+            "character_class_key": starting_character_class_key, # Assuming model has character_class_key
+            "race_key": starting_race_key, # Assuming model has race_key
             "level": level, "xp": experience, "unspent_xp": unspent_xp,
             "gold": kwargs.get('gold', 0),
             "current_hp": base_hp, "max_hp": base_max_health,
-            "current_mp": float(starting_mp), "max_mp": float(starting_mp),
-            "base_attack": starting_attack_base, "base_defense": starting_defense_base,
+            "mp": float(starting_mp), # Changed to 'mp' to match Character model
+            "base_attack": starting_attack_base,
+            "base_defense": starting_defense_base,
             "is_alive": True,
             "stats_json": json.dumps(starting_base_stats_rule),
             "effective_stats_json": json.dumps({}),
@@ -309,7 +314,7 @@ class CharacterManager:
             "collected_actions_json": None,
             "current_location_id": resolved_initial_location_id,
             "current_party_id": None,
-            "is_active_character": True
+            # is_active_character is NOT on the Character model in the new design. It's on Player.
         }
 
         new_character = Character(**char_data_dict)
@@ -318,21 +323,22 @@ class CharacterManager:
         player_account.active_character_id = new_char_id
         session.add(player_account)
 
-        for item_info in starting_items_rules:
-            template_id = item_info.get("template_id")
-            quantity = item_info.get("quantity", 1)
-            state_vars = item_info.get("state_variables")
-            if template_id:
-                try:
-                    await self._item_manager.create_and_add_item_to_character_inventory(
-                        guild_id=guild_id_str, character_id=new_char_id,
-                        item_template_id=template_id, quantity=quantity,
-                        state_variables=state_vars, session=session
-                    )
-                    logger.info(f"Granted starting item {template_id} (x{quantity}) to character {new_char_id}")
-                except Exception as item_ex:
-                    logger.error(f"Error granting starting item {template_id} to char {new_char_id}: {item_ex}", exc_info=True)
-                    raise
+        if self._item_manager: # Ensure item_manager exists
+            for item_info in starting_items_rules:
+                template_id = item_info.get("template_id")
+                quantity = item_info.get("quantity", 1)
+                state_vars = item_info.get("state_variables")
+                if template_id:
+                    try:
+                        await self._item_manager.create_and_add_item_to_character_inventory(
+                            guild_id=guild_id_str, character_id=new_char_id,
+                            item_template_id=template_id, quantity=quantity,
+                            state_variables=state_vars, session=session
+                        )
+                        logger.info(f"Granted starting item {template_id} (x{quantity}) to character {new_char_id}")
+                    except Exception as item_ex:
+                        logger.error(f"Error granting starting item {template_id} to char {new_char_id}: {item_ex}", exc_info=True)
+                        raise
 
         await session.flush()
 
@@ -344,7 +350,7 @@ class CharacterManager:
         return new_character
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
-        if self._db_service is None: # Removed self._db_service.adapter check as get_session is on DBService
+        if self._db_service is None:
             logger.error(f"CharacterManager: DB service not available for save_state in guild {guild_id}.")
             return
 
@@ -356,13 +362,13 @@ class CharacterManager:
             logger.debug(f"CharacterManager: No dirty or deleted characters to save for guild {guild_id_str}.")
             return
 
-        async with self._db_service.get_session() as session: # Manage session for batch operations
-            async with session.begin(): # Start a transaction
+        async with self._db_service.get_session() as session:
+            async with session.begin():
                 try:
                     if deleted_ids:
                         ids_to_delete_list = list(deleted_ids)
                         if ids_to_delete_list:
-                            from sqlalchemy import delete as sqlalchemy_delete # Local import
+                            from sqlalchemy import delete as sqlalchemy_delete
                             stmt = sqlalchemy_delete(Character).where(
                                 Character.guild_id == guild_id_str,
                                 Character.id.in_(ids_to_delete_list)
@@ -375,26 +381,21 @@ class CharacterManager:
                     for char_id in dirty_ids:
                         if char_id in guild_cache:
                             char_obj = guild_cache[char_id]
-                            # Ensure it's merged into the session before potential commit
                             await session.merge(char_obj)
                             processed_dirty_ids_in_transaction.add(char_id)
                         else:
                             logger.warning(f"Character {char_id} marked dirty but not found in cache for guild {guild_id_str}.")
 
-                    # Commit is handled by session.begin() context manager
                     logger.info(f"CharacterManager: Processed {len(processed_dirty_ids_in_transaction)} dirty characters for guild {guild_id_str}.")
 
-                    # Clear from dirty/deleted sets only after successful commit (implicitly via exiting 'with' block)
                     if guild_id_str in self._deleted_characters_ids:
-                         self._deleted_characters_ids[guild_id_str].clear() # Clear all processed deleted IDs
+                         self._deleted_characters_ids[guild_id_str].clear()
                     if guild_id_str in self._dirty_characters:
                         self._dirty_characters[guild_id_str].difference_update(processed_dirty_ids_in_transaction)
                         if not self._dirty_characters[guild_id_str]: del self._dirty_characters[guild_id_str]
 
                 except Exception as e:
-                    # Rollback is handled by session.begin() context manager
                     logger.error(f"CharacterManager: Error during save_state transaction for guild {guild_id_str}: {e}", exc_info=True)
-                    # Do not clear dirty/deleted sets here as the transaction failed
 
 
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
@@ -407,7 +408,7 @@ class CharacterManager:
 
         self._characters[guild_id_str] = {}
         self._discord_to_player_map[guild_id_str] = {}
-        self._entities_with_active_action.pop(guild_id_str, None) # Clear set for guild
+        self._entities_with_active_action.pop(guild_id_str, None)
         self._dirty_characters.pop(guild_id_str, None)
         self._deleted_characters_ids.pop(guild_id_str, None)
 
@@ -428,8 +429,14 @@ class CharacterManager:
                 loaded_char_count = 0
                 for char_obj in char_results.scalars().all():
                     self._characters.setdefault(guild_id_str, {})[char_obj.id] = char_obj
-                    current_action_q = json.loads(char_obj.action_queue_json or "[]")
-                    if char_obj.current_action_json or current_action_q: # Check parsed queue
+                    current_action_q_str = char_obj.action_queue_json or "[]"
+                    current_action_q = []
+                    try:
+                        current_action_q = json.loads(current_action_q_str)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Corrupt action_queue_json for char {char_obj.id}: {current_action_q_str}")
+
+                    if char_obj.current_action_json or current_action_q:
                         self._entities_with_active_action.setdefault(guild_id_str, set()).add(char_obj.id)
                     loaded_char_count += 1
                 logger.info(f"CharacterManager: Loaded {loaded_char_count} characters for guild {guild_id_str}.")
@@ -547,25 +554,25 @@ class CharacterManager:
         recalc_needed = False
 
         base_stats = json.loads(char.stats_json or '{}')
-        original_base_stats_json_str = char.stats_json # For comparison
+        original_base_stats_json_str = char.stats_json
 
         for key, value in stats_update.items():
             if key == "current_hp":
                 await self.update_health(guild_id, character_id, float(value) - (char.current_hp or 0.0), **kwargs)
                 updated_fields.append(f"current_hp to {char.current_hp}")
                 continue
-            elif key in ["current_mp", "gold", "level", "xp", "unspent_xp", "max_hp", "max_mp", "base_attack", "base_defense"]:
+            elif key in ["current_mp", "gold", "level", "xp", "unspent_xp", "max_hp", "max_mp", "base_attack", "base_defense"]: # Direct Character attributes
                  if hasattr(char, key) and getattr(char, key) != value:
                     setattr(char, key, value)
                     updated_fields.append(f"{key} to {value}")
                     if key not in ["current_mp", "gold"]:
                         recalc_needed = True
-            elif key in base_stats:
+            elif key in base_stats: # Modifying a base stat like "strength", "dexterity" stored in stats_json
                 if base_stats.get(key) != value:
                     base_stats[key] = value
                     updated_fields.append(f"base_stat_{key} to {value}")
                     recalc_needed = True
-            elif hasattr(char, key):
+            elif hasattr(char, key): # Other direct attributes on Character model
                 if getattr(char, key) != value:
                     setattr(char, key, value)
                     updated_fields.append(f"{key} to {value}")
@@ -575,7 +582,7 @@ class CharacterManager:
                 continue
 
         new_base_stats_json_str = json.dumps(base_stats)
-        if original_base_stats_json_str != new_base_stats_json_str:
+        if original_base_stats_json_str != new_base_stats_json_str: # Check if base_stats dict actually changed
             char.stats_json = new_base_stats_json_str
             # No need to add to updated_fields again, individual changes already noted
 
@@ -637,7 +644,7 @@ class CharacterManager:
         return None
 
     async def save_character(self, character: Character, guild_id: str) -> bool:
-        if not isinstance(character, Character): # Check if it's the SQLAlchemy model
+        if not isinstance(character, Character):
             logger.error("save_character expects a Character SQLAlchemy model instance.")
             return False
         if self._db_service is None:
@@ -670,7 +677,6 @@ class CharacterManager:
         logger.warning(f"CharacterManager: Field {field_name} not found or char {character_id} not found in guild {guild_id} for save_character_field.")
         return False
 
-    # --- Revert Methods ---
     async def revert_location_change(self, guild_id: str, character_id: str, old_location_id: str, **kwargs: Any) -> bool:
         char = self.get_character(guild_id, character_id)
         if char:
@@ -746,7 +752,6 @@ class CharacterManager:
         logger.debug(f"CharacterManager: revert_inventory_changes for char {character_id}. Needs proper ItemManager/inventory_json handling.")
         char = self.get_character(guild_id, character_id)
         if char:
-            # This would require complex logic to revert char.inventory_json or call ItemManager
             self.mark_character_dirty(guild_id, character_id)
             await self._recalculate_and_store_effective_stats(guild_id, character_id, char)
             return True
@@ -791,7 +796,7 @@ class CharacterManager:
                 player_account = await session.get(Player, char_to_delete.player_id)
                 if player_account and player_account.active_character_id == character_id:
                     player_account.active_character_id = None
-                    session.add(player_account) # Mark player account as dirty
+                    session.add(player_account)
 
             await session.delete(char_to_delete)
             if str(guild_id) in self._characters:
@@ -817,11 +822,12 @@ class CharacterManager:
             new_char = Character(**character_data)
             await session.merge(new_char)
 
-            if new_char.is_active_character and new_char.player_id:
+            if new_char.player_id: # is_active_character is not on Character model anymore
                 player_account = await session.get(Player, new_char.player_id)
-                if player_account:
-                    player_account.active_character_id = new_char.id
-                    session.add(player_account)
+                if player_account and player_account.active_character_id != new_char.id : # Check if it needs to be set
+                    # This logic might need refinement based on whether recreation implies making active.
+                    # For now, if a character is recreated, it doesn't automatically become the active one unless explicitly set.
+                    pass # player_account.active_character_id = new_char.id; session.add(player_account)
 
             self._characters.setdefault(guild_id_str, {})[new_char.id] = new_char
             await self._recalculate_and_store_effective_stats(guild_id_str, new_char.id, new_char)
@@ -837,7 +843,7 @@ class CharacterManager:
             return
 
         character.level = (character.level or 0) + 1
-        logger.info(f"CharacterManager.level_up: Character {character.name_i18n.get('en', character.id) if character.name_i18n else character.id} (ID: {character.id}) leveled up to {character.level}")
+        logger.info(f"CharacterManager.level_up: Character {character.name_i18n.get('en', character.id) if isinstance(character.name_i18n, dict) else character.id} (ID: {character.id}) leveled up to {character.level}")
 
         base_stats = json.loads(character.stats_json or '{}')
 
@@ -891,8 +897,8 @@ class CharacterManager:
             "gold": char.gold,
             "current_hp": char.current_hp,
             "max_hp": char.max_hp,
-            "current_mp": char.current_mp,
-            "max_mp": char.max_mp,
+            "current_mp": char.mp, # Changed from current_mp
+            "max_mp": char.mp, # Assuming max_mp is same as mp for now, or derived
             "is_alive": char.is_alive,
             "stats_json": char.stats_json,
             "effective_stats_json": char.effective_stats_json,
@@ -900,3 +906,5 @@ class CharacterManager:
             "xp_added": amount,
             "xp_for_next_level": xp_for_next_level
         }
+
+[end of bot/game/managers/character_manager.py]
