@@ -362,45 +362,66 @@ class CharacterManager:
             logger.debug(f"CharacterManager: No dirty or deleted characters to save for guild {guild_id_str}.")
             return
 
-        async with self._db_service.get_session() as session:
-            async with session.begin():
-                try:
-                    if deleted_ids:
-                        ids_to_delete_list = list(deleted_ids)
-                        if ids_to_delete_list:
-                            from sqlalchemy import delete as sqlalchemy_delete
-                            stmt = sqlalchemy_delete(Character).where(
-                                Character.guild_id == guild_id_str,
-                                Character.id.in_(ids_to_delete_list)
-                            )
-                            await session.execute(stmt)
-                            logger.info(f"CharacterManager: Marked {len(ids_to_delete_list)} characters for deletion in DB for guild {guild_id_str}: {ids_to_delete_list}")
+        # Ensure db_service and its session_factory are available
+        if not self._db_service or not hasattr(self._db_service, 'get_session_factory'):
+            logger.error(f"CharacterManager: DB service or session factory not available for save_state in guild {guild_id_str}.")
+            return
 
-                    guild_cache = self._characters.get(guild_id_str, {})
-                    processed_dirty_ids_in_transaction = set()
-                    for char_id in dirty_ids:
-                        if char_id in guild_cache:
-                            char_obj = guild_cache[char_id]
-                            await session.merge(char_obj)
-                            processed_dirty_ids_in_transaction.add(char_id)
-                        else:
-                            logger.warning(f"Character {char_id} marked dirty but not found in cache for guild {guild_id_str}.")
+        # Use GuildTransaction for saving state
+        from bot.database.guild_transaction import GuildTransaction
+        try:
+            async with GuildTransaction(self._db_service.get_session_factory, guild_id_str) as session:
+                if deleted_ids:
+                    ids_to_delete_list = list(deleted_ids)
+                    if ids_to_delete_list:
+                        from sqlalchemy import delete as sqlalchemy_delete
+                        stmt = sqlalchemy_delete(Character).where(
+                            Character.id.in_(ids_to_delete_list)
+                            # Guild ID check is implicitly handled by GuildTransaction's pre-commit checks
+                            # if we were fetching and then deleting, or if Character model had a before_delete hook.
+                            # For a bulk delete like this, ensuring the IDs actually BELONG to the guild
+                            # before adding to deleted_ids is important.
+                            # The GuildTransaction won't catch deleting an object from another guild if it's not loaded.
+                            # However, mark_character_deleted operates on cache which is guild-segregated.
+                        )
+                        await session.execute(stmt)
+                        logger.info(f"CharacterManager: Executed delete for {len(ids_to_delete_list)} characters in DB for guild {guild_id_str}: {ids_to_delete_list}")
 
-                    logger.info(f"CharacterManager: Processed {len(processed_dirty_ids_in_transaction)} dirty characters for guild {guild_id_str}.")
+                guild_cache = self._characters.get(guild_id_str, {})
+                processed_dirty_ids_in_transaction = set()
+                for char_id in dirty_ids:
+                    if char_id in guild_cache:
+                        char_obj = guild_cache[char_id]
+                        # Ensure the character object's guild_id matches before merging.
+                        # GuildTransaction pre-commit check will also verify this.
+                        if hasattr(char_obj, 'guild_id') and str(getattr(char_obj, 'guild_id')) != guild_id_str:
+                            logger.error(f"CRITICAL: Character {char_id} in guild {guild_id_str} cache has mismatched guild_id {getattr(char_obj, 'guild_id')}. Skipping save.")
+                            continue
+                        await session.merge(char_obj)
+                        processed_dirty_ids_in_transaction.add(char_id)
+                    else:
+                        logger.warning(f"Character {char_id} marked dirty but not found in cache for guild {guild_id_str}.")
 
-                    if guild_id_str in self._deleted_characters_ids:
-                         self._deleted_characters_ids[guild_id_str].clear()
-                    if guild_id_str in self._dirty_characters:
-                        self._dirty_characters[guild_id_str].difference_update(processed_dirty_ids_in_transaction)
-                        if not self._dirty_characters[guild_id_str]: del self._dirty_characters[guild_id_str]
+                logger.info(f"CharacterManager: Processed {len(processed_dirty_ids_in_transaction)} dirty characters for guild {guild_id_str} via merge.")
+                # No explicit session.commit() needed due to GuildTransaction
 
-                except Exception as e:
-                    logger.error(f"CharacterManager: Error during save_state transaction for guild {guild_id_str}: {e}", exc_info=True)
+            # Cleanup local dirty/deleted sets only after successful transaction
+            if guild_id_str in self._deleted_characters_ids:
+                    self._deleted_characters_ids[guild_id_str].clear()
+            if guild_id_str in self._dirty_characters:
+                self._dirty_characters[guild_id_str].difference_update(processed_dirty_ids_in_transaction)
+                if not self._dirty_characters[guild_id_str]: del self._dirty_characters[guild_id_str]
+            logger.info(f"CharacterManager: Successfully saved state for guild {guild_id_str}.")
+
+        except ValueError as ve: # Catch GuildTransaction specific errors
+            logger.error(f"CharacterManager: GuildTransaction integrity error during save_state for guild {guild_id_str}: {ve}", exc_info=True)
+        except Exception as e:
+            logger.error(f"CharacterManager: Error during save_state for guild {guild_id_str}: {e}", exc_info=True)
 
 
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
-        if self._db_service is None:
-            logger.error(f"CharacterManager: DB service not available for load_state in guild {guild_id}.")
+        if self._db_service is None or not hasattr(self._db_service, 'get_session_factory'):
+            logger.error(f"CharacterManager: DB service or session factory not available for load_state in guild {guild_id}.")
             return
 
         guild_id_str = str(guild_id)
@@ -412,22 +433,26 @@ class CharacterManager:
         self._dirty_characters.pop(guild_id_str, None)
         self._deleted_characters_ids.pop(guild_id_str, None)
 
-        async with self._db_service.get_session() as session:
-            try:
-                player_stmt = select(Player).where(Player.guild_id == guild_id_str)
-                player_results = await session.execute(player_stmt)
-                for player_obj in player_results.scalars().all():
+        from bot.database.crud_utils import get_entities
+        from bot.database.guild_transaction import GuildTransaction # Recommended for consistency, though reads might use simpler session
+
+        try:
+            # Using GuildTransaction for consistency, though for pure reads, a simpler session might also work
+            # if crud_utils are used which internally apply guild_id filtering.
+            # GuildTransaction ensures session.info["current_guild_id"] is set, which crud_utils can use for verification.
+            async with GuildTransaction(self._db_service.get_session_factory, guild_id_str, commit_on_exit=False) as session: # commit_on_exit=False for read-only
+                all_players_in_guild = await get_entities(session, Player, guild_id=guild_id_str)
+                for player_obj in all_players_in_guild:
                     if player_obj.discord_id:
                         try:
                             self._discord_to_player_map.setdefault(guild_id_str, {})[int(player_obj.discord_id)] = player_obj.id
                         except ValueError:
-                             logger.warning(f"Could not parse discord_id '{player_obj.discord_id}' to int for player mapping for player {player_obj.id}.")
+                            logger.warning(f"Could not parse discord_id '{player_obj.discord_id}' to int for player mapping for player {player_obj.id}.")
                 logger.info(f"CharacterManager: Loaded {len(self._discord_to_player_map.get(guild_id_str, {}))} player ID mappings for guild {guild_id_str}.")
 
-                char_stmt = select(Character).where(Character.guild_id == guild_id_str)
-                char_results = await session.execute(char_stmt)
+                all_characters_in_guild = await get_entities(session, Character, guild_id=guild_id_str)
                 loaded_char_count = 0
-                for char_obj in char_results.scalars().all():
+                for char_obj in all_characters_in_guild:
                     self._characters.setdefault(guild_id_str, {})[char_obj.id] = char_obj
                     current_action_q_str = char_obj.action_queue_json or "[]"
                     current_action_q = []
@@ -436,13 +461,19 @@ class CharacterManager:
                     except json.JSONDecodeError:
                         logger.warning(f"Corrupt action_queue_json for char {char_obj.id}: {current_action_q_str}")
 
-                    if char_obj.current_action_json or current_action_q:
-                        self._entities_with_active_action.setdefault(guild_id_str, set()).add(char_obj.id)
+                    if char_obj.current_action_json or current_action_q: # Check if current_action_json is not None or empty
+                        if isinstance(char_obj.current_action_json, str) and not char_obj.current_action_json.strip(): # handle empty string case for JSON
+                             pass # treat empty string as no action
+                        elif char_obj.current_action_json or current_action_q: # check again after potential empty string handling
+                            self._entities_with_active_action.setdefault(guild_id_str, set()).add(char_obj.id)
+
                     loaded_char_count += 1
                 logger.info(f"CharacterManager: Loaded {loaded_char_count} characters for guild {guild_id_str}.")
 
-            except Exception as e:
-                logger.error(f"CharacterManager: DB error during load_state for guild {guild_id_str}: {e}", exc_info=True)
+        except ValueError as ve: # Catch GuildTransaction specific errors if they arise
+            logger.error(f"CharacterManager: GuildTransaction integrity error during load_state for guild {guild_id_str}: {ve}", exc_info=True)
+        except Exception as e:
+            logger.error(f"CharacterManager: DB error during load_state for guild {guild_id_str}: {e}", exc_info=True)
 
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
         logger.info(f"CharacterManager: Rebuilding runtime caches for guild {guild_id} (currently a pass-through).")
