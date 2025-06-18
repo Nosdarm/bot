@@ -58,8 +58,8 @@ if TYPE_CHECKING:
     from bot.game.party_processors.party_action_processor import PartyActionProcessor
     from bot.game.command_handlers.party_handler import PartyCommandHandler
     from bot.game.command_router import CommandRouter
-    from bot.game.managers.ability_manager import AbilityManager
-    from bot.game.managers.spell_manager import SpellManager
+    from bot.game.managers.ability_manager import AbilityManager # ADDED
+    from bot.game.managers.spell_manager import SpellManager   # ADDED
     from bot.game.managers.quest_manager import QuestManager
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.managers.dialogue_manager import DialogueManager
@@ -127,16 +127,16 @@ class GameManager:
         self.campaign_loader: Optional["CampaignLoader"] = None
         self.consequence_processor: Optional["ConsequenceProcessor"] = None
         self.nlu_data_service: Optional["NLUDataService"] = None
-        self.ability_manager: Optional["AbilityManager"] = None
-        self.spell_manager: Optional["SpellManager"] = None
+        self.ability_manager: Optional["AbilityManager"] = None # ADDED
+        self.spell_manager: Optional["SpellManager"] = None   # ADDED
         self.lore_manager: Optional["LoreManager"] = None
         self.prompt_context_collector: Optional["PromptContextCollector"] = None
         self.multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None
-        self.ai_response_validator: Optional[AIResponseValidator] = None # Added attribute
-        self.turn_processor: Optional[TurnProcessor] = None # Added for TurnProcessor
-        self.check_resolver: Optional[CheckResolver] = None # Added for CheckResolver
-        self.faction_manager: Optional[FactionManager] = None # Added for FactionManager
-        self.location_interaction_service: Optional[LocationInteractionService] = None # For Part 2
+        self.ai_response_validator: Optional[AIResponseValidator] = None
+        self.turn_processor: Optional[TurnProcessor] = None
+        self.check_resolver: Optional[CheckResolver] = None
+        self.faction_manager: Optional[FactionManager] = None
+        self.location_interaction_service: Optional[LocationInteractionService] = None
         self._on_enter_action_executor: Optional["OnEnterActionExecutor"] = None
         self._stage_description_generator: Optional["StageDescriptionGenerator"] = None
         self._event_stage_processor: Optional["EventStageProcessor"] = None
@@ -589,8 +589,8 @@ class GameManager:
         from bot.game.managers.relationship_manager import RelationshipManager
         # DialogueManager already imported (or should be) if it's a dependency for others here
         # GameLogManager already initialized in _initialize_dependent_managers
-        from bot.game.managers.ability_manager import AbilityManager
-        from bot.game.managers.spell_manager import SpellManager
+        from bot.game.managers.ability_manager import AbilityManager # Ensure it's imported
+        from bot.game.managers.spell_manager import SpellManager   # Ensure it's imported
         from bot.game.conflict_resolver import ConflictResolver
         # TurnProcessingService already imported
         # TurnProcessor is imported at the top of the file.
@@ -740,8 +740,18 @@ class GameManager:
         )
         logger.info("GameManager: CharacterActionProcessor initialized.")
 
-        # Initialize other processors and services like CharacterViewService, PartyActionProcessor, etc.
-        # Ensure their dependencies, including those from the newly reordered managers, are available.
+        # Ensure AbilityManager and SpellManager are initialized
+        if not hasattr(self, 'ability_manager') or not self.ability_manager:
+            from bot.game.managers.ability_manager import AbilityManager # Ensure import is within reach
+            self.ability_manager = AbilityManager(db_service=self.db_service, settings=self._settings.get('ability_settings', {}))
+            logger.info("GameManager: AbilityManager initialized in _initialize_processors_and_command_system.")
+
+        if not hasattr(self, 'spell_manager') or not self.spell_manager:
+            from bot.game.managers.spell_manager import SpellManager # Ensure import is within reach
+            self.spell_manager = SpellManager(db_service=self.db_service, settings=self._settings.get('spell_settings', {}))
+            logger.info("GameManager: SpellManager initialized in _initialize_processors_and_command_system.")
+
+
         if not hasattr(self, '_character_view_service') or not self._character_view_service:
             self._character_view_service = CharacterViewService(
                 character_manager=self.character_manager,
@@ -971,8 +981,40 @@ class GameManager:
     async def _initialize_ai_content_services(self):
         logger.info("GameManager: Initializing AI content generation services...") # Changed
         # ... (AI services initialization, replace print with logger.warning if needed)
-        if not self.prompt_context_collector or not self.multilingual_prompt_generator: # Keep existing checks
+
+        # PromptContextCollector initialization
+        self.prompt_context_collector = PromptContextCollector(
+            settings=self._settings,
+            db_service=self.db_service, # type: ignore
+            character_manager=self.character_manager, # type: ignore
+            npc_manager=self.npc_manager, # type: ignore
+            quest_manager=self.quest_manager, # type: ignore
+            relationship_manager=self.relationship_manager, # type: ignore
+            item_manager=self.item_manager, # type: ignore
+            location_manager=self.location_manager, # type: ignore
+            ability_manager=self.ability_manager, # Pass initialized AbilityManager
+            spell_manager=self.spell_manager, # Pass initialized SpellManager
+            event_manager=self.event_manager, # type: ignore
+            party_manager=self.party_manager, # type: ignore
+            lore_manager=self.lore_manager, # type: ignore
+            game_manager=self # Pass self (GameManager instance)
+        )
+        logger.info("GameManager: PromptContextCollector initialized.")
+
+        if not self.multilingual_prompt_generator: # Initialize if not already (can happen if setup is re-entrant or parts are conditional)
+            if self.prompt_context_collector:
+                self.multilingual_prompt_generator = MultilingualPromptGenerator(
+                    context_collector=self.prompt_context_collector,
+                    main_bot_language=self.get_default_bot_language(self._active_guild_ids[0] if self._active_guild_ids else "__default__"), # Use a fallback guild if none active
+                    settings=self._settings.get('prompt_template_settings', {}) # Pass relevant settings
+                )
+                logger.info("GameManager: MultilingualPromptGenerator initialized.")
+            else: # Should not happen if PCC init is unconditional
+                logger.error("GameManager: PromptContextCollector failed to initialize before MultilingualPromptGenerator.")
+
+        if not self.prompt_context_collector or not self.multilingual_prompt_generator:
             logger.warning("GameManager: AI prompt services (collector or generator) not fully inited due to missing managers.")
+
 
         self.ai_response_validator = AIResponseValidator()
         logger.info("GameManager: AIResponseValidator initialized.")
@@ -2255,3 +2297,5 @@ class GameManager:
         return application_successful
 
 logger.debug("DEBUG: Finished loading game_manager.py from: %s", __file__) # Changed
+
+[end of bot/game/managers/game_manager.py]

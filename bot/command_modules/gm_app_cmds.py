@@ -940,7 +940,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 updated_record_after_apply: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
                     PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
                 )
-                current_status_after_apply = updated_record_after_apply.status if updated_record_after_apply else record.status
+                current_status_after_apply = updated_record_after_apply.status if updated_record_after_apply else record.status # Fallback to old status if fetch fails
 
                 if application_success:
                     await interaction.followup.send(f"✅ AI Content ID `{pending_id}` (Type: {record.request_type}) approved and successfully applied.", ephemeral=True)
