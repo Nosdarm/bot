@@ -743,12 +743,25 @@ class GameManager:
         # Ensure AbilityManager and SpellManager are initialized
         if not hasattr(self, 'ability_manager') or not self.ability_manager:
             from bot.game.managers.ability_manager import AbilityManager # Ensure import is within reach
-            self.ability_manager = AbilityManager(db_service=self.db_service, settings=self._settings.get('ability_settings', {}))
+            self.ability_manager = AbilityManager(
+                settings=self._settings.get('ability_settings', {}),
+                db_service=self.db_service # Added db_service
+                # rule_engine=self.rule_engine, # If AbilityManager needs these, they should be added
+                # character_manager=self.character_manager
+            )
             logger.info("GameManager: AbilityManager initialized in _initialize_processors_and_command_system.")
 
         if not hasattr(self, 'spell_manager') or not self.spell_manager:
             from bot.game.managers.spell_manager import SpellManager # Ensure import is within reach
-            self.spell_manager = SpellManager(db_service=self.db_service, settings=self._settings.get('spell_settings', {}))
+            # Pass relevant managers, including self (GameManager)
+            self.spell_manager = SpellManager(
+                settings=self._settings.get('spell_settings', {}),
+                character_manager=self.character_manager,
+                rule_engine=self.rule_engine,
+                status_manager=self.status_manager,
+                db_adapter=self.db_service.adapter if self.db_service else None, # Keep db_adapter if still used by other methods in SpellManager
+                game_manager=self # Pass GameManager instance
+            )
             logger.info("GameManager: SpellManager initialized in _initialize_processors_and_command_system.")
 
 
