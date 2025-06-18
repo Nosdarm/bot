@@ -128,17 +128,26 @@ class GuildConfigCmds(commands.Cog):
                 session.add(guild_config)
                 await session.commit()
 
-                # Update GameManager cache if possible (complex interaction, usually done via a service/method)
+                # Update RulesConfig via GameManager
                 if hasattr(self.bot, 'game_manager') and self.bot.game_manager:
-                    if self.bot.game_manager._rules_config_cache and guild_id_str in self.bot.game_manager._rules_config_cache:
-                         self.bot.game_manager._rules_config_cache[guild_id_str]['default_language'] = chosen_lang_code
-                         logger.info(f"Updated GameManager rule cache for default_language in guild {guild_id_str}.")
-                    # Also, if GameManager has a direct method to update its own concept of guild language:
-                    # await self.bot.game_manager.update_guild_language_setting(guild_id_str, chosen_lang_code)
-
+                    try:
+                        await self.bot.game_manager.update_rule_config(guild_id_str, "default_language", chosen_lang_code)
+                        logger.info(f"Successfully called GameManager.update_rule_config for default_language in guild {guild_id_str} to {chosen_lang_code}.")
+                    except Exception as e_gm_rules:
+                        logger.error(f"Error calling GameManager.update_rule_config for default_language in guild {guild_id_str}: {e_gm_rules}", exc_info=True)
+                        # Optionally inform the user that part of the update failed
+                        await interaction.response.send_message(
+                            f"Bot language for GuildConfig updated to {chosen_lang_name} ({chosen_lang_code}), but failed to update central RulesConfig. Please check logs.",
+                            ephemeral=True
+                        )
+                        return # Exit if this critical part fails
+                else:
+                    logger.warning("GameManager not available, RulesConfig for default_language not updated via GameManager.")
+                    # Depending on strictness, you might want to inform user or not.
+                    # For now, we proceed with GuildConfig update success message if GM is missing.
 
                 await interaction.response.send_message(
-                    f"Bot language for this server has been set to {chosen_lang_name} ({chosen_lang_code}).",
+                    f"Bot language for this server has been set to {chosen_lang_name} ({chosen_lang_code}). RulesConfig also updated.",
                     ephemeral=True
                 )
                 logger.info(f"Bot language set to {chosen_lang_code} for guild {guild_id_str} by Master {interaction.user.id}.")

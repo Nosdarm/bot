@@ -77,43 +77,82 @@ class SettingsCog(commands.Cog, name="Settings Commands"):
     )
 
     # /settings set language
+    async def _set_player_language_preference(self, interaction: discord.Interaction, guild_id_str: str, user_id_str: str, chosen_lang_value: str, chosen_lang_name: str) -> str:
+        """Helper method to set player language and return a response message."""
+        if not hasattr(self.bot, 'game_manager') or not self.bot.game_manager:
+            logger.error(f"Language change for user {user_id_str} in guild {guild_id_str} failed: GameManager not found on bot.")
+            return "The game manager is not available. Please try again later or contact an administrator."
+
+        game_mngr = self.bot.game_manager
+        if not game_mngr.db_service:
+            logger.error(f"Language change for user {user_id_str} in guild {guild_id_str} failed: DBService not found in GameManager.")
+            return "The database service is not available. Please try again later or contact an administrator."
+
+        try:
+            player: Optional[Player] = await game_mngr.get_player_by_discord_id(
+                discord_id=user_id_str,
+                guild_id=guild_id_str
+            )
+
+            if not player:
+                logger.warning(f"Player record not found for discord_id {user_id_str} in guild {guild_id_str} when trying to set language.")
+                return "Your player profile was not found. Please ensure you have started playing or contact support."
+
+            success = await game_mngr.db_service.update_player_field(
+                player_id=player.id,
+                field_name='selected_language',
+                value=chosen_lang_value,
+                guild_id_str=guild_id_str
+            )
+
+            if success:
+                logger.info(f"Successfully updated Player.selected_language for user {user_id_str} (Player ID: {player.id}) in guild {guild_id_str} to {chosen_lang_value}.")
+                return f"Your language has been set to: {chosen_lang_name} ({chosen_lang_value})."
+            else:
+                logger.error(f"Failed to save language {chosen_lang_value} to DB for user {user_id_str} (Player ID: {player.id}) in guild {guild_id_str}.")
+                return "Could not save your language preference. Please try again or contact an administrator."
+        except Exception as e:
+            logger.error(f"Error setting language for user {user_id_str} in guild {guild_id_str}: {e}", exc_info=True)
+            return "An unexpected error occurred while trying to set your language. Please try again later."
+
     @settings_set_group.command(name="language", description="Set your preferred language.")
     @app_commands.choices(language_code=LANGUAGE_CHOICES)
     @app_commands.describe(language_code="Choose your preferred language.")
     async def set_language(self, interaction: discord.Interaction, language_code: app_commands.Choice[str]):
-        if not interaction.guild_id:
+        if not interaction.guild_id: # Should be redundant due to guild_only on group
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
             return
 
         user_id_str = str(interaction.user.id)
         guild_id_str = str(interaction.guild_id)
-        chosen_lang = language_code.value
+        chosen_lang_value = language_code.value
+        chosen_lang_name = language_code.name
 
-        logger.info(f"User {user_id_str} in guild {guild_id_str} attempting to set language to {chosen_lang}.")
+        logger.info(f"User {user_id_str} in guild {guild_id_str} attempting to set language to {chosen_lang_value} via /settings set language.")
 
-        try:
-            async with self.bot.get_db_session() as session:
-                # Fetch the Player object
-                stmt = select(Player).where(Player.discord_id == user_id_str, Player.guild_id == guild_id_str)
-                result = await session.execute(stmt)
-                player = result.scalars().first()
+        # Defer the response as the helper method can take some time
+        await interaction.response.defer(ephemeral=True)
+        response_message = await self._set_player_language_preference(interaction, guild_id_str, user_id_str, chosen_lang_value, chosen_lang_name)
+        await interaction.followup.send(response_message)
 
-                if player:
-                    player.selected_language = chosen_lang
-                    session.add(player)
-                    await session.commit() # Commit the change to Player table
-                    await interaction.response.send_message(f"Your language has been set to: {language_code.name} ({chosen_lang}).", ephemeral=True)
-                    logger.info(f"Successfully updated Player.selected_language for user {user_id_str} in guild {guild_id_str} to {chosen_lang}.")
-                else:
-                    # Player not found - this might indicate an issue if players are expected to always exist.
-                    logger.warning(f"Player record not found for discord_id {user_id_str} in guild {guild_id_str} when trying to set language.")
-                    await interaction.response.send_message(
-                        "Could not find your player record to update the language. Please contact support if this issue persists.",
-                        ephemeral=True
-                    )
-        except Exception as e:
-            logger.error(f"Error setting language for user {user_id_str} in guild {guild_id_str}: {e}", exc_info=True)
-            await interaction.response.send_message("An error occurred while trying to set your language. Please try again later.", ephemeral=True)
+
+    @app_commands.command(name="lang", description="Set your preferred language for bot interactions.")
+    @app_commands.guild_only()
+    @app_commands.choices(language_code=LANGUAGE_CHOICES)
+    @app_commands.describe(language_code="Choose your preferred language.")
+    async def lang_command(self, interaction: discord.Interaction, language_code: app_commands.Choice[str]):
+        # guild_id is guaranteed by @app_commands.guild_only()
+        user_id_str = str(interaction.user.id)
+        guild_id_str = str(interaction.guild_id)
+        chosen_lang_value = language_code.value
+        chosen_lang_name = language_code.name
+
+        logger.info(f"User {user_id_str} in guild {guild_id_str} attempting to set language to {chosen_lang_value} via /lang.")
+
+        # Defer the response as the helper method can take some time
+        await interaction.response.defer(ephemeral=True)
+        response_message = await self._set_player_language_preference(interaction, guild_id_str, user_id_str, chosen_lang_value, chosen_lang_name)
+        await interaction.followup.send(response_message)
 
     # /settings set timezone
     @settings_set_group.command(name="timezone", description="Set your preferred timezone (e.g., UTC, Europe/Moscow).")
