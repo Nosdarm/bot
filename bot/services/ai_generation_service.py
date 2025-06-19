@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, List
 
 # Assuming models are accessible via bot.database.models after refactoring
 from bot.database.models import PendingGeneration, GuildConfig, NPC, Location, QuestTable, QuestStepTable
-from bot.ai.ai_response_validator import parse_and_validate_ai_response
 from bot.database.guild_transaction import GuildTransaction
 
 if TYPE_CHECKING:
@@ -81,7 +80,7 @@ class AIGenerationService:
             validation_issues_list = [{"type": "generation_error", "msg": "AI service returned no output."}]
         else:
             # parse_and_validate_ai_response might need game_manager or specific managers
-            parsed_data_dict, validation_issues_list = await parse_and_validate_ai_response(
+            parsed_data_dict, validation_issues_list = await self.game_manager.ai_response_validator.parse_and_validate_ai_response(
                 raw_ai_output_text=raw_ai_output,
                 guild_id=guild_id,
                 request_type=request_type,
