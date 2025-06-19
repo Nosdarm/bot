@@ -174,7 +174,7 @@ class AIResponseValidator:
                 ))
         return issues
 
-    def _semantic_validate_item_profile(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str) -> List[ValidationIssue]:
+    def _semantic_validate_item_profile(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str, game_manager: Optional['GameManager']) -> List[ValidationIssue]:
         issues: List[ValidationIssue] = []
         # item_type = data_dict.get('item_type') # Placeholder for item_type validation
         # equip_slot = data_dict.get('equipable_slot') # Placeholder for equip_slot validation
