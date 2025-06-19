@@ -26,8 +26,8 @@ def upgrade() -> None:
         sa.Column('timestamp', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('location_id', sa.String(), nullable=True),
         sa.Column('event_type', sa.String(), nullable=False),
-        sa.Column('entity_ids_json', postgresql.JSONB(astext_fallback=True), nullable=True, comment='Stores IDs of entities involved, e.g., {"character_ids": [], "npc_ids": [], "item_ids": []}'),
-        sa.Column('details_json', postgresql.JSONB(astext_fallback=True), nullable=True, comment='Stores detailed, structured information about the event'),
+        sa.Column('entity_ids_json', postgresql.JSONB(), nullable=True, comment='Stores IDs of entities involved, e.g., {"character_ids": [], "npc_ids": [], "item_ids": []}'),
+        sa.Column('details_json', postgresql.JSONB(), nullable=True, comment='Stores detailed, structured information about the event'),
         sa.ForeignKeyConstraint(['guild_id'], ['guild_configs.guild_id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['location_id'], ['locations.id'], ),
         sa.PrimaryKeyConstraint('id')
@@ -50,7 +50,7 @@ def upgrade() -> None:
         sa.Column('type', sa.String(), nullable=False),
         sa.Column('value', sa.Integer(), nullable=False, server_default=sa.text('0')),
         sa.Column('source_log_id', sa.String(), nullable=True),
-        sa.Column('details_json', postgresql.JSONB(astext_fallback=True), nullable=True),
+        sa.Column('details_json', postgresql.JSONB(), nullable=True),
         sa.ForeignKeyConstraint(['guild_id'], ['guild_configs.guild_id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['source_log_id'], ['story_logs.id'], ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('id'),
@@ -68,7 +68,7 @@ def upgrade() -> None:
     op.create_index('idx_relationship_guild_type', 'relationships', ['guild_id', 'type'], unique=False)
 
     # Add schedule_json column to npcs table
-    op.add_column('npcs', sa.Column('schedule_json', postgresql.JSONB(astext_fallback=True), nullable=True))
+    op.add_column('npcs', sa.Column('schedule_json', postgresql.JSONB(), nullable=True))
     # ### end Alembic commands ###
 
 
