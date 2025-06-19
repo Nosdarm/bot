@@ -1,3 +1,12 @@
+import os
+import sys
+
+# Add the project root directory to sys.path
+# This assumes env.py is at bot/alembic/env.py
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import asyncio
 from logging.config import fileConfig
 
@@ -21,12 +30,6 @@ if config.config_file_name is not None:
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 # Ensure the path to your models is correct
-import sys
-import os
-# Assuming your project structure allows direct import from bot.database.models
-# If alembic.ini has prepend_sys_path = ., this should work.
-# Otherwise, you might need to adjust sys.path:
-# sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from bot.database.models import Base # Corrected import path
 target_metadata = Base.metadata
 
@@ -74,9 +77,31 @@ async def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    # Get the SQLAlchemy URL from environment or use default, similar to postgres_adapter.py
+    # This ensures the async engine uses the correct async driver.
+    DATABASE_URL_ENV_VAR = "DATABASE_URL"
+    DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot" # From postgres_adapter.py
+    db_url = os.getenv(DATABASE_URL_ENV_VAR, DEFAULT_SQLALCHEMY_DATABASE_URL)
+
+    # Create a configuration dictionary for async_engine_from_config
+    # We are not using config.get_section directly to ensure the correct URL with async driver is used.
+    engine_config = {
+        "sqlalchemy.url": db_url,
+        # Add other options from config.get_section if needed, e.g., echo
+        # For now, only URL is critical.
+    }
+    # Add other options from alembic.ini's main section if they exist and are needed by the engine
+    # For example, 'sqlalchemy.echo': config.get_main_option('sqlalchemy.echo')
+    # This example assumes such options might exist and be relevant.
+    ini_section_options = config.get_section(config.config_ini_section, {})
+    for key, value in ini_section_options.items():
+        if key not in engine_config and key.startswith("sqlalchemy."):
+             engine_config[key] = value
+
+
     connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+        engine_config, # Use our constructed config
+        prefix="sqlalchemy.", # Standard prefix
         poolclass=pool.NullPool,
     )
 
