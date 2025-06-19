@@ -183,120 +183,44 @@ class CharacterManager:
         manage_session = session is None
         actual_session: AsyncSession = session if session else self._db_service.get_session() # type: ignore
 
-        try:
-            async with actual_session.begin() if manage_session else actual_session.begin_nested(): # type: ignore
-                char_model = await actual_session.get(Character, character_id)
-                if not char_model or str(char_model.guild_id) != guild_id:
-                    logger.warning(f"CM.update_health: Character {character_id} not found in guild {guild_id}.")
-                    return None
+        async with actual_session.begin() if manage_session else actual_session.begin_nested(): # type: ignore
+            char_model = await actual_session.get(Character, character_id)
+            if not char_model or str(char_model.guild_id) != guild_id:
+                logger.warning(f"CM.update_health: Character {character_id} not found in guild {guild_id}.")
+                return None
 
-        guild_id_str = str(player_account.guild_id)
+            original_hp = float(char_model.current_hp)
 
-        name_check_stmt = select(Character).where(
-            Character.guild_id == guild_id_str,
-            Character.name_i18n.op('->>')('en') == character_name
-        )
-        existing_char_by_name_result = await session.execute(name_check_stmt)
-        if existing_char_by_name_result.scalars().first():
-            logger.warning(f"Character with name '{character_name}' already exists in guild {guild_id_str}.")
-            raise CharacterAlreadyExistsError(f"A character with the name '{character_name}' already exists in this guild.")
+            char_model.current_hp = float(char_model.current_hp) + amount
 
-        new_char_id = str(uuid.uuid4())
+            # Ensure max_hp is float for comparison and storage
+            char_model.max_hp = float(char_model.max_hp)
+            if char_model.current_hp < 0:
+                char_model.current_hp = 0.0
+            if char_model.current_hp > char_model.max_hp:
+                char_model.current_hp = char_model.max_hp
 
-        # Fetch starting rules
-        starting_base_stats_rule = await self._game_manager.get_rule(guild_id_str, "starting_base_stats", default={"strength": 8,"dexterity": 8,"constitution": 8,"intelligence": 8,"wisdom": 8,"charisma": 8})
-        starting_items_rules = await self._game_manager.get_rule(guild_id_str, "starting_items", default=[])
-        starting_skills_rules = await self._game_manager.get_rule(guild_id_str, "starting_skills", default=[])
-        starting_abilities_rules = await self._game_manager.get_rule(guild_id_str, "starting_abilities", default=[])
-        starting_character_class_key = await self._game_manager.get_rule(guild_id_str, "starting_character_class", default="commoner")
-        starting_race_key = await self._game_manager.get_rule(guild_id_str, "starting_race", default="human")
-        starting_mp = await self._game_manager.get_rule(guild_id_str, "starting_mp", default=10)
-        starting_attack_base = await self._game_manager.get_rule(guild_id_str, "starting_attack_base", default=1)
-        starting_defense_base = await self._game_manager.get_rule(guild_id_str, "starting_defense_base", default=0)
+            actual_hp_change = char_model.current_hp - original_hp
 
-        con_stat = float(starting_base_stats_rule.get("constitution", 8))
-        base_hp = kwargs.get('hp', con_stat * 10 + 50)
-        base_max_health = kwargs.get('max_health', base_hp)
+            char_model.is_alive = char_model.current_hp > 0
 
-        resolved_initial_location_id = initial_location_id
-        if not resolved_initial_location_id:
-            default_loc_static_id = await self._game_manager.get_rule(guild_id_str, "default_starting_location_id", "village_square")
-            if self._location_manager:
-                loc_obj = await self._location_manager.get_location_by_static_id(guild_id_str, default_loc_static_id, session=session)
-                if loc_obj:
-                    resolved_initial_location_id = loc_obj.id
-                else:
-                    logger.error(f"Default starting location '{default_loc_static_id}' (static_id) not found for guild {guild_id_str}.")
-                    resolved_initial_location_id = None # Or raise error
-            else:
-                logger.error("LocationManager not available, cannot resolve default starting location.")
-                resolved_initial_location_id = None
+            flag_modified(char_model, "current_hp")
+            flag_modified(char_model, "is_alive")
 
-        char_data_dict = {
-            "id": new_char_id, "player_id": player_id, "guild_id": guild_id_str,
-            "name_i18n": {"en": character_name},
-            "character_class_key": starting_character_class_key, # Assuming model has character_class_key
-            "race_key": starting_race_key, # Assuming model has race_key
-            "level": level, "xp": experience, "unspent_xp": unspent_xp,
-            "gold": kwargs.get('gold', 0),
-            "current_hp": base_hp, "max_hp": base_max_health,
-            "mp": float(starting_mp), # Changed to 'mp' to match Character model
-            "base_attack": starting_attack_base,
-            "base_defense": starting_defense_base,
-            "is_alive": True,
-            "stats_json": json.dumps(starting_base_stats_rule),
-            "effective_stats_json": json.dumps({}),
-            "status_effects_json": json.dumps([]),
-            "skills_data_json": json.dumps(starting_skills_rules),
-            "abilities_data_json": json.dumps(starting_abilities_rules),
-            "spells_data_json": json.dumps([]),
-            "known_spells_json": json.dumps([]),
-            "spell_cooldowns_json": json.dumps({}),
-            "inventory_json": json.dumps([]),
-            "equipment_slots_json": json.dumps({}),
-            "active_quests_json": json.dumps([]),
-            "flags_json": json.dumps({}),
-            "state_variables_json": json.dumps({}),
-            "current_game_status": "active",
-            "current_action_json": None,
-            "action_queue_json": json.dumps([]),
-            "collected_actions_json": None,
-            "current_location_id": resolved_initial_location_id,
-            "current_party_id": None,
-            # is_active_character is NOT on the Character model in the new design. It's on Player.
-        }
+            logger.info(f"Character {character_id} health updated by {amount}. Original: {original_hp}, New: {char_model.current_hp}, Max: {char_model.max_hp}. Applied in session.")
 
-        new_character = Character(**char_data_dict)
-        session.add(new_character)
+            # char_model is already part of the session and changes are tracked.
+            # If manage_session is true, session.commit() will be called by async with.
 
-        player_account.active_character_id = new_char_id
-        session.add(player_account)
+            return UpdateHealthResult(
+                applied_amount=amount,
+                actual_hp_change=actual_hp_change,
+                current_hp=char_model.current_hp,
+                max_hp=char_model.max_hp,
+                is_alive=char_model.is_alive,
+                original_hp=original_hp
+            )
 
-        if self._item_manager: # Ensure item_manager exists
-            for item_info in starting_items_rules:
-                template_id = item_info.get("template_id")
-                quantity = item_info.get("quantity", 1)
-                state_vars = item_info.get("state_variables")
-                if template_id:
-                    try:
-                        await self._item_manager.create_and_add_item_to_character_inventory(
-                            guild_id=guild_id_str, character_id=new_char_id,
-                            item_template_id=template_id, quantity=quantity,
-                            state_variables=state_vars, session=session
-                        )
-                        logger.info(f"Granted starting item {template_id} (x{quantity}) to character {new_char_id}")
-                    except Exception as item_ex:
-                        logger.error(f"Error granting starting item {template_id} to char {new_char_id}: {item_ex}", exc_info=True)
-                        raise
-
-        await session.flush()
-
-        self._characters.setdefault(guild_id_str, {})[new_char_id] = new_character
-
-        await self._recalculate_and_store_effective_stats(guild_id_str, new_char_id, new_character)
-
-        logger.info(f"CharacterManager: Character '{character_name}' (ID: {new_char_id}) creation process complete for Player {player_id} in guild {guild_id_str}.")
-        return new_character
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         if self._db_service is None:

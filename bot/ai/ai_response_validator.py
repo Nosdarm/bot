@@ -202,6 +202,7 @@ class AIResponseValidator:
 
         # Item value validation
         if game_manager:
+            assert game_manager is not None # Ensure game_manager is not None for type checkers and runtime safety
             item_type = data_dict.get('item_type') # Assuming item_type is a simple string like "weapon", "potion"
             rarity_level = data_dict.get('rarity_tag') # Assuming a field like "rarity_tag": "common", "rare"
             base_value = data_dict.get('base_value')
