@@ -8,7 +8,7 @@ import traceback
 import asyncio
 from typing import Optional, Dict, Any, List, Set, Tuple, Callable, Awaitable, TYPE_CHECKING, Union
 
-from bot.game.models.check_models import CheckOutcome, DetailedCheckResult
+from bot.game.models.check_models import CheckResult # MODIFIED
 from bot.game.models.status_effect import StatusEffect
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from bot.game.managers.skill_manager import SkillManager
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.event_processors.event_stage_processor import EventStageProcessor
-    from bot.game.models.check_models import DetailedCheckResult as DetailedCheckResultHint
+    # DetailedCheckResultHint REMOVED
 
 from bot.game.models.character import Character
 from bot.game.models.combat import Combat, CombatParticipant
@@ -802,14 +802,14 @@ class RuleEngine:
         location_id: str,
         # npc_ids_in_location: List[str], # Future: for opposed checks
         **kwargs: Any
-    ) -> DetailedCheckResult:
+    ) -> CheckResult:
         """
         Resolves a stealth check for a character.
         Considers character's stealth skill and location-based factors.
         """
         character = await self._character_manager.get_character(guild_id, character_id)
         if not character:
-            return DetailedCheckResult(success=False, message="Character not found.", roll_details={})
+            return CheckResult(succeeded=False, description="Character not found.", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=None, details_log={"reason": "Character not found."})
 
         skills_data = character.skills_data_json or {}
         stealth_skill = skills_data.get("stealth", 0)
@@ -844,6 +844,14 @@ class RuleEngine:
             #     "awareness_level_change": awareness_level_change,
             #     "consequences": consequences
             # }
+            # Mapping to CheckResult:
+            succeeded=success, # from original
+            roll_value=d20_roll, # from roll_details.roll
+            modifier_applied=total_roll - d20_roll, # Calculated, placeholder for actual sum of modifiers
+            total_roll_value=total_roll, # from roll_details.total_roll
+            dc_value=current_dc, # from roll_details.dc
+            description=f"Stealth check {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}", # from original message
+            details_log={"skill_type": "stealth", "crit_status": crit_status} # from roll_details, skill_type mapped from "skill"
         )
 
     async def resolve_pickpocket_attempt(
@@ -853,17 +861,17 @@ class RuleEngine:
         target_npc_id: str,
         # item_to_steal_id: Optional[str] = None, # Future: item difficulty
         **kwargs: Any
-    ) -> DetailedCheckResult:
+    ) -> CheckResult:
         """
         Resolves a pickpocket attempt by a character on an NPC.
         """
         character = await self._character_manager.get_character(guild_id, character_id)
         if not character:
-            return DetailedCheckResult(success=False, message="Character not found for pickpocket.", roll_details={})
+            return CheckResult(succeeded=False, description="Character not found for pickpocket.", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=None, details_log={"reason": "Character not found."})
 
         target_npc = await self._npc_manager.get_npc(guild_id, target_npc_id)
         if not target_npc:
-            return DetailedCheckResult(success=False, message="Target NPC not found for pickpocket.", roll_details={})
+            return CheckResult(succeeded=False, description="Target NPC not found for pickpocket.", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=None, details_log={"reason": "Target NPC not found."})
 
         skills_data = character.skills_data_json or {}
         pickpocket_skill = skills_data.get("pickpocket", 0)
@@ -903,6 +911,19 @@ class RuleEngine:
                 "detected": detected,
                 "item_id_stolen": item_id_stolen if success else None
             }
+            # Mapping to CheckResult:
+            succeeded=success,
+            roll_value=d20_roll, # from roll_details.roll
+            modifier_applied=total_roll - d20_roll, # Calculated placeholder
+            total_roll_value=total_roll, # from roll_details.total_roll
+            dc_value=current_dc, # from roll_details.dc
+            description=f"Pickpocket attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}", # from original message
+            details_log={
+                "skill_type": "pickpocket", # from roll_details.skill
+                "crit_status": crit_status, # from roll_details.crit_status
+                "detected": detected, # from custom_outcomes
+                "item_id_stolen": item_id_stolen if success else None # from custom_outcomes
+            }
         )
 
     # --- New Crafting and Gathering Skill Check Methods ---
@@ -915,17 +936,17 @@ class RuleEngine:
         character_skills: Dict[str, int],
         character_inventory: List[Dict[str, Any]], # List of item dicts
         **kwargs: Any
-    ) -> DetailedCheckResult:
+    ) -> CheckResult:
         """
         Resolves a gathering attempt from a resource node PoI.
         """
         character = await self._character_manager.get_character(guild_id, character_id)
         if not character:
-            return DetailedCheckResult(success=False, message_key="error_character_not_found", roll_details={})
+            return CheckResult(succeeded=False, description="error_character_not_found", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=None, details_log={"reason": "error_character_not_found"})
 
         resource_details = poi_data.get("resource_details")
         if not resource_details:
-            return DetailedCheckResult(success=False, message_key="gathering_fail_invalid_node_data", roll_details={})
+            return CheckResult(succeeded=False, description="gathering_fail_invalid_node_data", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=None, details_log={"reason": "gathering_fail_invalid_node_data"})
 
         gathering_skill_id = resource_details.get("gathering_skill_id")
         gathering_dc = resource_details.get("gathering_dc", 15)
@@ -938,7 +959,7 @@ class RuleEngine:
         secondary_chance = resource_details.get("secondary_resource_chance", 0.0)
 
         if not primary_resource_id or not gathering_skill_id:
-            return DetailedCheckResult(success=False, message_key="gathering_fail_incomplete_node_data", roll_details={})
+            return CheckResult(succeeded=False, description="gathering_fail_incomplete_node_data", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=gathering_dc if 'gathering_dc' in locals() else None, details_log={"reason": "gathering_fail_incomplete_node_data", "skill_type": gathering_skill_id if 'gathering_skill_id' in locals() else "unknown"})
 
         # 1. Tool Check
         if required_tool_category:
@@ -955,7 +976,7 @@ class RuleEngine:
                     has_required_tool = True
                     break
             if not has_required_tool:
-                return DetailedCheckResult(success=False, message_key=f"gathering_fail_no_tool_{required_tool_category}", roll_details={})
+                return CheckResult(succeeded=False, description=f"gathering_fail_no_tool_{required_tool_category}", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=gathering_dc, details_log={"skill_type": gathering_skill_id, "required_tool_category": required_tool_category})
 
         # 2. Skill Check
         # We need the Character object for resolve_skill_check
@@ -964,10 +985,14 @@ class RuleEngine:
         )
 
         if not success:
-            return DetailedCheckResult(
-                success=False,
-                message_key=f"gathering_fail_skill_check_{gathering_skill_id}",
-                roll_details={"skill": gathering_skill_id, "roll": d20_roll, "total_roll": total_roll, "dc": gathering_dc, "crit_status": crit_status}
+            return CheckResult(
+                succeeded=False,
+                description=f"gathering_fail_skill_check_{gathering_skill_id}", # Using message_key
+                roll_value=d20_roll,
+                modifier_applied=total_roll - d20_roll, # Placeholder
+                total_roll_value=total_roll,
+                dc_value=gathering_dc,
+                details_log={"skill_type": gathering_skill_id, "crit_status": crit_status} # Mapped from roll_details
             )
 
         # 3. Calculate Yield
@@ -987,14 +1012,21 @@ class RuleEngine:
         except ValueError as e: # Invalid dice string
              # Log error, potentially yield 0 or a default amount
             print(f"Error resolving dice roll for gathering: {e}")
-            return DetailedCheckResult(success=False, message_key="gathering_fail_yield_calculation_error", roll_details={})
+            return CheckResult(succeeded=False, description="gathering_fail_yield_calculation_error", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=gathering_dc, details_log={"reason": "gathering_fail_yield_calculation_error", "skill_type": gathering_skill_id, "error": str(e)})
 
-
-        return DetailedCheckResult(
-            success=True,
-            message_key=f"gathering_success_{gathering_skill_id}",
-            roll_details={"skill": gathering_skill_id, "roll": d20_roll, "total_roll": total_roll, "dc": gathering_dc, "crit_status": crit_status},
-            custom_outcomes={"yielded_items": yielded_items}
+        details_log_data = {
+            "skill_type": gathering_skill_id, # from roll_details
+            "crit_status": crit_status, # from roll_details
+            "yielded_items": yielded_items # from custom_outcomes
+        }
+        return CheckResult(
+            succeeded=True,
+            roll_value=d20_roll,
+            modifier_applied=total_roll - d20_roll, # Placeholder
+            total_roll_value=total_roll,
+            dc_value=gathering_dc,
+            description=f"gathering_success_{gathering_skill_id}", # Using message_key
+            details_log=details_log_data
         )
 
     async def resolve_crafting_attempt(
@@ -1006,17 +1038,17 @@ class RuleEngine:
         character_inventory: List[Dict[str, Any]], # List of item dicts, each with 'template_id' and 'quantity'
         current_location_data: Dict[str, Any], # Contains 'tags' list and 'properties' like 'station_type'
         **kwargs: Any
-    ) -> DetailedCheckResult:
+    ) -> CheckResult:
         """
         Resolves a crafting attempt based on a recipe. (MVP: Requirement checks only)
         """
         # Ensure managers are available if direct character object is needed
         if not self._character_manager: # Or any other required manager
-            return DetailedCheckResult(success=False, message_key="error_internal_server_error", custom_outcomes={"details": "CharacterManager not available"})
+            return CheckResult(succeeded=False, description="error_internal_server_error", roll_value=0, total_roll_value=0, modifier_applied=0, details_log={"details": "CharacterManager not available"})
 
         character = await self._character_manager.get_character(guild_id, character_id)
         if not character:
-            return DetailedCheckResult(success=False, message_key="error_character_not_found")
+            return CheckResult(succeeded=False, description="error_character_not_found", roll_value=0, total_roll_value=0, modifier_applied=0, details_log={"reason": "error_character_not_found"})
 
         recipe_id = recipe_data.get("id", "unknown_recipe")
         ingredients = recipe_data.get("ingredients_json", []) # List of {"item_template_id": "x", "quantity": y}
@@ -1032,7 +1064,7 @@ class RuleEngine:
 
         # 1. Skill Level Check
         if required_skill_id and character_skills.get(required_skill_id, 0) < required_skill_level:
-            return DetailedCheckResult(success=False, message_key="crafting_fail_skill_too_low", custom_outcomes={"recipe_id": recipe_id, "required_skill": required_skill_id, "required_level": required_skill_level})
+            return CheckResult(succeeded=False, description="crafting_fail_skill_too_low", roll_value=0, total_roll_value=0, modifier_applied=0, details_log={"recipe_id": recipe_id, "required_skill": required_skill_id, "required_level": required_skill_level})
 
         # 2. Ingredient Check
         consumed_items_for_outcome = []
@@ -1041,14 +1073,14 @@ class RuleEngine:
             ing_id = ingredient["item_template_id"]
             ing_qty = ingredient["quantity"]
             if inventory_map.get(ing_id, 0) < ing_qty:
-                return DetailedCheckResult(success=False, message_key="crafting_fail_missing_ingredients", custom_outcomes={"recipe_id": recipe_id, "missing_item_id": ing_id, "required_quantity": ing_qty})
+                return CheckResult(succeeded=False, description="crafting_fail_missing_ingredients", roll_value=0, total_roll_value=0, modifier_applied=0, details_log={"recipe_id": recipe_id, "missing_item_id": ing_id, "required_quantity": ing_qty})
             consumed_items_for_outcome.append({"item_template_id": ing_id, "quantity": ing_qty})
 
         # 3. Specific Tool Check (player must have specific items)
         if required_tools_specific:
             for tool_template_id in required_tools_specific:
                 if not any(item['template_id'] == tool_template_id for item in character_inventory):
-                    return DetailedCheckResult(success=False, message_key="crafting_fail_missing_specific_tool", custom_outcomes={"recipe_id": recipe_id, "missing_tool_id": tool_template_id})
+                    return CheckResult(succeeded=False, description="crafting_fail_missing_specific_tool", roll_value=0, total_roll_value=0, modifier_applied=0, details_log={"recipe_id": recipe_id, "missing_tool_id": tool_template_id})
 
         # 4. Crafting Station Check
         if required_crafting_station:
@@ -1057,13 +1089,13 @@ class RuleEngine:
             # Or, location itself has a station type: current_location_data.get("properties", {}).get("station_type")
             location_station_type = current_location_data.get("properties", {}).get("station_type") # Example access
             if location_station_type != required_crafting_station:
-                 return DetailedCheckResult(success=False, message_key="crafting_fail_wrong_station", custom_outcomes={"recipe_id": recipe_id, "required_station": required_crafting_station, "current_station": location_station_type or "none"})
+                 return CheckResult(succeeded=False, description="crafting_fail_wrong_station", roll_value=0, total_roll_value=0, modifier_applied=0, details_log={"recipe_id": recipe_id, "required_station": required_crafting_station, "current_station": location_station_type or "none"})
 
         # 5. Location Tags Check
         if required_location_tags:
             location_tags = current_location_data.get("tags", []) # Assuming location has a 'tags' list
             if not all(tag in location_tags for tag in required_location_tags):
-                return DetailedCheckResult(success=False, message_key="crafting_fail_location_tags", custom_outcomes={"recipe_id": recipe_id, "required_tags": required_location_tags})
+                return CheckResult(succeeded=False, description="crafting_fail_location_tags", roll_value=0, total_roll_value=0, modifier_applied=0, details_log={"recipe_id": recipe_id, "required_tags": required_location_tags})
 
         # MVP: If all checks pass, crafting is successful.
         # Future: Add skill check roll against recipe DC for success chance/quality.
@@ -1071,18 +1103,22 @@ class RuleEngine:
         # For MVP, assume first output is the primary.
         crafted_item_details = outputs[0] if outputs else None
         if not crafted_item_details:
-            return DetailedCheckResult(success=False, message_key="crafting_fail_no_output_defined", custom_outcomes={"recipe_id": recipe_id})
+            return CheckResult(succeeded=False, description="crafting_fail_no_output_defined", roll_value=0, total_roll_value=0, modifier_applied=0, details_log={"recipe_id": recipe_id})
 
-
-        return DetailedCheckResult(
-            success=True,
-            message_key="crafting_success",
-            custom_outcomes={
-                "recipe_id": recipe_id,
-                "crafted_item": crafted_item_details, # {"item_template_id": "x", "quantity": y}
-                "consumed_items": consumed_items_for_outcome
-                # "xp_gained": calculated_xp (future)
-            }
+        details_log_data = {
+            "recipe_id": recipe_id,
+            "crafted_item": crafted_item_details,
+            "consumed_items": consumed_items_for_outcome
+            # "xp_gained": calculated_xp (future)
+        }
+        return CheckResult(
+            succeeded=True,
+            description="crafting_success", # Using message_key
+            roll_value=0, # No dice roll in current crafting MVP
+            modifier_applied=0, # No dice roll
+            total_roll_value=0, # No dice roll
+            details_log=details_log_data
+            # dc_value can be omitted (it's Optional)
         )
 
     async def resolve_lockpick_attempt(
@@ -1091,13 +1127,13 @@ class RuleEngine:
         guild_id: str,
         poi_data: Dict[str, Any], # Point of Interest data containing lock details
         **kwargs: Any
-    ) -> DetailedCheckResult:
+    ) -> CheckResult:
         """
         Resolves a lockpicking attempt by a character on a lock (part of a PoI).
         """
         character = await self._character_manager.get_character(guild_id, character_id)
         if not character:
-            return DetailedCheckResult(success=False, message="Character not found for lockpicking.", roll_details={})
+            return CheckResult(succeeded=False, description="Character not found for lockpicking.", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=None, details_log={"reason": "Character not found."})
 
         skills_data = character.skills_data_json or {}
         lockpicking_skill = skills_data.get("lockpicking", 0)
@@ -1127,6 +1163,18 @@ class RuleEngine:
             #     "tool_broken": tool_broken,
             #     "attempts_used": 1 # Simplified
             # }
+            # Mapping to CheckResult:
+            succeeded=success,
+            roll_value=d20_roll, # from roll_details.roll
+            modifier_applied=total_roll - d20_roll, # Calculated placeholder
+            total_roll_value=total_roll, # from roll_details.total_roll
+            dc_value=current_dc, # from roll_details.dc
+            description=f"Lockpicking attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}", # from original message
+            details_log={
+                "skill_type": "lockpicking", # from roll_details.skill
+                "crit_status": crit_status # from roll_details.crit_status
+                # custom_outcomes fields like tool_broken would go here if they were active
+            }
         )
 
     async def resolve_disarm_trap_attempt(
@@ -1135,20 +1183,20 @@ class RuleEngine:
         guild_id: str,
         poi_data: Dict[str, Any], # Point of Interest data containing trap details
         **kwargs: Any
-    ) -> DetailedCheckResult:
+    ) -> CheckResult:
         """
         Resolves a trap disarming attempt by a character.
         """
         character = await self._character_manager.get_character(guild_id, character_id)
         if not character:
-            return DetailedCheckResult(success=False, message="Character not found for disarming trap.", roll_details={})
+            return CheckResult(succeeded=False, description="Character not found for disarming trap.", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=None, details_log={"reason": "Character not found."})
 
         skills_data = character.skills_data_json or {}
         disarm_skill = skills_data.get("disarm_traps", 0)
 
         trap_details = poi_data.get("trap_details") # As per documentation plan
         if not trap_details:
-            return DetailedCheckResult(success=False, message="Trap details not found in PoI data.", roll_details={})
+            return CheckResult(succeeded=False, description="Trap details not found in PoI data.", roll_value=0, total_roll_value=0, modifier_applied=0, dc_value=None, details_log={"reason": "Trap details not found."})
 
         disarm_dc = trap_details.get("disarm_dc", 15) # Default if not specified
 
@@ -1173,6 +1221,18 @@ class RuleEngine:
             roll_details={"skill": "disarm_traps", "roll": d20_roll, "total_roll": total_roll, "dc": disarm_dc, "crit_status": crit_status},
             custom_outcomes={
                 "trap_triggered_on_fail": trap_triggered_on_fail
+            }
+            # Mapping to CheckResult:
+            succeeded=success,
+            roll_value=d20_roll, # from roll_details.roll
+            modifier_applied=total_roll - d20_roll, # Calculated placeholder
+            total_roll_value=total_roll, # from roll_details.total_roll
+            dc_value=disarm_dc, # from roll_details.dc
+            description=f"Disarm trap attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {disarm_dc}", # from original message
+            details_log={
+                "skill_type": "disarm_traps", # from roll_details.skill
+                "crit_status": crit_status, # from roll_details.crit_status
+                "trap_triggered_on_fail": trap_triggered_on_fail # from custom_outcomes
             }
         )
 
