@@ -8,7 +8,7 @@ from bot.ai.ai_data_models import GenerationContext, ValidationIssue
 # Imports for prepare_location_description_prompt & prepare_faction_generation_prompt & prepare_quest_generation_prompt
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.models import GuildConfig, Location, WorldState, Player, GeneratedFaction, GeneratedNpc # Added GeneratedNpc
-from bot.database.crud_utils import get_entity_by_id, get_entity_by_attributes, get_entities_by_conditions
+from bot.database.crud_utils import get_entity_by_id, get_entity_by_attributes, get_entities
 # GameManager and LoreManager will be accessed via the game_manager parameter
 
 if TYPE_CHECKING:
@@ -660,7 +660,7 @@ CRITICAL INSTRUCTIONS:
 
             # 3. Load Existing Factions
             existing_factions_str = "No factions currently exist."
-            existing_factions = await get_entities_by_conditions(db_session, GeneratedFaction, conditions={"guild_id": guild_id})
+            existing_factions = await get_entities(db_session, GeneratedFaction, guild_id=guild_id)
             if existing_factions:
                 faction_names = [f.name_i18n.get(bot_language, f.name_i18n.get("en", "Unnamed Faction")) for f in existing_factions if f.name_i18n]
                 if faction_names:
