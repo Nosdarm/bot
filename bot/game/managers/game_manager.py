@@ -205,7 +205,22 @@ class GameManager:
         self.combat_manager = CombatManager(db_service=self.db_service, settings=self._settings.get('combat_settings',{}), rule_engine=self.rule_engine, character_manager=self.character_manager, npc_manager=self.npc_manager, party_manager=self.party_manager, status_manager=self.status_manager, item_manager=self.item_manager, location_manager=self.location_manager, game_manager=self); self.npc_manager._combat_manager = self.combat_manager; self.character_manager._combat_manager = self.combat_manager; self.party_manager.combat_manager = self.combat_manager
         self.dialogue_manager = DialogueManager(db_service=self.db_service, settings=self._settings.get('dialogue_settings', {}), character_manager=self.character_manager, npc_manager=self.npc_manager, rule_engine=self.rule_engine, time_manager=self.time_manager, openai_service=self.openai_service, relationship_manager=self.relationship_manager, game_log_manager=self.game_log_manager, quest_manager=None, notification_service=None, game_manager=self); self.character_manager._dialogue_manager = self.dialogue_manager; # type: ignore
         if hasattr(self.npc_manager, 'dialogue_manager'): self.npc_manager.dialogue_manager = self.dialogue_manager # type: ignore
-        self.consequence_processor = ConsequenceProcessor(game_manager=self)
+        self.consequence_processor = ConsequenceProcessor(
+            character_manager=self.character_manager,
+            npc_manager=self.npc_manager,
+            item_manager=self.item_manager,
+            location_manager=self.location_manager,
+            event_manager=self.event_manager,
+            quest_manager=None,  # This will be set by QuestManager's __init__ or a setter
+            status_manager=self.status_manager,
+            dialogue_manager=None, # This will be set by DialogueManager's __init__ or a setter
+            rule_engine=self.rule_engine,
+            economy_manager=self.economy_manager,
+            relationship_manager=self.relationship_manager,
+            game_log_manager=self.game_log_manager,
+            notification_service=None, # This will be set later
+            prompt_context_collector=None # This will be set later
+        )
         self.quest_manager = QuestManager(db_service=self.db_service, settings=self._settings.get('quest_settings', {}), npc_manager=self.npc_manager, character_manager=self.character_manager, item_manager=self.item_manager, rule_engine=self.rule_engine, relationship_manager=self.relationship_manager, consequence_processor=self.consequence_processor, game_log_manager=self.game_log_manager, multilingual_prompt_generator=None, openai_service=self.openai_service, ai_validator=None, notification_service=None, game_manager=self); self.consequence_processor.quest_manager = self.quest_manager; self.dialogue_manager.quest_manager = self.quest_manager
         self.faction_manager = FactionManager(game_manager=self)
         self.notification_service = NotificationService(send_callback_factory=self._get_discord_send_callback, settings=self._settings, i18n_utils=None, character_manager=self.character_manager); self.dialogue_manager.notification_service = self.notification_service; self.quest_manager.notification_service = self.notification_service
