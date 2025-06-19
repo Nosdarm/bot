@@ -155,16 +155,15 @@ class CharacterManager:
                 else: logger.debug(f"Player {player_id_in_cache} for Discord {discord_user_id} not found or guild mismatch in DB.")
             else:
                 from bot.database.crud_utils import get_entity_by_attributes
-                player = await get_entity_by_attributes(actual_session, Player, {"discord_id": str(discord_user_id)}, guild_id_str)
-                if player: self._discord_to_player_map.setdefault(guild_id_str, {})[discord_user_id] = player.id; active_char_id = player.active_character_id
-            if active_char_id:
-                char_from_cache = self.get_character(guild_id_str, active_char_id)
-                if char_from_cache: return char_from_cache
-                char_from_db = await actual_session.get(Character, active_char_id)
-                if char_from_db and str(char_from_db.guild_id) == guild_id_str:
-                    self._characters.setdefault(guild_id_str, {})[active_char_id] = char_from_db
-                    return char_from_db
-                logger.warning(f"Active character {active_char_id} for Discord {discord_user_id} not found in DB or guild mismatch.")
+                player_account = await get_entity_by_attributes(session, Player, {"discord_id": str(discord_user_id)}, guild_id_str)
+                if player_account:
+                    self._discord_to_player_map.setdefault(guild_id_str, {})[discord_user_id] = player_account.id
+                    active_character_id_to_fetch = player_account.active_character_id
+                else:
+                    logger.info(f"Player account not found in DB for Discord ID {discord_user_id} in guild {guild_id_str}.")
+                    return None
+        except Exception as e:
+            logger.error(f"Error in get_character_by_discord_id for {discord_user_id} in guild {guild_id_str}: {e}", exc_info=True)
             return None
         finally:
             if not db_session_is_external and actual_session: await actual_session.__aexit__(None, None, None) # type: ignore
