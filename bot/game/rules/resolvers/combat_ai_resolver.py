@@ -1,7 +1,7 @@
 # bot/game/rules/resolvers/combat_ai_resolver.py
 import random
-import re
-import logging # Added logging
+# import re # Removed unused import
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional, List
 
 if TYPE_CHECKING:
