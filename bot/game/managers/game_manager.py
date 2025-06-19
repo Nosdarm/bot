@@ -482,4 +482,4 @@ class GameManager:
 
 logger.debug("DEBUG: Finished loading game_manager.py from: %s", __file__)
 
-[end of bot/game/managers/game_manager.py]
+
