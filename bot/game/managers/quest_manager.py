@@ -19,7 +19,7 @@ from bot.database.models import Player
 # DBGeneratedQuest and DBQuestStepTable are already imported
 
 # CRUD utils for accept_quest
-from bot.database.crud_utils import get_entity_by_id, get_entities_by_conditions
+from bot.database.crud_utils import get_entity_by_id, get_entities
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
@@ -199,12 +199,12 @@ class QuestManager:
 
                 # Find First Quest Step
                 # Using DBQuestStepTable as that's the alias for QuestStepTable model
-                first_step_candidates = await get_entities_by_conditions(
+                first_step_candidates = await get_entities(
                     session,
                     DBQuestStepTable,
-                    guild_id, # Assuming get_entities_by_conditions can take guild_id for context or filtering if needed by underlying queries
+                    guild_id,
                     conditions=[DBQuestStepTable.quest_id == quest_id_to_accept],
-                    order_by=[DBQuestStepTable.step_order.asc()] # Use .asc() for ordering
+                    order_by=[DBQuestStepTable.step_order.asc()]
                 )
 
                 if not first_step_candidates:
