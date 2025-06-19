@@ -44,6 +44,19 @@ class Ability(Base):
     __table_args__ = (Index('idx_ability_guild_id', 'guild_id'),)
 
 
+class Spell(Base):
+    __tablename__ = 'spells'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name_i18n = Column(JSONB, nullable=False)
+    description_i18n = Column(JSONB, nullable=False)
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    effect_i18n = Column(JSONB, nullable=False)
+    cost = Column(JSONB, nullable=True)
+    requirements = Column(JSONB, nullable=True)
+    type_i18n = Column(JSONB, nullable=False)  # e.g., school of magic
+    __table_args__ = (Index('idx_spell_guild_id', 'guild_id'),)
+
+
 class Skill(Base):
     __tablename__ = 'skills'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))

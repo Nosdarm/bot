@@ -6,7 +6,7 @@ from .item_related import ItemTemplate, Item, Inventory, ItemProperty, NewItem, 
 from .quest_related import QuestTable, GeneratedQuest, Questline, QuestStepTable
 from .config_related import GuildConfig, RulesConfig, UserSettings, GlobalState
 from .log_event_related import Timer, Event, StoryLog, PendingConflict, PendingGeneration
-from .game_mechanics import Combat, Ability, Skill, Status, CraftingRecipe, CraftingQueue, Relationship
+from .game_mechanics import Combat, Ability, Skill, Status, CraftingRecipe, CraftingQueue, Relationship, Spell
 
 __all__ = [
     'Base',
@@ -16,5 +16,5 @@ __all__ = [
     'QuestTable', 'GeneratedQuest', 'Questline', 'QuestStepTable',
     'GuildConfig', 'RulesConfig', 'UserSettings', 'GlobalState',
     'Timer', 'Event', 'StoryLog', 'PendingConflict', 'PendingGeneration',
-    'Combat', 'Ability', 'Skill', 'Status', 'CraftingRecipe', 'CraftingQueue', 'Relationship',
+    'Combat', 'Ability', 'Skill', 'Spell', 'Status', 'CraftingRecipe', 'CraftingQueue', 'Relationship',
 ]
