@@ -151,3 +151,22 @@ class WorldState(Base):
 
     def __repr__(self):
         return f"<WorldState(id='{self.id}', guild_id='{self.guild_id}')>"
+
+
+class GeneratedFaction(Base):
+    __tablename__ = 'generated_factions'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    name_i18n = Column(JSONB, nullable=False)
+    ideology_i18n = Column(JSONB, nullable=True)
+    description_i18n = Column(JSONB, nullable=True)
+    leader_concept_i18n = Column(JSONB, nullable=True)
+    resource_notes_i18n = Column(JSONB, nullable=True)
+    ai_metadata_json = Column(JSONB, nullable=True, comment="Stores metadata from AI generation, like prompt details or model version")
+
+    __table_args__ = (Index('idx_generatedfaction_guild_id', 'guild_id'),)
+
+    def __repr__(self):
+        name_en = self.name_i18n.get('en', 'Unknown Faction') if isinstance(self.name_i18n, dict) else 'Unknown Faction'
+        return f"<GeneratedFaction(id='{self.id}', name_en='{name_en}', guild_id='{self.guild_id}')>"
