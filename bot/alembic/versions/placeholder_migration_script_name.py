@@ -39,6 +39,7 @@ def upgrade() -> None:
     op.create_index('idx_storylog_guild_timestamp', 'story_logs', ['guild_id', 'timestamp'], unique=False)
     op.create_index('idx_storylog_guild_event_type', 'story_logs', ['guild_id', 'event_type'], unique=False)
 
+    op.drop_table('relationships', if_exists=True)
     # Create relationships table
     op.create_table('relationships',
         sa.Column('id', sa.String(), nullable=False),
