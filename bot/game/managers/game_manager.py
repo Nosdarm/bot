@@ -30,6 +30,7 @@ from bot.database.guild_transaction import GuildTransaction
 
 # Import the new service
 from bot.services.ai_generation_service import AIGenerationService
+from bot.game.managers.undo_manager import UndoManager
 
 
 if TYPE_CHECKING:
@@ -315,18 +316,33 @@ class GameManager:
         # ... (no changes needed here) ...
         if message.author.bot: return
         if not self._command_router:
-            logger.warning("GameManager: CommandRouter not available...")
-            if message.channel: try: await self._get_discord_send_callback(message.channel.id)(f"❌ Игра еще не полностью запущена...")
-            except Exception as cb_e: logger.error("GameManager: Error sending startup error: %s", cb_e, exc_info=True)
+            logger.warning("GameManager: CommandRouter not available, message '%s' from guild %s dropped.", message.content, message.guild.id if message.guild else "DM")
+            if message.channel:
+                try:
+                    send_callback = self._get_discord_send_callback(message.channel.id)
+                    await send_callback(f"❌ Игра еще не полностью запущена...")
+                except Exception as cb_e:
+                    logger.error("GameManager: Error sending startup error message to channel %s: %s", message.channel.id, cb_e, exc_info=True)
             return
+
         command_prefix = self._settings.get('command_prefix', '/')
-        if message.content.startswith(command_prefix): logger.info("GameManager: Passing command to CommandRouter: '%s'", message.content)
-        try: await self._command_router.route(message)
+        if message.content.startswith(command_prefix):
+            logger.info("GameManager: Passing command from %s (ID: %s, Guild: %s, Channel: %s) to CommandRouter: '%s'",
+                        message.author.name, message.author.id, message.guild.id if message.guild else 'DM',
+                        message.channel.id, message.content)
+
+        try:
+            await self._command_router.route(message)
         except Exception as e:
-            logger.error("GameManager: Error handling message '%s': %s", message.content, e, exc_info=True)
+            logger.error("GameManager: Error handling message '%s' from guild %s: %s", message.content, message.guild.id if message.guild else "DM", e, exc_info=True)
             try:
-                 if message.channel: await self._get_discord_send_callback(message.channel.id)(f"❌ Произошла внутренняя ошибка...")
-            except Exception as cb_e: logger.error("GameManager: Error sending internal error message: %s", cb_e, exc_info=True)
+                if message.channel:
+                    send_callback = self._get_discord_send_callback(message.channel.id)
+                    await send_callback(f"❌ Произошла внутренняя ошибка при обработке команды. Подробности в логах бота.")
+                else:
+                    logger.warning("GameManager: Cannot send error message to user (DM channel or channel not found).")
+            except Exception as cb_e:
+                logger.error("GameManager: Error sending generic internal error message to channel %s: %s", message.channel.id, cb_e, exc_info=True)
 
     def _get_discord_send_callback(self, channel_id: int) -> SendToChannelCallback:
         # ... (no changes needed here) ...
