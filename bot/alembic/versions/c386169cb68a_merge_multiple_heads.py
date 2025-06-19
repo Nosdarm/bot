@@ -1,7 +1,7 @@
 """Merge multiple heads
 
 Revision ID: c386169cb68a
-Revises: 1a2b3c4d5e6f, a3d433e5916c, XXXXXXXXXXXX
+Revises: 1a2b3c4d5e6f, a3d433e5916c
 Create Date: 2025-06-19 10:16:59.886300
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'c386169cb68a'
-down_revision: Union[str, None] = ('1a2b3c4d5e6f', 'a3d433e5916c', 'XXXXXXXXXXXX')
+down_revision: Union[str, None] = ('1a2b3c4d5e6f', 'a3d433e5916c')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
