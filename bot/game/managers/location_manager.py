@@ -55,20 +55,17 @@ class LocationManager:
 
     def __init__(
         self,
-        db_service: Optional["DBService"] = None, # Kept, though game_manager can provide it
+        db_service: Optional["DBService"] = None,
         settings: Optional[Dict[str, Any]] = None,
-        game_manager: Optional["GameManager"] = None, # Added GameManager reference
-        # Removed individual manager imports if they can be accessed via game_manager
-        # rule_engine, event_manager, character_manager, etc.
+        game_manager: Optional["GameManager"] = None,
         send_callback_factory: Optional[SendCallbackFactory] = None
     ):
         self._diagnostic_log = []
         self._diagnostic_log.append("DEBUG_LM: Initializing LocationManager...")
-        self._db_service = db_service # Can be game_manager.db_service
+        self._db_service = db_service
         self._settings = settings
-        self._game_manager = game_manager # Store GameManager reference
+        self._game_manager = game_manager
 
-        # Access other managers via game_manager if needed, e.g., self._game_manager.rule_engine
         self._rule_engine = game_manager.rule_engine if game_manager else None
         self._event_manager = game_manager.event_manager if game_manager else None
         self._character_manager = game_manager.character_manager if game_manager else None
@@ -82,7 +79,6 @@ class LocationManager:
 
 
         self._send_callback_factory = send_callback_factory
-        # Processors can also be accessed via game_manager if they are public attributes there
         self._event_stage_processor = game_manager._event_stage_processor if game_manager and hasattr(game_manager, '_event_stage_processor') else None
         self._event_action_processor = game_manager._event_action_processor if game_manager and hasattr(game_manager, '_event_action_processor') else None
         self._on_enter_action_executor = game_manager._on_enter_action_executor if game_manager and hasattr(game_manager, '_on_enter_action_executor') else None
@@ -90,9 +86,7 @@ class LocationManager:
 
 
         self.rules_config: Optional[CoreGameRulesConfig] = None
-        if self._rule_engine and hasattr(self._rule_engine, '_rules_data'): # Access _rules_data
-            # This needs to be adapted if rules_config is per-guild
-            # For now, assuming _rules_data is the dict for the relevant guild or global
+        if self._rule_engine and hasattr(self._rule_engine, '_rules_data'):
             self.rules_config = self._rule_engine._rules_data # type: ignore
 
         self._location_templates = {}
@@ -103,7 +97,6 @@ class LocationManager:
         self._load_location_templates()
         self._diagnostic_log.append("DEBUG_LM: LocationManager initialized.")
 
-    # ... (keep _load_location_templates, load_state, save_state, rebuild_runtime_caches, etc.)
     def _load_location_templates(self):
         self._diagnostic_log.append("DEBUG_LM: ENTERING _load_location_templates")
         self._location_templates = {}
@@ -165,15 +158,13 @@ class LocationManager:
             logger.critical("LocationManager: CRITICAL DB error loading instances for guild %s: %s", guild_id_str, e, exc_info=True)
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
-        # ... (original save_state, ensure db_service is accessed via self._db_service or self._game_manager.db_service)
         guild_id_str = str(guild_id)
         logger.debug("LocationManager: Saving state for guild %s.", guild_id_str)
         db_service_to_use = self._db_service or (self._game_manager.db_service if self._game_manager else None)
         if not db_service_to_use or not hasattr(db_service_to_use, 'get_session_factory'):
             logger.error(f"LocationManager: DB service or session factory not available for save_state in guild {guild_id_str}.")
             return
-        # ... (rest of save_state logic as before)
-        from sqlalchemy import delete as sqlalchemy_delete # Local import
+        from sqlalchemy import delete as sqlalchemy_delete
         deleted_ids_for_guild = list(self._deleted_instances.get(guild_id_str, set()))
         dirty_ids_for_guild = list(self._dirty_instances.get(guild_id_str, set()))
         processed_dirty_ids_in_transaction = set()
@@ -194,7 +185,6 @@ class LocationManager:
             if guild_id_str in self._dirty_instances and not self._dirty_instances[guild_id_str]: del self._dirty_instances[guild_id_str]
         except ValueError as ve: logger.error(f"LM: GuildTransaction error during save_state for guild {guild_id_str}: {ve}", exc_info=True)
         except Exception as e: logger.error(f"LM: Error during save_state for guild {guild_id_str}: {e}", exc_info=True)
-
 
     async def process_character_move(self, guild_id: str, character_id: str, target_location_identifier: str) -> bool:
         guild_id_str = str(guild_id)
@@ -250,12 +240,11 @@ class LocationManager:
             if current_location_obj.id == target_location_obj.id:
                 logger.info(f"Character {character.id} is already at {target_location_obj.id}. Triggering on_enter.")
                 event_entity_id = character.id; event_target_location_id = target_location_obj.id
-                # The actual _on_enter_location call is outside the transaction
             else:
                 old_location_id = character.current_location_id
                 party_moved_as_primary = False
                 party_id_for_event_details = character.current_party_id
-                party_movement_rules = await rule_engine.get_rule(guild_id_str, "party_movement_rules", default={}) # Access rule via RuleEngine
+                party_movement_rules = await rule_engine.get_rule(guild_id_str, "party_movement_rules", default={})
 
                 if character.current_party_id:
                     party = await session.get(Party, character.current_party_id)
@@ -275,9 +264,9 @@ class LocationManager:
                                         session.add(member_char)
 
                 character_needs_individual_move = True
+                party_ref_for_check = await session.get(Party, character.current_party_id) if character.current_party_id else None
                 if party_moved_as_primary and party_movement_rules.get("teleport_all_members", True):
-                    party_ref = await session.get(Party, character.current_party_id) # Re-fetch or use existing party object
-                    if party_ref and character.id in (party_ref.player_ids_json or []):
+                    if party_ref_for_check and character.id in (party_ref_for_check.player_ids_json or []):
                         character_needs_individual_move = False
 
                 if character_needs_individual_move:
@@ -295,90 +284,67 @@ class LocationManager:
                                   'party_moved_as_primary': party_moved_as_primary},
                     player_id=character.player_id, location_id=target_location_obj.id, session=session)
 
-        # After GuildTransaction block, call process_on_enter_location_events if move happened
         if event_entity_id and event_target_location_id and self._game_manager and self._game_manager.location_interaction_service:
             asyncio.create_task(self._game_manager.location_interaction_service.process_on_enter_location_events(guild_id_str, event_entity_id, event_entity_type, event_target_location_id))
             return True
         elif current_location_obj_for_final_check and target_location_obj and \
              current_location_obj_for_final_check.id == target_location_obj.id and \
              initial_character_location_id_for_event and self._game_manager and self._game_manager.location_interaction_service:
-            # Case: "moved" to the same location, still trigger on_enter
             asyncio.create_task(self._game_manager.location_interaction_service.process_on_enter_location_events(guild_id_str, character_id_str, "Character", initial_character_location_id_for_event))
             return True
 
         logger.warning(f"LocationManager: Move action for char {character_id_str} to '{target_location_identifier}' did not result in state change or event dispatch, or LIS not found.")
         return False
 
-    # ... (keep other LocationManager methods like create_location_instance, get_location_instance, etc. as they are,
-    # ensuring they use self._game_manager.some_manager if they need access to other managers not directly passed to __init__)
-    # For example, if generate_location_details_from_ai needed self._multilingual_prompt_generator, it would be self._game_manager.multilingual_prompt_generator
     async def generate_location_details_from_ai(self, guild_id: str, generation_prompt_key: str, player_context: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        # This method was illustrative and seems to be missing from the provided LocationManager.
-        # If it existed and needed other managers, it would access them via self._game_manager.
         logger.warning("generate_location_details_from_ai is not fully implemented in LocationManager based on provided code.")
         return None
 
-    # Ensure all other methods are present from the original file, and update their internal access to managers if needed.
-    # For brevity, I'm omitting repeating all of them here but they should be assumed to be carried over.
-    # Key is to update how they access dependencies if they were passed via **kwargs or context before.
-    # Now, they should primarily use self._game_manager.manager_attribute or managers stored on self from __init__.
-
-    # Example for a method that might have used kwargs for a manager:
-    # async def some_other_method(self, guild_id: str, **kwargs: Any):
-    #     npc_manager = kwargs.get('npc_manager') # Old way
-    #     # New way:
-    #     npc_manager = self._npc_manager # Or self._game_manager.npc_manager
-    #     if npc_manager:
-    #         # ... use npc_manager
-    #         pass
-
-    # Simplified stubs for remaining methods from the original file:
     async def _ensure_persistent_location_exists(self, guild_id: str, location_template_id: str) -> Optional[Dict[str, Any]]: return None
     def get_location_name(self, guild_id: str, instance_id: str) -> Optional[str]: return None
     def get_connected_locations(self, guild_id: str, instance_id: str) -> Dict[str, str]: return {}
     async def update_location_state(self, guild_id: str, instance_id: str, state_updates: Dict[str, Any], **kwargs: Any) -> bool: return False
     def get_location_channel(self, guild_id: str, instance_id: str) -> Optional[int]: return None
     def get_default_location_id(self, guild_id: str) -> Optional[str]: return None
-    async def move_entity(self, guild_id: str, entity_id: str, entity_type: str, from_location_id: Optional[str], to_location_id: str, **kwargs: Any) -> bool: return False # Placeholder, actual logic is in process_character_move
+    async def move_entity(self, guild_id: str, entity_id: str, entity_type: str, from_location_id: Optional[str], to_location_id: str, **kwargs: Any) -> bool: return False
     async def handle_entity_arrival(self, location_id: str, entity_id: str, entity_type: str, **kwargs: Any) -> None: pass
     async def handle_entity_departure(self, location_id: str, entity_id: str, entity_type: str, **kwargs: Any) -> None: pass
     async def process_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None: pass
     def get_location_static(self, template_id: Optional[str]) -> Optional[Dict[str, Any]]: return self._location_templates.get(str(template_id)) if template_id is not None else None
-    def _clear_guild_state_cache(self, guild_id: str) -> None: # ... (original logic)
+    def _clear_guild_state_cache(self, guild_id: str) -> None:
         guild_id_str = str(guild_id); self._location_instances.pop(guild_id_str, None); self._dirty_instances.pop(guild_id_str, None); self._deleted_instances.pop(guild_id_str, None)
-    def mark_location_instance_dirty(self, guild_id: str, instance_id: str) -> None: # ... (original logic)
+    def mark_location_instance_dirty(self, guild_id: str, instance_id: str) -> None:
         guild_id_str, instance_id_str = str(guild_id), str(instance_id)
         if guild_id_str in self._location_instances and instance_id_str in self._location_instances[guild_id_str]: self._dirty_instances.setdefault(guild_id_str, set()).add(instance_id_str)
-    async def create_location_instance(self, guild_id: str, template_id: str, initial_state: Optional[Dict[str, Any]] = None, instance_name: Optional[str] = None, instance_description: Optional[str] = None, instance_exits: Optional[Dict[str, str]] = None, **kwargs: Any) -> Optional[Dict[str, Any]]: # ... (original logic, ensure manager access via self._game_manager if needed)
-        # Simplified for brevity, original complex logic for AI vs template should be here.
+    async def create_location_instance(self, guild_id: str, template_id: str, initial_state: Optional[Dict[str, Any]] = None, instance_name: Optional[str] = None, instance_description: Optional[str] = None, instance_exits: Optional[Dict[str, str]] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
         template_data = self.get_location_static(template_id)
         if not template_data: return None
         new_id = str(uuid.uuid4())
-        instance_data = {"id": new_id, "guild_id": guild_id, "template_id": template_id, "name_i18n": {"en": instance_name or new_id}} # Highly simplified
+        instance_data = {"id": new_id, "guild_id": guild_id, "template_id": template_id, "name_i18n": {"en": instance_name or new_id}}
         self._location_instances.setdefault(str(guild_id), {})[new_id] = instance_data
         self.mark_location_instance_dirty(str(guild_id), new_id)
         return instance_data
 
     async def delete_location_instance(self, guild_id: str, instance_id: str, **kwargs: Any) -> bool: return False
     async def clean_up_location_contents(self, location_instance_id: str, **kwargs: Any) -> None: pass
-    async def create_location_instance_from_moderated_data(self, guild_id: str, location_data: Dict[str, Any], user_id: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]: return None # Placeholder for original logic
+    async def create_location_instance_from_moderated_data(self, guild_id: str, location_data: Dict[str, Any], user_id: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]: return None
     async def add_item_to_location(self, guild_id: str, location_id: str, item_template_id: str, quantity: int = 1, dropped_item_data: Optional[Dict[str, Any]] = None) -> bool: return False
     async def revert_location_state_variable_change(self, guild_id: str, location_id: str, variable_name: str, old_value: Any, **kwargs: Any) -> bool: return False
     async def revert_location_inventory_change(self, guild_id: str, location_id: str, item_template_id: str, item_instance_id: Optional[str], change_action: str, quantity_changed: int, original_item_data: Optional[Dict[str, Any]], **kwargs: Any) -> bool: return False
     async def revert_location_exit_change(self, guild_id: str, location_id: str, exit_direction: str, old_target_location_id: Optional[str], **kwargs: Any) -> bool: return False
     async def revert_location_activation_status(self, guild_id: str, location_id: str, old_is_active_status: bool, **kwargs: Any) -> bool: return False
-    async def get_location_by_static_id(self, guild_id: str, static_id: str, session: Optional[AsyncSession] = None) -> Optional[Location]: # ... (original logic, ensure db_service access)
+    async def get_location_by_static_id(self, guild_id: str, static_id: str, session: Optional[AsyncSession] = None) -> Optional[Location]:
         guild_id_str = str(guild_id); static_id_str = str(static_id)
         guild_cache = self._location_instances.get(guild_id_str, {})
         for loc_id, loc_data_dict in guild_cache.items():
             if isinstance(loc_data_dict, dict) and loc_data_dict.get('static_id') == static_id_str:
                 try: return Location.from_dict(loc_data_dict)
-                except Exception: return None # Simplified
+                except Exception: return None
         db_service_to_use = self._db_service or (self._game_manager.db_service if self._game_manager else None)
-        if session: # ... use session
+        if session:
             stmt = select(Location).where(Location.guild_id == guild_id_str, Location.static_id == static_id_str); result = await session.execute(stmt); loc_model = result.scalars().first()
             if loc_model: self._location_instances.setdefault(guild_id_str, {})[loc_model.id] = loc_model.to_dict(); return loc_model
-        elif db_service_to_use: # ... use crud_utils
+        elif db_service_to_use:
             from bot.database.crud_utils import get_entity_by_attributes
             async with GuildTransaction(db_service_to_use.get_session_factory, guild_id_str, commit_on_exit=False) as crud_session:
                 loc_model = await get_entity_by_attributes(crud_session, Location, attributes={'static_id': static_id_str}, guild_id=guild_id_str)
