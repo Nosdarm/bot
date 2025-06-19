@@ -2,10 +2,17 @@ from __future__ import annotations
 import logging
 import json
 from typing import Optional, Dict, Any, TYPE_CHECKING, List
+import uuid # Added for location ID generation
+
+# Models for persistence
+from bot.database.models.world_related import Location
+from bot.ai.ai_data_models import GeneratedLocationContent, POIModel, ConnectionModel, GeneratedNpcProfile # Added GeneratedNpcProfile
+from sqlalchemy.orm.attributes import flag_modified # Added for npc_ids update
 
 from bot.models.pending_generation import PendingGeneration, GenerationType, PendingStatus
 from bot.persistence.pending_generation_crud import PendingGenerationCRUD # Assuming this path is correct
 from bot.database.guild_transaction import GuildTransaction # Added import
+from sqlalchemy.future import select # Added for querying existing location
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
@@ -238,14 +245,259 @@ class AIGenerationManager:
                 logger.debug(f"AIGenerationManager: [PLACEHOLDER] Data for PG ID {record.id}: {json.dumps(parsed_data, indent=2, ensure_ascii=False)[:500]}...") # Log snippet of data
 
                 if request_type == GenerationType.LOCATION_DETAILS:
-                    logger.info(f"AIGenerationManager: [SIMULATING PERSISTENCE] Would create/update location from: {parsed_data.get('name_i18n', {}).get('en', 'Unknown Location')}")
-                    # Example (conceptual - actual methods might differ or be on GameManager):
-                    # loc_success = await self.game_manager.location_manager.create_location_from_ai_data(session, guild_id, parsed_data)
-                    # if loc_success and parsed_data.get("npcs"):
-                    #    for npc_data in parsed_data.get("npcs"):
-                    #        await self.game_manager.npc_manager.create_npc_from_ai_data(session, guild_id, npc_data, new_location_id=loc_success.id)
-                    # application_success = bool(loc_success) # Update based on actual outcome
-                    application_success = True # Placeholder for MVP
+                    ai_location_data: Optional[GeneratedLocationContent] = None
+                    logger.info(f"Attempting to parse LOCATION_DETAILS data for PG ID {record.id}...")
+                    try:
+                        # parsed_data is already a dict from JSONB
+                        ai_location_data = GeneratedLocationContent(**parsed_data)
+                        logger.info(f"Successfully parsed LOCATION_DETAILS data for PG ID {record.id}.")
+                    except Exception as e:
+                        logger.error(f"Failed to parse LOCATION_DETAILS data for PG ID {record.id}: {e}", exc_info=True)
+                        application_success = False
+                        await self.pending_generation_crud.update_pending_generation_status(
+                            session, record.id, PendingStatus.APPLICATION_FAILED, guild_id,
+                            moderator_user_id=moderator_user_id,
+                            moderator_notes=record.moderator_notes + f" | Failed to parse AI data: {str(e)[:100]}" if record.moderator_notes else f"Failed to parse AI data: {str(e)[:100]}"
+                        )
+                        # Return False here as we cannot proceed with this specific generation
+                        return False # Critical parsing error, stop processing this record
+
+                    if ai_location_data: # Ensure parsing was successful
+                        location_to_persist: Optional[Location] = None
+                        location_id_to_use: Optional[str] = None
+                        existing_location: Optional[Location] = None
+
+                        if ai_location_data.static_id:
+                            stmt = select(Location).filter_by(guild_id=guild_id, static_id=ai_location_data.static_id)
+                            result = await session.execute(stmt)
+                            existing_location = result.scalars().first()
+
+                        if existing_location:
+                            location_to_persist = existing_location
+                            location_id_to_use = existing_location.id
+                            logger.info(f"Updating existing location {location_id_to_use} with static_id {ai_location_data.static_id} for PG ID {record.id}")
+                        else:
+                            location_to_persist = Location(guild_id=guild_id)
+                            location_to_persist.id = str(uuid.uuid4()) # Set new UUID
+                            location_id_to_use = location_to_persist.id
+                            if ai_location_data.static_id:
+                                location_to_persist.static_id = ai_location_data.static_id
+                            logger.info(f"Creating new location {location_id_to_use} (static_id: {ai_location_data.static_id}) for PG ID {record.id}")
+                            # session.add(location_to_persist) # Add is done by merge if new
+
+                        # Populate fields
+                        location_to_persist.name_i18n = ai_location_data.name_i18n
+                        location_to_persist.descriptions_i18n = ai_location_data.atmospheric_description_i18n
+                        location_to_persist.template_id = ai_location_data.template_id
+                        # Ensure static_id is set if provided and it's a new record or updating an old one
+                        if ai_location_data.static_id:
+                             location_to_persist.static_id = ai_location_data.static_id
+
+
+                        # Placeholder for type_i18n from location_type_key
+                        location_to_persist.type_i18n = {"en": ai_location_data.location_type_key.replace("_", " ").title()}
+                        # TODO: Potentially look up location_type_key in game_terms to get full i18n object
+
+                        location_to_persist.coordinates = ai_location_data.coordinates_json
+                        location_to_persist.details_i18n = ai_location_data.generated_details_json
+                        location_to_persist.ai_metadata_json = ai_location_data.ai_metadata_json
+
+                        if ai_location_data.points_of_interest:
+                            location_to_persist.points_of_interest_json = [poi.model_dump() for poi in ai_location_data.points_of_interest]
+                        else:
+                            location_to_persist.points_of_interest_json = []
+
+                        if ai_location_data.connections:
+                            location_to_persist.neighbor_locations_json = [conn.model_dump() for conn in ai_location_data.connections]
+                        else:
+                            location_to_persist.neighbor_locations_json = []
+
+                        # NPC and Item lists are intentionally NOT handled here per subtask instructions
+                        # location_to_persist.npc_ids = []
+                        # location_to_persist.item_ids = []
+
+                        try:
+                            await session.merge(location_to_persist)
+                            # The ID is now fixed, either new or existing
+                            record.entity_id = location_to_persist.id # Store created/updated entity ID back on PendingGeneration
+                            persisted_location_id = location_to_persist.id # Use this for NPCs
+                            logger.info(f"Successfully merged location {persisted_location_id} (template: {location_to_persist.template_id}, static: {location_to_persist.static_id}) for PG ID {record.id}.")
+                            application_success = True
+
+                            # --- NPC Persistence Start ---
+                            if application_success and ai_location_data.initial_npcs_json:
+                                logger.info(f"Starting NPC persistence for location {persisted_location_id}, PG ID {record.id}.")
+                                newly_created_npc_ids = []
+                                npc_persistence_failed_flag = False
+                                for npc_profile_data in ai_location_data.initial_npcs_json:
+                                    if not isinstance(npc_profile_data, GeneratedNpcProfile):
+                                        logger.warning(f"NPC profile data is not of type GeneratedNpcProfile for PG ID {record.id}. Skipping this NPC. Data: {npc_profile_data}")
+                                        continue
+
+                                    initial_state_for_npc = npc_profile_data.model_dump()
+
+                                    # Adjust keys for NpcManager.spawn_npc_in_location
+                                    if 'skills' in initial_state_for_npc:
+                                        initial_state_for_npc['skills_data'] = initial_state_for_npc.pop('skills')
+                                    if 'abilities' in initial_state_for_npc:
+                                        initial_state_for_npc['abilities_data'] = initial_state_for_npc.pop('abilities')
+
+                                    # Handle faction_affiliations: use the first one's ID if available
+                                    # This is a simple approach. More complex logic could be in NpcManager.
+                                    if npc_profile_data.faction_affiliations and len(npc_profile_data.faction_affiliations) > 0:
+                                        initial_state_for_npc['faction_id'] = npc_profile_data.faction_affiliations[0].faction_id
+                                    # Remove the list of faction_affiliations as NPC model expects a single faction_id
+                                    initial_state_for_npc.pop('faction_affiliations', None)
+
+
+                                    logger.info(f"Attempting to spawn NPC with template_id '{npc_profile_data.template_id}' in location '{persisted_location_id}' for PG ID {record.id}")
+                                    created_npc = await self.game_manager.npc_manager.spawn_npc_in_location(
+                                        guild_id=guild_id,
+                                        location_id=persisted_location_id,
+                                        npc_template_id=npc_profile_data.template_id,
+                                        is_temporary=False, # Assuming persistent NPCs from location generation
+                                        initial_state=initial_state_for_npc,
+                                        session=session
+                                    )
+
+                                    if created_npc:
+                                        newly_created_npc_ids.append(created_npc.id)
+                                        logger.info(f"Successfully spawned NPC {created_npc.id} for PG ID {record.id}.")
+                                    else:
+                                        error_msg = f"Failed to spawn NPC with template_id '{npc_profile_data.template_id}' for PG ID {record.id}."
+                                        logger.error(error_msg)
+                                        application_success = False # Mark overall failure
+                                        npc_persistence_failed_flag = True # Mark NPC specific failure
+                                        # Update PendingGeneration status with this specific failure
+                                        await self.pending_generation_crud.update_pending_generation_status(
+                                            session, record.id, PendingStatus.APPLICATION_FAILED, guild_id,
+                                            moderator_user_id=moderator_user_id,
+                                            moderator_notes=record.moderator_notes + f" | {error_msg}" if record.moderator_notes else error_msg
+                                        )
+                                        break # Stop processing further NPCs for this location
+
+                                if npc_persistence_failed_flag:
+                                    logger.error(f"NPC persistence failed for location {persisted_location_id}, PG ID {record.id}.")
+                                elif application_success: # Check application_success again in case it was modified by other logic
+                                    logger.info(f"Finished NPC persistence for location {persisted_location_id}. {len(newly_created_npc_ids)} NPCs processed/created for PG ID {record.id}.")
+                                    if newly_created_npc_ids: # Only try to update if there are new IDs and previous steps were successful
+                                        loc_for_npc_update = await session.get(Location, persisted_location_id)
+                                        if loc_for_npc_update:
+                                            if loc_for_npc_update.npc_ids is None:
+                                                loc_for_npc_update.npc_ids = []
+
+                                            for npc_id_to_add in newly_created_npc_ids:
+                                                if npc_id_to_add not in loc_for_npc_update.npc_ids:
+                                                    loc_for_npc_update.npc_ids.append(npc_id_to_add)
+
+                                            flag_modified(loc_for_npc_update, "npc_ids")
+                                            logger.info(f"Updated location {persisted_location_id} with new NPC IDs: {newly_created_npc_ids} for PG ID {record.id}")
+                                        else:
+                                            crit_error_msg = f"CRITICAL: Location {persisted_location_id} not found after successful merge, cannot update npc_ids for PG ID {record.id}."
+                                            logger.critical(crit_error_msg)
+                                            application_success = False
+                                            await self.pending_generation_crud.update_pending_generation_status(
+                                                session, record.id, PendingStatus.APPLICATION_FAILED, guild_id,
+                                                moderator_user_id=moderator_user_id,
+                                                moderator_notes=record.moderator_notes + f" | {crit_error_msg}" if record.moderator_notes else crit_error_msg
+                                            )
+                            # --- NPC Persistence End ---
+
+                            # --- Item Persistence Start ---
+                            if application_success and ai_location_data.initial_items_json:
+                                logger.info(f"Starting item persistence for location {persisted_location_id}, PG ID {record.id}.")
+                                items_processed_successfully = True # Internal flag for this section
+                                location_for_item_updates = await session.get(Location, persisted_location_id)
+
+                                if not location_for_item_updates:
+                                    crit_item_err_msg = f"CRITICAL: Location {persisted_location_id} not found before item processing for PG ID {record.id}."
+                                    logger.critical(crit_item_err_msg)
+                                    application_success = False # This is a critical failure
+                                    await self.pending_generation_crud.update_pending_generation_status(
+                                        session, record.id, PendingStatus.APPLICATION_FAILED, guild_id,
+                                        moderator_user_id=moderator_user_id,
+                                        moderator_notes=record.moderator_notes + f" | {crit_item_err_msg}" if record.moderator_notes else crit_item_err_msg
+                                    )
+                                else:
+                                    if location_for_item_updates.points_of_interest_json is None:
+                                        location_for_item_updates.points_of_interest_json = []
+                                    if location_for_item_updates.inventory is None:
+                                        location_for_item_updates.inventory = {}
+
+                                    items_changed_in_location = False
+
+                                    for item_entry_dict in ai_location_data.initial_items_json:
+                                        item_template_id = item_entry_dict.get("template_id")
+                                        item_quantity = item_entry_dict.get("quantity", 1)
+                                        target_poi_id = item_entry_dict.get("target_poi_id")
+
+                                        if not item_template_id:
+                                            logger.warning(f"Missing template_id in initial_items_json entry for PG ID {record.id}. Entry: {item_entry_dict}")
+                                            continue
+
+                                        if target_poi_id:
+                                            poi_found_for_item = False
+                                            for poi_dict in location_for_item_updates.points_of_interest_json:
+                                                if poi_dict.get("poi_id") == target_poi_id:
+                                                    poi_found_for_item = True
+                                                    poi_dict.setdefault("contained_item_ids", [])
+                                                    if item_template_id not in poi_dict["contained_item_ids"]:
+                                                        poi_dict["contained_item_ids"].append(item_template_id)
+                                                        items_changed_in_location = True
+                                                        logger.info(f"Added item '{item_template_id}' to POI '{target_poi_id}' in location '{persisted_location_id}' for PG ID {record.id}.")
+                                                    break
+                                            if not poi_found_for_item:
+                                                logger.warning(f"Target POI ID '{target_poi_id}' not found in location '{persisted_location_id}' for item '{item_template_id}' (PG ID {record.id}). Item not placed in POI.")
+                                                # Not setting items_processed_successfully = False, as item can still be general loot or ignored.
+                                        else:
+                                            # General location loot
+                                            location_for_item_updates.inventory.setdefault("initial_ai_loot", [])
+                                            # Avoid duplicates if this is a retry, check based on template_id for now.
+                                            # A more robust check might involve unique item instance IDs if items were actual instances.
+                                            existing_loot_item = next((loot for loot in location_for_item_updates.inventory["initial_ai_loot"] if loot.get("template_id") == item_template_id), None)
+                                            if existing_loot_item:
+                                                # If allowing quantity update on existing template_id
+                                                # existing_loot_item["quantity"] = existing_loot_item.get("quantity", 0) + item_quantity
+                                                logger.info(f"Item template '{item_template_id}' already in general loot for location '{persisted_location_id}' (PG ID {record.id}). Quantity not updated by default, new entry not added.")
+
+                                            else:
+                                                location_for_item_updates.inventory["initial_ai_loot"].append({
+                                                    "template_id": item_template_id,
+                                                    "quantity": item_quantity
+                                                })
+                                                items_changed_in_location = True
+                                                logger.info(f"Added item '{item_template_id}' (qty: {item_quantity}) to general loot of location '{persisted_location_id}' for PG ID {record.id}.")
+
+                                    if items_changed_in_location:
+                                        flag_modified(location_for_item_updates, "points_of_interest_json")
+                                        flag_modified(location_for_item_updates, "inventory")
+                                        # session.add(location_for_item_updates) # Will be part of the transaction, merge handles it.
+                                        logger.info(f"Marked points_of_interest_json and/or inventory as modified for location {persisted_location_id} (PG ID {record.id}).")
+                                    logger.info(f"Finished item persistence for location {persisted_location_id}, PG ID {record.id}. Items changed in DB: {items_changed_in_location}.")
+
+                                # If decided that certain item processing errors should fail the application:
+                                # if not items_processed_successfully:
+                                #     application_success = False
+                                #     # Ensure PendingGeneration notes are updated if needed
+                            # --- Item Persistence End ---
+
+                        except Exception as e_merge:
+                            logger.error(f"Failed to merge location {location_id_to_use} (PG ID {record.id}): {e_merge}", exc_info=True)
+                            application_success = False
+                            # Update status with specific error for this stage
+                            await self.pending_generation_crud.update_pending_generation_status(
+                                session, record.id, PendingStatus.APPLICATION_FAILED, guild_id,
+                                moderator_user_id=moderator_user_id,
+                                moderator_notes=record.moderator_notes + f" | DB merge failed: {str(e_merge)[:100]}" if record.moderator_notes else f"DB merge failed: {str(e_merge)[:100]}"
+                            )
+                            return False # Stop processing this record
+
+                    else: # This else corresponds to `if ai_location_data:`
+                        # This case should have been handled by the initial try-except for parsing
+                        # but as a safeguard:
+                        logger.error(f"ai_location_data was None after parsing attempt for PG ID {record.id}. This should not happen.")
+                        application_success = False
+                        # Status should have been set already by the parsing exception handler.
 
                 elif request_type == GenerationType.NPC_PROFILE:
                     logger.info(f"AIGenerationManager: [SIMULATING PERSISTENCE] Would create/update NPC from: {parsed_data.get('name_i18n', {}).get('en', 'Unknown NPC')}")
