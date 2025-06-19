@@ -63,7 +63,7 @@ def upgrade() -> None:
     op.create_primary_key('rules_config_pkey', 'rules_config', ['id'])
 
 
-    op.add_column('rules_config', sa.Column('key', sa.String(), nullable=False))
+    op.add_column('rules_config', sa.Column('key', sa.String(), nullable=False, server_default='migrated_default_key'))
     op.add_column('rules_config', sa.Column('value', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
 
     op.create_index('idx_rulesconfig_guild_key', 'rules_config', ['guild_id', 'key'], unique=False)
