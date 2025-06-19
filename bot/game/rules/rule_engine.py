@@ -338,16 +338,34 @@ class RuleEngine:
 
     def _compare_values(self, value1: Any, value2: Any, operator: str) -> bool:
         try:
-            num1 = float(value1); num2 = float(value2)
-            if operator == '>=': return num1 >= num2; elif operator == '>': return num1 > num2
-            elif operator == '<=': return num1 <= num2; elif operator == '<': return num1 < num2
-            elif operator == '==': return num1 == num2; elif operator == '!=': return num1 != num2
-            else: return False
+            num1 = float(value1)
+            num2 = float(value2)
+
+            if operator == '>=':
+                return num1 >= num2
+            elif operator == '>':
+                return num1 > num2
+            elif operator == '<=':
+                return num1 <= num2
+            elif operator == '<':
+                return num1 < num2
+            elif operator == '==':
+                return num1 == num2
+            elif operator == '!=':
+                return num1 != num2
+            else:
+                # Operator not recognized for numeric comparison
+                return False
         except (ValueError, TypeError):
-            if operator == '==' : return str(value1) == str(value2)
-            elif operator == '!=': return str(value1) != str(value2)
+            # Fallback to string comparison for '==' and '!=' if numeric conversion fails
+            if operator == '==':
+                return str(value1) == str(value2)
+            elif operator == '!=':
+                return str(value1) != str(value2)
             return False
-        except Exception: return False
+        except Exception:
+            # Consider logging here: logger.error(f"Unexpected error in _compare_values", exc_info=True)
+            return False
 
     async def resolve_dice_roll(self, dice_string: str, pre_rolled_result: Optional[int] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         dice_string_cleaned = dice_string.lower().strip()
