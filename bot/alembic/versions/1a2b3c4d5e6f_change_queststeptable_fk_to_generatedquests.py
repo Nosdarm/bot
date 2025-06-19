@@ -28,24 +28,11 @@ def upgrade():
     # If the index was created simply by index=True without explicit naming via FK,
     # its name would be 'ix_quest_steps_quest_id'.
 
-    # Step 1: Drop the old index first if it exists and is not tied to the FK constraint itself
-    # (some DBs drop index with FK, others don't). To be safe, drop explicitly.
-    try:
-        op.drop_index(index_name, table_name='quest_steps')
-    except Exception as e:
-        print(f"Could not drop old index {index_name} (it might not exist or be tied to FK): {e}")
+    # Step 1: Drop the old index first if it exists.
+    op.execute(f"DROP INDEX IF EXISTS {index_name};")
 
-    # Step 2: Drop the old foreign key constraint
-    # The name 'fk_quest_steps_quest_id_quests' is an assumption based on common SQLAlchemy naming.
-    # If this fails, it implies the auto-generated name was different or it was dropped with the index.
-    try:
-        op.drop_constraint(old_fk_name, 'quest_steps', type_='foreignkey')
-    except Exception as e:
-        print(f"Could not drop old FK constraint {old_fk_name} (it might not exist or name differs): {e}")
-        # As a fallback, try to alter the column to remove the FK if name is unknown.
-        # This is less clean and might not work universally or if the FK has a non-standard name.
-        # For this exercise, we'll assume the named drop is the primary path.
-        # A more robust script might inspect the table for existing FKs on the column.
+    # Step 2: Drop the old foreign key constraint if it exists.
+    op.execute(f"ALTER TABLE quest_steps DROP CONSTRAINT IF EXISTS {old_fk_name};")
 
     # Step 3: Create the new foreign key constraint to 'generated_quests'
     op.create_foreign_key(
