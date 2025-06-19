@@ -158,4 +158,4 @@ async def test_create_item_instance_default_state_and_quantity(item_manager_fixt
     assert item_instance.quantity == 1 # Default quantity from method signature
     assert item_instance.state_variables == {} # Default initial_state from method signature becomes {}
     assert item_instance.is_temporary is False # Default from method signature
-```
+
