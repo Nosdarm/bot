@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from bot.game.character_processors.character_action_processor import CharacterActionProcessor
     from bot.game.npc_processors.npc_action_processor import NpcActionProcessor
     from bot.game.party_processors.party_action_processor import PartyActionProcessor
+    from bot.game.managers.game_manager import GameManager
 
 logger = logging.getLogger(__name__) # Added
 
@@ -54,6 +55,7 @@ class CombatManager:
         status_manager: Optional["StatusManager"] = None,
         item_manager: Optional["ItemManager"] = None,
         location_manager: Optional["LocationManager"] = None,
+        game_manager: Optional["GameManager"] = None
     ):
         logger.info("Initializing CombatManager...") # Changed
         self._db_service = db_service
@@ -70,6 +72,7 @@ class CombatManager:
         self._status_manager = status_manager
         self._item_manager = item_manager
         self._location_manager = location_manager
+        self._game_manager = game_manager
 
         self._active_combats = {}
         self._dirty_combats = {}
