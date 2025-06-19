@@ -414,6 +414,37 @@ class GameManager:
         if self._rules_config_cache and guild_id in self._rules_config_cache: return self._rules_config_cache[guild_id].get(key, default)
         return default
 
+    async def get_location_type_i18n_map(self, guild_id: str, type_key: str) -> Optional[Dict[str, str]]:
+        """
+        Retrieves the i18n map (e.g., {"en": "Name", "ru": "Имя"}) for a given location type key.
+        Returns None if the key is not found or definitions are not loaded.
+        """
+        if not self.rule_engine:
+            logger.warning(f"RuleEngine not available in GameManager for guild {guild_id}. Cannot fetch location type definitions.")
+            return None
+
+        try:
+            # Assuming rule_engine has a method to get the fully loaded CoreGameRulesConfig
+            # This matches the assumption made when designing this method.
+            # If RuleEngine stores it as a direct attribute (e.g., self.rule_engine.core_config_data after parsing),
+            # this would be: rules_config = self.rule_engine.core_config_data.get(guild_id) or self.rule_engine.core_config_data
+            # For now, proceeding with get_rules_config as an async method on RuleEngine.
+            rules_config = await self.rule_engine.get_rules_config(guild_id)
+
+            if rules_config and rules_config.location_type_definitions:
+                i18n_map = rules_config.location_type_definitions.get(type_key)
+                if i18n_map is None:
+                    logger.warning(f"Location type key '{type_key}' not found in location_type_definitions for guild {guild_id}. Definitions are present but key is missing.")
+                return i18n_map
+            elif rules_config:
+                logger.warning(f"location_type_definitions not found in CoreGameRulesConfig for guild {guild_id}.")
+            else:
+                logger.warning(f"CoreGameRulesConfig not loaded for guild {guild_id}.")
+        except Exception as e:
+            logger.error(f"Error retrieving location type definitions for guild {guild_id}, key '{type_key}': {e}", exc_info=True)
+
+        return None
+
     async def update_rule_config(self, guild_id: str, key: str, value: Any) -> bool:
         if not self.db_service: return False
         try:
