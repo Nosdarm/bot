@@ -512,6 +512,7 @@ class AIGenerationManager:
 
                                 # If decided that certain item processing errors should fail the application:
                                 if not items_processed_successfully: # Check local flag in case of break from loop
+                                    pass
                                 #     application_success = False
                                 #     # Ensure PendingGeneration notes are updated if needed
                             # --- Item Persistence End ---
