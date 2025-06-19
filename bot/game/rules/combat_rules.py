@@ -259,11 +259,11 @@ async def process_attack(
         dc=target_ac, target_id=target_id
     )
     log_messages.append(attack_check_result.description)
-    if attack_check_result.is_critical and attack_check_result.actor_crit_status:
+    if attack_check_result.details_log.get('is_critical') and attack_check_result.details_log.get('crit_status'):
         outcome_summary["crit"] = True
     await game_log_manager.add_log_entry(f"Combat: {attack_check_result.description}", "combat_details")
 
-    if not attack_check_result.is_success:
+    if not attack_check_result.succeeded:
         outcome_summary["hit"] = False
         return outcome_summary
 
@@ -287,7 +287,7 @@ async def process_attack(
     if damage_bonus != 0: damage_details.append({"source": "stat_bonus", "type": "physical", "value": damage_bonus})
     total_damage = base_damage + damage_bonus
 
-    if attack_check_result.actor_crit_status == CheckOutcome.CRITICAL_SUCCESS.value:
+    if attack_check_result.details_log.get('crit_status') == "critical_success":
         crit_multiplier = combat_rules.get("attack_roll", {}).get("crit_success_multiplier", 2.0)
         crit_damage_bonus = total_damage * (crit_multiplier - 1.0)
         total_damage += crit_damage_bonus
