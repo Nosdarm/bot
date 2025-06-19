@@ -340,7 +340,11 @@ class RuleEngine:
         try:
             num1 = float(value1)
             num2 = float(value2)
+<<<<<<< HEAD
             
+=======
+
+>>>>>>> 24285a31fbfe8ee6da5afddf693672d60e47aab0
             if operator == '>=':
                 return num1 >= num2
             elif operator == '>':
