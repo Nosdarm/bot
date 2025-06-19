@@ -3,7 +3,7 @@
 import json
 from typing import TYPE_CHECKING, Dict, Any, List, Optional, Tuple # Ensure Tuple is imported
 
-from bot.ai.ai_data_models import GenerationContext, ParsedAiData, ValidationError, ValidatedEntity, ValidationIssue
+from bot.ai.ai_data_models import GenerationContext, ValidationIssue
 
 # Imports for prepare_location_description_prompt & prepare_faction_generation_prompt & prepare_quest_generation_prompt
 from sqlalchemy.ext.asyncio import AsyncSession
