@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.event_processors.event_stage_processor import EventStageProcessor
     from bot.game.managers.economy_manager import EconomyManager
+    from bot.game.managers.game_manager import GameManager # Add this line
 
 from bot.game.models.character import Character
 from bot.game.models.combat import Combat, CombatParticipant
@@ -50,7 +51,8 @@ class RuleEngine:
                  rules_data: Optional[Dict[str, Any]] = None,
                  game_log_manager: Optional["GameLogManager"] = None,
                  relationship_manager: Optional["RelationshipManager"] = None,
-                 economy_manager: Optional["EconomyManager"] = None
+                 economy_manager: Optional["EconomyManager"] = None,
+                 game_manager: Optional["GameManager"] = None
                  ):
         logger.info("Initializing RuleEngine...") # Changed print to logger
         self._settings = settings or {}
@@ -66,6 +68,7 @@ class RuleEngine:
         self._time_manager = time_manager
         self._relationship_manager = relationship_manager
         self._economy_manager = economy_manager
+        self._game_manager = game_manager
         
         if rules_data is not None:
             self._rules_data = rules_data
