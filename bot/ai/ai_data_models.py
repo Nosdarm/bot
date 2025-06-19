@@ -261,6 +261,25 @@ class GeneratedItemProfile(BaseModel):
             raise ValueError('Base value cannot be negative.')
         return v
 
+# --- Generation Context Model ---
+class GenerationContext(BaseModel):
+    guild_id: str
+    main_language: str
+    target_languages: List[str]
+    request_type: str
+    request_params: Dict[str, Any]
+    game_rules_summary: Dict[str, Any]
+    lore_snippets: List[Dict[str, Any]]
+    world_state: Dict[str, Any]
+    game_terms_dictionary: List[Dict[str, Any]]
+    scaling_parameters: List[Dict[str, Any]]
+    player_context: Optional[Dict[str, Any]] = None
+    faction_data: List[Dict[str, Any]]
+    relationship_data: List[Dict[str, Any]]
+    active_quests_summary: List[Dict[str, Any]]
+    primary_location_details: Optional[Dict[str, Any]] = None
+    party_context: Optional[Dict[str, Any]] = None
+
 # --- Wrapper Models for AI Response Validation ---
 # These are not directly produced by AI but used to structure the validation process and results.
 class ValidatedAiResponse(BaseModel):
@@ -279,7 +298,4 @@ class ValidatedAiResponse(BaseModel):
     @property
     def is_valid(self) -> bool:
         return self.data is not None and not self.validation_issues
-
-# Note: GenerationContext was removed as it was minimal and not directly part of this subtask's focus on AI output models.
-# If needed, it can be re-added or defined elsewhere.
 
