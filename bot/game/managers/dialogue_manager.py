@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from bot.game.managers.location_manager import LocationManager
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.services.notification_service import NotificationService
+    from bot.game.managers.game_manager import GameManager
 
 logger = logging.getLogger(__name__) # Added
 
@@ -57,6 +58,7 @@ class DialogueManager:
         game_log_manager: Optional["GameLogManager"] = None,
         quest_manager: Optional["QuestManager"] = None, 
         notification_service: Optional["NotificationService"] = None,
+        game_manager: Optional["GameManager"] = None
     ):
         logger.info("Initializing DialogueManager...") # Changed
         self._db_service = db_service 
@@ -71,6 +73,7 @@ class DialogueManager:
         self._game_log_manager = game_log_manager
         self._quest_manager = quest_manager
         self._notification_service = notification_service
+        self._game_manager = game_manager
 
         self._active_dialogues = {} 
         self._dialogue_templates = {} 
