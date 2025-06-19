@@ -1,8 +1,8 @@
 """Create pending_generations table
 
-Revision ID: XXXXXXXXXXXX  # Placeholder for new revision ID for this specific migration
-Revises: YYYYYYYYYYYY  # Placeholder: Should be the ID of the migration that added StoryLog, Relationship, NPC.schedule
-Create Date: ZZZZ-ZZ-ZZ ZZ:ZZ:ZZ.ZZZZZZ
+Revision ID: 1b2c3d4e5f0a
+Revises: 0a1b2c3d4e5f
+Create Date: ZZZZ-ZZ-ZZ ZZ:ZZ:ZZ.ZZZZZZ # Create Date will be updated by Alembic if regenerated
 
 """
 from alembic import op
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = 'XXXXXXXXXXXX' # Placeholder
-down_revision = 'YYYYYYYYYYYY' # Placeholder: This should point to the previous migration's ID
+revision = '1b2c3d4e5f0a' # Updated
+down_revision = '0a1b2c3d4e5f' # Updated
 branch_labels = None
 depends_on = None
 
