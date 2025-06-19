@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from bot.services.openai_service import OpenAIService
     from bot.game.ai.event_ai_generator import EventAIGenerator
     from bot.game.managers.game_log_manager import GameLogManager
+    from bot.game.managers.game_manager import GameManager # Add this
 
 logger = logging.getLogger(__name__) # Added
 
@@ -62,7 +63,8 @@ class EventManager:
         event_stage_processor: Optional["EventStageProcessor"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
         multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None,
-        openai_service: Optional["OpenAIService"] = None
+        openai_service: Optional["OpenAIService"] = None,
+        game_manager: Optional["GameManager"] = None
     ):
         logger.info("Initializing EventManager...") # Changed
         self._db_service = db_service
@@ -80,6 +82,7 @@ class EventManager:
         self._game_log_manager = game_log_manager
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
+        self._game_manager = game_manager
 
         if self._openai_service and self._multilingual_prompt_generator and self._settings:
             # Assuming EventAIGenerator is defined elsewhere or imported
