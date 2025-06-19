@@ -66,7 +66,7 @@ if TYPE_CHECKING:
     from bot.game.managers.dialogue_manager import DialogueManager
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.managers.lore_manager import LoreManager
-    from bot.game.services.campaign_loader import CampaignLoader
+    from bot.game.services.campaign_loader import CampaignLoaderService
     from bot.game.services.consequence_processor import ConsequenceProcessor
     from bot.services.nlu_data_service import NLUDataService
     from bot.game.conflict_resolver import ConflictResolver
@@ -145,7 +145,7 @@ class GameManager:
         self._party_action_processor: Optional["PartyActionProcessor"] = None
         self._party_command_handler: Optional["PartyCommandHandler"] = None
         self.conflict_resolver: Optional["ConflictResolver"] = None
-        self.campaign_loader: Optional["CampaignLoader"] = None
+        self.campaign_loader: Optional["CampaignLoaderService"] = None
         self.consequence_processor: Optional["ConsequenceProcessor"] = None
         self.nlu_data_service: Optional["NLUDataService"] = None
         self._world_tick_task: Optional[asyncio.Task] = None
@@ -191,9 +191,9 @@ class GameManager:
 
     async def _initialize_dependent_managers(self):
         logger.info("GameManager: Initializing dependent managers...")
-        from bot.game.managers.item_manager import ItemManager; from bot.game.managers.status_manager import StatusManager; from bot.game.managers.npc_manager import NpcManager; from bot.game.managers.inventory_manager import InventoryManager; from bot.game.managers.equipment_manager import EquipmentManager; from bot.game.managers.combat_manager import CombatManager; from bot.game.managers.party_manager import PartyManager; from bot.game.managers.lore_manager import LoreManager; from bot.game.managers.game_log_manager import GameLogManager; from bot.services.campaign_loader import CampaignLoader; from bot.game.managers.faction_manager import FactionManager; from bot.game.managers.relationship_manager import RelationshipManager; from bot.game.managers.dialogue_manager import DialogueManager; from bot.game.managers.quest_manager import QuestManager; from bot.game.services.consequence_processor import ConsequenceProcessor; from bot.game.managers.ability_manager import AbilityManager; from bot.game.managers.spell_manager import SpellManager; from bot.game.managers.crafting_manager import CraftingManager; from bot.game.managers.economy_manager import EconomyManager
+        from bot.game.managers.item_manager import ItemManager; from bot.game.managers.status_manager import StatusManager; from bot.game.managers.npc_manager import NpcManager; from bot.game.managers.inventory_manager import InventoryManager; from bot.game.managers.equipment_manager import EquipmentManager; from bot.game.managers.combat_manager import CombatManager; from bot.game.managers.party_manager import PartyManager; from bot.game.managers.lore_manager import LoreManager; from bot.game.managers.game_log_manager import GameLogManager; from bot.services.campaign_loader import CampaignLoaderService; from bot.game.managers.faction_manager import FactionManager; from bot.game.managers.relationship_manager import RelationshipManager; from bot.game.managers.dialogue_manager import DialogueManager; from bot.game.managers.quest_manager import QuestManager; from bot.game.services.consequence_processor import ConsequenceProcessor; from bot.game.managers.ability_manager import AbilityManager; from bot.game.managers.spell_manager import SpellManager; from bot.game.managers.crafting_manager import CraftingManager; from bot.game.managers.economy_manager import EconomyManager
         self.item_manager = ItemManager(db_service=self.db_service, settings=self._settings, location_manager=self.location_manager, rule_engine=self.rule_engine); self.status_manager = StatusManager(db_service=self.db_service, settings=self._settings.get('status_settings', {})); self.game_log_manager = GameLogManager(db_service=self.db_service); self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_service=self.db_service); self.ability_manager = AbilityManager(db_service=self.db_service); self.spell_manager = SpellManager(db_service=self.db_service); self.crafting_manager = CraftingManager(db_service=self.db_service, item_manager=self.item_manager); self.economy_manager = EconomyManager(db_service=self.db_service, item_manager=self.item_manager, rule_engine=self.rule_engine)
-        self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service); npc_archetypes_from_campaign = {};
+        self.campaign_loader = CampaignLoaderService(settings=self._settings); npc_archetypes_from_campaign = {};
         if self.campaign_loader: campaign_identifier = self._settings.get('default_campaign_identifier'); default_campaign_data = await self.campaign_loader.load_campaign_data_from_source(campaign_identifier=campaign_identifier); npc_archetypes_from_campaign = default_campaign_data.get('npc_archetypes', {}) if default_campaign_data and isinstance(default_campaign_data.get('npc_archetypes'), dict) else {}
         npc_manager_settings = self._settings.get('npc_settings', {}).copy(); npc_manager_settings['loaded_npc_archetypes_from_campaign'] = npc_archetypes_from_campaign
         self.relationship_manager = RelationshipManager(db_service=self.db_service, settings=self._settings.get('relationship_settings', {}))
