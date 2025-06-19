@@ -218,7 +218,7 @@ def upgrade() -> None:
                nullable=False)
     op.create_index('idx_player_guild_discord', 'players', ['guild_id', 'discord_id'], unique=False)
     op.create_index(op.f('ix_players_active_character_id'), 'players', ['active_character_id'], unique=False)
-    op.create_index(op.f('ix_players_discord_id'), 'players', ['discord_id'], unique=False)
+    op.create_index(op.f('ix_players_discord_id'), 'players', ['discord_id'], unique=True)
     op.create_index(op.f('ix_players_guild_id'), 'players', ['guild_id'], unique=False)
     op.drop_constraint(op.f('fk_players_party_id'), 'players', type_='foreignkey')
     op.drop_constraint(op.f('fk_players_current_party_id'), 'players', type_='foreignkey')
