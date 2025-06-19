@@ -30,7 +30,7 @@ from bot.database.guild_transaction import GuildTransaction
 
 # Import the new service
 from bot.services.ai_generation_service import AIGenerationService
-from bot.game.managers.undo_manager import UndoManager
+from bot.game.managers.undo_manager import UndoManager # Added import
 
 
 if TYPE_CHECKING:
@@ -129,7 +129,7 @@ class GameManager:
         self.prompt_context_collector: Optional["PromptContextCollector"] = None
         self.multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None
         self.ai_response_validator: Optional["AIResponseValidator"] = None
-        self.ai_generation_service: Optional[AIGenerationService] = None # Added
+        self.ai_generation_service: Optional[AIGenerationService] = None
         self._persistence_manager: Optional["PersistenceManager"] = None
         self._world_simulation_processor: Optional["WorldSimulationProcessor"] = None
         self._command_router: Optional["CommandRouter"] = None
@@ -156,7 +156,6 @@ class GameManager:
         logger.info("GameManager initialized with attributes set to None.")
 
     async def _initialize_database(self):
-        # ... (no changes needed here)
         logger.info("GameManager: Initializing database service...")
         self.db_service = DBService()
         await self.db_service.connect()
@@ -164,7 +163,6 @@ class GameManager:
         logger.info("GameManager: DBService initialized.")
 
     async def _initialize_core_managers_and_services(self):
-        # ... (no changes needed here for this specific subtask)
         logger.info("GameManager: Initializing core managers and services (RuleEngine, TimeManager, LocationManager, EventManager, OpenAIService)...")
         from bot.game.rules.rule_engine import RuleEngine
         from bot.game.managers.time_manager import TimeManager
@@ -193,11 +191,10 @@ class GameManager:
         logger.info("GameManager: Core managers and OpenAI service initialized.")
 
     async def _initialize_dependent_managers(self):
-        # ... (no changes needed here for this specific subtask)
         logger.info("GameManager: Initializing dependent managers...")
         from bot.game.managers.item_manager import ItemManager; from bot.game.managers.status_manager import StatusManager; from bot.game.managers.npc_manager import NpcManager; from bot.game.managers.inventory_manager import InventoryManager; from bot.game.managers.equipment_manager import EquipmentManager; from bot.game.managers.combat_manager import CombatManager; from bot.game.managers.party_manager import PartyManager; from bot.game.managers.lore_manager import LoreManager; from bot.game.managers.game_log_manager import GameLogManager; from bot.services.campaign_loader import CampaignLoader; from bot.game.managers.faction_manager import FactionManager; from bot.game.managers.relationship_manager import RelationshipManager; from bot.game.managers.dialogue_manager import DialogueManager; from bot.game.managers.quest_manager import QuestManager; from bot.game.services.consequence_processor import ConsequenceProcessor; from bot.game.managers.ability_manager import AbilityManager; from bot.game.managers.spell_manager import SpellManager; from bot.game.managers.crafting_manager import CraftingManager; from bot.game.managers.economy_manager import EconomyManager
         self.item_manager = ItemManager(db_service=self.db_service, settings=self._settings, location_manager=self.location_manager, rule_engine=self.rule_engine); self.status_manager = StatusManager(db_service=self.db_service, settings=self._settings.get('status_settings', {})); self.game_log_manager = GameLogManager(db_service=self.db_service); self.lore_manager = LoreManager(settings=self._settings.get('lore_settings', {}), db_service=self.db_service); self.ability_manager = AbilityManager(db_service=self.db_service); self.spell_manager = SpellManager(db_service=self.db_service); self.crafting_manager = CraftingManager(db_service=self.db_service, item_manager=self.item_manager); self.economy_manager = EconomyManager(db_service=self.db_service, item_manager=self.item_manager, rule_engine=self.rule_engine)
-        self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service); npc_archetypes_from_campaign = {}; # ... (npc archetype loading)
+        self.campaign_loader = CampaignLoader(settings=self._settings, db_service=self.db_service); npc_archetypes_from_campaign = {};
         if self.campaign_loader: campaign_identifier = self._settings.get('default_campaign_identifier'); default_campaign_data = await self.campaign_loader.load_campaign_data_from_source(campaign_identifier=campaign_identifier); npc_archetypes_from_campaign = default_campaign_data.get('npc_archetypes', {}) if default_campaign_data and isinstance(default_campaign_data.get('npc_archetypes'), dict) else {}
         npc_manager_settings = self._settings.get('npc_settings', {}).copy(); npc_manager_settings['loaded_npc_archetypes_from_campaign'] = npc_archetypes_from_campaign
         self.relationship_manager = RelationshipManager(db_service=self.db_service, settings=self._settings.get('relationship_settings', {}))
@@ -217,9 +214,9 @@ class GameManager:
         logger.info("GameManager: Dependent managers initialized.")
 
     async def _initialize_processors_and_command_system(self):
-        # ... (no changes needed here for this specific subtask)
         logger.info("GameManager: Initializing processors and command system...")
-        from bot.game.managers.undo_manager import UndoManager; from bot.game.character_processors.character_action_processor import CharacterActionProcessor; from bot.game.character_processors.character_view_service import CharacterViewService; from bot.game.party_processors.party_action_processor import PartyActionProcessor; from bot.game.command_handlers.party_handler import PartyCommandHandler; from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor; from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator; from bot.game.event_processors.event_stage_processor import EventStageProcessor; from bot.game.event_processors.event_action_processor import EventActionProcessor; from bot.game.world_processors.world_simulation_processor import WorldSimulationProcessor; from bot.game.managers.persistence_manager import PersistenceManager; from bot.game.command_router import CommandRouter; from bot.game.conflict_resolver import ConflictResolver; from bot.game.turn_processing_service import TurnProcessingService; from bot.game.turn_processor import TurnProcessor; from bot.game.rules.check_resolver import CheckResolver; from bot.game.services.location_interaction_service import LocationInteractionService
+        # from bot.game.managers.undo_manager import UndoManager # Already imported globally
+        from bot.game.character_processors.character_action_processor import CharacterActionProcessor; from bot.game.character_processors.character_view_service import CharacterViewService; from bot.game.party_processors.party_action_processor import PartyActionProcessor; from bot.game.command_handlers.party_handler import PartyCommandHandler; from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor; from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator; from bot.game.event_processors.event_stage_processor import EventStageProcessor; from bot.game.event_processors.event_action_processor import EventActionProcessor; from bot.game.world_processors.world_simulation_processor import WorldSimulationProcessor; from bot.game.managers.persistence_manager import PersistenceManager; from bot.game.command_router import CommandRouter; from bot.game.conflict_resolver import ConflictResolver; from bot.game.turn_processing_service import TurnProcessingService; from bot.game.turn_processor import TurnProcessor; from bot.game.rules.check_resolver import CheckResolver; from bot.game.services.location_interaction_service import LocationInteractionService
         self.undo_manager = UndoManager(db_service=self.db_service, game_log_manager=self.game_log_manager, character_manager=self.character_manager, item_manager=self.item_manager, quest_manager=self.quest_manager, party_manager=self.party_manager)
         self._on_enter_action_executor = OnEnterActionExecutor(npc_manager=self.npc_manager, item_manager=self.item_manager, combat_manager=self.combat_manager, status_manager=self.status_manager)
         self._stage_description_generator = StageDescriptionGenerator(openai_service=self.openai_service)
@@ -268,13 +265,11 @@ class GameManager:
         self.ai_response_validator = AIResponseValidator(game_manager=self)
         if self.quest_manager: self.quest_manager.ai_validator = self.ai_response_validator
 
-        # Instantiate AIGenerationService
         self.ai_generation_service = AIGenerationService(game_manager=self)
         logger.info("GameManager: AIGenerationService initialized.")
         logger.info("GameManager: AI content services initialized.")
 
     async def _load_initial_data_and_state(self):
-        # ... (no changes needed here)
         logger.info("GameManager: Loading initial game data and state...")
         if self.campaign_loader:
             if self._active_guild_ids:
@@ -286,21 +281,19 @@ class GameManager:
         logger.info("GameManager: Initial data and game state loaded.")
 
     async def _start_background_tasks(self):
-        # ... (no changes needed here)
         logger.info("GameManager: Starting background tasks...")
         if self._world_simulation_processor: self._world_tick_task = asyncio.create_task(self._world_tick_loop()); logger.info("GameManager: World tick loop started.")
         else: logger.warning("GameManager: World tick loop not started, WSP unavailable.")
         logger.info("GameManager: Background tasks started.")
 
     async def setup(self) -> None:
-        # ... (order of calls is important, ensure _initialize_ai_content_services is called) ...
         logger.info("GameManager: Running setup…")
         try:
             await self._initialize_database()
             await self._initialize_core_managers_and_services()
             await self._initialize_dependent_managers()
             await self._initialize_processors_and_command_system()
-            await self._initialize_ai_content_services() # Ensure this is called
+            await self._initialize_ai_content_services()
             await self._load_initial_data_and_state()
             await self._start_background_tasks()
             logger.info("GameManager: Setup complete.")
@@ -313,7 +306,6 @@ class GameManager:
             raise
 
     async def handle_discord_message(self, message: "Message") -> None:
-        # ... (no changes needed here) ...
         if message.author.bot: return
         if not self._command_router:
             logger.warning("GameManager: CommandRouter not available, message '%s' from guild %s dropped.", message.content, message.guild.id if message.guild else "DM")
@@ -345,7 +337,6 @@ class GameManager:
                 logger.error("GameManager: Error sending generic internal error message to channel %s: %s", message.channel.id, cb_e, exc_info=True)
 
     def _get_discord_send_callback(self, channel_id: int) -> SendToChannelCallback:
-        # ... (no changes needed here) ...
         channel_id_int = int(channel_id)
         async def _send(content: str = "", **kwargs: Any) -> None:
             channel = self._discord_client.get_channel(channel_id_int)
@@ -357,14 +348,12 @@ class GameManager:
         return _send
 
     async def _process_player_turns_for_tick(self, guild_id_str: str) -> None:
-        # ... (no changes needed here) ...
         if not self.turn_processor or not self.character_manager: logger.warning(f"GameManager (Tick-{guild_id_str}): TurnProcessor or CharacterManager not available."); return
         try:
             if self.turn_processor: await self.turn_processor.process_turns_for_guild(guild_id_str)
         except Exception as tps_e: logger.error(f"GameManager (Tick-{guild_id_str}): Error during TurnProcessor call: {tps_e}", exc_info=True)
 
     async def _world_tick_loop(self) -> None:
-        # ... (no changes needed here) ...
         logger.info("GameManager: Starting world tick loop...")
         try:
             while True:
@@ -377,13 +366,11 @@ class GameManager:
         except Exception as e: logger.critical(f"Critical error in world tick loop: {e}", exc_info=True)
 
     async def save_game_state_after_action(self, guild_id: str) -> None:
-        # ... (no changes needed here) ...
         if not self._persistence_manager: logger.warning(f"PersistenceManager not available for guild {guild_id}."); return
         try: await self._persistence_manager.save_game_state(guild_ids=[str(guild_id)])
         except Exception as e: logger.error(f"Error saving game state for guild {guild_id}: {e}", exc_info=True)
 
     async def shutdown(self) -> None:
-        # ... (no changes needed here) ...
         logger.info("GameManager: Running shutdown...")
         if self._world_tick_task:
             self._world_tick_task.cancel()
@@ -399,13 +386,11 @@ class GameManager:
         logger.info("GameManager: Shutdown complete.")
 
     async def get_player_by_discord_id(self, discord_id: int, guild_id: str) -> Optional[Character]:
-        # ... (no changes needed here) ...
         if not self.character_manager: return None
         try: return self.character_manager.get_character_by_discord_id(guild_id=guild_id, discord_user_id=discord_id)
         except Exception as e: logger.error(f"Error in get_player_by_discord_id: {e}", exc_info=True); return None
 
     async def _load_or_initialize_rules_config(self, guild_id: str):
-        # ... (no changes needed here) ...
         logger.info(f"GameManager: Loading/Init rules for guild_id: {guild_id}...")
         if self._rules_config_cache is None: self._rules_config_cache = {}
         if guild_id not in self._rules_config_cache: self._rules_config_cache[guild_id] = {}
@@ -425,13 +410,11 @@ class GameManager:
         if not self._rules_config_cache.get(guild_id): self._rules_config_cache[guild_id] = {"default_bot_language": "en", "emergency_mode": True, "reason": "Final fallback"}
 
     async def get_rule(self, guild_id: str, key: str, default: Optional[Any] = None) -> Optional[Any]:
-        # ... (no changes needed here) ...
         if self._rules_config_cache is None or guild_id not in self._rules_config_cache: await self._load_or_initialize_rules_config(guild_id)
         if self._rules_config_cache and guild_id in self._rules_config_cache: return self._rules_config_cache[guild_id].get(key, default)
         return default
 
     async def update_rule_config(self, guild_id: str, key: str, value: Any) -> bool:
-        # ... (no changes needed here) ...
         if not self.db_service: return False
         try:
             existing_rule_entry = await self.db_service.get_entity_by_conditions(table_name='rules_config', conditions={'guild_id': guild_id, 'key': key}, model_class=RulesConfig, single_entity=True)
@@ -446,7 +429,6 @@ class GameManager:
         except Exception as e: logger.error(f"Exception saving rule '{key}' for guild {guild_id}: {e}", exc_info=True); return False
 
     async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
-        # ... (no changes needed here) ...
         if not guild_id: return False
         success = await self.update_rule_config(guild_id, "default_language", language)
         if success and self.multilingual_prompt_generator:
@@ -454,17 +436,14 @@ class GameManager:
         return success
 
     async def get_player_model_by_discord_id(self, guild_id: str, discord_id: str) -> Optional[Player]:
-        # ... (no changes needed here) ...
         if not self.db_service: return None
         return await self.db_service.get_entity_by_conditions(table_name='players', conditions={'guild_id': str(guild_id), 'discord_id': str(discord_id)}, model_class=Player, single_entity=True)
 
     async def get_player_model_by_id(self, guild_id: str, player_id: str) -> Optional[Player]:
-        # ... (no changes needed here) ...
         if not self.db_service: return None
         return await self.db_service.get_entity_by_pk(table_name='players', pk_value=str(player_id), guild_id=str(guild_id), model_class=Player)
 
     async def get_players_in_location(self, guild_id: str, location_id: str) -> List[Player]:
-        # ... (no changes needed here) ...
         if not self.db_service: return []
         return await self.db_service.get_entities_by_conditions(table_name='players', conditions={'guild_id': str(guild_id), 'current_location_id': str(location_id)}, model_class=Player) or []
 
@@ -502,3 +481,5 @@ class GameManager:
     # _on_enter_location was moved to LocationInteractionService.process_on_enter_location_events
 
 logger.debug("DEBUG: Finished loading game_manager.py from: %s", __file__)
+
+[end of bot/game/managers/game_manager.py]
