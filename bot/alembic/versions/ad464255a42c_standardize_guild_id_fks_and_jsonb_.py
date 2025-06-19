@@ -81,6 +81,26 @@ def upgrade() -> None:
 
     # ### Add Foreign Key constraints for guild_id columns ###
     for table_name in TABLES_WITH_GUILD_ID_FK:
+        # Ensure guild_ids from the current table exist in guild_configs before creating FK
+        conn = op.get_bind()
+        current_table_metadata = sa.Table(table_name, sa.MetaData(), sa.Column('guild_id', sa.String))
+
+        # Select distinct non-null guild_ids from the current table
+        select_stmt = sa.select(current_table_metadata.c.guild_id).distinct()
+        existing_guild_ids_in_current_table = conn.execute(select_stmt).fetchall()
+
+        if existing_guild_ids_in_current_table:
+            for row in existing_guild_ids_in_current_table:
+                gid_to_insert = row[0]
+                if gid_to_insert is not None:
+                    # Use INSERT ... ON CONFLICT DO NOTHING to avoid errors if guild_id already exists
+                    # This requires PostgreSQL 9.5+
+                    insert_stmt = sa.text(
+                        "INSERT INTO guild_configs (guild_id) VALUES (:guild_id) "
+                        "ON CONFLICT (guild_id) DO NOTHING"
+                    ).bindparams(guild_id=gid_to_insert)
+                    conn.execute(insert_stmt)
+
         op.create_foreign_key(
             op.f(f'fk_{table_name}_guild_id_guild_configs'),
             table_name, 'guild_configs',
