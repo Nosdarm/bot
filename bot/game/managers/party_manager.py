@@ -431,4 +431,3 @@ class PartyManager:
             return False
 
 logger.debug("PartyManager class defined.")
-```

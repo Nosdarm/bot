@@ -316,4 +316,3 @@ class AIGenerationManager:
     # async def request_quest_generation(...) -> Optional[PendingGeneration]:
     # async def request_item_generation(...) -> Optional[PendingGeneration]:
 
-```
