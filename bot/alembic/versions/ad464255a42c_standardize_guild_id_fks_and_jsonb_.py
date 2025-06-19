@@ -132,8 +132,6 @@ def upgrade() -> None:
     op.create_foreign_key(op.f('fk_items_template_id_item_templates'), 'items', 'item_templates', ['template_id'], ['id'])
 
     # QuestStepTable.quest_id
-    op.create_foreign_key(op.f('fk_quest_steps_quest_id_quests'), 'quest_steps', 'quests', ['quest_id'], ['id'], ondelete='CASCADE')
-
     # UserSettings.user_id and guild_id
     op.drop_constraint('user_settings_user_id_fkey', 'user_settings', type_='foreignkey') # Replace if needed
     op.create_foreign_key(op.f('fk_user_settings_user_id_players'), 'user_settings', 'players', ['user_id'], ['discord_id'])
@@ -152,8 +150,6 @@ def downgrade() -> None:
     # op.drop_constraint(op.f('fk_user_settings_guild_id_guild_configs'), 'user_settings', type_='foreignkey') # Handled by loop below
 
     # ### Revert QuestStepTable FK ###
-    op.drop_constraint(op.f('fk_quest_steps_quest_id_quests'), 'quest_steps', type_='foreignkey')
-
     # ### Revert Item FK ###
     op.drop_constraint(op.f('fk_items_template_id_item_templates'), 'items', type_='foreignkey')
 
