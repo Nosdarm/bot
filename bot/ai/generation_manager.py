@@ -293,10 +293,20 @@ class AIGenerationManager:
                         if ai_location_data.static_id:
                              location_to_persist.static_id = ai_location_data.static_id
 
+                        # Get translated location type name
+                        type_key = ai_location_data.location_type_key
+                        type_i18n_map = await self.game_manager.get_location_type_i18n_map(guild_id, type_key)
 
-                        # Placeholder for type_i18n from location_type_key
-                        location_to_persist.type_i18n = {"en": ai_location_data.location_type_key.replace("_", " ").title()}
-                        # TODO: Potentially look up location_type_key in game_terms to get full i18n object
+                        if type_i18n_map and isinstance(type_i18n_map, dict):
+                            location_to_persist.type_i18n = type_i18n_map
+                            logger.info(f"Applied translated type_i18n for key '{type_key}' for location ID '{location_id_to_use}' (PG ID {record.id}).")
+                        else:
+                            fallback_type_i18n = {"en": type_key.replace("_", " ").title()}
+                            location_to_persist.type_i18n = fallback_type_i18n
+                            logger.warning(
+                                f"Location type key '{type_key}' not found or invalid map in definitions for location ID '{location_id_to_use}' (PG ID {record.id}). "
+                                f"Using fallback: {fallback_type_i18n}. Returned map: {type_i18n_map}"
+                            )
 
                         location_to_persist.coordinates = ai_location_data.coordinates_json
                         location_to_persist.details_i18n = ai_location_data.generated_details_json
