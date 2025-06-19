@@ -1,161 +1,185 @@
-# tests/game/managers/test_npc_manager.py
-import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
-import json # Added import for json
-import uuid # Added import for uuid
+import pytest
+import uuid
+from unittest.mock import AsyncMock, MagicMock
 
 from bot.game.managers.npc_manager import NpcManager
-# Assuming other necessary imports like NPC model, or other managers if their direct methods are called.
-# from bot.game.models.npc import NPC
+from bot.database.models import NPC as SQLAlchemyNPC
+from bot.database.models import Location as DBLocation # For mocking location object
+from sqlalchemy.ext.asyncio import AsyncSession
 
-# If NpcManager is in a class that inherits from something providing asyncio support:
-# class TestNpcManager(unittest.IsolatedAsyncioTestCase):
-# Otherwise, ensure your test runner handles async tests.
-class TestNpcManager(unittest.IsolatedAsyncioTestCase): # Using IsolatedAsyncioTestCase for async tests
-
-    def setUp(self):
-        # Mock services that are injected into NpcManager
-        self.mock_db_service = MagicMock()
-        self.mock_db_service.adapter = AsyncMock() # The adapter has async methods
-
-        self.mock_settings = {"npc_generation_ai_settings": {}} # Basic settings mock
-        self.mock_item_manager = AsyncMock()
-        self.mock_status_manager = AsyncMock()
-        self.mock_party_manager = AsyncMock()
-        self.mock_character_manager = AsyncMock()
-        self.mock_rule_engine = AsyncMock()
-        self.mock_combat_manager = AsyncMock()
-        self.mock_dialogue_manager = AsyncMock()
-        self.mock_location_manager = AsyncMock()
-        self.mock_game_log_manager = AsyncMock()
-        self.mock_multilingual_prompt_generator = AsyncMock()
-        self.mock_openai_service = AsyncMock()
-        self.mock_ai_validator = AsyncMock()
-        self.mock_campaign_loader = MagicMock() # Assuming sync methods for now
-        self.mock_notification_service = AsyncMock()
-
-        self.npc_manager = NpcManager(
-            db_service=self.mock_db_service,
-            settings=self.mock_settings,
-            item_manager=self.mock_item_manager,
-            status_manager=self.mock_status_manager,
-            party_manager=self.mock_party_manager,
-            character_manager=self.mock_character_manager,
-            rule_engine=self.mock_rule_engine,
-            combat_manager=self.mock_combat_manager,
-            dialogue_manager=self.mock_dialogue_manager,
-            location_manager=self.mock_location_manager,
-            game_log_manager=self.mock_game_log_manager,
-            multilingual_prompt_generator=self.mock_multilingual_prompt_generator,
-            openai_service=self.mock_openai_service,
-            ai_validator=self.mock_ai_validator,
-            campaign_loader=self.mock_campaign_loader,
-            notification_service=self.mock_notification_service
-        )
-        # Pre-load archetypes or mock _load_npc_archetypes if it interferes
-        self.npc_manager._npc_archetypes = {}
-
-
-    async def test_create_npc_ai_path_moderation_flow(self):
-        guild_id = "test_guild_123"
-        npc_template_id = "AI:Powerful Dragon" # Trigger AI path
-        user_id = "test_user_456"
-
-        # 1. Mock AI Generation and Validation
-        mock_ai_generated_data = {
-            "name": "Sparky the Dragon",
-            "name_i18n": {"en": "Sparky the Dragon"},
-            "archetype": "dragon_young",
-            "level_suggestion": 10
-            # Ensure this data matches what generate_npc_details_from_ai is expected to return
-            # after validation (i.e., the content of validated_data)
+@pytest.fixture
+def mock_npc_templates() -> Dict:
+    return {
+        "guard": {
+            "name_i18n": {"en": "Guard"},
+            "stats": {"hp": 100, "strength": 12},
+            "archetype": "humanoid_fighter",
+            "faction_id": "city_guard_template_faction", # Template faction
+            # No inventory in guard template by default for these tests
+        },
+        "goblin": {
+            "name_i18n": {"en": "Goblin"},
+            "stats": {"hp": 30, "strength": 8},
+            "archetype": "goblin_basic",
+            "inventory": [{"item_template_id": "rusty_dagger", "quantity": 1}] # Template inventory
+            # No faction in goblin template by default
         }
-        # NpcManager.generate_npc_details_from_ai calls:
-        #   - multilingual_prompt_generator.generate_npc_profile_prompt
-        #   - openai_service.generate_structured_multilingual_content
-        #   - ai_validator.validate_ai_response
-        self.mock_multilingual_prompt_generator.generate_npc_profile_prompt.return_value = {"system": "sys_prompt", "user": "user_prompt"}
-        self.mock_openai_service.generate_structured_multilingual_content.return_value = {"json_string": json.dumps(mock_ai_generated_data)}
-        self.mock_ai_validator.validate_ai_response.return_value = {
-            "overall_status": "success",
-            "entities": [{"validated_data": mock_ai_generated_data, "errors": [], "notifications": []}],
-            "global_errors": []
-        }
+    }
 
-        # 2. Mock DB save_pending_moderation_request
-        self.mock_db_service.adapter.save_pending_moderation_request.return_value = None # Simulates successful execution
+@pytest.fixture
+def npc_manager_fixture(mock_npc_templates: Dict):
+    # Mock DBService as it's checked in spawn_npc_in_location
+    mock_db_service = AsyncMock()
+    manager = NpcManager(db_service=mock_db_service)
+    manager._npc_archetypes = mock_npc_templates
+    manager._location_manager = AsyncMock()
+    return manager
 
-        # 3. Mock CharacterManager and StatusManager for player status update
-        mock_player_character = MagicMock()
-        mock_player_character.id = "player_char_id_789"
-        # Ensure 'name' attribute exists for logging if get_character_by_discord_id returns an object with it
-        mock_player_character.name = "TestPlayer"
-        self.mock_character_manager.get_character_by_discord_id.return_value = mock_player_character
-        self.mock_status_manager.add_status_effect_to_entity.return_value = "status_effect_id_abc"
+@pytest.mark.asyncio
+async def test_spawn_npc_with_factions_and_inventory(npc_manager_fixture: NpcManager):
+    # Arrange
+    guild_id = "test_guild"
+    location_id = "loc_castle_courtyard"
+    npc_template_id = "guard" # Guard template has a faction_id
+    mock_session = AsyncMock(spec=AsyncSession)
 
-        # 4. Mock NotificationService
-        self.mock_notification_service.send_moderation_request_alert.return_value = None
+    initial_faction_id = "city_watch_override" # Override template's faction_id
+    initial_faction_details = [
+        {"faction_id": "city_watch_override", "rank_i18n": {"en": "Sergeant"}},
+        {"faction_id": "kings_guard", "rank_i18n": {"en": "Reservist"}}
+    ]
+    initial_inventory = [
+        {"item_template_id": "long_sword", "quantity": 1},
+        {"item_template_id": "healing_potion", "quantity": 2}
+    ]
 
-        # Call the method
-        result = await self.npc_manager.create_npc(
-            guild_id=guild_id,
-            npc_template_id=npc_template_id,
-            user_id=user_id,
-            # time_manager might be needed by add_status_effect_to_entity context
-            time_manager=AsyncMock()
-        )
+    initial_state = {
+        "name_i18n": {"en": "Custom Guard"},
+        "faction_id": initial_faction_id,
+        "faction_details_list": initial_faction_details,
+        "inventory": initial_inventory,
+        "stats": {"hp": 120}
+    }
 
-        # Assertions
-        self.assertIsNotNone(result)
-        self.assertEqual(result.get("status"), "pending_moderation")
-        self.assertTrue("request_id" in result)
-        request_id = result["request_id"]
+    mock_location = DBLocation(id=location_id, guild_id=guild_id, npc_ids=[])
+    mock_session.get = AsyncMock(return_value=mock_location)
 
-        # Verify AI generation path was taken
-        self.mock_multilingual_prompt_generator.generate_npc_profile_prompt.assert_called_once()
-        self.mock_openai_service.generate_structured_multilingual_content.assert_called_once()
-        self.mock_ai_validator.validate_ai_response.assert_called_once_with(
-            ai_json_string=json.dumps(mock_ai_generated_data),
-            expected_structure="single_npc",
-            existing_npc_ids=set(),
-            existing_quest_ids=set(),
-            existing_item_template_ids=set()
-        )
+    # Act
+    created_npc = await npc_manager_fixture.spawn_npc_in_location(
+        guild_id, location_id, npc_template_id,
+        initial_state=initial_state, session=mock_session, is_temporary=False
+    )
 
-        # Verify moderation save
-        self.mock_db_service.adapter.save_pending_moderation_request.assert_awaited_once()
-        args_save, _ = self.mock_db_service.adapter.save_pending_moderation_request.call_args
-        self.assertEqual(args_save[0], request_id)
-        self.assertEqual(args_save[1], guild_id)
-        self.assertEqual(args_save[2], user_id)
-        self.assertEqual(args_save[3], "npc")
-        self.assertEqual(json.loads(args_save[4]), mock_ai_generated_data)
+    # Assert
+    assert created_npc is not None
+    assert isinstance(created_npc, SQLAlchemyNPC)
+    mock_session.add.assert_any_call(created_npc)
 
-        # Verify player status update
-        self.mock_character_manager.get_character_by_discord_id.assert_awaited_once_with(guild_id, user_id)
-        self.mock_status_manager.add_status_effect_to_entity.assert_awaited_once()
+    assert created_npc.name_i18n["en"] == "Custom Guard"
+    assert created_npc.faction_id == initial_faction_id # Overridden
+    assert created_npc.faction == initial_faction_details
+    assert created_npc.inventory == initial_inventory
+    assert created_npc.stats["hp"] == 120
+    assert created_npc.stats["strength"] == 12
+    assert created_npc.is_temporary is False
 
-        # Check the arguments of add_status_effect_to_entity more carefully
-        # call_args gives a tuple (args, kwargs). We are interested in kwargs['context']
-        called_args_status, called_kwargs_status = self.mock_status_manager.add_status_effect_to_entity.call_args
-        self.assertEqual(called_args_status[0], mock_player_character.id) # target_id
-        self.assertEqual(called_args_status[1], "Character") # target_type
-        self.assertEqual(called_args_status[2], "common.awaiting_moderation") # status_type
-        self.assertIn('context', called_kwargs_status)
-        self.assertEqual(called_kwargs_status['context']['guild_id'], guild_id)
+    mock_session.add.assert_any_call(mock_location)
+    assert created_npc.id in mock_location.npc_ids
 
 
-        # Verify notification
-        self.mock_notification_service.send_moderation_request_alert.assert_awaited_once()
-        args_notify, _ = self.mock_notification_service.send_moderation_request_alert.call_args
-        self.assertEqual(args_notify[0], guild_id)
-        self.assertEqual(args_notify[1], request_id)
-        self.assertEqual(args_notify[2], "npc")
-        self.assertEqual(args_notify[3], user_id)
-        self.assertIn("name", args_notify[4]) # content_summary
-        self.assertEqual(args_notify[4]["name"], mock_ai_generated_data["name"])
-        self.assertIn("Use /approve", args_notify[5]) # moderation_interface_link
+@pytest.mark.asyncio
+async def test_spawn_npc_no_initial_faction_or_inventory_uses_template_values(npc_manager_fixture: NpcManager):
+    # Arrange
+    guild_id = "test_guild"
+    location_id = "loc_forest_edge"
+    npc_template_id = "goblin" # Goblin template has inventory, no faction
+    mock_session = AsyncMock(spec=AsyncSession)
+    initial_state = {} # Empty initial_state
 
-# Required for running tests if this file is executed directly
-if __name__ == '__main__':
-    unittest.main()
+    mock_location = DBLocation(id=location_id, guild_id=guild_id, npc_ids=[])
+    mock_session.get = AsyncMock(return_value=mock_location)
+
+    # Act
+    created_npc = await npc_manager_fixture.spawn_npc_in_location(
+        guild_id, location_id, npc_template_id,
+        initial_state=initial_state, session=mock_session
+    )
+
+    # Assert
+    assert created_npc is not None
+    template_data = npc_manager_fixture.get_npc_template(guild_id, npc_template_id)
+
+    assert created_npc.faction_id == template_data.get("faction_id") # Should be None from goblin template
+    assert created_npc.faction == template_data.get("faction_details_list") # Should be None
+    assert created_npc.inventory == template_data.get("inventory") # Should be from goblin template
+    assert created_npc.inventory == [{"item_template_id": "rusty_dagger", "quantity": 1}]
+
+@pytest.mark.asyncio
+async def test_spawn_npc_initial_state_overrides_template_inventory(npc_manager_fixture: NpcManager):
+    # Arrange
+    guild_id = "test_guild"
+    location_id = "loc_cave_entrance"
+    npc_template_id = "goblin"
+    mock_session = AsyncMock(spec=AsyncSession)
+    new_inventory = [{"item_template_id": "shiny_rock", "quantity": 3}]
+    initial_state = {"inventory": new_inventory}
+
+    mock_location = DBLocation(id=location_id, guild_id=guild_id, npc_ids=[])
+    mock_session.get = AsyncMock(return_value=mock_location)
+
+    # Act
+    created_npc = await npc_manager_fixture.spawn_npc_in_location(
+        guild_id, location_id, npc_template_id,
+        initial_state=initial_state, session=mock_session
+    )
+
+    # Assert
+    assert created_npc is not None
+    assert created_npc.inventory == new_inventory
+
+
+@pytest.mark.asyncio
+async def test_spawn_npc_empty_list_initial_inventory_overrides_template(npc_manager_fixture: NpcManager):
+    # Arrange
+    guild_id = "test_guild"
+    location_id = "loc_clearing"
+    npc_template_id = "goblin"
+    mock_session = AsyncMock(spec=AsyncSession)
+    initial_state = {"inventory": []} # Explicitly empty inventory list
+
+    mock_location = DBLocation(id=location_id, guild_id=guild_id, npc_ids=[])
+    mock_session.get = AsyncMock(return_value=mock_location)
+
+    # Act
+    created_npc = await npc_manager_fixture.spawn_npc_in_location(
+        guild_id, location_id, npc_template_id,
+        initial_state=initial_state, session=mock_session
+    )
+
+    # Assert
+    assert created_npc is not None
+    assert created_npc.inventory == []
+
+
+@pytest.mark.asyncio
+async def test_spawn_npc_inventory_none_in_initial_state_overrides_template(npc_manager_fixture: NpcManager):
+    # Arrange
+    guild_id = "test_guild"
+    location_id = "loc_swamp"
+    npc_template_id = "goblin"
+    mock_session = AsyncMock(spec=AsyncSession)
+    initial_state = {"inventory": None} # Explicitly None inventory
+
+    mock_location = DBLocation(id=location_id, guild_id=guild_id, npc_ids=[])
+    mock_session.get = AsyncMock(return_value=mock_location)
+
+    # Act
+    created_npc = await npc_manager_fixture.spawn_npc_in_location(
+        guild_id, location_id, npc_template_id,
+        initial_state=initial_state, session=mock_session
+    )
+
+    # Assert
+    assert created_npc is not None
+    assert created_npc.inventory is None # Should be None (SQL NULL)
+```
