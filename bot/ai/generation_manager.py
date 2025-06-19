@@ -342,11 +342,17 @@ class AIGenerationManager:
                                     if 'abilities' in initial_state_for_npc:
                                         initial_state_for_npc['abilities_data'] = initial_state_for_npc.pop('abilities')
 
-                                    # Handle faction_affiliations: use the first one's ID if available
-                                    # This is a simple approach. More complex logic could be in NpcManager.
-                                    if npc_profile_data.faction_affiliations and len(npc_profile_data.faction_affiliations) > 0:
+                                    # New faction handling
+                                    if npc_profile_data.faction_affiliations: # Check if the list exists and is not empty
                                         initial_state_for_npc['faction_id'] = npc_profile_data.faction_affiliations[0].faction_id
-                                    # Remove the list of faction_affiliations as NPC model expects a single faction_id
+                                        initial_state_for_npc['faction_details_list'] = [
+                                            affiliation.model_dump() for affiliation in npc_profile_data.faction_affiliations
+                                        ]
+                                    else:
+                                        initial_state_for_npc['faction_id'] = None
+                                        initial_state_for_npc['faction_details_list'] = None # Or [] if preferred for JSONB
+
+                                    # Remove the original Pydantic model list from the state dict being passed to NpcManager
                                     initial_state_for_npc.pop('faction_affiliations', None)
 
 
