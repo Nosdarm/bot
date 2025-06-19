@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql # If using JSONB specifically for PostgreSQL
 
 # revision identifiers, used by Alembic.
-revision = 'placeholder_revision_id'
-down_revision = '<previous_revision_id>' # Replace with actual previous revision ID
+revision = 'YYYYYYYYYYYY'
+down_revision = 'ad464255a42c' # Replace with actual previous revision ID
 branch_labels = None
 depends_on = None
 
