@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     # from bot.game.models.character import Character
     # from bot.game.models.npc import NPC
 
-from bot.game.models.check_models import DetailedCheckResult, CheckOutcome
+from bot.game.models.check_models import CheckResult
 
 def _roll_dice_simple(dice_str: str) -> int:
     # Very simple parser for NdX+M or NdX-M or NdX
@@ -55,61 +55,67 @@ def perform_check(
     target_id: Optional[str] = None,
     opposed_roll_value: Optional[int] = None,
     opposed_roll_crit_status: Optional[str] = None
-) -> DetailedCheckResult:
+) -> CheckResult:
     if modifier_details is None:
         modifier_details = []
 
-    result = DetailedCheckResult(
-        check_type=check_type,
-        entity_doing_check_id=actor_id,
-        target_entity_id=target_id,
-        difficulty_dc=dc,
-        actor_modifier_applied=modifier,
-        actor_modifier_details=modifier_details,
-    )
+    details_log = {
+        'check_type': check_type,
+        'actor_id': actor_id,
+        'target_id': target_id,
+        'modifier_details': modifier_details, # Already ensured it's a list
+        'roll_formula': '',
+        'rolls': [],
+        'crit_status': None, # Will be 'critical_success', 'critical_failure', or None
+        'is_critical': False,
+        'outcome_category': 'indeterminate' # Default, will be updated
+    }
+
+    # Variables for CheckResult constructor
+    succeeded_val: bool = False # Default to False
+    actor_raw_roll_val: int = 0
+    # 'modifier' is already available as function argument
+    actor_total_roll_val: int = 0
+    # 'dc' is available as function argument 'dc'
+    # 'opposed_roll_value' is available as function argument
+    description_val: str = ""
+
 
     combat_rules = rules_config.get("combat_rules", {})
     config_key = ""
 
     if "attack" in check_type:
         config_key = "attack_roll"
-        result.actor_roll_formula = combat_rules.get(config_key, {}).get("base_die", "1d20")
+        details_log['roll_formula'] = combat_rules.get(config_key, {}).get("base_die", "1d20")
     elif "saving_throw" in check_type:
         config_key = "saving_throws"
-        result.actor_roll_formula = combat_rules.get(config_key, {}).get("base_die", "1d20")
+        details_log['roll_formula'] = combat_rules.get(config_key, {}).get("base_die", "1d20")
     else:
-        result.actor_roll_formula = combat_rules.get("default_check_die", "1d20")
+        details_log['roll_formula'] = combat_rules.get("default_check_die", "1d20")
 
     if base_die_override:
-        result.actor_roll_formula = base_die_override
+        details_log['roll_formula'] = base_die_override
 
-    actor_raw_roll = 0
     try:
-        # Using the more robust _roll_dice_simple for consistency if formula is simple enough
-        # This assumes perform_check's formulas are also simple like "1d20" or "NdX"
-        if 'd' in result.actor_roll_formula.lower():
-             # _roll_dice_simple can handle "1d20", "2d6+3" etc.
-             # For perform_check, the base_die from config is usually just "1d20".
-             # If it's more complex, _roll_dice_simple might fail or misinterpret.
-             # The original logic was fine for "NdX" format.
-            num_dice_pd, die_type_pd = map(int, result.actor_roll_formula.lower().split('d'))
+        if 'd' in details_log['roll_formula'].lower():
+            num_dice_pd, die_type_pd = map(int, details_log['roll_formula'].lower().split('d'))
             rolls = [random.randint(1, die_type_pd) for _ in range(num_dice_pd)]
-            actor_raw_roll = sum(rolls)
-            result.actor_rolls = rolls
+            actor_raw_roll_val = sum(rolls)
+            details_log['rolls'] = rolls
         else:
-            actor_raw_roll = int(result.actor_roll_formula) # Flat number "roll"
-            result.actor_rolls = [actor_raw_roll]
-    except ValueError: # Fallback if parsing above failed
+            actor_raw_roll_val = int(details_log['roll_formula'])
+            details_log['rolls'] = [actor_raw_roll_val]
+    except ValueError:
         try:
-            actor_raw_roll = _roll_dice_simple(result.actor_roll_formula)
-            result.actor_rolls = [actor_raw_roll] # _roll_dice_simple returns sum, not individual rolls for now
+            actor_raw_roll_val = _roll_dice_simple(details_log['roll_formula'])
+            details_log['rolls'] = [actor_raw_roll_val]
         except Exception as e_simple_roll:
-            actor_raw_roll = random.randint(1, 20)
-            result.actor_rolls = [actor_raw_roll]
-            result.description = f"Note: Dice formula '{result.actor_roll_formula}' invalid ('{e_simple_roll}'), used 1d20."
+            actor_raw_roll_val = random.randint(1, 20)
+            details_log['rolls'] = [actor_raw_roll_val]
+            description_val = f"Note: Dice formula '{details_log['roll_formula']}' invalid ('{e_simple_roll}'), used 1d20. "
 
 
-    result.actor_total_roll_value = actor_raw_roll + modifier
+    actor_total_roll_val = actor_raw_roll_val + modifier
 
     crit_rule_details = combat_rules.get(config_key, {})
     if not crit_rule_details and "saving_throw" in check_type:
@@ -125,61 +131,70 @@ def perform_check(
     natural_20_wins_opposed = combat_rules.get("opposed_checks", {}).get("natural_20_auto_wins", True)
     natural_1_loses_opposed = combat_rules.get("opposed_checks", {}).get("natural_1_auto_loses", True)
 
-    if actor_raw_roll >= crit_success_threshold:
-        result.actor_crit_status = CheckOutcome.CRITICAL_SUCCESS.value
-        result.is_critical = True
-    elif actor_raw_roll <= crit_failure_threshold:
-        result.actor_crit_status = CheckOutcome.CRITICAL_FAILURE.value
-        result.is_critical = True
+    if actor_raw_roll_val >= crit_success_threshold:
+        details_log['crit_status'] = "critical_success"
+        details_log['is_critical'] = True
+    elif actor_raw_roll_val <= crit_failure_threshold:
+        details_log['crit_status'] = "critical_failure"
+        details_log['is_critical'] = True
     else:
-        result.actor_crit_status = None
-
-    current_description = result.description if result.description else ""
+        details_log['crit_status'] = None # Explicitly None if not critical
 
     if dc is not None:
-        if result.actor_crit_status == CheckOutcome.CRITICAL_SUCCESS.value and natural_20_is_always_success:
-            result.is_success = True
-        elif result.actor_crit_status == CheckOutcome.CRITICAL_FAILURE.value and natural_1_is_always_failure:
-            result.is_success = False
+        if details_log['crit_status'] == "critical_success" and natural_20_is_always_success:
+            succeeded_val = True
+        elif details_log['crit_status'] == "critical_failure" and natural_1_is_always_failure:
+            succeeded_val = False
         else:
-            result.is_success = result.actor_total_roll_value >= dc
+            succeeded_val = actor_total_roll_val >= dc
 
-        if result.is_success:
-            result.outcome = CheckOutcome.CRITICAL_SUCCESS if result.actor_crit_status == CheckOutcome.CRITICAL_SUCCESS.value else CheckOutcome.SUCCESS
+        if succeeded_val:
+            details_log['outcome_category'] = "critical_success" if details_log['crit_status'] == "critical_success" else "success"
         else:
-            result.outcome = CheckOutcome.CRITICAL_FAILURE if result.actor_crit_status == CheckOutcome.CRITICAL_FAILURE.value else CheckOutcome.FAILURE
-        result.description = f"{current_description}{actor_id} rolled {actor_raw_roll}({result.actor_rolls}) + {modifier} = {result.actor_total_roll_value} vs DC {dc}."
+            details_log['outcome_category'] = "critical_failure" if details_log['crit_status'] == "critical_failure" else "failure"
+        description_val += f"{actor_id} rolled {actor_raw_roll_val}({details_log['rolls']}) + {modifier} = {actor_total_roll_val} vs DC {dc}."
 
     elif opposed_roll_value is not None:
-        actor_wins_on_crit_success = result.actor_crit_status == CheckOutcome.CRITICAL_SUCCESS.value and natural_20_wins_opposed
-        actor_loses_on_crit_failure = result.actor_crit_status == CheckOutcome.CRITICAL_FAILURE.value and natural_1_loses_opposed
+        actor_wins_on_crit_success = details_log['crit_status'] == "critical_success" and natural_20_wins_opposed
+        actor_loses_on_crit_failure = details_log['crit_status'] == "critical_failure" and natural_1_loses_opposed
 
-        target_crit_success = opposed_roll_crit_status == CheckOutcome.CRITICAL_SUCCESS.value and natural_20_wins_opposed
-        target_crit_failure = opposed_roll_crit_status == CheckOutcome.CRITICAL_FAILURE.value and natural_1_loses_opposed
+        # Assuming opposed_roll_crit_status is passed as simple string "critical_success" or "critical_failure"
+        target_crit_success = opposed_roll_crit_status == "critical_success" and natural_20_wins_opposed
+        target_crit_failure = opposed_roll_crit_status == "critical_failure" and natural_1_loses_opposed
 
-        if actor_wins_on_crit_success: result.is_success = True
-        elif actor_loses_on_crit_failure: result.is_success = False
-        elif target_crit_success: result.is_success = False
-        elif target_crit_failure: result.is_success = True
+        if actor_wins_on_crit_success: succeeded_val = True
+        elif actor_loses_on_crit_failure: succeeded_val = False
+        elif target_crit_success: succeeded_val = False
+        elif target_crit_failure: succeeded_val = True
         else:
             tie_breaker_rule = combat_rules.get("opposed_checks", {}).get("tie_breaker", "actor_wins")
-            if tie_breaker_rule == "actor_wins": result.is_success = result.actor_total_roll_value >= opposed_roll_value
-            elif tie_breaker_rule == "target_wins": result.is_success = result.actor_total_roll_value > opposed_roll_value
-            else: result.is_success = result.actor_total_roll_value >= opposed_roll_value
+            if tie_breaker_rule == "actor_wins": succeeded_val = actor_total_roll_val >= opposed_roll_value
+            elif tie_breaker_rule == "target_wins": succeeded_val = actor_total_roll_val > opposed_roll_value
+            else: succeeded_val = actor_total_roll_val >= opposed_roll_value # Default to actor wins on tie
 
-        if result.is_success: result.outcome = CheckOutcome.ACTOR_WINS_OPPOSED
-        elif result.actor_total_roll_value == opposed_roll_value: result.outcome = CheckOutcome.TIE_OPPOSED
-        else: result.outcome = CheckOutcome.TARGET_WINS_OPPOSED
-        result.description = f"{current_description}{actor_id} rolled {actor_raw_roll}({result.actor_rolls}) + {modifier} = {result.actor_total_roll_value} vs opponent's {opposed_roll_value}."
+        if succeeded_val: details_log['outcome_category'] = "actor_wins_opposed"
+        elif actor_total_roll_val == opposed_roll_value: details_log['outcome_category'] = "tie_opposed"
+        else: details_log['outcome_category'] = "target_wins_opposed"
+        description_val += f"{actor_id} rolled {actor_raw_roll_val}({details_log['rolls']}) + {modifier} = {actor_total_roll_val} vs opponent's {opposed_roll_value}."
     else:
-        result.outcome = CheckOutcome.INDETERMINATE
-        result.is_success = False
-        result.description = f"{current_description}{actor_id} rolled {actor_raw_roll}({result.actor_rolls}) + {modifier} = {result.actor_total_roll_value}. No DC or opposed roll."
+        # No DC and no opposed roll means it's indeterminate by default (already set)
+        succeeded_val = False # Or handle as per specific game rules for such checks
+        description_val += f"{actor_id} rolled {actor_raw_roll_val}({details_log['rolls']}) + {modifier} = {actor_total_roll_val}. No DC or opposed roll."
 
-    result.description += f" Outcome: {result.outcome.value}."
-    if result.is_critical and result.actor_crit_status:
-        result.description += f" Critical Status: {result.actor_crit_status}."
-    return result
+    description_val += f" Outcome: {details_log['outcome_category']}."
+    if details_log['is_critical'] and details_log['crit_status']:
+        description_val += f" Critical Status: {details_log['crit_status']}."
+
+    return CheckResult(
+        succeeded=succeeded_val,
+        roll_value=actor_raw_roll_val,
+        modifier_applied=modifier,
+        total_roll_value=actor_total_roll_val,
+        dc_value=dc,
+        opposed_roll_value=opposed_roll_value,
+        description=description_val,
+        details_log=details_log
+    )
 
 async def process_attack(
     actor_id: str, actor_type: str, target_id: str, target_type: str,
@@ -309,7 +324,7 @@ async def process_saving_throw(
     dc: int, save_type: str, character_manager: 'CharacterManager',
     npc_manager: 'NpcManager', game_log_manager: 'GameLogManager',
     effect_description: Optional[str] = "an effect"
-) -> DetailedCheckResult:
+) -> CheckResult:
     guild_id = rules_config.get("guild_id", "default_guild")
     entity_object: Optional[Any] = None
     if entity_type == "Character": entity_object = await character_manager.get_character(guild_id, entity_id)
@@ -318,9 +333,14 @@ async def process_saving_throw(
     if not entity_object:
         error_description = f"Entity {entity_id} ({entity_type}) not found for saving throw against {effect_description} (DC {dc})."
         await game_log_manager.add_log_entry(error_description, "error_combat")
-        return DetailedCheckResult(
-            check_type=f"saving_throw_{save_type}", entity_doing_check_id=entity_id, difficulty_dc=dc,
-            outcome=CheckOutcome.FAILURE, description=error_description, actor_rolls=[0], actor_total_roll_value=0
+        return CheckResult(
+            succeeded=False,
+            roll_value=0,
+            modifier_applied=0,
+            total_roll_value=0,
+            dc_value=dc,
+            description=error_description,
+            details_log={'check_type': f"saving_throw_{save_type}", 'actor_id': entity_id, 'outcome_category': "failure"}
         )
 
     entity_name = getattr(entity_object, 'name', entity_id)
