@@ -39,9 +39,9 @@ class PromptContextCollector:
         relationship_manager: 'RelationshipManager',
         item_manager: 'ItemManager',
         location_manager: 'LocationManager',
+        event_manager: 'EventManager', # Moved before optional arguments
         ability_manager: Optional['AbilityManager'] = None,
         spell_manager: Optional['SpellManager'] = None,
-        event_manager: 'EventManager',
         party_manager: Optional['PartyManager'] = None,
         lore_manager: Optional['LoreManager'] = None,
         game_manager: Optional['GameManager'] = None
@@ -54,9 +54,9 @@ class PromptContextCollector:
         self.relationship_manager = relationship_manager
         self.item_manager = item_manager
         self.location_manager = location_manager
+        self.event_manager = event_manager # Assignment is correct
         self.ability_manager = ability_manager
         self.spell_manager = spell_manager
-        self.event_manager = event_manager
         self.party_manager = party_manager
         self.lore_manager = lore_manager
         self._game_manager = game_manager

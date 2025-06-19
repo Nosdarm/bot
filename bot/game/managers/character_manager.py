@@ -161,6 +161,9 @@ class CharacterManager:
                 else:
                     logger.info(f"Player account not found in DB for Discord ID {discord_user_id} in guild {guild_id_str}.")
                     return None
+        except Exception as e:
+            logger.error(f"Error in get_character_by_discord_id for {discord_user_id} in guild {guild_id_str}: {e}", exc_info=True)
+            return None
         finally:
             if db_session_managed_locally and session:
                 await session.close()

@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, TYPE_CHECKING, List
 
 from bot.models.pending_generation import PendingGeneration, GenerationType, PendingStatus
 from bot.persistence.pending_generation_crud import PendingGenerationCRUD # Assuming this path is correct
+from bot.database.guild_transaction import GuildTransaction # Added import
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
