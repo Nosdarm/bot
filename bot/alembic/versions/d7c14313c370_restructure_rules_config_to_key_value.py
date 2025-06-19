@@ -59,7 +59,7 @@ def upgrade() -> None:
     # Let's try to create the PK on 'id'. If guild_id was PK, this implies it's replaced.
     # If there was an existing PK, op.create_primary_key might require dropping the old one first.
     # A common pattern is to drop the old PK by name.
-    # op.drop_constraint('rules_config_pkey', 'rules_config', type_='primary') # Uncomment if needed and name is correct
+    op.drop_constraint('rules_config_pkey', 'rules_config', type_='primary') # Uncomment if needed and name is correct
     op.create_primary_key('rules_config_pkey', 'rules_config', ['id'])
 
 
