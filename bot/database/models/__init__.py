@@ -1,7 +1,7 @@
 from ..base import Base # Ensures Base is accessible if someone imports models.Base
 
 from .character_related import Player, Character, NPC, GeneratedNpc, GlobalNpc, Party, PlayerNpcMemory, RPGCharacter
-from .world_related import Location, GeneratedLocation, LocationTemplate, MobileGroup, WorldState
+from .world_related import Location, GeneratedLocation, LocationTemplate, MobileGroup, WorldState, GeneratedFaction
 from .item_related import ItemTemplate, Item, Inventory, ItemProperty, NewItem, NewCharacterItem, Shop, Currency
 from .quest_related import QuestTable, GeneratedQuest, Questline, QuestStepTable
 from .config_related import GuildConfig, RulesConfig, UserSettings, GlobalState
@@ -11,7 +11,7 @@ from .game_mechanics import Combat, Ability, Skill, Status, CraftingRecipe, Craf
 __all__ = [
     'Base',
     'Player', 'Character', 'NPC', 'GeneratedNpc', 'GlobalNpc', 'Party', 'PlayerNpcMemory', 'RPGCharacter',
-    'Location', 'GeneratedLocation', 'LocationTemplate', 'MobileGroup', 'WorldState',
+    'Location', 'GeneratedLocation', 'GeneratedFaction', 'LocationTemplate', 'MobileGroup', 'WorldState',
     'ItemTemplate', 'Item', 'Inventory', 'ItemProperty', 'NewItem', 'NewCharacterItem', 'Shop', 'Currency',
     'QuestTable', 'GeneratedQuest', 'Questline', 'QuestStepTable',
     'GuildConfig', 'RulesConfig', 'UserSettings', 'GlobalState',
