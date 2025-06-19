@@ -1,6 +1,9 @@
 # bot/game/rules/resolvers/dialogue_resolver.py
 import re
+import logging # Added
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Callable, Awaitable, Tuple
+
+logger = logging.getLogger(__name__) # Added
 
 if TYPE_CHECKING:
     from bot.game.models.character import Character
@@ -99,7 +102,7 @@ async def process_dialogue_action(
                 rule_condition_str = found_rule.get("condition")
                 condition_eval_locals = {"character": character_obj.to_dict(), "npc": npc_obj.to_dict(), "current_strength": rel_strength, "dialogue_data": dialogue_data}
                 try: condition_met = eval(rule_condition_str, eval_globals, condition_eval_locals) if rule_condition_str else True
-                except Exception as e: print(f"DialogueResolver: Error evaluating condition for skill check rule '{found_rule.get('name')}': {e}"); condition_met = False
+                except Exception as e: logger.error(f"DialogueResolver: Error evaluating condition for skill check rule '{found_rule.get('name')}': {e}", exc_info=True); condition_met = False
                 if condition_met:
                     threshold_type = found_rule.get("threshold_type"); threshold_value = found_rule.get("threshold_value"); threshold_met = True
                     if threshold_type and threshold_value is not None:
@@ -110,7 +113,7 @@ async def process_dialogue_action(
                         if bonus_malus_formula:
                             formula_eval_locals = {"current_strength": rel_strength, "character_stats": character_obj.stats_json, "npc_stats": npc_obj.stats}
                             try: relationship_bonus = float(eval(bonus_malus_formula, eval_globals, formula_eval_locals))
-                            except Exception as e: print(f"DialogueResolver: Error evaluating bonus_malus for rule '{found_rule.get('name')}': {e}")
+                            except Exception as e: logger.error(f"DialogueResolver: Error evaluating bonus_malus for rule '{found_rule.get('name')}': {e}", exc_info=True)
                         feedback_key_skill_check = found_rule.get("effect_description_i18n_key")
                         raw_params_map = found_rule.get("effect_params_mapping", {})
                         for param_key, context_path_str in raw_params_map.items():
@@ -178,7 +181,7 @@ async def get_filtered_dialogue_options(
             rule_condition_str = rule.get("condition")
             condition_eval_locals = {"character": char_obj_dict, "npc": npc_obj_dict, "current_strength": current_strength_with_npc, "dialogue_data": dialogue_data, "option_data": option_copy}
             try: rule_applies = eval(rule_condition_str, eval_globals, condition_eval_locals) if rule_condition_str else True
-            except Exception as e: print(f"DialogueResolver: Error evaluating condition for avail rule '{rule.get('name')}': {e}"); rule_applies = False
+            except Exception as e: logger.error(f"DialogueResolver: Error evaluating condition for avail rule '{rule.get('name')}': {e}", exc_info=True); rule_applies = False
 
             if rule_applies:
                 threshold_type = rule.get("threshold_type"); threshold_value = rule.get("threshold_value"); threshold_met = True
