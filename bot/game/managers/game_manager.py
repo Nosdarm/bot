@@ -7,9 +7,9 @@ import os
 import io
 import logging
 import uuid
-from alembic.config import Config
-from alembic import command
-from typing import Optional, Dict, Any, Callable, Awaitable, List, Set, TYPE_CHECKING
+# from alembic.config import Config # Removed unused import
+# from alembic import command # Removed unused import
+from typing import Optional, Dict, Any, Callable, Awaitable, List, TYPE_CHECKING # Removed Set
 
 from asyncpg import exceptions as asyncpg_exceptions
 # from bot.database.postgres_adapter import SQLALCHEMY_DATABASE_URL as PG_URL_FOR_ALEMBIC # Not used here

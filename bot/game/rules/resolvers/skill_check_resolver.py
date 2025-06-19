@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from bot.game.models.character import Character
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.npc_manager import NpcManager
-    from bot.game.managers.item_manager import ItemManager
+    # from bot.game.managers.item_manager import ItemManager # Removed unused import
     # Add other necessary model/manager imports if specific methods need them
 
 

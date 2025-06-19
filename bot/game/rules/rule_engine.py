@@ -1,15 +1,13 @@
 # bot/game/rules/rule_engine.py
 
 from __future__ import annotations
-import json
 import random
 import re
-import traceback
-import asyncio
-from typing import Optional, Dict, Any, List, Set, Tuple, Callable, Awaitable, TYPE_CHECKING, Union
+import logging # Added
+from typing import Optional, Dict, Any, List, Tuple, Callable, Awaitable, TYPE_CHECKING, Union # Removed Set, asyncio, json, traceback
 
 from bot.game.models.check_models import CheckResult
-from bot.game.models.status_effect import StatusEffect
+# from bot.game.models.status_effect import StatusEffect # Removed unused import
 
 if TYPE_CHECKING:
     from bot.game.models.npc import NPC
@@ -34,7 +32,8 @@ from bot.game.managers.time_manager import TimeManager
 # Import the resolvers
 from .resolvers import skill_check_resolver, economic_resolver, dialogue_resolver, combat_ai_resolver
 
-print("DEBUG: rule_engine.py module loaded.")
+logger = logging.getLogger(__name__) # Added
+logger.debug("RuleEngine: Module loaded.") # Changed print to logger
 
 class RuleEngine:
     def __init__(self,
@@ -53,7 +52,7 @@ class RuleEngine:
                  relationship_manager: Optional["RelationshipManager"] = None,
                  economy_manager: Optional["EconomyManager"] = None
                  ):
-        print("Initializing RuleEngine...")
+        logger.info("Initializing RuleEngine...") # Changed print to logger
         self._settings = settings or {}
         self._game_log_manager = game_log_manager
         self._character_manager = character_manager
@@ -73,22 +72,22 @@ class RuleEngine:
         else:
             self._rules_data = self._settings.get('game_rules', {})
         
-        print("RuleEngine initialized.")
+        logger.info("RuleEngine initialized.") # Changed print to logger
 
     async def load_rules_data(self) -> None:
-        print("RuleEngine: Loading rules data...")
+        logger.info("RuleEngine: Loading rules data...") # Changed print to logger
         self._rules_data = self._settings.get('game_rules', {})
-        print(f"RuleEngine: Loaded {len(self._rules_data)} rules entries.")
+        logger.info(f"RuleEngine: Loaded {len(self._rules_data)} rules entries.") # Changed print to logger
 
     async def load_state(self, **kwargs: Any) -> None:
          await self.load_rules_data()
 
     async def save_state(self, **kwargs: Any) -> None:
-         print("RuleEngine: Save state method called. (Placeholder - does RuleEngine have state to save?)")
+         logger.info("RuleEngine: Save state method called. (Placeholder - does RuleEngine have state to save?)") # Changed print to logger
          pass
 
     def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-        print(f"RuleEngine: Rebuilding runtime caches for guild {guild_id}. (Placeholder)")
+        logger.info(f"RuleEngine: Rebuilding runtime caches for guild {guild_id}. (Placeholder)") # Changed print to logger
         pass
 
     async def calculate_action_duration(
@@ -108,7 +107,7 @@ class RuleEngine:
             if curr is not None and target is not None and lm:
                 base = float(self._rules_data.get('base_move_duration_per_location', 5.0))
                 return base
-            print(f"RuleEngine: Warning: Cannot calculate duration for move from {curr} to {target} (lm: {lm is not None}). Returning 0.0.")
+            logger.warning(f"RuleEngine: Cannot calculate duration for move from {curr} to {target} (lm: {lm is not None}). Returning 0.0.") # Changed print
             return 0.0
         if action_type == 'combat_attack':
             return float(self._rules_data.get('base_attack_duration', 1.0))
@@ -124,7 +123,7 @@ class RuleEngine:
             return float(self._rules_data.get('base_dialogue_step_duration', 0.1))
         if action_type == 'idle':
             return float(self._rules_data.get('default_idle_duration', 60.0))
-        print(f"RuleEngine: Warning: Unknown action type '{action_type}' for duration calculation. Returning 0.0.")
+        logger.warning(f"RuleEngine: Unknown action type '{action_type}' for duration calculation. Returning 0.0.") # Changed print
         return 0.0
 
 
@@ -180,7 +179,7 @@ class RuleEngine:
                 if entity_id and entity_type == 'Character':
                      party_instance = pm.get_party_by_member_id(entity_id, context=context)
                      if party_instance and getattr(party_instance, 'leader_id', None) == entity_id: met = True
-            else: print(f"RuleEngine: Warning: Unknown or unhandled condition type '{ctype}'."); return False
+            else: logger.warning(f"RuleEngine: Unknown or unhandled condition type '{ctype}'."); return False # Changed print
             if not met: return False
         return True
 
@@ -368,6 +367,8 @@ class RuleEngine:
             return False
 
     async def resolve_dice_roll(self, dice_string: str, pre_rolled_result: Optional[int] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        # This method is general and used by many resolvers, so it stays in RuleEngine for now.
+        # It will be passed as a function to resolvers that need it.
         dice_string_cleaned = dice_string.lower().strip()
         match = re.fullmatch(r"(\d*)d(\d+)(\s*[+-]\s*\d+)?", dice_string_cleaned)
         if not match:
@@ -388,4 +389,4 @@ class RuleEngine:
         total_with_modifier = roll_total + modifier
         return {"dice_string": dice_string, "num_dice": num_dice, "sides": sides, "modifier": modifier, "rolls": rolls, "roll_total_raw": roll_total, "total": total_with_modifier, "pre_rolled_input": pre_rolled_result}
 
-print("DEBUG: rule_engine.py module defined.")
+logger.debug("RuleEngine: Module defined.") # Changed print to logger
