@@ -123,3 +123,4 @@ async def test_get_location_type_i18n_map_rule_engine_not_available(
     # Assert
     assert result is None
 
+
