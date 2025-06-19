@@ -836,22 +836,14 @@ class RuleEngine:
         #     awareness_level_change = stealth_rules.get("awareness_increase_on_fail", 1)
         #     consequences.append("Detected by someone or something.")
 
-        return DetailedCheckResult(
-            success=success,
-            message=f"Stealth check {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}",
-            roll_details={"skill": "stealth", "roll": d20_roll, "total_roll": total_roll, "dc": current_dc, "crit_status": crit_status},
-            # custom_outcomes={
-            #     "awareness_level_change": awareness_level_change,
-            #     "consequences": consequences
-            # }
-            # Mapping to CheckResult:
-            succeeded=success, # from original
-            roll_value=d20_roll, # from roll_details.roll
-            modifier_applied=total_roll - d20_roll, # Calculated, placeholder for actual sum of modifiers
-            total_roll_value=total_roll, # from roll_details.total_roll
-            dc_value=current_dc, # from roll_details.dc
-            description=f"Stealth check {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}", # from original message
-            details_log={"skill_type": "stealth", "crit_status": crit_status} # from roll_details, skill_type mapped from "skill"
+        return CheckResult(
+            succeeded=success,
+            roll_value=d20_roll,
+            modifier_applied=total_roll - d20_roll, # Placeholder for actual sum of modifiers
+            total_roll_value=total_roll,
+            dc_value=current_dc,
+            description=f"Stealth check {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}",
+            details_log={"skill_type": "stealth", "crit_status": crit_status}
         )
 
     async def resolve_pickpocket_attempt(
@@ -903,26 +895,18 @@ class RuleEngine:
         # else:
             # item_id_stolen = "some_item_id" # TODO: Logic to determine what item is stolen
 
-        return DetailedCheckResult(
-            success=success,
-            message=f"Pickpocket attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}",
-            roll_details={"skill": "pickpocket", "roll": d20_roll, "total_roll": total_roll, "dc": current_dc, "crit_status": crit_status},
-            custom_outcomes={
+        return CheckResult(
+            succeeded=success,
+            roll_value=d20_roll,
+            modifier_applied=total_roll - d20_roll, # Placeholder
+            total_roll_value=total_roll,
+            dc_value=current_dc,
+            description=f"Pickpocket attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}",
+            details_log={
+                "skill_type": "pickpocket",
+                "crit_status": crit_status,
                 "detected": detected,
                 "item_id_stolen": item_id_stolen if success else None
-            }
-            # Mapping to CheckResult:
-            succeeded=success,
-            roll_value=d20_roll, # from roll_details.roll
-            modifier_applied=total_roll - d20_roll, # Calculated placeholder
-            total_roll_value=total_roll, # from roll_details.total_roll
-            dc_value=current_dc, # from roll_details.dc
-            description=f"Pickpocket attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}", # from original message
-            details_log={
-                "skill_type": "pickpocket", # from roll_details.skill
-                "crit_status": crit_status, # from roll_details.crit_status
-                "detected": detected, # from custom_outcomes
-                "item_id_stolen": item_id_stolen if success else None # from custom_outcomes
             }
         )
 
@@ -1155,25 +1139,16 @@ class RuleEngine:
         # if crit_status == "critical_failure" and lockpicking_rules.get("break_tools_on_crit_fail", False):
         #     tool_broken = True
 
-        return DetailedCheckResult(
-            success=success,
-            message=f"Lockpicking attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}",
-            roll_details={"skill": "lockpicking", "roll": d20_roll, "total_roll": total_roll, "dc": current_dc, "crit_status": crit_status},
-            # custom_outcomes={
-            #     "tool_broken": tool_broken,
-            #     "attempts_used": 1 # Simplified
-            # }
-            # Mapping to CheckResult:
+        return CheckResult(
             succeeded=success,
-            roll_value=d20_roll, # from roll_details.roll
-            modifier_applied=total_roll - d20_roll, # Calculated placeholder
-            total_roll_value=total_roll, # from roll_details.total_roll
-            dc_value=current_dc, # from roll_details.dc
-            description=f"Lockpicking attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}", # from original message
+            roll_value=d20_roll,
+            modifier_applied=total_roll - d20_roll, # Placeholder
+            total_roll_value=total_roll,
+            dc_value=current_dc,
+            description=f"Lockpicking attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {current_dc}",
             details_log={
-                "skill_type": "lockpicking", # from roll_details.skill
-                "crit_status": crit_status # from roll_details.crit_status
-                # custom_outcomes fields like tool_broken would go here if they were active
+                "skill_type": "lockpicking",
+                "crit_status": crit_status
             }
         )
 
@@ -1215,24 +1190,17 @@ class RuleEngine:
             #     trap_triggered_on_fail = True
             trap_triggered_on_fail = True # Simplified: any failure triggers for now
 
-        return DetailedCheckResult(
-            success=success,
-            message=f"Disarm trap attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {disarm_dc}",
-            roll_details={"skill": "disarm_traps", "roll": d20_roll, "total_roll": total_roll, "dc": disarm_dc, "crit_status": crit_status},
-            custom_outcomes={
-                "trap_triggered_on_fail": trap_triggered_on_fail
-            }
-            # Mapping to CheckResult:
+        return CheckResult(
             succeeded=success,
-            roll_value=d20_roll, # from roll_details.roll
-            modifier_applied=total_roll - d20_roll, # Calculated placeholder
-            total_roll_value=total_roll, # from roll_details.total_roll
-            dc_value=disarm_dc, # from roll_details.dc
-            description=f"Disarm trap attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {disarm_dc}", # from original message
+            roll_value=d20_roll,
+            modifier_applied=total_roll - d20_roll, # Placeholder
+            total_roll_value=total_roll,
+            dc_value=disarm_dc,
+            description=f"Disarm trap attempt {'succeeded' if success else 'failed'}. Roll: {total_roll} vs DC: {disarm_dc}",
             details_log={
-                "skill_type": "disarm_traps", # from roll_details.skill
-                "crit_status": crit_status, # from roll_details.crit_status
-                "trap_triggered_on_fail": trap_triggered_on_fail # from custom_outcomes
+                "skill_type": "disarm_traps",
+                "crit_status": crit_status,
+                "trap_triggered_on_fail": trap_triggered_on_fail
             }
         )
 
