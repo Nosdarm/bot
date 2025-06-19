@@ -4,18 +4,20 @@ Manages item instances and item templates within the game.
 """
 from __future__ import annotations
 import json
-import uuid
+import uuid # Added for new method
 import traceback # Will be removed
 import asyncio
 import logging # Added
 import sys # Added for debug printing
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union, TypedDict
 
+from sqlalchemy.ext.asyncio import AsyncSession # Added for new method
+
 from builtins import dict, set, list, str, int, bool, float
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
-    from bot.game.models.item import Item
+    # from bot.game.models.item import Item # This is Pydantic, keep for other methods for now
     from bot.game.models.character import Character as CharacterModel
     from bot.game.rules.rule_engine import RuleEngine
     from bot.game.managers.character_manager import CharacterManager
@@ -29,10 +31,10 @@ if TYPE_CHECKING:
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.managers.inventory_manager import InventoryManager
 
-from bot.game.models.item import Item
+from bot.game.models.item import Item # This is Pydantic, keep for other methods for now
 from bot.utils.i18n_utils import get_i18n_text
 from bot.ai.rules_schema import CoreGameRulesConfig, EquipmentSlotDefinition, ItemEffectDefinition, EffectProperty
-from bot.database.models import Item as SQLAlchemyItem # Added for new method
+from bot.database.models import Item as SQLAlchemyItem
 
 logger = logging.getLogger(__name__)
 logger.debug("DEBUG: item_manager.py module loaded.")
@@ -50,7 +52,7 @@ class ItemManager:
     required_args_for_rebuild: List[str] = ["guild_id"]
 
     _item_templates: Dict[str, Dict[str, Any]]
-    _items: Dict[str, Dict[str, "Item"]]
+    _items: Dict[str, Dict[str, "Item"]] # Pydantic Item cache
     _items_by_owner: Dict[str, Dict[str, Set[str]]]
     _items_by_location: Dict[str, Dict[str, Set[str]]]
     _dirty_items: Dict[str, Set[str]]
@@ -92,12 +94,12 @@ class ItemManager:
             self.rules_config = self._rule_engine.rules_config_data
 
         self._item_templates = {}
-        self._items = {}
+        self._items = {} # This is for Pydantic Item models if used for runtime logic
         self._items_by_owner = {}
         self._items_by_location = {}
         self._dirty_items = {}
         self._deleted_items = {}
-        self._diagnostic_log = [] # Added diagnostic log
+        self._diagnostic_log = []
 
 
         self._load_item_templates()
@@ -260,21 +262,28 @@ class ItemManager:
         return {"success": False, "message": "Not fully implemented with new logging.", "state_changed": False}
 
     def get_item_template(self, template_id: str) -> Optional[Dict[str, Any]]:
-        if self.rules_config and template_id in self.rules_config.item_definitions:
+        # Check primary source (rules_config.item_definitions) first
+        if self.rules_config and self.rules_config.item_definitions and template_id in self.rules_config.item_definitions:
             item_def_model = self.rules_config.item_definitions[template_id]
+            # Pydantic model's model_dump can create a dict. mode='python' for native types.
             try: return item_def_model.model_dump(mode='python')
-            except AttributeError: return json.loads(item_def_model.model_dump_json())
+            except AttributeError: # Fallback if it's not a Pydantic model somehow (e.g. plain dict)
+                 try: return json.loads(item_def_model.model_dump_json()) # type: ignore
+                 except AttributeError: return item_def_model # type: ignore
+
         logger.debug("ItemManager.get_item_template: Template '%s' not in rules_config, checking legacy _item_templates.", template_id)
+        # Fallback to legacy _item_templates
         return self._item_templates.get(str(template_id))
 
-    async def get_all_item_instances(self, guild_id: str) -> List["Item"]:
+
+    async def get_all_item_instances(self, guild_id: str) -> List["Item"]: # "Item" here is Pydantic
         guild_id_str = str(guild_id)
         return list(self._items.get(guild_id_str, {}).values())
 
-    async def get_items_by_owner(self, guild_id: str, owner_id: str) -> List["Item"]:
+    async def get_items_by_owner(self, guild_id: str, owner_id: str) -> List["Item"]: # "Item" here is Pydantic
         return []
 
-    async def get_items_in_location(self, guild_id: str, location_id: str) -> List["Item"]:
+    async def get_items_in_location(self, guild_id: str, location_id: str) -> List["Item"]: # "Item" here is Pydantic
         return []
 
     def get_item_template_display_name(self, template_id: str, lang: str, default_lang: str = "en") -> str:
@@ -297,24 +306,68 @@ class ItemManager:
         return f"Item template '{template_id}' not found"
 
 
-    def get_item_instance(self, guild_id: str, item_id: str) -> Optional["Item"]:
+    def get_item_instance(self, guild_id: str, item_id: str) -> Optional["Item"]: # "Item" here is Pydantic
         guild_id_str, item_id_str = str(guild_id), str(item_id)
         return self._items.get(guild_id_str, {}).get(item_id_str)
 
-    async def create_item_instance(self, guild_id: str, template_id: str, owner_id: Optional[str] = None, owner_type: Optional[str] = None, location_id: Optional[str] = None, quantity: float = 1.0, initial_state: Optional[Dict[str, Any]] = None, is_temporary: bool = False, **kwargs: Any) -> Optional["Item"]:
-        guild_id_str, template_id_str = str(guild_id), str(template_id)
+    async def create_item_instance(
+        self,
+        guild_id: str,
+        template_id: str,
+        owner_id: Optional[str] = None,
+        owner_type: Optional[str] = None,
+        location_id: Optional[str] = None,
+        quantity: float = 1.0,
+        initial_state: Optional[Dict[str, Any]] = None,
+        is_temporary: bool = False,
+        session: Optional[AsyncSession] = None,
+        **kwargs: Any
+    ) -> Optional[SQLAlchemyItem]:
+
+        guild_id_str = str(guild_id)
+        template_id_str = str(template_id)
         log_prefix = f"ItemManager.create_item_instance(guild='{guild_id_str}', template='{template_id_str}'):"
-        if self._db_service is None:
-            logger.error("%s DBService is None.", log_prefix)
-            return None
-        if not self.rules_config or template_id_str not in self.rules_config.item_definitions:
-            logger.warning("%s Template '%s' not found in rules_config.", log_prefix, template_id_str)
-            return None
-        if quantity <= 0:
-            logger.warning("%s Attempted to create item with non-positive quantity %.2f.", log_prefix, quantity)
+
+        item_template_data = self.get_item_template(template_id_str)
+        if not item_template_data:
+            logger.warning(f"{log_prefix} Template '{template_id_str}' not found.")
             return None
 
-        return None
+        if quantity <= 0:
+            logger.warning(f"{log_prefix} Attempted to create item with non-positive quantity {quantity}.")
+            return None
+
+        item_data_for_db = {
+            "id": str(uuid.uuid4()),
+            "template_id": template_id_str,
+            "guild_id": guild_id_str,
+            "name_i18n": item_template_data.get("name_i18n"),
+            "description_i18n": item_template_data.get("description_i18n"),
+            "properties": item_template_data.get("properties"),
+            "quantity": int(quantity),
+            "owner_id": owner_id,
+            "owner_type": owner_type,
+            "location_id": location_id,
+            "state_variables": initial_state if initial_state else {},
+            "is_temporary": is_temporary,
+            "value": item_template_data.get("base_value", item_template_data.get("value")) # Handle legacy 'value' or new 'base_value'
+        }
+
+        new_item_instance = SQLAlchemyItem(**item_data_for_db)
+
+        if not session:
+            logger.error(f"{log_prefix} No session provided. Item instance creation must be part of a transaction.")
+            return None
+
+        session.add(new_item_instance)
+
+        logger.info(f"{log_prefix} Created item instance {new_item_instance.id} for template '{template_id_str}' and added to session.")
+
+        # Runtime Pydantic cache self._items is not updated here.
+        # That would typically happen after successful commit and if the overall design uses such a cache.
+        # For SQLAlchemy instances, direct session operations are primary.
+
+        return new_item_instance
 
     async def remove_item_instance(self, guild_id: str, item_id: str, **kwargs: Any) -> bool:
 
@@ -353,12 +406,12 @@ class ItemManager:
 
         pass
 
-    async def save_item(self, item: "Item", guild_id: str) -> bool:
+    async def save_item(self, item: "Item", guild_id: str) -> bool: # "Item" here is Pydantic
 
 
         return False
 
-    async def get_items_in_location_async(self, guild_id: str, location_id: str) -> List["Item"]: return await self.get_items_in_location(guild_id, location_id)
+    async def get_items_in_location_async(self, guild_id: str, location_id: str) -> List["Item"]: return await self.get_items_in_location(guild_id, location_id) # "Item" here is Pydantic
     async def transfer_item_world_to_character(self, guild_id: str, character_id: str, item_instance_id: str, quantity: int = 1) -> bool:
         logger.info("ItemManager.transfer_item_world_to_character: Placeholder for item %s to char %s in guild %s.", item_instance_id, character_id, guild_id)
         return False
@@ -383,7 +436,7 @@ class ItemManager:
         try:
             # Ensure model_class is the SQLAlchemy model, not Pydantic
             item_model_instance = await self._db_service.get_entity_by_pk(
-                table_name='items',
+                table_name='items', # Assuming table name is 'items' for SQLAlchemyItem
                 pk_value=item_instance_id,
                 guild_id=guild_id,
                 model_class=SQLAlchemyItem
@@ -394,3 +447,5 @@ class ItemManager:
             return None
 
 logger.debug("DEBUG: item_manager.py module loaded (after overwrite).")
+
+```

@@ -143,6 +143,19 @@ async def test_process_location_success_new_with_npcs_items(
     mock_created_npc = DBNPC(id=mock_created_npc_id, template_id="goblin_warrior_0", name_i18n={"en":"Gruk_0"})
     mock_game_manager.npc_manager.spawn_npc_in_location.return_value = mock_created_npc
 
+    # Mock ItemManager.create_item_instance
+    mock_poi_item_instance = MagicMock(spec=DBLocation) # Spec helps mock behave like the object
+    mock_poi_item_instance.id = "poi_item_instance_uuid_001"
+    mock_general_loot_item_instance = MagicMock(spec=DBLocation)
+    mock_general_loot_item_instance.id = "general_item_instance_uuid_002"
+
+    # Configure create_item_instance to return different values based on template_id or other args if needed
+    # For this test, assume specific calls for specific items if template_ids are unique in test data
+    mock_game_manager.item_manager = AsyncMock(name="mock_item_manager") # Ensure it's an AsyncMock
+    mock_game_manager.item_manager.create_item_instance = AsyncMock(
+        side_effect=[mock_poi_item_instance, mock_general_loot_item_instance] # Returns in order of calls
+    )
+
     persisted_objects = {}
 
     async def side_effect_merge(obj_to_merge, **kwargs):
@@ -197,12 +210,48 @@ async def test_process_location_success_new_with_npcs_items(
     assert merged_location_obj.npc_ids == [mock_created_npc_id]
 
     assert len(merged_location_obj.points_of_interest_json) == 1
-    poi_data = merged_location_obj.points_of_interest_json[0]
-    assert "poi_item_1" in poi_data.get("contained_item_ids", [])
+    poi_data_after_processing = merged_location_obj.points_of_interest_json[0]
 
-    assert "initial_ai_loot" in merged_location_obj.inventory
-    assert len(merged_location_obj.inventory["initial_ai_loot"]) == 1
-    assert merged_location_obj.inventory["initial_ai_loot"][0]["template_id"] == "general_loot_item_1"
+    # Assert new field is populated for PoI item
+    assert "contained_item_instance_ids" in poi_data_after_processing
+    assert mock_poi_item_instance.id in poi_data_after_processing["contained_item_instance_ids"]
+
+    # Assert old field is NOT populated by new logic for PoI item
+    # If the test data for POIModel initially had contained_item_ids, it might still be there.
+    # The important part is that new item instances don't add to it.
+    # For this test, parsed_loc_data["points_of_interest"][0] did not have "contained_item_ids"
+    # so we expect it to be absent or None if the model defaults it.
+    # The current POIModel in ai_data_models.py defaults contained_item_ids to None.
+    # If it was [] by default in the model dump, then this would be assert "poi_item_1" not in ...
+    assert poi_data_after_processing.get("contained_item_ids") is None
+
+    # Assert general loot item was created via item_manager call
+    # And that initial_ai_loot (old way) is not populated by new items
+    assert "initial_ai_loot" not in merged_location_obj.inventory or \
+           not any(d["template_id"] == "general_loot_item_1" for d in merged_location_obj.inventory.get("initial_ai_loot", []))
+
+    # Check calls to create_item_instance
+    assert mock_game_manager.item_manager.create_item_instance.call_count == 2
+    calls = mock_game_manager.item_manager.create_item_instance.call_args_list
+
+    # PoI item call
+    poi_item_call_args = calls[0].kwargs
+    assert poi_item_call_args['template_id'] == "poi_item_1"
+    assert poi_item_call_args['location_id'] == merged_location_obj.id
+    assert poi_item_call_args['owner_type'] == "location"
+    assert poi_item_call_args['owner_id'] == merged_location_obj.id
+    assert poi_item_call_args['initial_state'] == {"is_in_poi_id": "poi_1"}
+    assert poi_item_call_args['session'] == mock_session
+
+    # General loot item call
+    general_item_call_args = calls[1].kwargs
+    assert general_item_call_args['template_id'] == "general_loot_item_1"
+    assert general_item_call_args['location_id'] == merged_location_obj.id
+    assert general_item_call_args['owner_type'] == "location"
+    assert general_item_call_args['owner_id'] == merged_location_obj.id
+    assert general_item_call_args['session'] == mock_session
+    # initial_state might be None or {} depending on implementation if not provided by caller
+    # current generation_manager passes initial_state only for PoI items.
 
     mock_session_context.__aexit__.assert_called_once_with(None, None, None)
 
@@ -353,7 +402,7 @@ async def test_process_location_failure_parsing(
         status=PendingStatus.APPROVED, parsed_data_json=malformed_parsed_data
     )
     mock_pending_gen_crud_fixture.get_pending_generation_by_id.return_value = mock_pending_generation
-    mock_session = mock_session_context.__aenter__() # Get session for status update check
+    mock_session = mock_session_context.__aenter__()
 
     # Act
     with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()):
