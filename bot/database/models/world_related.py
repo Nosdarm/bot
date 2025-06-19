@@ -1,0 +1,153 @@
+from sqlalchemy import (
+    Column, Integer, String, JSON, ForeignKey, Boolean, Text,
+    PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
+)
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+import uuid
+from typing import Dict, Any, List # Add other typing imports if model uses them
+
+from ..base import Base # Import Base from the new location
+
+class Location(Base):
+    __tablename__ = 'locations'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    static_id = Column(String, nullable=True, index=True)
+    name_i18n = Column(JSONB, nullable=False)
+    descriptions_i18n = Column(JSONB, nullable=False)
+    type_i18n = Column(JSONB, nullable=False)
+    coordinates = Column(JSONB, nullable=True)
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    neighbor_locations_json = Column(JSONB, nullable=True, comment="Stores {target_location_id: 'connection_type_i18n_key'}")
+    inventory = Column(JSONB, nullable=True)
+    npc_ids = Column(JSONB, nullable=True, default=lambda: [])
+    event_triggers = Column(JSONB, nullable=True, default=lambda: [])
+    template_id = Column(String, nullable=True)
+    state_variables = Column(JSONB, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    details_i18n = Column(JSONB, nullable=True)
+    tags_i18n = Column(JSONB, nullable=True)
+    atmosphere_i18n = Column(JSONB, nullable=True)
+    features_i18n = Column(JSONB, nullable=True)
+    channel_id = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
+    ai_metadata_json = Column(JSONB, nullable=True, comment="Stores metadata for AI generation purposes")
+    points_of_interest_json = Column(JSONB, nullable=True, comment="List of Points of Interest objects/dictionaries")
+    on_enter_events_json = Column(JSONB, nullable=True, default=lambda: [])
+
+    __table_args__ = (
+        UniqueConstraint('guild_id', 'static_id', name='uq_location_guild_static_id'),
+    )
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Location':
+        if 'id' not in data or 'guild_id' not in data:
+            raise ValueError("Location data must include 'id' and 'guild_id'.")
+
+        i18n_fields = ['name_i18n', 'descriptions_i18n', 'details_i18n',
+                       'tags_i18n', 'atmosphere_i18n', 'features_i18n']
+        for field in i18n_fields:
+            data.setdefault(field, {})
+
+        json_fields_default_dict = ['inventory', 'state_variables',
+                                    'neighbor_locations_json', 'ai_metadata_json',
+                                    'npc_ids', 'event_triggers']
+        for field in json_fields_default_dict:
+            data.setdefault(field, {})
+
+        data.setdefault('points_of_interest_json', [])
+        data.setdefault('on_enter_events_json', [])
+
+        if data.get('is_active') is None:
+            data['is_active'] = True
+
+        data.pop('exits', None)
+        data.pop('static_connections', None)
+        if 'static_name' in data and 'static_id' not in data:
+            data['static_id'] = data.pop('static_name')
+
+        return cls(**data)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id, "guild_id": self.guild_id, "template_id": self.template_id,
+            "static_id": self.static_id, "name_i18n": self.name_i18n or {},
+            "descriptions_i18n": self.descriptions_i18n or {}, "details_i18n": self.details_i18n or {},
+            "tags_i18n": self.tags_i18n or {}, "atmosphere_i18n": self.atmosphere_i18n or {},
+            "features_i18n": self.features_i18n or {},
+            "neighbor_locations_json": self.neighbor_locations_json or {},
+            "inventory": self.inventory or {},
+            "state_variables": self.state_variables or {},
+            "ai_metadata_json": self.ai_metadata_json or {},
+            "is_active": self.is_active,
+            "channel_id": self.channel_id,
+            "image_url": self.image_url,
+            "npc_ids": self.npc_ids or [],
+            "event_triggers": self.event_triggers or [],
+            "type_i18n": self.type_i18n or {},
+            "coordinates": self.coordinates or {},
+            "points_of_interest_json": self.points_of_interest_json or [],
+            "on_enter_events_json": self.on_enter_events_json or []
+        }
+
+
+class GeneratedLocation(Base):
+    __tablename__ = 'generated_locations'
+    id = Column(String, primary_key=True)
+    name_i18n = Column(JSONB, nullable=True)
+    descriptions_i18n = Column(JSONB, nullable=True)
+    details_i18n = Column(JSONB, nullable=True)
+    tags_i18n = Column(JSONB, nullable=True)
+    atmosphere_i18n = Column(JSONB, nullable=True)
+    features_i18n = Column(JSONB, nullable=True)
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    __table_args__ = (Index('idx_generatedlocation_guild_id', 'guild_id'),)
+
+
+class LocationTemplate(Base):
+    __tablename__ = 'location_templates'
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    description_i18n = Column(JSONB, nullable=True)
+    properties = Column(JSONB, nullable=True)
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+
+
+class MobileGroup(Base):
+    __tablename__ = 'mobile_groups'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    name_i18n = Column(JSONB, nullable=False)
+    description_i18n = Column(JSONB, nullable=True)
+    current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
+    member_ids = Column(JSONB, nullable=True)
+    destination_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
+    state_variables = Column(JSONB, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+
+    current_location = relationship("Location", foreign_keys=[current_location_id])
+    destination_location = relationship("Location", foreign_keys=[destination_location_id])
+
+    __table_args__ = (
+        Index('idx_mobilegroup_guild_id', 'guild_id'),
+        Index('idx_mobilegroup_is_active', 'is_active'),
+    )
+
+    def __repr__(self):
+        return f"<MobileGroup(id='{self.id}', name_i18n='{self.name_i18n}', guild_id='{self.guild_id}')>"
+
+
+class WorldState(Base):
+    __tablename__ = 'world_states'
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), unique=True, nullable=False, index=True)
+    global_narrative_state_i18n = Column(JSONB, nullable=True)
+    current_era_i18n = Column(JSONB, nullable=True)
+    custom_flags = Column(JSONB, nullable=True)
+
+    guild = relationship("GuildConfig")
+
+    def __repr__(self):
+        return f"<WorldState(id='{self.id}', guild_id='{self.guild_id}')>"
