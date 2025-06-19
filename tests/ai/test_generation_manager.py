@@ -276,6 +276,15 @@ async def test_process_location_success_new_with_npcs_items(
     # initial_state might be None or {} depending on implementation if not provided by caller
     # current generation_manager passes initial_state only for PoI items.
 
+    # Assert neighbor_locations_json
+    assert isinstance(merged_location_obj.neighbor_locations_json, list)
+    assert len(merged_location_obj.neighbor_locations_json) == 1
+    first_connection = merged_location_obj.neighbor_locations_json[0]
+    assert first_connection["to_location_id"] == "neighbor_forest"
+    assert isinstance(first_connection["path_description_i18n"], dict)
+    assert first_connection["path_description_i18n"]["en"] == "Path to neighbor"
+    assert first_connection["travel_time_hours"] == 1
+
     mock_session_context.__aexit__.assert_called_once_with(None, None, None)
 
 

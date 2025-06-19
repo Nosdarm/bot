@@ -19,7 +19,7 @@ class Location(Base):
     type_i18n = Column(JSONB, nullable=False)
     coordinates = Column(JSONB, nullable=True)
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    neighbor_locations_json = Column(JSONB, nullable=True, comment="Stores {target_location_id: 'connection_type_i18n_key'}")
+    neighbor_locations_json = Column(JSONB, nullable=True, comment="Stores a list of connection objects, e.g., [{'to_location_id': 'id1', 'path_description_i18n': {'en': 'a path'}, 'travel_time_hours': 1}]")
     inventory = Column(JSONB, nullable=True)
     npc_ids = Column(JSONB, nullable=True, default=lambda: [])
     event_triggers = Column(JSONB, nullable=True, default=lambda: [])
