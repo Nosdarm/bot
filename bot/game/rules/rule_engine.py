@@ -336,15 +336,29 @@ class RuleEngine:
             if target_stage_id:
                  await proc.advance_stage(event=event, target_stage_id=str(target_stage_id), send_message_callback=send_message_callback, **context)
 
-     def _compare_values(self, value1: Any, value2: Any, operator: str) -> bool:
+    def _compare_values(self, value1: Any, value2: Any, operator: str) -> bool:
         try:
             num1 = float(value1)
             num2 = float(value2)
-<<<<<<< HEAD
             
-=======
+            if operator == '>=':
+                return num1 >= num2
+            elif operator == '>':
+                return num1 > num2
+            elif operator == '<=':
+                return num1 <= num2
+            elif operator == '<':
+                return num1 < num2
+            elif operator == '==':
+                return num1 == num2
+            elif operator == '!=':
+                return num1 != num2
+            else:
+                # Operator not recognized for numeric comparison
+                return False
+            num1 = float(value1)
+            num2 = float(value2)
 
->>>>>>> 24285a31fbfe8ee6da5afddf693672d60e47aab0
             if operator == '>=':
                 return num1 >= num2
             elif operator == '>':
