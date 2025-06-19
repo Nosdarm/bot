@@ -1,7 +1,7 @@
 """Add StoryLog, Relationship tables and NPC.schedule_json column
 
-Revision ID: placeholder_revision_id
-Revises: <previous_revision_id>
+Revision ID: 0a1b2c3d4e5f
+Revises: ad464255a42c
 Create Date: YYYY-MM-DD HH:MM:SS.MS
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql # If using JSONB specifically for PostgreSQL
 
 # revision identifiers, used by Alembic.
-revision = 'YYYYYYYYYYYY'
-down_revision = 'ad464255a42c' # Replace with actual previous revision ID
+revision = '0a1b2c3d4e5f' # Updated
+down_revision = 'ad464255a42c' # Kept from original placeholder file
 branch_labels = None
 depends_on = None
 
@@ -39,7 +39,7 @@ def upgrade() -> None:
     op.create_index('idx_storylog_guild_timestamp', 'story_logs', ['guild_id', 'timestamp'], unique=False)
     op.create_index('idx_storylog_guild_event_type', 'story_logs', ['guild_id', 'event_type'], unique=False)
 
-    op.drop_table('relationships', if_exists=True)
+    op.drop_table('relationships', if_exists=True) # This was in the original, implies it might have existed before or is for idempotency
     # Create relationships table
     op.create_table('relationships',
         sa.Column('id', sa.String(), nullable=False),
