@@ -185,6 +185,36 @@ def test_poi_model_validation():
     valid_data = get_valid_poi_model_data()
     poi = POIModel(**valid_data)
     assert poi.poi_id == valid_data["poi_id"]
+    assert poi.contained_item_ids == ["item_template_1"] # Existing field
+    assert poi.contained_item_instance_ids is None # New field defaults to None
+
+    # Test with new field
+    valid_data_with_instance_ids = {
+        "poi_id": "poi_2",
+        "name_i18n": get_valid_i18n_dict("POI 2 Name"),
+        "description_i18n": get_valid_i18n_dict("POI 2 Description"),
+        "contained_item_ids": ["item_template_2"], # Still accepted
+        "contained_item_instance_ids": ["item_instance_uuid_001", "item_instance_uuid_002"],
+        "npc_ids": []
+    }
+    poi_with_instances = POIModel(**valid_data_with_instance_ids)
+    assert poi_with_instances.poi_id == "poi_2"
+    assert poi_with_instances.contained_item_ids == ["item_template_2"]
+    assert poi_with_instances.contained_item_instance_ids == ["item_instance_uuid_001", "item_instance_uuid_002"]
+
+    # Test validation error if new field is not a list of strings (if provided)
+    invalid_data_instance_ids = valid_data_with_instance_ids.copy()
+    invalid_data_instance_ids["contained_item_instance_ids"] = "not_a_list"
+    with pytest.raises(ValidationError) as excinfo_instance:
+        POIModel(**invalid_data_instance_ids)
+    assert "list[str]" in str(excinfo_instance.value).lower()
+
+    invalid_data_instance_ids_list_type = valid_data_with_instance_ids.copy()
+    invalid_data_instance_ids_list_type["contained_item_instance_ids"] = [123, "abc"] # Contains non-string
+    with pytest.raises(ValidationError) as excinfo_instance_list_type:
+        POIModel(**invalid_data_instance_ids_list_type)
+    assert "str_type" in str(excinfo_instance_list_type.value).lower()
+
 
     with pytest.raises(ValidationError):
         POIModel(**{"name_i18n": {}, "description_i18n": {}}) # Missing poi_id
