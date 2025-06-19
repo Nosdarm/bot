@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Dict, Any, Optional, List
 
 class CampaignLoaderService:
@@ -109,6 +110,19 @@ class CampaignLoaderService:
             print("Warning: Campaign data not loaded. Returning empty list for NPC archetypes.")
             return []
         return self._campaign_data.get("npc_archetypes", [])
+
+    def load_campaign_by_identifier(self, identifier: str) -> Dict[str, Any]:
+        if not identifier:
+            print("Error: Campaign identifier not provided.")
+            return {}
+        # Assuming campaign files always end with .json
+        # This could be made more robust if campaign_identifier might include .json
+        # or if file extensions can vary.
+        file_name = f"{identifier}.json"
+        full_path = os.path.join(self._campaign_base_path, file_name)
+        # Added print for debugging path construction
+        print(f"CampaignLoaderService: Attempting to load by identifier '{identifier}' from calculated path '{full_path}'")
+        return self.load_campaign_from_file(full_path)
 
 # Example Usage (for testing purposes)
 if __name__ == '__main__':
