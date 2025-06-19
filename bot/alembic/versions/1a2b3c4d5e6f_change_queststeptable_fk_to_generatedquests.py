@@ -20,6 +20,7 @@ new_fk_name = 'fk_quest_steps_quest_id_generated_quests'
 index_name = 'ix_quest_steps_quest_id' # Default index name for index=True
 
 def upgrade():
+    op.add_column('quest_steps', sa.Column('quest_id', sa.String(), nullable=True))
     # Drop existing foreign key constraint and index
     # Need to ensure the old constraint name is correct. If SQLAlchemy auto-named it,
     # it might be different. For safety, one might inspect the DB or use a try-except.
@@ -64,3 +65,4 @@ def downgrade():
 
     # Step 4: Recreate the old index
     op.create_index(index_name, 'quest_steps', ['quest_id'], unique=False)
+    op.drop_column('quest_steps', 'quest_id')
