@@ -134,7 +134,7 @@ def upgrade() -> None:
     # QuestStepTable.quest_id
     # UserSettings.user_id and guild_id
     op.drop_constraint('user_settings_user_id_fkey', 'user_settings', type_='foreignkey') # Replace if needed
-    op.create_foreign_key(op.f('fk_user_settings_user_id_players'), 'user_settings', 'players', ['user_id'], ['discord_id'])
+    op.create_foreign_key(op.f('fk_user_settings_user_id_players'), 'user_settings', 'players', ['user_id'], ['id'])
     # user_settings.guild_id FK was added to TABLES_WITH_GUILD_ID_FK list
 
     # ### Update LocationTemplate name to be unique ###
