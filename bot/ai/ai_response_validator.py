@@ -263,7 +263,7 @@ class AIResponseValidator:
             return None, pydantic_issues
 
         request_type_to_model_map: Dict[str, Any] = {
-            "location_content_generation": GeneratedLocationContent,
+            "location_details": GeneratedLocationContent, # Key changed
             "npc_profile_generation": GeneratedNpcProfile,
             "quest_generation": GeneratedQuestData,
             "item_profile_generation": GeneratedItemProfile,
@@ -316,7 +316,7 @@ class AIResponseValidator:
                     semantic_issues.extend(self._semantic_validate_npc_profile(model_instance_dict, game_terms, guild_id, game_manager))
                 elif request_type == "quest_generation":
                     semantic_issues.extend(self._semantic_validate_quest_data(model_instance_dict, game_terms, guild_id)) # Pass game_manager if needed
-                elif request_type == "location_content_generation":
+                elif request_type == "location_details": # Key changed here as well
                     semantic_issues.extend(self._semantic_validate_location_content(model_instance_dict, game_terms, guild_id, game_manager)) # Pass game_manager if needed
                 elif request_type == "item_profile_generation":
                     semantic_issues.extend(self._semantic_validate_item_profile(model_instance_dict, game_terms, guild_id, game_manager))
@@ -335,8 +335,8 @@ class AIResponseValidator:
 
     # --- Deprecated Methods ---
     async def parse_and_validate_location_description_response(self, raw_ai_output_text: str, guild_id: str, game_manager: "GameManager") -> Optional[Dict[str, str]]:
-        logger.warning("Deprecated: Use parse_and_validate_ai_response with request_type='location_content_generation'.")
-        data, issues = await self.parse_and_validate_ai_response(raw_ai_output_text, guild_id, "location_content_generation", game_manager)
+        logger.warning("Deprecated: Use parse_and_validate_ai_response with request_type='location_details'.") # Key changed in warning
+        data, issues = await self.parse_and_validate_ai_response(raw_ai_output_text, guild_id, "location_details", game_manager) # Key changed in function call
         if data and not issues and isinstance(data.get("atmospheric_description_i18n"), dict): return data["atmospheric_description_i18n"]
         return None
 

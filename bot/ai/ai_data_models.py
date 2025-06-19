@@ -215,6 +215,13 @@ class GeneratedLocationContent(BaseModel):
     connections: Optional[List[ConnectionModel]] = None
     possible_events_i18n: Optional[List[Dict[str, str]]] = None
     required_access_items_ids: Optional[List[str]] = None
+    static_id: Optional[str] = None
+    location_type_key: str
+    coordinates_json: Optional[Dict[str, Any]] = None
+    initial_npcs_json: Optional[List[GeneratedNpcProfile]] = None
+    initial_items_json: Optional[List[Dict[str, Any]]] = None
+    generated_details_json: Optional[Dict[str, Any]] = None
+    ai_metadata_json: Optional[Dict[str, Any]] = None
 
     _validate_i18n_fields = field_validator('name_i18n', 'atmospheric_description_i18n', mode='before')(validate_i18n_field)
 

@@ -1,0 +1,371 @@
+import pytest
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch, call
+
+# Models and Enums
+from bot.ai.generation_manager import AIGenerationManager
+from bot.models.pending_generation import PendingGeneration, GenerationType, PendingStatus
+from bot.ai.ai_data_models import (
+    GeneratedLocationContent, # Used for type hinting if we deserialize
+    POIModel,
+    ConnectionModel,
+    GeneratedNpcProfile,
+)
+from bot.database.models.world_related import Location as DBLocation
+from bot.database.models.world_related import NPC as DBNPC
+
+# Helper to create valid GeneratedLocationContent data (as dict) for tests
+def get_valid_parsed_location_data(
+    static_id="test_static_loc_1",
+    loc_name="Haunted Forest",
+    num_npcs=1,
+    num_items=1,
+    with_poi_item=True,
+    existing_loc_id: str = None # If simulating update, this would be the ID of existing
+) -> dict:
+    base_data = {
+        "template_id": "forest_template_01",
+        "name_i18n": {"en": loc_name, "ru": f"{loc_name}_ru"},
+        "atmospheric_description_i18n": {"en": "A spooky forest.", "ru": "Spooky forest ru"},
+        "location_type_key": "forest_haunted",
+        "static_id": static_id,
+        "coordinates_json": {"x": 10, "y": 20},
+        "points_of_interest": [
+            # POIModel(...).model_dump() ensures it's a dict, matching parsed_data_json
+            POIModel(poi_id="poi_1", name_i18n={"en": "Old Shack", "ru":"Old Shack RU"}, description_i18n={"en":"A rundown shack.","ru":"Shack RU"}).model_dump()
+        ],
+        "connections": [
+            ConnectionModel(to_location_id="neighbor_forest", path_description_i18n={"en":"Path to neighbor","ru":"Path RU"}, travel_time_hours=1).model_dump()
+        ],
+        "initial_npcs_json": [],
+        "initial_items_json": [],
+        "generated_details_json": {"en": {"weather": "foggy"}},
+        "ai_metadata_json": {"model": "test_model"}
+    }
+    if num_npcs > 0:
+        for i in range(num_npcs):
+            # Directly create dicts as they would be after JSON parsing of GeneratedNpcProfile
+            npc_dict = {
+                "template_id":f"goblin_warrior_{i}",
+                "name_i18n":{"en": f"Gruk_{i}", "ru":f"Gruk RU_{i}"},
+                "role_i18n":{"en":"Warrior","ru":"Warrior RU"},
+                "archetype":"goblin_fighter",
+                "backstory_i18n":{"en":"Backstory","ru":"Backstory RU"},
+                "personality_i18n":{"en":"Mean","ru":"Mean RU"},
+                "motivation_i18n":{"en":"Loot","ru":"Loot RU"},
+                "visual_description_i18n":{"en":"Green","ru":"Green RU"},
+                "dialogue_hints_i18n":{"en":"Ugh","ru":"Ugh RU"},
+                "stats":{"strength": 10},
+                "skills":{"melee": 5}, # This will be transformed to skills_data
+                "abilities": ["charge"], # This will be transformed to abilities_data
+                "faction_affiliations": [{"faction_id": "monsters", "rank_i18n": {"en": "Grunt"}}] # Transformed to faction_id
+            }
+            base_data["initial_npcs_json"].append(npc_dict)
+
+    if num_items > 0:
+        if with_poi_item and base_data["points_of_interest"]:
+            base_data["initial_items_json"].append(
+                {"template_id": "poi_item_1", "quantity": 1, "target_poi_id": "poi_1"}
+            )
+        base_data["initial_items_json"].append(
+            {"template_id": "general_loot_item_1", "quantity": 2}
+        )
+    return base_data
+
+
+@pytest.fixture
+def mock_session_context():
+    # This context manager mock will be returned by the factory
+    mock_ctx = AsyncMock(name="mock_session_context")
+    mock_session_obj = AsyncMock(name="mock_session")
+    mock_ctx.__aenter__.return_value = mock_session_obj
+    mock_ctx.__aexit__ = AsyncMock(return_value=None, name="mock_session_context_exit")
+    return mock_ctx
+
+@pytest.fixture
+def mock_db_service(mock_session_context: AsyncMock):
+    mock = AsyncMock(name="mock_db_service")
+    # The factory, when called, returns the context manager mock
+    mock.get_session_factory = MagicMock(return_value=lambda: mock_session_context)
+    return mock
+
+@pytest.fixture
+def mock_game_manager():
+    gm = MagicMock(name="mock_game_manager")
+    gm.npc_manager = AsyncMock(name="mock_npc_manager")
+    return gm
+
+@pytest.fixture
+def mock_pending_gen_crud_fixture(): # Renamed to avoid conflict
+    return AsyncMock(name="mock_pending_gen_crud")
+
+@pytest.fixture
+def ai_generation_manager_fixture(mock_db_service: AsyncMock, mock_game_manager: MagicMock, mock_pending_gen_crud_fixture: AsyncMock):
+    manager = AIGenerationManager(
+        db_service=mock_db_service,
+        prompt_context_collector=MagicMock(),
+        multilingual_prompt_generator=MagicMock(),
+        ai_response_validator=MagicMock(),
+        game_manager=mock_game_manager
+    )
+    manager.pending_generation_crud = mock_pending_gen_crud_fixture
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_process_location_success_new_with_npcs_items(
+    ai_generation_manager_fixture: AIGenerationManager,
+    mock_pending_gen_crud_fixture: AsyncMock,
+    mock_game_manager: MagicMock,
+    mock_db_service: AsyncMock,
+    mock_session_context: AsyncMock # Get the context mock to access the session
+):
+    # Arrange
+    guild_id = "test_guild_1"
+    pending_gen_id = str(uuid.uuid4())
+    moderator_id = "mod_user_1"
+
+    parsed_loc_data = get_valid_parsed_location_data(static_id="new_loc_static_1", num_npcs=1, num_items=1)
+
+    mock_pending_generation = PendingGeneration(
+        id=pending_gen_id, guild_id=guild_id, request_type=GenerationType.LOCATION_DETAILS,
+        status=PendingStatus.APPROVED, parsed_data_json=parsed_loc_data, moderator_notes=None
+    )
+    mock_pending_gen_crud_fixture.get_pending_generation_by_id.return_value = mock_pending_generation
+
+    mock_session = mock_session_context.__aenter__() # Get the session object
+
+    mock_select_result = AsyncMock()
+    mock_select_result.scalars.return_value.first.return_value = None
+    mock_session.execute.return_value = mock_select_result
+
+    mock_created_npc_id = str(uuid.uuid4())
+    mock_created_npc = DBNPC(id=mock_created_npc_id, template_id="goblin_warrior_0", name_i18n={"en":"Gruk_0"})
+    mock_game_manager.npc_manager.spawn_npc_in_location.return_value = mock_created_npc
+
+    persisted_objects = {}
+
+    async def side_effect_merge(obj_to_merge, **kwargs):
+        nonlocal persisted_objects
+        current_id = getattr(obj_to_merge, 'id', None)
+        model_cls = type(obj_to_merge)
+
+        if isinstance(obj_to_merge, DBLocation):
+            if not current_id:
+                current_id = str(uuid.uuid4())
+                obj_to_merge.id = current_id
+            persisted_objects[(model_cls, current_id)] = obj_to_merge
+        return obj_to_merge
+    mock_session.merge = AsyncMock(side_effect=side_effect_merge)
+
+    async def side_effect_get(model_cls, entity_id, **kwargs):
+        return persisted_objects.get((model_cls, entity_id))
+    mock_session.get = AsyncMock(side_effect=side_effect_get)
+
+    # Act
+    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()):
+        result = await ai_generation_manager_fixture.process_approved_generation(
+            pending_gen_id, guild_id, moderator_id
+        )
+
+    # Assert
+    assert result is True
+    mock_pending_gen_crud_fixture.update_pending_generation_status.assert_called_once_with(
+        mock_session, pending_gen_id, PendingStatus.APPLIED, guild_id,
+        moderator_user_id=moderator_id, moderator_notes=None
+    )
+
+    merged_location_obj = None
+    for (obj_type, obj_id), obj in persisted_objects.items():
+        if obj_type == DBLocation:
+            merged_location_obj = obj
+            break
+
+    assert merged_location_obj is not None
+    assert merged_location_obj.static_id == "new_loc_static_1"
+    assert merged_location_obj.name_i18n["en"] == "Haunted Forest"
+    assert mock_pending_generation.entity_id == merged_location_obj.id
+
+    mock_game_manager.npc_manager.spawn_npc_in_location.assert_called_once()
+    spawn_call_args = mock_game_manager.npc_manager.spawn_npc_in_location.call_args
+    assert spawn_call_args.kwargs['location_id'] == merged_location_obj.id
+    assert spawn_call_args.kwargs['npc_template_id'] == "goblin_warrior_0"
+    initial_state_arg = spawn_call_args.kwargs['initial_state']
+    assert "skills_data" in initial_state_arg and initial_state_arg["skills_data"] == {"melee": 5}
+    assert "abilities_data" in initial_state_arg and initial_state_arg["abilities_data"] == ["charge"]
+    assert "faction_id" in initial_state_arg and initial_state_arg["faction_id"] == "monsters"
+    assert merged_location_obj.npc_ids == [mock_created_npc_id]
+
+    assert len(merged_location_obj.points_of_interest_json) == 1
+    poi_data = merged_location_obj.points_of_interest_json[0]
+    assert "poi_item_1" in poi_data.get("contained_item_ids", [])
+
+    assert "initial_ai_loot" in merged_location_obj.inventory
+    assert len(merged_location_obj.inventory["initial_ai_loot"]) == 1
+    assert merged_location_obj.inventory["initial_ai_loot"][0]["template_id"] == "general_loot_item_1"
+
+    mock_session_context.__aexit__.assert_called_once_with(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_process_location_success_update_existing(
+    ai_generation_manager_fixture: AIGenerationManager,
+    mock_pending_gen_crud_fixture: AsyncMock,
+    mock_db_service: AsyncMock,
+    mock_session_context: AsyncMock
+):
+    # Arrange
+    guild_id = "test_guild_1"
+    pending_gen_id = str(uuid.uuid4())
+    moderator_id = "mod_user_1"
+    existing_loc_id = str(uuid.uuid4())
+    existing_static_id = "existing_static_loc_id"
+
+    parsed_loc_data = get_valid_parsed_location_data(
+        static_id=existing_static_id, loc_name="Renovated Haunted Forest", num_npcs=0, num_items=0
+    )
+
+    mock_pending_generation = PendingGeneration(
+        id=pending_gen_id, guild_id=guild_id, request_type=GenerationType.LOCATION_DETAILS,
+        status=PendingStatus.APPROVED, parsed_data_json=parsed_loc_data, moderator_notes=None
+    )
+    mock_pending_gen_crud_fixture.get_pending_generation_by_id.return_value = mock_pending_generation
+
+    mock_session = mock_session_context.__aenter__()
+
+    existing_db_location = DBLocation(
+        id=existing_loc_id, guild_id=guild_id, static_id=existing_static_id,
+        name_i18n={"en": "Original Haunted Forest"},
+        template_id="forest_template_01", location_type_key="forest_haunted",
+        descriptions_i18n={"en": "Old spooky forest."}
+    )
+    mock_select_result = AsyncMock()
+    mock_select_result.scalars.return_value.first.return_value = existing_db_location
+    mock_session.execute.return_value = mock_select_result
+
+    persisted_objects = {(DBLocation, existing_loc_id): existing_db_location}
+
+    async def side_effect_merge(obj_to_merge, **kwargs):
+        persisted_objects[(type(obj_to_merge), obj_to_merge.id)] = obj_to_merge
+        return obj_to_merge
+    mock_session.merge = AsyncMock(side_effect=side_effect_merge)
+
+    async def side_effect_get(model_cls, entity_id, **kwargs):
+        return persisted_objects.get((model_cls, entity_id))
+    mock_session.get = AsyncMock(side_effect=side_effect_get)
+
+    # Act
+    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()):
+        result = await ai_generation_manager_fixture.process_approved_generation(
+            pending_gen_id, guild_id, moderator_id
+        )
+
+    # Assert
+    assert result is True
+    mock_pending_gen_crud_fixture.update_pending_generation_status.assert_called_with(
+        mock_session, pending_gen_id, PendingStatus.APPLIED, guild_id,
+        moderator_user_id=moderator_id, moderator_notes=None
+    )
+
+    merged_location_obj = persisted_objects.get((DBLocation, existing_loc_id))
+    assert merged_location_obj is not None
+    assert merged_location_obj.id == existing_loc_id
+    assert merged_location_obj.name_i18n["en"] == "Renovated Haunted Forest"
+    assert mock_pending_generation.entity_id == existing_loc_id
+    mock_session_context.__aexit__.assert_called_once_with(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_process_location_failure_npc_spawn_preserves_notes( # Added preserves_notes
+    ai_generation_manager_fixture: AIGenerationManager,
+    mock_pending_gen_crud_fixture: AsyncMock,
+    mock_game_manager: MagicMock,
+    mock_db_service: AsyncMock,
+    mock_session_context: AsyncMock
+):
+    # Arrange
+    guild_id = "test_guild_1"
+    pending_gen_id = str(uuid.uuid4())
+    moderator_id = "mod_user_1"
+    initial_mod_notes = "Pre-existing notes." # Test notes concatenation
+
+    parsed_loc_data = get_valid_parsed_location_data(num_npcs=1)
+
+    mock_pending_generation = PendingGeneration(
+        id=pending_gen_id, guild_id=guild_id, request_type=GenerationType.LOCATION_DETAILS,
+        status=PendingStatus.APPROVED, parsed_data_json=parsed_loc_data, moderator_notes=initial_mod_notes
+    )
+    mock_pending_gen_crud_fixture.get_pending_generation_by_id.return_value = mock_pending_generation
+
+    mock_session = mock_session_context.__aenter__()
+    mock_select_result = AsyncMock()
+    mock_select_result.scalars.return_value.first.return_value = None
+    mock_session.execute.return_value = mock_select_result
+
+    mock_game_manager.npc_manager.spawn_npc_in_location.return_value = None # Simulate NPC spawn failure
+
+    persisted_objects = {}
+    async def side_effect_merge(obj_to_merge, **kwargs):
+        if isinstance(obj_to_merge, DBLocation):
+            if not obj_to_merge.id: obj_to_merge.id = str(uuid.uuid4())
+            persisted_objects[(DBLocation, obj_to_merge.id)] = obj_to_merge
+        return obj_to_merge
+    mock_session.merge = AsyncMock(side_effect=side_effect_merge)
+    async def side_effect_get(model_cls, entity_id, **kwargs):
+        return persisted_objects.get((model_cls, entity_id))
+    mock_session.get = AsyncMock(side_effect=side_effect_get)
+
+    # Act
+    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()):
+        result = await ai_generation_manager_fixture.process_approved_generation(
+            pending_gen_id, guild_id, moderator_id
+        )
+
+    # Assert
+    assert result is False
+    update_call = mock_pending_gen_crud_fixture.update_pending_generation_status.call_args
+    assert update_call.args[2] == PendingStatus.APPLICATION_FAILED
+
+    # Check that original notes are preserved and new one appended
+    expected_notes = initial_mod_notes + " | Failed to spawn NPC"
+    assert expected_notes in update_call.kwargs['moderator_notes']
+
+    mock_session_context.__aexit__.assert_called_once_with(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_process_location_failure_parsing(
+    ai_generation_manager_fixture: AIGenerationManager,
+    mock_pending_gen_crud_fixture: AsyncMock,
+    mock_db_service: AsyncMock,
+    mock_session_context: AsyncMock
+):
+    # Arrange
+    guild_id = "test_guild_1"
+    pending_gen_id = str(uuid.uuid4())
+    moderator_id = "mod_user_1"
+
+    malformed_parsed_data = get_valid_parsed_location_data()
+    malformed_parsed_data["name_i18n"] = "This should be a dict"
+
+    mock_pending_generation = PendingGeneration(
+        id=pending_gen_id, guild_id=guild_id, request_type=GenerationType.LOCATION_DETAILS,
+        status=PendingStatus.APPROVED, parsed_data_json=malformed_parsed_data
+    )
+    mock_pending_gen_crud_fixture.get_pending_generation_by_id.return_value = mock_pending_generation
+    mock_session = mock_session_context.__aenter__() # Get session for status update check
+
+    # Act
+    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()):
+        result = await ai_generation_manager_fixture.process_approved_generation(
+            pending_gen_id, guild_id, moderator_id
+        )
+
+    # Assert
+    assert result is False
+    update_call = mock_pending_gen_crud_fixture.update_pending_generation_status.call_args
+    assert update_call.args[0] == mock_session # Ensure it's called with the correct session
+    assert update_call.args[2] == PendingStatus.APPLICATION_FAILED
+    assert "Failed to parse AI data" in update_call.kwargs['moderator_notes']
+    mock_session_context.__aexit__.assert_called_once_with(None, None, None)
+```
