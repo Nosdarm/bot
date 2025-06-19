@@ -436,47 +436,82 @@ class AIGenerationManager:
                                             continue
 
                                         if target_poi_id:
-                                            poi_found_for_item = False
-                                            for poi_dict in location_for_item_updates.points_of_interest_json:
-                                                if poi_dict.get("poi_id") == target_poi_id:
-                                                    poi_found_for_item = True
-                                                    poi_dict.setdefault("contained_item_ids", [])
-                                                    if item_template_id not in poi_dict["contained_item_ids"]:
-                                                        poi_dict["contained_item_ids"].append(item_template_id)
-                                                        items_changed_in_location = True
-                                                        logger.info(f"Added item '{item_template_id}' to POI '{target_poi_id}' in location '{persisted_location_id}' for PG ID {record.id}.")
-                                                    break
-                                            if not poi_found_for_item:
-                                                logger.warning(f"Target POI ID '{target_poi_id}' not found in location '{persisted_location_id}' for item '{item_template_id}' (PG ID {record.id}). Item not placed in POI.")
-                                                # Not setting items_processed_successfully = False, as item can still be general loot or ignored.
-                                        else:
-                                            # General location loot
-                                            location_for_item_updates.inventory.setdefault("initial_ai_loot", [])
-                                            # Avoid duplicates if this is a retry, check based on template_id for now.
-                                            # A more robust check might involve unique item instance IDs if items were actual instances.
-                                            existing_loot_item = next((loot for loot in location_for_item_updates.inventory["initial_ai_loot"] if loot.get("template_id") == item_template_id), None)
-                                            if existing_loot_item:
-                                                # If allowing quantity update on existing template_id
-                                                # existing_loot_item["quantity"] = existing_loot_item.get("quantity", 0) + item_quantity
-                                                logger.info(f"Item template '{item_template_id}' already in general loot for location '{persisted_location_id}' (PG ID {record.id}). Quantity not updated by default, new entry not added.")
+                                            # Create item instance
+                                            created_item_instance = await self.game_manager.item_manager.create_item_instance(
+                                                guild_id=guild_id,
+                                                template_id=item_template_id,
+                                                quantity=item_quantity,
+                                                location_id=persisted_location_id,
+                                                owner_type="location",
+                                                owner_id=persisted_location_id,
+                                                initial_state={"is_in_poi_id": target_poi_id},
+                                                session=session
+                                            )
 
+                                            if created_item_instance and created_item_instance.id:
+                                                poi_found_for_item = False
+                                                for poi_dict in location_for_item_updates.points_of_interest_json:
+                                                    if poi_dict.get("poi_id") == target_poi_id:
+                                                        poi_found_for_item = True
+                                                        poi_dict.setdefault("contained_item_instance_ids", [])
+                                                        if created_item_instance.id not in poi_dict["contained_item_instance_ids"]:
+                                                            poi_dict["contained_item_instance_ids"].append(created_item_instance.id)
+                                                            items_changed_in_location = True
+                                                            logger.info(f"Created item instance '{created_item_instance.id}' (template: '{item_template_id}') and added to POI '{target_poi_id}' in location '{persisted_location_id}' for PG ID {record.id}.")
+                                                        # Optionally, remove from old template ID list if migrating:
+                                                        # if "contained_item_ids" in poi_dict and item_template_id in poi_dict["contained_item_ids"]:
+                                                        #     poi_dict["contained_item_ids"].remove(item_template_id)
+                                                        #     items_changed_in_location = True # Ensure flag is set
+                                                        break
+                                                if not poi_found_for_item:
+                                                    logger.warning(f"Target POI ID '{target_poi_id}' for item instance '{created_item_instance.id}' (template: '{item_template_id}') not found in location '{persisted_location_id}' (PG ID {record.id}). Item instance created but not linked to a specific POI's new list.")
                                             else:
-                                                location_for_item_updates.inventory["initial_ai_loot"].append({
-                                                    "template_id": item_template_id,
-                                                    "quantity": item_quantity
-                                                })
-                                                items_changed_in_location = True
-                                                logger.info(f"Added item '{item_template_id}' (qty: {item_quantity}) to general loot of location '{persisted_location_id}' for PG ID {record.id}.")
+                                                item_err_msg = f"Failed to create item instance for template '{item_template_id}' in POI '{target_poi_id}' for PG ID {record.id}."
+                                                logger.error(item_err_msg)
+                                                application_success = False
+                                                items_processed_successfully = False
+                                                await self.pending_generation_crud.update_pending_generation_status(
+                                                    session, record.id, PendingStatus.APPLICATION_FAILED, guild_id,
+                                                    moderator_user_id=moderator_user_id,
+                                                    moderator_notes=record.moderator_notes + f" | {item_err_msg}" if record.moderator_notes else item_err_msg
+                                                )
+                                                break # Stop item processing loop
+                                        else:
+                                            # General location loot - create item instance
+                                            created_item_instance = await self.game_manager.item_manager.create_item_instance(
+                                                guild_id=guild_id,
+                                                template_id=item_template_id,
+                                                quantity=item_quantity,
+                                                location_id=persisted_location_id,
+                                                owner_type="location",
+                                                owner_id=persisted_location_id,
+                                                session=session
+                                            )
+                                            if created_item_instance and created_item_instance.id:
+                                                items_changed_in_location = True # An item instance was created for the location
+                                                logger.info(f"Created general loot item instance '{created_item_instance.id}' (template: '{item_template_id}', qty: {item_quantity}) for location '{persisted_location_id}' for PG ID {record.id}.")
+                                                # No longer adding to location_for_item_updates.inventory["initial_ai_loot"]
+                                            else:
+                                                item_err_msg = f"Failed to create general loot item instance for template '{item_template_id}' in location '{persisted_location_id}' for PG ID {record.id}."
+                                                logger.error(item_err_msg)
+                                                application_success = False
+                                                items_processed_successfully = False # Ensure this local flag is also set
+                                                await self.pending_generation_crud.update_pending_generation_status(
+                                                    session, record.id, PendingStatus.APPLICATION_FAILED, guild_id,
+                                                    moderator_user_id=moderator_user_id,
+                                                    moderator_notes=record.moderator_notes + f" | {item_err_msg}" if record.moderator_notes else item_err_msg
+                                                )
+                                                break # Stop item processing loop
 
-                                    if items_changed_in_location:
-                                        flag_modified(location_for_item_updates, "points_of_interest_json")
-                                        flag_modified(location_for_item_updates, "inventory")
+                                    if items_changed_in_location: # This flag now also covers successful general loot creation
+                                        flag_modified(location_for_item_updates, "points_of_interest_json") # Keep this if PoIs could have been modified
+                                        flag_modified(location_for_item_updates, "inventory") # Keep this, as other logic might still use/modify inventory JSON directly, or future state might.
                                         # session.add(location_for_item_updates) # Will be part of the transaction, merge handles it.
-                                        logger.info(f"Marked points_of_interest_json and/or inventory as modified for location {persisted_location_id} (PG ID {record.id}).")
+                                        logger.info(f"Marked points_of_interest_json and/or inventory as modified for location {persisted_location_id} (PG ID {record.id}) due to item instance changes.")
                                     logger.info(f"Finished item persistence for location {persisted_location_id}, PG ID {record.id}. Items changed in DB: {items_changed_in_location}.")
 
                                 # If decided that certain item processing errors should fail the application:
-                                # if not items_processed_successfully:
+                                if not items_processed_successfully: # Check local flag in case of break from loop
                                 #     application_success = False
                                 #     # Ensure PendingGeneration notes are updated if needed
                             # --- Item Persistence End ---
