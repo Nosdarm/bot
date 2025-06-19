@@ -12,6 +12,8 @@ import logging # Added
 
 # Database model imports
 from bot.database.models import Player, Party as PartyModel # Renamed Party to PartyModel to avoid conflict
+from bot.game.exceptions import CharacterAlreadyInPartyError, NotPartyLeaderError, PartyNotFoundError, PartyFullError, CharacterNotInPartyError # Corrected import path
+
 
 if TYPE_CHECKING:
     # from bot.bot_core import RPGBot # Now imported directly above
