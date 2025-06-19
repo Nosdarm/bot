@@ -33,6 +33,41 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_guild_configs_guild_id'), 'guild_configs', ['guild_id'], unique=False) # unique=False because UniqueConstraint handles uniqueness
 
+    # Pre-populate guild_configs with existing guild_ids from rules_config
+    # to ensure foreign key constraint can be created.
+    conn = op.get_bind()
+
+    # Define table structures for query and insert (minimal definition needed)
+    rules_config_table = sa.table('rules_config',
+                                  sa.column('guild_id', sa.String)
+                                 )
+    guild_configs_table = sa.table('guild_configs',
+                                   sa.column('guild_id', sa.String),
+                                   # 'id' and 'bot_language' have server defaults in create_table
+                                   # Other columns are nullable or have server_defaults
+                                  )
+
+    # Fetch distinct guild_ids from rules_config
+    select_stmt = sa.select(rules_config_table.c.guild_id).distinct()
+    existing_guild_ids_in_rules = conn.execute(select_stmt).fetchall()
+
+    if existing_guild_ids_in_rules:
+        guild_configs_to_insert = []
+        for row in existing_guild_ids_in_rules:
+            # Check if guild_id already exists in guild_configs to avoid duplicate errors
+            # This check is important if the migration could be run multiple times in a partially failed state,
+            # or if guild_ids in rules_config might not be unique (though guild_id was PK before restructure).
+            # For simplicity in this step, we assume this pre-population runs once cleanly.
+            # A more robust version might do an "INSERT ... ON CONFLICT DO NOTHING" if dealing with
+            # potential re-runs or pre-existing partial data in guild_configs.
+            # However, given the context of creating guild_configs fresh in this migration,
+            # direct insertion of distinct guild_ids from rules_config should be fine.
+            if row[0] is not None: # Ensure guild_id is not None before inserting
+                 guild_configs_to_insert.append({'guild_id': row[0]})
+
+        if guild_configs_to_insert:
+            op.bulk_insert(guild_configs_table, guild_configs_to_insert)
+
     # Add foreign key to rules_config table
     # Ensure that guild_id in rules_config is compatible (String type)
     # The FK constraint is on rules_config.guild_id referencing guild_configs.guild_id
