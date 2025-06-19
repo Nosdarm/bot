@@ -368,4 +368,4 @@ async def test_process_location_failure_parsing(
     assert update_call.args[2] == PendingStatus.APPLICATION_FAILED
     assert "Failed to parse AI data" in update_call.kwargs['moderator_notes']
     mock_session_context.__aexit__.assert_called_once_with(None, None, None)
-```
+
