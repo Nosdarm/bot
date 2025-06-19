@@ -1,6 +1,7 @@
 import pytest
 import uuid
 from unittest.mock import AsyncMock, MagicMock
+from typing import Dict
 
 from bot.game.managers.npc_manager import NpcManager
 from bot.database.models import NPC as SQLAlchemyNPC
@@ -182,4 +183,4 @@ async def test_spawn_npc_inventory_none_in_initial_state_overrides_template(npc_
     # Assert
     assert created_npc is not None
     assert created_npc.inventory is None # Should be None (SQL NULL)
-```
+

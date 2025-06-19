@@ -448,4 +448,3 @@ class ItemManager:
 
 logger.debug("DEBUG: item_manager.py module loaded (after overwrite).")
 
-```
