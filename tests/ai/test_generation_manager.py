@@ -44,21 +44,32 @@ def get_valid_parsed_location_data(
     }
     if num_npcs > 0:
         for i in range(num_npcs):
-            # Directly create dicts as they would be after JSON parsing of GeneratedNpcProfile
+            npc_factions = [
+                {"faction_id": f"faction_{i}_a", "rank_i18n": {"en": "Member"}},
+            ]
+            if i % 2 == 0: # Add a second faction for even numbered NPCs for variety
+                npc_factions.append({"faction_id": f"faction_{i}_b", "rank_i18n": {"en": "Ally"}})
+
+            npc_inventory = [
+                {"item_template_id": f"sword_{i}", "quantity": 1},
+                {"item_template_id": f"potion_health_{i}", "quantity": i + 1}
+            ]
+
             npc_dict = {
-                "template_id":f"goblin_warrior_{i}",
-                "name_i18n":{"en": f"Gruk_{i}", "ru":f"Gruk RU_{i}"},
-                "role_i18n":{"en":"Warrior","ru":"Warrior RU"},
-                "archetype":"goblin_fighter",
-                "backstory_i18n":{"en":"Backstory","ru":"Backstory RU"},
-                "personality_i18n":{"en":"Mean","ru":"Mean RU"},
-                "motivation_i18n":{"en":"Loot","ru":"Loot RU"},
-                "visual_description_i18n":{"en":"Green","ru":"Green RU"},
-                "dialogue_hints_i18n":{"en":"Ugh","ru":"Ugh RU"},
-                "stats":{"strength": 10},
-                "skills":{"melee": 5}, # This will be transformed to skills_data
-                "abilities": ["charge"], # This will be transformed to abilities_data
-                "faction_affiliations": [{"faction_id": "monsters", "rank_i18n": {"en": "Grunt"}}] # Transformed to faction_id
+                "template_id":f"npc_template_{i}",
+                "name_i18n":{"en": f"NPC_{i}", "ru":f"НПС_{i}"},
+                "role_i18n":{"en":"Test Role","ru":"Тестовая Роль"},
+                "archetype":f"test_archetype_{i}",
+                "backstory_i18n":{"en":"A long story","ru":"Длинная история"},
+                "personality_i18n":{"en":"Unique","ru":"Уникальная"},
+                "motivation_i18n":{"en":"Test","ru":"Тест"},
+                "visual_description_i18n":{"en":"Visually distinct","ru":"Отличительная внешность"},
+                "dialogue_hints_i18n":{"en":"Says things","ru":"Говорит вещи"},
+                "stats":{"strength": 10 + i, "dexterity": 8 + i},
+                "skills":{"heavy_armor": i, "persuasion": i + 1},
+                "abilities": [f"ability_{i}_1", f"ability_{i}_2"],
+                "faction_affiliations": npc_factions,
+                "inventory": npc_inventory
             }
             base_data["initial_npcs_json"].append(npc_dict)
 
@@ -204,9 +215,21 @@ async def test_process_location_success_new_with_npcs_items(
     assert spawn_call_args.kwargs['location_id'] == merged_location_obj.id
     assert spawn_call_args.kwargs['npc_template_id'] == "goblin_warrior_0"
     initial_state_arg = spawn_call_args.kwargs['initial_state']
-    assert "skills_data" in initial_state_arg and initial_state_arg["skills_data"] == {"melee": 5}
-    assert "abilities_data" in initial_state_arg and initial_state_arg["abilities_data"] == ["charge"]
-    assert "faction_id" in initial_state_arg and initial_state_arg["faction_id"] == "monsters"
+    assert "skills_data" in initial_state_arg and initial_state_arg["skills_data"] == {"heavy_armor": 0, "persuasion": 1} # Based on i=0
+    assert "abilities_data" in initial_state_arg and initial_state_arg["abilities_data"] == ["ability_0_1", "ability_0_2"]
+
+    # Assert faction data in initial_state_arg
+    expected_primary_faction_id = parsed_loc_data["initial_npcs_json"][0]["faction_affiliations"][0]["faction_id"]
+    assert "faction_id" in initial_state_arg and initial_state_arg["faction_id"] == expected_primary_faction_id
+    assert "faction_details_list" in initial_state_arg
+    assert len(initial_state_arg["faction_details_list"]) == len(parsed_loc_data["initial_npcs_json"][0]["faction_affiliations"])
+    assert initial_state_arg["faction_details_list"][0]["faction_id"] == expected_primary_faction_id
+
+    # Assert inventory data in initial_state_arg
+    assert "inventory" in initial_state_arg
+    assert len(initial_state_arg["inventory"]) == len(parsed_loc_data["initial_npcs_json"][0]["inventory"])
+    assert initial_state_arg["inventory"][0]["item_template_id"] == "sword_0"
+
     assert merged_location_obj.npc_ids == [mock_created_npc_id]
 
     assert len(merged_location_obj.points_of_interest_json) == 1

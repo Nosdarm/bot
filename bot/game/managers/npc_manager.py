@@ -173,7 +173,8 @@ class NpcManager:
                     is_alive=final_npc_data.get('is_alive', True),
                     archetype=final_npc_data.get('archetype'),
                     inventory=final_npc_data.get('inventory', {}), # JSONB field
-                    faction_id=final_npc_data.get('faction_id'),
+                    faction_id=final_npc_data.get('faction_id'), # Primary faction ID
+                    faction=final_npc_data.get('faction_details_list'), # Detailed list for JSONB
                     skills_data=final_npc_data.get('skills_data', {}), # JSONB field
                     abilities_data=final_npc_data.get('abilities_data', {}), # JSONB field
                     state_variables=final_npc_data.get('state_variables', {}) # JSONB field
