@@ -191,7 +191,8 @@ class POIModel(BaseModel):
     poi_id: str
     name_i18n: Dict[str, str]
     description_i18n: Dict[str, str]
-    contained_item_ids: Optional[List[str]] = None
+    contained_item_ids: Optional[List[str]] = None # Deprecated: Will be phased out. New content should use contained_item_instance_ids.
+    contained_item_instance_ids: Optional[List[str]] = None
     npc_ids: Optional[List[str]] = None
     _validate_i18n_fields = field_validator('name_i18n', 'description_i18n', mode='before')(validate_i18n_field)
 
