@@ -26,7 +26,7 @@ TABLE_COLUMNS_TO_JSONB = {
     'parties': ['name_i18n', 'player_ids', 'state_variables'],
     'generated_locations': ['name_i18n', 'descriptions_i18n', 'details_i18n', 'tags_i18n', 'atmosphere_i18n', 'features_i18n'],
     'item_templates': ['name_i18n', 'description_i18n', 'properties'],
-    'location_templates': ['description_i18n', 'properties'], # Name is not i18n, 'properties' was JSON
+    'location_templates': ['description', 'properties'], # Name is not i18n, 'properties' was JSON
     'npcs': ['name_i18n', 'description_i18n', 'backstory_i18n', 'persona_i18n', 'stats', 'inventory', 'action_queue', 'state_variables', 'status_effects', 'traits', 'desires', 'motives', 'skills_data', 'equipment_data', 'abilities_data', 'faction', 'behavior_tags', 'effective_stats_json'],
     'generated_npcs': ['name_i18n', 'description_i18n', 'backstory_i18n', 'persona_i18n', 'effective_stats_json'],
     'generated_factions': ['name_i18n', 'description_i18n'],
