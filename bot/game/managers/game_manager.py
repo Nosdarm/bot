@@ -260,7 +260,18 @@ class GameManager:
             inventory_manager=self.inventory_manager,
             location_interaction_service=None # Passed as None for now
         )
-        self._character_view_service = CharacterViewService(game_manager=self)
+        self._character_view_service = CharacterViewService(
+            character_manager=self.character_manager,
+            item_manager=self.item_manager,
+            location_manager=self.location_manager,
+            rule_engine=self.rule_engine,
+            status_manager=self.status_manager,
+            party_manager=self.party_manager,
+            equipment_manager=self.equipment_manager,
+            inventory_manager=self.inventory_manager,
+            ability_manager=self.ability_manager,
+            spell_manager=self.spell_manager
+        )
         self._party_action_processor = PartyActionProcessor(game_manager=self)
         self._party_command_handler = PartyCommandHandler(game_manager=self)
         self._persistence_manager = PersistenceManager(game_manager=self)
