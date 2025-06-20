@@ -272,7 +272,18 @@ class GameManager:
             ability_manager=self.ability_manager,
             spell_manager=self.spell_manager
         )
-        self._party_action_processor = PartyActionProcessor(game_manager=self)
+        self._party_action_processor = PartyActionProcessor(
+            party_manager=self.party_manager,
+            send_callback_factory=self._get_discord_send_callback,
+            rule_engine=self.rule_engine,
+            location_manager=self.location_manager,
+            character_manager=self.character_manager,
+            npc_manager=self.npc_manager,
+            time_manager=self.time_manager,
+            combat_manager=self.combat_manager,
+            event_stage_processor=self._event_stage_processor,
+            game_log_manager=self.game_log_manager
+        )
         self._party_command_handler = PartyCommandHandler(game_manager=self)
         self._persistence_manager = PersistenceManager(game_manager=self)
         self._world_simulation_processor = WorldSimulationProcessor(game_manager=self)
