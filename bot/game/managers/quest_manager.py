@@ -59,7 +59,8 @@ class QuestManager:
         multilingual_prompt_generator: Optional["MultilingualPromptGenerator"] = None,
         openai_service: Optional["OpenAIService"] = None,
         ai_validator: Optional["AIResponseValidator"] = None,
-        notification_service: Optional["NotificationService"] = None
+        notification_service: Optional["NotificationService"] = None,
+        game_manager: Optional["GameManager"] = None
     ):
         logger.info("Initializing QuestManager...") # Added guild_id context if available from settings? For now, global.
         self._db_service = db_service
@@ -75,26 +76,27 @@ class QuestManager:
         self._multilingual_prompt_generator = multilingual_prompt_generator
         self._openai_service = openai_service
         self._ai_validator = ai_validator
+        self.game_manager = game_manager # Moved game_manager assignment higher up
 
         # Ensure ConsequenceProcessor is initialized with NotificationService
-        if consequence_processor is None and character_manager and npc_manager and item_manager and self._location_manager and self._event_manager and self and self._status_manager and game_log_manager: # self is QuestManager
+        if consequence_processor is None and self.game_manager and character_manager and npc_manager and item_manager and self.game_manager.location_manager and self.game_manager.event_manager and self and self.game_manager.status_manager and game_log_manager:
             from bot.game.services.consequence_processor import ConsequenceProcessor # Local import to avoid circular if not already imported at top
             self._consequence_processor = ConsequenceProcessor(
                 character_manager=character_manager,
                 npc_manager=npc_manager,
                 item_manager=item_manager,
-                location_manager=self._location_manager, # Assuming LocationManager is available as self._location_manager
-                event_manager=self._event_manager,       # Assuming EventManager is available as self._event_manager
-                quest_manager=self, # Pass self (QuestManager)
-                status_manager=self._status_manager,   # Assuming StatusManager is available as self._status_manager
-                dialogue_manager=None, # Pass actual DialogueManager if available
-                game_state=None, # Pass actual GameState if available
+                location_manager=self.game_manager.location_manager,
+                event_manager=self.game_manager.event_manager,
+                quest_manager=self,
+                status_manager=self.game_manager.status_manager,
+                dialogue_manager=None,
+                game_state=None,
                 rule_engine=rule_engine,
-                economy_manager=None, # Pass actual EconomyManager if available
+                economy_manager=None,
                 relationship_manager=relationship_manager,
                 game_log_manager=game_log_manager,
-                notification_service=self._notification_service, # Pass NotificationService
-                prompt_context_collector=None # Pass PromptContextCollector if available, None for now
+                notification_service=self._notification_service,
+                prompt_context_collector=None
             )
             logger.info("QuestManager: Auto-initialized ConsequenceProcessor with NotificationService.")
         elif consequence_processor:
@@ -120,7 +122,7 @@ class QuestManager:
         # Add game_manager reference if available through settings or passed in __init__
         # For now, assuming it's not directly available or needed for basic accept_quest
         # If needed for rules, it would require __init__ modification or passing GameManager instance.
-        # self.game_manager: Optional["GameManager"] = None # Placeholder if it were to be added
+        # self.game_manager assignment moved higher up
 
         logger.info("QuestManager initialized.")
 
