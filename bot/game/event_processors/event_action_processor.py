@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor
     from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator
     from bot.game.character_processors.character_action_processor import CharacterActionProcessor # If needed in signatures
+    from bot.game.managers.game_manager import GameManager
 
 
 # --- Imports needed at Runtime ---
@@ -112,8 +113,7 @@ class EventActionProcessor:
                  on_enter_action_executor: Optional["OnEnterActionExecutor"] = None,
                  stage_description_generator: Optional["StageDescriptionGenerator"] = None,
                  character_action_processor: Optional["CharacterActionProcessor"] = None,
-
-
+                 game_manager: Optional["GameManager"] = None  # Added this line
                 ):
         print("Initializing EventActionProcessor...")
 
@@ -141,6 +141,7 @@ class EventActionProcessor:
         self._on_enter_action_executor = on_enter_action_executor
         self._stage_description_generator = stage_description_generator
         self._character_action_processor = character_action_processor
+        self._game_manager = game_manager
 
 
         print("EventActionProcessor initialized.")
