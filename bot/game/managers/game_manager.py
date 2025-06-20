@@ -284,7 +284,13 @@ class GameManager:
             event_stage_processor=self._event_stage_processor,
             game_log_manager=self.game_log_manager
         )
-        self._party_command_handler = PartyCommandHandler(game_manager=self)
+        self._party_command_handler = PartyCommandHandler(
+            character_manager=self.character_manager,
+            party_manager=self.party_manager,
+            party_action_processor=self._party_action_processor,
+            settings=self._settings,
+            npc_manager=self.npc_manager
+        )
         self._persistence_manager = PersistenceManager(game_manager=self)
         self._world_simulation_processor = WorldSimulationProcessor(game_manager=self)
         self.turn_processing_service = TurnProcessingService(game_manager=self)
