@@ -291,7 +291,26 @@ class GameManager:
             settings=self._settings,
             npc_manager=self.npc_manager
         )
-        self._persistence_manager = PersistenceManager(game_manager=self)
+        self._persistence_manager = PersistenceManager(
+            event_manager=self.event_manager,
+            character_manager=self.character_manager,
+            location_manager=self.location_manager,
+            db_service=self.db_service,
+            npc_manager=self.npc_manager,
+            combat_manager=self.combat_manager,
+            item_manager=self.item_manager,
+            time_manager=self.time_manager,
+            status_manager=self.status_manager,
+            crafting_manager=self.crafting_manager,
+            economy_manager=self.economy_manager,
+            party_manager=self.party_manager,
+            quest_manager=self.quest_manager,
+            relationship_manager=self.relationship_manager,
+            game_log_manager=self.game_log_manager,
+            dialogue_manager=self.dialogue_manager,
+            skill_manager=None, # GameManager doesn't have a direct _skill_manager attribute.
+            spell_manager=self.spell_manager
+        )
         self._world_simulation_processor = WorldSimulationProcessor(game_manager=self)
         self.turn_processing_service = TurnProcessingService(game_manager=self)
         self.turn_processor = TurnProcessor(game_manager=self)
