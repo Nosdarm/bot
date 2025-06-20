@@ -22,6 +22,7 @@ from bot.game.managers.economy_manager import EconomyManager
 from bot.game.managers.dialogue_manager import DialogueManager
 from bot.game.managers.crafting_manager import CraftingManager
 from bot.game.managers.event_manager import EventManager
+    from bot.game.managers.game_manager import GameManager
 
 # Импopт пpoцессоров
 from .on_enter_action_executor import OnEnterActionExecutor
@@ -66,6 +67,7 @@ class EventStageProcessor:
         economy_manager: Optional['EconomyManager'] = None, # Already using string literal, good.
         dialogue_manager: Optional['DialogueManager'] = None, # Already using string literal, good.
         crafting_manager: Optional['CraftingManager'] = None, # Already using string literal, good.
+        game_manager: Optional["GameManager"] = None,  # Added this line
         event_action_processor: Optional['EventActionProcessor'] = None, # Already using string literal, and needs to be!
     ):
         # Сохраняем зависимости
@@ -83,6 +85,7 @@ class EventStageProcessor:
         self._economy_manager = economy_manager
         self._dialogue_manager = dialogue_manager
         self._crafting_manager = crafting_manager
+        self._game_manager = game_manager
         self._event_action_processor = event_action_processor # Storing the instance is fine.
 
     async def advance_stage(
