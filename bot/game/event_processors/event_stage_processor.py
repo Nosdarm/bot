@@ -22,7 +22,7 @@ from bot.game.managers.economy_manager import EconomyManager
 from bot.game.managers.dialogue_manager import DialogueManager
 from bot.game.managers.crafting_manager import CraftingManager
 from bot.game.managers.event_manager import EventManager
-    from bot.game.managers.game_manager import GameManager
+from bot.game.managers.game_manager import GameManager
 
 # Импopт пpoцессоров
 from .on_enter_action_executor import OnEnterActionExecutor
