@@ -238,7 +238,28 @@ class GameManager:
         self._event_action_processor = EventActionProcessor(event_stage_processor=None, event_manager=self.event_manager, character_manager=self.character_manager, loc_manager=self.location_manager, rule_engine=self.rule_engine, openai_service=self.openai_service, send_callback_factory=self._get_discord_send_callback, game_manager=self)
         self._event_stage_processor = EventStageProcessor(on_enter_action_executor=self._on_enter_action_executor, stage_description_generator=self._stage_description_generator, rule_engine=self.rule_engine, character_manager=self.character_manager, loc_manager=self.location_manager, game_manager=self, event_action_processor=self._event_action_processor)
         self._event_action_processor.event_stage_processor = self._event_stage_processor
-        self._character_action_processor = CharacterActionProcessor(game_manager=self)
+        self._character_action_processor = CharacterActionProcessor(
+            character_manager=self.character_manager,
+            send_callback_factory=self._get_discord_send_callback,
+            db_service=self.db_service,
+            item_manager=self.item_manager,
+            location_manager=self.location_manager,
+            dialogue_manager=self.dialogue_manager,
+            rule_engine=self.rule_engine,
+            time_manager=self.time_manager,
+            combat_manager=self.combat_manager,
+            status_manager=self.status_manager,
+            party_manager=self.party_manager,
+            npc_manager=self.npc_manager,
+            event_stage_processor=self._event_stage_processor,
+            event_action_processor=self._event_action_processor,
+            game_log_manager=self.game_log_manager,
+            openai_service=self.openai_service,
+            event_manager=self.event_manager,
+            equipment_manager=self.equipment_manager,
+            inventory_manager=self.inventory_manager,
+            location_interaction_service=None # Passed as None for now
+        )
         self._character_view_service = CharacterViewService(game_manager=self)
         self._party_action_processor = PartyActionProcessor(game_manager=self)
         self._party_command_handler = PartyCommandHandler(game_manager=self)
