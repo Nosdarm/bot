@@ -198,7 +198,7 @@ class TurnProcessingService:
         ready_player_actions = self.action_scheduler.get_ready_actions(guild_id)
 
         # Filter for player actions (actor_id is a player character)
-        all_player_character_ids = [c.id for c in await self.character_manager.get_all_characters(guild_id)]
+        all_player_character_ids = [c.id for c in self.character_manager.get_all_characters(guild_id)] # MODIFIED: Removed await
         player_actions_to_process = [act for act in ready_player_actions if act.actor_id in all_player_character_ids]
 
         for action_request in player_actions_to_process:
