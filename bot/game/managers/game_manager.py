@@ -398,7 +398,40 @@ class GameManager:
             game_log_manager=self.game_log_manager
         )
         self.location_interaction_service = LocationInteractionService(game_manager=self)
-        self._command_router = CommandRouter(game_manager=self)
+        self._command_router = CommandRouter(
+            character_manager=self.character_manager,
+            event_manager=self.event_manager,
+            persistence_manager=self._persistence_manager,
+            settings=self._settings,
+            world_simulation_processor=self._world_simulation_processor,
+            send_callback_factory=self._get_discord_send_callback,
+            character_action_processor=self._character_action_processor,
+            character_view_service=self._character_view_service,
+            location_manager=self.location_manager,
+            rule_engine=self.rule_engine,
+            party_command_handler=self._party_command_handler,
+            # Optional arguments that are available:
+            openai_service=self.openai_service,
+            item_manager=self.item_manager,
+            npc_manager=self.npc_manager,
+            combat_manager=self.combat_manager,
+            time_manager=self.time_manager,
+            status_manager=self.status_manager,
+            party_manager=self.party_manager,
+            crafting_manager=self.crafting_manager,
+            economy_manager=self.economy_manager,
+            party_action_processor=self._party_action_processor,
+            event_action_processor=self._event_action_processor,
+            event_stage_processor=self._event_stage_processor,
+            quest_manager=self.quest_manager,
+            dialogue_manager=self.dialogue_manager,
+            campaign_loader=self.campaign_loader,
+            relationship_manager=self.relationship_manager,
+            game_log_manager=self.game_log_manager,
+            conflict_resolver=self.conflict_resolver,
+            game_manager=self
+            # ai_validator will be None at this point, which is fine as it's optional
+        )
         logger.info("GameManager: Processors and command system initialized.")
 
     async def _initialize_ai_content_services(self):
