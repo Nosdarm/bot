@@ -384,66 +384,67 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
     #             ephemeral=True
     #         )
 
-    @app_commands.command(
-        name="set_master_role",
-        description="Установить роль Мастера для этой гильдии (только для Мастера/Администратора)."
-    )
-    @app_commands.describe(role="Роль Discord, которая будет назначена как роль Мастера.")
-    async def cmd_set_master_role(self, interaction: Interaction, role: discord.Role):
-        logging.info(f"Command /set_master_role received from {interaction.user.name} ({interaction.user.id}) with role: {role.name} ({role.id})")
-        if not await self.is_master_or_admin(interaction):
-            await interaction.response.send_message(
-                "Только Мастер или администратор может назначать роль Мастера.",
-                ephemeral=True
-            )
-            logging.warning(f"User {interaction.user.name} ({interaction.user.id}) attempted to use /set_master_role without permissions in guild {interaction.guild_id}.")
-            return
-
-        if not interaction.guild_id:
-            await interaction.response.send_message(
-                "Эта команда должна быть использована на сервере.",
-                ephemeral=True
-            )
-            return
-
-        bot_instance = self.bot  # type: RPGBot
-        if not hasattr(bot_instance, 'game_manager') or \
-           bot_instance.game_manager is None or \
-           not hasattr(bot_instance.game_manager, 'db_service') or \
-           bot_instance.game_manager.db_service is None:
-            await interaction.response.send_message(
-                "GameManager или DBService не доступен. Пожалуйста, попробуйте позже или свяжитесь с администратором.",
-                ephemeral=True
-            )
-            logging.error(f"GameManager or DBService not available for /set_master_role in guild {interaction.guild_id}.")
-            return
-
-        game_mngr: "GameManager" = bot_instance.game_manager
-
-        try:
-            success = await game_mngr.db_service.set_guild_setting(
-                str(interaction.guild_id),
-                'master_role_id',
-                str(role.id)
-            )
-            if success:
-                await interaction.response.send_message(
-                    f"Роль '{role.name}' была успешно назначена как роль Мастера для этой гильдии.",
-                    ephemeral=True
-                )
-                logging.info(f"Master role set to '{role.name}' ({role.id}) for guild {interaction.guild_id} by {interaction.user.name}.")
-            else:
-                await interaction.response.send_message(
-                    "Не удалось сохранить настройку роли Мастера. Проверьте логи для деталей.",
-                    ephemeral=True
-                )
-                logging.error(f"Failed to set master role (DBService.set_guild_setting returned False) for guild {interaction.guild_id} by {interaction.user.name}.")
-        except Exception as e:
-            await interaction.response.send_message(
-                f"Произошла ошибка при установке роли Мастера: {e}",
-                ephemeral=True
-            )
-            logging.error(f"Exception occurred in /set_master_role for guild {interaction.guild_id} by {interaction.user.name}: {e}", exc_info=True)
+    # Removed duplicate set_master_role command
+    # @app_commands.command(
+    #     name="set_master_role",
+    #     description="Установить роль Мастера для этой гильдии (только для Мастера/Администратора)."
+    # )
+    # @app_commands.describe(role="Роль Discord, которая будет назначена как роль Мастера.")
+    # async def cmd_set_master_role(self, interaction: Interaction, role: discord.Role):
+    #     logging.info(f"Command /set_master_role received from {interaction.user.name} ({interaction.user.id}) with role: {role.name} ({role.id})")
+    #     if not await self.is_master_or_admin(interaction):
+    #         await interaction.response.send_message(
+    #             "Только Мастер или администратор может назначать роль Мастера.",
+    #             ephemeral=True
+    #         )
+    #         logging.warning(f"User {interaction.user.name} ({interaction.user.id}) attempted to use /set_master_role without permissions in guild {interaction.guild_id}.")
+    #         return
+    #
+    #     if not interaction.guild_id:
+    #         await interaction.response.send_message(
+    #             "Эта команда должна быть использована на сервере.",
+    #             ephemeral=True
+    #         )
+    #         return
+    #
+    #     bot_instance = self.bot  # type: RPGBot
+    #     if not hasattr(bot_instance, 'game_manager') or \
+    #        bot_instance.game_manager is None or \
+    #        not hasattr(bot_instance.game_manager, 'db_service') or \
+    #        bot_instance.game_manager.db_service is None:
+    #         await interaction.response.send_message(
+    #             "GameManager или DBService не доступен. Пожалуйста, попробуйте позже или свяжитесь с администратором.",
+    #             ephemeral=True
+    #         )
+    #         logging.error(f"GameManager or DBService not available for /set_master_role in guild {interaction.guild_id}.")
+    #         return
+    #
+    #     game_mngr: "GameManager" = bot_instance.game_manager
+    #
+    #     try:
+    #         success = await game_mngr.db_service.set_guild_setting(
+    #             str(interaction.guild_id),
+    #             'master_role_id',
+    #             str(role.id)
+    #         )
+    #         if success:
+    #             await interaction.response.send_message(
+    #                 f"Роль '{role.name}' была успешно назначена как роль Мастера для этой гильдии.",
+    #                 ephemeral=True
+    #             )
+    #             logging.info(f"Master role set to '{role.name}' ({role.id}) for guild {interaction.guild_id} by {interaction.user.name}.")
+    #         else:
+    #             await interaction.response.send_message(
+    #                 "Не удалось сохранить настройку роли Мастера. Проверьте логи для деталей.",
+    #                 ephemeral=True
+    #             )
+    #             logging.error(f"Failed to set master role (DBService.set_guild_setting returned False) for guild {interaction.guild_id} by {interaction.user.name}.")
+    #     except Exception as e:
+    #         await interaction.response.send_message(
+    #             f"Произошла ошибка при установке роли Мастера: {e}",
+    #             ephemeral=True
+    #         )
+    #         logging.error(f"Exception occurred in /set_master_role for guild {interaction.guild_id} by {interaction.user.name}: {e}", exc_info=True)
 
     @app_commands.command(name="start", description="Begin your adventure by creating your player profile.")
     @app_commands.guild_only()

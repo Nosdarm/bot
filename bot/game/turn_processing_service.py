@@ -243,7 +243,7 @@ class TurnProcessingService:
                 self.action_scheduler.update_action_status(guild_id, action_request.action_id, "failed", {"error": str(e)})
 
         # 2. Plan NPC Actions for all NPCs in the guild
-        all_npcs_in_guild = await self.npc_manager.get_all_npcs(guild_id)
+        all_npcs_in_guild = self.npc_manager.get_all_npcs(guild_id) # MODIFIED: Removed await
         for npc in all_npcs_in_guild:
             # Update context for this specific NPC if needed (e.g., NPC-specific stats)
             # context['current_npc_data'] = npc.some_relevant_attribute
