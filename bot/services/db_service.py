@@ -60,6 +60,29 @@ class DBService:
         await self.adapter.initialize_database()
         logger.info("Database schema initialization complete.") # Added
 
+    @asynccontextmanager
+    async def get_session(self):
+        """Provides a database session/connection from the adapter."""
+        if hasattr(self.adapter, 'db') and self.adapter.db is not None: # PostgresAdapter with SQLAlchemy AsyncSession
+            if hasattr(self.adapter.db, 'begin'): # Check if it's a session object that can begin transactions
+                async with self.adapter.db.begin_nested() as transaction: # Use begin_nested for safety if called within existing transaction
+                    yield self.adapter.db
+            else: # Fallback for simpler session-like objects, though less likely for PostgresAdapter
+                yield self.adapter.db
+        elif hasattr(self.adapter, '_conn') and self.adapter._conn is not None: # SQLiteAdapter with aiosqlite.Connection
+            # aiosqlite connection itself can be used for execution context
+            yield self.adapter._conn
+        elif hasattr(self.adapter, '_SessionLocal'): # For PostgresAdapter, if self.db is None but factory exists
+            session = self.adapter._SessionLocal()
+            try:
+                async with session.begin_nested() as transaction:
+                    yield session
+            finally:
+                await session.close()
+        else:
+            logger.error("DBService.get_session: Adapter has no session/connection factory or is not connected.")
+            raise ConnectionError("DBService: No active session or connection available.")
+
     async def get_global_state_value(self, key: str) -> Optional[str]:
         """Fetches a single value from the global_state table."""
         if not self.adapter:
@@ -846,10 +869,15 @@ class DBService:
         elif model_class and not session:
             # Model-based creation but no session provided - use crud_utils with its own session
             logger.debug(f"DBService.create_entity: model_class {model_class.__name__} provided but no session. Using internal session with crud_utils.")
-            async with self.get_session() as internal_session: # type: ignore
-                async with internal_session.begin():
-                    try:
-                        created_model_instance = await crud_utils.create_entity(
+            try:
+                async with self.get_session() as internal_session: # type: ignore
+                    # For SQLAlchemy sessions from PostgresAdapter, crud_utils will handle begin/commit within the session.
+                    # For aiosqlite, the connection itself is yielded, and crud_utils would need to handle it.
+                    # Assuming crud_utils is adapted for both or primarily for SQLAlchemy sessions.
+                    # If crud_utils expects a SQLAlchemy session, this might need more specific handling for SQLite.
+                    # However, crud_utils primarily uses session.add, session.flush, session.refresh which are SQLAlchemy specific.
+                    # This path will likely only work well with PostgresAdapter.
+                    created_model_instance = await crud_utils.create_entity(
                             session=internal_session,
                             model_class=model_class,
                             data=actual_data
