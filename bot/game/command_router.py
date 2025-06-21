@@ -18,7 +18,7 @@ from discord import Message
 import discord
 
 # TOP-LEVEL IMPORTS
-from bot.services.campaign_loader import CampaignLoaderService
+# from bot.services.campaign_loader import CampaignLoaderService # MODIFIED - Removed
 from bot.game.managers.relationship_manager import RelationshipManager
 from bot.game.managers.quest_manager import QuestManager
 
@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from bot.game.managers.game_manager import GameManager
     from bot.game.managers.dialogue_manager import DialogueManager
     from bot.game.managers.game_log_manager import GameLogManager
-    from bot.services.campaign_loader import CampaignLoader
+    from bot.game.services.campaign_loader import CampaignLoader # MODIFIED - Corrected path
     from bot.game.conflict_resolver import ConflictResolver
     from bot.ai.ai_response_validator import AIResponseValidator
     from bot.game.event_processors.event_action_processor import EventActionProcessor
@@ -108,7 +108,7 @@ class CommandRouter:
         event_stage_processor: Optional["EventStageProcessor"] = None,
         quest_manager: Optional["QuestManager"] = None,
         dialogue_manager: Optional["DialogueManager"] = None,
-        campaign_loader: Optional["CampaignLoaderService"] = None,
+        campaign_loader: Optional["CampaignLoader"] = None, # MODIFIED
         relationship_manager: Optional["RelationshipManager"] = None,
         game_log_manager: Optional["GameLogManager"] = None,
         conflict_resolver: Optional["ConflictResolver"] = None,
