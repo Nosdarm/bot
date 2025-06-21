@@ -137,7 +137,8 @@ class LocationManager:
         from bot.database.crud_utils import get_entities
         loaded_instances_count = 0
         try:
-            async with GuildTransaction(db_service_to_use.get_session_factory, guild_id_str, commit_on_exit=False) as session:
+            actual_session_factory = db_service_to_use.get_session_factory() # MODIFIED
+            async with GuildTransaction(actual_session_factory, guild_id_str, commit_on_exit=False) as session: # MODIFIED
                 all_locations_in_guild = await get_entities(session, Location, guild_id=guild_id_str)
                 guild_instances_cache = self._location_instances.setdefault(guild_id_str, {})
                 for loc_model_instance in all_locations_in_guild:
@@ -170,7 +171,8 @@ class LocationManager:
         processed_dirty_ids_in_transaction = set()
         if not deleted_ids_for_guild and not dirty_ids_for_guild: return
         try:
-            async with GuildTransaction(db_service_to_use.get_session_factory, guild_id_str) as session:
+            actual_session_factory = db_service_to_use.get_session_factory() # MODIFIED
+            async with GuildTransaction(actual_session_factory, guild_id_str) as session: # MODIFIED
                 if deleted_ids_for_guild:
                     stmt = sqlalchemy_delete(Location).where(Location.id.in_(deleted_ids_for_guild), Location.guild_id == guild_id_str)
                     await session.execute(stmt)
@@ -346,7 +348,8 @@ class LocationManager:
             if loc_model: self._location_instances.setdefault(guild_id_str, {})[loc_model.id] = loc_model.to_dict(); return loc_model
         elif db_service_to_use:
             from bot.database.crud_utils import get_entity_by_attributes
-            async with GuildTransaction(db_service_to_use.get_session_factory, guild_id_str, commit_on_exit=False) as crud_session:
+            actual_session_factory = db_service_to_use.get_session_factory() # MODIFIED
+            async with GuildTransaction(actual_session_factory, guild_id_str, commit_on_exit=False) as crud_session: # MODIFIED
                 loc_model = await get_entity_by_attributes(crud_session, Location, attributes={'static_id': static_id_str}, guild_id=guild_id_str)
             if loc_model: self._location_instances.setdefault(guild_id_str, {})[loc_model.id] = loc_model.to_dict(); return loc_model
         return None

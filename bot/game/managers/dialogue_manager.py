@@ -10,7 +10,7 @@ import logging # Added
 import time
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union, Tuple
 
-import asyncpg.exceptions # ADDED IMPORT
+from asyncpg.exceptions import UndefinedTableError # MODIFIED IMPORT
 from bot.services.db_service import DBService
 from builtins import dict, set, list, str, int, bool, float
 
@@ -426,7 +426,7 @@ class DialogueManager:
         except AttributeError: # Handles if adapter is None, though already checked by _db_service.adapter
             logger.error("DialogueManager: DB adapter not available for load_state in guild %s.", guild_id_str)
             return # Or raise, depending on desired behavior
-        except asyncpg.exceptions.UndefinedTableError: # type: ignore
+        except UndefinedTableError: # MODIFIED: Use direct import
             logger.warning("DialogueManager: 'dialogues' table not found in database for guild %s. Dialogue persistence will be skipped.", guild_id_str)
             rows = [] # Ensure rows is an empty list to prevent further errors
         except Exception as e:
@@ -492,7 +492,7 @@ class DialogueManager:
                          await self._db_service.adapter.execute(sql_delete, (guild_id_str, *tuple(ids_to_del)))
                          logger.info("DialogueManager: Deleted %s dialogues from DB for guild %s.", len(ids_to_del), guild_id_str) # Added
                          self._deleted_dialogue_ids.pop(guild_id_str, None)
-                     except asyncpg.exceptions.UndefinedTableError: # type: ignore
+                     except UndefinedTableError: # MODIFIED: Use direct import
                          logger.warning("DialogueManager: 'dialogues' table not found for deletion in guild %s. Skipping deletion.", guild_id_str)
                          self._deleted_dialogue_ids.pop(guild_id_str, None) # Still clear from memory
                      except Exception as e:
@@ -532,7 +532,7 @@ class DialogueManager:
                          if guild_id_str in self._dirty_dialogues:
                              self._dirty_dialogues[guild_id_str].difference_update(saved_ids)
                              if not self._dirty_dialogues[guild_id_str]: del self._dirty_dialogues[guild_id_str]
-                     except asyncpg.exceptions.UndefinedTableError: # type: ignore
+                     except UndefinedTableError: # MODIFIED: Use direct import
                          logger.warning("DialogueManager: 'dialogues' table not found for upsert in guild %s. Skipping save.", guild_id_str)
                          # If table doesn't exist, can't save, so clear dirty flags for these items
                          if guild_id_str in self._dirty_dialogues:
