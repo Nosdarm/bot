@@ -102,7 +102,7 @@ class TurnProcessingService:
                 'game_log_manager': self.game_log_manager,
                 # Add other managers as needed by action processors or planners
             },
-            'rules_config': self.rule_engine.rules_config_data if self.rule_engine else None,
+            'rules_config': self.rule_engine._rules_data if self.rule_engine else None, # MODIFIED: _rules_data
         }
         await self.process_guild_turn(guild_id, context)
 
