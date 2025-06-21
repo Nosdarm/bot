@@ -391,7 +391,12 @@ class GameManager:
         )
         self.turn_processor = TurnProcessor(game_manager=self)
         self.check_resolver = CheckResolver(game_manager=self)
-        self.conflict_resolver = ConflictResolver(game_manager=self)
+        self.conflict_resolver = ConflictResolver(
+            rule_engine=self.rule_engine,
+            notification_service=self.notification_service,
+            db_service=self.db_service,
+            game_log_manager=self.game_log_manager
+        )
         self.location_interaction_service = LocationInteractionService(game_manager=self)
         self._command_router = CommandRouter(game_manager=self)
         logger.info("GameManager: Processors and command system initialized.")
