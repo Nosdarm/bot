@@ -2,6 +2,7 @@
 import json
 import logging # Added
 import os # Moved import to top
+from contextlib import asynccontextmanager # Added import
 import traceback # Will be removed where logger.error(exc_info=True) is used
 import uuid # Moved uuid import to top
 from typing import Optional, List, Dict, Any
@@ -878,15 +879,15 @@ class DBService:
                     # However, crud_utils primarily uses session.add, session.flush, session.refresh which are SQLAlchemy specific.
                     # This path will likely only work well with PostgresAdapter.
                     created_model_instance = await crud_utils.create_entity(
-                            session=internal_session,
-                            model_class=model_class,
-                            data=actual_data
-                        )
-                        logger.info(f"DBService: Created entity via crud_utils (internal session) for model {model_class.__name__}, ID: {getattr(created_model_instance, 'id', 'N/A')}")
-                        return created_model_instance
-                    except Exception as e:
-                        logger.error(f"DBService: Error using crud_utils.create_entity (internal session) for {model_class.__name__}: {e}", exc_info=True)
-                        return None
+                        session=internal_session,
+                        model_class=model_class,
+                        data=actual_data
+                    )
+                    logger.info(f"DBService: Created entity via crud_utils (internal session) for model {model_class.__name__}, ID: {getattr(created_model_instance, 'id', 'N/A')}")
+                    return created_model_instance
+            except Exception as e:
+                logger.error(f"DBService: Error using crud_utils.create_entity (internal session) for {model_class.__name__}: {e}", exc_info=True)
+                return None
         elif table_name and data:
             # Legacy path: low-level table-based creation (session not supported here directly)
             logger.warning("DBService.create_entity: Using legacy table-based creation. Session parameter is ignored.")
