@@ -467,10 +467,10 @@ class GameManager:
                              if self._rules_config_cache else 'en')
 
         self.multilingual_prompt_generator = MultilingualPromptGenerator(
-            prompt_context_collector=self.prompt_context_collector,
-            game_rules_data_source_func=lambda: self._rules_data,
+            context_collector=self.prompt_context_collector, # Corrected argument name
             main_bot_language=main_bot_lang,
-            target_languages=self._settings.get('target_languages', ['en', 'ru'])
+            settings=self._settings # Added settings argument
+            # Removed game_rules_data_source_func and target_languages as they are not expected
         )
         if self.quest_manager: self.quest_manager.multilingual_prompt_generator = self.multilingual_prompt_generator
         if self.consequence_processor: self.consequence_processor.prompt_context_collector = self.prompt_context_collector
