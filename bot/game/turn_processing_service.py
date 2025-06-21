@@ -117,7 +117,7 @@ class TurnProcessingService:
         print(f"TurnProcessingService: Processing player actions for guild {guild_id} and adding to scheduler.")
         actions_submitted_count = 0
 
-        all_characters_in_guild = await self.character_manager.get_all_characters(guild_id)
+        all_characters_in_guild = self.character_manager.get_all_characters(guild_id) # MODIFIED: Removed await
         if not all_characters_in_guild:
             print(f"TurnProcessingService: No characters found in guild {guild_id} for player turn processing.")
             return {"status": "no_characters", "count": 0}

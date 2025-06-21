@@ -5,6 +5,7 @@ import uuid
 import logging # Added
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 import asyncio
+import asyncpg.exceptions # ADDED IMPORT
 from sqlalchemy.ext.asyncio import AsyncSession # Added for type hinting
 from sqlalchemy import text # Added for session.execute
 
@@ -175,6 +176,8 @@ class GameLogManager:
                 asyncio.create_task(
                     self._relationship_event_processor.process_new_log_entry(log_data_for_processor)
                 )
+        except asyncpg.exceptions.UndefinedTableError:
+            logger.warning("GameLogManager: 'game_logs' table not found in database for guild %s. Log event (type: %s) will be skipped.", guild_id, event_type)
         except Exception as e:
             logger.error("GameLogManager: Failed to log event to DB for guild %s. Type: %s, Error: %s", guild_id, event_type, e, exc_info=True)
             fallback_data = {
@@ -217,6 +220,9 @@ class GameLogManager:
         try:
             rows = await self._db_service.adapter.fetchall(sql, tuple(params_list))
             return rows
+        except asyncpg.exceptions.UndefinedTableError:
+            logger.warning("GameLogManager: 'game_logs' table not found when fetching logs for guild %s. Returning empty list.", guild_id)
+            return []
         except Exception as e:
             logger.error("GameLogManager: Failed to fetch logs from DB for guild %s. Error: %s", guild_id, e, exc_info=True) # Changed
             return []
@@ -243,6 +249,9 @@ class GameLogManager:
             await self._db_service.adapter.execute(sql, (log_id, guild_id))
             logger.info("GameLogManager: Attempted deletion of log %s for guild %s.", log_id, guild_id) # Changed
             return True
+        except asyncpg.exceptions.UndefinedTableError:
+            logger.warning("GameLogManager: 'game_logs' table not found for deleting log %s in guild %s. Operation skipped.", log_id, guild_id)
+            return False # Indicate that deletion didn't occur in DB
         except Exception as e:
             logger.error("GameLogManager: Failed to delete log %s from DB for guild %s. Error: %s", log_id, guild_id, e, exc_info=True) # Changed
             return False
@@ -261,6 +270,9 @@ class GameLogManager:
             row = await self._db_service.adapter.fetchone(sql, (log_id, guild_id))
             if row:
                 return dict(row)
+            return None
+        except asyncpg.exceptions.UndefinedTableError:
+            logger.warning("GameLogManager: 'game_logs' table not found when fetching log %s for guild %s.", log_id, guild_id)
             return None
         except Exception as e:
             logger.error("GameLogManager: Failed to fetch log %s from DB for guild %s. Error: %s", log_id, guild_id, e, exc_info=True) # Changed
@@ -300,6 +312,9 @@ class GameLogManager:
             row = await self._db_service.adapter.fetchone(sql, params)
             if row:
                 return dict(row)
+            return None
+        except asyncpg.exceptions.UndefinedTableError:
+            logger.warning("GameLogManager: 'game_logs' table not found when fetching log by detail ('%s'='%s') for guild %s.", detail_key, detail_value, guild_id)
             return None
         except Exception as e:
             logger.error(

@@ -10,6 +10,7 @@ import logging # Added
 import time
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union, Tuple
 
+import asyncpg.exceptions # ADDED IMPORT
 from bot.services.db_service import DBService
 from builtins import dict, set, list, str, int, bool, float
 

@@ -334,53 +334,54 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
     #             ephemeral=True
     #         )
 
-    @app_commands.command(
-        name="set_system_channel",
-        description=(
-            "Установить этот канал как системный канал (только для Мастера)."
-        )
-    )
-    async def cmd_set_system_channel(self, interaction: Interaction):
-        if not await self.is_master_or_admin(interaction):
-            await interaction.response.send_message(
-                "Только Мастер может назначить этот канал.", ephemeral=True
-            )
-            return
-        if not interaction.guild_id or not interaction.channel_id:
-            await interaction.response.send_message(
-                "Эта команда должна быть использована в канале сервера.",
-                ephemeral=True
-            )
-            return
-
-        bot_instance = self.bot  # type: RPGBot
-        if not hasattr(bot_instance, 'game_manager') or \
-           bot_instance.game_manager is None:
-            await interaction.response.send_message(
-                "GameManager is not available. "
-                "Please try again later or contact an admin.",
-                ephemeral=True
-            )
-            return
-        game_mngr: "GameManager" = bot_instance.game_manager
-
-        if game_mngr.db_service:
-            await game_mngr.db_service.set_guild_setting(
-                str(interaction.guild_id),
-                'system_notification_channel_id',
-                str(interaction.channel_id)
-            )
-            await interaction.response.send_message(
-                f"Канал <#{interaction.channel_id}> назначен как "
-                "системный для этой гильдии.",
-                ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                "Не удалось сохранить настройку системного канала "
-                "(DB service unavailable).",
-                ephemeral=True
-            )
+    # Removed duplicate set_system_channel command
+    # @app_commands.command(
+    #     name="set_system_channel",
+    #     description=(
+    #         "Установить этот канал как системный канал (только для Мастера)."
+    #     )
+    # )
+    # async def cmd_set_system_channel(self, interaction: Interaction):
+    #     if not await self.is_master_or_admin(interaction):
+    #         await interaction.response.send_message(
+    #             "Только Мастер может назначить этот канал.", ephemeral=True
+    #         )
+    #         return
+    #     if not interaction.guild_id or not interaction.channel_id:
+    #         await interaction.response.send_message(
+    #             "Эта команда должна быть использована в канале сервера.",
+    #             ephemeral=True
+    #         )
+    #         return
+    #
+    #     bot_instance = self.bot  # type: RPGBot
+    #     if not hasattr(bot_instance, 'game_manager') or \
+    #        bot_instance.game_manager is None:
+    #         await interaction.response.send_message(
+    #             "GameManager is not available. "
+    #             "Please try again later or contact an admin.",
+    #             ephemeral=True
+    #         )
+    #         return
+    #     game_mngr: "GameManager" = bot_instance.game_manager
+    #
+    #     if game_mngr.db_service:
+    #         await game_mngr.db_service.set_guild_setting(
+    #             str(interaction.guild_id),
+    #             'system_notification_channel_id',
+    #             str(interaction.channel_id)
+    #         )
+    #         await interaction.response.send_message(
+    #             f"Канал <#{interaction.channel_id}> назначен как "
+    #             "системный для этой гильдии.",
+    #             ephemeral=True
+    #         )
+    #     else:
+    #         await interaction.response.send_message(
+    #             "Не удалось сохранить настройку системного канала "
+    #             "(DB service unavailable).",
+    #             ephemeral=True
+    #         )
 
     @app_commands.command(
         name="set_master_role",

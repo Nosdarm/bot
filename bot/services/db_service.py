@@ -45,6 +45,16 @@ class DBService:
         # Ensure os is imported if not already
         # import os # Removed from here
 
+    def get_session_factory(self): # ADDED METHOD
+        """Returns the session factory from the underlying adapter if available."""
+        if hasattr(self.adapter, '_SessionLocal'): # Specific to PostgresAdapter's SQLAlchemy setup
+            return self.adapter._SessionLocal
+        elif hasattr(self.adapter, 'get_session_factory'): # If an adapter had its own getter
+             return self.adapter.get_session_factory()
+
+        logger.error("DBService: Adapter does not have a recognizable session factory (e.g., _SessionLocal or get_session_factory method).")
+        raise NotImplementedError("DBService's underlying adapter does not provide a session factory.")
+
     async def connect(self) -> None:
         """Connects to the database."""
         await self.adapter.connect()
