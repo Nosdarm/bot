@@ -422,9 +422,16 @@ class DialogueManager:
             '''
             rows = await self._db_service.adapter.fetchall(sql, (guild_id_str,))
             logger.info("DialogueManager: Found %s active dialogues in DB for guild %s.", len(rows), guild_id_str) # Added
+        except AttributeError: # Handles if adapter is None, though already checked by _db_service.adapter
+            logger.error("DialogueManager: DB adapter not available for load_state in guild %s.", guild_id_str)
+            return # Or raise, depending on desired behavior
+        except asyncpg.exceptions.UndefinedTableError: # type: ignore
+            logger.warning("DialogueManager: 'dialogues' table not found in database for guild %s. Dialogue persistence will be skipped.", guild_id_str)
+            rows = [] # Ensure rows is an empty list to prevent further errors
         except Exception as e:
             logger.critical("DialogueManager: CRITICAL ERROR fetching dialogues for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
-            raise
+            # Depending on policy, may want to raise, or return to allow bot to run without dialogues
+            return # For now, return to prevent crash
 
         loaded_count = 0
         guild_dialogues_cache = self._active_dialogues.get(guild_id_str) # Should be {} due to pop above
@@ -479,11 +486,14 @@ class DialogueManager:
                  ids_to_del = list(deleted_ids_set)
                  if ids_to_del:
                      placeholders = ','.join([f'${i+2}' for i in range(len(ids_to_del))])
-                     sql = f"DELETE FROM dialogues WHERE guild_id = $1 AND id IN ({placeholders})"
+                     sql_delete = f"DELETE FROM dialogues WHERE guild_id = $1 AND id IN ({placeholders})" # Renamed variable to avoid conflict
                      try:
-                         await self._db_service.adapter.execute(sql, (guild_id_str, *tuple(ids_to_del)))
+                         await self._db_service.adapter.execute(sql_delete, (guild_id_str, *tuple(ids_to_del)))
                          logger.info("DialogueManager: Deleted %s dialogues from DB for guild %s.", len(ids_to_del), guild_id_str) # Added
                          self._deleted_dialogue_ids.pop(guild_id_str, None)
+                     except asyncpg.exceptions.UndefinedTableError: # type: ignore
+                         logger.warning("DialogueManager: 'dialogues' table not found for deletion in guild %s. Skipping deletion.", guild_id_str)
+                         self._deleted_dialogue_ids.pop(guild_id_str, None) # Still clear from memory
                      except Exception as e:
                          logger.error("DialogueManager: Error deleting dialogues for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
             else: self._deleted_dialogue_ids.pop(guild_id_str, None)
@@ -515,16 +525,25 @@ class DialogueManager:
                      ))
                      saved_ids.add(str(d_data['id']))
                  if params_list:
-                     await self._db_service.adapter.execute_many(upsert_sql, params_list)
-                     logger.info("DialogueManager: Saved/Updated %s dialogues for guild %s.", len(params_list), guild_id_str) # Added
-                     if guild_id_str in self._dirty_dialogues:
-                         self._dirty_dialogues[guild_id_str].difference_update(saved_ids)
-                         if not self._dirty_dialogues[guild_id_str]: del self._dirty_dialogues[guild_id_str]
+                     try:
+                         await self._db_service.adapter.execute_many(upsert_sql, params_list)
+                         logger.info("DialogueManager: Saved/Updated %s dialogues for guild %s.", len(params_list), guild_id_str) # Added
+                         if guild_id_str in self._dirty_dialogues:
+                             self._dirty_dialogues[guild_id_str].difference_update(saved_ids)
+                             if not self._dirty_dialogues[guild_id_str]: del self._dirty_dialogues[guild_id_str]
+                     except asyncpg.exceptions.UndefinedTableError: # type: ignore
+                         logger.warning("DialogueManager: 'dialogues' table not found for upsert in guild %s. Skipping save.", guild_id_str)
+                         # If table doesn't exist, can't save, so clear dirty flags for these items
+                         if guild_id_str in self._dirty_dialogues:
+                             self._dirty_dialogues[guild_id_str].difference_update(saved_ids)
+                             if not self._dirty_dialogues[guild_id_str]: del self._dirty_dialogues[guild_id_str]
             else: 
                 if guild_id_str in self._dirty_dialogues and not self._dirty_dialogues[guild_id_str]:
                     del self._dirty_dialogues[guild_id_str]
                 elif not dirty_ids_set : 
                     self._dirty_dialogues.pop(guild_id_str, None)
+        except AttributeError: # Handles if adapter is None
+            logger.error("DialogueManager: DB adapter not available for save_state in guild %s.", guild_id_str)
         except Exception as e:
             logger.error("DialogueManager: Error during save_state for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
 
