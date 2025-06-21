@@ -40,9 +40,10 @@ class TurnProcessor:
             try:
                 # Fetch characters who have submitted actions
                 characters_to_process = await get_entities(
-                    session,
-                    Character, # MODIFIED: Query Character model
-                    conditions=[Character.current_game_status == "actions_submitted", Character.guild_id == guild_id]
+                    db_session=session,
+                    model_class=Character,
+                    guild_id=guild_id, # MODIFIED: Pass guild_id explicitly
+                    conditions=[Character.current_game_status == "actions_submitted"] # guild_id condition is implicitly handled by get_entities
                 )
 
                 if not characters_to_process:
