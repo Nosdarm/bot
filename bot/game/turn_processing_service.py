@@ -175,7 +175,7 @@ class TurnProcessingService:
                     self.character_manager.mark_character_dirty(guild_id, char.id)
 
         if actions_submitted_count > 0:
-            await self.game_manager.save_game_state_after_action(guild_id, reason="Player actions submitted to scheduler")
+            await self.game_manager.save_game_state_after_action(guild_id) # MODIFIED: reason argument removed
             details_log3 = {"count": actions_submitted_count, "log_message": f"{actions_submitted_count} player actions queued for guild {guild_id}."}
             await self.game_log_manager.log_event(
                 guild_id=guild_id,
@@ -313,7 +313,7 @@ class TurnProcessingService:
                     setattr(char_to_update, 'current_game_status', 'turn_cycle_complete')
                     self.character_manager.mark_character_dirty(guild_id, char_id)
 
-        await self.game_manager.save_game_state_after_action(guild_id, reason="End of guild turn processing cycle")
+        await self.game_manager.save_game_state_after_action(guild_id) # MODIFIED: reason argument removed
 
         details_log4 = turn_results.copy()
         details_log4["log_message"] = f"Guild turn processed for {guild_id}. Results: {json.dumps(turn_results)}"
