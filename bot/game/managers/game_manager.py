@@ -232,6 +232,11 @@ class GameManager:
         # from bot.game.managers.undo_manager import UndoManager # Already imported globally
         from bot.game.character_processors.character_action_processor import CharacterActionProcessor; from bot.game.character_processors.character_view_service import CharacterViewService; from bot.game.party_processors.party_action_processor import PartyActionProcessor; from bot.game.command_handlers.party_handler import PartyCommandHandler; from bot.game.event_processors.on_enter_action_executor import OnEnterActionExecutor; from bot.game.event_processors.stage_description_generator import StageDescriptionGenerator; from bot.game.event_processors.event_stage_processor import EventStageProcessor; from bot.game.event_processors.event_action_processor import EventActionProcessor; from bot.game.world_processors.world_simulation_processor import WorldSimulationProcessor; from bot.game.managers.persistence_manager import PersistenceManager; from bot.game.command_router import CommandRouter; from bot.game.conflict_resolver import ConflictResolver; from bot.game.turn_processing_service import TurnProcessingService; from bot.game.turn_processor import TurnProcessor; from bot.game.services.location_interaction_service import LocationInteractionService
         from bot.game.rules.check_resolver import CheckResolver
+        # Imports for missing dependencies of TurnProcessingService
+        from bot.game.action_scheduler import GuildActionScheduler
+        from bot.game.ai.npc_action_planner import NPCActionPlanner
+        from bot.game.npc_action_processor import NPCActionProcessor
+
         self.undo_manager = UndoManager(db_service=self.db_service, game_log_manager=self.game_log_manager, character_manager=self.character_manager, item_manager=self.item_manager, quest_manager=self.quest_manager, party_manager=self.party_manager)
         self._on_enter_action_executor = OnEnterActionExecutor(npc_manager=self.npc_manager, item_manager=self.item_manager, combat_manager=self.combat_manager, status_manager=self.status_manager)
         self._stage_description_generator = StageDescriptionGenerator(openai_service=self.openai_service)
@@ -338,7 +343,52 @@ class GameManager:
             game_log_manager=self.game_log_manager,
             multilingual_prompt_generator=self.multilingual_prompt_generator
         )
-        self.turn_processing_service = TurnProcessingService(game_manager=self)
+
+        # Initialize missing dependencies for TurnProcessingService
+        self.guild_action_scheduler = GuildActionScheduler() # Assuming no args for constructor
+
+        # For NPCActionPlanner and NPCActionProcessor, collect necessary managers/services
+        npc_planner_services = {
+            'rule_engine': self.rule_engine,
+            'relationship_manager': self.relationship_manager,
+            'location_manager': self.location_manager,
+            # Add other services NPCActionPlanner might need from self
+        }
+        self.npc_action_planner = NPCActionPlanner(context_providing_services=npc_planner_services)
+
+        npc_processor_managers = {
+            'game_log_manager': self.game_log_manager,
+            'location_manager': self.location_manager,
+            'combat_manager': self.combat_manager,
+            'character_manager': self.character_manager,
+            'npc_manager': self.npc_manager,
+            'item_manager': self.item_manager,
+            'status_manager': self.status_manager,
+            'event_manager': self.event_manager, # Added based on NPCActionProcessor potential needs
+            'rule_engine': self.rule_engine # Added based on NPCActionProcessor potential needs
+            # Add other managers NPCActionProcessor might need from self
+        }
+        self.npc_action_processor = NPCActionProcessor(managers=npc_processor_managers)
+
+        self.turn_processing_service = TurnProcessingService(
+            character_manager=self.character_manager,
+            rule_engine=self.rule_engine,
+            game_manager=self,
+            game_log_manager=self.game_log_manager,
+            character_action_processor=self._character_action_processor, # Corrected attribute name
+            combat_manager=self.combat_manager,
+            location_manager=self.location_manager,
+            location_interaction_service=self.location_interaction_service, # Corrected: was missing self
+            dialogue_manager=self.dialogue_manager,
+            inventory_manager=self.inventory_manager,
+            equipment_manager=self.equipment_manager,
+            item_manager=self.item_manager,
+            action_scheduler=self.guild_action_scheduler, # Use the new instance
+            npc_action_planner=self.npc_action_planner,     # Use the new instance
+            npc_action_processor=self.npc_action_processor, # Use the new instance
+            npc_manager=self.npc_manager,
+            settings=self._settings
+        )
         self.turn_processor = TurnProcessor(game_manager=self)
         self.check_resolver = CheckResolver(game_manager=self)
         self.conflict_resolver = ConflictResolver(game_manager=self)
