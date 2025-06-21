@@ -3,9 +3,13 @@
 from __future__ import annotations
 import json
 import uuid
-from bot.game.models.party import Party
-from bot.game.models.location import Location
-from bot.game.models.character import Character # Added for type hinting
+# Pydantic models - aliasing to avoid confusion if SQLAlchemy model is also named Location
+from bot.game.models.party import Party as PydanticParty
+from bot.game.models.location import Location as PydanticLocation
+from bot.game.models.character import Character as PydanticCharacter
+# SQLAlchemy models
+from bot.database.models.world_related import Location as DBLocation
+from bot.database.models.character_related import Character as DBCharacter, Party as DBParty
 import traceback
 import asyncio
 import logging
@@ -137,14 +141,27 @@ class LocationManager:
         from bot.database.crud_utils import get_entities
         loaded_instances_count = 0
         try:
-            actual_session_factory = db_service_to_use.get_session_factory() # MODIFIED
-            async with GuildTransaction(actual_session_factory, guild_id_str, commit_on_exit=False) as session: # MODIFIED
-                all_locations_in_guild = await get_entities(session, Location, guild_id=guild_id_str)
+            actual_session_factory = db_service_to_use.get_session_factory()
+            async with GuildTransaction(actual_session_factory, guild_id_str, commit_on_exit=False) as session:
+                all_locations_in_guild = await get_entities(session, DBLocation, guild_id=guild_id_str) # MODIFIED: Use DBLocation
                 guild_instances_cache = self._location_instances.setdefault(guild_id_str, {})
-                for loc_model_instance in all_locations_in_guild:
+                for loc_model_instance in all_locations_in_guild: # loc_model_instance is DBLocation
                     try:
-                        instance_data_dict = loc_model_instance.to_dict()
-                        guild_instances_cache[loc_model_instance.id] = instance_data_dict
+                        # Assuming DBLocation has a to_dict() method or similar for cache storage
+                        # If not, specific fields need to be extracted.
+                        # For now, assuming to_dict() exists and returns a dict compatible with PydanticLocation.from_dict()
+                        instance_data_dict = {}
+                        if hasattr(loc_model_instance, 'to_dict'):
+                            instance_data_dict = loc_model_instance.to_dict()
+                        else: # Manual conversion if no to_dict()
+                            instance_data_dict = {c.name: getattr(loc_model_instance, c.name) for c in loc_model_instance.__table__.columns}
+                            # Further parsing for JSON fields if needed by PydanticLocation.from_dict()
+                            for key, value in instance_data_dict.items():
+                                if (key.endswith('_i18n') or key.endswith('_json') or key in ['exits', 'state_variables']) and isinstance(value, str):
+                                    try: instance_data_dict[key] = json.loads(value)
+                                    except json.JSONDecodeError: pass # Keep as string if not valid JSON
+
+                        guild_instances_cache[loc_model_instance.id] = instance_data_dict # Cache stores dicts
                         loaded_instances_count += 1
                     except Exception as e_proc:
                         self._diagnostic_log.append(f"DEBUG_LM: Error processing location model instance (ID: {loc_model_instance.id}) for guild {guild_id_str}: {e_proc}")
@@ -172,15 +189,28 @@ class LocationManager:
         if not deleted_ids_for_guild and not dirty_ids_for_guild: return
         try:
             actual_session_factory = db_service_to_use.get_session_factory() # MODIFIED
-            async with GuildTransaction(actual_session_factory, guild_id_str) as session: # MODIFIED
+            async with GuildTransaction(actual_session_factory, guild_id_str) as session:
                 if deleted_ids_for_guild:
-                    stmt = sqlalchemy_delete(Location).where(Location.id.in_(deleted_ids_for_guild), Location.guild_id == guild_id_str)
+                    stmt = sqlalchemy_delete(DBLocation).where(DBLocation.id.in_(deleted_ids_for_guild), DBLocation.guild_id == guild_id_str) # MODIFIED: Use DBLocation
                     await session.execute(stmt)
                 guild_cache = self._location_instances.get(guild_id_str, {})
                 for instance_id in dirty_ids_for_guild:
-                    instance_data_dict = guild_cache.get(instance_id)
+                    instance_data_dict = guild_cache.get(instance_id) # This is a dict from PydanticLocation or to_dict()
                     if instance_data_dict and isinstance(instance_data_dict, dict) and str(instance_data_dict.get('guild_id')) == guild_id_str and 'id' in instance_data_dict:
-                        loc_to_merge = Location(**instance_data_dict); await session.merge(loc_to_merge)
+                        # Convert dict to DBLocation model for merge
+                        # This requires DBLocation to be constructible from this dict, or careful field mapping
+                        # For simplicity, assuming direct field compatibility or DBLocation(**instance_data_dict) works if keys match columns
+                        # A safer way is to fetch then update, or ensure keys match.
+                        # For now, direct merge of a new DBLocation instance from the dict data.
+                        # Ensure JSON fields are dumped if DBLocation expects strings for JSONB.
+                        # The instance_data_dict in cache should already be serializable (JSON strings for JSON fields).
+                        data_for_db_model = instance_data_dict.copy()
+                        for key, value in data_for_db_model.items():
+                            if (key.endswith('_i18n') or key.endswith('_json') or key in ['exits', 'state_variables']) and isinstance(value, (dict,list)):
+                                data_for_db_model[key] = json.dumps(value)
+
+                        loc_to_merge = DBLocation(**data_for_db_model) # MODIFIED: Use DBLocation
+                        await session.merge(loc_to_merge)
                         processed_dirty_ids_in_transaction.add(instance_id)
             if guild_id_str in self._deleted_instances: self._deleted_instances[guild_id_str].clear()
             if guild_id_str in self._dirty_instances: self._dirty_instances[guild_id_str].difference_update(processed_dirty_ids_in_transaction)
@@ -210,9 +240,9 @@ class LocationManager:
         initial_character_location_id_for_event: Optional[str] = None
         current_location_obj_for_final_check: Optional[Location] = None
 
-        session_factory = db_service.async_session_factory
+        session_factory = db_service.get_session_factory() # Correctly get the factory instance
         async with GuildTransaction(session_factory, guild_id_str) as session:
-            character = await session.get(Character, character_id_str)
+            character = await session.get(DBCharacter, character_id_str) # MODIFIED: Use DBCharacter
             if not character or str(character.guild_id) != guild_id_str:
                 logger.error(f"LocationManager: Character {character_id_str} not found in guild {guild_id_str} or guild mismatch.")
                 return False
@@ -229,58 +259,64 @@ class LocationManager:
                 return False
 
             target_location_obj = await self.get_location_by_static_id(guild_id_str, target_location_identifier, session=session)
-            if not target_location_obj:
-                cached_locations = self._location_instances.get(guild_id_str, {}).values()
-                found_by_name: List[Location] = [Location.from_dict(loc_data) for loc_data in cached_locations if isinstance(loc_data.get('name_i18n'), dict) and any(name.lower() == target_location_identifier.lower() for name in loc_data['name_i18n'].values())]
-                if len(found_by_name) == 1: target_location_obj = found_by_name[0]
-                elif len(found_by_name) > 1: logger.warning(f"Ambiguous target location name '{target_location_identifier}'. Move failed."); return False
+            if not target_location_obj: # target_location_obj is PydanticLocation here
+                cached_locations = self._location_instances.get(guild_id_str, {}).values() # These are dicts
+                found_by_name_dicts: List[Dict[str,Any]] = [loc_data for loc_data in cached_locations if isinstance(loc_data.get('name_i18n'), dict) and any(name.lower() == target_location_identifier.lower() for name in loc_data['name_i18n'].values())]
+                if len(found_by_name_dicts) == 1: target_location_obj = PydanticLocation.from_dict(found_by_name_dicts[0]) # Convert to PydanticLocation
+                elif len(found_by_name_dicts) > 1: logger.warning(f"Ambiguous target location name '{target_location_identifier}'. Move failed."); return False
             if not target_location_obj: logger.warning(f"Target location '{target_location_identifier}' not found. Move failed."); return False
 
-            if not current_location_obj.neighbor_locations_json or target_location_obj.id not in current_location_obj.neighbor_locations_json:
-                logger.info(f"Character {character.id} cannot move from {current_location_obj.id} to {target_location_obj.id}. Not connected."); return False
+            # current_location_obj is PydanticLocation, target_location_obj is PydanticLocation
+            # neighbor_locations_json should exist on PydanticLocation model if this logic is to work
+            if not hasattr(current_location_obj, 'neighbor_locations_json') or \
+               not current_location_obj.neighbor_locations_json or \
+               target_location_obj.id not in current_location_obj.neighbor_locations_json:
+                logger.info(f"Character {character.id} cannot move from {current_location_obj.id} to {target_location_obj.id}. Not connected or neighbor_locations_json missing."); return False
 
-            if current_location_obj.id == target_location_obj.id:
+            if current_location_obj.id == target_location_obj.id: # Comparing PydanticLocation IDs
                 logger.info(f"Character {character.id} is already at {target_location_obj.id}. Triggering on_enter.")
-                event_entity_id = character.id; event_target_location_id = target_location_obj.id
+                event_entity_id = character.id; event_target_location_id = target_location_obj.id # Use DBCharacter ID
             else:
                 old_location_id = character.current_location_id
                 party_moved_as_primary = False
                 party_id_for_event_details = character.current_party_id
                 party_movement_rules = await rule_engine.get_rule(guild_id_str, "party_movement_rules", default={})
 
-                if character.current_party_id:
-                    party = await session.get(Party, character.current_party_id)
+                if character.current_party_id: # character is DBCharacter
+                    party = await session.get(DBParty, character.current_party_id) # MODIFIED: Use DBParty
                     if party and str(party.guild_id) == guild_id_str:
                         is_leader = (character.id == party.leader_id)
                         allow_leader_only_move = party_movement_rules.get("allow_leader_only_move", True)
                         can_player_move_party = is_leader or not allow_leader_only_move
                         if can_player_move_party:
-                            party.current_location_id = target_location_obj.id
+                            party.current_location_id = target_location_obj.id # target_location_obj is PydanticLocation
                             session.add(party)
                             event_entity_id = party.id; event_entity_type = "Party"; party_moved_as_primary = True
-                            if party_movement_rules.get("teleport_all_members", True) and party.player_ids_json:
-                                for member_char_id_str in party.player_ids_json:
-                                    member_char = await session.get(Character, member_char_id_str)
+                            if party_movement_rules.get("teleport_all_members", True) and party.player_ids_json: # player_ids_json should be string
+                                member_ids_list = json.loads(party.player_ids_json) if isinstance(party.player_ids_json, str) else (party.player_ids_json or [])
+                                for member_char_id_str in member_ids_list:
+                                    member_char = await session.get(DBCharacter, member_char_id_str) # MODIFIED: Use DBCharacter
                                     if member_char and str(member_char.guild_id) == guild_id_str:
                                         member_char.current_location_id = target_location_obj.id
                                         session.add(member_char)
 
                 character_needs_individual_move = True
-                party_ref_for_check = await session.get(Party, character.current_party_id) if character.current_party_id else None
+                party_ref_for_check = await session.get(DBParty, character.current_party_id) if character.current_party_id else None # MODIFIED: Use DBParty
                 if party_moved_as_primary and party_movement_rules.get("teleport_all_members", True):
-                    if party_ref_for_check and character.id in (party_ref_for_check.player_ids_json or []):
+                    member_ids_for_check = json.loads(party_ref_for_check.player_ids_json) if party_ref_for_check and isinstance(party_ref_for_check.player_ids_json, str) else (party_ref_for_check.player_ids_json or [])
+                    if party_ref_for_check and character.id in member_ids_for_check:
                         character_needs_individual_move = False
 
                 if character_needs_individual_move:
-                    character.current_location_id = target_location_obj.id
+                    character.current_location_id = target_location_obj.id # target_location_obj is PydanticLocation
                     session.add(character)
 
-                if not party_moved_as_primary: event_entity_id = character.id
-                event_target_location_id = target_location_obj.id
+                if not party_moved_as_primary: event_entity_id = character.id # Use DBCharacter ID
+                event_target_location_id = target_location_obj.id # Use PydanticLocation ID
 
                 await game_log_manager.log_event(
                     guild_id=guild_id_str, event_type="character_move",
-                    details_json={'character_id': character.id, 'player_account_id': character.player_id,
+                    details={'character_id': character.id, 'player_account_id': character.player_id, # details takes dict
                                   'party_id': party_id_for_event_details, 'old_location_id': old_location_id,
                                   'new_location_id': target_location_obj.id, 'method': 'direct_move_command',
                                   'party_moved_as_primary': party_moved_as_primary},
@@ -335,23 +371,45 @@ class LocationManager:
     async def revert_location_inventory_change(self, guild_id: str, location_id: str, item_template_id: str, item_instance_id: Optional[str], change_action: str, quantity_changed: int, original_item_data: Optional[Dict[str, Any]], **kwargs: Any) -> bool: return False
     async def revert_location_exit_change(self, guild_id: str, location_id: str, exit_direction: str, old_target_location_id: Optional[str], **kwargs: Any) -> bool: return False
     async def revert_location_activation_status(self, guild_id: str, location_id: str, old_is_active_status: bool, **kwargs: Any) -> bool: return False
-    async def get_location_by_static_id(self, guild_id: str, static_id: str, session: Optional[AsyncSession] = None) -> Optional[Location]:
+    async def get_location_by_static_id(self, guild_id: str, static_id: str, session: Optional[AsyncSession] = None) -> Optional[PydanticLocation]: # Return PydanticLocation
         guild_id_str = str(guild_id); static_id_str = str(static_id)
-        guild_cache = self._location_instances.get(guild_id_str, {})
+        guild_cache = self._location_instances.get(guild_id_str, {}) # This cache stores dicts
         for loc_id, loc_data_dict in guild_cache.items():
             if isinstance(loc_data_dict, dict) and loc_data_dict.get('static_id') == static_id_str:
-                try: return Location.from_dict(loc_data_dict)
+                try: return PydanticLocation.from_dict(loc_data_dict) # MODIFIED: Use PydanticLocation
                 except Exception: return None
+
         db_service_to_use = self._db_service or (self._game_manager.db_service if self._game_manager else None)
-        if session:
-            stmt = select(Location).where(Location.guild_id == guild_id_str, Location.static_id == static_id_str); result = await session.execute(stmt); loc_model = result.scalars().first()
-            if loc_model: self._location_instances.setdefault(guild_id_str, {})[loc_model.id] = loc_model.to_dict(); return loc_model
-        elif db_service_to_use:
+        db_loc_model_instance: Optional[DBLocation] = None
+
+        if session: # Session is provided (likely from GuildTransaction context)
+            stmt = select(DBLocation).where(DBLocation.guild_id == guild_id_str, DBLocation.static_id == static_id_str) # MODIFIED: Use DBLocation
+            result = await session.execute(stmt)
+            db_loc_model_instance = result.scalars().first()
+        elif db_service_to_use: # No session provided, create one
             from bot.database.crud_utils import get_entity_by_attributes
-            actual_session_factory = db_service_to_use.get_session_factory() # MODIFIED
-            async with GuildTransaction(actual_session_factory, guild_id_str, commit_on_exit=False) as crud_session: # MODIFIED
-                loc_model = await get_entity_by_attributes(crud_session, Location, attributes={'static_id': static_id_str}, guild_id=guild_id_str)
-            if loc_model: self._location_instances.setdefault(guild_id_str, {})[loc_model.id] = loc_model.to_dict(); return loc_model
+            actual_session_factory = db_service_to_use.get_session_factory()
+            async with GuildTransaction(actual_session_factory, guild_id_str, commit_on_exit=False) as crud_session:
+                db_loc_model_instance = await get_entity_by_attributes(crud_session, DBLocation, attributes={'static_id': static_id_str}, guild_id=guild_id_str) # MODIFIED: Use DBLocation
+
+        if db_loc_model_instance:
+            # Convert DBLocation model to dict, then to PydanticLocation, and cache the dict
+            loc_data_for_cache = {}
+            if hasattr(db_loc_model_instance, 'to_dict'):
+                loc_data_for_cache = db_loc_model_instance.to_dict()
+            else: # Manual conversion
+                loc_data_for_cache = {c.name: getattr(db_loc_model_instance, c.name) for c in db_loc_model_instance.__table__.columns}
+                for key, value in loc_data_for_cache.items():
+                    if (key.endswith('_i18n') or key.endswith('_json') or key in ['exits', 'state_variables']) and isinstance(value, str):
+                        try: loc_data_for_cache[key] = json.loads(value)
+                        except json.JSONDecodeError: pass
+
+            self._location_instances.setdefault(guild_id_str, {})[db_loc_model_instance.id] = loc_data_for_cache
+            try:
+                return PydanticLocation.from_dict(loc_data_for_cache) # MODIFIED: Use PydanticLocation
+            except Exception as e:
+                logger.error(f"Error converting DBLocation to PydanticLocation for ID {db_loc_model_instance.id}: {e}")
+                return None
         return None
 
 logger.debug("DEBUG: location_manager.py module loaded (after overwrite).")
