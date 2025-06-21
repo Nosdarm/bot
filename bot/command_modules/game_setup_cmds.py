@@ -243,47 +243,48 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
                 ephemeral=True
             )
 
-    @app_commands.command(
-        name="set_bot_language",
-        description=(
-            "Установить язык бота для этой гильдии (только для Мастера)."
-        )
-    )
-    @app_commands.describe(language_code="Код языка (например, 'ru', 'en').")
-    async def cmd_set_bot_language(
-        self, interaction: Interaction, language_code: str
-    ):
-        if not await self.is_master_or_admin(interaction):
-            await interaction.response.send_message(
-                "Только Мастер или администратор может менять язык бота.",
-                ephemeral=True
-            )
-            return
-
-        bot_instance = self.bot  # type: RPGBot
-        if not hasattr(bot_instance, 'game_manager') or \
-           bot_instance.game_manager is None:
-            await interaction.response.send_message(
-                "GameManager is not available. "
-                "Please try again later or contact an admin.",
-                ephemeral=True
-            )
-            return
-        game_mngr: "GameManager" = bot_instance.game_manager
-
-        success = await game_mngr.set_default_bot_language(
-            language_code, str(interaction.guild_id)
-        )
-        if success:
-            await interaction.response.send_message(
-                f"Язык бота для этой гильдии установлен на '{language_code}'.",
-                ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                "Не удалось установить язык бота. Проверьте логи.",
-                ephemeral=True
-            )
+    # Removed duplicate set_bot_language command
+    # @app_commands.command(
+    #     name="set_bot_language",
+    #     description=(
+    #         "Установить язык бота для этой гильдии (только для Мастера)."
+    #     )
+    # )
+    # @app_commands.describe(language_code="Код языка (например, 'ru', 'en').")
+    # async def cmd_set_bot_language(
+    #     self, interaction: Interaction, language_code: str
+    # ):
+    #     if not await self.is_master_or_admin(interaction):
+    #         await interaction.response.send_message(
+    #             "Только Мастер или администратор может менять язык бота.",
+    #             ephemeral=True
+    #         )
+    #         return
+    #
+    #     bot_instance = self.bot  # type: RPGBot
+    #     if not hasattr(bot_instance, 'game_manager') or \
+    #        bot_instance.game_manager is None:
+    #         await interaction.response.send_message(
+    #             "GameManager is not available. "
+    #             "Please try again later or contact an admin.",
+    #             ephemeral=True
+    #         )
+    #         return
+    #     game_mngr: "GameManager" = bot_instance.game_manager
+    #
+    #     success = await game_mngr.set_default_bot_language(
+    #         language_code, str(interaction.guild_id)
+    #     )
+    #     if success:
+    #         await interaction.response.send_message(
+    #             f"Язык бота для этой гильдии установлен на '{language_code}'.",
+    #             ephemeral=True
+    #         )
+    #     else:
+    #         await interaction.response.send_message(
+    #             "Не удалось установить язык бота. Проверьте логи.",
+    #             ephemeral=True
+    #         )
 
     # Removed duplicate set_master_channel command
     # @app_commands.command(
