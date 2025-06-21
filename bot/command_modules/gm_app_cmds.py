@@ -36,9 +36,11 @@ if TYPE_CHECKING:
     # For new master AI commands
     from bot.database.models import PendingGeneration
     import datetime # Ensure datetime is directly available
-    from bot.utils.decorators import is_master_role # Assuming decorator location
+    # from bot.utils.decorators import is_master_role # Assuming decorator location # MOVED
     from bot.ai.ai_response_validator import parse_and_validate_ai_response # For edit_ai
 
+# Actual runtime import for the decorator
+from bot.utils.decorators import is_master_role
 
 class GMAppCog(commands.Cog, name="GM App Commands"):
     master_group = app_commands.Group(name="master", description="Команды для Мастера Игры.", guild_only=True)

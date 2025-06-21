@@ -76,11 +76,11 @@ class TurnProcessingService:
 
     async def run_turn_cycle_check(self, guild_id: str) -> None:
         print(f"TurnProcessingService: Starting turn cycle check for guild {guild_id}.")
+        details_log1 = {"guild_id": guild_id, "log_message": f"Turn cycle check started for guild {guild_id}."}
         await self.game_log_manager.log_event(
             guild_id=guild_id,
             event_type="turn_cycle_check_start",
-            message=f"Turn cycle check started for guild {guild_id}.",
-            details={"guild_id": guild_id} # Changed metadata to details
+            details=details_log1
         )
 
         # Process player turns (collects actions and queues them)
@@ -106,10 +106,10 @@ class TurnProcessingService:
         }
         await self.process_guild_turn(guild_id, context)
 
+        details_log2 = {"guild_id": guild_id, "log_message": f"Turn cycle check completed for guild {guild_id}."}
         await self.game_log_manager.log_event(
             guild_id=guild_id, event_type="turn_cycle_check_end",
-            message=f"Turn cycle check completed for guild {guild_id}.",
-            details={"guild_id": guild_id} # Changed metadata to details
+            details=details_log2
         )
 
 
@@ -176,11 +176,11 @@ class TurnProcessingService:
 
         if actions_submitted_count > 0:
             await self.game_manager.save_game_state_after_action(guild_id, reason="Player actions submitted to scheduler")
+            details_log3 = {"count": actions_submitted_count, "log_message": f"{actions_submitted_count} player actions queued for guild {guild_id}."}
             await self.game_log_manager.log_event(
                 guild_id=guild_id,
                 event_type="player_actions_queued",
-                message=f"{actions_submitted_count} player actions queued for guild {guild_id}.",
-                details={"count": actions_submitted_count}
+                details=details_log3
             )
 
         return {"status": "player_actions_submitted", "count": actions_submitted_count}
@@ -315,11 +315,12 @@ class TurnProcessingService:
 
         await self.game_manager.save_game_state_after_action(guild_id, reason="End of guild turn processing cycle")
 
+        details_log4 = turn_results.copy()
+        details_log4["log_message"] = f"Guild turn processed for {guild_id}. Results: {json.dumps(turn_results)}"
         await self.game_log_manager.log_event(
             guild_id=guild_id,
             event_type="guild_turn_processed",
-            message=f"Guild turn processed for {guild_id}. Results: {json.dumps(turn_results)}",
-            details=turn_results
+            details=details_log4
         )
         print(f"TurnProcessingService: Guild turn processed for {guild_id}. Results: {turn_results}")
         return turn_results
