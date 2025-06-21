@@ -12,6 +12,7 @@ from bot.database.models.world_related import Location as DBLocation
 from bot.database.models.character_related import Character as DBCharacter, Party as DBParty
 import traceback
 import asyncio
+import datetime # ADDED IMPORT
 import logging
 import sys
 from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union
@@ -46,6 +47,21 @@ logger = logging.getLogger(__name__)
 
 SendToChannelCallback = Callable[..., Awaitable[Any]]
 SendCallbackFactory = Callable[[int], SendToChannelCallback]
+
+# Placeholder for a proper get_location_instance, assuming it should return PydanticLocation
+# This is based on its usage in process_character_move
+def get_location_instance_placeholder(self, guild_id: str, instance_id: str) -> Optional[PydanticLocation]:
+    instance_data_dict = self._location_instances.get(str(guild_id), {}).get(str(instance_id))
+    if instance_data_dict:
+        try:
+            # Ensure all necessary fields are present for PydanticLocation.from_dict
+            # This might require fetching the template if only partial data is cached
+            # For now, assume instance_data_dict is sufficient or from_dict is robust
+            return PydanticLocation.from_dict(instance_data_dict)
+        except Exception as e:
+            logger.error(f"Error converting cached dict to PydanticLocation for {instance_id} in guild {guild_id}: {e}", exc_info=True)
+            return None
+    return None
 
 class LocationManager:
     required_args_for_load: List[str] = ["guild_id"]
@@ -238,7 +254,7 @@ class LocationManager:
         event_entity_type: str = "Character"
         event_target_location_id: Optional[str] = None
         initial_character_location_id_for_event: Optional[str] = None
-        current_location_obj_for_final_check: Optional[Location] = None
+        current_location_obj_for_final_check: Optional[PydanticLocation] = None # MODIFIED: Type hint
 
         session_factory = db_service.get_session_factory() # Correctly get the factory instance
         async with GuildTransaction(session_factory, guild_id_str) as session:
