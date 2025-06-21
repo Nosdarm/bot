@@ -139,7 +139,7 @@ class RelationshipManager:
         self._dirty_relationships.pop(guild_id_str, None)
         self._deleted_relationship_ids.pop(guild_id_str, None)
 
-        query = "SELECT id, guild_id, entity1_id, entity1_type, entity2_id, entity2_type, relationship_type, strength, details_i18n FROM relationships WHERE guild_id = $1"
+        query = "SELECT id, guild_id, entity1_id, entity1_type, entity2_id, entity2_type, type AS relationship_type, strength, details_i18n FROM relationships WHERE guild_id = $1" # MODIFIED: relationship_type -> type AS relationship_type
         try:
             rows = await self._db_service.adapter.fetchall(query, (guild_id_str,))
         except Exception as e:
@@ -204,14 +204,16 @@ class RelationshipManager:
                     logger.error("RelationshipManager: Error preparing relationship %s for save in guild %s: %s", rel_id, guild_id_str, e, exc_info=True) # Changed
         if relationships_to_save_data:
             upsert_sql = """
-                INSERT INTO relationships (id, guild_id, entity1_id, entity1_type, entity2_id, entity2_type, relationship_type, strength, details_i18n)
+                INSERT INTO relationships (id, guild_id, entity1_id, entity1_type, entity2_id, entity2_type, type, strength, details_i18n)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT (id) DO UPDATE SET
                     guild_id = EXCLUDED.guild_id, entity1_id = EXCLUDED.entity1_id, entity1_type = EXCLUDED.entity1_type,
                     entity2_id = EXCLUDED.entity2_id, entity2_type = EXCLUDED.entity2_type,
-                    relationship_type = EXCLUDED.relationship_type, strength = EXCLUDED.strength, details_i18n = EXCLUDED.details_i18n
-            """
+                    type = EXCLUDED.type, strength = EXCLUDED.strength, details_i18n = EXCLUDED.details_i18n
+            """ # MODIFIED: relationship_type -> type
             try:
+                # The data_tuple already correctly provides relationship.relationship_type at the 7th position ($7)
+                # which now maps to the 'type' column in the SQL query.
                 await self._db_service.adapter.execute_many(upsert_sql, relationships_to_save_data)
                 logger.info("RelationshipManager: Successfully saved/updated %s relationships for guild %s.", len(relationships_to_save_data), guild_id_str) # Changed
                 if guild_id_str in self._dirty_relationships:

@@ -20,4 +20,8 @@ class PartyFullError(GameError):
     """Raised when trying to join a party that is already full."""
     pass
 
+class CharacterNotInPartyError(GameError):
+    """Raised when an action requires a character to be in a party, but they are not."""
+    pass
+
 # Add other custom game exceptions here as needed.
