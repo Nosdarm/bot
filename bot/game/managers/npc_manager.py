@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from bot.game.managers.location_manager import LocationManager
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.rules.rule_engine import RuleEngine
-    from bot.services.campaign_loader import CampaignLoader
+    from bot.game.services.campaign_loader import CampaignLoader # MODIFIED - Corrected path
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.services.openai_service import OpenAIService
     from bot.ai.ai_response_validator import AIResponseValidator
