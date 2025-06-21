@@ -442,7 +442,23 @@ class GameManager:
         from bot.services.nlu_data_service import NLUDataService
 
         self.nlu_data_service = NLUDataService(db_service=self.db_service)
-        self.prompt_context_collector = PromptContextCollector(game_manager=self)
+        self.prompt_context_collector = PromptContextCollector(
+            settings=self._settings,
+            db_service=self.db_service,
+            character_manager=self.character_manager,
+            npc_manager=self.npc_manager,
+            quest_manager=self.quest_manager,
+            relationship_manager=self.relationship_manager,
+            item_manager=self.item_manager,
+            location_manager=self.location_manager,
+            event_manager=self.event_manager,
+            # Optional available managers:
+            ability_manager=self.ability_manager,
+            spell_manager=self.spell_manager,
+            party_manager=self.party_manager,
+            lore_manager=self.lore_manager,
+            game_manager=self
+        )
 
         main_bot_lang = "en"
         if self._active_guild_ids:
