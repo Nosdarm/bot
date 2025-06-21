@@ -475,10 +475,10 @@ class GameManager:
         if self.quest_manager: self.quest_manager.multilingual_prompt_generator = self.multilingual_prompt_generator
         if self.consequence_processor: self.consequence_processor.prompt_context_collector = self.prompt_context_collector
 
-        self.ai_response_validator = AIResponseValidator(game_manager=self)
+        self.ai_response_validator = AIResponseValidator() # Removed unexpected game_manager argument
         if self.quest_manager: self.quest_manager.ai_validator = self.ai_response_validator
 
-        self.ai_generation_service = AIGenerationService(game_manager=self)
+        self.ai_generation_service = AIGenerationService(game_manager=self) # This was already correct
         logger.info("GameManager: AIGenerationService initialized.")
         logger.info("GameManager: AI content services initialized.")
 
