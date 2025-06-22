@@ -319,33 +319,14 @@ class RPGBot(commands.Bot):
         traceback.print_exc()
 
     async def on_ready(self):
-        print("DEBUG_PRINT: RPGBot.on_ready CALLED")
+        print("DEBUG_PRINT: RPGBot.on_ready CALLED") # New raw print
         try:
+            # Existing on_ready code starts here
             logging.debug(f"{datetime.now()} - RPGBot: Entering on_ready handler...")
             if self.user:
                 logging.info(f"{datetime.now()} - RPGBot: Logged in as {self.user.name} ({self.user.id})")
             else:
                 logging.warning(f"{datetime.now()} - RPGBot: Bot logged in, but self.user is None.")
-
-            # --- Enhanced Guild Logging START ---
-            logging.info(f"[ON_READY IMMEDIATE] Bot self.guilds count: {len(self.guilds)}")
-            if not self.guilds:
-                logging.warning("[ON_READY IMMEDIATE] self.guilds is empty.")
-            else:
-                for guild_obj in self.guilds:
-                    logging.info(f"[ON_READY IMMEDIATE] - Found Guild: {guild_obj.name} ({guild_obj.id})")
-
-            logging.info("[ON_READY] Waiting for 5 seconds to allow guild cache to potentially populate further...")
-            await asyncio.sleep(5)
-
-            logging.info(f"[ON_READY AFTER DELAY] Bot self.guilds count: {len(self.guilds)}")
-            if not self.guilds:
-                logging.warning("[ON_READY AFTER DELAY] self.guilds is STILL empty.")
-            else:
-                for guild_obj in self.guilds:
-                    logging.info(f"[ON_READY AFTER DELAY] - Found Guild: {guild_obj.name} ({guild_obj.id})")
-            # --- Enhanced Guild Logging END ---
-
             if self.game_manager:
                 logging.info(f"{datetime.now()} - RPGBot: GameManager is initialized in RPGBot.")
             else:
@@ -353,27 +334,24 @@ class RPGBot(commands.Bot):
 
             logging.info(f"{datetime.now()} - RPGBot: Attempting to sync command tree...")
             try:
-                logging.info(f"[COMMAND_SYNC] self.debug_guild_ids value: {self.debug_guild_ids}")
                 if self.debug_guild_ids:
                     logging.info(f"{datetime.now()} - RPGBot: Found {len(self.debug_guild_ids)} debug guild(s): {self.debug_guild_ids}")
                     for guild_id_val in self.debug_guild_ids:
-                        if self.get_guild(guild_id_val): # Check if bot is aware of this guild
-                            guild_obj_for_sync = discord.Object(id=guild_id_val)
-                            logging.info(f"{datetime.now()} - RPGBot: Syncing command tree for debug guild {guild_id_val} (bot is a member).")
-                            await self.tree.sync(guild=guild_obj_for_sync)
-                            logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree for debug guild {guild_id_val}.")
-                        else:
-                            logging.warning(f"{datetime.now()} - RPGBot: Skipped syncing for debug guild {guild_id_val} because bot is not a member OR guild not found in cache (self.get_guild returned None).")
-                    logging.info(f"{datetime.now()} - RPGBot: Command tree synced/attempted for {len(self.debug_guild_ids)} debug guild(s).")
+                        guild = discord.Object(id=guild_id_val)
+                        logging.info(f"{datetime.now()} - RPGBot: Syncing command tree for debug guild {guild_id_val}...")
+                        await self.tree.sync(guild=guild)
+                        logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree for debug guild {guild_id_val}.")
+                    logging.info(f"{datetime.now()} - RPGBot: Command tree synced to {len(self.debug_guild_ids)} debug guild(s).")
                 else:
-                    logging.info(f"{datetime.now()} - RPGBot: No debug_guild_ids set. Syncing command tree globally...")
+                    logging.info(f"{datetime.now()} - RPGBot: Syncing command tree globally...")
                     await self.tree.sync()
                     logging.info(f"{datetime.now()} - RPGBot: Successfully synced command tree globally.")
-            except Exception as e_sync:
+            except Exception as e_sync: # Specific exception for tree sync
                 logging.error(f"{datetime.now()} - RPGBot: Error during command tree sync: {e_sync}", exc_info=True)
 
             logging.info(f"{datetime.now()} - RPGBot: Command tree synchronization process completed.")
 
+            # Start periodic turn checks task
             if not self.turn_processing_task or self.turn_processing_task.done():
                 logging.info("RPGBot.on_ready: Launching periodic turn checks task.")
                 self.turn_processing_task = asyncio.create_task(self.run_periodic_turn_checks())
@@ -382,7 +360,7 @@ class RPGBot(commands.Bot):
 
             logging.debug(f"{datetime.now()} - RPGBot: Exiting on_ready handler.")
             logging.info(f"{datetime.now()} - RPGBot: Bot is ready!")
-        except Exception as e_outer:
+        except Exception as e_outer: # New outer wrapper
             logging.exception(f"{datetime.now()} - RPGBot: UNHANDLED EXCEPTION IN ON_READY")
 
     async def on_message(self, message: discord.Message):

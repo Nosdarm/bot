@@ -5,15 +5,7 @@ from .world_related import Location, GeneratedLocation, LocationTemplate, Mobile
 from .item_related import ItemTemplate, Item, Inventory, ItemProperty, NewItem, NewCharacterItem, Shop, Currency
 from .quest_related import QuestTable, GeneratedQuest, Questline, QuestStepTable
 from .config_related import GuildConfig, RulesConfig, UserSettings, GlobalState
-from .log_event_related import Timer, Event, StoryLog, PendingConflict # PendingGeneration removed from here
-# Make sure to import the new Dialogue model
-from .dialogue_model import Dialogue
-from .game_log_model import GameLogEntry # Import the new GameLogEntry model
-
-# Import PendingGeneration and its enums from their new canonical source bot.models.pending_generation
-# but make them available as if they are part of bot.database.models for Alembic and unified access
-from ...models.pending_generation import PendingGeneration, GenerationType, PendingStatus
-
+from .log_event_related import Timer, Event, StoryLog, PendingConflict, PendingGeneration
 from .game_mechanics import Combat, Ability, Skill, Status, CraftingRecipe, CraftingQueue, Relationship, Spell
 
 __all__ = [
@@ -23,8 +15,6 @@ __all__ = [
     'ItemTemplate', 'Item', 'Inventory', 'ItemProperty', 'NewItem', 'NewCharacterItem', 'Shop', 'Currency',
     'QuestTable', 'GeneratedQuest', 'Questline', 'QuestStepTable',
     'GuildConfig', 'RulesConfig', 'UserSettings', 'GlobalState',
-    'Timer', 'Event', 'StoryLog', 'PendingConflict', # PendingGeneration removed
-    'Dialogue', 'GameLogEntry',
-    'PendingGeneration', 'GenerationType', 'PendingStatus', # Added these
+    'Timer', 'Event', 'StoryLog', 'PendingConflict', 'PendingGeneration',
     'Combat', 'Ability', 'Skill', 'Spell', 'Status', 'CraftingRecipe', 'CraftingQueue', 'Relationship',
 ]

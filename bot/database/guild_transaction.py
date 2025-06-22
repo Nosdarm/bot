@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker # For isinstance check
-from typing import Callable, Union, Any, Coroutine, Optional # Ensure Coroutine is imported if needed by Callable type hint
+from typing import Callable, Union, Any, Coroutine # Ensure Coroutine is imported if needed by Callable type hint
 
 logger = logging.getLogger(__name__)
 
