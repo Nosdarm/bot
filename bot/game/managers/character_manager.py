@@ -573,7 +573,7 @@ class CharacterManager:
         manage_session = session is None
         # This variable will hold the actual session object to be used for DB operations.
         active_db_session: AsyncSession
-
+        player_record: Optional[Player] = None # Initialize player_record
         new_char_orm_instance: Optional[Character] = None
 
         if manage_session:
