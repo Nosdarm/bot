@@ -5,7 +5,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB # For PostgreSQL specific JSONB
 
-from .base import Base # Assuming Base is in bot/models/base.py or accessible via .base
+from ..database.base import Base # Corrected: Point to the centralized Base from bot.database.base
 
 class GenerationType(enum.Enum):
     LOCATION_DESCRIPTION = "location_description"
