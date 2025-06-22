@@ -29,6 +29,11 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
+
+# Explicitly import all models to ensure they are registered with Base.metadata
+# before target_metadata is assigned. This helps Alembic's autogenerate.
+import bot.database.models  # This will run models/__init__.py
+
 # Ensure the path to your models is correct
 from bot.database.models import Base # Corrected import path
 target_metadata = Base.metadata
