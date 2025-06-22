@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm.attributes import flag_modified
 
-from bot.database.models import Player, Character
+from bot.database.models import Player, Character # This is CharacterDB
+from bot.game.models.character import Character as CharacterPydantic # Import Pydantic model
 from builtins import dict, set, list, int
 
 from bot.game.utils import stats_calculator
