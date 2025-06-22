@@ -200,14 +200,36 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
             # Effective language for character messages, potentially overriding player's selected language for this command
             effective_character_language = player_language or await game_mngr.get_rule(guild_id_str, 'default_language', 'en')
 
-            new_character_obj = await game_mngr.start_new_character_session(
-                user_id=interaction.user.id, # This is discord_id as int
+            # Call CharacterManager's method to create a character.
+            # Assuming create_new_character exists and handles the logic.
+            # We need to ensure CharacterManager is available.
+            if not game_mngr.character_manager:
+                logging.error(f"CharacterManager not available for /start_new_character by {interaction.user.id} in guild {guild_id_str}")
+                await interaction.followup.send(
+                    "Character manager is not available. Please contact an admin.",
+                    ephemeral=True
+                )
+                return
+
+            # Assuming create_new_character is an async method.
+            # The exact parameters will depend on its definition, which is not fully visible.
+            # Common parameters would include user_id, guild_id, character_name, and possibly language.
+            new_character_obj = await game_mngr.character_manager.create_new_character(
                 guild_id=guild_id_str,
-                character_name=character_name
+                user_id=interaction.user.id,  # discord_user_id
+                character_name=character_name,
+                language=effective_character_language, # Pass the determined language
+                # session=session # If the method requires an active DB session, it should be passed.
+                                  # This depends on create_new_character's implementation.
+                                  # For now, assuming it handles its own session or is session-less for creation logic
+                                  # before persisting, or that game_mngr.character_manager methods are designed
+                                  # to work with the GameManager's DB service if needed.
             )
 
             if new_character_obj:
-                logging.info(f"Character {new_character_obj.id} created for Player {discord_id_str} in guild {guild_id_str}.")
+                # Ensure new_character_obj has an 'id' attribute before logging.
+                char_id_log = getattr(new_character_obj, 'id', 'UNKNOWN_ID')
+                logging.info(f"Character {char_id_log} created for Player {discord_id_str} in guild {guild_id_str}.")
                 # If player_language was explicitly provided for the character (distinct from Player's selected_language)
                 if player_language and hasattr(new_character_obj, 'selected_language'): # Character model might not have selected_language
                     # This depends on whether Character model stores language or if it's purely a Player attribute.
