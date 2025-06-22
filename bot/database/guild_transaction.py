@@ -6,7 +6,7 @@ from typing import Callable, Coroutine, Any
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
-async def GuildTransaction(session_factory: Callable[[], AsyncSession], guild_id: str, commit_on_exit: bool = True):
+async def GuildTransaction(session_factory_param: Callable[[], AsyncSession], guild_id: str, commit_on_exit: bool = True):
     """
     Provides a transactional scope that is aware of a specific guild_id.
 
@@ -14,7 +14,8 @@ async def GuildTransaction(session_factory: Callable[[], AsyncSession], guild_id
     pre-commit checks to ensure data integrity across guild-specific tables.
 
     Args:
-        session_factory: A callable that returns a new SQLAlchemy AsyncSession.
+        session_factory_param: A callable that returns a new SQLAlchemy AsyncSession
+                               (this should be an instance of sessionmaker).
         guild_id: The ID of the guild for which this transaction is scoped.
         commit_on_exit: If True (default), commits the transaction upon successful
                         exit from the context block. If False, the caller is
@@ -23,16 +24,13 @@ async def GuildTransaction(session_factory: Callable[[], AsyncSession], guild_id
     if not guild_id:
         raise ValueError("guild_id must be provided for a GuildTransaction")
 
-    if not guild_id:
-        raise ValueError("guild_id must be provided for a GuildTransaction")
-
-    # session_factory IS the sessionmaker instance (e.g., adapter._SessionLocal)
-    session: AsyncSession = session_factory() # Call the sessionmaker to get an AsyncSession
+    # session_factory_param IS the sessionmaker instance (e.g., adapter._SessionLocal)
+    session: AsyncSession = session_factory_param() # Call the sessionmaker to get an AsyncSession
 
     if not isinstance(session, AsyncSession):
-        # This check should now pass if the session_factory (sessionmaker instance) is valid
-        logger.error(f"GuildTransaction: session_factory() did not return an AsyncSession. Got: {type(session)}")
-        raise TypeError("session_factory() must return an SQLAlchemy AsyncSession.")
+        # This check ensures the factory worked as expected.
+        logger.error(f"GuildTransaction: session_factory_param() did not return an AsyncSession. Got: {type(session)}")
+        raise TypeError("session_factory_param() must return an SQLAlchemy AsyncSession.")
 
     original_guild_id_in_info = session.info.get("current_guild_id")
     session.info["current_guild_id"] = guild_id
@@ -66,14 +64,17 @@ async def GuildTransaction(session_factory: Callable[[], AsyncSession], guild_id
                         raise ValueError(f"Cross-guild write attempt for new object {type(obj).__name__} (ID: {getattr(obj, 'id', 'N/A')}). Expected guild {guild_id_str}, got {obj_guild_id}.")
 
             if commit_on_exit:
-                pass # Commit handled by `async with transaction:`
+                # The 'async with transaction:' block will handle commit if no exceptions occurred.
+                pass
 
             logger.debug(f"GuildTransaction for guild_id: {guild_id} completed operations within 'try' block.")
 
     except Exception as e:
         logger.error(f"GuildTransaction for guild_id: {guild_id} encountered an exception: {e}. Transaction will be rolled back.", exc_info=True)
+        # Rollback is handled by the `async with transaction:` context manager.
         raise
     finally:
+        # Restore original guild_id info if it was present, or remove if we added it.
         if original_guild_id_in_info is not None:
             session.info["current_guild_id"] = original_guild_id_in_info
         elif "current_guild_id" in session.info:
