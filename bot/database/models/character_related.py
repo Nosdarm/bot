@@ -1,30 +1,48 @@
+import datetime # Moved to top
 from sqlalchemy import (
     Column, Integer, String, JSON, ForeignKey, Boolean, Text,
     PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.sql import func
 import uuid
-from typing import Dict, Any, List # Add other typing imports if model uses them
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
 from ..base import Base # Import Base from the new location
 
-class Player(Base): # Represents the player's account in a guild
+if TYPE_CHECKING:
+    from .config_related import UserSettings, GuildConfig # For type hinting
+    from .world_related import Location
+    # Forward declare Party for relationship hints because Party is defined later in this file
+    class Party: pass
+    # class Character: pass # Character is defined in this file, direct use is fine for self-refs if needed, or later refs
+
+
+class Player(Base):
     __tablename__ = 'players'
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    discord_id = Column(String, nullable=False, index=True)
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    discord_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
 
-    name_i18n = Column(JSONB, nullable=True)
-    selected_language = Column(String, nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    selected_language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 
-    active_character_id = Column(String, ForeignKey('characters.id', name='fk_player_active_character', use_alter=True, ondelete='SET NULL'), nullable=True, index=True)
+    active_character_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('characters.id', name='fk_player_active_character', use_alter=True, ondelete='SET NULL'), nullable=True, index=True)
 
-    characters = relationship("Character", back_populates="player_account", cascade="all, delete-orphan", foreign_keys="Character.player_id")
-    active_character = relationship("Character", foreign_keys=[active_character_id], post_update=True, lazy="joined")
+    characters: Mapped[List["Character"]] = relationship("Character", back_populates="player_account", cascade="all, delete-orphan", foreign_keys="Character.player_id")
+    active_character: Mapped[Optional["Character"]] = relationship("Character", foreign_keys=[active_character_id], post_update=True, lazy="joined") # type: ignore
+
+    user_settings_entry: Mapped[Optional["UserSettings"]] = relationship(
+        "UserSettings",
+        back_populates="player",
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+
+    guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref like 'players'
 
     __table_args__ = (
         UniqueConstraint('discord_id', 'guild_id', name='uq_player_discord_guild'),
@@ -38,56 +56,58 @@ class Player(Base): # Represents the player's account in a guild
 class Character(Base):
     __tablename__ = 'characters'
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    player_id = Column(String, ForeignKey('players.id', ondelete='CASCADE'), nullable=False, index=True)
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    player_id: Mapped[str] = mapped_column(String, ForeignKey('players.id', ondelete='CASCADE'), nullable=False, index=True)
+    guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
 
-    name_i18n = Column(JSONB, nullable=False)
-    character_class_i18n = Column(JSONB, nullable=True)
-    race_key = Column(String, nullable=True)
-    race_i18n = Column(JSONB, nullable=True)
-    description_i18n = Column(JSONB, nullable=True)
+    name_i18n: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    character_class_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    race_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    race_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
-    level = Column(Integer, default=1, nullable=False)
-    xp = Column(Integer, default=0, nullable=False)
-    unspent_xp = Column(Integer, default=0, nullable=False)
-    gold = Column(Integer, default=0, nullable=False)
+    level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    xp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    unspent_xp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    gold: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    current_hp = Column(Float, nullable=True)
-    max_hp = Column(Float, nullable=True)
-    mp = Column(Integer, nullable=True) # Renamed from current_mp to just mp, max_mp can be in stats
-    base_attack = Column(Integer, nullable=True)
-    base_defense = Column(Integer, nullable=True)
-    is_alive = Column(Boolean, default=True, nullable=False)
+    current_hp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_hp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    mp: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    base_attack: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    base_defense: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    is_alive: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    stats_json = Column(JSONB, nullable=True) # Renamed from 'stats' to 'stats_json' to be explicit
-    effective_stats_json = Column(JSONB, nullable=True)
+    stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    effective_stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
-    status_effects_json = Column(JSONB, nullable=True)
-    skills_data_json = Column(JSONB, nullable=True)
-    abilities_data_json = Column(JSONB, nullable=True)
-    spells_data_json = Column(JSONB, nullable=True)
-    known_spells_json = Column(JSONB, nullable=True)
-    spell_cooldowns_json = Column(JSONB, nullable=True)
+    status_effects_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
+    skills_data_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    abilities_data_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    spells_data_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    known_spells_json: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
+    spell_cooldowns_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
-    inventory_json = Column(JSONB, nullable=True)
-    equipment_slots_json = Column(JSONB, nullable=True, default=lambda: {})
+    inventory_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
+    equipment_slots_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True, default=lambda: {})
 
-    active_quests_json = Column(JSONB, nullable=True)
-    flags_json = Column(JSONB, nullable=True)
-    state_variables_json = Column(JSONB, nullable=True)
+    active_quests_json: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
+    flags_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    state_variables_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
-    current_game_status = Column(String, nullable=True)
-    current_action_json = Column(JSONB, nullable=True)
-    action_queue_json = Column(JSONB, nullable=True)
-    collected_actions_json = Column(JSONB, nullable=True)
+    current_game_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    current_action_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    action_queue_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
+    collected_actions_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
 
-    current_location_id = Column(String, ForeignKey('locations.id'), nullable=True, index=True)
-    current_party_id = Column(String, ForeignKey('parties.id', name='fk_character_current_party'), nullable=True, index=True)
+    current_location_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('locations.id'), nullable=True, index=True)
+    current_party_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('parties.id', name='fk_character_current_party'), nullable=True, index=True)
 
-    player_account = relationship("Player", back_populates="characters", foreign_keys=[player_id])
-    current_location = relationship("Location", foreign_keys=[current_location_id], lazy="joined")
-    current_party = relationship("Party", foreign_keys=[current_party_id], lazy="joined")
+    player_account: Mapped["Player"] = relationship("Player", back_populates="characters", foreign_keys=[player_id])
+    current_location: Mapped[Optional["Location"]] = relationship("Location", foreign_keys=[current_location_id], lazy="joined") # type: ignore
+    current_party: Mapped[Optional["Party"]] = relationship("Party", foreign_keys=[current_party_id], lazy="joined") # type: ignore
+
+    guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref
 
     __table_args__ = (
         Index('idx_character_guild_player', 'guild_id', 'player_id'),
@@ -102,85 +122,95 @@ class Character(Base):
 
 class Party(Base):
     __tablename__ = 'parties'
-    id = Column(String, primary_key=True)
-    name_i18n = Column(JSONB, nullable=True)
-    player_ids_json = Column(JSONB, nullable=True) # Will store Character IDs
-    current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
-    turn_status = Column(String, nullable=True)
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    leader_id = Column(String, ForeignKey('characters.id', name='fk_party_leader_character'), nullable=True)
-    state_variables = Column(JSONB, nullable=True)
-    current_action = Column(String, nullable=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    player_ids_json: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True)
+    current_location_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('locations.id'), nullable=True)
+    turn_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    leader_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('characters.id', name='fk_party_leader_character'), nullable=True)
+    state_variables: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    current_action: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
-    location = relationship("Location", foreign_keys=[current_location_id])
-    leader = relationship("Character", foreign_keys=[leader_id])
+    location: Mapped[Optional["Location"]] = relationship("Location", foreign_keys=[current_location_id]) # type: ignore
+    leader: Mapped[Optional["Character"]] = relationship("Character", foreign_keys=[leader_id]) # type: ignore
+    guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref
+
+    # If Character.current_party relationship needs a back_populates:
+    # characters_in_party: Mapped[List["Character"]] = relationship(back_populates="current_party")
 
 
 class NPC(Base):
     __tablename__ = 'npcs'
-    id = Column(String, primary_key=True)
-    template_id = Column(String, nullable=True)
-    name_i18n = Column(JSONB, nullable=True)
-    description_i18n = Column(JSONB, nullable=True)
-    backstory_i18n = Column(JSONB, nullable=True)
-    persona_i18n = Column(JSONB, nullable=True)
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    location_id = Column(String, ForeignKey('locations.id'), nullable=True)
-    stats = Column(JSONB, nullable=True)
-    inventory = Column(JSONB, nullable=True)
-    current_action = Column(String, nullable=True)
-    action_queue = Column(JSONB, nullable=True)
-    party_id = Column(String, ForeignKey('parties.id'), nullable=True)
-    state_variables = Column(JSONB, nullable=True)
-    health = Column(Float, nullable=True)
-    max_health = Column(Float, nullable=True)
-    is_alive = Column(Boolean, default=True)
-    status_effects = Column(JSONB, nullable=True)
-    is_temporary = Column(Boolean, default=False)
-    archetype = Column(String, nullable=True)
-    traits = Column(JSONB, nullable=True)
-    desires = Column(JSONB, nullable=True)
-    motives = Column(JSONB, nullable=True)
-    skills_data = Column(JSONB, nullable=True)
-    equipment_data = Column(JSONB, nullable=True)
-    abilities_data = Column(JSONB, nullable=True)
-    faction = Column(JSONB, nullable=True)
-    behavior_tags = Column(JSONB, nullable=True)
-    loot_table_id = Column(String, nullable=True)
-    effective_stats_json = Column(JSONB, nullable=True)
-    faction_id = Column(String, nullable=True, index=True)
-    schedule_json = Column(JSONB, nullable=True) # Added for NPC schedules
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    template_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    backstory_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    persona_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    location_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('locations.id'), nullable=True)
+    stats: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    inventory: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    current_action: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    action_queue: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    party_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('parties.id'), nullable=True)
+    state_variables: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    health: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_health: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    is_alive: Mapped[bool] = mapped_column(Boolean, default=True)
+    status_effects: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    is_temporary: Mapped[bool] = mapped_column(Boolean, default=False)
+    archetype: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    traits: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    desires: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    motives: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    skills_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    equipment_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    abilities_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    faction: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True) # Or string if it's an ID
+    behavior_tags: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    loot_table_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    effective_stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    faction_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True) # Assuming this might link to a Factions table later
+    schedule_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
-    location = relationship("Location")
-    party = relationship("Party")
+    location: Mapped[Optional["Location"]] = relationship("Location", foreign_keys=[location_id]) # type: ignore
+    party: Mapped[Optional["Party"]] = relationship("Party", foreign_keys=[party_id]) # type: ignore
+    guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref
+    # player_memories: Mapped[List["PlayerNpcMemory"]] = relationship(back_populates="npc") # Example
 
 
 class GeneratedNpc(Base):
     __tablename__ = 'generated_npcs'
-    id = Column(String, primary_key=True)
-    name_i18n = Column(JSONB, nullable=True)
-    description_i18n = Column(JSONB, nullable=True)
-    backstory_i18n = Column(JSONB, nullable=True)
-    persona_i18n = Column(JSONB, nullable=True)
-    effective_stats_json = Column(JSONB, nullable=True)
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    backstory_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    persona_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    effective_stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+
+    guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref
+
     __table_args__ = (Index('idx_generatednpc_guild_id', 'guild_id'),)
 
 
 class GlobalNpc(Base):
     __tablename__ = 'global_npcs'
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    name_i18n = Column(JSONB, nullable=False)
-    description_i18n = Column(JSONB, nullable=True)
-    current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
-    npc_template_id = Column(String, nullable=True)
-    state_variables = Column(JSONB, nullable=True)
-    faction_id = Column(String, nullable=True, index=True)
-    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    name_i18n: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    current_location_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('locations.id'), nullable=True)
+    npc_template_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    state_variables: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    faction_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 
-    current_location = relationship("Location")
+    current_location: Mapped[Optional["Location"]] = relationship("Location", foreign_keys=[current_location_id]) # type: ignore
+    guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref
 
     __table_args__ = (
         Index('idx_globalnpc_guild_id', 'guild_id'),
@@ -192,32 +222,37 @@ class GlobalNpc(Base):
         return f"<GlobalNpc(id='{self.id}', name_i18n='{self.name_i18n}', guild_id='{self.guild_id}')>"
 
 
-class PlayerNpcMemory(Base): # Already updated above, this is just to ensure it's not duplicated
+class PlayerNpcMemory(Base):
     __tablename__ = 'player_npc_memory'
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    character_id = Column(String, ForeignKey('characters.id', ondelete='CASCADE'), nullable=False, index=True)
-    npc_id = Column(String, ForeignKey('npcs.id', ondelete='CASCADE'), nullable=False, index=True)
-    memory_details_i18n = Column(JSONB, nullable=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    character_id: Mapped[str] = mapped_column(String, ForeignKey('characters.id', ondelete='CASCADE'), nullable=False, index=True)
+    npc_id: Mapped[str] = mapped_column(String, ForeignKey('npcs.id', ondelete='CASCADE'), nullable=False, index=True) # Assuming npcs.id is String
+    memory_details_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+
+    guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref
+    character: Mapped["Character"] = relationship(foreign_keys=[character_id]) # Add back_populates if Character has a memories list
+    npc: Mapped["NPC"] = relationship(foreign_keys=[npc_id]) # Add back_populates if NPC has a memories list
 
     __table_args__ = (
         Index('idx_playernpcmemory_guild_char_npc', 'guild_id', 'character_id', 'npc_id'),
         Index('idx_playernpcmemory_character_id', 'character_id'),
         Index('idx_playernpcmemory_npc_id', 'npc_id'),
+        UniqueConstraint('character_id', 'npc_id', 'guild_id', name='uq_char_npc_guild_memory') # Ensure one memory entry
     )
 
 
-class RPGCharacter(Base):
+class RPGCharacter(Base): # This seems like a different style of model, maybe from another part or older.
     __tablename__ = 'rpg_characters'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String, nullable=False)
-    class_name = Column(String, nullable=False)
-    level = Column(Integer, default=1, nullable=False)
-    health = Column(Integer, nullable=False)
-    mana = Column(Integer, nullable=False)
-    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
-    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    class_name: Mapped[str] = mapped_column(String, nullable=False)
+    level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    health: Mapped[int] = mapped_column(Integer, nullable=False)
+    mana: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now()) # type: ignore
+    updated_at: Mapped[datetime.datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()) # type: ignore
 
     __table_args__ = (
         CheckConstraint('level >= 0', name='check_level_non_negative'),
@@ -227,3 +262,5 @@ class RPGCharacter(Base):
 
     def __repr__(self):
         return f"<RPGCharacter(id={self.id}, name='{self.name}', class_name='{self.class_name}')>"
+
+# Removed the import datetime from the end as it's now at the top.
