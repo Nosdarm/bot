@@ -1,5 +1,6 @@
 import os
 import sys
+import configparser # Added for manual .ini parsing
 
 # Add the project root directory to sys.path
 # This assumes env.py is at bot/alembic/env.py
@@ -8,7 +9,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 import asyncio
-from logging.config import fileConfig
+from logging.config import fileConfig # Keep this for fileConfig itself
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -21,104 +22,87 @@ from alembic import context
 config = context.config
 
 # Interpret the config file for Python logging.
-# This line sets up loggers basically.
+# MODIFICATION: Manually read alembic.ini with UTF-8 and pass a ConfigParser object
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Create a ConfigParser instance
+    parser = configparser.ConfigParser()
+    try:
+        # Read the .ini file explicitly with UTF-8
+        with open(config.config_file_name, 'r', encoding='utf-8') as f_ini:
+            parser.read_file(f_ini)
+
+        # Pass the ConfigParser object to fileConfig
+        # disable_existing_loggers=False is often a good practice
+        fileConfig(parser, disable_existing_loggers=False)
+    except Exception as e:
+        print(f"Error processing logging configuration from {config.config_file_name}: {e}")
+        # Fallback or raise error if logging config is critical
+        # For now, just print and continue; Alembic might still work if logging isn't essential for it.
+
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-# Ensure the path to your models is correct
 from bot.database.models import Base # Corrected import path
 target_metadata = Base.metadata
 
-# Custom include_object function to ignore specific constraints
 def include_object(object, name, type_, reflected, compare_to):
     if type_ == "unique_constraint" and name == "uq_guild_configs_guild_id":
         return False
-    # Optionally, filter out the unique constraint backing the PK if it's being problematic,
-    # though typically PKs are handled well. This is a more aggressive filter.
-    # if type_ == "unique_constraint" and name is not None and name.endswith("_pkey") and object.table.name == "guild_configs":
-    #     return False
     return True
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
-
-
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode.
-
-    This configures the context with just a URL
-    and not an Engine, though an Engine is acceptable
-    here as well.  By skipping the Engine creation
-    we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the
-    script output.
-
-    """
+    """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        include_object=include_object,  # Add this line
-        compare_type=True  # Recommended when using include_object for constraints
+        include_object=include_object,
+        compare_type=True
     )
-
     with context.begin_transaction():
         context.run_migrations()
-
 
 def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        include_object=include_object,  # Add this line
-        compare_type=True  # Recommended when using include_object for constraints
+        include_object=include_object,
+        compare_type=True
     )
-
     with context.begin_transaction():
         context.run_migrations()
 
-
 async def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
-
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
-    # Get the SQLAlchemy URL from environment or use default, similar to postgres_adapter.py
-    # This ensures the async engine uses the correct async driver.
+    """Run migrations in 'online' mode."""
     DATABASE_URL_ENV_VAR = "DATABASE_URL"
-    DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot" # From postgres_adapter.py
-    db_url = os.getenv(DATABASE_URL_ENV_VAR, DEFAULT_SQLALCHEMY_DATABASE_URL)
+    # Fallback to a generic local async URL if DATABASE_URL is not set
+    # This ensures that if DATABASE_URL is missing, it defaults to something,
+    # rather than relying on alembic.ini's potentially sync URL for async engine setup.
+    default_async_url = "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot_default"
 
-    # Create a configuration dictionary for async_engine_from_config
-    # We are not using config.get_section directly to ensure the correct URL with async driver is used.
-    engine_config = {
-        "sqlalchemy.url": db_url,
-        # Add other options from config.get_section if needed, e.g., echo
-        # For now, only URL is critical.
-    }
-    # Add other options from alembic.ini's main section if they exist and are needed by the engine
-    # For example, 'sqlalchemy.echo': config.get_main_option('sqlalchemy.echo')
-    # This example assumes such options might exist and be relevant.
-    ini_section_options = config.get_section(config.config_ini_section, {})
-    for key, value in ini_section_options.items():
-        if key not in engine_config and key.startswith("sqlalchemy."):
-             engine_config[key] = value
+    db_url_for_engine = os.getenv(DATABASE_URL_ENV_VAR)
 
+    if not db_url_for_engine:
+        print(f"Warning: {DATABASE_URL_ENV_VAR} is not set. Falling back to default URL: {default_async_url}")
+        db_url_for_engine = default_async_url
+    elif not db_url_for_engine.startswith("postgresql+asyncpg://"):
+        if db_url_for_engine.startswith("postgresql://"):
+            # Convert sync URL from env to async
+            db_url_for_engine = db_url_for_engine.replace("postgresql://", "postgresql+asyncpg://", 1)
+            print(f"Info: Converted sync DATABASE_URL to async: {db_url_for_engine}")
+        else:
+            # If DATABASE_URL is set but not a recognized postgresql format, this is problematic.
+            print(f"Error: DATABASE_URL ('{db_url_for_engine}') is not a valid 'postgresql+asyncpg://' or 'postgresql://' URL. Using hardcoded default.")
+            db_url_for_engine = default_async_url # Fallback to a known safe default
+
+    engine_config_from_ini = config.get_section(config.config_ini_section, {})
+    engine_config_from_ini["sqlalchemy.url"] = db_url_for_engine
 
     connectable = async_engine_from_config(
-        engine_config, # Use our constructed config
-        prefix="sqlalchemy.", # Standard prefix
+        engine_config_from_ini,
+        prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
@@ -126,7 +110,6 @@ async def run_migrations_online() -> None:
         await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()
-
 
 if context.is_offline_mode():
     run_migrations_offline()
