@@ -1,4 +1,4 @@
-from .base import Base
+from ..database.base import Base # Corrected import to use the centralized Base
 from .pending_generation import PendingGeneration, GenerationType, PendingStatus
 
 # Import other models here as they are migrated to this package
