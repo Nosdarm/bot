@@ -543,10 +543,10 @@ class CharacterManager:
                 return None # Or re-raise e
 
         # Cache update happens after successful operation, outside explicit transaction blocks
-        if new_char_orm_instance and player_record : # Ensure player_record was fetched
-             self._characters.setdefault(guild_id_str, {})[new_char_orm_instance.id] = new_char_orm_instance
-             self._discord_to_player_map.setdefault(guild_id_str, {})[user_id] = player_record.id
-             logger.info(f"CM.create_new_character: Successfully created Character {new_char_orm_instance.id} for Player {player_record.id} in guild {guild_id_str}. Cached (pending caller's commit if session was external).")
+        if (new_char_orm_instance is not None) and (player_record is not None):
+            self._characters.setdefault(guild_id_str, {})[new_char_orm_instance.id] = new_char_orm_instance
+            self._discord_to_player_map.setdefault(guild_id_str, {})[user_id] = player_record.id # type: ignore
+            logger.info(f"CM.create_new_character: Successfully created and cached Character {new_char_orm_instance.id} for Player {player_record.id} in guild {guild_id_str}. Cached (pending caller's commit if session was external).") # type: ignore
 
         return new_char_orm_instance
 -
