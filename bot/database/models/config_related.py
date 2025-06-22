@@ -48,9 +48,9 @@ class UserSettings(Base):
 
     player: Mapped["Player"] = relationship(
         "Player",
-        foreign_keys=[user_id, guild_id],
-        primaryjoin=lambda: and_(UserSettings.user_id == Player.discord_id, UserSettings.guild_id == Player.guild_id),
-        back_populates="user_settings_entry"
+        # foreign_keys and primaryjoin removed; SQLAlchemy should infer from ForeignKeyConstraint
+        back_populates="user_settings_entry",
+        uselist=False # Add uselist=False as it's a one-to-one or many-to-one from UserSettings to Player
     )
 
     # Relationship to GuildConfig (many UserSettings to one GuildConfig)
