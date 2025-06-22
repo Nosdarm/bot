@@ -3,22 +3,13 @@ from discord import Interaction, app_commands
 from discord.ext import commands
 import traceback
 import logging
-from bot.command_modules.game_setup_cmds import is_master_or_admin_check
-# Removed duplicate import of is_master_or_admin_check
+# from bot.command_modules.game_setup_cmds import is_master_or_admin_check # Replaced by decorator
 import json # For parsing parameters_json
-from typing import TYPE_CHECKING, Optional, Dict, Any, List # Added List
-import uuid # For report_id
+from typing import TYPE_CHECKING, Optional, Dict, Any, List
+import uuid
 
 from bot.game.managers.undo_manager import UndoManager
 
-# For Pydantic models if used in type hints for params_json structures
-# from bot.api.schemas.rule_config_schemas import RuleConfigData # Only if directly used
-
-# For Simulators and ReportFormatters (imported dynamically or within methods to avoid circulars if complex)
-# from bot.game.simulation import BattleSimulator, QuestSimulator, ActionConsequenceModeler
-# from bot.game.services.report_formatter import ReportFormatter
-# from bot.game.models.location import Location as LocationModel # if type hinting specific models
-# from bot.game.models.npc import NPC as NPCModelType
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
@@ -33,13 +24,10 @@ if TYPE_CHECKING:
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.rules.rule_engine import RuleEngine
     from bot.api.schemas.rule_config_schemas import RuleConfigData
-    # For new master AI commands
     from bot.database.models import PendingGeneration
-    import datetime # Ensure datetime is directly available
-    # from bot.utils.decorators import is_master_role # Assuming decorator location # MOVED
-    from bot.ai.ai_response_validator import parse_and_validate_ai_response # For edit_ai
+    import datetime
+    from bot.ai.ai_response_validator import parse_and_validate_ai_response
 
-# Actual runtime import for the decorator
 from bot.utils.decorators import is_master_role
 
 class GMAppCog(commands.Cog, name="GM App Commands"):
@@ -48,8 +36,26 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
     def __init__(self, bot: "RPGBot"):
         self.bot = bot
 
-    # Existing commands like gm_simulate, resolve_conflict etc. remain here...
-    # ... (Make sure to place the new master_group commands after existing ones or logically grouped)
+    class SimpleReportFormatter: # Helper class for master_view_map
+        def __init__(self, game_manager: "GameManager", guild_id: str):
+            self.game_manager = game_manager
+            self.guild_id = guild_id
+
+        def _get_entity_name(self, entity_id: str, entity_type: str, lang: str) -> str:
+            name = entity_id
+            if entity_type == "location" and self.game_manager.location_manager:
+                loc = self.game_manager.location_manager.get_location_instance(self.guild_id, entity_id)
+                if loc: name = getattr(loc, "name_i18n", {}).get(lang, getattr(loc, "name_i18n", {}).get("en", loc.id)) if hasattr(loc,"name_i18n") else getattr(loc,"name", loc.id)
+            elif entity_type == "npc" and self.game_manager.npc_manager:
+                npc = self.game_manager.npc_manager.get_npc(self.guild_id, entity_id)
+                if npc: name = npc.name_i18n.get(lang,npc.name_i18n.get("en",npc.id)) if hasattr(npc,"name_i18n") and npc.name_i18n else getattr(npc,"name",npc.id)
+            elif entity_type == "character" and self.game_manager.character_manager:
+                char = self.game_manager.character_manager.get_character(self.guild_id, entity_id)
+                if char: name = (char.name_i18n.get(lang,char.name_i18n.get("en",char.id)) if hasattr(char,"name_i18n") and char.name_i18n else getattr(char,"name",char.id))
+            elif entity_type == "event" and self.game_manager.event_manager:
+                evt = self.game_manager.event_manager.get_event(self.guild_id, entity_id)
+                if evt: name = getattr(evt, "name", evt.id)
+            return name
 
     @app_commands.command(name="gm_simulate", description="ГМ: Запустить один шаг симуляции мира.")
     async def cmd_gm_simulate(self, interaction: Interaction):
@@ -57,7 +63,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             await interaction.response.send_message("**Мастер:** Конфигурация игры не загружена.", ephemeral=True)
             return
         bot_admin_ids = [str(id_val) for id_val in self.bot.game_manager._settings.get('bot_admins', [])]
-        if str(interaction.user.id) not in bot_admin_ids: # Basic check, consider standardizing
+        if str(interaction.user.id) not in bot_admin_ids:
             await interaction.response.send_message("**Мастер:** Только Истинный Мастер может управлять ходом времени!", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
@@ -72,8 +78,8 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
     @app_commands.command(name="resolve_conflict", description="ГМ: Разрешить ожидающий конфликт.")
     @app_commands.describe(conflict_id="ID конфликта.", outcome_type="Тип исхода.", parameters_json="JSON параметры (опц).")
+    @is_master_role()
     async def cmd_resolve_conflict(self, interaction: discord.Interaction, conflict_id: str, outcome_type: str, parameters_json: Optional[str] = None):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.", ephemeral=True); return
         await interaction.response.defer(ephemeral=True)
         if not interaction.guild_id: await interaction.followup.send("**Мастер:** Команда для сервера.", ephemeral=True); return
         game_mngr = self.bot.game_manager
@@ -94,8 +100,8 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
     @app_commands.command(name="gm_delete_character", description="ГМ: Удалить данные персонажа по его ID.")
     @app_commands.describe(character_id="ID персонажа (Character object UUID) для удаления.")
+    @is_master_role()
     async def cmd_gm_delete_character(self, interaction: discord.Interaction, character_id: str):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.", ephemeral=True); return
         await interaction.response.defer(ephemeral=True)
         if not interaction.guild_id: await interaction.followup.send("**Мастер:** Команда для сервера.", ephemeral=True); return
         guild_id_str, game_mngr = str(interaction.guild_id), self.bot.game_manager
@@ -110,8 +116,8 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
     @app_commands.command(name="master_undo", description="ГМ: Отменить последнее событие для игрока или партии.")
     @app_commands.describe(num_steps="Количество шагов (по умолчанию 1).", entity_id="ID игрока/партии (обязательно).")
+    @is_master_role()
     async def cmd_master_undo(self, interaction: Interaction, num_steps: Optional[int] = 1, entity_id: Optional[str] = None):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.", ephemeral=True); return
         await interaction.response.defer(ephemeral=True)
         if not interaction.guild_id: await interaction.followup.send("**Мастер:** Команда для сервера.", ephemeral=True); return
         guild_id_str, game_mngr = str(interaction.guild_id), self.bot.game_manager
@@ -127,8 +133,8 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
     @app_commands.command(name="master_goto_log", description="ГМ: Отменить события до указанной записи лога.")
     @app_commands.describe(log_id_target="ID целевой записи лога.", entity_id="Опц: ID игрока/партии.")
+    @is_master_role()
     async def cmd_master_goto_log(self, interaction: Interaction, log_id_target: str, entity_id: Optional[str] = None):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.", ephemeral=True); return
         await interaction.response.defer(ephemeral=True)
         if not interaction.guild_id: await interaction.followup.send("**Мастер:** Команда для сервера.", ephemeral=True); return
         guild_id_str, game_mngr = str(interaction.guild_id), self.bot.game_manager
@@ -144,8 +150,8 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
     @app_commands.command(name="master_undo_event", description="ГМ: Отменить конкретное событие по ID из лога.")
     @app_commands.describe(log_id="ID записи лога для отмены.")
+    @is_master_role()
     async def cmd_master_undo_event(self, interaction: Interaction, log_id: str):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.", ephemeral=True); return
         await interaction.response.defer(ephemeral=True)
         if not interaction.guild_id: await interaction.followup.send("**Мастер:** Команда для сервера.", ephemeral=True); return
         guild_id_str, game_mngr = str(interaction.guild_id), self.bot.game_manager
@@ -154,19 +160,13 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
         success = await game_mngr.undo_manager.undo_specific_log_entry(guild_id_str, log_id)
         await interaction.followup.send(f"**Мастер:** Событие '{log_id}' {'успешно отменено' if success else 'не удалось отменить'}.", ephemeral=True)
 
-    # --- Start of Consolidated Commands ---
-
     @app_commands.command(name="master_edit_npc", description="ГМ: Редактировать атрибут NPC.")
     @app_commands.describe(npc_id="ID NPC для редактирования.",
                            attribute="Атрибут для изменения (например, name_i18n.en, stats.hp, location_id).",
                            value="Новое значение для атрибута.")
+    @is_master_role()
     async def cmd_master_edit_npc(self, interaction: Interaction, npc_id: str, attribute: str, value: str):
-        if not await is_master_or_admin_check(interaction):
-            await interaction.response.send_message("**Мастер:** У вас нет прав для выполнения этой команды.", ephemeral=True)
-            return
-
         await interaction.response.defer(ephemeral=True, thinking=True)
-
         guild_id = str(interaction.guild_id)
         game_mngr = self.bot.game_manager
 
@@ -181,10 +181,9 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
         try:
             original_value_str = "N/A"
-            processed_value: Any = value # Value to be stored, potentially type-converted
-            log_value = value # Value for logging, usually string
+            processed_value: Any = value
+            log_value = value
 
-            # Determine NPC name for logging (best effort)
             lang_for_log = str(interaction.locale or game_mngr.get_default_bot_language() or "en")
             npc_name_for_log = npc.id
             if hasattr(npc, 'name_i18n') and isinstance(npc.name_i18n, dict):
@@ -194,43 +193,37 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
             update_successful = False
 
-            # Handling i18n fields: name_i18n, description_i18n, persona_i18n
             if attribute.startswith("name_i18n.") or \
                attribute.startswith("description_i18n.") or \
                attribute.startswith("persona_i18n."):
                 parts = attribute.split(".", 1)
-                field_name = parts[0]  # e.g., "name_i18n"
-                lang_code = parts[1]   # e.g., "en"
+                field_name = parts[0]
+                lang_code = parts[1]
 
                 if not hasattr(npc, field_name):
                     await interaction.followup.send(f"**Мастер:** У NPC нет атрибута '{field_name}'.", ephemeral=True)
                     return
 
                 current_i18n_dict = getattr(npc, field_name, {})
-                if not isinstance(current_i18n_dict, dict): # Ensure it's a dict
+                if not isinstance(current_i18n_dict, dict):
                     current_i18n_dict = {}
 
                 original_value_str = str(current_i18n_dict.get(lang_code, "N/A"))
                 current_i18n_dict[lang_code] = value
                 processed_value = current_i18n_dict
 
-                # Use a generic update method if available, or setattr and mark_dirty
                 if hasattr(game_mngr.npc_manager, 'update_npc_field'):
                     update_successful = await game_mngr.npc_manager.update_npc_field(guild_id, npc_id, field_name, processed_value)
-                else: # Fallback to direct setattr if NpcManager does not have update_npc_field
+                else:
                     setattr(npc, field_name, processed_value)
-                    game_mngr.npc_manager.mark_npc_dirty(guild_id, npc_id) # Assumes mark_npc_dirty exists
+                    game_mngr.npc_manager.mark_npc_dirty(guild_id, npc_id)
                     update_successful = True
                 log_value = f"{value} (lang: {lang_code})"
 
-            # Handling stats fields: stats.hp, stats.base_strength, etc.
             elif attribute.startswith("stats."):
-                stat_key = attribute.split(".", 1)[1] # e.g., "hp"
-
+                stat_key = attribute.split(".", 1)[1]
                 current_stats = npc.stats if isinstance(npc.stats, dict) else {}
                 original_value_str = str(current_stats.get(stat_key, "N/A"))
-
-                # Attempt type conversion based on existing value or common types
                 target_type = None
                 if stat_key in current_stats and current_stats[stat_key] is not None:
                     target_type = type(current_stats[stat_key])
@@ -243,17 +236,16 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 elif target_type == float:
                     try: processed_value = float(value)
                     except ValueError: await interaction.followup.send(f"**Мастер:** Неверное значение для '{attribute}'. Ожидалось число.", ephemeral=True); return
-                else: # Default to trying int, then float, then string
+                else:
                     try: processed_value = int(value)
                     except ValueError:
                         try: processed_value = float(value)
-                        except ValueError: processed_value = value # Keep as string
+                        except ValueError: processed_value = value
 
                 update_successful = await game_mngr.npc_manager.update_npc_stats(guild_id, npc_id, {stat_key: processed_value})
                 log_value = str(processed_value)
 
-            # Handling direct fields like location_id, faction_id
-            elif attribute in ["location_id", "faction_id", "archetype", "role"]: # Add other simple fields if needed
+            elif attribute in ["location_id", "faction_id", "archetype", "role"]:
                 if not hasattr(npc, attribute):
                     await interaction.followup.send(f"**Мастер:** У NPC нет атрибута '{attribute}'.", ephemeral=True)
                     return
@@ -261,73 +253,71 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 original_value_str = str(getattr(npc, attribute, "N/A"))
                 processed_value = value if value.lower() not in ["none", "null", ""] else None
 
-                if attribute == "location_id" and processed_value is not None: # Validate location exists
+                if attribute == "location_id" and processed_value is not None:
                     if not game_mngr.location_manager or not game_mngr.location_manager.get_location_instance(guild_id, processed_value):
                         await interaction.followup.send(f"**Мастер:** Локация с ID '{processed_value}' не найдена.", ephemeral=True)
                         return
 
-                # Use a generic update method if available
                 if hasattr(game_mngr.npc_manager, 'update_npc_field'):
                     update_successful = await game_mngr.npc_manager.update_npc_field(guild_id, npc_id, attribute, processed_value)
-                else: # Fallback
+                else:
                     setattr(npc, attribute, processed_value)
                     game_mngr.npc_manager.mark_npc_dirty(guild_id, npc_id)
                     update_successful = True
                 log_value = str(processed_value)
-
             else:
                 await interaction.followup.send(f"**Мастер:** Атрибут '{attribute}' не поддерживается для редактирования этим способом.", ephemeral=True)
                 return
 
             if update_successful:
-                # For stats, trigger recalculation if NpcManager doesn't do it internally
                 if attribute.startswith("stats.") and hasattr(game_mngr.npc_manager, 'trigger_stats_recalculation'):
                     await game_mngr.npc_manager.trigger_stats_recalculation(guild_id, npc_id)
 
                 log_details = {
-                    "npc_id": npc_id,
-                    "npc_name": npc_name_for_log, # Use derived name
-                    "attribute_changed": attribute,
-                    "old_value": original_value_str,
-                    "new_value": log_value, # Use stringified processed value for log
-                    "gm_user_id": str(interaction.user.id),
+                    "npc_id": npc_id, "npc_name": npc_name_for_log,
+                    "attribute_changed": attribute, "old_value": original_value_str,
+                    "new_value": log_value, "gm_user_id": str(interaction.user.id),
                     "gm_user_name": interaction.user.name
                 }
-                await game_mngr.game_log_manager.log_event(
-                    guild_id=guild_id,
-                    event_type="gm_npc_edit",
-                    details=log_details
-                )
+                await game_mngr.game_log_manager.log_event(guild_id=guild_id, event_type="gm_npc_edit", details=log_details)
                 await interaction.followup.send(f"**Мастер:** NPC '{npc_name_for_log}' (`{npc_id}`) успешно обновлен. Атрибут '{attribute}' изменен с '{original_value_str}' на '{log_value}'.", ephemeral=True)
             else:
                 await interaction.followup.send(f"**Мастер:** Не удалось обновить атрибут '{attribute}' для NPC '{npc_name_for_log}' (`{npc_id}`). Проверьте логи для деталей.", ephemeral=True)
-
         except Exception as e:
             traceback.print_exc()
             await interaction.followup.send(f"**Мастер:** Произошла внутренняя ошибка при редактировании NPC: {e}", ephemeral=True)
 
     @app_commands.command(name="master_edit_character", description="ГМ: Редактировать атрибут персонажа.")
     @app_commands.describe(character_id="ID персонажа/Discord ID.", attribute="Атрибут (name_i18n.en, stats.hp, level, etc.).", value="Новое значение.")
+    @is_master_role()
     async def cmd_master_edit_character(self, interaction: Interaction, character_id: str, attribute: str, value: str):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.", ephemeral=True); return
         await interaction.response.defer(ephemeral=True, thinking=True)
         gid, gm = str(interaction.guild_id), self.bot.game_manager
         if not gm or not gm.character_manager or not gm.game_log_manager or not gm.location_manager: await interaction.followup.send("**Мастер:** Необходимые менеджеры недоступны.", ephemeral=True); return
         char = gm.character_manager.get_character_by_discord_id(gid, int(character_id)) if character_id.isdigit() else gm.character_manager.get_character(gid, character_id)
         if not char and character_id.isdigit(): char = gm.character_manager.get_character(gid, character_id)
         if not char: await interaction.followup.send(f"**Мастер:** Персонаж '{character_id}' не найден.", ephemeral=True); return
+
         try:
-            orig_val_str="N/A"; processed_val: Any =value; lang=str(interaction.locale or "en")
-            char_name_log = char.name_i18n.get(lang, char.name_i18n.get("en",char.id)) if hasattr(char,"name_i18n") and char.name_i18n else getattr(char,"name",char.id)
+            orig_val_str="N/A"; processed_val: Any = value; lang=str(interaction.locale or "en")
+            char_name_log = char.name_i18n.get(lang, char.name_i18n.get("en",char.id)) if hasattr(char,"name_i18n") and isinstance(char.name_i18n, dict) else getattr(char,"name",char.id)
+            update_success = False
+
             if attribute.startswith("name_i18n."):
-                parts=attribute.split(".",1); field,code=parts[0],parts[1]; i18n_d=getattr(char,field,{}); i18n_d=i18n_d if isinstance(i18n_d,dict) else {}
-                orig_val_str=i18n_d.get(code,"N/A"); i18n_d[code]=value; setattr(char,field,i18n_d)
-                if code!='en' and 'en' not in i18n_d: i18n_d['en']=value
-                gm.character_manager.mark_character_dirty(gid,char.id)
-            elif attribute.startswith("stats.") or attribute in ["level","experience","unspent_xp","hp","max_health","is_alive","gold","character_class","selected_language"]:
-                stat_key_for_update=attribute
-                _orig_val_for_type = char.stats.get(attribute.split(".",1)[1]) if attribute.startswith("stats.") else getattr(char,attribute,None)
+                parts=attribute.split(".",1); field,code=parts[0],parts[1]
+                i18n_d=getattr(char,field,{}); i18n_d=i18n_d if isinstance(i18n_d,dict) else {}
+                orig_val_str=str(i18n_d.get(code,"N/A"))
+                i18n_d[code]=value
+                if code != 'en' and 'en' not in i18n_d and value.strip():
+                    i18n_d['en'] = value
+                update_success = await gm.character_manager.save_character_field(gid, char.id, field, i18n_d)
+                processed_val = i18n_d
+            elif attribute.startswith("stats.") or attribute in ["level","experience","unspent_xp","hp","max_health","is_alive","gold"]:
+                stat_key_for_update = attribute.split(".",1)[1] if attribute.startswith("stats.") else attribute
+                current_stats_dict = char.stats if isinstance(char.stats, dict) else {}
+                _orig_val_for_type = current_stats_dict.get(stat_key_for_update) if attribute.startswith("stats.") else getattr(char,attribute,None)
                 orig_val_str=str(_orig_val_for_type) if _orig_val_for_type is not None else "N/A"
+
                 if _orig_val_for_type is not None and not isinstance(_orig_val_for_type,str):
                     try: processed_val = type(_orig_val_for_type)(value)
                     except ValueError: await interaction.followup.send(f"**Мастер:** Неверный тип для '{attribute}'. Ожидался {type(_orig_val_for_type).__name__}.",ephemeral=True); return
@@ -337,24 +327,40 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 elif attribute in ["hp","max_health"]:
                     try: processed_val = float(value)
                     except ValueError: await interaction.followup.send(f"**Мастер:** Неверный тип для '{attribute}'. Ожидается число.",ephemeral=True); return
-                elif attribute=="is_alive": processed_val = True if value.lower() in ["true","1","yes"] else (False if value.lower() in ["false","0","no"] else "INVALID_BOOL")
-                if processed_val == "INVALID_BOOL": await interaction.followup.send("**Мастер:** Неверное значение для 'is_alive'. True/False.",ephemeral=True); return
-                if attribute in ["character_class","selected_language"]: setattr(char,attribute,processed_val); gm.character_manager.mark_character_dirty(gid,char.id); await gm.character_manager.trigger_stats_recalculation(gid,char.id) if attribute=="character_class" else None
-                else:
-                    if not await gm.character_manager.update_character_stats(gid,char.id,{stat_key_for_update:processed_val}): await interaction.followup.send(f"**Мастер:** Ошибка обновления '{attribute}'.",ephemeral=True); return
+                elif attribute=="is_alive":
+                    processed_val = True if value.lower() in ["true","1","yes"] else (False if value.lower() in ["false","0","no"] else "INVALID_BOOL")
+                    if processed_val == "INVALID_BOOL": await interaction.followup.send("**Мастер:** Неверное значение для 'is_alive'. True/False.",ephemeral=True); return
+                update_success = await gm.character_manager.update_character_stats(gid,char.id,{stat_key_for_update:processed_val})
+            elif attribute == "character_class":
+                orig_val_str = str(getattr(char, "character_class", "N/A"))
+                processed_val = value
+                update_success = await gm.character_manager.save_character_field(gid, char.id, "character_class", processed_val)
+                if update_success: await gm.character_manager.trigger_stats_recalculation(gid, char.id)
+            elif attribute == "selected_language":
+                orig_val_str = str(getattr(char, "selected_language", "N/A"))
+                processed_val = value
+                update_success = await gm.character_manager.save_character_field(gid, char.id, "selected_language", processed_val)
             elif attribute=="location_id":
-                orig_val_str=str(char.location_id if char.location_id else "N/A"); processed_val=value if value.lower()!="none" else None
-                if not await gm.character_manager.update_character_location(char.id,processed_val,gid): await interaction.followup.send(f"**Мастер:** Ошибка обновления location_id.",ephemeral=True); return
-            else: await interaction.followup.send(f"**Мастер:** Атрибут '{attribute}' не поддерживается.",ephemeral=True); return
-            log_d={"char_id":char.id,"char_name":char_name_log,"discord_id":str(char.discord_user_id),"attr":attribute,"old":orig_val_str,"new":str(processed_val),"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
-            await gm.game_log_manager.log_event(gid,"gm_edit_character",details=log_d)
-            await interaction.followup.send(f"**Мастер:** Персонаж '{char_name_log}' (`{char.id}`) обновлен: '{attribute}' с '{orig_val_str}' на '{str(processed_val)}'.",ephemeral=True)
-        except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка: {e}",ephemeral=True)
+                orig_val_str=str(char.location_id if char.location_id else "N/A")
+                processed_val=value if value.lower() not in ["none", "null", ""] else None
+                update_success = await gm.character_manager.update_character_location(char.id,processed_val,gid)
+            else:
+                await interaction.followup.send(f"**Мастер:** Атрибут '{attribute}' не поддерживается для прямого редактирования этим способом.",ephemeral=True); return
+
+            if update_success:
+                log_d={"char_id":char.id,"char_name":char_name_log,"discord_id":str(char.discord_user_id),"attr":attribute,"old":orig_val_str,"new":str(processed_val),"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
+                await gm.game_log_manager.log_event(gid,"gm_edit_character",details=log_d)
+                await interaction.followup.send(f"**Мастер:** Персонаж '{char_name_log}' (`{char.id}`) обновлен: '{attribute}' изменен с '{orig_val_str}' на '{str(processed_val)}'.",ephemeral=True)
+            else:
+                await interaction.followup.send(f"**Мастер:** Не удалось обновить '{attribute}' для персонажа '{char_name_log}'. Проверьте предыдущие сообщения или логи.", ephemeral=True)
+        except Exception as e:
+            traceback.print_exc()
+            await interaction.followup.send(f"**Мастер:** Ошибка при редактировании персонажа: {e}",ephemeral=True)
 
     @app_commands.command(name="master_edit_item", description="ГМ: Редактировать атрибут экземпляра предмета.")
     @app_commands.describe(item_instance_id="ID экземпляра.", attribute="Атрибут (owner_id, quantity, state_variables.key).", value="Новое значение.")
+    @is_master_role()
     async def cmd_master_edit_item(self, interaction: Interaction, item_instance_id: str, attribute: str, value: str):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.", ephemeral=True); return
         await interaction.response.defer(ephemeral=True, thinking=True)
         gid, gm = str(interaction.guild_id), self.bot.game_manager
         if not gm or not gm.item_manager or not gm.game_log_manager: await interaction.followup.send("**Мастер:** ItemManager/GameLogManager недоступен.", ephemeral=True); return
@@ -363,45 +369,68 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
         try:
             orig_val_str, payload, proc_val = "N/A", {}, value; lang = str(interaction.locale or "en")
             item_tpl_name = item.template_id
-            if tpl := gm.item_manager.get_item_template(item.template_id): item_tpl_name=tpl.get("name_i18n",{}).get(lang,tpl.get("en",item.template_id))
+            if tpl := gm.item_manager.get_item_template(gid, item.template_id):
+                 item_tpl_name=tpl.get("name_i18n",{}).get(lang,tpl.get("name_i18n",{}).get("en",item.template_id))
+
             if attribute.startswith("state_variables."):
                 if not isinstance(item.state_variables,dict): item.state_variables={}
                 key=attribute.split(".",1)[1]; orig_val=item.state_variables.get(key); orig_val_str=str(orig_val) if orig_val is not None else "N/A"
-                try: proc_val=type(orig_val)(value) if orig_val is not None and not isinstance(orig_val,str) else (int(value) if value.isdigit() else (float(value) if value.replace('.','',1).isdigit() else value))
-                except: proc_val=value
+                if orig_val is not None:
+                    try: proc_val = type(orig_val)(value)
+                    except (ValueError, TypeError): proc_val = value
+                else:
+                    try: proc_val = int(value)
+                    except ValueError:
+                        try: proc_val = float(value)
+                        except ValueError:
+                             if value.lower() == 'true': proc_val = True
+                             elif value.lower() == 'false': proc_val = False
+                             else: proc_val = value
                 item.state_variables[key]=proc_val; payload["state_variables"]=item.state_variables
             elif attribute=="quantity":
-                orig_val_str=str(item.quantity); proc_val=float(value)
+                orig_val_str=str(item.quantity)
+                try: proc_val=float(value)
+                except ValueError: await interaction.followup.send("**Мастер:** Количество должно быть числом.",ephemeral=True); return
                 if proc_val<=0: await interaction.followup.send("**Мастер:** Кол-во > 0.",ephemeral=True); return
                 payload[attribute]=proc_val
             elif attribute in ["owner_id","owner_type","location_id"]:
-                orig_val_str=str(getattr(item,attribute,"N/A")); proc_val=value if value.lower()!="none" else None; payload[attribute]=proc_val
-                if attribute=="owner_id": payload["location_id"]=None; payload["owner_type"]=payload.get("owner_type") if proc_val else None
-                elif attribute=="location_id" and proc_val: payload.update({"owner_id":None,"owner_type":None})
+                orig_val_str=str(getattr(item,attribute,"N/A")); proc_val=value if value.lower()not in ["none", "null", ""] else None; payload[attribute]=proc_val
+                if attribute=="owner_id" and proc_val is not None:
+                    payload["location_id"]=None
+                    if not payload.get("owner_type") and not item.owner_type:
+                        await interaction.followup.send("**Мастер:** При установке 'owner_id' необходимо указать 'owner_type' (character, npc), если он еще не задан.",ephemeral=True); return
+                elif attribute=="owner_id" and proc_val is None:
+                    payload["owner_type"] = None
+                elif attribute=="location_id" and proc_val is not None:
+                    payload.update({"owner_id":None,"owner_type":None})
             else: await interaction.followup.send(f"**Мастер:** Атрибут '{attribute}' не поддерживается.",ephemeral=True); return
+
             if not payload: await interaction.followup.send(f"**Мастер:** Нечего обновлять для '{attribute}'.",ephemeral=True); return
+
             if await gm.item_manager.update_item_instance(gid,item_instance_id,payload):
-                gm.item_manager.mark_item_dirty(gid,item_instance_id)
                 log_d={"item_id":item_instance_id,"item_name":item_tpl_name,"attr":attribute,"old":orig_val_str,"new":str(proc_val),"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
                 await gm.game_log_manager.log_event(gid,"gm_edit_item",details=log_d)
-                await interaction.followup.send(f"**Мастер:** Предмет '{item_tpl_name}' (`{item_instance_id}`) обновлен: '{attribute}' с '{orig_val_str}' на '{str(proc_val)}'.",ephemeral=True)
+                await interaction.followup.send(f"**Мастер:** Предмет '{item_tpl_name}' (`{item_instance_id}`) обновлен: '{attribute}' изменен с '{orig_val_str}' на '{str(proc_val)}'.",ephemeral=True)
             else: await interaction.followup.send(f"**Мастер:** Ошибка обновления '{item_instance_id}'.",ephemeral=True)
         except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка: {e}",ephemeral=True)
 
     @app_commands.command(name="master_create_item", description="ГМ: Создать новый экземпляр предмета.")
     @app_commands.describe(template_id="ID шаблона.", target_id="Опц: ID владельца/локации.", target_type="Опц: Тип цели ('character', 'npc', 'location').", quantity="Опц: Количество (default 1).")
+    @is_master_role()
     async def cmd_master_create_item(self, interaction: Interaction, template_id: str, target_id: Optional[str]=None, target_type: Optional[str]=None, quantity: Optional[float]=1.0):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.",ephemeral=True); return
         await interaction.response.defer(ephemeral=True,thinking=True)
         gid,gm=str(interaction.guild_id),self.bot.game_manager
         if not gm or not all(hasattr(gm,m) and getattr(gm,m) for m in ['item_manager','game_log_manager','character_manager','npc_manager','location_manager']):
             await interaction.followup.send("**Мастер:** Один из менеджеров недоступен.",ephemeral=True); return
         qty=quantity if quantity is not None else 1.0
         if qty<=0: await interaction.followup.send("**Мастер:** Кол-во >0.",ephemeral=True); return
-        if not (item_tpl:=gm.item_manager.get_item_template(template_id)): await interaction.followup.send(f"**Мастер:** Шаблон '{template_id}' не найден.",ephemeral=True); return
+
+        item_tpl = gm.item_manager.get_item_template(gid, template_id)
+        if not item_tpl: await interaction.followup.send(f"**Мастер:** Шаблон '{template_id}' не найден.",ephemeral=True); return
+
         tpl_name_log=item_tpl.get("name_i18n",{}).get("en",template_id); own_id,own_type,loc_id=None,None,None
         if target_id:
-            if not target_type: await interaction.followup.send("**Мастер:** 'target_type' обязателен.",ephemeral=True); return
+            if not target_type: await interaction.followup.send("**Мастер:** 'target_type' обязателен при указании 'target_id'.",ephemeral=True); return
             tt=target_type.lower()
             if tt in ["character","player"]:
                 char=gm.character_manager.get_character_by_discord_id(gid,int(target_id)) if target_id.isdigit() else gm.character_manager.get_character(gid,target_id)
@@ -411,112 +440,141 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 if not (npc:=gm.npc_manager.get_npc(gid,target_id)): await interaction.followup.send(f"**Мастер:** NPC '{target_id}' не найден.",ephemeral=True); return
                 own_id,own_type=npc.id,"NPC"
             elif tt=="location":
-                # Assuming LocationManager.get_location_instance for consistency, or get_location_by_id if that's the actual method
-                loc_obj = gm.location_manager.get_location_instance(gid, target_id) # Changed from get_location_by_id
+                loc_obj = gm.location_manager.get_location_instance(gid, target_id)
                 if not loc_obj: await interaction.followup.send(f"**Мастер:** Локация '{target_id}' не найдена.",ephemeral=True); return
                 loc_id=loc_obj.id
-            else: await interaction.followup.send("**Мастер:** Неверный 'target_type'.",ephemeral=True); return
+            else: await interaction.followup.send("**Мастер:** Неверный 'target_type'. Допустимые: character, player, npc, location.",ephemeral=True); return
         try:
-            if new_item:=await gm.item_manager.create_item_instance(gid,template_id,own_id,own_type,loc_id,qty):
-                log_d={"item_id":new_item.id,"tpl_id":template_id,"tpl_name":tpl_name_log,"qty":qty,"owner":own_id,"owner_t":own_type,"loc":loc_id,"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
+            new_item_instance = await gm.item_manager.create_item_instance(
+                guild_id=gid, template_id=template_id, owner_id=own_id,
+                owner_type=own_type, location_id=loc_id, quantity=qty
+            )
+            if new_item_instance:
+                log_d={"item_id":new_item_instance.id,"tpl_id":template_id,"tpl_name":tpl_name_log,"qty":qty,"owner":own_id,"owner_t":own_type,"loc":loc_id,"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
                 await gm.game_log_manager.log_event(gid,"gm_create_item",details=log_d)
-                msg=f"**Мастер:** Предмет '{tpl_name_log}' (ID: {new_item.id}) x{qty} создан."
+                msg=f"**Мастер:** Предмет '{tpl_name_log}' (ID: {new_item_instance.id}) x{qty} создан."
                 if own_id: msg+=f" Владелец: {own_type} {own_id}."
                 elif loc_id: msg+=f" В локации {loc_id}."
+                else: msg += " (без владельца и не в локации)."
                 await interaction.followup.send(msg,ephemeral=True)
-            else: await interaction.followup.send(f"**Мастер:** Ошибка создания '{template_id}'.",ephemeral=True)
+            else: await interaction.followup.send(f"**Мастер:** Ошибка создания '{template_id}'. Метод create_item_instance вернул None.",ephemeral=True)
         except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка: {e}",ephemeral=True)
 
     @app_commands.command(name="master_launch_event", description="ГМ: Запустить событие по шаблону.")
     @app_commands.describe(template_id="ID шаблона.",location_id="Опц: ID локации.",channel_id="Опц: ID канала.",player_ids_json="Опц: JSON массив ID игроков.")
+    @is_master_role()
     async def cmd_master_launch_event(self, interaction: Interaction, template_id:str, location_id:Optional[str]=None, channel_id:Optional[str]=None, player_ids_json:Optional[str]=None):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.",ephemeral=True); return
         await interaction.response.defer(ephemeral=True,thinking=True)
         gid,gm=str(interaction.guild_id),self.bot.game_manager
         if not gm or not gm.event_manager or not gm.game_log_manager: await interaction.followup.send("**Мастер:** EventManager/GameLogManager недоступен.",ephemeral=True); return
-        if not (evt_tpl:=gm.event_manager.get_event_template(gid,template_id)): await interaction.followup.send(f"**Мастер:** Шаблон '{template_id}' не найден.",ephemeral=True); return
+        evt_tpl = gm.event_manager.get_event_template(gid, template_id)
+        if not evt_tpl: await interaction.followup.send(f"**Мастер:** Шаблон '{template_id}' не найден.",ephemeral=True); return
         tpl_name_log=evt_tpl.get("name",template_id); p_ids:Optional[List[str]]=None
         if player_ids_json:
             try: p_ids=json.loads(player_ids_json)
-            except: await interaction.followup.send("**Мастер:** Ошибка JSON 'player_ids_json'.",ephemeral=True); return
+            except json.JSONDecodeError: await interaction.followup.send("**Мастер:** Ошибка JSON 'player_ids_json'.",ephemeral=True); return
             if not isinstance(p_ids,list) or not all(isinstance(p,str) for p in p_ids): await interaction.followup.send("**Мастер:** 'player_ids_json' должен быть массивом строк.",ephemeral=True); return
-        p_chan_id:Optional[int]=None
+        p_chan_id_int:Optional[int]=None
         if channel_id:
-            try: p_chan_id=int(channel_id)
-            except: await interaction.followup.send("**Мастер:** 'channel_id' должен быть числом.",ephemeral=True); return
+            try: p_chan_id_int=int(channel_id)
+            except ValueError: await interaction.followup.send("**Мастер:** 'channel_id' должен быть числом.",ephemeral=True); return
         try:
-            if created_evt:=await gm.event_manager.create_event_from_template(gid,template_id,location_id,p_ids,p_chan_id):
-                log_d={"evt_id":created_evt.id,"tpl_id":template_id,"tpl_name":tpl_name_log,"loc":location_id,"chan":p_chan_id,"p_ids":p_ids,"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
+            created_evt = await gm.event_manager.create_event_from_template(
+                guild_id=gid, template_id=template_id, target_location_id=location_id,
+                involved_player_ids=p_ids, channel_id_override=p_chan_id_int
+            )
+            if created_evt:
+                log_d={"evt_id":created_evt.id,"tpl_id":template_id,"tpl_name":tpl_name_log,"loc":location_id,"chan":p_chan_id_int,"p_ids":p_ids,"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
                 await gm.game_log_manager.log_event(gid,"gm_launch_event",details=log_d)
                 evt_n=getattr(created_evt,'name',tpl_name_log)
                 await interaction.followup.send(f"**Мастер:** Событие '{evt_n}' (ID:{created_evt.id}) запущено из '{template_id}'.",ephemeral=True)
-            else: await interaction.followup.send(f"**Мастер:** Ошибка запуска '{template_id}'.",ephemeral=True)
+            else: await interaction.followup.send(f"**Мастер:** Ошибка запуска '{template_id}'. Метод create_event_from_template вернул None.",ephemeral=True)
         except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка: {e}",ephemeral=True)
 
     @app_commands.command(name="master_set_rule", description="ГМ: Установить значение для правила игры.")
     @app_commands.describe(rule_key="Путь к правилу (e.g., economy_rules.multiplier).",value_json="JSON значение.")
+    @is_master_role()
     async def cmd_master_set_rule(self, interaction: Interaction, rule_key: str, value_json: str):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.",ephemeral=True); return
         await interaction.response.defer(ephemeral=True,thinking=True)
         gid,gm,db=str(interaction.guild_id),self.bot.game_manager,self.bot.db_service
         if not db or not db.adapter: await interaction.followup.send("**Мастер:** DBService недоступен.",ephemeral=True); return
         if not gm or not gm.game_log_manager: await interaction.followup.send("**Мастер:** GameLogManager недоступен.",ephemeral=True); return
-        from bot.api.schemas.rule_config_schemas import RuleConfigData
         try:
-            row=await db.adapter.fetchone("SELECT config_data FROM rules_config WHERE guild_id=$1",(gid,)); cfg_dict:Dict[str,Any]; new_cfg=False
-            if row and row['config_data']: cfg_dict=row['config_data'] if isinstance(row['config_data'],dict) else json.loads(str(row['config_data']))
-            else: new_cfg=True; cfg_dict=RuleConfigData().model_dump()
-            try: new_val=json.loads(value_json)
+            if hasattr(gm, 'rule_engine') and hasattr(gm.rule_engine, 'get_raw_rules_config_dict_for_guild'):
+                cfg_dict = await gm.rule_engine.get_raw_rules_config_dict_for_guild(gid)
+                new_cfg = False
+                if not cfg_dict:
+                    if hasattr(gm.rule_engine, 'get_default_rules_config_data_model'):
+                         cfg_dict = gm.rule_engine.get_default_rules_config_data_model().model_dump()
+                         new_cfg = True
+                    else:
+                        from bot.api.schemas.rule_config_schemas import RuleConfigData
+                        cfg_dict = RuleConfigData().model_dump()
+                        new_cfg = True
+            else:
+                row=await db.adapter.fetchone("SELECT config_data FROM rules_config WHERE guild_id=$1",(gid,)); cfg_dict:Dict[str,Any]; new_cfg=False
+                if row and row['config_data']: cfg_dict=row['config_data'] if isinstance(row['config_data'],dict) else json.loads(str(row['config_data']))
+                else:
+                    from bot.api.schemas.rule_config_schemas import RuleConfigData
+                    new_cfg=True; cfg_dict=RuleConfigData().model_dump()
+            try: new_val_parsed=json.loads(value_json)
             except json.JSONDecodeError: await interaction.followup.send(f"**Мастер:** Ошибка JSON: `{value_json}`.",ephemeral=True); return
             keys,curr_lvl,orig_val=rule_key.split('.'),cfg_dict,None
             for i,k_part in enumerate(keys[:-1]):
-                if not isinstance(curr_lvl,dict) or k_part not in curr_lvl: await interaction.followup.send(f"**Мастер:** Неверный путь '{rule_key}', '{k_part}' не найден/не словарь.",ephemeral=True); return
+                if not isinstance(curr_lvl,dict) or k_part not in curr_lvl:
+                    await interaction.followup.send(f"**Мастер:** Неверный путь '{rule_key}', ключ '{k_part}' не найден или не является словарем.",ephemeral=True); return
                 curr_lvl=curr_lvl[k_part]
             f_key=keys[-1]
-            if not isinstance(curr_lvl,dict): await interaction.followup.send(f"**Мастер:** Неверный путь '{rule_key}', '{keys[-2] if len(keys)>1 else '<корень>'}' не словарь для '{f_key}'.",ephemeral=True); return
-            proc_val=new_val
-            if f_key in curr_lvl:
+            if not isinstance(curr_lvl,dict):
+                await interaction.followup.send(f"**Мастер:** Неверный путь '{rule_key}', родительский элемент для '{f_key}' не является словарем.",ephemeral=True); return
+            processed_val_for_dict = new_val_parsed
+            if f_key in curr_lvl and curr_lvl[f_key] is not None:
                 orig_val=curr_lvl[f_key]
-                if orig_val is not None:
-                    try:
-                        tgt_type=type(orig_val)
-                        if tgt_type==bool and isinstance(new_val,str):new_val=True if new_val.lower()=='true' else (False if new_val.lower()=='false' else "INVALID_BOOL")
-                        proc_val=tgt_type(new_val)
-                    except (ValueError,TypeError) as e: await interaction.followup.send(f"**Мастер:** Ошибка типа для '{f_key}'. Ожидался {tgt_type.__name__}, получен '{value_json}'. {e}",ephemeral=True); return
-            curr_lvl[f_key]=proc_val; orig_val_str=str(orig_val) if orig_val is not None else "N/A (новый ключ)"
-            if new_cfg: await db.adapter.execute("INSERT INTO rules_config (guild_id,config_data) VALUES ($1,$2)",(gid,json.dumps(cfg_dict)))
-            else: await db.adapter.execute("UPDATE rules_config SET config_data=$1 WHERE guild_id=$2",(json.dumps(cfg_dict),gid))
+                try:
+                    target_type=type(orig_val)
+                    if target_type == bool and isinstance(new_val_parsed, str):
+                        if new_val_parsed.lower() == 'true': processed_val_for_dict = True
+                        elif new_val_parsed.lower() == 'false': processed_val_for_dict = False
+                        else: raise ValueError("Boolean string must be 'true' or 'false'")
+                    else:
+                        processed_val_for_dict = target_type(new_val_parsed)
+                except (ValueError,TypeError) as e:
+                    await interaction.followup.send(f"**Мастер:** Ошибка типа для '{f_key}'. Ожидался {target_type.__name__}, получен '{value_json}' (распарсен как {type(new_val_parsed).__name__}). Ошибка: {e}",ephemeral=True); return
+            curr_lvl[f_key]=processed_val_for_dict
+            orig_val_str=str(orig_val) if orig_val is not None else "N/A (новый ключ)"
+            if hasattr(gm, 'rule_engine') and hasattr(gm.rule_engine, 'save_rules_config_for_guild_from_dict'):
+                await gm.rule_engine.save_rules_config_for_guild_from_dict(gid, cfg_dict)
+            else:
+                if new_cfg: await db.adapter.execute("INSERT INTO rules_config (guild_id,config_data) VALUES ($1,$2)",(gid,json.dumps(cfg_dict)))
+                else: await db.adapter.execute("UPDATE rules_config SET config_data=$1 WHERE guild_id=$2",(json.dumps(cfg_dict),gid))
             if hasattr(gm,'rule_engine') and hasattr(gm.rule_engine,'load_rules_config_for_guild'):
                 try: await gm.rule_engine.load_rules_config_for_guild(gid)
-                except Exception as e_rl: print(f"Error reloading RuleEngine for {gid}: {e_rl}")
-            log_d={"gid":gid,"key":rule_key,"old":orig_val_str,"new_json":value_json,"new_val":proc_val,"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
+                except Exception as e_rl: logging.error(f"Error reloading RuleEngine for {gid} after set_rule: {e_rl}", exc_info=True)
+            log_d={"gid":gid,"key":rule_key,"old":orig_val_str,"new_json":value_json,"new_val_processed":processed_val_for_dict,"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
             await gm.game_log_manager.log_event(gid,"gm_set_rule",details=log_d)
-            await interaction.followup.send(f"**Мастер:** Правило '{rule_key}' установлено на '{value_json}'.",ephemeral=True)
-        except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка: {e}",ephemeral=True)
-
-    # --- Simulation Commands ---
-    # SimpleReportFormatter class removed from here, will be imported from bot.game.services.report_formatter
+            await interaction.followup.send(f"**Мастер:** Правило '{rule_key}' установлено на '{json.dumps(processed_val_for_dict)}' (исходный JSON: '{value_json}').",ephemeral=True)
+        except Exception as e:
+            traceback.print_exc()
+            await interaction.followup.send(f"**Мастер:** Ошибка при установке правила: {e}",ephemeral=True)
 
     @app_commands.command(name="run_simulation", description="ГМ: Запустить симуляцию (бой, квест, последствия).")
     @app_commands.choices(simulation_type=[app_commands.Choice(name="Battle",value="battle"), app_commands.Choice(name="Quest",value="quest"), app_commands.Choice(name="Action Consequence",value="action_consequence")])
     @app_commands.describe(simulation_type="Тип симуляции.", params_json="JSON параметры.")
+    @is_master_role()
     async def cmd_run_simulation(self, interaction: Interaction, simulation_type: app_commands.Choice[str], params_json: str):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.", ephemeral=True); return
         await interaction.response.defer(ephemeral=True, thinking=True); gid, gm = str(interaction.guild_id), self.bot.game_manager
         if not gm: await interaction.followup.send("**Мастер:** GameManager недоступен.", ephemeral=True); return
-
-        from bot.game.services.report_formatter import SimpleReportFormatter # Updated import
-
+        from bot.game.services.report_formatter import SimpleReportFormatter
         req_mgrs = ['character_manager','npc_manager','rule_engine','game_log_manager','item_manager','event_manager','combat_manager','relationship_manager','location_manager']
-        if simulation_type.value=="quest" and (not hasattr(gm,'quest_manager') or not gm.quest_manager): print(f"Warn: QuestManager missing for quest sim {gid}.")
-        if any(not hasattr(gm,m) or getattr(gm,m) is None for m in req_mgrs): await interaction.followup.send("**Мастер:** Один из менеджеров недоступен.", ephemeral=True); return
-
-        import uuid; from bot.game.simulation import BattleSimulator,QuestSimulator,ActionConsequenceModeler
-
+        if simulation_type.value=="quest" and (not hasattr(gm,'quest_manager') or not gm.quest_manager):
+            logging.warning(f"QuestManager missing for quest simulation in guild {gid}.")
+        if any(not hasattr(gm,m) or getattr(gm,m) is None for m in req_mgrs if not (simulation_type.value=="quest" and m=='quest_manager')):
+            await interaction.followup.send("**Мастер:** Один из необходимых менеджеров недоступен.", ephemeral=True); return
+        import uuid
+        from bot.game.simulation import BattleSimulator,QuestSimulator,ActionConsequenceModeler
         try: params = json.loads(params_json)
-        except json.JSONDecodeError: await interaction.followup.send("**Мастер:** Ошибка JSON.", ephemeral=True); return
-
-        report, fmt, rep_id, lang = None, SimpleReportFormatter(gm,gid), str(uuid.uuid4()), str(interaction.locale or "en") # Instantiation remains the same
+        except json.JSONDecodeError: await interaction.followup.send("**Мастер:** Ошибка JSON в параметрах.", ephemeral=True); return
+        report, fmt, rep_id, lang = None, SimpleReportFormatter(gm,gid), str(uuid.uuid4()), str(interaction.locale or "en")
         fmtd_report = ""
         try:
             if simulation_type.value=="battle":
@@ -524,8 +582,13 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 report=await sim.simulate_full_battle(params.get('participants_setup',[]),params.get('rules_config_override_data'),params.get('max_rounds',50))
                 fmtd_report=fmt.format_battle_report(report,lang)
             elif simulation_type.value=="quest":
-                qdefs=getattr(gm.quest_manager,'get_all_quest_definitions',lambda g:{})(gid) if hasattr(gm,'quest_manager') and gm.quest_manager else {}
-                if not qdefs and not params.get('quest_definitions_override'): await interaction.followup.send("**Мастер:** Определения квестов не найдены.",ephemeral=True); return
+                if not gm.quest_manager and not params.get('quest_definitions_override'):
+                    await interaction.followup.send("**Мастер:** QuestManager недоступен и определения квестов не предоставлены в параметрах.",ephemeral=True); return
+                qdefs = {}
+                if gm.quest_manager and hasattr(gm.quest_manager, 'get_all_quest_definitions'):
+                     qdefs = gm.quest_manager.get_all_quest_definitions(gid)
+                if not qdefs and not params.get('quest_definitions_override'):
+                    await interaction.followup.send("**Мастер:** Определения квестов не найдены (QuestManager пуст и нет override).",ephemeral=True); return
                 sim=QuestSimulator(gid,gm.character_manager,gm.event_manager,gm.rule_engine,params.get('quest_definitions_override',qdefs))
                 report=await sim.simulate_full_quest(params.get('quest_id',''),params.get('character_ids',[]),params.get('rules_config_override_data'),params.get('max_stages',20))
                 fmtd_report=fmt.format_quest_report(report,lang)
@@ -533,300 +596,293 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 sim=ActionConsequenceModeler(gid,gm.character_manager,gm.npc_manager,gm.rule_engine,gm.relationship_manager,gm.event_manager)
                 report=await sim.analyze_action_consequences(params.get('action_description',{}),params.get('actor_id',''),params.get('actor_type',''),params.get('target_id'),params.get('target_type'),params.get('rules_config_override_data'))
                 fmtd_report=fmt.format_action_consequence_report(report,lang)
-            else: await interaction.followup.send(f"**Мастер:** Неизвестный тип '{simulation_type.value}'.",ephemeral=True); return
+            else: await interaction.followup.send(f"**Мастер:** Неизвестный тип симуляции '{simulation_type.value}'.",ephemeral=True); return
             if report:
-                await gm.game_log_manager.log_event(gid,"gm_simulation_report",{"report_id":rep_id,"type":simulation_type.value,"params":params_json,"report":report})
-                msg=f"Симуляция '{simulation_type.name}' завершена. ID: `{rep_id}`\n\n{fmtd_report}"
+                await gm.game_log_manager.log_event(gid,"gm_simulation_report",{"report_id":rep_id,"type":simulation_type.value,"params_json_snapshot":params_json,"report_data":report})
+                msg=f"Симуляция '{simulation_type.name}' завершена. ID Отчета: `{rep_id}`\n\n{fmtd_report}"
                 await interaction.followup.send(msg[:1950]+("..." if len(msg)>1950 else ""),ephemeral=True)
-            else: await interaction.followup.send(f"**Мастер:** Симуляция '{simulation_type.name}' не дала данных.",ephemeral=True)
-        except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка симуляции '{simulation_type.name}': {e}",ephemeral=True)
+            else: await interaction.followup.send(f"**Мастер:** Симуляция '{simulation_type.name}' не дала результатов.",ephemeral=True)
+        except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка во время симуляции '{simulation_type.name}': {e}",ephemeral=True)
 
     @app_commands.command(name="view_simulation_report",description="ГМ: Просмотреть отчет симуляции.")
     @app_commands.describe(report_id="ID отчета.")
-    async def cmd_view_simulation_report(self, interaction: Interaction, report_id: str): # Renamed interaction to 'interaction'
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.",ephemeral=True); return
+    @is_master_role()
+    async def cmd_view_simulation_report(self, interaction: Interaction, report_id: str):
         await interaction.response.defer(ephemeral=True,thinking=True); gid,gm=str(interaction.guild_id),self.bot.game_manager
         if not gm or not gm.game_log_manager: await interaction.followup.send("**Мастер:** GameLogManager недоступен.",ephemeral=True); return
         try:
             logs=await gm.game_log_manager.get_logs_by_guild(gid,limit=500,event_type_filter="gm_simulation_report")
             entry_data:Optional[Dict[str,Any]]=None
-            for log_row in logs:
-                details=log_row.get('details'); details=json.loads(details) if isinstance(details,str) else details
-                if isinstance(details,dict) and details.get('report_id')==report_id: entry_data=details; break
-            if entry_data and 'report_data' in entry_data and 'simulation_type' in entry_data:
-                report_data,sim_type_from_log,lang=entry_data['report_data'],entry_data['simulation_type'],str(interaction.locale or "en")
-
-                from bot.game.services.report_formatter import SimpleReportFormatter # Updated import
+            for log_row_dict in logs:
+                details=log_row_dict.get('details')
+                if isinstance(details,dict) and details.get('report_id')==report_id:
+                    entry_data=details
+                    break
+            if entry_data and 'report_data' in entry_data and 'type' in entry_data:
+                report_data,sim_type_from_log,lang=entry_data['report_data'],entry_data['type'],str(interaction.locale or "en")
+                from bot.game.services.report_formatter import SimpleReportFormatter
                 fmt=SimpleReportFormatter(gm,gid)
-
                 if not isinstance(report_data, (dict, list)):
-                    try: report_data = json.loads(str(report_data))
-                    except json.JSONDecodeError: await interaction.followup.send(f"**Мастер:** Ошибка: данные отчета для ID '{report_id}' повреждены.", ephemeral=True); return
-
+                    await interaction.followup.send(f"**Мастер:** Ошибка: данные отчета для ID '{report_id}' имеют неверный формат в логе.", ephemeral=True); return
                 formatter_method_name = f"format_{sim_type_from_log}_report"
                 if hasattr(fmt, formatter_method_name):
                     formatter_method = getattr(fmt, formatter_method_name)
                     fmtd_report = formatter_method(report_data, lang)
                 else:
-                    fmtd_report = fmt.format_generic_report(report_data, lang)
-
+                    fmtd_report = fmt.format_generic_report({"content": report_data, "title": f"Generic Report for {sim_type_from_log}"}, lang)
                 msg=f"**Отчет (ID: {report_id}, Тип: {sim_type_from_log})**:\n\n{fmtd_report}"
                 await interaction.followup.send(msg[:1950]+("..." if len(msg)>1950 else ""),ephemeral=True)
-            else: await interaction.followup.send(f"**Мастер:** Отчет ID '{report_id}' не найден.",ephemeral=True)
-        except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка просмотра: {e}",ephemeral=True)
+            else: await interaction.followup.send(f"**Мастер:** Отчет ID '{report_id}' не найден или его данные повреждены в логах.",ephemeral=True)
+        except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка просмотра отчета: {e}",ephemeral=True)
 
     @app_commands.command(name="compare_reports",description="ГМ: Сравнить два отчета (концепт).")
     @app_commands.describe(report_id_1="ID первого отчета.",report_id_2="ID второго отчета.")
-    async def cmd_compare_reports(self, interaction:Interaction, report_id_1:str, report_id_2:str): # Renamed interaction
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.",ephemeral=True); return
+    @is_master_role()
+    async def cmd_compare_reports(self, interaction:Interaction, report_id_1:str, report_id_2:str):
         await interaction.response.defer(ephemeral=True,thinking=True)
         await interaction.followup.send(f"**Мастер:** Сравнение '{report_id_1}' и '{report_id_2}'. Функция в разработке.",ephemeral=True)
 
     @app_commands.command(name="master_view_npcs", description="ГМ: Просмотреть NPC (фильтр по локации).")
     @app_commands.describe(location_id_filter="Опц: ID локации.")
+    @is_master_role()
     async def cmd_master_view_npcs(self, interaction: Interaction, location_id_filter: Optional[str]=None):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.",ephemeral=True); return
         await interaction.response.defer(ephemeral=True,thinking=True)
         gid,gm,lang = str(interaction.guild_id),self.bot.game_manager,str(interaction.locale or "en")
         if not gm or not gm.npc_manager or not gm.location_manager: await interaction.followup.send("**Мастер:** NPC/Location Manager недоступен.",ephemeral=True); return
-        from bot.game.models.npc import NPC as NPCModelType # For type hint
-        npc_list: List[NPCModelType] = []; header = "" # Ensure npc_list is typed
+        from bot.game.models.npc import NPC as NPCModelType
+        npc_list: List[NPCModelType] = []
+        header_str: str
         if location_id_filter:
             loc = gm.location_manager.get_location_instance(gid, location_id_filter)
             if not loc: await interaction.followup.send(f"**Мастер:** Локация '{location_id_filter}' не найдена.",ephemeral=True); return
-            loc_name = (loc.name_i18n.get(lang,loc.name_i18n.get("en",loc.id)) if hasattr(loc,"name_i18n") and loc.name_i18n else getattr(loc,"name",loc.id))
-            header = f"**NPC в локации '{loc_name}' (`{location_id_filter}`)**:\n"
+            loc_name = (loc.name_i18n.get(lang,loc.name_i18n.get("en",loc.id)) if hasattr(loc,"name_i18n") and isinstance(loc.name_i18n, dict) else getattr(loc,"name",loc.id))
+            header_str = f"**NPC в локации '{loc_name}' (`{location_id_filter}`)**\n"
             npc_list = gm.npc_manager.get_npcs_in_location(gid, location_id_filter)
-        else: header = "**Все NPC в гильдии**:\n"; npc_list = gm.npc_manager.get_all_npcs(gid)
-        if not npc_list: await interaction.followup.send(f"**Мастер:** NPC не найдены {(f'в `{location_id_filter}`' if location_id_filter else 'в гильдии')}.",ephemeral=True); return
-        lines:List[str]=[]
-        for npc in npc_list: # npc is NPCModelType
-            npc_name = npc.name_i18n.get(lang,npc.name_i18n.get("en",npc.id)) if hasattr(npc,"name_i18n") and npc.name_i18n else getattr(npc,"name",npc.id)
+        else:
+            header_str = "**Все NPC в гильдии**\n";
+            npc_list = gm.npc_manager.get_all_npcs(gid)
+        if not npc_list:
+            await interaction.followup.send(f"**Мастер:** NPC не найдены {(f'в `{location_id_filter}`' if location_id_filter else 'в гильдии')}.",ephemeral=True); return
+        content_lines:List[str]=[]
+        for npc_item in npc_list:
+            npc_name = npc_item.name_i18n.get(lang,npc_item.name_i18n.get("en",npc_item.id)) if hasattr(npc_item,"name_i18n") and isinstance(npc_item.name_i18n, dict) else getattr(npc_item,"name",npc_item.id)
             loc_str="N/A"
-            if npc.location_id and (loc_inst:=gm.location_manager.get_location_instance(gid,npc.location_id)):
-                loc_n=(loc_inst.name_i18n.get(lang,loc_inst.name_i18n.get("en",loc_inst.id)) if hasattr(loc_inst,"name_i18n") and loc_inst.name_i18n else getattr(loc_inst,"name",loc_inst.id))
-                loc_str=f"{loc_n} (`{npc.location_id}`)"
-            elif npc.location_id: loc_str=f"Unknown (`{npc.location_id}`)"
-            lines.append(f"- ID:`{npc.id}` Имя:**{npc_name}** Лок:{loc_str} HP:{getattr(npc,'hp','N/A')}/{getattr(npc,'max_health','N/A')}")
-        msgs,cur_msg=[],header
-        for ln in lines:
-            if len(cur_msg)+len(ln)+1>1950: msgs.append(cur_msg); cur_msg="" # Start new message part without header
-            cur_msg+=("\n" if cur_msg else "")+ln
-        if cur_msg: msgs.append(cur_msg) # Add any remaining part
-        if not msgs: await interaction.followup.send("**Мастер:** Не удалось сформировать список.",ephemeral=True); return
-
-        first_message_sent = False
-        for i,part_msg in enumerate(msgs):
-            final_msg_part = part_msg
-            if i == 0 and not part_msg.startswith(header): # If header was too long and split
-                 final_msg_part = header + part_msg
-
-            page_prefix = f"(Часть {i+1}/{len(msgs)})\n" if len(msgs) > 1 else ""
-            if i == 0 : # First message, potentially with header
-                 await interaction.followup.send(f"{page_prefix if len(msgs)>1 else ''}{final_msg_part}",ephemeral=True)
-            else: # Subsequent messages
-                 await interaction.followup.send(f"{page_prefix}{final_msg_part}",ephemeral=True)
-            first_message_sent = True
-        if not first_message_sent and header.strip(): # Case where only header exists and it's short
-            await interaction.followup.send(header, ephemeral=True)
-
+            if npc_item.location_id and (loc_inst:=gm.location_manager.get_location_instance(gid,npc_item.location_id)):
+                loc_n=(loc_inst.name_i18n.get(lang,loc_inst.name_i18n.get("en",loc_inst.id)) if hasattr(loc_inst,"name_i18n") and isinstance(loc_inst.name_i18n, dict) else getattr(loc_inst,"name",loc_inst.id))
+                loc_str=f"{loc_n} (`{npc_item.location_id}`)"
+            elif npc_item.location_id: loc_str=f"Unknown (`{npc_item.location_id}`)"
+            content_lines.append(f"- ID:`{npc_item.id}` Имя:**{npc_name}** Лок:{loc_str} HP:{getattr(npc_item,'hp','N/A')}/{getattr(npc_item,'max_health','N/A')}")
+        msgs_to_send,current_msg_part=[],header_str
+        for line_item in content_lines:
+            if len(current_msg_part)+len(line_item)+1 > 1950:
+                msgs_to_send.append(current_msg_part.strip())
+                current_msg_part=line_item
+            else:
+                if not current_msg_part.endswith("\n"): current_msg_part += "\n"
+                current_msg_part+=line_item
+        if current_msg_part.strip() and (current_msg_part.strip() != header_str.strip() or not content_lines):
+             if current_msg_part.strip() != header_str.strip() or not msgs_to_send :
+                msgs_to_send.append(current_msg_part.strip())
+        if not msgs_to_send:
+            if header_str.strip(): await interaction.followup.send(header_str, ephemeral=True)
+            else: await interaction.followup.send("**Мастер:** Не удалось сформировать список NPC.",ephemeral=True)
+            return
+        for i,final_part_msg in enumerate(msgs_to_send):
+            page_prefix = f"(Часть {i+1}/{len(msgs_to_send)})\n" if len(msgs_to_send) > 1 else ""
+            await interaction.followup.send(f"{page_prefix}{final_part_msg}",ephemeral=True)
 
     @app_commands.command(name="master_view_log", description="ГМ: Просмотреть логи событий сервера.")
     @app_commands.describe(event_type_filter="Опц: Фильтр по типу события.", limit="Опц: Кол-во записей (1-200, default 50).")
+    @is_master_role()
     async def cmd_master_view_log(self, interaction: Interaction, event_type_filter: Optional[str]=None, limit:app_commands.Range[int,1,200]=50): # type: ignore
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.",ephemeral=True); return
         await interaction.response.defer(ephemeral=True,thinking=True); guild_id_str,game_mngr=str(interaction.guild_id),self.bot.game_manager
         if not game_mngr or not game_mngr.game_log_manager: await interaction.followup.send("**Мастер:** GameLogManager недоступен.",ephemeral=True); return
-        try: from bot.game.services.report_formatter import ReportFormatter
-        except ImportError: await interaction.followup.send("**Мастер:** ReportFormatter не найден.",ephemeral=True); return
-        if not all(hasattr(game_mngr,m) and getattr(game_mngr,m) for m in ['character_manager','npc_manager','item_manager']):
-            await interaction.followup.send("**Мастер:** Менеджеры для ReportFormatter недоступны.",ephemeral=True); return
+        try:
+            from bot.game.services.report_formatter import ReportFormatter
+        except ImportError:
+            await interaction.followup.send("**Мастер:** ReportFormatter не найден. Проверьте импорты.",ephemeral=True); return
+        if not all(hasattr(game_mngr,mgr_name) and getattr(game_mngr,mgr_name) for mgr_name in ['character_manager','npc_manager','item_manager']):
+            await interaction.followup.send("**Мастер:** Один из менеджеров (Character, NPC, Item) для ReportFormatter недоступен.",ephemeral=True); return
         fmt=ReportFormatter(game_mngr.character_manager,game_mngr.npc_manager,game_mngr.item_manager)
         try:
             logs=await game_mngr.game_log_manager.get_logs_by_guild(guild_id_str,limit=(limit or 50),event_type_filter=event_type_filter)
             if not logs: await interaction.followup.send(f"**Мастер:** Логи не найдены (фильтр: '{event_type_filter or 'Нет'}').",ephemeral=True); return
-            lang,lines=str(interaction.locale or "en"),[]
+            lang,log_lines=str(interaction.locale or "en"),[]
             from datetime import timezone
-            for entry in logs:
-                if 'guild_id' not in entry: entry['guild_id']=guild_id_str
-                ts = entry.get('timestamp'); ts_str = ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z") if ts else 'N/A'
-                et_str=str(entry.get('event_type','N/A'))
+            for entry_dict in logs:
+                ts = entry_dict.get('timestamp')
+                ts_str = ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z") if ts else 'N/A'
+                et_str=str(entry_dict.get('event_type','N/A'))
                 try:
-                    desc=await fmt.format_story_log_entry(entry,lang)
-                    dtls,preview=entry.get('details'),""
-                    if dtls:
-                        if isinstance(dtls,str): dtls=json.loads(dtls) if dtls.startswith('{') or dtls.startswith('[') else {}
-                        if isinstance(dtls,dict): preview=f" (...{', '.join([f'{k}: {v}' for k,v in list(dtls.items())[:2]])}...)"
-                    lines.append(f"`{ts_str}` `[{et_str}]` {desc}{preview}")
-                except Exception as e_fmt: lines.append(f"`{ts_str}` `[{et_str}]` Error log format {entry.get('id')}: {e_fmt}")
-            msgs,cur_msg= [], ""
-            hdr = f"**Игровой лог ({len(lines)} записей)**:\n"
-            for i,ln in enumerate(lines):
-                line_to_add = (hdr if i == 0 else "") + ln
-                if len(cur_msg) + len(line_to_add) + (1 if cur_msg and i > 0 else 0) > 1950:
-                    msgs.append(cur_msg)
-                    cur_msg = (hdr if i == 0 and len(msgs) > 0 else "") + ln # Start new part, add header if it's a new first part
+                    desc=await fmt.format_story_log_entry(entry_dict,lang)
+                    details_data,preview_str=entry_dict.get('details'),""
+                    if details_data:
+                        if isinstance(details_data,dict):
+                            preview_items = list(details_data.items())[:2]
+                            preview_str=f" (...{', '.join([f'{k}: {str(v)[:30]}' for k,v in preview_items])}...)"
+                    log_lines.append(f"`{ts_str}` `[{et_str}]` {desc}{preview_str}")
+                except Exception as e_fmt:
+                    log_lines.append(f"`{ts_str}` `[{et_str}]` Ошибка форматирования лога ID {entry_dict.get('id', 'N/A')}: {e_fmt}")
+            msgs_to_send_log,current_msg_part_log= [], ""
+            header_log = f"**Игровой лог ({len(log_lines)} записей)**\n"
+            current_msg_part_log = header_log
+            for i,log_line_content in enumerate(log_lines):
+                if len(current_msg_part_log) + len(log_line_content) + 1 > 1950:
+                    msgs_to_send_log.append(current_msg_part_log.strip())
+                    current_msg_part_log = log_line_content
                 else:
-                    cur_msg += ("\n" if cur_msg and not cur_msg.endswith(hdr) else "") + ln
-            if cur_msg: msgs.append(cur_msg)
-            if not msgs: await interaction.followup.send("**Мастер:** Не удалось сформировать логи.",ephemeral=True); return
-            for i,part in enumerate(msgs):
-                final_msg = f"(Часть {i+1}/{len(msgs)})\n{part}" if len(msgs) > 1 else part
-                if i==0 and not final_msg.startswith(hdr): final_msg = hdr + final_msg # Ensure first message has header
-                await interaction.followup.send(final_msg,ephemeral=True)
-        except Exception as e: traceback.print_exc(); await interaction.followup.send(f"**Мастер:** Ошибка просмотра: {e}",ephemeral=True)
+                    if not current_msg_part_log.endswith("\n"): current_msg_part_log += "\n"
+                    current_msg_part_log += log_line_content
+            if current_msg_part_log.strip() and (current_msg_part_log.strip() != header_log.strip() or not log_lines):
+                 if current_msg_part_log.strip() != header_log.strip() or not msgs_to_send_log:
+                    msgs_to_send_log.append(current_msg_part_log.strip())
+            if not msgs_to_send_log:
+                if header_log.strip() and not log_lines: await interaction.followup.send(header_log, ephemeral=True)
+                else: await interaction.followup.send("**Мастер:** Не удалось сформировать логи для отображения.",ephemeral=True)
+                return
+            for i,final_log_part in enumerate(msgs_to_send_log):
+                page_prefix_log = f"(Часть {i+1}/{len(msgs_to_send_log)})\n" if len(msgs_to_send_log) > 1 else ""
+                await interaction.followup.send(f"{page_prefix_log}{final_log_part}",ephemeral=True)
+        except Exception as e:
+            traceback.print_exc()
+            await interaction.followup.send(f"**Мастер:** Ошибка просмотра логов: {e}",ephemeral=True)
 
     @app_commands.command(name="master_view_player_stats", description="ГМ: Просмотреть статы и информацию об игроке.")
     @app_commands.describe(character_id="ID персонажа или Discord ID игрока.")
+    @is_master_role()
     async def cmd_master_view_player_stats(self, interaction: Interaction, character_id: str):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.",ephemeral=True); return
         await interaction.response.defer(ephemeral=True,thinking=True); guild_id_str,game_mngr = str(interaction.guild_id),self.bot.game_manager
         if not game_mngr or not game_mngr.character_manager or not game_mngr.location_manager: await interaction.followup.send("**Мастер:** Character/LocationManager недоступен.",ephemeral=True); return
         char = game_mngr.character_manager.get_character(guild_id_str,character_id) if not character_id.isdigit() else game_mngr.character_manager.get_character_by_discord_id(guild_id_str,int(character_id))
         if not char and character_id.isdigit(): char = game_mngr.character_manager.get_character(guild_id_str, character_id)
         if not char: await interaction.followup.send(f"**Мастер:** Персонаж '{character_id}' не найден.",ephemeral=True); return
         lang = str(interaction.locale or "en")
-        char_name = (char.name_i18n.get(lang,char.name_i18n.get("en",char.id)) if hasattr(char,"name_i18n") and char.name_i18n else getattr(char,"name",char.id))
+        char_name = (char.name_i18n.get(lang,char.name_i18n.get("en",char.id)) if hasattr(char,"name_i18n") and isinstance(char.name_i18n, dict) else getattr(char,"name",char.id))
         details=[f"**Информация о персонаже: {char_name}**", f"- ID Персонажа: `{char.id}`", f"- Discord User ID: `{char.discord_user_id}`",
-                   f"- Уровень: {char.level}", f"- Опыт: {char.experience}", f"- Непотраченный опыт: {char.unspent_xp}", # Corrected xp attribute
+                   f"- Уровень: {char.level}", f"- Опыт: {char.experience}", f"- Непотраченный опыт: {char.unspent_xp}",
                    f"- HP: {char.hp} / {char.max_health}"]
-        cl_name=char.character_class;_i18n=getattr(char,'class_i18n',{}); cl_name=_i18n.get(lang,_i18n.get("en",cl_name)) if isinstance(_i18n,dict) and _i18n else cl_name
-        details.append(f"- Класс: {cl_name or 'N/A'}"); details.append(f"- Выбранный язык: {char.selected_language}")
+        class_i18n_val = getattr(char, 'class_i18n', {})
+        cl_name = class_i18n_val.get(lang, class_i18n_val.get("en", char.character_class)) if isinstance(class_i18n_val, dict) and class_i18n_val else char.character_class
+        details.append(f"- Класс: {cl_name or 'N/A'}"); details.append(f"- Выбранный язык: {char.selected_language or 'N/A'}")
         loc_str="N/A"
-        # Corrected attribute access for location_id on char model
-        char_loc_id = getattr(char, 'location_id', None) or getattr(char, 'current_location_id', None)
+        char_loc_id = getattr(char, 'current_location_id', None)
         if char_loc_id and (loc_inst:=game_mngr.location_manager.get_location_instance(guild_id_str,char_loc_id)):
-            loc_n=(loc_inst.name_i18n.get(lang,loc_inst.name_i18n.get("en",loc_inst.id)) if hasattr(loc_inst,"name_i18n") and loc_inst.name_i18n else getattr(loc_inst,"name",loc_inst.id))
+            loc_n=(loc_inst.name_i18n.get(lang,loc_inst.name_i18n.get("en",loc_inst.id)) if hasattr(loc_inst,"name_i18n") and isinstance(loc_inst.name_i18n, dict) else getattr(loc_inst,"name",loc_inst.id))
             loc_str=f"{loc_n} (`{char_loc_id}`)"
         elif char_loc_id: loc_str=f"Unknown (`{char_loc_id}`)"
         details.append(f"- Текущая локация: {loc_str}")
-        if char.stats: details.extend(["\n**Базовые статы:**"]+[f"  - {s.replace('_',' ').capitalize()}: {v}" for s,v in char.stats.items()])
-        if eff_s:=getattr(char,'effective_stats_json',None):
+        if char.stats and isinstance(char.stats, dict):
+            details.extend(["\n**Базовые статы:**"]+[f"  - {s.replace('_',' ').capitalize()}: {v}" for s,v in char.stats.items()])
+        eff_s_json = getattr(char,'effective_stats_json',None)
+        if eff_s_json:
             try:
-                if isinstance(eff_s, str) and (eff_d:=json.loads(eff_s)): details.extend(["\n**Эффективные статы:**"]+[f"  - {s.replace('_',' ').capitalize()}: {v}" for s,v in eff_d.items()])
-                elif isinstance(eff_s, dict) and eff_s: details.extend(["\n**Эффективные статы:**"]+[f"  - {s.replace('_',' ').capitalize()}: {v}" for s,v in eff_s.items()])
+                eff_s_data = json.loads(eff_s_json) if isinstance(eff_s_json, str) else eff_s_json
+                if isinstance(eff_s_data, dict) and eff_s_data:
+                     details.extend(["\n**Эффективные статы:**"]+[f"  - {s.replace('_',' ').capitalize()}: {v}" for s,v in eff_s_data.items()])
             except json.JSONDecodeError: details.append("\n- Эффективные статы: (ошибка JSON)")
         msg="\n".join(details); await interaction.followup.send(msg[:1950]+("..." if len(msg)>1950 else ""),ephemeral=True)
 
     @app_commands.command(name="master_view_map", description="ГМ: Просмотреть карту или детали локации.")
     @app_commands.describe(location_id="Опционально: ID локации для просмотра деталей.")
+    @is_master_role()
     async def cmd_master_view_map(self, interaction: Interaction, location_id: Optional[str] = None):
-        if not await is_master_or_admin_check(interaction): await interaction.response.send_message("**Мастер:** Нет прав.", ephemeral=True); return
         await interaction.response.defer(ephemeral=True, thinking=True)
         gid, gm, lang = str(interaction.guild_id), self.bot.game_manager, str(interaction.locale or "en")
         if not gm or not all(hasattr(gm,m) and getattr(gm,m) for m in ['location_manager','npc_manager','character_manager','event_manager']):
             await interaction.followup.send("**Мастер:** Один или несколько менеджеров недоступны.", ephemeral=True); return
-
         fmt = self.SimpleReportFormatter(gm, gid)
         if location_id is None:
             all_loc_data = []
-            if hasattr(gm.location_manager, 'get_all_location_instances'): # Prefer method returning models
+            if hasattr(gm.location_manager, 'get_all_location_instances'):
                  all_loc_data = gm.location_manager.get_all_location_instances(gid)
-            elif hasattr(gm.location_manager, '_location_instances'): # Fallback for older LocationManager
+            elif hasattr(gm.location_manager, '_location_instances'):
                  all_loc_data = [gm.location_manager.get_location_instance(gid, loc_id) for loc_id in gm.location_manager._location_instances.get(gid, {}).keys()]
                  all_loc_data = [loc for loc in all_loc_data if loc]
-
-            if not all_loc_data: await interaction.followup.send("**Мастер:** Локаций не найдено.", ephemeral=True); return
-            lines = ["**Все локации в гильдии:**"]
+            if not all_loc_data:
+                await interaction.followup.send("**Мастер:** Локаций не найдено.", ephemeral=True); return
+            map_lines = ["**Все локации в гильдии:**"]
             for loc_obj in all_loc_data:
-                loc_name = getattr(loc_obj,"name_i18n",{}).get(lang, getattr(loc_obj,"name_i18n",{}).get("en", loc_obj.id)) if hasattr(loc_obj,"name_i18n") else getattr(loc_obj,"name", loc_obj.id)
-                lines.append(f"- `{loc_obj.id}`: **{loc_name}**")
-            msgs,cur_msg,hdr="",lines.pop(0)+"\n",""
-            cur_msg = hdr
-            for ln in lines:
-                if len(cur_msg)+len(ln)+1 > 1950: msgs.append(cur_msg); cur_msg = ""
-                cur_msg += ("\n" if cur_msg else "") + ln
-            if cur_msg: msgs.append(cur_msg)
-            for i,part_msg_content in enumerate(msgs): # Renamed part to avoid conflict with part variable in loop
-                prefix = f"(Часть {i+1}/{len(msgs)})\n" if len(msgs) > 1 and i > 0 else ""
-                # Determine if the current part starts with the header or if header needs to be prepended
-                message_to_send: str
-                if i == 0: # First message part
-                    if part_msg_content.startswith(hdr):
-                        message_to_send = part_msg_content
-                    else:
-                        message_to_send = hdr + part_msg_content
-                else: # Subsequent message parts
-                    message_to_send = part_msg_content
-
-                # The original logic for prepending header seems to be more about whether the part *is* the header
-                # or if the header was so long it became its own part.
-                # Let's simplify based on the loop structure:
-                # If it's the first message of potentially many, and it doesn't already include the header (e.g. header was too long)
-                # then prepend header. Otherwise, just send the part.
-                # The original construction was complex. A clearer way:
-                # Send header once, then send parts. Or ensure header is part of msgs[0].
-                # The current msgs list construction seems to handle header inclusion in msgs[0].
-
-                # Simpler logic:
-                # if i == 0: # First message always contains the header or is the header
-                #    message_to_send = part_msg_content
-                # else: # Subsequent messages are just content
-                #    message_to_send = part_msg_content
-                # The prefix for page numbering is separate.
-
-                # Sticking to a direct fix of the f-string backslash issue by reconstructing the message part by part
-                # The original logic was: if len(msgs)>1 and i>0, prefix with "(Часть X/Y)\n".
-                # Then, for the content part: {part if i==0 and part.startswith(hdr) else (hdr if i==0 else '')+part }
-                # This implies 'hdr' might be part of 'part' or not.
-
-                content_part_final: str
-                if i == 0: # First message part
-                    if part_msg_content.startswith(hdr):
-                        content_part_final = part_msg_content
-                    else: # This case implies hdr might be separate or part_msg_content is the actual first content line
-                        content_part_final = hdr + part_msg_content # Assuming hdr should always be with the first content if not already there
-                else: # Subsequent message parts
-                    content_part_final = part_msg_content # Header not prepended to subsequent parts
-
-                await interaction.followup.send(f"{prefix}{content_part_final}", ephemeral=True)
+                loc_name = getattr(loc_obj,"name_i18n",{}).get(lang, getattr(loc_obj,"name_i18n",{}).get("en", loc_obj.id)) if hasattr(loc_obj,"name_i18n") and isinstance(getattr(loc_obj,"name_i18n"),dict) else getattr(loc_obj,"name", loc_obj.id)
+                map_lines.append(f"- `{loc_obj.id}`: **{loc_name}**")
+            msgs_to_send = []
+            if not map_lines :
+                await interaction.followup.send("**Мастер:** Не удалось сформировать список локаций.", ephemeral=True); return
+            current_message_part = map_lines.pop(0)
+            if map_lines:
+                 current_message_part += "\n"
+            for line_item in map_lines:
+                if len(current_message_part) + len(line_item) + 1 > 1950:
+                    msgs_to_send.append(current_message_part.strip())
+                    current_message_part = line_item
+                else:
+                    if not current_message_part.endswith("\n"): current_message_part += "\n"
+                    current_message_part += line_item
+            if current_message_part.strip():
+                msgs_to_send.append(current_message_part.strip())
+            if not msgs_to_send:
+                 await interaction.followup.send("**Мастер:** Нечего отображать для карты.", ephemeral=True); return
+            for i, final_map_part in enumerate(msgs_to_send):
+                page_prefix_map = f"(Часть {i+1}/{len(msgs_to_send)})\n" if len(msgs_to_send) > 1 else ""
+                await interaction.followup.send(f"{page_prefix_map}{final_map_part}", ephemeral=True)
         else:
             loc = gm.location_manager.get_location_instance(gid, location_id)
             if not loc: await interaction.followup.send(f"**Мастер:** Локация `{location_id}` не найдена.", ephemeral=True); return
-            loc_name = loc.name_i18n.get(lang, loc.name_i18n.get("en", loc.id)) if hasattr(loc,"name_i18n") and loc.name_i18n else getattr(loc,"name",loc.id)
-            loc_desc = getattr(loc, "display_description", loc.descriptions_i18n.get(lang, loc.descriptions_i18n.get("en","N/A")))
+            loc_name = (loc.name_i18n.get(lang, loc.name_i18n.get("en", loc.id)) if hasattr(loc,"name_i18n") and isinstance(loc.name_i18n, dict) else getattr(loc,"name",loc.id))
+            loc_desc_i18n = getattr(loc, "descriptions_i18n", {})
+            loc_desc = loc_desc_i18n.get(lang, loc_desc_i18n.get("en","N/A")) if isinstance(loc_desc_i18n, dict) else "N/A"
             details = [f"**Детали локации: {loc_name} (`{loc.id}`)**", f"Описание: {loc_desc}"]
-            if hasattr(loc,'exits') and loc.exits and isinstance(loc.exits,dict):
-                ex_lns = ["\n**Выходы:**"] + [f"- {d.capitalize()}: {fmt._get_entity_name(str(tid.get('target_location_id') if isinstance(tid,dict) else tid), 'location', lang)}" for d,tid in loc.exits.items()]
-                details.extend(ex_lns if len(ex_lns)>1 else ["- Выходов нет."])
-            else: details.append("\n**Выходы:** Информации нет.")
-            if npcs:=gm.npc_manager.get_npcs_in_location(gid,loc.id): details.extend(["\n**NPC:**"]+[f"- {fmt._get_entity_name(n.id,'npc',lang)}" for n in npcs])
-            if chars:=gm.character_manager.get_characters_in_location(gid,loc.id): details.extend(["\n**Персонажи:**"]+[f"- {fmt._get_entity_name(c.id,'character',lang)} (Discord: <@{c.discord_user_id}>)" for c in chars])
-            if hasattr(gm, 'event_manager') and (active_evts:=gm.event_manager.get_active_events(gid)):
+            if hasattr(loc,'exits') and isinstance(loc.exits,dict) and loc.exits:
+                exit_lines = ["\n**Выходы:**"]
+                for direction, exit_target in loc.exits.items():
+                    target_id_str = ""
+                    if isinstance(exit_target, dict):
+                        target_id_str = exit_target.get("target_location_id", "Неизвестно")
+                        exit_name_override = exit_target.get("name_i18n", {}).get(lang, exit_target.get("name_i18n", {}).get("en"))
+                        if exit_name_override:
+                             exit_lines.append(f"- {direction.capitalize()}: {exit_name_override} (к `{target_id_str}`)")
+                             continue
+                    elif isinstance(exit_target, str):
+                        target_id_str = exit_target
+                    exit_loc_name = fmt._get_entity_name(target_id_str, 'location', lang) if target_id_str else "Неизвестно"
+                    exit_lines.append(f"- {direction.capitalize()}: {exit_loc_name}" + (f" (`{target_id_str}`)" if target_id_str else ""))
+                details.extend(exit_lines if len(exit_lines)>1 else ["- Выходов нет."])
+            else: details.append("\n**Выходы:** Информации нет или формат некорректен.")
+            if npcs_in_loc:=gm.npc_manager.get_npcs_in_location(gid,loc.id):
+                details.extend(["\n**NPC:**"]+[f"- {fmt._get_entity_name(n.id,'npc',lang)}" for n in npcs_in_loc])
+            if chars_in_loc:=gm.character_manager.get_characters_in_location(gid,loc.id):
+                details.extend(["\n**Персонажи:**"]+[f"- {fmt._get_entity_name(c.id,'character',lang)} (Discord: <@{c.discord_user_id}>)" for c in chars_in_loc])
+            if hasattr(gm, 'event_manager') and hasattr(gm.event_manager, 'get_active_events_for_location') :
+                active_loc_evts = gm.event_manager.get_active_events_for_location(gid, loc.id)
+                if active_loc_evts:
+                    details.extend(["\n**События в локации:**"]+[f"- {fmt._get_entity_name(evt.id,'event',lang)}" for evt in active_loc_evts])
+            elif hasattr(gm, 'event_manager') and hasattr(gm.event_manager, 'get_active_events'):
+                active_evts = gm.event_manager.get_active_events(gid)
                 loc_evts=[e for e in active_evts if (hasattr(e,'location_id') and e.location_id==loc.id) or (hasattr(e,'state_variables') and isinstance(e.state_variables,dict) and e.state_variables.get('linked_location_id')==loc.id)]
-                if loc_evts: details.extend(["\n**События:**"]+[f"- {fmt._get_entity_name(evt.id,'event',lang)}" for evt in loc_evts])
-            msg="\n".join(details); await interaction.followup.send(msg[:1950]+("..." if len(msg)>1950 else ""),ephemeral=True)
+                if loc_evts: details.extend(["\n**События (связанные):**"]+[f"- {fmt._get_entity_name(evt.id,'event',lang)}" for evt in loc_evts])
+            msg_content="\n".join(details)
+            await interaction.followup.send(msg_content[:1950]+("..." if len(msg_content)>1950 else ""),ephemeral=True)
 
-    # --- New Master AI Review Commands ---
     @master_group.command(name="review_ai", description="Просмотреть ожидающие или неудачные AI генерации.")
     @app_commands.describe(pending_id="ID конкретной записи для просмотра (необязательно).")
     @is_master_role()
     async def cmd_master_review_ai(self, interaction: Interaction, pending_id: Optional[str] = None):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild_id_str = str(interaction.guild_id)
-        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
-
+        game_mngr: "GameManager" = self.bot.game_manager
         if not game_mngr or not game_mngr.db_service:
             await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
             return
-
         if not pending_id:
-            # List recent pending/failed generations
             try:
-                # Fetch records with specific statuses, ordered by creation date
                 pending_records = await game_mngr.db_service.get_entities_by_conditions(
                     PendingGeneration,
-                    conditions={
-                        "guild_id": guild_id_str,
-                        "status": {"in_": ["pending_moderation", "failed_validation"]}
-                    },
-                    order_by=[PendingGeneration.created_at.desc()], # type: ignore
+                    conditions={ "guild_id": guild_id_str, "status": {"in_": ["pending_moderation", "failed_validation"]}},
+                    order_by=[PendingGeneration.created_at.desc()],
                     limit=10
                 )
                 if not pending_records:
                     await interaction.followup.send("Нет записей AI генераций, ожидающих модерации или с ошибками валидации.", ephemeral=True)
                     return
-
                 embed = discord.Embed(title="Ожидающие/Неудачные AI Генерации", color=discord.Color.orange())
                 for record in pending_records:
                     status_emoji = "🟠" if record.status == "pending_moderation" else "🔴"
@@ -837,67 +893,59 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                         f"**Автор:** <@{record.created_by_user_id}> (ID: {record.created_by_user_id})"
                     )
                     embed.add_field(name=f"ID: `{record.id}`", value=field_value, inline=False)
-
-                if len(embed.fields) == 0: # Should be caught by "not pending_records" but as a safeguard
+                if len(embed.fields) == 0:
                      await interaction.followup.send("Не найдено записей для отображения.", ephemeral=True)
                      return
                 await interaction.followup.send(embed=embed, ephemeral=True)
-
             except Exception as e:
                 logging.error(f"Error listing pending AI generations: {e}", exc_info=True)
                 await interaction.followup.send("Произошла ошибка при получении списка генераций.", ephemeral=True)
             return
-
-        # Display details for a specific pending_id
         try:
             record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
                 PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
             )
-
             if not record:
                 await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
                 return
-
             embed = discord.Embed(title=f"Детали AI Генерации: {record.id}", color=discord.Color.blue())
             embed.add_field(name="Guild ID", value=f"`{record.guild_id}`", inline=False)
             embed.add_field(name="Тип Запроса", value=record.request_type, inline=True)
             embed.add_field(name="Статус", value=record.status, inline=True)
             embed.add_field(name="Автор Запроса", value=f"<@{record.created_by_user_id}> (`{record.created_by_user_id}`)" if record.created_by_user_id else "N/A", inline=True)
-            embed.add_field(name="Время Создания", value=record.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if record.created_at else "N/A", inline=False)
-
+            created_at_str = record.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if hasattr(record, 'created_at') and record.created_at else "N/A"
+            embed.add_field(name="Время Создания", value=created_at_str, inline=False)
             if record.request_params_json:
                 try:
                     params_str = json.dumps(record.request_params_json, indent=2, ensure_ascii=False)
                     embed.add_field(name="Параметры Запроса", value=f"```json\n{params_str[:1000]}{'...' if len(params_str)>1000 else ''}\n```", inline=False)
                 except Exception:
                     embed.add_field(name="Параметры Запроса", value="Не удалось отобразить (ошибка форматирования).", inline=False)
-
             if record.raw_ai_output_text:
                 embed.add_field(name="Raw AI Output (сниппет)", value=f"```\n{record.raw_ai_output_text[:1000]}{'...' if len(record.raw_ai_output_text)>1000 else ''}\n```", inline=False)
-
             if record.parsed_data_json:
                 try:
                     parsed_str = json.dumps(record.parsed_data_json, indent=2, ensure_ascii=False)
                     embed.add_field(name="Обработанные Данные", value=f"```json\n{parsed_str[:1000]}{'...' if len(parsed_str)>1000 else ''}\n```", inline=False)
                 except Exception:
                      embed.add_field(name="Обработанные Данные", value="Не удалось отобразить (ошибка форматирования).", inline=False)
-
             if record.validation_issues_json:
                 try:
                     issues_str = json.dumps(record.validation_issues_json, indent=2, ensure_ascii=False)
                     embed.add_field(name="Ошибки Валидации", value=f"```json\n{issues_str[:1000]}{'...' if len(issues_str)>1000 else ''}\n```", inline=False)
                 except Exception:
                     embed.add_field(name="Ошибки Валидации", value="Не удалось отобразить (ошибка форматирования).", inline=False)
-
             if record.moderated_by_user_id:
                 embed.add_field(name="Модератор", value=f"<@{record.moderated_by_user_id}> (`{record.moderated_by_user_id}`)", inline=True)
-                embed.add_field(name="Время Модерации", value=record.moderated_at.strftime('%Y-%m-%d %H:%M:%S UTC') if record.moderated_at else "N/A", inline=True)
+                moderated_at_str = record.moderated_at.strftime('%Y-%m-%d %H:%M:%S UTC') if hasattr(record, 'moderated_at') and record.moderated_at else "N/A"
+                embed.add_field(name="Время Модерации", value=moderated_at_str, inline=True)
             if record.moderator_notes_i18n:
-                notes_str = json.dumps(record.moderator_notes_i18n, indent=2, ensure_ascii=False)
-                embed.add_field(name="Заметки Модератора", value=f"```json\n{notes_str[:1000]}{'...' if len(notes_str)>1000 else ''}\n```", inline=False)
-
+                try:
+                    notes_str = json.dumps(record.moderator_notes_i18n, indent=2, ensure_ascii=False)
+                    embed.add_field(name="Заметки Модератора", value=f"```json\n{notes_str[:1000]}{'...' if len(notes_str)>1000 else ''}\n```", inline=False)
+                except:
+                    embed.add_field(name="Заметки Модератора", value="Не удалось отобразить (ошибка форматирования).", inline=False)
             await interaction.followup.send(embed=embed, ephemeral=True)
-
         except Exception as e:
             logging.error(f"Error reviewing AI generation {pending_id}: {e}", exc_info=True)
             await interaction.followup.send(f"Произошла ошибка при просмотре записи: {e}", ephemeral=True)
@@ -908,12 +956,11 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
     async def cmd_master_approve_ai(self, interaction: Interaction, pending_id: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild_id_str = str(interaction.guild_id)
-        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
-
+        game_mngr: "GameManager" = self.bot.game_manager
+        import datetime
         if not game_mngr or not game_mngr.db_service:
             await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
             return
-
         try:
             record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
                 PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
@@ -921,36 +968,28 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             if not record:
                 await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
                 return
-
             if record.status not in ["pending_moderation", "failed_validation"]:
                 await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть одобрена сейчас.", ephemeral=True)
                 return
-
             updates = {
                 "status": "approved",
                 "moderated_by_user_id": str(interaction.user.id),
                 "moderated_at": datetime.datetime.utcnow()
             }
             success = await game_mngr.db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
-
             if success:
                 logging.info(f"AI Generation {pending_id} approved by {interaction.user.id}. Attempting to apply content.")
-
                 application_success = await game_mngr.apply_approved_generation(pending_gen_id=pending_id, guild_id=guild_id_str)
-
-                # Fetch the record again to get the latest status set by apply_approved_generation
                 updated_record_after_apply: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
                     PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
                 )
-                current_status_after_apply = updated_record_after_apply.status if updated_record_after_apply else record.status # Fallback to old status if fetch fails
-
+                current_status_after_apply = updated_record_after_apply.status if updated_record_after_apply else record.status
                 if application_success:
                     await interaction.followup.send(f"✅ AI Content ID `{pending_id}` (Type: {record.request_type}) approved and successfully applied.", ephemeral=True)
                 else:
                     await interaction.followup.send(f"⚠️ AI Content ID `{pending_id}` (Type: {record.request_type}) was approved, but application failed or is pending further logic. Status: {current_status_after_apply}. Check logs or use `/master review_ai id:{pending_id}`.", ephemeral=True)
             else:
                 await interaction.followup.send(f"❌ Failed to update status for AI Content ID `{pending_id}` to 'approved'.", ephemeral=True)
-
         except Exception as e:
             logging.error(f"Error approving AI generation {pending_id}: {e}", exc_info=True)
             await interaction.followup.send(f"Произошла ошибка при одобрении записи: {e}", ephemeral=True)
@@ -961,12 +1000,11 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
     async def cmd_master_reject_ai(self, interaction: Interaction, pending_id: str, reason: Optional[str] = None):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild_id_str = str(interaction.guild_id)
-        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
-
+        game_mngr: "GameManager" = self.bot.game_manager
+        import datetime
         if not game_mngr or not game_mngr.db_service:
             await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
             return
-
         try:
             record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
                 PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
@@ -974,32 +1012,25 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             if not record:
                 await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
                 return
-
             if record.status not in ["pending_moderation", "failed_validation"]:
                 await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть отклонена сейчас.", ephemeral=True)
                 return
-
             updates: Dict[str, Any] = {
                 "status": "rejected",
                 "moderated_by_user_id": str(interaction.user.id),
                 "moderated_at": datetime.datetime.utcnow()
             }
             if reason:
-                # Store reason in a simple way, assuming 'en' or guild's main lang.
-                # A more complex system might use player's selected lang for notes.
                 main_lang = await game_mngr.get_rule(guild_id_str, "default_language", "en") or "en"
-                updates["moderator_notes_i18n"] = record.moderator_notes_i18n or {} # Ensure dict exists
-                updates["moderator_notes_i18n"]["rejection_reason"] = {main_lang: reason}
-
-
+                current_notes = record.moderator_notes_i18n if isinstance(record.moderator_notes_i18n, dict) else {}
+                current_notes["rejection_reason"] = {main_lang: reason}
+                updates["moderator_notes_i18n"] = current_notes
             success = await game_mngr.db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
-
             if success:
                 logging.info(f"AI Generation {pending_id} rejected by {interaction.user.id}. Reason: {reason or 'N/A'}")
                 await interaction.followup.send(f"🚫 AI Content ID `{pending_id}` (Type: {record.request_type}) has been rejected. Reason: {reason or 'N/A'}", ephemeral=True)
             else:
                 await interaction.followup.send(f"❌ Failed to update status for AI Content ID `{pending_id}` to 'rejected'.", ephemeral=True)
-
         except Exception as e:
             logging.error(f"Error rejecting AI generation {pending_id}: {e}", exc_info=True)
             await interaction.followup.send(f"Произошла ошибка при отклонении записи: {e}", ephemeral=True)
@@ -1013,12 +1044,11 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
     async def cmd_master_edit_ai(self, interaction: Interaction, pending_id: str, json_data: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild_id_str = str(interaction.guild_id)
-        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
-
+        game_mngr: "GameManager" = self.bot.game_manager
+        import datetime
         if not game_mngr or not game_mngr.db_service:
             await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
             return
-
         try:
             record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
                 PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
@@ -1026,74 +1056,57 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             if not record:
                 await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
                 return
-
             if record.status not in ["pending_moderation", "failed_validation"]:
                 await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть отредактирована.", ephemeral=True)
                 return
-
-            new_parsed_data: Optional[Dict[str, Any]] = None
+            new_parsed_data: Optional[Any] = None
             try:
                 new_parsed_data = json.loads(json_data)
             except json.JSONDecodeError as e:
                 await interaction.followup.send(f"Предоставленные JSON данные некорректны: {e}", ephemeral=True)
                 return
-
-            if not isinstance(new_parsed_data, dict) and not (record.request_type in ["list_of_quests", "list_of_npcs", "list_of_items"] and isinstance(new_parsed_data, list)):
-                 await interaction.followup.send(f"Отредактированные JSON данные должны быть объектом (или списком для типов list_*). Получен: {type(new_parsed_data).__name__}", ephemeral=True)
+            is_list_type = record.request_type in ["list_of_quests", "list_of_npcs", "list_of_items", "list_of_locations", "list_of_events"]
+            if is_list_type and not isinstance(new_parsed_data, list):
+                 await interaction.followup.send(f"Для типа запроса '{record.request_type}' ожидается JSON массив (list). Получен: {type(new_parsed_data).__name__}", ephemeral=True)
                  return
-
-
-            # Re-validate the edited data (which is now passed as raw string to the validator)
-            # The validator will parse it again.
+            elif not is_list_type and not isinstance(new_parsed_data, dict):
+                 await interaction.followup.send(f"Для типа запроса '{record.request_type}' ожидается JSON объект (dict). Получен: {type(new_parsed_data).__name__}", ephemeral=True)
+                 return
             validated_data_after_edit, validation_issues_after_edit = await parse_and_validate_ai_response(
-                raw_ai_output_text=json_data, # Pass the new string data
-                guild_id=guild_id_str,
-                request_type=record.request_type,
-                game_manager=game_mngr
+                raw_ai_output_text=json_data, guild_id=guild_id_str,
+                request_type=record.request_type, game_manager=game_mngr
             )
-
             updates: Dict[str, Any] = {
-                "parsed_data_json": validated_data_after_edit, # This will be the model_dump or the parsed input if pydantic failed
+                "parsed_data_json": validated_data_after_edit,
                 "validation_issues_json": validation_issues_after_edit,
                 "status": "pending_moderation" if not validation_issues_after_edit else "failed_validation",
-                "moderated_by_user_id": str(interaction.user.id), # Mark as edited by this user
+                "moderated_by_user_id": str(interaction.user.id),
                 "moderated_at": datetime.datetime.utcnow()
             }
-
-            # Add/update edit history in moderator_notes_i18n
-            notes = record.moderator_notes_i18n or {}
-            if not isinstance(notes, dict): notes = {} # Ensure notes is a dict
-            edit_history = notes.setdefault("edit_history", [])
-            if not isinstance(edit_history, list): edit_history = [] # Ensure edit_history is a list
-
+            current_notes = record.moderator_notes_i18n if isinstance(record.moderator_notes_i18n, dict) else {}
+            edit_history = current_notes.get("edit_history", [])
+            if not isinstance(edit_history, list): edit_history = []
             edit_history.append({
-                "timestamp": datetime.datetime.utcnow().isoformat(),
-                "editor_id": str(interaction.user.id),
-                "action": "edited_data",
-                "previous_status": record.status,
-                "new_status": updates["status"]
+                "timestamp": datetime.datetime.utcnow().isoformat(), "editor_id": str(interaction.user.id),
+                "action": "edited_data", "previous_status": record.status, "new_status": updates["status"]
             })
-            notes["edit_history"] = edit_history
-            updates["moderator_notes_i18n"] = notes
-
+            current_notes["edit_history"] = edit_history
+            updates["moderator_notes_i18n"] = current_notes
             success = await game_mngr.db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
-
             if success:
                 msg = f"⚙️ AI Content ID `{pending_id}` (Type: {record.request_type}) data updated. New validation status: {updates['status']}."
                 if validation_issues_after_edit:
-                    issues_summary = "; ".join([f"{issue.get('loc', 'N/A')}: {issue.get('msg', 'Unknown issue')}" for issue in validation_issues_after_edit[:3]])
+                    issues_summary = "; ".join([f"{str(issue.get('loc', 'N/A'))}: {issue.get('msg', 'Unknown issue')}" for issue in validation_issues_after_edit[:3]])
                     msg += f"\nValidation Issues (first 3): {issues_summary}"
-                    if len(validation_issues_after_edit) > 3:
-                        msg += "..."
+                    if len(validation_issues_after_edit) > 3: msg += "..."
                 logging.info(f"AI Generation {pending_id} edited by {interaction.user.id}. New status: {updates['status']}.")
                 await interaction.followup.send(msg, ephemeral=True)
             else:
                 await interaction.followup.send(f"❌ Failed to save edits for AI Content ID `{pending_id}`.", ephemeral=True)
-
         except Exception as e:
             logging.error(f"Error editing AI generation {pending_id}: {e}", exc_info=True)
             await interaction.followup.send(f"Произошла ошибка при редактировании записи: {e}", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GMAppCog(bot)) # type: ignore
-    print("GMAppCog loaded.") # Removed duplicate load
+    print("GMAppCog loaded.")
