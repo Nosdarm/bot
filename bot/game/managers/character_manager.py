@@ -14,6 +14,7 @@ from pydantic import BaseModel # Added for UpdateHealthResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.exc import IntegrityError # Added for handling DB unique constraints
 
 from bot.database.models import Player, Character, PlayerDB, CharacterDB # Added PlayerDB, CharacterDB
 from builtins import dict, set, list, int
