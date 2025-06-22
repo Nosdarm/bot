@@ -11,10 +11,15 @@ from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
 from ..base import Base
 
+# Ensure Player is imported for SQLAlchemy relationship resolution
+from .character_related import Player
+
 if TYPE_CHECKING:
-    from .character_related import Player # Assuming Player is in character_related
+    # Player is already imported above, keep other type-checking imports if needed
+    # from .character_related import Player
     # If GuildConfig is related to Player or UserSettings via relationship, it should be here too.
     # For now, GuildConfig is mostly standalone or referenced by simple FKs.
+    pass # Keep the block if other TYPE_CHECKING imports might be added later
 
 class RulesConfig(Base):
     __tablename__ = 'rules_config'
