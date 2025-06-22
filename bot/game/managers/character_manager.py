@@ -381,4 +381,184 @@ class CharacterManager:
     async def gain_xp(self, guild_id: str, character_id: str, amount: int, session: Optional[AsyncSession] = None) -> Optional[Dict[str, Any]]: return None # Placeholder
     async def update_character_stats(self, guild_id: str, character_id: str, stats_update: Dict[str, Any], session: Optional[AsyncSession] = None, **kwargs: Any) -> bool: return False
 
+    async def _create_and_activate_char_in_session(
+        self,
+        session: AsyncSession,
+        guild_id: str,
+        discord_user_id: str,
+        character_name: str,
+        player_language: Optional[str],
+        char_class_key: Optional[str], # Not used yet, for future expansion
+        race_key: Optional[str] # Not used yet, for future expansion
+    ) -> Optional[CharacterPydantic]: # Return Pydantic model
+
+        from bot.database.models import Player as PlayerDB, Character as CharacterDB
+        from bot.game.models.character import Character as CharacterPydantic
+        from bot.database.crud_utils import get_entity_by_attributes, create_entity # create_entity might not be used if we construct directly
+
+        # 1. Find or Create Player DB record
+        player_db_model = await get_entity_by_attributes(session, PlayerDB, {"discord_id": discord_user_id, "guild_id": guild_id})
+
+        if not player_db_model:
+            logger.info(f"CM: No existing PlayerDB found for {discord_user_id} in guild {guild_id}. Creating new PlayerDB.")
+            player_default_lang = player_language or await self._game_manager.get_rule(guild_id, 'default_language', 'en') # type: ignore
+
+            # Attempt to get display name; requires interaction object or pre-fetched name.
+            # For robustness, if interaction isn't passed, use a placeholder.
+            # This part of logic is better handled at command level or by passing display_name.
+            user_display_name = f"User_{discord_user_id}" # Fallback
+
+            player_data = {
+                "id": str(uuid.uuid4()),
+                "discord_id": discord_user_id,
+                "guild_id": guild_id,
+                "name_i18n": {"en": user_display_name, player_default_lang: user_display_name},
+                "selected_language": player_default_lang,
+                "is_active": True,
+            }
+            # Using create_entity, assuming it handles add & flush, and returns the instance.
+            player_db_model = await create_entity(session, PlayerDB, player_data, guild_id=guild_id)
+            if not player_db_model:
+                logger.error(f"CM: Failed to create PlayerDB for {discord_user_id} in guild {guild_id}.")
+                return None
+            logger.info(f"CM: PlayerDB {player_db_model.id} created for {discord_user_id} in guild {guild_id}.")
+            self._discord_to_player_map.setdefault(guild_id, {})[int(discord_user_id)] = player_db_model.id
+            await session.flush() # Ensure player_db_model.id is available if create_entity doesn't flush
+
+        # 2. Check if Character with the same name already exists for this player
+        # A more robust check would involve checking name_i18n if it's the source of truth
+        # For simplicity, assuming character_name is the primary name to check.
+        stmt_existing_char = select(CharacterDB).where(
+            CharacterDB.player_id == player_db_model.id,
+            CharacterDB.name_i18n[player_language or self._game_manager.get_rule(guild_id, 'default_language', 'en')].astext == character_name # type: ignore
+        )
+        result_existing_char = await session.execute(stmt_existing_char)
+        if result_existing_char.scalars().first():
+            raise CharacterAlreadyExistsError(f"Character '{character_name}' already exists for player {player_db_model.id}.")
+
+        # 3. Get default starting attributes from RuleEngine via GameManager
+        starting_location_id = await self._game_manager.get_rule(guild_id, 'starting_location_id', 'town_square') # type: ignore
+        starting_hp = float(await self._game_manager.get_rule(guild_id, 'starting_hp', 100.0)) # type: ignore
+        starting_max_hp = float(await self._game_manager.get_rule(guild_id, 'starting_max_health', 100.0)) # type: ignore
+        starting_gold = int(await self._game_manager.get_rule(guild_id, 'starting_gold', 0)) # type: ignore
+
+        char_name_i18n_map = {"en": character_name}
+        effective_lang = player_language or player_db_model.selected_language or await self._game_manager.get_rule(guild_id, 'default_language', 'en') # type: ignore
+        if effective_lang and effective_lang != "en":
+            char_name_i18n_map[effective_lang] = character_name
+
+        new_char_id = str(uuid.uuid4())
+        character_db_data = {
+            "id": new_char_id, "player_id": player_db_model.id, "guild_id": guild_id,
+            "name_i18n": char_name_i18n_map,
+            "character_class_i18n": {"en": char_class_key or "Adventurer", effective_lang: char_class_key or "Adventurer"},
+            "race_key": race_key or "human",
+            "level": 1, "xp": 0, "unspent_xp": 0, "gold": starting_gold,
+            "current_hp": starting_hp, "max_hp": starting_max_hp, "is_alive": True,
+            "current_location_id": starting_location_id,
+            "stats_json": {}, "effective_stats_json": {}, "status_effects_json": [],
+            "skills_data_json": {}, "abilities_data_json": {}, "spells_data_json": {},
+            "known_spells_json": [], "spell_cooldowns_json": {}, "inventory_json": [],
+            "equipment_slots_json": {}, "active_quests_json": [], "flags_json": {},
+            "state_variables_json": {}, "current_game_status": "active",
+            "action_queue_json": "[]", "collected_actions_json": "[]"
+        }
+        new_character_db = CharacterDB(**character_db_data)
+        session.add(new_character_db)
+        await session.flush()
+
+        player_db_model.active_character_id = new_char_id
+        flag_modified(player_db_model, "active_character_id")
+        session.add(player_db_model)
+
+        await self._recalculate_and_store_effective_stats(guild_id, new_char_id, new_character_db, session_for_db=session)
+        await session.flush() # Ensure all changes, including stats, are flushed before refresh
+        await session.refresh(new_character_db)
+        await session.refresh(player_db_model)
+
+
+        # Convert DB model to Pydantic model dictionary
+        char_dict_for_pydantic = {c.name: getattr(new_character_db, c.name) for c in CharacterDB.__table__.columns} # type: ignore
+
+        json_fields_to_parse = [ # Ensure these match CharacterPydantic expectations
+            "name_i18n", "character_class_i18n", "race_i18n", "description_i18n",
+            "stats_json", "effective_stats_json", "status_effects_json",
+            "skills_data_json", "abilities_data_json", "spells_data_json",
+            "known_spells_json", "spell_cooldowns_json", "inventory_json",
+            "equipment_slots_json", "active_quests_json", "flags_json",
+            "state_variables_json", "current_action_json", "action_queue_json",
+            "collected_actions_json"
+        ]
+
+        for field in json_fields_to_parse:
+            val = char_dict_for_pydantic.get(field)
+            if isinstance(val, str):
+                try: char_dict_for_pydantic[field] = json.loads(val)
+                except json.JSONDecodeError:
+                    logger.warning(f"CM: JSONDecodeError for field {field} on char {new_char_id}, value: {val}. Using default.")
+                    if field in ["status_effects_json", "known_spells_json", "inventory_json", "active_quests_json", "action_queue_json", "collected_actions_json", "abilities_data_json", "spells_data_json", "skills_data_json"]: # these are lists
+                        char_dict_for_pydantic[field] = []
+                    else: # these are dicts
+                        char_dict_for_pydantic[field] = {}
+            elif val is None: # Ensure JSON fields are at least empty dict/list if None from DB
+                if field in ["status_effects_json", "known_spells_json", "inventory_json", "active_quests_json", "action_queue_json", "collected_actions_json", "abilities_data_json", "spells_data_json", "skills_data_json"]:
+                    char_dict_for_pydantic[field] = []
+                else:
+                    char_dict_for_pydantic[field] = {}
+
+        # Map DB field names to Pydantic field names if they differ
+        char_dict_for_pydantic['discord_user_id'] = int(discord_user_id)
+        char_dict_for_pydantic['selected_language'] = player_language or player_db_model.selected_language
+        char_dict_for_pydantic['location_id'] = char_dict_for_pydantic.get('current_location_id')
+        char_dict_for_pydantic['party_id'] = char_dict_for_pydantic.get('current_party_id')
+        char_dict_for_pydantic['hp'] = char_dict_for_pydantic.get('current_hp', starting_hp)
+        char_dict_for_pydantic['max_health'] = char_dict_for_pydantic.get('max_hp', starting_max_hp)
+        char_dict_for_pydantic['experience'] = char_dict_for_pydantic.get('xp',0)
+        char_dict_for_pydantic['stats'] = char_dict_for_pydantic.get('stats_json', {}) # Pydantic model expects 'stats'
+        # Populate potentially missing fields expected by Pydantic model from CharacterPydantic.from_dict
+        # These are fields in Pydantic Character not directly columns in DB Character or with different names
+        char_dict_for_pydantic.setdefault('name', character_name) # Fallback if name_i18n is empty
+        char_dict_for_pydantic.setdefault('skills', {}) # Old field, ensure it exists
+        char_dict_for_pydantic.setdefault('known_abilities', []) # Old field
+        char_dict_for_pydantic.setdefault('character_class', (char_dict_for_pydantic.get('character_class_i18n') or {}).get(effective_lang))
+
+        try:
+            character_pydantic = CharacterPydantic.from_dict(char_dict_for_pydantic)
+        except Exception as pydantic_conversion_err:
+            logger.error(f"CM: Error converting CharacterDB to CharacterPydantic for char {new_char_id} using from_dict: {pydantic_conversion_err}", exc_info=True)
+            logger.error(f"Data passed to from_dict: {json.dumps(char_dict_for_pydantic, indent=2)}")
+            return None
+
+        self._characters.setdefault(guild_id, {})[new_char_id] = character_pydantic
+        self.mark_character_dirty(guild_id, new_char_id)
+
+        logger.info(f"CM: Character {new_char_id} ({character_name}) created and activated for player {player_db_model.id} (Discord: {discord_user_id}) in guild {guild_id}.")
+        return character_pydantic
+
+    async def create_and_activate_character_for_discord_user(
+        self,
+        guild_id: str,
+        discord_user_id: str,
+        character_name: str,
+        player_language: Optional[str] = None,
+        char_class_key: Optional[str] = None,
+        race_key: Optional[str] = None
+    ) -> Optional[CharacterPydantic]:
+        if not self._db_service:
+            logger.error("CM: DBService not available for character creation.")
+            return None
+
+        try:
+            # Use GuildTransaction to manage the session and transaction
+            from bot.database.guild_transaction import GuildTransaction # Ensure import
+            async with GuildTransaction(self._db_service.get_session_factory, guild_id) as session: # type: ignore
+                return await self._create_and_activate_char_in_session(
+                    session, guild_id, discord_user_id, character_name, player_language, char_class_key, race_key
+                )
+        except CharacterAlreadyExistsError:
+            # Logged inside _create_and_activate_char_in_session or by caller
+            raise
+        except Exception as e:
+            logger.error(f"CM: Outer error in create_and_activate_character_for_discord_user for {discord_user_id} in {guild_id}: {e}", exc_info=True)
+            return None
 

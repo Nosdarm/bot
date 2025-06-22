@@ -694,6 +694,38 @@ class GameManager:
         if not self.db_service: return []
         return await self.db_service.get_entities_by_conditions(table_name='players', conditions={'guild_id': str(guild_id), 'current_location_id': str(location_id)}, model_class=Player) or []
 
+    async def start_new_character_session(
+        self,
+        user_id: int, # This is discord_id
+        guild_id: str,
+        character_name: str,
+        player_language: Optional[str] = None,
+        char_class_key: Optional[str] = None,
+        race_key: Optional[str] = None
+    ) -> Optional[Character]: # Returns Pydantic model bot.game.models.character.Character
+        if not self.character_manager:
+            logger.error("GameManager: CharacterManager not available. Cannot start new character session.")
+            return None
+
+        discord_id_str = str(user_id)
+
+        try:
+            character_pydantic_model = await self.character_manager.create_and_activate_character_for_discord_user(
+                guild_id=guild_id,
+                discord_user_id=discord_id_str,
+                character_name=character_name,
+                player_language=player_language,
+                char_class_key=char_class_key,
+                race_key=race_key
+            )
+            return character_pydantic_model
+        except CharacterAlreadyExistsError:
+            logger.info(f"GameManager: CharacterAlreadyExistsError for user {discord_id_str} in guild {guild_id} when creating '{character_name}'.")
+            raise
+        except Exception as e:
+            logger.error(f"GameManager: Error in start_new_character_session for user {discord_id_str}, guild {guild_id}: {e}", exc_info=True)
+            return None
+
     async def handle_move_action(self, guild_id: str, character_id: str, target_location_identifier: str) -> bool:
         if not self.location_manager:
             logger.error("GameManager: LocationManager not available. Cannot handle move action.")
