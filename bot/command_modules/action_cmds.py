@@ -247,7 +247,7 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
         try:
             async with game_mngr.db_service.get_session() as session:
                 # Fetch the Player model instance
-                player = await get_entity_by_attributes(session, Player, {"discord_id": discord_id_str, "guild_id": guild_id_str})
+                player = await get_entity_by_attributes(session, Player, {"discord_id": discord_id_str}, guild_id_str)
 
                 if not player:
                     logger.warning(f"/end_turn: Player not found for discord_id {discord_id_str} in guild {guild_id_str}.")
