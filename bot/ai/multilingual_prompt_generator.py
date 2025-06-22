@@ -530,7 +530,11 @@ CRITICAL INSTRUCTIONS:
 
 
             # 3. Load WorldState
+<<<<<<< HEAD
             world_state = await get_entity_by_attributes(db_session, WorldState, {"guild_id": guild_id})
+=======
+            world_state = await get_entity_by_attributes(db_session, WorldState, {}, guild_id)
+>>>>>>> 2be3465c5dd3d49acbca783e65f073a1e82be621
             # If using manager's cache: world_state = game_manager.world_state_manager.get_world_state(guild_id)
 
             world_state_info = "No specific world state details available."
@@ -637,7 +641,11 @@ CRITICAL INSTRUCTIONS:
             target_languages = sorted(list(set([bot_language, "en"])))
 
             # 2. Load WorldState
+<<<<<<< HEAD
             world_state = await get_entity_by_attributes(db_session, WorldState, {"guild_id": guild_id})
+=======
+            world_state = await get_entity_by_attributes(db_session, WorldState, {}, guild_id)
+>>>>>>> 2be3465c5dd3d49acbca783e65f073a1e82be621
             world_state_info = "No specific world state details available."
             if world_state:
                 current_era_native = world_state.current_era_i18n.get(bot_language, world_state.current_era_i18n.get("en", "Current era not specified"))
@@ -758,7 +766,11 @@ CRITICAL INSTRUCTIONS:
             target_languages = sorted(list(set([bot_language, "en"])))
 
             # 2. Load Contextual Data
+<<<<<<< HEAD
             world_state = await get_entity_by_attributes(db_session, WorldState, {"guild_id": guild_id})
+=======
+            world_state = await get_entity_by_attributes(db_session, WorldState, {}, guild_id)
+>>>>>>> 2be3465c5dd3d49acbca783e65f073a1e82be621
             world_state_info = "No specific world state details available."
             if world_state:
                 current_era_native = world_state.current_era_i18n.get(bot_language, world_state.current_era_i18n.get("en", "Current era not specified"))
@@ -936,7 +948,11 @@ CRITICAL INSTRUCTIONS:
             target_languages = sorted(list(set([bot_language, "en"])))
 
             # 2. Load WorldState (for custom_flags, if any)
+<<<<<<< HEAD
             world_state = await get_entity_by_attributes(db_session, WorldState, {"guild_id": guild_id})
+=======
+            world_state = await get_entity_by_attributes(db_session, WorldState, {}, guild_id)
+>>>>>>> 2be3465c5dd3d49acbca783e65f073a1e82be621
             world_flags_context_str = ""
             if world_state and world_state.custom_flags and isinstance(world_state.custom_flags, dict):
                 custom_flags_details = []
@@ -1037,7 +1053,11 @@ CRITICAL INSTRUCTIONS:
             num_npcs_to_generate = context_details.get("num_npcs_to_generate", 1)
 
             # 2. Load Contextual Data
+<<<<<<< HEAD
             world_state = await get_entity_by_attributes(db_session, WorldState, {"guild_id": guild_id})
+=======
+            world_state = await get_entity_by_attributes(db_session, WorldState, {}, guild_id)
+>>>>>>> 2be3465c5dd3d49acbca783e65f073a1e82be621
             world_state_info = "No specific world state details available."
             world_flags_context_str = ""
             if world_state:

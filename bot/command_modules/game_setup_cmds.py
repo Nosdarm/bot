@@ -137,54 +137,107 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
             return
 
         guild_id_str = str(interaction.guild_id)
-        # discord_id_str = str(interaction.user.id) # No longer needed here for direct DB ops
-        # player_display_name = interaction.user.display_name # No longer needed here
+        discord_id_str = str(interaction.user.id)
+        player_display_name = interaction.user.display_name
 
-        # Player creation/verification is now handled within GameManager/CharacterManager
+        # --- Player Creation/Verification ---
+        try:
+            async with db_service.get_session() as session:
+                # Check if Player already exists
+                existing_player_stmt = select(Player).where(Player.discord_id == discord_id_str, Player.guild_id == guild_id_str)
+                result = await session.execute(existing_player_stmt)
+                existing_player = result.scalars().first()
+
+                if not existing_player:
+                    logging.info(f"No existing Player found for {discord_id_str} in guild {guild_id_str}. Creating new Player.")
+
+                    # Determine player language and starting location
+                    # Using game_manager.get_rule which is async
+                    player_initial_language = await game_mngr.get_rule(guild_id_str, 'default_language', 'en')
+                    starting_location_id = await game_mngr.get_rule(guild_id_str, 'starting_location_id', "default_starting_location") # Placeholder if rule not set
+
+                    player_data = {
+                        "id": str(uuid.uuid4()),
+                        "discord_id": discord_id_str,
+                        "guild_id": guild_id_str,
+                        "name_i18n": {"en": player_display_name, player_initial_language: player_display_name}, # Basic i18n
+                        "current_location_id": starting_location_id,
+                        "selected_language": player_initial_language,
+                        "xp": 0,
+                        "level": 1,
+                        "unspent_xp": 0,
+                        "gold": await game_mngr.get_rule(guild_id_str, 'starting_gold', 0),
+                        "current_game_status": "active",
+                        "collected_actions_json": "[]",
+                        "hp": await game_mngr.get_rule(guild_id_str, 'starting_hp', 100.0), # Example starting HP from rules
+                        "max_health": await game_mngr.get_rule(guild_id_str, 'starting_max_health', 100.0), # Example starting max_health
+                        "is_alive": True,
+                        # current_party_id can be None initially
+                    }
+
+                    # create_entity handles add and flush. Commit is handled by the session context manager.
+                    new_player_record = await create_entity(session, Player, player_data) # guild_id not needed for create_entity per its definition
+                    await session.commit() # Commit the new Player record
+                    logging.info(f"Player record {new_player_record.id} created for {discord_id_str} in guild {guild_id_str}.")
+                else:
+                    logging.info(f"Existing Player {existing_player.id} found for {discord_id_str} in guild {guild_id_str}.")
+
+        except IntegrityError: # This might occur if Player creation is attempted twice concurrently, though select check mitigates it.
+            await session.rollback() # Rollback on integrity error during Player creation
+            logging.warning(f"IntegrityError during Player creation for {discord_id_str} in guild {guild_id_str}. May indicate concurrent attempts or race condition.", exc_info=True)
+            # Player likely exists, proceed with Character creation attempt or inform user.
+            # For this flow, we assume if IntegrityError happens, player record was just created by another concurrent request.
+            pass # Allow to proceed to character creation phase as player record should exist.
+        except Exception as e:
+            if 'session' in locals() and session.is_active: # Check if session was defined and is active
+                 await session.rollback()
+            logging.error(f"Unexpected error during Player creation/check for {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
+            await interaction.followup.send(f"An unexpected error occurred while setting up your player profile: {e}", ephemeral=True)
+            return
+
         # --- Character Creation ---
         try:
-            # Determine the language to be primarily associated with this character creation event/messages
-            # This might be different from the player's stored preferred language if they override it for this command.
-            # The CharacterManager's create_and_activate_character_for_discord_user will handle player's language preference.
-            effective_command_language = player_language or await game_mngr.get_rule(guild_id_str, 'default_language', 'en')
+            # Effective language for character messages, potentially overriding player's selected language for this command
+            effective_character_language = player_language or await game_mngr.get_rule(guild_id_str, 'default_language', 'en')
 
-            # Call the GameManager method which now encapsulates player and character creation logic
-            new_character_pydantic = await game_mngr.start_new_character_session(
-                user_id=interaction.user.id, # Pass as int
+            new_character_obj = await game_mngr.start_new_character_session(
+                user_id=interaction.user.id, # This is discord_id as int
                 guild_id=guild_id_str,
-                character_name=character_name,
-                player_language=player_language # Pass explicitly provided language for character preference
-                # char_class_key and race_key can be added as parameters if desired
+                character_name=character_name
             )
 
-            if new_character_pydantic:
-                logging.info(f"Character {new_character_pydantic.id} (Pydantic) created for user {interaction.user.id} in guild {guild_id_str}.")
+            if new_character_obj:
+                logging.info(f"Character {new_character_obj.id} created for Player {discord_id_str} in guild {guild_id_str}.")
+                # If player_language was explicitly provided for the character (distinct from Player's selected_language)
+                if player_language and hasattr(new_character_obj, 'selected_language'): # Character model might not have selected_language
+                    # This depends on whether Character model stores language or if it's purely a Player attribute.
+                    # For now, let's assume Character does not have its own 'selected_language' and Player's is used.
+                    pass # player_language preference for character might be handled inside start_new_character_session or by setting Player.selected_language
 
-                # Use the name from the returned Pydantic object, respecting its i18n logic
-                # The Pydantic Character model has a .name property that handles i18n
-                char_name_display = new_character_pydantic.name
+                char_name_display = getattr(new_character_obj, 'name', character_name)
+                if hasattr(new_character_obj, 'name_i18n') and isinstance(new_character_obj.name_i18n, dict):
+                    char_name_display = new_character_obj.name_i18n.get(effective_character_language, char_name_display)
 
                 await interaction.followup.send(
                     f"Персонаж '{char_name_display}' успешно создан! "
-                    f"Язык персонажа установлен на: {new_character_pydantic.selected_language}.",
+                    f"Язык для сообщений: {effective_character_language}.", # This refers to message language, Player.selected_language is the stored preference
                     ephemeral=True
                 )
             else:
-                # This 'else' handles cases where start_new_character_session returns None
-                # (e.g., internal validation failed in CharacterManager not raising an exception caught here)
-                logging.warning(f"Character creation returned None for user {interaction.user.id} in guild {guild_id_str} via GameManager.start_new_character_session.")
+                # This 'else' handles cases where start_new_character_session returns None (e.g. other validation failed)
+                logging.warning(f"Character creation returned None for Player {discord_id_str} in guild {guild_id_str} (GameManager.start_new_character_session returned None).")
                 await interaction.followup.send(
-                    f"Не удалось создать персонажа '{character_name}'. Пожалуйста, попробуйте еще раз или свяжитесь с администратором, если проблема повторяется.",
+                    f"Не удалось создать персонажа '{character_name}'. Проверьте, возможно имя уже занято или существуют другие ограничения.",
                     ephemeral=True
                 )
         except CharacterAlreadyExistsError:
-            logging.info(f"Character already exists for user {interaction.user.id} in guild {guild_id_str} when trying to create '{character_name}'.")
+            logging.info(f"Character already exists for Player {discord_id_str} in guild {guild_id_str} when trying to create '{character_name}'.")
             await interaction.followup.send(
-                "У вас уже есть персонаж с таким именем в этой игре, или вы достигли лимита персонажей. Вы не можете создать еще одного с этим именем.",
+                "У вас уже есть персонаж в этой игре. Вы не можете создать еще одного.",
                 ephemeral=True
             )
         except Exception as e:
-            logging.error(f"Unexpected error during /start_new_character for {interaction.user.id} in guild {guild_id_str}: {e}", exc_info=True)
+            logging.error(f"Unexpected error during Character creation for {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
             await interaction.followup.send(
                 f"Произошла непредвиденная ошибка при создании персонажа: {e}",
                 ephemeral=True

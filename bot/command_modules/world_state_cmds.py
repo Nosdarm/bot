@@ -60,7 +60,7 @@ class WorldStateCmdsCog(commands.Cog, name="Master WorldState"):
 
         async with db_service.get_session() as session:
             try:
-                world_state = await get_entity_by_attributes(session, WorldState, {"guild_id": guild_id})
+                world_state = await get_entity_by_attributes(session, WorldState, {}, guild_id)
 
                 if not world_state:
                     logger.info(f"{log_prefix}: No WorldState found, creating one for guild {guild_id}.")
@@ -104,7 +104,7 @@ class WorldStateCmdsCog(commands.Cog, name="Master WorldState"):
 
         async with db_service.get_session() as session:
             try:
-                world_state = await get_entity_by_attributes(session, WorldState, {"guild_id": guild_id})
+                world_state = await get_entity_by_attributes(session, WorldState, {}, guild_id)
 
                 if not world_state or world_state.custom_flags is None or cleaned_flag_name not in world_state.custom_flags:
                     logger.warning(f"{log_prefix}: World flag '{cleaned_flag_name}' not found or no flags set.")
@@ -141,7 +141,7 @@ class WorldStateCmdsCog(commands.Cog, name="Master WorldState"):
 
         async with db_service.get_session() as session:
             try:
-                world_state = await get_entity_by_attributes(session, WorldState, {"guild_id": guild_id})
+                world_state = await get_entity_by_attributes(session, WorldState, {}, guild_id)
 
                 if not world_state or not world_state.custom_flags:
                     logger.info(f"{log_prefix}: No custom world flags are set for this guild.")
