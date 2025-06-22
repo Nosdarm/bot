@@ -400,100 +400,165 @@ class CharacterManager:
         discord_id_str = str(user_id)
 
         manage_session = session is None
-        db_op_session: Optional[AsyncSession] = None # This will hold the session instance for DB operations
+        # This variable will hold the actual session object to be used for DB operations.
+        active_db_session: AsyncSession
 
-        outer_session_cm = None
+        new_char_orm_instance: Optional[Character] = None
+
         if manage_session:
-            outer_session_cm = self._db_service.get_session() # type: ignore
-            db_op_session = await outer_session_cm.__aenter__()
-        else:
-            db_op_session = session # Use the provided session directly
+            # DBService.get_session() is an async context manager.
+            # We enter it, and it yields the actual session instance.
+            # This outer context manager should handle the overall transaction commit/rollback.
+            async with self._db_service.get_session() as session_instance: # type: ignore
+                active_db_session = session_instance
+                # All operations within this block use active_db_session.
+                # No explicit .begin() here, assuming the get_session() context manager handles it.
+                try:
+                    from bot.database.crud_utils import get_entity_by_attributes
+                    player_record = await get_entity_by_attributes(active_db_session, Player, {"discord_id": discord_id_str}, guild_id=guild_id_str)
 
-        if not db_op_session: # Should not happen if logic above is correct
-            logger.error("CM.create_new_character: Failed to acquire a database session.")
-            return None
+                    if not player_record:
+                        logger.error(f"CM.create_new_character: Player record not found for Discord ID {discord_id_str} in guild {guild_id_str}. Character creation aborted.")
+                        return None
 
-        new_char_orm_instance: Optional[Character] = None # To store created char for caching outside transaction if managed
+                    if player_record.active_character_id:
+                        existing_char_check = await active_db_session.get(Character, player_record.active_character_id)
+                        if existing_char_check and str(existing_char_check.guild_id) == guild_id_str:
+                            logger.info(f"CM.create_new_character: Player {player_record.id} (Discord: {discord_id_str}) already has an active character {player_record.active_character_id}.")
+                            raise CharacterAlreadyExistsError(f"Player already has an active character.")
+                        else:
+                            logger.warning(f"CM.create_new_character: Player {player_record.id} had an invalid active_character_id {player_record.active_character_id}. Clearing.")
+                            player_record.active_character_id = None
+                            flag_modified(player_record, "active_character_id")
 
-        try:
-            transaction_cm = db_op_session.begin() if manage_session else db_op_session.begin_nested() # type: ignore
-            async with transaction_cm:
-                # 1. Retrieve the Player object
-                from bot.database.crud_utils import get_entity_by_attributes
-                player_record = await get_entity_by_attributes(db_op_session, Player, {"discord_id": discord_id_str}, guild_id=guild_id_str)
+                    new_character_id = str(uuid.uuid4())
+                    default_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.hp", 100.0)
+                    default_max_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.max_hp", 100.0)
+                    default_location_id = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
 
-                if not player_record:
-                    logger.error(f"CM.create_new_character: Player record not found for Discord ID {discord_id_str} in guild {guild_id_str}. Character creation aborted.")
-                    return None
+                    starting_location = await self._location_manager.get_location_by_id(guild_id_str, default_location_id, session=active_db_session)
+                    if not starting_location:
+                        logger.error(f"CM.create_new_character: Default starting location '{default_location_id}' not found for guild {guild_id_str}. Character might have invalid location.")
 
-                if player_record.active_character_id:
-                    existing_char_check = await db_op_session.get(Character, player_record.active_character_id)
-                    if existing_char_check and str(existing_char_check.guild_id) == guild_id_str:
-                        logger.info(f"CM.create_new_character: Player {player_record.id} (Discord: {discord_id_str}) already has an active character {player_record.active_character_id}.")
-                        raise CharacterAlreadyExistsError(f"Player already has an active character.")
-                    else:
-                        logger.warning(f"CM.create_new_character: Player {player_record.id} had an invalid active_character_id {player_record.active_character_id}. Clearing.")
-                        player_record.active_character_id = None
-                        flag_modified(player_record, "active_character_id")
+                    character_data = {
+                        "id": new_character_id, "player_id": player_record.id, "guild_id": guild_id_str,
+                        "name_i18n": {language: character_name, "en": character_name},
+                        "description_i18n": {"en": "A new adventurer.", language: "Новый искатель приключений."},
+                        "current_hp": float(default_hp), "max_hp": float(default_max_hp),
+                        "current_mp": 0.0, "max_mp": 0.0, "level": 1, "xp": 0, "unspent_xp": 0,
+                        "gold": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.gold", 10),
+                        "base_stats_json": json.dumps(await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})),
+                        "skills_json": "{}", "inventory_json": "[]", "equipment_json": "{}",
+                        "status_effects_json": "[]", "current_location_id": default_location_id if starting_location else None,
+                        "action_queue_json": "[]", "current_action_json": None, "is_alive": True, "party_id": None,
+                        "effective_stats_json": "{}", "abilities_json": "[]", "spellbook_json": "[]",
+                        "race": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.race", "human"),
+                        "char_class": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.char_class", "adventurer"),
+                        "appearance_json": json.dumps({"description": "An ordinary looking individual."}),
+                        "backstory_json": json.dumps({"summary": "A mysterious past."}),
+                        "personality_json": json.dumps({"traits": ["brave"]}),
+                        "relationships_json": "{}", "quests_json": "[]", "flags_json": "{}"
+                    }
 
-                new_character_id = str(uuid.uuid4())
-                default_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.hp", 100.0)
-                default_max_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.max_hp", 100.0)
-                default_location_id = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
+                    new_char_orm = Character(**character_data)
+                    await self._recalculate_and_store_effective_stats(guild_id_str, new_char_orm.id, new_char_orm, session_for_db=active_db_session)
+                    active_db_session.add(new_char_orm)
 
-                starting_location = await self._location_manager.get_location_by_id(guild_id_str, default_location_id, session=db_op_session)
-                if not starting_location:
-                    logger.error(f"CM.create_new_character: Default starting location '{default_location_id}' not found for guild {guild_id_str}. Character might have invalid location.")
+                    player_record.active_character_id = new_char_orm.id
+                    flag_modified(player_record, "active_character_id")
+                    active_db_session.add(player_record)
 
-                character_data = {
-                    "id": new_character_id, "player_id": player_record.id, "guild_id": guild_id_str,
-                    "name_i18n": {language: character_name, "en": character_name},
-                    "description_i18n": {"en": "A new adventurer.", language: "Новый искатель приключений."},
-                    "current_hp": float(default_hp), "max_hp": float(default_max_hp),
-                    "current_mp": 0.0, "max_mp": 0.0, "level": 1, "xp": 0, "unspent_xp": 0,
-                    "gold": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.gold", 10),
-                    "base_stats_json": json.dumps(await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})),
-                    "skills_json": "{}", "inventory_json": "[]", "equipment_json": "{}",
-                    "status_effects_json": "[]", "current_location_id": default_location_id if starting_location else None,
-                    "action_queue_json": "[]", "current_action_json": None, "is_alive": True, "party_id": None,
-                    "effective_stats_json": "{}", "abilities_json": "[]", "spellbook_json": "[]",
-                    "race": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.race", "human"),
-                    "char_class": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.char_class", "adventurer"),
-                    "appearance_json": json.dumps({"description": "An ordinary looking individual."}),
-                    "backstory_json": json.dumps({"summary": "A mysterious past."}),
-                    "personality_json": json.dumps({"traits": ["brave"]}),
-                    "relationships_json": "{}", "quests_json": "[]", "flags_json": "{}"
-                }
+                    new_char_orm_instance = new_char_orm # For caching after successful commit by context manager
 
-                new_char_orm = Character(**character_data)
-                await self._recalculate_and_store_effective_stats(guild_id_str, new_char_orm.id, new_char_orm, session_for_db=db_op_session)
-                db_op_session.add(new_char_orm)
+                except CharacterAlreadyExistsError as caee:
+                    logger.info(f"CM.create_new_character (managed session): Character already exists for Discord ID {discord_id_str} in guild {guild_id_str}.")
+                    raise caee # Let the context manager handle rollback due to exception
+                except Exception as e:
+                    logger.error(f"CM.create_new_character (managed session): Error for Discord ID {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
+                    # Let the context manager handle rollback
+                    return None # Or re-raise e if preferred
 
-                player_record.active_character_id = new_char_orm.id
-                flag_modified(player_record, "active_character_id")
-                db_op_session.add(player_record)
+        else: # manage_session is False, session was passed in
+            active_db_session = session
+            try:
+                # Assuming the passed session is already in a transaction or caller handles it.
+                # If a savepoint is desired within the caller's transaction:
+                async with active_db_session.begin_nested(): # type: ignore
+                    from bot.database.crud_utils import get_entity_by_attributes
+                    player_record = await get_entity_by_attributes(active_db_session, Player, {"discord_id": discord_id_str}, guild_id=guild_id_str)
 
-                new_char_orm_instance = new_char_orm # Store for caching after commit
+                    if not player_record:
+                        logger.error(f"CM.create_new_character (external session): Player record not found for Discord ID {discord_id_str} in guild {guild_id_str}.")
+                        return None
 
-            # If manage_session is True, the transaction_cm context manager handles commit/rollback.
-            # If session is external, the calling code handles commit/rollback of its transaction.
+                    if player_record.active_character_id:
+                        existing_char_check = await active_db_session.get(Character, player_record.active_character_id)
+                        if existing_char_check and str(existing_char_check.guild_id) == guild_id_str:
+                            raise CharacterAlreadyExistsError(f"Player already has an active character.")
+                        else:
+                            player_record.active_character_id = None
+                            flag_modified(player_record, "active_character_id")
 
-            if new_char_orm_instance: # This will be set if the transaction was successful
-                 self._characters.setdefault(guild_id_str, {})[new_char_orm_instance.id] = new_char_orm_instance
-                 self._discord_to_player_map.setdefault(guild_id_str, {})[user_id] = player_record.id # type: ignore
-                 logger.info(f"CM.create_new_character: Successfully created and cached Character {new_char_orm_instance.id} for Player {player_record.id} in guild {guild_id_str}.") # type: ignore
+                    new_character_id = str(uuid.uuid4())
+                    # ... (character_data creation as above, using active_db_session for rule/location lookups if necessary for some reason, though unlikely)
+                    default_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.hp", 100.0)
+                    default_max_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.max_hp", 100.0)
+                    default_location_id = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
+                    starting_location = await self._location_manager.get_location_by_id(guild_id_str, default_location_id, session=active_db_session)
 
-            return new_char_orm_instance
+                    character_data = {
+                        "id": new_character_id, "player_id": player_record.id, "guild_id": guild_id_str,
+                        "name_i18n": {language: character_name, "en": character_name},
+                        "description_i18n": {"en": "A new adventurer.", language: "Новый искатель приключений."},
+                        "current_hp": float(default_hp), "max_hp": float(default_max_hp), "current_mp": 0.0, "max_mp": 0.0,
+                        "level": 1, "xp": 0, "unspent_xp": 0,
+                        "gold": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.gold", 10),
+                        "base_stats_json": json.dumps(await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})),
+                        "skills_json": "{}", "inventory_json": "[]", "equipment_json": "{}", "status_effects_json": "[]",
+                        "current_location_id": default_location_id if starting_location else None,
+                        "action_queue_json": "[]", "current_action_json": None, "is_alive": True, "party_id": None,
+                        "effective_stats_json": "{}", "abilities_json": "[]", "spellbook_json": "[]",
+                        "race": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.race", "human"),
+                        "char_class": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.char_class", "adventurer"),
+                        "appearance_json": json.dumps({"description": "An ordinary looking individual."}),
+                        "backstory_json": json.dumps({"summary": "A mysterious past."}),
+                        "personality_json": json.dumps({"traits": ["brave"]}),
+                        "relationships_json": "{}", "quests_json": "[]", "flags_json": "{}"
+                    }
+                    new_char_orm = Character(**character_data)
+                    await self._recalculate_and_store_effective_stats(guild_id_str, new_char_orm.id, new_char_orm, session_for_db=active_db_session)
+                    active_db_session.add(new_char_orm)
 
-        except CharacterAlreadyExistsError as caee:
-            logger.info(f"CM.create_new_character: Attempt to create character for Discord ID {discord_id_str} in guild {guild_id_str} failed as character already exists.")
-            # Rollback is handled by transaction_cm's __aexit__ if an exception occurs
-            raise caee
-        except Exception as e:
-            logger.error(f"CM.create_new_character: Error creating character for Discord ID {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
-            # Rollback is handled by transaction_cm's __aexit__
-            return None
-        finally:
-            if manage_session and outer_session_cm:
-                await outer_session_cm.__aexit__(None, None, None)
+                    player_record.active_character_id = new_char_orm.id
+                    flag_modified(player_record, "active_character_id")
+                    active_db_session.add(player_record)
+                    new_char_orm_instance = new_char_orm
+
+            except CharacterAlreadyExistsError as caee:
+                logger.info(f"CM.create_new_character (external session): Character already exists for Discord ID {discord_id_str} in guild {guild_id_str}.")
+                raise caee # Let caller's transaction context handle rollback
+            except Exception as e:
+                logger.error(f"CM.create_new_character (external session): Error for Discord ID {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
+                # Let caller's transaction context handle rollback
+                return None # Or re-raise e
+
+        # Cache update happens after successful operation, outside explicit transaction blocks
+        if new_char_orm_instance and player_record : # Ensure player_record was fetched
+             self._characters.setdefault(guild_id_str, {})[new_char_orm_instance.id] = new_char_orm_instance
+             self._discord_to_player_map.setdefault(guild_id_str, {})[user_id] = player_record.id
+             logger.info(f"CM.create_new_character: Successfully created Character {new_char_orm_instance.id} for Player {player_record.id} in guild {guild_id_str}. Cached (pending caller's commit if session was external).")
+
+        return new_char_orm_instance
+-
+-        except CharacterAlreadyExistsError as caee:
+-            logger.info(f"CM.create_new_character: Attempt to create character for Discord ID {discord_id_str} in guild {guild_id_str} failed as character already exists.")
+-            # Rollback is handled by transaction_cm's __aexit__ if an exception occurs
+-            raise caee
+-        except Exception as e:
+-            logger.error(f"CM.create_new_character: Error creating character for Discord ID {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
+-            # Rollback is handled by transaction_cm's __aexit__
+-            return None
+-        finally:
+-            if manage_session and outer_session_cm:
+-                await outer_session_cm.__aexit__(None, None, None)
 
