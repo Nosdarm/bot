@@ -549,17 +549,3 @@ class CharacterManager:
             logger.info(f"CM.create_new_character: Successfully created and cached Character {new_char_orm_instance.id} for Player {player_record.id} in guild {guild_id_str}. Cached (pending caller's commit if session was external).") # type: ignore
         
         return new_char_orm_instance
-
-        except CharacterAlreadyExistsError as caee:
-            logger.info(f"CM.create_new_character: Attempt to create character for Discord ID {discord_id_str} in guild {guild_id_str} failed as character already exists.")
-            # Rollback is handled by transaction_cm's __aexit__ if an exception occurs
-            raise caee
-        except Exception as e:
-            logger.error(f"CM.create_new_character: Error creating character for Discord ID {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
-            # Rollback is handled by transaction_cm's __aexit__
-            return None
-        finally:
-            if manage_session and outer_session_cm:
-                await outer_session_cm.__aexit__(None, None, None)
-
-
