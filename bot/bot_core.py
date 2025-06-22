@@ -254,7 +254,8 @@ class RPGBot(commands.Bot):
             "bot.command_modules.guild_config_cmds", # Added GuildConfig commands cog
             "bot.command_modules.world_state_cmds", # Added WorldState commands cog
             "bot.command_modules.quest_cmds", # Added Quest commands cog
-            "bot.command_modules.settings_cmds" # Added Settings commands cog
+            "bot.command_modules.settings_cmds", # Added Settings commands cog
+            # "bot.command_modules.moderation_cmds" # Removed due to redundancy with gm_app_cmds.py AI moderation
         ]
         
         all_cogs_loaded_successfully = True
