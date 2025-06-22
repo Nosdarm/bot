@@ -62,7 +62,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_migrations_online() -> None:
     DATABASE_URL_ENV_VAR = "DATABASE_URL"
-    default_async_url = "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot_default"
+    default_async_url = "postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require"
 
     db_url_for_engine_str = os.getenv(DATABASE_URL_ENV_VAR)
     connect_args = {} # Initialize connect_args
