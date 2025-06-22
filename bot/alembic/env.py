@@ -33,6 +33,16 @@ if config.config_file_name is not None:
 from bot.database.models import Base # Corrected import path
 target_metadata = Base.metadata
 
+# Custom include_object function to ignore specific constraints
+def include_object(object, name, type_, reflected, compare_to):
+    if type_ == "unique_constraint" and name == "uq_guild_configs_guild_id":
+        return False
+    # Optionally, filter out the unique constraint backing the PK if it's being problematic,
+    # though typically PKs are handled well. This is a more aggressive filter.
+    # if type_ == "unique_constraint" and name is not None and name.endswith("_pkey") and object.table.name == "guild_configs":
+    #     return False
+    return True
+
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
@@ -57,6 +67,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,  # Add this line
+        compare_type=True  # Recommended when using include_object for constraints
     )
 
     with context.begin_transaction():
@@ -64,7 +76,12 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,  # Add this line
+        compare_type=True  # Recommended when using include_object for constraints
+    )
 
     with context.begin_transaction():
         context.run_migrations()
