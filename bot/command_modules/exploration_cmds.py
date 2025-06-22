@@ -331,7 +331,7 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
 
         try:
             async with game_mngr.db_service.get_session() as session:
-                player = await get_entity_by_attributes(session, Player, {"discord_id": discord_id, "guild_id": guild_id})
+                player = await get_entity_by_attributes(session, Player, {"discord_id": discord_id}, guild_id)
 
                 if not player:
                     logger.info(f"/whereami: Player not found for discord_id {discord_id} in guild {guild_id}.")
