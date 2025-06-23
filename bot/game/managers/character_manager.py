@@ -445,19 +445,39 @@ class CharacterManager:
                         "name_i18n": {language: character_name, "en": character_name},
                         "description_i18n": {"en": "A new adventurer.", language: "Новый искатель приключений."},
                         "current_hp": float(default_hp), "max_hp": float(default_max_hp),
-                        "current_mp": 0.0, "max_mp": 0.0, "level": 1, "xp": 0, "unspent_xp": 0,
+                        "mp": 0, # Model field is 'mp'
+                        "level": 1, "xp": 0, "unspent_xp": 0,
                         "gold": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.gold", 10),
-                        "base_stats_json": json.dumps(await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})),
-                        "skills_json": "{}", "inventory_json": "[]", "equipment_json": "{}", 
-                        "status_effects_json": "[]", "current_location_id": default_location_id if starting_location else None,
-                        "action_queue_json": "[]", "current_action_json": None, "is_alive": True, "party_id": None,
-                        "effective_stats_json": "{}", "abilities_json": "[]", "spellbook_json": "[]",
-                        "race": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.race", "human"),
-                        "char_class": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.char_class", "adventurer"),
-                        "appearance_json": json.dumps({"description": "An ordinary looking individual."}),
-                        "backstory_json": json.dumps({"summary": "A mysterious past."}),
-                        "personality_json": json.dumps({"traits": ["brave"]}),
-                        "relationships_json": "{}", "quests_json": "[]", "flags_json": "{}"
+                        "stats_json": json.dumps(await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})), # Renamed from base_stats_json
+                        "skills_data_json": "{}", # Renamed from skills_json
+                        "inventory_json": "[]",
+                        "equipment_slots_json": "{}", # Renamed from equipment_json
+                        "status_effects_json": "[]",
+                        "current_location_id": default_location_id if starting_location else None,
+                        "action_queue_json": "[]",
+                        "current_action_json": None,
+                        "is_alive": True,
+                        "current_party_id": None, # Renamed from party_id
+                        "effective_stats_json": "{}",
+                        "abilities_data_json": "[]", # Renamed from abilities_json
+                        "spells_data_json": "{}", # Renamed from spellbook_json (model has spells_data_json and known_spells_json)
+                        "known_spells_json": "[]", # Added for specific known spells
+                        "race_key": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.race", "human"), # Renamed from race
+                        "character_class_i18n": { # Renamed from char_class and ensuring i18n structure
+                            language: await self._rule_engine.get_rule_value(guild_id_str, f"character_creation.defaults.char_class.{language}", "Adventurer"),
+                            "en": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.char_class.en", "Adventurer")
+                        },
+                        # Consolidating other _json fields into flags_json or specific model fields
+                        "flags_json": json.dumps({
+                            "appearance": {"description": "An ordinary looking individual."}, # from appearance_json
+                            "backstory": {"summary": "A mysterious past."}, # from backstory_json
+                            "personality": {"traits": ["brave"]}, # from personality_json
+                            # relationships_json and quests_json are better handled by their specific model fields if they exist
+                            # or remain in flags if they are simple key-value pairs.
+                        }),
+                        "active_quests_json": "[]", # Model has active_quests_json
+                        "state_variables_json": "{}", # General purpose state variables
+                        # Removed: appearance_json, backstory_json, personality_json, relationships_json, quests_json as separate keys
                     }
                     
                     new_char_orm = Character(**character_data)
@@ -510,20 +530,35 @@ class CharacterManager:
                         "id": new_character_id, "player_id": player_record.id, "guild_id": guild_id_str,
                         "name_i18n": {language: character_name, "en": character_name},
                         "description_i18n": {"en": "A new adventurer.", language: "Новый искатель приключений."},
-                        "current_hp": float(default_hp), "max_hp": float(default_max_hp), "current_mp": 0.0, "max_mp": 0.0,
+                        "current_hp": float(default_hp), "max_hp": float(default_max_hp),
+                        "mp": 0, # Model field is 'mp'
                         "level": 1, "xp": 0, "unspent_xp": 0,
                         "gold": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.gold", 10),
-                        "base_stats_json": json.dumps(await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})),
-                        "skills_json": "{}", "inventory_json": "[]", "equipment_json": "{}", "status_effects_json": "[]",
+                        "stats_json": json.dumps(await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})), # Renamed from base_stats_json
+                        "skills_data_json": "{}", # Renamed from skills_json
+                        "inventory_json": "[]",
+                        "equipment_slots_json": "{}", # Renamed from equipment_json
+                        "status_effects_json": "[]",
                         "current_location_id": default_location_id if starting_location else None,
-                        "action_queue_json": "[]", "current_action_json": None, "is_alive": True, "party_id": None,
-                        "effective_stats_json": "{}", "abilities_json": "[]", "spellbook_json": "[]",
-                        "race": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.race", "human"),
-                        "char_class": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.char_class", "adventurer"),
-                        "appearance_json": json.dumps({"description": "An ordinary looking individual."}),
-                        "backstory_json": json.dumps({"summary": "A mysterious past."}),
-                        "personality_json": json.dumps({"traits": ["brave"]}),
-                        "relationships_json": "{}", "quests_json": "[]", "flags_json": "{}"
+                        "action_queue_json": "[]", "current_action_json": None, "is_alive": True,
+                        "current_party_id": None, # Renamed from party_id
+                        "effective_stats_json": "{}",
+                        "abilities_data_json": "[]", # Renamed from abilities_json
+                        "spells_data_json": "{}", # Renamed from spellbook_json
+                        "known_spells_json": "[]", # Added
+                        "race_key": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.race", "human"), # Renamed from race
+                        "character_class_i18n": { # Renamed from char_class and ensuring i18n structure
+                            language: await self._rule_engine.get_rule_value(guild_id_str, f"character_creation.defaults.char_class.{language}", "Adventurer"),
+                            "en": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.char_class.en", "Adventurer")
+                        },
+                        "flags_json": json.dumps({
+                            "appearance": {"description": "An ordinary looking individual."},
+                            "backstory": {"summary": "A mysterious past."},
+                            "personality": {"traits": ["brave"]},
+                        }),
+                        "active_quests_json": "[]",
+                        "state_variables_json": "{}"
+                        # Removed: appearance_json, backstory_json, personality_json, relationships_json, quests_json
                     }
                     new_char_orm = Character(**character_data)
                     await self._recalculate_and_store_effective_stats(guild_id_str, new_char_orm.id, new_char_orm, session_for_db=active_db_session)
