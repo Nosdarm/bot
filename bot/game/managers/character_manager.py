@@ -432,9 +432,9 @@ class CharacterManager:
                             flag_modified(player_record, "active_character_id")
                     
                     new_character_id = str(uuid.uuid4())
-                    default_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.hp", 100.0)
-                    default_max_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.max_hp", 100.0)
-                    default_location_id = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
+                    default_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.hp", 100.0)
+                    default_max_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.max_hp", 100.0)
+                    default_location_id = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
                     
                     starting_location = await self._location_manager.get_location_by_id(guild_id_str, default_location_id, session=active_db_session)
                     if not starting_location:
@@ -447,8 +447,8 @@ class CharacterManager:
                         "current_hp": float(default_hp), "max_hp": float(default_max_hp),
                         "mp": 0, # Model field is 'mp'
                         "level": 1, "xp": 0, "unspent_xp": 0,
-                        "gold": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.gold", 10),
-                        "stats_json": json.dumps(await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})), # Renamed from base_stats_json
+                        "gold": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.gold", 10),
+                        "stats_json": json.dumps(await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})), # Renamed from base_stats_json
                         "skills_data_json": "{}", # Renamed from skills_json
                         "inventory_json": "[]",
                         "equipment_slots_json": "{}", # Renamed from equipment_json
@@ -462,10 +462,10 @@ class CharacterManager:
                         "abilities_data_json": "[]", # Renamed from abilities_json
                         "spells_data_json": "{}", # Renamed from spellbook_json (model has spells_data_json and known_spells_json)
                         "known_spells_json": "[]", # Added for specific known spells
-                        "race_key": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.race", "human"), # Renamed from race
+                        "race_key": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.race", "human"), # Renamed from race
                         "character_class_i18n": { # Renamed from char_class and ensuring i18n structure
-                            language: await self._rule_engine.get_rule_value(guild_id_str, f"character_creation.defaults.char_class.{language}", "Adventurer"),
-                            "en": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.char_class.en", "Adventurer")
+                            language: await self._game_manager.get_rule(guild_id_str, f"character_creation.defaults.char_class.{language}", "Adventurer"),
+                            "en": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.char_class.en", "Adventurer")
                         },
                         # Consolidating other _json fields into flags_json or specific model fields
                         "flags_json": json.dumps({
@@ -521,9 +521,9 @@ class CharacterManager:
                     
                     new_character_id = str(uuid.uuid4())
                     # ... (character_data creation as above, using active_db_session for rule/location lookups if necessary for some reason, though unlikely)
-                    default_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.hp", 100.0)
-                    default_max_hp = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.max_hp", 100.0)
-                    default_location_id = await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
+                    default_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.hp", 100.0)
+                    default_max_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.max_hp", 100.0)
+                    default_location_id = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
                     starting_location = await self._location_manager.get_location_by_id(guild_id_str, default_location_id, session=active_db_session)
 
                     character_data = {
@@ -533,8 +533,8 @@ class CharacterManager:
                         "current_hp": float(default_hp), "max_hp": float(default_max_hp),
                         "mp": 0, # Model field is 'mp'
                         "level": 1, "xp": 0, "unspent_xp": 0,
-                        "gold": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.gold", 10),
-                        "stats_json": json.dumps(await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})), # Renamed from base_stats_json
+                        "gold": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.gold", 10),
+                        "stats_json": json.dumps(await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})), # Renamed from base_stats_json
                         "skills_data_json": "{}", # Renamed from skills_json
                         "inventory_json": "[]",
                         "equipment_slots_json": "{}", # Renamed from equipment_json
@@ -546,10 +546,10 @@ class CharacterManager:
                         "abilities_data_json": "[]", # Renamed from abilities_json
                         "spells_data_json": "{}", # Renamed from spellbook_json
                         "known_spells_json": "[]", # Added
-                        "race_key": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.race", "human"), # Renamed from race
+                        "race_key": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.race", "human"), # Renamed from race
                         "character_class_i18n": { # Renamed from char_class and ensuring i18n structure
-                            language: await self._rule_engine.get_rule_value(guild_id_str, f"character_creation.defaults.char_class.{language}", "Adventurer"),
-                            "en": await self._rule_engine.get_rule_value(guild_id_str, "character_creation.defaults.char_class.en", "Adventurer")
+                            language: await self._game_manager.get_rule(guild_id_str, f"character_creation.defaults.char_class.{language}", "Adventurer"),
+                            "en": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.char_class.en", "Adventurer")
                         },
                         "flags_json": json.dumps({
                             "appearance": {"description": "An ordinary looking individual."},
