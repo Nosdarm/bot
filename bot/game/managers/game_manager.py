@@ -11,6 +11,7 @@ import uuid
 # from alembic import command # Removed unused import
 from typing import Optional, Dict, Any, Callable, Awaitable, List, TYPE_CHECKING # Removed Set
 
+from sqlalchemy.exc import IntegrityError # <--- ADD THIS IMPORT
 from asyncpg import exceptions as asyncpg_exceptions
 # from bot.database.postgres_adapter import SQLALCHEMY_DATABASE_URL as PG_URL_FOR_ALEMBIC # Not used here
 
