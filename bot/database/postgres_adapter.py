@@ -35,66 +35,12 @@ if SQLALCHEMY_DATABASE_URL_FROM_ENV is None:
     print(f"⚠️ WARNING: Environment variable {DATABASE_URL_ENV_VAR} is not set.")
     print(f"Falling back to default database URL: {DEFAULT_SQLALCHEMY_DATABASE_URL}")
     print(f"👉 For production, please set the {DATABASE_URL_ENV_VAR} environment variable.")
-    EFFECTIVE_SQLALCHEMY_DATABASE_URL = DEFAULT_SQLALCHEMY_DATABASE_URL
+    SQLALCHEMY_DATABASE_URL = DEFAULT_SQLALCHEMY_DATABASE_URL
     _used_env_var_globally = False
 else:
     print(f"🌍 Using database URL from environment variable {DATABASE_URL_ENV_VAR}.")
-
-# Удаляем query параметры из URL, особенно sslmode, если он есть,
-# так как asyncpg и SQLAlchemy диалект предпочитают connect_args для таких настроек.
-from sqlalchemy.engine.url import make_url
-
-parsed_url = make_url(SQLALCHEMY_DATABASE_URL)
-connect_args = {}
-
-# Извлекаем sslmode из query параметров, если он там есть.
-# Предпочтительный способ задания ssl - через connect_args.
-ssl_mode_from_url = parsed_url.query.get('sslmode')
-# Создаем изменяемую копию query параметров
-query_params = dict(parsed_url.query)
-
-if ssl_mode_from_url:
-    print(f"ℹ️ Found 'sslmode={ssl_mode_from_url}' in DATABASE_URL query parameters. It will be handled via connect_args if needed.")
-    # Преобразуем sslmode в соответствующий параметр ssl для asyncpg, если это известный режим.
-    # asyncpg ожидает 'ssl' как bool, str ('prefer', 'require'), или ssl.SSLContext.
-    # Простой маппинг для самых частых случаев:
-    if ssl_mode_from_url == 'require':
-        connect_args['ssl'] = 'require'
-    elif ssl_mode_from_url == 'prefer':
-        connect_args['ssl'] = 'prefer' # или True, asyncpg разберется
-    elif ssl_mode_from_url == 'allow':
-        connect_args['ssl'] = False # или не устанавливать, если asyncpg по умолчанию 'prefer'
-    elif ssl_mode_from_url == 'disable':
-        connect_args['ssl'] = False
-    # Для 'verify-ca', 'verify-full' потребуется SSLContext, что сложнее автоматизировать из URL.
-    # Пользователю лучше будет настроить SSLContext и передать его через connect_args напрямую.
-    else:
-        print(f"⚠️ Unsupported 'sslmode={ssl_mode_from_url}' from URL. SSL will not be explicitly configured based on this mode.")
-
-    # Удаляем sslmode из нашей изменяемой копии query_params
-    if 'sslmode' in query_params:
-        del query_params['sslmode']
-
-# Обновляем URL, используя новый словарь query_params (без sslmode)
-# SQLALCHEMY_DATABASE_URL = str(parsed_url.set(query=query_params)) # Keep original for asyncpg_dsn if needed
-
-# Создаем URL специально для SQLAlchemy engine, полностью очищенный от query параметров.
-SQLALCHEMY_DATABASE_URL_FOR_ENGINE = str(parsed_url.set(query={}))
-print(f"ℹ️ Original SQLALCHEMY_DATABASE_URL (potentially with non-SSL query params): {SQLALCHEMY_DATABASE_URL}")
-print(f"ℹ️ SQLALCHEMY_DATABASE_URL_FOR_ENGINE (query params removed): {SQLALCHEMY_DATABASE_URL_FOR_ENGINE}")
-
-# Explicitly prepare all components for engine_connect_args from the initial parsed_url
-engine_connect_args = connect_args.copy() # Starts with {'ssl': 'require'} or {} if parsed from SQLALCHEMY_DATABASE_URL
-engine_connect_args.update({
-    "user": parsed_url.username,
-    "password": parsed_url.password,
-    "host": parsed_url.host,
-    "port": parsed_url.port,
-    "database": parsed_url.database
-})
-# Filter out None values, as asyncpg might not like them for some params
-engine_connect_args = {k: v for k, v in engine_connect_args.items() if v is not None}
-print(f"ℹ️ Globally prepared engine_connect_args: {engine_connect_args}")
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL_FROM_ENV
+    _used_env_var_globally = True
 
 
 class PostgresAdapter(BaseDbAdapter):
@@ -103,46 +49,21 @@ class PostgresAdapter(BaseDbAdapter):
     """
 
     def __init__(self, db_url: Optional[str] = None):
-        # db_url parameter is for explicit override.
-        # If db_url is provided, it dictates all parameters.
-        # Otherwise, global configuration (SQLALCHEMY_DATABASE_URL_FOR_ENGINE, engine_connect_args, SQLALCHEMY_DATABASE_URL) is used.
+        self._default_db_url = DEFAULT_SQLALCHEMY_DATABASE_URL
+        self._used_env_var_url: bool
 
-        current_parsed_url = parsed_url # Default to global parsed_url
-        final_engine_connect_args = engine_connect_args.copy() # Default to global engine_connect_args
-        self._db_url_for_engine = SQLALCHEMY_DATABASE_URL_FOR_ENGINE # Default
-        original_db_url_for_asyncpg_dsn = SQLALCHEMY_DATABASE_URL # Default
+        if db_url: # If a specific URL is passed, it takes precedence
+            self._db_url = db_url
+            # We can't be certain if this explicitly passed db_url originated from env or default,
+            # so we make a best guess or assume it's not the global env var for fallback purposes.
+            # For simplicity, if db_url is provided, we assume it's intentional and don't fallback.
+            self._used_env_var_url = False # Or determine based on equality if needed
+        else:
+            self._db_url = SQLALCHEMY_DATABASE_URL
+            self._used_env_var_url = _used_env_var_globally
 
-        if db_url:
-            print(f"ℹ️ Overriding global DB config with provided db_url: {db_url}")
-            current_parsed_url = make_url(db_url)
-            self._db_url_for_engine = str(current_parsed_url.set(query={}))
-            original_db_url_for_asyncpg_dsn = db_url
-
-            # Re-evaluate connect_args based on this overridden db_url
-            final_engine_connect_args = {}
-            overridden_ssl_mode = current_parsed_url.query.get('sslmode')
-            if overridden_ssl_mode:
-                if overridden_ssl_mode == 'require': final_engine_connect_args['ssl'] = 'require'
-                elif overridden_ssl_mode == 'prefer': final_engine_connect_args['ssl'] = 'prefer'
-                # Add other ssl_mode mappings if necessary
-                else: print(f"⚠️ Unsupported 'sslmode={overridden_ssl_mode}' from overridden db_url.")
-
-            final_engine_connect_args.update({
-                "user": current_parsed_url.username,
-                "password": current_parsed_url.password,
-                "host": current_parsed_url.host,
-                "port": current_parsed_url.port,
-                "database": current_parsed_url.database
-            })
-            final_engine_connect_args = {k: v for k, v in final_engine_connect_args.items() if v is not None}
-            print(f"ℹ️ Final engine_connect_args after db_url override: {final_engine_connect_args}")
-
-
-        # For asyncpg.create_pool DSN and explicit ssl param
-        # Use original_db_url_for_asyncpg_dsn (which could be the global SQLALCHEMY_DATABASE_URL or the overridden db_url)
-        # The DSN itself should be clean of query params for asyncpg.create_pool, esp. if 'ssl' is passed separately.
-        parsed_for_asyncpg_url = make_url(original_db_url_for_asyncpg_dsn)
-        self._asyncpg_url = parsed_for_asyncpg_url.set(drivername='postgresql', query={}).render_as_string(hide_password=False)
+        # Ensure the URL scheme is compatible with asyncpg if used directly
+        self._asyncpg_url = self._db_url.replace("postgresql+asyncpg://", "postgresql://")
 
         # The 'ssl' parameter for asyncpg.create_pool should come from the final derived connect_args
         self._asyncpg_ssl_param = final_engine_connect_args.get('ssl')
