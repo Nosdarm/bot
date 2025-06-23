@@ -22,6 +22,7 @@ class RulesConfig(Base):
     guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     key: Mapped[str] = mapped_column(String, nullable=False, index=True)
     value: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # Новое поле для теста
 
     # Relationships if any, e.g., to GuildConfig
     # guild_config: Mapped["GuildConfig"] = relationship(back_populates="rules_configs") # Example
