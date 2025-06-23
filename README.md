@@ -192,9 +192,15 @@ Refer to the API documentation at `/docs` (Swagger UI) or `/redoc` when the Fast
 
     Example for local development (ensure your PostgreSQL server is running and configured with these credentials):
     ```bash
+<<<<<<< HEAD
     export DATABASE_URL="postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require"
     ```
     The default URL if `DATABASE_URL` is not set is `postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require` (defined in `bot/database/postgres_adapter.py`).
+=======
+    export DATABASE_URL="postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot"
+    ```
+    The default URL if `DATABASE_URL` is not set is `postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot` (defined in `bot/database/postgres_adapter.py`).
+>>>>>>> 819a40fc95738a10ce21d7ccd5edda6e20723f70
 
 2.  **Run Database Migrations:**
     This project uses Alembic for database schema management. The migration scripts are typically located in `bot/alembic/versions/`.

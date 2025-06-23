@@ -14,4 +14,8 @@ fastapi
 uvicorn
 # For specific models, these can be installed via pip:
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz
+<<<<<<< HEAD
 #ru_core_news_sm
+=======
+#ru_core_news_sm
+>>>>>>> 819a40fc95738a10ce21d7ccd5edda6e20723f70

@@ -25,7 +25,7 @@ from bot.database.base_adapter import BaseDbAdapter
 # Example: DATABASE_URL="postgresql+asyncpg://user:password@host:port/dbname"
 
 DATABASE_URL_ENV_VAR = "DATABASE_URL"
-DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require"
+DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot"
 
 SQLALCHEMY_DATABASE_URL = os.getenv(DATABASE_URL_ENV_VAR)
 
@@ -37,6 +37,39 @@ if SQLALCHEMY_DATABASE_URL is None:
 else:
     print(f"🌍 Using database URL from environment variable {DATABASE_URL_ENV_VAR}.")
 
+# Удаляем query параметры из URL, особенно sslmode, если он есть,
+# так как asyncpg и SQLAlchemy диалект предпочитают connect_args для таких настроек.
+from sqlalchemy.engine.url import make_url
+
+parsed_url = make_url(SQLALCHEMY_DATABASE_URL)
+connect_args = {}
+
+# Извлекаем sslmode из query параметров, если он там есть, и удаляем его из URL.
+# Предпочтительный способ задания ssl - через connect_args.
+if parsed_url.query.get('sslmode'):
+    ssl_mode_from_url = parsed_url.query.pop('sslmode')
+    print(f"ℹ️ Found 'sslmode={ssl_mode_from_url}' in DATABASE_URL query parameters. It will be handled via connect_args if needed.")
+    # Преобразуем sslmode в соответствующий параметр ssl для asyncpg, если это известный режим.
+    # asyncpg ожидает 'ssl' как bool, str ('prefer', 'require'), или ssl.SSLContext.
+    # Простой маппинг для самых частых случаев:
+    if ssl_mode_from_url == 'require':
+        connect_args['ssl'] = 'require'
+    elif ssl_mode_from_url == 'prefer':
+        connect_args['ssl'] = 'prefer' # или True, asyncpg разберется
+    elif ssl_mode_from_url == 'allow':
+        connect_args['ssl'] = False # или не устанавливать, если asyncpg по умолчанию 'prefer'
+    elif ssl_mode_from_url == 'disable':
+        connect_args['ssl'] = False
+    # Для 'verify-ca', 'verify-full' потребуется SSLContext, что сложнее автоматизировать из URL.
+    # Пользователю лучше будет настроить SSLContext и передать его через connect_args напрямую.
+    else:
+        print(f"⚠️ Unsupported 'sslmode={ssl_mode_from_url}' from URL. SSL will not be explicitly configured based on this mode.")
+
+    # Обновляем URL без query параметров, которые мы обработали или хотим удалить.
+    # SQLAlchemy_DATABASE_URL = parsed_url.set(query={}) # Это создаст URL с пустым query знаком '?'
+    # Лучше собрать URL без query вообще, если он пуст
+    SQLALCHEMY_DATABASE_URL = str(parsed_url.set(query=dict(parsed_url.query))) # Сохраняем остальные query параметры, если они есть
+
 
 class PostgresAdapter(BaseDbAdapter):
     """
@@ -45,10 +78,19 @@ class PostgresAdapter(BaseDbAdapter):
 
     def __init__(self, db_url: Optional[str] = None):
         self._db_url = db_url or SQLALCHEMY_DATABASE_URL
-        # Ensure the URL scheme is compatible with asyncpg if used directly
-        self._asyncpg_url = self._db_url.replace("postgresql+asyncpg://", "postgresql://")
 
-        self._engine = create_async_engine(self._db_url, echo=False) # Set echo=True for SQL query logging
+        # Используем connect_args, которые были сформированы глобально на основе URL
+        effective_connect_args = connect_args.copy()
+
+        # Ensure the URL scheme is compatible with asyncpg if used directly for asyncpg.create_pool
+        # asyncpg_url должен быть чистым DSN без SQLAlchemy префикса и без query параметров, которые обрабатываются отдельно.
+        parsed_for_asyncpg_url = make_url(self._db_url)
+        asyncpg_dsn = parsed_for_asyncpg_url.set(drivername='postgresql', query={}).render_as_string(hide_password=False)
+        self._asyncpg_url = asyncpg_dsn # Используется для asyncpg.create_pool
+
+        print(f"🔧 SQLAlchemy engine will be created for URL: {self._db_url} with connect_args: {effective_connect_args}")
+        self._engine = create_async_engine(self._db_url, echo=False, connect_args=effective_connect_args)
+
         self._SessionLocal = sessionmaker(
             bind=self._engine,
             class_=AsyncSession, # Use AsyncSession for SQLAlchemy 2.0 async support
@@ -66,10 +108,19 @@ class PostgresAdapter(BaseDbAdapter):
             max_retries = 2
             last_retryable_exception: Optional[Union[ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError]] = None
 
+            # Получаем параметры SSL из connect_args, которые были сформированы глобально
+            # Это необходимо, так как asyncpg.create_pool не использует connect_args от SQLAlchemy engine
+            ssl_param_for_pool = connect_args.get('ssl')
+
             for attempt in range(max_retries + 1):
                 try:
+                    print(f"ℹ️ Attempting to create asyncpg pool with DSN: {self._asyncpg_url} and SSL param: {ssl_param_for_pool}")
                     # Adjust connect_min_size and connect_max_size as needed
-                    self._conn_pool = await asyncpg.create_pool(dsn=self._asyncpg_url, min_size=1, max_size=10)
+                    # Передаем ssl параметр в create_pool, если он определен
+                    if ssl_param_for_pool is not None:
+                        self._conn_pool = await asyncpg.create_pool(dsn=self._asyncpg_url, min_size=1, max_size=10, ssl=ssl_param_for_pool)
+                    else:
+                        self._conn_pool = await asyncpg.create_pool(dsn=self._asyncpg_url, min_size=1, max_size=10)
 
                     if self._conn_pool is None:
                         # This is an immediate failure, not to be retried by this loop.

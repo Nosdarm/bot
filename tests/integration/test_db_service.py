@@ -14,7 +14,7 @@ os.environ['PGPASSWORD'] = 'test123'
 async def main():
     print('Starting DBService test...')
     # SQLALCHEMY_DATABASE_URL in postgres_adapter.py is:
-    # "postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require"
+    # "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot"
     db_service = None # Initialize to None for finally block
     try:
         db_service = DBService() # Instantiation happens here
