@@ -44,10 +44,13 @@ from sqlalchemy.engine.url import make_url
 parsed_url = make_url(SQLALCHEMY_DATABASE_URL)
 connect_args = {}
 
-# Извлекаем sslmode из query параметров, если он там есть, и удаляем его из URL.
+# Извлекаем sslmode из query параметров, если он там есть.
 # Предпочтительный способ задания ssl - через connect_args.
-if parsed_url.query.get('sslmode'):
-    ssl_mode_from_url = parsed_url.query.pop('sslmode')
+ssl_mode_from_url = parsed_url.query.get('sslmode')
+# Создаем изменяемую копию query параметров
+query_params = dict(parsed_url.query)
+
+if ssl_mode_from_url:
     print(f"ℹ️ Found 'sslmode={ssl_mode_from_url}' in DATABASE_URL query parameters. It will be handled via connect_args if needed.")
     # Преобразуем sslmode в соответствующий параметр ssl для asyncpg, если это известный режим.
     # asyncpg ожидает 'ssl' как bool, str ('prefer', 'require'), или ssl.SSLContext.
@@ -65,10 +68,12 @@ if parsed_url.query.get('sslmode'):
     else:
         print(f"⚠️ Unsupported 'sslmode={ssl_mode_from_url}' from URL. SSL will not be explicitly configured based on this mode.")
 
-    # Обновляем URL без query параметров, которые мы обработали или хотим удалить.
-    # SQLAlchemy_DATABASE_URL = parsed_url.set(query={}) # Это создаст URL с пустым query знаком '?'
-    # Лучше собрать URL без query вообще, если он пуст
-    SQLALCHEMY_DATABASE_URL = str(parsed_url.set(query=dict(parsed_url.query))) # Сохраняем остальные query параметры, если они есть
+    # Удаляем sslmode из нашей изменяемой копии query_params
+    if 'sslmode' in query_params:
+        del query_params['sslmode']
+
+# Обновляем URL, используя новый словарь query_params (без sslmode)
+SQLALCHEMY_DATABASE_URL = str(parsed_url.set(query=query_params))
 
 
 class PostgresAdapter(BaseDbAdapter):
