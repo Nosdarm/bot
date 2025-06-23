@@ -503,8 +503,41 @@ async def start_bot():
     data_settings = load_settings_from_file('data/settings.json')
     settings.update(data_settings)
 
-    TOKEN = os.getenv('DISCORD_TOKEN') or settings.get('discord_token')
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY') or settings.get('openai_api_key')
+    # Check DATABASE_URL source
+    db_url_env = os.getenv('DATABASE_URL')
+    if db_url_env:
+        print("ℹ️ RPGBot Core: DATABASE_URL found in environment variables.")
+        # SQLALCHEMY_DATABASE_URL in postgres_adapter will pick this up.
+    else:
+        print("ℹ️ RPGBot Core: DATABASE_URL NOT found in environment variables. Will use fallback in postgres_adapter.")
+
+    TOKEN_FROM_ENV = os.getenv('DISCORD_TOKEN')
+    TOKEN_FROM_SETTINGS = settings.get('discord_token')
+
+    if TOKEN_FROM_ENV:
+        TOKEN = TOKEN_FROM_ENV
+        print("ℹ️ RPGBot Core: Discord token loaded from DISCORD_TOKEN environment variable.")
+    elif TOKEN_FROM_SETTINGS:
+        TOKEN = TOKEN_FROM_SETTINGS
+        print("ℹ️ RPGBot Core: Discord token loaded from settings.json.")
+    else:
+        TOKEN = None
+        print("❌ RPGBot Core: Discord token NOT FOUND in environment or settings.json.")
+
+    OPENAI_API_KEY_FROM_ENV = os.getenv('OPENAI_API_KEY')
+    OPENAI_API_KEY_FROM_SETTINGS = settings.get('openai_api_key')
+
+    if OPENAI_API_KEY_FROM_ENV:
+        OPENAI_API_KEY = OPENAI_API_KEY_FROM_ENV
+        print("ℹ️ RPGBot Core: OpenAI API Key loaded from OPENAI_API_KEY environment variable.")
+    elif OPENAI_API_KEY_FROM_SETTINGS:
+        OPENAI_API_KEY = OPENAI_API_KEY_FROM_SETTINGS
+        print("ℹ️ RPGBot Core: OpenAI API Key loaded from settings.json.")
+    else:
+        OPENAI_API_KEY = None
+        print("⚠️ RPGBot Core: OpenAI API Key NOT FOUND in environment or settings.json.")
+
+
     COMMAND_PREFIX = os.getenv('COMMAND_PREFIX') or settings.get('discord_command_prefix', '!')
 
     test_guild_ids_str = os.getenv('TEST_GUILD_IDS')

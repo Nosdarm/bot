@@ -485,6 +485,37 @@ class GameManager:
         logger.info("GameManager: AIGenerationService initialized.")
         logger.info("GameManager: AI content services initialized.")
 
+    async def _ensure_guild_configs_exist(self):
+        logger.info("GameManager: Ensuring guild configurations exist before data loading...")
+        if not self.db_service:
+            logger.error("GameManager: DBService not available. Cannot ensure guild configs.")
+            return
+
+        from bot.game.guild_initializer import initialize_new_guild
+
+        # Use a default if no active_guild_ids are set, common for initial setup
+        guild_ids_to_check = self._active_guild_ids
+        if not guild_ids_to_check:
+            # This default ID was observed in logs as problematic for FK constraints
+            # It should match the guild ID used by CampaignLoader if no specific guild is targeted by Discord events yet
+            default_id_for_setup = self._settings.get('default_guild_id_for_setup', "1364930265591320586")
+            logger.warning(f"GameManager: No active_guild_ids found. Ensuring config for default setup guild: {default_id_for_setup}")
+            guild_ids_to_check = [default_id_for_setup]
+            # Also, ensure this default ID is added to _active_guild_ids if it's going to be used for data loading
+            if default_id_for_setup not in self._active_guild_ids:
+                 self._active_guild_ids.append(default_id_for_setup)
+
+
+        for guild_id_str in guild_ids_to_check:
+            logger.info(f"GameManager: Checking/Initializing GuildConfig for guild_id: {guild_id_str}")
+            try:
+                # The get_session method on DBService is an async context manager
+                async with self.db_service.get_session() as session: # type: ignore
+                    await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
+            except Exception as e:
+                logger.error(f"GameManager: Failed to ensure/initialize GuildConfig for {guild_id_str}: {e}", exc_info=True)
+
+
     async def _load_initial_data_and_state(self):
         logger.info("GameManager: Loading initial game data and state...")
         if self.campaign_loader:
@@ -492,7 +523,7 @@ class GameManager:
                 for guild_id_str in self._active_guild_ids:
                     logger.info("GameManager: Populating game data for guild %s.", guild_id_str)
                     await self.campaign_loader.populate_all_game_data(guild_id=guild_id_str, campaign_identifier=None)
-            else: logger.warning("GameManager: No active guilds specified for data loading.")
+            else: logger.warning("GameManager: No active guilds specified for data loading during _load_initial_data_and_state.")
         if self._persistence_manager: await self._persistence_manager.load_game_state(guild_ids=self._active_guild_ids)
         logger.info("GameManager: Initial data and game state loaded.")
 
@@ -510,6 +541,7 @@ class GameManager:
             await self._initialize_dependent_managers()
             await self._initialize_processors_and_command_system()
             await self._initialize_ai_content_services()
+            await self._ensure_guild_configs_exist() # Ensure configs before loading data
             await self._load_initial_data_and_state()
             await self._start_background_tasks()
             logger.info("GameManager: Setup complete.")

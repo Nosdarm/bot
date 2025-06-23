@@ -74,7 +74,25 @@ if ssl_mode_from_url:
         del query_params['sslmode']
 
 # Обновляем URL, используя новый словарь query_params (без sslmode)
-SQLALCHEMY_DATABASE_URL = str(parsed_url.set(query=query_params))
+# SQLALCHEMY_DATABASE_URL = str(parsed_url.set(query=query_params)) # Keep original for asyncpg_dsn if needed
+
+# Создаем URL специально для SQLAlchemy engine, полностью очищенный от query параметров.
+SQLALCHEMY_DATABASE_URL_FOR_ENGINE = str(parsed_url.set(query={}))
+print(f"ℹ️ Original SQLALCHEMY_DATABASE_URL (potentially with non-SSL query params): {SQLALCHEMY_DATABASE_URL}")
+print(f"ℹ️ SQLALCHEMY_DATABASE_URL_FOR_ENGINE (query params removed): {SQLALCHEMY_DATABASE_URL_FOR_ENGINE}")
+
+# Explicitly prepare all components for engine_connect_args from the initial parsed_url
+engine_connect_args = connect_args.copy() # Starts with {'ssl': 'require'} or {} if parsed from SQLALCHEMY_DATABASE_URL
+engine_connect_args.update({
+    "user": parsed_url.username,
+    "password": parsed_url.password,
+    "host": parsed_url.host,
+    "port": parsed_url.port,
+    "database": parsed_url.database
+})
+# Filter out None values, as asyncpg might not like them for some params
+engine_connect_args = {k: v for k, v in engine_connect_args.items() if v is not None}
+print(f"ℹ️ Globally prepared engine_connect_args: {engine_connect_args}")
 
 
 class PostgresAdapter(BaseDbAdapter):
@@ -83,19 +101,53 @@ class PostgresAdapter(BaseDbAdapter):
     """
 
     def __init__(self, db_url: Optional[str] = None):
-        self._db_url = db_url or SQLALCHEMY_DATABASE_URL
+        # db_url parameter is for explicit override.
+        # If db_url is provided, it dictates all parameters.
+        # Otherwise, global configuration (SQLALCHEMY_DATABASE_URL_FOR_ENGINE, engine_connect_args, SQLALCHEMY_DATABASE_URL) is used.
 
-        # Используем connect_args, которые были сформированы глобально на основе URL
-        effective_connect_args = connect_args.copy()
+        current_parsed_url = parsed_url # Default to global parsed_url
+        final_engine_connect_args = engine_connect_args.copy() # Default to global engine_connect_args
+        self._db_url_for_engine = SQLALCHEMY_DATABASE_URL_FOR_ENGINE # Default
+        original_db_url_for_asyncpg_dsn = SQLALCHEMY_DATABASE_URL # Default
 
-        # Ensure the URL scheme is compatible with asyncpg if used directly for asyncpg.create_pool
-        # asyncpg_url должен быть чистым DSN без SQLAlchemy префикса и без query параметров, которые обрабатываются отдельно.
-        parsed_for_asyncpg_url = make_url(self._db_url)
-        asyncpg_dsn = parsed_for_asyncpg_url.set(drivername='postgresql', query={}).render_as_string(hide_password=False)
-        self._asyncpg_url = asyncpg_dsn # Используется для asyncpg.create_pool
+        if db_url:
+            print(f"ℹ️ Overriding global DB config with provided db_url: {db_url}")
+            current_parsed_url = make_url(db_url)
+            self._db_url_for_engine = str(current_parsed_url.set(query={}))
+            original_db_url_for_asyncpg_dsn = db_url
 
-        print(f"🔧 SQLAlchemy engine will be created for URL: {self._db_url} with connect_args: {effective_connect_args}")
-        self._engine = create_async_engine(self._db_url, echo=False, connect_args=effective_connect_args)
+            # Re-evaluate connect_args based on this overridden db_url
+            final_engine_connect_args = {}
+            overridden_ssl_mode = current_parsed_url.query.get('sslmode')
+            if overridden_ssl_mode:
+                if overridden_ssl_mode == 'require': final_engine_connect_args['ssl'] = 'require'
+                elif overridden_ssl_mode == 'prefer': final_engine_connect_args['ssl'] = 'prefer'
+                # Add other ssl_mode mappings if necessary
+                else: print(f"⚠️ Unsupported 'sslmode={overridden_ssl_mode}' from overridden db_url.")
+
+            final_engine_connect_args.update({
+                "user": current_parsed_url.username,
+                "password": current_parsed_url.password,
+                "host": current_parsed_url.host,
+                "port": current_parsed_url.port,
+                "database": current_parsed_url.database
+            })
+            final_engine_connect_args = {k: v for k, v in final_engine_connect_args.items() if v is not None}
+            print(f"ℹ️ Final engine_connect_args after db_url override: {final_engine_connect_args}")
+
+
+        # For asyncpg.create_pool DSN and explicit ssl param
+        # Use original_db_url_for_asyncpg_dsn (which could be the global SQLALCHEMY_DATABASE_URL or the overridden db_url)
+        # The DSN itself should be clean of query params for asyncpg.create_pool, esp. if 'ssl' is passed separately.
+        parsed_for_asyncpg_url = make_url(original_db_url_for_asyncpg_dsn)
+        self._asyncpg_url = parsed_for_asyncpg_url.set(drivername='postgresql', query={}).render_as_string(hide_password=False)
+
+        # The 'ssl' parameter for asyncpg.create_pool should come from the final derived connect_args
+        self._asyncpg_ssl_param = final_engine_connect_args.get('ssl')
+
+
+        print(f"🔧 SQLAlchemy engine will be created for URL: {self._db_url_for_engine} with explicit connect_args: {final_engine_connect_args}")
+        self._engine = create_async_engine(self._db_url_for_engine, echo=False, connect_args=final_engine_connect_args)
 
         self._SessionLocal = sessionmaker(
             bind=self._engine,
@@ -106,7 +158,7 @@ class PostgresAdapter(BaseDbAdapter):
         )
         self.db: Optional[AsyncSession] = None # SQLAlchemy async session
         self._conn_pool: Optional[asyncpg.Pool] = None # Asyncpg connection pool
-        print(f"PostgresAdapter initialized for database URL: {self._db_url}")
+        print(f"PostgresAdapter initialized. Engine URL: {self._db_url_for_engine}, Asyncpg DSN: {self._asyncpg_url}")
 
     async def _get_raw_connection(self) -> asyncpg.Connection:
         """Gets a raw connection from the pool, creating pool if necessary."""
@@ -551,8 +603,8 @@ Last encountered error: {last_retryable_exception}
         columns = [
             'id', 'guild_id', 'template_id', 'name_i18n', 'descriptions_i18n',
             'details_i18n', 'tags_i18n', 'atmosphere_i18n', 'features_i18n',
-            'exits', 'state_variables', 'is_active', 'channel_id', 'image_url',
-            'static_name', 'static_connections', 'inventory'
+            'neighbor_locations_json', 'state_variables', 'is_active', 'channel_id', 'image_url', # Changed 'exits' to 'neighbor_locations_json'
+            'static_name', 'static_connections', 'inventory' # Assuming static_name and static_connections are still desired; schema review needed
         ]
 
         # Prepare values in the correct order, using None for missing optional fields
