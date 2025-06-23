@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from bot.game.managers.spell_manager import SpellManager
 
 logger = logging.getLogger(__name__) # Added
-logger.debug("DEBUG: persistence_manager.py module loaded.") # Changed
+# logger.debug("DEBUG: persistence_manager.py module loaded.") # Changed
 
 class PersistenceManager:
     def __init__(self,
@@ -111,7 +111,7 @@ class PersistenceManager:
               manager = manager_attr
               if manager and hasattr(manager, method_name):
                    try:
-                       logger.debug("PersistenceManager: Calling %s.%s for guild %s", type(manager).__name__, method_name, guild_id) # Added
+                       # logger.debug("PersistenceManager: Calling %s.%s for guild %s", type(manager).__name__, method_name, guild_id) # Added
                        await getattr(manager, method_name)(**call_kwargs)
                    except Exception as e:
                        logger.error("PersistenceManager: Error saving state for guild %s in manager %s: %s", guild_id, type(manager).__name__, e, exc_info=True) # Changed
@@ -169,7 +169,7 @@ class PersistenceManager:
               manager = manager_attr
               if manager and hasattr(manager, method_name):
                    try:
-                       logger.debug("PersistenceManager: Calling %s.%s for guild %s", type(manager).__name__, method_name, guild_id) # Added
+                       # logger.debug("PersistenceManager: Calling %s.%s for guild %s", type(manager).__name__, method_name, guild_id) # Added
                        await getattr(manager, method_name)(**call_kwargs)
                    except Exception as e:
                        logger.error("PersistenceManager: Error loading state for guild %s in manager %s: %s", guild_id, type(manager).__name__, e, exc_info=True) # Changed
@@ -192,10 +192,10 @@ class PersistenceManager:
               manager = manager_attr
               if manager and hasattr(manager, method_name):
                    try:
-                       logger.debug("PersistenceManager: Calling %s.%s for guild %s", type(manager).__name__, method_name, guild_id) # Added
+                       # logger.debug("PersistenceManager: Calling %s.%s for guild %s", type(manager).__name__, method_name, guild_id) # Added
                        await getattr(manager, method_name)(**call_kwargs)
                    except Exception as e:
                        logger.error("PersistenceManager: Error rebuilding caches for guild %s in manager %s: %s", guild_id, type(manager).__name__, e, exc_info=True) # Changed
               # else: logger.debug for optional managers if needed
 
-logger.debug("DEBUG: persistence_manager.py module loaded.") # Changed
+# logger.debug("DEBUG: persistence_manager.py module loaded.") # Changed

@@ -185,15 +185,15 @@ class RPGBot(commands.Bot):
         try:
             while not self.is_closed():
                 if self.game_manager:
-                    logging.debug(f"Periodic turn check: Iterating {len(self.guilds)} guilds.")
+                    # logging.debug(f"Periodic turn check: Iterating {len(self.guilds)} guilds.")
                     for guild in self.guilds:
                         guild_id_str = str(guild.id)
                         # Call existing TurnProcessingService if it exists
                         if self.game_manager.turn_processing_service:
                             try:
-                                logging.debug(f"RPGBot: Calling TurnProcessingService.run_turn_cycle_check for guild {guild_id_str}.")
+                                # logging.debug(f"RPGBot: Calling TurnProcessingService.run_turn_cycle_check for guild {guild_id_str}.")
                                 await self.game_manager.turn_processing_service.run_turn_cycle_check(guild_id_str)
-                                logging.debug(f"RPGBot: TurnProcessingService.run_turn_cycle_check finished for guild {guild_id_str}.")
+                                # logging.debug(f"RPGBot: TurnProcessingService.run_turn_cycle_check finished for guild {guild_id_str}.")
                             except Exception as e_tps:
                                 logging.error(f"RPGBot: Error during TurnProcessingService.run_turn_cycle_check for guild {guild_id_str}: {e_tps}", exc_info=True)
                         else:
@@ -202,9 +202,9 @@ class RPGBot(commands.Bot):
                         # Call new TurnProcessor for submitted actions
                         if self.game_manager.turn_processor:
                             try:
-                                logging.debug(f"RPGBot: Calling TurnProcessor.process_turns_for_guild for guild {guild_id_str}.")
+                                # logging.debug(f"RPGBot: Calling TurnProcessor.process_turns_for_guild for guild {guild_id_str}.")
                                 await self.game_manager.turn_processor.process_turns_for_guild(guild_id_str)
-                                logging.debug(f"RPGBot: TurnProcessor.process_turns_for_guild finished for guild {guild_id_str}.")
+                                # logging.debug(f"RPGBot: TurnProcessor.process_turns_for_guild finished for guild {guild_id_str}.")
                             except Exception as e_tp:
                                 logging.error(f"RPGBot: Error during TurnProcessor.process_turns_for_guild for guild {guild_id_str}: {e_tp}", exc_info=True)
                         else:
