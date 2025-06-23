@@ -92,17 +92,26 @@ async def run_migrations_online() -> None:
     if ssl_mode_from_url:
         print(f"ℹ️ [Alembic env.py] Found 'sslmode={ssl_mode_from_url}' in DATABASE_URL. Processing for connect_args.")
         if ssl_mode_from_url == 'require':
-            connect_args['ssl'] = 'require'
+            connect_args['ssl'] = 'require' # asyncpg can handle this string
         elif ssl_mode_from_url == 'prefer':
-            connect_args['ssl'] = 'prefer'
+            connect_args['ssl'] = 'prefer' # asyncpg can handle this string
         elif ssl_mode_from_url == 'allow':
-            connect_args['ssl'] = False
+            # 'allow' means SSL is optional; client tries SSL, falls back to non-SSL if server doesn't support.
+            # asyncpg interprets ssl='allow' or ssl=True (with server negotiation) appropriately.
+            connect_args['ssl'] = 'allow'
         elif ssl_mode_from_url == 'disable':
-            connect_args['ssl'] = False
+            connect_args['ssl'] = 'disable' # asyncpg can handle this string, same as False
+        elif ssl_mode_from_url in ['verify-ca', 'verify-full']:
+            # These modes require SSL and verification.
+            # Pass the string directly; asyncpg handles it.
+            # For actual CA verification, SSLContext with CA certs might be needed if not configured elsewhere.
+            connect_args['ssl'] = ssl_mode_from_url
+            print(f"ℹ️ [Alembic env.py] For sslmode={ssl_mode_from_url}, using connect_args['ssl'] = '{ssl_mode_from_url}'. Ensure CA certs are available if needed.")
         else:
             print(f"⚠️ [Alembic env.py] Unsupported 'sslmode={ssl_mode_from_url}' from URL. SSL will not be explicitly configured by Alembic based on this mode.")
 
         # Remove sslmode from processed_query_params as it's now handled by connect_args
+        # or if it's not supported and shouldn't be in the DSN query string for the engine.
         if 'sslmode' in processed_query_params:
             del processed_query_params['sslmode']
 
