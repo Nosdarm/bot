@@ -25,7 +25,8 @@ from bot.database.base_adapter import BaseDbAdapter
 # Example: DATABASE_URL="postgresql+asyncpg://user:password@host:port/dbname"
 
 DATABASE_URL_ENV_VAR = "DATABASE_URL"
-DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot"
+# Заменяем URL по умолчанию на предоставленный пользователем
+DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require"
 
 SQLALCHEMY_DATABASE_URL = os.getenv(DATABASE_URL_ENV_VAR)
 

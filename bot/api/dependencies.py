@@ -5,7 +5,8 @@ from typing import AsyncGenerator
 import os
 
 # This should ideally come from a central config, same as Alembic and game_manager
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot")
+# Заменяем URL по умолчанию на предоставленный пользователем
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require")
 
 engine = create_async_engine(DATABASE_URL, echo=False) # echo=True for debugging SQL
 AsyncSessionLocal = sessionmaker(
