@@ -157,33 +157,34 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
                     starting_location_id = await game_mngr.get_rule(guild_id_str, 'starting_location_id', "default_starting_location") # Placeholder if rule not set
 
                     player_data = {
-                        "id": str(uuid.uuid4()),
+                        "id": str(uuid.uuid4()), # Player model has a default for ID, but providing it here is explicit.
                         "discord_id": discord_id_str,
                         "guild_id": guild_id_str,
-                        "name_i18n": {"en": player_display_name, player_initial_language: player_display_name}, # Basic i18n
-                        "current_location_id": starting_location_id,
-                        "selected_language": player_initial_language,
-                        "xp": 0,
-                        "level": 1,
-                        "unspent_xp": 0,
-                        "gold": await game_mngr.get_rule(guild_id_str, 'starting_gold', 0),
-                        "current_game_status": "active",
-                        "collected_actions_json": "[]",
-                        "hp": await game_mngr.get_rule(guild_id_str, 'starting_hp', 100.0), # Example starting HP from rules
-                        "max_health": await game_mngr.get_rule(guild_id_str, 'starting_max_health', 100.0), # Example starting max_health
-                        "is_alive": True,
-                        # current_party_id can be None initially
+                        "name_i18n": {"en": player_display_name, player_initial_language: player_display_name},
+                        "selected_language": player_initial_language, # This is a Player attribute
+                        "is_active": True # Player attribute
+                        # active_character_id is set later, after character creation.
+                        # All other fields like location, xp, level, gold, status, hp are Character attributes.
                     }
 
                     # create_entity handles add and flush. Commit is handled by the session context manager.
-                    new_player_record = await create_entity(session, Player, player_data) # guild_id not needed for create_entity per its definition
+                    new_player_record = await create_entity(session, Player, player_data)
+                    # Ensure new_player_record is not None if create_entity can return None on failure
+                    if not new_player_record:
+                        logging.error(f"Failed to create Player record for {discord_id_str} in guild {guild_id_str} (create_entity returned None/False).")
+                        await interaction.followup.send("There was an issue creating your player profile. Please try again.", ephemeral=True)
+                        # Do not commit if player creation failed
+                        return # Exit before character creation
+
                     await session.commit() # Commit the new Player record
-                    logging.info(f"Player record {new_player_record.id} created for {discord_id_str} in guild {guild_id_str}.")
+                    logging.info(f"Player record {getattr(new_player_record, 'id', 'UNKNOWN_ID')} created for {discord_id_str} in guild {guild_id_str}.")
+                    existing_player = new_player_record # Use the newly created player for character creation phase
                 else:
                     logging.info(f"Existing Player {existing_player.id} found for {discord_id_str} in guild {guild_id_str}.")
 
         except IntegrityError: # This might occur if Player creation is attempted twice concurrently, though select check mitigates it.
-            await session.rollback() # Rollback on integrity error during Player creation
+            if 'session' in locals() and session.is_active: # Ensure session exists and is active before rollback
+                await session.rollback() # Rollback on integrity error during Player creation
             logging.warning(f"IntegrityError during Player creation for {discord_id_str} in guild {guild_id_str}. May indicate concurrent attempts or race condition.", exc_info=True)
             # Player likely exists, proceed with Character creation attempt or inform user.
             # For this flow, we assume if IntegrityError happens, player record was just created by another concurrent request.
