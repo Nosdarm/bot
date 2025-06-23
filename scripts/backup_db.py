@@ -5,7 +5,7 @@ import datetime
 from urllib.parse import urlparse
 
 # --- Database Configuration ---
-DB_URL = "postgresql+asyncpg://postgres:test123@localhost:5432/kvelin_bot"
+DB_URL = "postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require"
 
 def get_db_url() -> str:
     """
