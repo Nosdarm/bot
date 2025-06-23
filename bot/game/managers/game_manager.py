@@ -506,16 +506,26 @@ class GameManager:
 
         for guild_id_str in guild_ids_to_process:
             logger.info(f"GameManager._ensure_guild_configs_exist: Processing guild_id: {guild_id_str}")
+            operation_successful = False
             try:
                 async with self.db_service.get_session() as session: # type: ignore
-                    success = await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
-                    if success:
-                        logger.info(f"GameManager._ensure_guild_configs_exist: Successfully ensured/initialized GuildConfig for {guild_id_str}.")
-                        successfully_initialized_guild_ids.append(guild_id_str)
-                    else:
-                        logger.warning(f"GameManager._ensure_guild_configs_exist: initialize_new_guild reported an issue (returned False) for {guild_id_str}. This guild will NOT be processed for data loading.")
-            except Exception as e:
-                logger.error(f"GameManager._ensure_guild_configs_exist: Exception while trying to ensure/initialize GuildConfig for {guild_id_str}: {e}. This guild will NOT be processed for data loading.", exc_info=True)
+                    async with session.begin(): # Start a transaction
+                        # initialize_new_guild will now re-raise exceptions on DB error, or return True on logical success
+                        await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
+                        # If initialize_new_guild completes without raising an error, this transaction block will commit.
+                        operation_successful = True
+                        # No specific commit needed here, 'async with session.begin()' handles it.
+
+                if operation_successful:
+                    logger.info(f"GameManager._ensure_guild_configs_exist: Successfully ensured/initialized GuildConfig for {guild_id_str} (transaction committed).")
+                    successfully_initialized_guild_ids.append(guild_id_str)
+                # If an exception occurred, it's caught below, and operation_successful remains False.
+                # No 'else' needed here as failure is handled by exception catching.
+
+            except IntegrityError as ie: # Specifically catch IntegrityError re-raised by initialize_new_guild
+                logger.error(f"GameManager._ensure_guild_configs_exist: IntegrityError for guild {guild_id_str} during initialize_new_guild: {ie}. Guild will NOT be processed. Transaction rolled back by context manager.", exc_info=True)
+            except Exception as e: # Catches other exceptions from initialize_new_guild or get_session/begin
+                logger.error(f"GameManager._ensure_guild_configs_exist: Exception for guild {guild_id_str}: {e}. This guild will NOT be processed. Transaction rolled back by context manager.", exc_info=True)
 
         logger.info(f"GameManager._ensure_guild_configs_exist: Completed. Successfully confirmed/initialized GuildConfigs for: {successfully_initialized_guild_ids}")
         return successfully_initialized_guild_ids

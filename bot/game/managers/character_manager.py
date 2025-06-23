@@ -524,7 +524,9 @@ class CharacterManager:
                     default_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.hp", 100.0)
                     default_max_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.max_hp", 100.0)
                     default_location_id = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
-                    starting_location = await self._location_manager.get_location_by_id(guild_id_str, default_location_id, session=active_db_session)
+                    starting_location_obj = await self._location_manager.get_location_by_static_id(guild_id_str, default_location_id, session=active_db_session)
+                    if not starting_location_obj: # Added check similar to the other block
+                        logger.error(f"CM.create_new_character (external session): Default starting location '{default_location_id}' (static_id) not found for guild {guild_id_str}. Character will have no starting location.")
 
                     character_data = {
                         "id": new_character_id, "player_id": player_record.id, "guild_id": guild_id_str,
@@ -539,7 +541,7 @@ class CharacterManager:
                         "inventory_json": "[]",
                         "equipment_slots_json": "{}", # Renamed from equipment_json
                         "status_effects_json": "[]",
-                        "current_location_id": default_location_id if starting_location else None,
+                        "current_location_id": starting_location_obj.id if starting_location_obj else None,
                         "action_queue_json": "[]", "current_action_json": None, "is_alive": True,
                         "current_party_id": None, # Renamed from party_id
                         "effective_stats_json": "{}",
