@@ -450,18 +450,22 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
         else:
             logger.info(f"Guild Initializer for {guild_id_str}: WorldState already exists. No action taken for WorldState creation.")
 
-        logger.info(f"Guild Initializer for {guild_id_str}: Attempting to commit session.")
-        await db_session.commit()
-        logger.info(f"Guild Initializer for {guild_id_str}: Session committed. Successfully initialized/updated default data.")
-        return True
+        # logger.info(f"Guild Initializer for {guild_id_str}: Attempting to commit session.") # Removed
+        # await db_session.commit() # Removed: Caller will handle commit/rollback
+        logger.info(f"Guild Initializer for {guild_id_str}: Operations completed. Successfully staged data for initialization/update.")
+        return True # Indicates logical success of operations, not commit status
     except IntegrityError as e:
-        await db_session.rollback()
-        logger.error(f"Guild Initializer for {guild_id_str}: IntegrityError during guild initialization: {e}. Rolled back session.", exc_info=True)
-        return False
+        # await db_session.rollback() # Removed: Caller will handle rollback
+        logger.error(f"Guild Initializer for {guild_id_str}: IntegrityError during guild initialization: {e}. Caller should roll back.", exc_info=True)
+        # Re-raise the error so the caller's transaction management (e.g., GuildTransaction or manual try/except) can catch it and roll back.
+        # This ensures the specific error is propagated if the caller wants to inspect it.
+        # Alternatively, just return False and let the caller decide to rollback based on that.
+        # For now, re-raising to make the failure explicit to the transactional context.
+        raise  # Re-raise the caught IntegrityError
     except Exception as e:
-        await db_session.rollback()
-        logger.error(f"Guild Initializer for {guild_id_str}: Unexpected error during guild initialization: {e}. Rolled back session.", exc_info=True)
-        return False
+        # await db_session.rollback() # Removed: Caller will handle rollback
+        logger.error(f"Guild Initializer for {guild_id_str}: Unexpected error during guild initialization: {e}. Caller should roll back.", exc_info=True)
+        raise # Re-raise other unexpected exceptions
 
 # Main test function (commented out for bot use)
 # if __name__ == '__main__':

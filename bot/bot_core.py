@@ -85,18 +85,18 @@ class RPGBot(commands.Bot):
         logger.info(f"Bot joined new guild: {guild.name} (ID: {guild.id})")
 
         try:
-            async with self.get_db_session() as session:
-                from bot.game.guild_initializer import initialize_new_guild
-                # Ensure guild_id is passed as string, as initialize_new_guild expects str
-                success = await initialize_new_guild(session, str(guild.id), force_reinitialize=False)
-                if success:
-                    logger.info(f"Successfully initialized guild {guild.id} upon joining.")
-                else:
-                    logger.warning(f"Initialization for guild {guild.id} upon joining reported no action or failure (e.g., already initialized).")
-        except RuntimeError as e: # Catch if get_db_session fails
-            logger.error(f"DB session error during on_guild_join for {guild.id}: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"Failed to initialize guild {guild.id} upon joining: {e}", exc_info=True)
+            async with self.get_db_session() as session: # This gets the session
+                async with session.begin(): # This manages the transaction
+                    from bot.game.guild_initializer import initialize_new_guild
+                    # initialize_new_guild will now re-raise on DB errors
+                    await initialize_new_guild(session, str(guild.id), force_reinitialize=False)
+                    # If no exception, transaction will commit.
+                    logger.info(f"Successfully initialized guild {guild.id} upon joining (transaction committed).")
+        except RuntimeError as e_session: # Catch if get_db_session fails
+            logger.error(f"DB session error during on_guild_join for {guild.id}: {e_session}", exc_info=True)
+        except Exception as e_init: # Catches errors from initialize_new_guild or session.begin()
+            # The session.begin() context manager handles rollback on exception.
+            logger.error(f"Failed to initialize guild {guild.id} upon joining: {e_init}. Transaction should be rolled back.", exc_info=True)
 
         # Optional: Send a welcome message
         # Attempt to find a suitable channel to send a welcome message
@@ -178,41 +178,52 @@ class RPGBot(commands.Bot):
                         guild_id_str = str(guild.id)
 
                         # Ensure guild config exists before processing turns
+                        initialization_required_or_incomplete = False
+                        initialization_attempt_failed = False
                         try:
-                            async with self.get_db_session() as session:
-                                from bot.database.models import GuildConfig # Correct import location
-                                from sqlalchemy.future import select
-
-                                stmt = select(GuildConfig).where(GuildConfig.guild_id == guild_id_str)
-                                result = await session.execute(stmt)
-                                existing_config = result.scalars().first()
-
-                                if not existing_config:
-                                    logging.warning(f"RPGBot: GuildConfig missing for guild {guild_id_str} during periodic check. Attempting initialization.")
+                            async with self.get_db_session() as session: # RPGBot.get_db_session now uses DBService.get_session
+                                async with session.begin(): # Start a transaction for checks and potential init
+                                    from bot.database.models import GuildConfig
+                                    from sqlalchemy.future import select
                                     from bot.game.guild_initializer import initialize_new_guild
-                                    # Ensure guild_id is passed as string, as initialize_new_guild expects str
-                                    init_success = await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
-                                    if init_success:
-                                        logging.info(f"RPGBot: Successfully initialized guild {guild_id_str} during periodic check.")
-                                    else:
-                                        logging.error(f"RPGBot: Failed to initialize guild {guild_id_str} during periodic check. Skipping turn processing for this guild.")
-                                        continue # Skip to next guild if initialization fails
-                                elif not existing_config.game_channel_id: # Also check if essential parts of config are missing
-                                    logging.warning(f"RPGBot: GuildConfig for guild {guild_id_str} seems incomplete (e.g. no game_channel_id). Re-running initializer.")
-                                    from bot.game.guild_initializer import initialize_new_guild
-                                    # force_reinitialize might be too much, but initialize_new_guild has upsert logic.
-                                    # Consider a more targeted update if this becomes an issue.
-                                    # Using force_reinitialize=False to mostly fill in blanks or update non-critical fields.
-                                    init_success = await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
-                                    if init_success:
-                                        logging.info(f"RPGBot: Successfully re-ran initialization for guild {guild_id_str} to complete config.")
-                                    else:
-                                        logging.warning(f"RPGBot: Re-running initialization for guild {guild_id_str} reported no major changes or failed.")
-                                        # Decide if to continue if re-init fails or does nothing; for now, proceed.
+                                    from sqlalchemy.exc import IntegrityError as SQLAlchemyIntegrityError
 
-                        except Exception as e_cfg_check:
-                            logging.error(f"RPGBot: Error checking/initializing guild config for {guild_id_str} in periodic check: {e_cfg_check}", exc_info=True)
-                            continue # Skip to next guild if config check fails catastrophically
+                                    stmt = select(GuildConfig).where(GuildConfig.guild_id == guild_id_str)
+                                    result = await session.execute(stmt)
+                                    existing_config = result.scalars().first()
+
+                                    if not existing_config:
+                                        logging.warning(f"RPGBot: GuildConfig missing for guild {guild_id_str} during periodic check. Attempting initialization.")
+                                        initialization_required_or_incomplete = True
+                                    elif not existing_config.game_channel_id: # Proxy for incomplete config
+                                        logging.warning(f"RPGBot: GuildConfig for guild {guild_id_str} seems incomplete. Re-running initializer.")
+                                        initialization_required_or_incomplete = True
+
+                                    if initialization_required_or_incomplete:
+                                        try:
+                                            # initialize_new_guild now re-raises on DB error
+                                            await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
+                                            # If initialize_new_guild completes, transaction will commit.
+                                            logging.info(f"RPGBot: Guild initialization/update for {guild_id_str} in periodic check successful (transaction committed).")
+                                        except SQLAlchemyIntegrityError as ie_init:
+                                            logging.error(f"RPGBot: IntegrityError during periodic check initialization for guild {guild_id_str}: {ie_init}. Skipping turn processing.", exc_info=True)
+                                            initialization_attempt_failed = True
+                                            # session.begin() context manager will handle rollback
+                                        except Exception as e_init:
+                                            logging.error(f"RPGBot: Exception during periodic check initialization for guild {guild_id_str}: {e_init}. Skipping turn processing.", exc_info=True)
+                                            initialization_attempt_failed = True
+                                    # If no init needed, or init succeeded, transaction commits.
+                                    # If init raised an error, session.begin() rolls back.
+
+                        except SQLAlchemyIntegrityError as ie_outer: # Catch if session.begin() itself fails (rare) or other unexpected DB errors
+                             logging.error(f"RPGBot: Outer IntegrityError during config check/init for guild {guild_id_str} in periodic check: {ie_outer}. Skipping.", exc_info=True)
+                             initialization_attempt_failed = True # Mark as failed to skip turn processing
+                        except Exception as e_cfg_check: # Catch other errors like DBService not available from get_db_session
+                            logging.error(f"RPGBot: Outer error checking/initializing guild config for {guild_id_str} in periodic check: {e_cfg_check}. Skipping.", exc_info=True)
+                            initialization_attempt_failed = True # Mark as failed
+
+                        if initialization_attempt_failed:
+                            continue # Skip to next guild if any part of the config check/init failed
 
                         # Call existing TurnProcessingService if it exists
                         if self.game_manager.turn_processing_service:

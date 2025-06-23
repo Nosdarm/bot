@@ -96,31 +96,48 @@ class GameLogManager:
 
         if not guild_config_exists:
             logger.critical(f"GameLogManager: GuildConfig for guild_id '{guild_id}' does NOT exist prior to logging event '{event_type}'. Attempting last-chance initialization.")
+            initialization_succeeded_in_fallback = False
             try:
-                async with self._db_service.get_session() as init_session: # Use get_session()
-                    from bot.game.guild_initializer import initialize_new_guild # Local import
-                    init_success = await initialize_new_guild(init_session, guild_id, force_reinitialize=False)
-                    if init_success:
-                        logger.info(f"GameLogManager: Last-chance initialization for guild {guild_id} SUCCEEDED.")
-                        guild_config_exists = True # Now it should exist
-                    else:
-                        logger.error(f"GameLogManager: Last-chance initialization for guild {guild_id} FAILED or reported no change. Log event for type '{event_type}' will be SKIPPED to prevent ForeignKeyViolation.")
-                        # Log the original event details to logger as a fallback
-                        details_for_fallback_log = {
-                             "guild_id": guild_id, "event_type": f"SKIPPED_{event_type}", "original_details": details,
-                             "reason": "GuildConfig missing and last-chance init failed.",
-                             "player_id": player_id, "party_id": party_id, "location_id": location_id
-                        }
-                        logger.error(f"GameLogManager (FALLBACK_LOG_SKIP): {json.dumps(details_for_fallback_log)}")
-                        return # CRITICAL: Skip logging to DB
-            except Exception as e_init:
-                logger.error(f"GameLogManager: Exception during last-chance initialization for guild {guild_id}: {e_init}. Log event for type '{event_type}' will be SKIPPED.", exc_info=True)
+                async with self._db_service.get_session() as init_session:
+                    async with init_session.begin(): # Manage transaction for the initialization
+                        from bot.game.guild_initializer import initialize_new_guild # Local import
+                        from sqlalchemy.exc import IntegrityError as SQLAlchemyIntegrityError # For specific catch
+
+                        try:
+                            # initialize_new_guild re-raises on DB error, returns True on logical success
+                            await initialize_new_guild(init_session, guild_id, force_reinitialize=False)
+                            # If no error, transaction commits via session.begin() context.
+                            initialization_succeeded_in_fallback = True
+                        except SQLAlchemyIntegrityError as ie_init_fallback: # Catch DB errors from initialize_new_guild
+                            logger.error(f"GameLogManager: IntegrityError during last-chance initialization for guild {guild_id}: {ie_init_fallback}. Log event for type '{event_type}' will be SKIPPED.", exc_info=True)
+                            # session.begin() context manager handles rollback
+                        except Exception as e_init_fallback: # Catch other errors from initialize_new_guild
+                            logger.error(f"GameLogManager: Exception during last-chance initialization for guild {guild_id}: {e_init_fallback}. Log event for type '{event_type}' will be SKIPPED.", exc_info=True)
+                            # session.begin() context manager handles rollback
+
+                if initialization_succeeded_in_fallback:
+                    logger.info(f"GameLogManager: Last-chance initialization for guild {guild_id} SUCCEEDED (transaction committed).")
+                    guild_config_exists = True # Now it should exist
+                else:
+                    # This path means either initialize_new_guild raised an exception (handled above, rollback done)
+                    # or an error occurred in the outer try/except for session management.
+                    logger.error(f"GameLogManager: Last-chance initialization for guild {guild_id} ultimately FAILED. Log event for type '{event_type}' will be SKIPPED.")
+                    details_for_fallback_log = {
+                         "guild_id": guild_id, "event_type": f"SKIPPED_{event_type}", "original_details": details,
+                         "reason": "GuildConfig missing and last-chance init failed.",
+                         "player_id": player_id, "party_id": party_id, "location_id": location_id
+                    }
+                    logger.error(f"GameLogManager (FALLBACK_LOG_SKIP_AFTER_INIT_FAIL): {json.dumps(details_for_fallback_log)}")
+                    return # CRITICAL: Skip logging to DB
+
+            except Exception as e_outer_init_fallback: # Catches errors from get_session or session.begin itself
+                logger.error(f"GameLogManager: Outer exception during last-chance initialization setup for guild {guild_id}: {e_outer_init_fallback}. Log event for type '{event_type}' will be SKIPPED.", exc_info=True)
                 details_for_fallback_log_exc = {
                     "guild_id": guild_id, "event_type": f"SKIPPED_{event_type}", "original_details": details,
-                    "reason": "Exception during last-chance init.", "exception_details": str(e_init),
+                    "reason": "Outer exception during last-chance init setup.", "exception_details": str(e_outer_init_fallback),
                     "player_id": player_id, "party_id": party_id, "location_id": location_id
                 }
-                logger.error(f"GameLogManager (FALLBACK_LOG_SKIP_EXCEPTION): {json.dumps(details_for_fallback_log_exc)}")
+                logger.error(f"GameLogManager (FALLBACK_LOG_SKIP_OUTER_EXCEPTION): {json.dumps(details_for_fallback_log_exc)}")
                 return # CRITICAL: Skip logging to DB
         # --- End Fallback Check ---
 
