@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -25,10 +26,10 @@ def upgrade() -> None:
         sa.Column('id', sa.Text(), primary_key=True),
         sa.Column('template_id', sa.Text(), nullable=True),
         sa.Column('guild_id', sa.Text(), sa.ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False),
-        sa.Column('participants', sa.JSONB(), nullable=True),
+        sa.Column('participants', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column('channel_id', sa.Text(), nullable=True),
         sa.Column('current_stage_id', sa.Text(), nullable=True),
-        sa.Column('state_variables', sa.JSONB(), nullable=True),
+        sa.Column('state_variables', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column('last_activity_game_time', sa.DOUBLE_PRECISION(), nullable=True),
         sa.Column('event_id', sa.Text(), nullable=True),
         sa.Column('is_active', sa.BOOLEAN(), default=True, nullable=False)
