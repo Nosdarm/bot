@@ -233,95 +233,64 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                     await db_session.flush()
                     logger.info(f"Guild Initializer for {guild_id_str}: Deleted {deleted_faction_count} existing GeneratedFaction entries.")
 
-            default_factions_data = [
+            default_factions_data_group1 = [ # Renamed to avoid conflict with a later redeclaration
                 {"id": f"faction_observers_{str(uuid.uuid4())[:8]}", "name_i18n": {"en": "Neutral Observers", "ru": "Нейтральные Наблюдатели"}, "description_i18n": {"en": "A neutral faction...", "ru": "Нейтральная фракция..."}},
                 {"id": f"faction_guardians_{str(uuid.uuid4())[:8]}", "name_i18n": {"en": "Forest Guardians", "ru": "Стражи Леса"}, "description_i18n": {"en": "Protectors of the woods...", "ru": "Защитники лесов..."}},
                 {"id": f"faction_merchants_{str(uuid.uuid4())[:8]}", "name_i18n": {"en": "Rivertown Traders", "ru": "Торговцы Речного Города"}, "description_i18n": {"en": "A mercantile collective...", "ru": "Торговый коллектив..."}}
             ]
-            factions_to_add = []
-            for faction_data in default_factions_data:
+            factions_to_add_group1 = [] # Renamed
+            for faction_data in default_factions_data_group1: # Use renamed variable
                 new_faction = GeneratedFaction(
                     id=faction_data["id"], guild_id=guild_id_str,
                     name_i18n=faction_data["name_i18n"], description_i18n=faction_data["description_i18n"]
                 )
-                factions_to_add.append(new_faction)
-            if factions_to_add:
-                db_session.add_all(factions_to_add)
-                logger.info(f"Added {len(factions_to_add)} default factions for guild {guild_id_str}.")
+                factions_to_add_group1.append(new_faction) # Use renamed variable
+            if factions_to_add_group1: # Use renamed variable
+                db_session.add_all(factions_to_add_group1) # Use renamed variable
+                logger.info(f"Added {len(factions_to_add_group1)} default factions for guild {guild_id_str}.")
 
             # Initialize default Locations (those specific to this function, not from CampaignLoader)
-            logger.info(f"Initializing default map (initializer specific locations) for guild {guild_id_str}.")
+            logger.info(f"Guild Initializer for {guild_id_str}: Initializing default map (Location entities).") # Moved this log up
+            # The LocationTemplate creation block that was here is removed as it's redundant
+            # with the pg_insert block earlier in the function.
+
+            # Deletion of existing Locations if force_reinitialize
             if force_reinitialize: # This specific deletion should only happen if forced.
-                logger.info(f"Force reinitialize: Deleting existing locations (initializer specific) for guild {guild_id_str}.")
-                # Be careful if CampaignLoader locations use a different ID scheme or might overlap.
-                # This assumes locations created here have a distinct pattern or are okay to delete on force_reinit.
-                # For now, this deletes ALL locations for the guild if forced.
-                # A more targeted deletion (e.g., by a specific template_id pattern) might be safer if mixing strategies.
+                logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing Location entries for this guild.")
+                # This was: existing_locations_stmt = select(Location).where(Location.guild_id == guild_id_str)
+                # And then: result = await db_session.execute(existing_factions_stmt) <- TYPO: used existing_factions_stmt
+                # Corrected:
                 existing_locations_stmt = select(Location).where(Location.guild_id == guild_id_str)
-                result = await db_session.execute(existing_factions_stmt)
-                for faction in result.scalars().all():
-                    await db_session.delete(faction)
-                await db_session.flush()
-
-            default_factions_data = [
-                {"id": f"faction_observers_{str(uuid.uuid4())[:8]}", "name_i18n": {"en": "Neutral Observers", "ru": "Нейтральные Наблюдатели"}, "description_i18n": {"en": "A neutral faction...", "ru": "Нейтральная фракция..."}},
-                {"id": f"faction_guardians_{str(uuid.uuid4())[:8]}", "name_i18n": {"en": "Forest Guardians", "ru": "Стражи Леса"}, "description_i18n": {"en": "Protectors of the woods...", "ru": "Защитники лесов..."}},
-                {"id": f"faction_merchants_{str(uuid.uuid4())[:8]}", "name_i18n": {"en": "Rivertown Traders", "ru": "Торговцы Речного Города"}, "description_i18n": {"en": "A mercantile collective...", "ru": "Торговый коллектив..."}}
-            ]
-            factions_to_add = []
-            for faction_data in default_factions_data:
-                new_faction = GeneratedFaction(
-                    id=faction_data["id"], guild_id=guild_id_str,
-                    name_i18n=faction_data["name_i18n"], description_i18n=faction_data["description_i18n"]
-                )
-                factions_to_add.append(new_faction)
-            if factions_to_add:
-                db_session.add_all(factions_to_add)
-                logger.info(f"Added {len(factions_to_add)} default factions for guild {guild_id_str}.")
-
-            # Initialize Location Templates
-            logger.info(f"Guild Initializer for {guild_id_str}: Initializing default location templates.")
-            if force_reinitialize:
-                logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing LocationTemplate entries.")
-                delete_loc_templates_stmt = LocationTemplate.__table__.delete().where(LocationTemplate.guild_id == guild_id_str)
-                await db_session.execute(delete_loc_templates_stmt)
-                logger.info(f"Guild Initializer for {guild_id_str}: Existing LocationTemplate entries deleted.")
-
-            default_template_ids = [
-                "town_square", "tavern", "market_street", "guild_hall", "city_gate",
-                "alchemist_shop", "wilderness_crossroads", "forest_path", "mountain_trail",
-                "clearing_deepwood", "cave_entrance",
-                # Add templates for the locations created by guild_initializer itself if they are different
-                # For now, assuming the default locations created later will use some of these IDs.
-                "village_square", "village_tavern", "village_shop", "forest_edge", "deep_forest" # Generic templates for initialized locations
-            ]
-            location_templates_to_add = []
-            for template_id_val in default_template_ids:
-                # Check if template already exists to prevent duplicates if not force_reinitializing
-                # However, on_conflict_do_nothing for LocationTemplate might be better if it had a unique constraint on (guild_id, id) or (guild_id, name)
-                # The current schema has PK on id, Unique on name. We use template_id_val for both id and name here for simplicity.
-
-                # Simplified: just attempt to add, relying on PK or future upsert logic if this were more complex.
-                # For now, if not force_reinitializing, we might add duplicates if this function is called multiple times on an existing guild
-                # without proper cleanup or unique constraints that pg_insert could use.
-                # Given the overall flow, this part runs if existing_guild_config is None or force_reinitialize is True.
-                # So, duplicates shouldn't be an issue if an existing guild (not forced) skips this block.
-                location_templates_to_add.append(LocationTemplate(
-                    id=template_id_val, # Using the ID as the template's own ID
-                    name=template_id_val.replace("_", " ").title(), # A sensible default name
-                    guild_id=guild_id_str,
-                    description_i18n={"en": f"Default template for {template_id_val}"}
-                ))
-            if location_templates_to_add:
-                # Consider using pg_insert with on_conflict_do_nothing if templates might already exist
-                # and we don't want errors. For now, direct add_all.
-                db_session.add_all(location_templates_to_add)
-                logger.info(f"Guild Initializer for {guild_id_str}: Added/Attempted to add {len(location_templates_to_add)} default location templates.")
+                result = await db_session.execute(existing_locations_stmt) # Corrected to use existing_locations_stmt
+                deleted_loc_count = 0
+                for loc in result.scalars().all(): # Changed variable name from faction to loc
+                    await db_session.delete(loc)
+                    deleted_loc_count +=1
+                if deleted_loc_count > 0:
+                    await db_session.flush()
+                    logger.info(f"Guild Initializer for {guild_id_str}: Deleted {deleted_loc_count} existing Location entries.")
 
 
-            logger.info(f"Guild Initializer for {guild_id_str}: Initializing default map (Location entities).")
-            if force_reinitialize:
-                logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing Location entries.")
+            # This was a duplicate faction creation block, removing it.
+            # default_factions_data = [ ... ]
+            # factions_to_add = []
+            # ...
+            # db_session.add_all(factions_to_add)
+
+            # The LocationTemplate creation that was here is removed as it's handled by the earlier pg_insert.
+            # logger.info(f"Guild Initializer for {guild_id_str}: Initializing default location templates.")
+            # if force_reinitialize:
+            #    ... delete ...
+            # default_template_ids = [ ... ]
+            # location_templates_to_add = []
+            # ...
+            # db_session.add_all(location_templates_to_add)
+
+            # Ensure the log for initializing map (Location entities) is not duplicated. It was moved up.
+            # logger.info(f"Guild Initializer for {guild_id_str}: Initializing default map (Location entities).")
+            # The deletion of locations if force_reinitialize was also moved up and corrected.
+            # if force_reinitialize:
+            #    logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing Location entries.")
                 existing_locations_stmt = select(Location).where(Location.guild_id == guild_id_str)
                 result = await db_session.execute(existing_locations_stmt)
                 deleted_loc_count = 0

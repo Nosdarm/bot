@@ -69,28 +69,16 @@ class RPGBot(commands.Bot):
 
     @asynccontextmanager
     async def get_db_session(self) -> AsyncIterator[AsyncSession]:
-        if not self.game_manager or \
-           not self.game_manager.db_service or \
-           not self.game_manager.db_service.async_session_factory:
-            # Log the state of relevant attributes for debugging
-            gm_exists = bool(self.game_manager)
-            db_service_exists = bool(self.game_manager.db_service) if gm_exists else False
-            factory_exists = bool(self.game_manager.db_service.async_session_factory) if db_service_exists else False
+        """Provides a database session managed by DBService."""
+        if not self.game_manager or not self.game_manager.db_service:
             logger.error(
-                f"Database session factory not available. "
-                f"GameManager: {gm_exists}, DBService: {db_service_exists}, Factory: {factory_exists}"
+                "RPGBot.get_db_session: GameManager or DBService is not available."
             )
-            raise RuntimeError("Database session factory not available.")
+            raise RuntimeError("GameManager or DBService not available for DB session.")
 
-        async with self.game_manager.db_service.async_session_factory() as session:
-            try:
-                yield session
-                # Removed explicit commit; operations should manage commits or use @transactional_session
-            except Exception:
-                logger.debug("Rolling back session in get_db_session due to exception.")
-                await session.rollback()
-                raise
-            # Session is automatically closed by async_session_factory's context manager if it's a sessionmaker
+        # Delegate to DBService's get_session context manager
+        async with self.game_manager.db_service.get_session() as session:
+            yield session
 
     async def on_guild_join(self, guild: discord.Guild):
         """Handles the event when the bot joins a new guild."""

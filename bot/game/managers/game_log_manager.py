@@ -59,9 +59,9 @@ class GameLogManager:
         generate_narrative: bool = False, # New parameter
         session: Optional[AsyncSession] = None # New parameter for transaction participation
     ) -> None:
-        if self._db_service is None or self._db_service.adapter is None or self._db_service.async_session_factory is None:
+        if self._db_service is None or self._db_service.adapter is None: # Simpler check, get_session() will fail if factory is missing
             log_message_fallback = (
-                f"GameLogManager: DB service, adapter, or session factory not available. Log: "
+                f"GameLogManager: DB service or adapter not available. Log: "
                 f"Guild: {guild_id}, Event: {event_type}, Details: {details}, "
                 f"Player: {player_id}, Party: {party_id}, Location: {location_id}, Channel: {channel_id}, "
                 f"DescKey: {description_key}, DescParams: {description_params}, Involved: {involved_entities_ids}, "
@@ -83,8 +83,8 @@ class GameLogManager:
                 logger.error(f"GameLogManager: Error checking GuildConfig within provided session for guild {guild_id}: {e_check_session}", exc_info=True)
                 # Proceed cautiously, or decide to bail if check fails
         else: # Otherwise, use a new session from the factory
-            async with self._db_service.async_session_factory() as check_session:
-                try:
+            try:
+                async with self._db_service.get_session() as check_session: # Use get_session()
                     from bot.database.models import GuildConfig # Local import
                     from sqlalchemy.future import select
                     stmt = select(GuildConfig.guild_id).where(GuildConfig.guild_id == guild_id).limit(1)
@@ -97,7 +97,7 @@ class GameLogManager:
         if not guild_config_exists:
             logger.critical(f"GameLogManager: GuildConfig for guild_id '{guild_id}' does NOT exist prior to logging event '{event_type}'. Attempting last-chance initialization.")
             try:
-                async with self._db_service.async_session_factory() as init_session: # type: ignore
+                async with self._db_service.get_session() as init_session: # Use get_session()
                     from bot.game.guild_initializer import initialize_new_guild # Local import
                     init_success = await initialize_new_guild(init_session, guild_id, force_reinitialize=False)
                     if init_success:
