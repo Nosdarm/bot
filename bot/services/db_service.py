@@ -348,13 +348,14 @@ class DBService:
         properties: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         sql = """
-            INSERT INTO locations (id, template_id, name_i18n, descriptions_i18n, type_i18n, guild_id, exits, state_variables, is_active)
+            INSERT INTO locations (id, template_id, name_i18n, descriptions_i18n, type_i18n, guild_id, neighbor_locations_json, state_variables, is_active)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id;
         """
+        # 'exits' parameter from function signature is used for 'neighbor_locations_json' column
         params = (
             loc_id, template_id, json.dumps(name_i18n), json.dumps(description_i18n), json.dumps(type_i18n), guild_id,
-            json.dumps(exits) if exits else '{}',
+            json.dumps(exits) if exits else '{}', # This now correctly maps to neighbor_locations_json
             json.dumps(properties) if properties else '{}', True
         )
         try: # Added
