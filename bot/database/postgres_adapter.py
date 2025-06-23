@@ -120,33 +120,13 @@ class PostgresAdapter(BaseDbAdapter):
 
             for attempt in range(max_retries + 1):
                 try:
-                    # Извлекаем компоненты из self._db_url для явной передачи в create_pool
-                    # self._db_url это уже URL с которым работает SQLAlchemy (т.е. с префиксом postgresql+asyncpg://)
-                    # make_url корректно его распарсит.
-                    parsed_connect_url = make_url(self._db_url)
-                    pool_user = parsed_connect_url.username
-                    pool_password = parsed_connect_url.password
-                    pool_host = parsed_connect_url.host
-                    pool_port = parsed_connect_url.port
-                    pool_database = parsed_connect_url.database
-
-                    # Отладочная печать компонентов (пароль не печатаем)
-                    print(f"DEBUG _get_raw_connection: Attempting asyncpg.create_pool with components: "
-                          f"user='{pool_user}', host='{pool_host}', port='{pool_port}', "
-                          f"db='{pool_database}', ssl='{ssl_param_for_pool}'")
-
+                    print(f"ℹ️ Attempting to create asyncpg pool with DSN: {self._asyncpg_url} and SSL param: {ssl_param_for_pool}")
+                    # Adjust connect_min_size and connect_max_size as needed
+                    # Передаем ssl параметр в create_pool, если он определен
                     if ssl_param_for_pool is not None:
-                        self._conn_pool = await asyncpg.create_pool(
-                            user=pool_user, password=pool_password, database=pool_database,
-                            host=pool_host, port=pool_port, ssl=ssl_param_for_pool,
-                            min_size=1, max_size=10
-                        )
+                        self._conn_pool = await asyncpg.create_pool(dsn=self._asyncpg_url, min_size=1, max_size=10, ssl=ssl_param_for_pool)
                     else:
-                        self._conn_pool = await asyncpg.create_pool(
-                            user=pool_user, password=pool_password, database=pool_database,
-                            host=pool_host, port=pool_port,
-                            min_size=1, max_size=10
-                        )
+                        self._conn_pool = await asyncpg.create_pool(dsn=self._asyncpg_url, min_size=1, max_size=10)
 
                     if self._conn_pool is None:
                         # This is an immediate failure, not to be retried by this loop.
