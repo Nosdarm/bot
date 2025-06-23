@@ -28,53 +28,19 @@ DATABASE_URL_ENV_VAR = "DATABASE_URL"
 # Заменяем URL по умолчанию на предоставленный пользователем
 DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require"
 
-SQLALCHEMY_DATABASE_URL = os.getenv(DATABASE_URL_ENV_VAR)
+SQLALCHEMY_DATABASE_URL_FROM_ENV = os.getenv(DATABASE_URL_ENV_VAR)
+_used_env_var_globally = False
 
-if SQLALCHEMY_DATABASE_URL is None:
+if SQLALCHEMY_DATABASE_URL_FROM_ENV is None:
     print(f"⚠️ WARNING: Environment variable {DATABASE_URL_ENV_VAR} is not set.")
     print(f"Falling back to default database URL: {DEFAULT_SQLALCHEMY_DATABASE_URL}")
     print(f"👉 For production, please set the {DATABASE_URL_ENV_VAR} environment variable.")
-    SQLALCHEMY_DATABASE_URL = DEFAULT_SQLALCHEMY_DATABASE_URL
+    EFFECTIVE_SQLALCHEMY_DATABASE_URL = DEFAULT_SQLALCHEMY_DATABASE_URL
+    _used_env_var_globally = False
 else:
     print(f"🌍 Using database URL from environment variable {DATABASE_URL_ENV_VAR}.")
-
-# Удаляем query параметры из URL, особенно sslmode, если он есть,
-# так как asyncpg и SQLAlchemy диалект предпочитают connect_args для таких настроек.
-from sqlalchemy.engine.url import make_url
-
-parsed_url = make_url(SQLALCHEMY_DATABASE_URL)
-connect_args = {}
-
-# Извлекаем sslmode из query параметров, если он там есть.
-# Предпочтительный способ задания ssl - через connect_args.
-ssl_mode_from_url = parsed_url.query.get('sslmode')
-# Создаем изменяемую копию query параметров
-query_params = dict(parsed_url.query)
-
-if ssl_mode_from_url:
-    print(f"ℹ️ Found 'sslmode={ssl_mode_from_url}' in DATABASE_URL query parameters. It will be handled via connect_args if needed.")
-    # Преобразуем sslmode в соответствующий параметр ssl для asyncpg, если это известный режим.
-    # asyncpg ожидает 'ssl' как bool, str ('prefer', 'require'), или ssl.SSLContext.
-    # Простой маппинг для самых частых случаев:
-    if ssl_mode_from_url == 'require':
-        connect_args['ssl'] = 'require'
-    elif ssl_mode_from_url == 'prefer':
-        connect_args['ssl'] = 'prefer' # или True, asyncpg разберется
-    elif ssl_mode_from_url == 'allow':
-        connect_args['ssl'] = False # или не устанавливать, если asyncpg по умолчанию 'prefer'
-    elif ssl_mode_from_url == 'disable':
-        connect_args['ssl'] = False
-    # Для 'verify-ca', 'verify-full' потребуется SSLContext, что сложнее автоматизировать из URL.
-    # Пользователю лучше будет настроить SSLContext и передать его через connect_args напрямую.
-    else:
-        print(f"⚠️ Unsupported 'sslmode={ssl_mode_from_url}' from URL. SSL will not be explicitly configured based on this mode.")
-
-    # Удаляем sslmode из нашей изменяемой копии query_params
-    if 'sslmode' in query_params:
-        del query_params['sslmode']
-
-# Обновляем URL, используя новый словарь query_params (без sslmode)
-SQLALCHEMY_DATABASE_URL = str(parsed_url.set(query=query_params))
+    EFFECTIVE_SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL_FROM_ENV
+    _used_env_var_globally = True
 
 
 class PostgresAdapter(BaseDbAdapter):
@@ -83,20 +49,26 @@ class PostgresAdapter(BaseDbAdapter):
     """
 
     def __init__(self, db_url: Optional[str] = None):
-        self._db_url = db_url or SQLALCHEMY_DATABASE_URL
+        self._default_db_url = DEFAULT_SQLALCHEMY_DATABASE_URL
+        self._used_env_var_url: bool
 
-        # Используем connect_args, которые были сформированы глобально на основе URL
-        effective_connect_args = connect_args.copy()
+        if db_url: # If a specific URL is passed, it takes precedence
+            self._db_url = db_url
+            # We can't be certain if this explicitly passed db_url originated from env or default,
+            # so we make a best guess or assume it's not the global env var for fallback purposes.
+            # For simplicity, if db_url is provided, we assume it's intentional and don't fallback.
+            self._used_env_var_url = False # Or determine based on equality if needed
+        else:
+            self._db_url = EFFECTIVE_SQLALCHEMY_DATABASE_URL
+            self._used_env_var_url = _used_env_var_globally
 
-        # Ensure the URL scheme is compatible with asyncpg if used directly for asyncpg.create_pool
-        # asyncpg_url должен быть чистым DSN без SQLAlchemy префикса и без query параметров, которые обрабатываются отдельно.
-        parsed_for_asyncpg_url = make_url(self._db_url)
-        asyncpg_dsn = parsed_for_asyncpg_url.set(drivername='postgresql', query={}).render_as_string(hide_password=False)
-        self._asyncpg_url = asyncpg_dsn # Используется для asyncpg.create_pool
+        # Ensure the URL scheme is compatible with asyncpg if used directly
+        self._asyncpg_url = self._db_url.replace("postgresql+asyncpg://", "postgresql://")
 
-        print(f"🔧 SQLAlchemy engine will be created for URL: {self._db_url} with connect_args: {effective_connect_args}")
-        self._engine = create_async_engine(self._db_url, echo=False, connect_args=effective_connect_args)
+        # Store the initial asyncpg_url to compare later if we fallback
+        self._initial_asyncpg_url = self._asyncpg_url
 
+        self._engine = create_async_engine(self._db_url, echo=False) # Set echo=True for SQL query logging
         self._SessionLocal = sessionmaker(
             bind=self._engine,
             class_=AsyncSession, # Use AsyncSession for SQLAlchemy 2.0 async support
@@ -111,52 +83,90 @@ class PostgresAdapter(BaseDbAdapter):
     async def _get_raw_connection(self) -> asyncpg.Connection:
         """Gets a raw connection from the pool, creating pool if necessary."""
         if self._conn_pool is None:
-            max_retries = 2
-            last_retryable_exception: Optional[Union[ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError]] = None
+            max_retries = 2 # Max retries for general connection issues (refused, cannot connect now)
+            auth_fallback_attempted = False
 
-            # Получаем параметры SSL из connect_args, которые были сформированы глобально
-            # Это необходимо, так как asyncpg.create_pool не использует connect_args от SQLAlchemy engine
-            ssl_param_for_pool = connect_args.get('ssl')
-
-            for attempt in range(max_retries + 1):
+            # Loop for retrying general connection issues and for the auth fallback
+            for attempt in range(max_retries + 2): # +1 for initial try, +1 for potential fallback
+                last_retryable_exception: Optional[Union[ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError]] = None
                 try:
-                    print(f"ℹ️ Attempting to create asyncpg pool with DSN: {self._asyncpg_url} and SSL param: {ssl_param_for_pool}")
+                    print(f"PostgresAdapter: Attempting to create pool with DSN: {self._asyncpg_url} (Attempt {attempt + 1})")
                     # Adjust connect_min_size and connect_max_size as needed
-                    # Передаем ssl параметр в create_pool, если он определен
-                    if ssl_param_for_pool is not None:
-                        self._conn_pool = await asyncpg.create_pool(dsn=self._asyncpg_url, min_size=1, max_size=10, ssl=ssl_param_for_pool)
-                    else:
-                        self._conn_pool = await asyncpg.create_pool(dsn=self._asyncpg_url, min_size=1, max_size=10)
+                    # The log mentioned ssl_param_for_pool, so we should consider if it's needed.
+                    # For now, sticking to the code's direct parameters.
+                    # If `self._asyncpg_url` contains `sslmode=require`, asyncpg might handle it.
+                    # Let's assume for now the DSN is self-contained regarding SSL if needed by asyncpg.
+                    ssl_options = None
+                    if "sslmode=require" in self._db_url and "ssl=" not in self._asyncpg_url : # Crude check, improve if necessary
+                        # asyncpg needs an SSLContext object or True for default context
+                        # For simplicity, if sslmode=require is in the original URL, we'll pass ssl=True
+                        # A more robust solution would parse the URL properly.
+                        # import ssl # Add if not imported
+                        # context = ssl.create_default_context()
+                        # context.check_hostname = False
+                        # context.verify_mode = ssl.CERT_NONE # Example, adjust for security
+                        # ssl_options = context
+                        ssl_options = True # Use default SSL context
+                        print(f"PostgresAdapter: Detected sslmode=require, attempting to pass ssl=True to asyncpg.create_pool for DSN: {self._asyncpg_url}")
+
+
+                    self._conn_pool = await asyncpg.create_pool(
+                        dsn=self._asyncpg_url,
+                        min_size=1,
+                        max_size=10,
+                        ssl=ssl_options # Added SSL based on log analysis
+                    )
 
                     if self._conn_pool is None:
-                        # This is an immediate failure, not to be retried by this loop.
-                        # Original error message for this specific case.
                         print("PostgresAdapter: ❌ Failed to create asyncpg connection pool: create_pool returned None")
-                        # No traceback here for this specific known condition, just raise
                         raise ConnectionError("Failed to create asyncpg connection pool: create_pool returned None")
 
-                    print("PostgresAdapter: Asyncpg connection pool created.")
-                    last_retryable_exception = None # Reset if successful
+                    print("PostgresAdapter: Asyncpg connection pool created successfully.")
+                    last_retryable_exception = None
                     break  # Exit loop if pool is created successfully
 
                 except (ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError) as e:
                     last_retryable_exception = e
-                    print(f"PostgresAdapter: Connection attempt {attempt + 1}/{max_retries + 1} failed due to {type(e).__name__}.")
-                    if attempt < max_retries:
+                    print(f"PostgresAdapter: Connection attempt {attempt + 1} failed due to {type(e).__name__}: {e}")
+                    if attempt < max_retries: # Only retry these errors up to max_retries
                         print(f"PostgresAdapter: Retrying in 5 seconds...")
                         await asyncio.sleep(5)
-                    # If it's the last attempt, the loop will end, and last_retryable_exception will be handled below.
+                    else: # Max retries exceeded for these specific errors
+                        break # Break to handle last_retryable_exception outside
+
+                except asyncpg.exceptions.InternalServerError as e:
+                    if "password authentication failed" in str(e).lower():
+                        if self._used_env_var_url and not auth_fallback_attempted and self._initial_asyncpg_url == self._asyncpg_url:
+                            auth_fallback_attempted = True # Mark that we are trying the fallback
+                            print(f"PostgresAdapter: 🔑 Password authentication failed with environment variable URL.")
+                            print(f"PostgresAdapter: Attempting fallback to default database URL.")
+                            self._asyncpg_url = self._default_db_url.replace("postgresql+asyncpg://", "postgresql://")
+                            # Reset engine and session factory if URL changes
+                            self._engine = create_async_engine(self._default_db_url, echo=False)
+                            self._SessionLocal = sessionmaker(
+                                bind=self._engine, class_=AsyncSession, expire_on_commit=False,
+                                autocommit=False, autoflush=False
+                            )
+                            print(f"PostgresAdapter: Switched to default DSN: {self._asyncpg_url}. Retrying pool creation.")
+                            # Continue to next iteration of the loop to retry with new URL
+                            continue
+                        else:
+                            # Auth error, but not eligible for fallback (e.g., default URL already failed, or not using env var)
+                            print(f"PostgresAdapter: ❌ Password authentication failed: {e}")
+                            traceback.print_exc()
+                            raise # Re-raise immediately
+                    else:
+                        # Other InternalServerError, not auth related
+                        print(f"PostgresAdapter: ❌ An unexpected InternalServerError occurred: {e}")
+                        traceback.print_exc()
+                        raise # Re-raise immediately
 
                 except Exception as e:
-                    # This catches other exceptions during create_pool, or the ConnectionError from pool being None.
-                    # These are considered immediate failures.
-                    # Format and print the generic "unexpected error" message.
                     print(f"PostgresAdapter: ❌ An unexpected error occurred while creating asyncpg connection pool: {e}")
                     traceback.print_exc()
                     raise # Re-raise immediately, no more retries for this type of error.
 
-            if last_retryable_exception is not None:
-                # All retries for ConnectionRefusedError or CannotConnectNowError failed.
+            if last_retryable_exception is not None: # This means ConnectionRefused or CannotConnectNow max_retries exceeded
                 # Now, format and print the detailed error message block and raise the last caught exception.
                 error_message = f"""
 PostgresAdapter: ❌ DATABASE CONNECTION FAILED AFTER {max_retries + 1} ATTEMPTS!
