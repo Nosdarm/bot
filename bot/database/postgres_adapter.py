@@ -35,11 +35,11 @@ if SQLALCHEMY_DATABASE_URL_FROM_ENV is None:
     print(f"⚠️ WARNING: Environment variable {DATABASE_URL_ENV_VAR} is not set.")
     print(f"Falling back to default database URL: {DEFAULT_SQLALCHEMY_DATABASE_URL}")
     print(f"👉 For production, please set the {DATABASE_URL_ENV_VAR} environment variable.")
-    EFFECTIVE_SQLALCHEMY_DATABASE_URL = DEFAULT_SQLALCHEMY_DATABASE_URL
+    SQLALCHEMY_DATABASE_URL = DEFAULT_SQLALCHEMY_DATABASE_URL
     _used_env_var_globally = False
 else:
     print(f"🌍 Using database URL from environment variable {DATABASE_URL_ENV_VAR}.")
-    EFFECTIVE_SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL_FROM_ENV
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL_FROM_ENV
     _used_env_var_globally = True
 
 
@@ -59,7 +59,7 @@ class PostgresAdapter(BaseDbAdapter):
             # For simplicity, if db_url is provided, we assume it's intentional and don't fallback.
             self._used_env_var_url = False # Or determine based on equality if needed
         else:
-            self._db_url = EFFECTIVE_SQLALCHEMY_DATABASE_URL
+            self._db_url = SQLALCHEMY_DATABASE_URL
             self._used_env_var_url = _used_env_var_globally
 
         # Ensure the URL scheme is compatible with asyncpg if used directly
