@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -30,9 +31,9 @@ def upgrade() -> None:
         sa.Column('location_id', sa.Text(), sa.ForeignKey('locations.id', name='fk_game_logs_location_id_locations'), nullable=True),
         sa.Column('event_type', sa.Text(), nullable=False),
         sa.Column('description_key', sa.Text(), nullable=True),
-        sa.Column('description_params_json', sa.JSONB(), nullable=True),
-        sa.Column('involved_entities_ids', sa.JSONB(), nullable=True, comment='JSON array or object of involved entity IDs, e.g., {"characters": [], "npcs": []}'),
-        sa.Column('details', sa.JSONB(), nullable=True, comment='Flexible JSON field for additional structured data about the event'),
+        sa.Column('description_params_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column('involved_entities_ids', postgresql.JSONB(astext_type=sa.Text()), nullable=True, comment='JSON array or object of involved entity IDs, e.g., {"characters": [], "npcs": []}'),
+        sa.Column('details', postgresql.JSONB(astext_type=sa.Text()), nullable=True, comment='Flexible JSON field for additional structured data about the event'),
         sa.Column('channel_id', sa.Text(), nullable=True),
         sa.Column('source_entity_id', sa.Text(), nullable=True),
         sa.Column('source_entity_type', sa.Text(), nullable=True),
