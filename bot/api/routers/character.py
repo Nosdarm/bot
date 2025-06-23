@@ -93,25 +93,36 @@ async def create_character_for_player(
         player_id=character_data.player_id, # Use from body after validation
         guild_id=character_data.guild_id,   # Use from body after validation
         # Ensure character_data fields match DBCharacter model expectations
-        # Notably, 'experience' from schema maps to 'xp' in DB model
-        # and 'stats' from schema (CharacterStatsSchema object) maps to 'stats' (JSON) in DB
         name_i18n=character_data.name_i18n,
-        class_i18n=character_data.class_i18n,
+        character_class_i18n=character_data.class_i18n, # Corrected field name
         description_i18n=character_data.description_i18n,
         level=character_data.level,
         xp=character_data.experience, # Map 'experience' from schema to 'xp' in DB
-        stats=character_data.stats.dict() if character_data.stats else CharacterStatsSchema().dict(), # Convert CharacterStatsSchema to dict for JSON
+        stats_json=character_data.stats.dict() if character_data.stats else CharacterStatsSchema().dict(), # Corrected field name and ensure dict for JSON
         current_hp=character_data.current_hp,
         max_hp=character_data.max_hp,
-        abilities=character_data.abilities,
-        inventory=character_data.inventory,
-        npc_relationships=character_data.npc_relationships,
-        is_active_char=character_data.is_active_char
+        abilities_data_json=character_data.abilities, # Corrected field name
+        inventory_json=character_data.inventory, # Corrected field name
+        # npc_relationships is not directly mapped. Store in flags_json or state_variables_json if needed.
+        # For now, we'll assume it might be stored in flags if it's simple key-value.
+        # If complex, state_variables_json or a dedicated table might be better.
+        # Example: storing in flags_json
+        flags_json={"npc_relationships": character_data.npc_relationships} if character_data.npc_relationships else None,
+        # is_active_char logic needs to update the Player model, not Character directly.
+        # This will be handled after character creation.
     )
     db.add(db_character_instance)
     try:
+        # If is_active_char is True, update the player's active_character_id
+        if character_data.is_active_char:
+            db_player.active_character_id = character_id
+            db.add(db_player) # Add player to session if it was modified
+
         await db.commit()
         await db.refresh(db_character_instance)
+        if character_data.is_active_char: # Also refresh player if changed
+            await db.refresh(db_player)
+
     except IntegrityError as e: # Catch potential DB errors like FK violations if any
         await db.rollback()
         logger.error(f"IntegrityError creating character for player {character_data.player_id}: {e}")
@@ -120,7 +131,40 @@ async def create_character_for_player(
         await db.rollback()
         logger.error(f"Error creating character for player {character_data.player_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not create character.")
-    return db_character_instance
+
+    # Prepare the response. If CharacterRead expects stats as an object, we might need to parse stats_json.
+    # However, CharacterRead.stats is Optional[CharacterStatsSchema].
+    # The ORM mode should handle this if db_character_instance.stats_json is available and CharacterRead can map it.
+    # For safety, let's ensure the response model gets what it expects if direct mapping is tricky.
+    # The current CharacterRead schema expects 'stats' to be a CharacterStatsSchema object.
+    # The DBCharacter model has 'stats_json'. We need to bridge this for the response.
+
+    response_data = CharacterRead.from_orm(db_character_instance).dict()
+    if db_character_instance.stats_json:
+        # If stats_json is a string, parse it. If dict, use directly.
+        stats_dict_for_response = db_character_instance.stats_json
+        if isinstance(stats_dict_for_response, str):
+            try:
+                stats_dict_for_response = json.loads(stats_dict_for_response)
+            except json.JSONDecodeError:
+                stats_dict_for_response = {} # Default if parsing fails
+        response_data['stats'] = CharacterStatsSchema(**stats_dict_for_response) if stats_dict_for_response else None
+    else:
+        response_data['stats'] = None
+
+    # Map xp from DB to experience for response
+    response_data['experience'] = db_character_instance.xp
+    # Map character_class_i18n from DB to class_i18n for response
+    response_data['class_i18n'] = db_character_instance.character_class_i18n
+    # Map abilities_data_json and inventory_json back if needed by CharacterRead
+    # CharacterRead expects 'abilities' and 'inventory'
+    response_data['abilities'] = db_character_instance.abilities_data_json
+    response_data['inventory'] = db_character_instance.inventory_json
+    # is_active_char for response
+    response_data['is_active_char'] = db_player.active_character_id == db_character_instance.id if db_player else False
+
+
+    return CharacterRead(**response_data)
 
 @router.get(
     "/players/{player_id}/characters/",
