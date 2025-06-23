@@ -507,25 +507,49 @@ class GameManager:
 
 
         for guild_id_str in guild_ids_to_check:
-            logger.info(f"GameManager: Checking/Initializing GuildConfig for guild_id: {guild_id_str}")
+            logger.info(f"GameManager._ensure_guild_configs_exist: Attempting to ensure GuildConfig for guild_id: {guild_id_str}")
             try:
                 # The get_session method on DBService is an async context manager
                 async with self.db_service.get_session() as session: # type: ignore
-                    await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
+                    success = await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
+                    if success:
+                        logger.info(f"GameManager._ensure_guild_configs_exist: Successfully ensured/initialized GuildConfig for {guild_id_str}.")
+                    else:
+                        # This 'else' means initialize_new_guild returned False, indicating a handled error (e.g., IntegrityError)
+                        logger.warning(f"GameManager._ensure_guild_configs_exist: initialize_new_guild reported an issue (returned False) for {guild_id_str}. Check previous logs from GuildInitializer.")
             except Exception as e:
-                logger.error(f"GameManager: Failed to ensure/initialize GuildConfig for {guild_id_str}: {e}", exc_info=True)
+                # This catches errors from get_session() or unhandled errors within initialize_new_guild if it were to raise something new
+                logger.error(f"GameManager._ensure_guild_configs_exist: Exception while trying to ensure/initialize GuildConfig for {guild_id_str}: {e}", exc_info=True)
 
 
     async def _load_initial_data_and_state(self):
         logger.info("GameManager: Loading initial game data and state...")
+        if not self._active_guild_ids:
+            logger.warning("GameManager: No active_guild_ids defined. Skipping initial data and state loading by CampaignLoader and PersistenceManager.")
+            return
+
         if self.campaign_loader:
-            if self._active_guild_ids:
-                for guild_id_str in self._active_guild_ids:
-                    logger.info("GameManager: Populating game data for guild %s.", guild_id_str)
+            logger.info(f"GameManager: CampaignLoader found. Processing {_active_guild_ids=}")
+            for guild_id_str in self._active_guild_ids:
+                logger.info(f"GameManager: Populating game data via CampaignLoader for guild {guild_id_str}.")
+                try:
                     await self.campaign_loader.populate_all_game_data(guild_id=guild_id_str, campaign_identifier=None)
-            else: logger.warning("GameManager: No active guilds specified for data loading during _load_initial_data_and_state.")
-        if self._persistence_manager: await self._persistence_manager.load_game_state(guild_ids=self._active_guild_ids)
-        logger.info("GameManager: Initial data and game state loaded.")
+                    logger.info(f"GameManager: Successfully populated game data for guild {guild_id_str}.")
+                except Exception as e:
+                    logger.error(f"GameManager: Error populating game data for guild {guild_id_str} using CampaignLoader: {e}", exc_info=True)
+        else:
+            logger.warning("GameManager: CampaignLoader not available. Skipping campaign data population.")
+
+        if self._persistence_manager:
+            logger.info(f"GameManager: PersistenceManager found. Loading game state for active guilds: {self._active_guild_ids}")
+            try:
+                await self._persistence_manager.load_game_state(guild_ids=self._active_guild_ids)
+                logger.info("GameManager: Successfully loaded game state via PersistenceManager.")
+            except Exception as e:
+                logger.error(f"GameManager: Error loading game state using PersistenceManager: {e}", exc_info=True)
+        else:
+            logger.warning("GameManager: PersistenceManager not available. Skipping game state loading.")
+        logger.info("GameManager: Finished _load_initial_data_and_state method.")
 
     async def _start_background_tasks(self):
         logger.info("GameManager: Starting background tasks...")

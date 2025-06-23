@@ -59,8 +59,9 @@ class GameLogManager:
         generate_narrative: bool = False, # New parameter
         session: Optional[AsyncSession] = None # New parameter for transaction participation
     ) -> None:
-        if self._db_service is None or self._db_service.adapter is None:
+        if self._db_service is None or self._db_service.adapter is None or self._db_service.async_session_factory is None:
             log_message_fallback = (
+                f"GameLogManager: DB service, adapter, or session factory not available. Log: "
                 f"Guild: {guild_id}, Event: {event_type}, Details: {details}, "
                 f"Player: {player_id}, Party: {party_id}, Location: {location_id}, Channel: {channel_id}, "
                 f"DescKey: {description_key}, DescParams: {description_params}, Involved: {involved_entities_ids}, "
@@ -68,6 +69,60 @@ class GameLogManager:
             )
             logger.error("GameLogManager: DB service not available. Log: %s", log_message_fallback)
             return
+
+        # --- Fallback Check for GuildConfig ---
+        guild_config_exists = False
+        if session: # If a session is provided, use it for the check
+            try:
+                from bot.database.models import GuildConfig # Local import
+                from sqlalchemy.future import select
+                stmt = select(GuildConfig.guild_id).where(GuildConfig.guild_id == guild_id).limit(1)
+                result = await session.execute(stmt)
+                guild_config_exists = result.scalars().first() is not None
+            except Exception as e_check_session:
+                logger.error(f"GameLogManager: Error checking GuildConfig within provided session for guild {guild_id}: {e_check_session}", exc_info=True)
+                # Proceed cautiously, or decide to bail if check fails
+        else: # Otherwise, use a new session from the factory
+            async with self._db_service.async_session_factory() as check_session:
+                try:
+                    from bot.database.models import GuildConfig # Local import
+                    from sqlalchemy.future import select
+                    stmt = select(GuildConfig.guild_id).where(GuildConfig.guild_id == guild_id).limit(1)
+                    result = await check_session.execute(stmt)
+                    guild_config_exists = result.scalars().first() is not None
+                except Exception as e_check_new_session:
+                    logger.error(f"GameLogManager: Error checking GuildConfig with new session for guild {guild_id}: {e_check_new_session}", exc_info=True)
+                    # Decide whether to bail or proceed; for now, assume it might exist if check fails.
+
+        if not guild_config_exists:
+            logger.critical(f"GameLogManager: GuildConfig for guild_id '{guild_id}' does NOT exist prior to logging event '{event_type}'. Attempting last-chance initialization.")
+            try:
+                async with self._db_service.async_session_factory() as init_session: # type: ignore
+                    from bot.game.guild_initializer import initialize_new_guild # Local import
+                    init_success = await initialize_new_guild(init_session, guild_id, force_reinitialize=False)
+                    if init_success:
+                        logger.info(f"GameLogManager: Last-chance initialization for guild {guild_id} SUCCEEDED.")
+                        guild_config_exists = True # Now it should exist
+                    else:
+                        logger.error(f"GameLogManager: Last-chance initialization for guild {guild_id} FAILED or reported no change. Log event for type '{event_type}' will be SKIPPED to prevent ForeignKeyViolation.")
+                        # Log the original event details to logger as a fallback
+                        details_for_fallback_log = {
+                             "guild_id": guild_id, "event_type": f"SKIPPED_{event_type}", "original_details": details,
+                             "reason": "GuildConfig missing and last-chance init failed.",
+                             "player_id": player_id, "party_id": party_id, "location_id": location_id
+                        }
+                        logger.error(f"GameLogManager (FALLBACK_LOG_SKIP): {json.dumps(details_for_fallback_log)}")
+                        return # CRITICAL: Skip logging to DB
+            except Exception as e_init:
+                logger.error(f"GameLogManager: Exception during last-chance initialization for guild {guild_id}: {e_init}. Log event for type '{event_type}' will be SKIPPED.", exc_info=True)
+                details_for_fallback_log_exc = {
+                    "guild_id": guild_id, "event_type": f"SKIPPED_{event_type}", "original_details": details,
+                    "reason": "Exception during last-chance init.", "exception_details": str(e_init),
+                    "player_id": player_id, "party_id": party_id, "location_id": location_id
+                }
+                logger.error(f"GameLogManager (FALLBACK_LOG_SKIP_EXCEPTION): {json.dumps(details_for_fallback_log_exc)}")
+                return # CRITICAL: Skip logging to DB
+        # --- End Fallback Check ---
 
         log_id = str(uuid.uuid4())
         description_params_json = json.dumps(description_params) if description_params is not None else None

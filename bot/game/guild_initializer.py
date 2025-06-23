@@ -26,6 +26,7 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
 
     # This flag will determine if we populate new game world entities (factions, specific locations made by this func)
     is_new_world_setup = original_existing_guild_config is None or force_reinitialize
+    logger.info(f"Guild Initializer for {guild_id_str}: is_new_world_setup = {is_new_world_setup} (original_existing_guild_config: {bool(original_existing_guild_config)}, force_reinitialize: {force_reinitialize})")
 
     # The early exit that was problematic:
     # if existing_guild_config and not force_reinitialize:
@@ -34,26 +35,37 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
 
     try:
         # 1. Upsert GuildConfig (always, as it might update bot_language or ensure presence)
+        logger.info(f"Guild Initializer for {guild_id_str}: Attempting to upsert GuildConfig.")
         guild_config_values = {
             "guild_id": guild_id_str,
-            "bot_language": "en"
+            "bot_language": "en" # Default, can be updated by commands
+            # Other fields like game_channel_id are intentionally left to be set by specific commands
+            # or later updates, to avoid overwriting them here if they were set manually.
         }
 
         stmt_guild_config = pg_insert(GuildConfig).values(guild_config_values)
         stmt_guild_config = stmt_guild_config.on_conflict_do_update(
             index_elements=['guild_id'],
             set_={
-                "bot_language": stmt_guild_config.excluded.bot_language,
-                "game_channel_id": None, # Or stmt_guild_config.excluded.game_channel_id if it could be part of values
-                "master_channel_id": None, # Or stmt_guild_config.excluded.master_channel_id
-                "system_channel_id": None, # Or stmt_guild_config.excluded.system_channel_id
-                "notification_channel_id": None # Or stmt_guild_config.excluded.notification_channel_id
+                # Only update bot_language if it's explicitly part of the insert,
+                # otherwise, preserve existing. Since it's always in values, it will be set.
+                "bot_language": stmt_guild_config.excluded.bot_language
+                # To preserve existing channel IDs if they are already set and not part of `guild_config_values`:
+                # "game_channel_id": GuildConfig.game_channel_id, # Keep existing
+                # "master_channel_id": GuildConfig.master_channel_id, # Keep existing
+                # ... and so on for other fields not intended to be reset by this basic init.
+                # However, the current structure of on_conflict_do_update in SQLAlchemy
+                # might require listing them if you want to selectively update.
+                # The provided example for on_conflict_do_update implies that only fields in `set_` are touched.
+                # If a field is not in `set_`, its existing value is retained on conflict.
+                # If it's a new insert, fields not in `guild_config_values` get their SQL defaults.
             }
         )
         await db_session.execute(stmt_guild_config)
         logger.info(f"GuildConfig for guild {guild_id_str} upserted successfully.")
 
         # Initialize WorldState for the guild
+        logger.info(f"Guild Initializer for {guild_id_str}: Attempting to upsert WorldState.")
         world_state_values = {
             "guild_id": guild_id_str,
             "global_narrative_state_i18n": {},
@@ -98,26 +110,29 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
 
         # Handle RulesConfig: Delete if force_reinitialize, then add if missing or forced.
         if force_reinitialize:
-            logger.info(f"Force reinitializing rules for guild {guild_id_str}. Deleting existing rules.")
+            logger.info(f"Guild Initializer for {guild_id_str}: Force reinitializing rules. Deleting existing RulesConfig entries.")
             delete_rules_stmt = RulesConfig.__table__.delete().where(RulesConfig.guild_id == guild_id_str)
             await db_session.execute(delete_rules_stmt)
+            logger.info(f"Guild Initializer for {guild_id_str}: Existing RulesConfig entries deleted due to force_reinitialize.")
             # After forcing delete, we should ensure they are re-added.
             ensure_rules_are_added = True
         else:
             # If not forcing, check if essential rules are present. If not, add them.
+            logger.info(f"Guild Initializer for {guild_id_str}: Checking for existing essential rules (e.g., default_language).")
             existing_rule_check_stmt = select(RulesConfig.id).where(
                 RulesConfig.guild_id == guild_id_str,
                 RulesConfig.key == "default_language"  # A marker default rule
             ).limit(1)
             rule_result = await db_session.execute(existing_rule_check_stmt)
             if not rule_result.scalars().first():
-                logger.info(f"Essential rules (e.g., default_language) missing for guild {guild_id_str}. Adding default rules.")
+                logger.info(f"Guild Initializer for {guild_id_str}: Essential rules (e.g., default_language) missing. Flagging default rules for addition.")
                 ensure_rules_are_added = True
             else:
-                logger.info(f"Essential rules appear to exist for guild {guild_id_str}. Not re-adding default rules unless forced.")
+                logger.info(f"Guild Initializer for {guild_id_str}: Essential rules appear to exist. Not re-adding default rules unless forced.")
                 ensure_rules_are_added = False # Rules exist and not forcing, so don't add again.
 
         if ensure_rules_are_added:
+            logger.info(f"Guild Initializer for {guild_id_str}: Proceeding to add/re-add default rules.")
             default_rules = {
                 "experience_rate": 1.0,
                 "loot_drop_chance": 0.5,
@@ -200,19 +215,23 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
         # Conditional population of game world entities (Factions, default Locations specific to this initializer)
         # This part only runs if it's a brand new guild setup OR force_reinitialize is True.
         if is_new_world_setup:
-            logger.info(f"Proceeding with new world entity initialization (Factions, default Locations) for guild {guild_id_str} (is_new_world_setup: {is_new_world_setup}).")
+            logger.info(f"Guild Initializer for {guild_id_str}: Proceeding with new world entity initialization (Factions, default Locations) as is_new_world_setup is True.")
 
             # Initialize Factions
-            logger.info(f"Initializing default factions for guild {guild_id_str}.")
+            logger.info(f"Guild Initializer for {guild_id_str}: Initializing default factions.")
             # No need to check force_reinitialize again here, is_new_world_setup already covers it.
             # If is_new_world_setup is true due to force_reinitialize, factions should be deleted.
             if force_reinitialize: # This specific deletion should only happen if forced.
-                 logger.info(f"Force reinitialize: Deleting existing factions for guild {guild_id_str}.")
+                 logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing GeneratedFaction entries.")
                  existing_factions_stmt = select(GeneratedFaction).where(GeneratedFaction.guild_id == guild_id_str)
                  result = await db_session.execute(existing_factions_stmt)
+                 deleted_faction_count = 0
                  for faction in result.scalars().all():
                      await db_session.delete(faction)
-                 await db_session.flush()
+                     deleted_faction_count += 1
+                 if deleted_faction_count > 0:
+                    await db_session.flush()
+                    logger.info(f"Guild Initializer for {guild_id_str}: Deleted {deleted_faction_count} existing GeneratedFaction entries.")
 
             default_factions_data = [
                 {"id": f"faction_observers_{str(uuid.uuid4())[:8]}", "name_i18n": {"en": "Neutral Observers", "ru": "Нейтральные Наблюдатели"}, "description_i18n": {"en": "A neutral faction...", "ru": "Нейтральная фракция..."}},
@@ -261,11 +280,12 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                 logger.info(f"Added {len(factions_to_add)} default factions for guild {guild_id_str}.")
 
             # Initialize Location Templates
-            logger.info(f"Initializing default location templates for guild {guild_id_str}.")
+            logger.info(f"Guild Initializer for {guild_id_str}: Initializing default location templates.")
             if force_reinitialize:
-                logger.info(f"Force reinitialize: Deleting existing location templates for guild {guild_id_str}.")
+                logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing LocationTemplate entries.")
                 delete_loc_templates_stmt = LocationTemplate.__table__.delete().where(LocationTemplate.guild_id == guild_id_str)
                 await db_session.execute(delete_loc_templates_stmt)
+                logger.info(f"Guild Initializer for {guild_id_str}: Existing LocationTemplate entries deleted.")
 
             default_template_ids = [
                 "town_square", "tavern", "market_street", "guild_hall", "city_gate",
@@ -296,17 +316,21 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                 # Consider using pg_insert with on_conflict_do_nothing if templates might already exist
                 # and we don't want errors. For now, direct add_all.
                 db_session.add_all(location_templates_to_add)
-                logger.info(f"Added/Attempted to add {len(location_templates_to_add)} default location templates for guild {guild_id_str}.")
+                logger.info(f"Guild Initializer for {guild_id_str}: Added/Attempted to add {len(location_templates_to_add)} default location templates.")
 
 
-            logger.info(f"Initializing default map for guild {guild_id_str}.")
+            logger.info(f"Guild Initializer for {guild_id_str}: Initializing default map (Location entities).")
             if force_reinitialize:
-                logger.info(f"Force reinitialize: Deleting existing locations for guild {guild_id_str}.")
+                logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing Location entries.")
                 existing_locations_stmt = select(Location).where(Location.guild_id == guild_id_str)
                 result = await db_session.execute(existing_locations_stmt)
+                deleted_loc_count = 0
                 for loc in result.scalars().all():
                     await db_session.delete(loc)
-                await db_session.flush()
+                    deleted_loc_count += 1
+                if deleted_loc_count > 0:
+                    await db_session.flush()
+                    logger.info(f"Guild Initializer for {guild_id_str}: Deleted {deleted_loc_count} existing Location entries.")
 
             village_square_id = f"loc_village_square_{guild_id_str[:4]}_{str(uuid.uuid4())[:4]}"
             village_tavern_id = f"loc_village_tavern_{guild_id_str[:4]}_{str(uuid.uuid4())[:4]}"
@@ -421,28 +445,31 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                 ))
             if locations_to_add:
                 db_session.add_all(locations_to_add)
-                logger.info(f"Added {len(locations_to_add)} default locations for guild {guild_id_str}.")
+                logger.info(f"Guild Initializer for {guild_id_str}: Added {len(locations_to_add)} default Location entries.")
         else:
-            logger.info(f"Skipping Factions/Locations initialization for guild {guild_id_str} as it's not new or forced.")
+            logger.info(f"Guild Initializer for {guild_id_str}: Skipping Factions/Locations initialization as is_new_world_setup is False.")
 
         # Initialize WorldState
-        logger.info(f"Attempting to initialize WorldState for guild {guild_id_str}.")
+        logger.info(f"Guild Initializer for {guild_id_str}: Attempting to initialize WorldState.")
         if force_reinitialize:
-            logger.info(f"Force reinitialize: Deleting existing WorldState for guild {guild_id_str}.")
+            logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing WorldState for guild.")
             existing_world_state_stmt = select(WorldState).where(WorldState.guild_id == guild_id_str)
             result = await db_session.execute(existing_world_state_stmt)
             existing_world_state = result.scalars().first()
             if existing_world_state:
                 await db_session.delete(existing_world_state)
                 await db_session.flush()
-                logger.info(f"Deleted existing WorldState for guild {guild_id_str}.")
+                logger.info(f"Guild Initializer for {guild_id_str}: Deleted existing WorldState.")
+            else:
+                logger.info(f"Guild Initializer for {guild_id_str}: No existing WorldState found to delete (force_reinitialize).")
+
 
         world_state_stmt = select(WorldState).where(WorldState.guild_id == guild_id_str)
         result = await db_session.execute(world_state_stmt)
         world_state = result.scalars().first()
 
         if not world_state:
-            logger.info(f"No existing WorldState found for guild {guild_id_str} or it was deleted; creating new one.")
+            logger.info(f"Guild Initializer for {guild_id_str}: No existing WorldState found (or it was deleted); creating new one.")
             new_world_state = WorldState(
                 guild_id=guild_id_str,
                 global_narrative_state_i18n={},
@@ -450,20 +477,21 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                 custom_flags={}
             )
             db_session.add(new_world_state)
-            logger.info(f"New WorldState created and added to session for guild {guild_id_str}.")
+            logger.info(f"Guild Initializer for {guild_id_str}: New WorldState created and added to session.")
         else:
-            logger.info(f"WorldState already exists for guild {guild_id_str}. No action taken.")
+            logger.info(f"Guild Initializer for {guild_id_str}: WorldState already exists. No action taken for WorldState creation.")
 
+        logger.info(f"Guild Initializer for {guild_id_str}: Attempting to commit session.")
         await db_session.commit()
-        logger.info(f"Successfully initialized/updated default data for guild_id: {guild_id_str}")
+        logger.info(f"Guild Initializer for {guild_id_str}: Session committed. Successfully initialized/updated default data.")
         return True
     except IntegrityError as e:
         await db_session.rollback()
-        logger.error(f"IntegrityError during guild initialization for {guild_id_str}: {e}. Rolled back session.")
+        logger.error(f"Guild Initializer for {guild_id_str}: IntegrityError during guild initialization: {e}. Rolled back session.", exc_info=True)
         return False
     except Exception as e:
         await db_session.rollback()
-        logger.error(f"Unexpected error during guild initialization for {guild_id_str}: {e}. Rolled back session.", exc_info=True)
+        logger.error(f"Guild Initializer for {guild_id_str}: Unexpected error during guild initialization: {e}. Rolled back session.", exc_info=True)
         return False
 
 # Main test function (commented out for bot use)

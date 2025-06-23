@@ -188,6 +188,44 @@ class RPGBot(commands.Bot):
                     # logging.debug(f"Periodic turn check: Iterating {len(self.guilds)} guilds.")
                     for guild in self.guilds:
                         guild_id_str = str(guild.id)
+
+                        # Ensure guild config exists before processing turns
+                        try:
+                            async with self.get_db_session() as session:
+                                from bot.database.models import GuildConfig # Correct import location
+                                from sqlalchemy.future import select
+
+                                stmt = select(GuildConfig).where(GuildConfig.guild_id == guild_id_str)
+                                result = await session.execute(stmt)
+                                existing_config = result.scalars().first()
+
+                                if not existing_config:
+                                    logging.warning(f"RPGBot: GuildConfig missing for guild {guild_id_str} during periodic check. Attempting initialization.")
+                                    from bot.game.guild_initializer import initialize_new_guild
+                                    # Ensure guild_id is passed as string, as initialize_new_guild expects str
+                                    init_success = await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
+                                    if init_success:
+                                        logging.info(f"RPGBot: Successfully initialized guild {guild_id_str} during periodic check.")
+                                    else:
+                                        logging.error(f"RPGBot: Failed to initialize guild {guild_id_str} during periodic check. Skipping turn processing for this guild.")
+                                        continue # Skip to next guild if initialization fails
+                                elif not existing_config.game_channel_id: # Also check if essential parts of config are missing
+                                    logging.warning(f"RPGBot: GuildConfig for guild {guild_id_str} seems incomplete (e.g. no game_channel_id). Re-running initializer.")
+                                    from bot.game.guild_initializer import initialize_new_guild
+                                    # force_reinitialize might be too much, but initialize_new_guild has upsert logic.
+                                    # Consider a more targeted update if this becomes an issue.
+                                    # Using force_reinitialize=False to mostly fill in blanks or update non-critical fields.
+                                    init_success = await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
+                                    if init_success:
+                                        logging.info(f"RPGBot: Successfully re-ran initialization for guild {guild_id_str} to complete config.")
+                                    else:
+                                        logging.warning(f"RPGBot: Re-running initialization for guild {guild_id_str} reported no major changes or failed.")
+                                        # Decide if to continue if re-init fails or does nothing; for now, proceed.
+
+                        except Exception as e_cfg_check:
+                            logging.error(f"RPGBot: Error checking/initializing guild config for {guild_id_str} in periodic check: {e_cfg_check}", exc_info=True)
+                            continue # Skip to next guild if config check fails catastrophically
+
                         # Call existing TurnProcessingService if it exists
                         if self.game_manager.turn_processing_service:
                             try:
