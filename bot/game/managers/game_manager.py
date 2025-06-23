@@ -485,52 +485,51 @@ class GameManager:
         logger.info("GameManager: AIGenerationService initialized.")
         logger.info("GameManager: AI content services initialized.")
 
-    async def _ensure_guild_configs_exist(self):
+    async def _ensure_guild_configs_exist(self) -> List[str]:
         logger.info("GameManager: Ensuring guild configurations exist before data loading...")
         if not self.db_service:
             logger.error("GameManager: DBService not available. Cannot ensure guild configs.")
-            return
+            return []
 
         from bot.game.guild_initializer import initialize_new_guild
 
-        # Use a default if no active_guild_ids are set, common for initial setup
-        guild_ids_to_check = self._active_guild_ids
-        if not guild_ids_to_check:
-            # This default ID was observed in logs as problematic for FK constraints
-            # It should match the guild ID used by CampaignLoader if no specific guild is targeted by Discord events yet
+        successfully_initialized_guild_ids: List[str] = []
+
+        guild_ids_to_process = list(self._active_guild_ids) # Make a copy to potentially modify for default
+        if not guild_ids_to_process:
             default_id_for_setup = self._settings.get('default_guild_id_for_setup', "1364930265591320586")
-            logger.warning(f"GameManager: No active_guild_ids found. Ensuring config for default setup guild: {default_id_for_setup}")
-            guild_ids_to_check = [default_id_for_setup]
-            # Also, ensure this default ID is added to _active_guild_ids if it's going to be used for data loading
+            logger.warning(f"GameManager: No active_guild_ids found. Attempting to ensure config for default setup guild: {default_id_for_setup}")
+            guild_ids_to_process = [default_id_for_setup]
+            # Add to self._active_guild_ids so other parts of setup that rely on it also see this default
             if default_id_for_setup not in self._active_guild_ids:
-                 self._active_guild_ids.append(default_id_for_setup)
+                self._active_guild_ids.append(default_id_for_setup)
 
-
-        for guild_id_str in guild_ids_to_check:
-            logger.info(f"GameManager._ensure_guild_configs_exist: Attempting to ensure GuildConfig for guild_id: {guild_id_str}")
+        for guild_id_str in guild_ids_to_process:
+            logger.info(f"GameManager._ensure_guild_configs_exist: Processing guild_id: {guild_id_str}")
             try:
-                # The get_session method on DBService is an async context manager
                 async with self.db_service.get_session() as session: # type: ignore
                     success = await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
                     if success:
                         logger.info(f"GameManager._ensure_guild_configs_exist: Successfully ensured/initialized GuildConfig for {guild_id_str}.")
+                        successfully_initialized_guild_ids.append(guild_id_str)
                     else:
-                        # This 'else' means initialize_new_guild returned False, indicating a handled error (e.g., IntegrityError)
-                        logger.warning(f"GameManager._ensure_guild_configs_exist: initialize_new_guild reported an issue (returned False) for {guild_id_str}. Check previous logs from GuildInitializer.")
+                        logger.warning(f"GameManager._ensure_guild_configs_exist: initialize_new_guild reported an issue (returned False) for {guild_id_str}. This guild will NOT be processed for data loading.")
             except Exception as e:
-                # This catches errors from get_session() or unhandled errors within initialize_new_guild if it were to raise something new
-                logger.error(f"GameManager._ensure_guild_configs_exist: Exception while trying to ensure/initialize GuildConfig for {guild_id_str}: {e}", exc_info=True)
+                logger.error(f"GameManager._ensure_guild_configs_exist: Exception while trying to ensure/initialize GuildConfig for {guild_id_str}: {e}. This guild will NOT be processed for data loading.", exc_info=True)
+
+        logger.info(f"GameManager._ensure_guild_configs_exist: Completed. Successfully confirmed/initialized GuildConfigs for: {successfully_initialized_guild_ids}")
+        return successfully_initialized_guild_ids
 
 
-    async def _load_initial_data_and_state(self):
-        logger.info("GameManager: Loading initial game data and state...")
-        if not self._active_guild_ids:
-            logger.warning("GameManager: No active_guild_ids defined. Skipping initial data and state loading by CampaignLoader and PersistenceManager.")
+    async def _load_initial_data_and_state(self, confirmed_guild_ids: List[str]):
+        logger.info(f"GameManager: Loading initial game data and state for confirmed_guild_ids: {confirmed_guild_ids}")
+        if not confirmed_guild_ids:
+            logger.warning("GameManager: No confirmed_guild_ids provided. Skipping initial data and state loading.")
             return
 
         if self.campaign_loader:
-            logger.info(f"GameManager: CampaignLoader found. Processing self._active_guild_ids={self._active_guild_ids}")
-            for guild_id_str in self._active_guild_ids:
+            logger.info(f"GameManager: CampaignLoader found. Processing confirmed_guild_ids={confirmed_guild_ids}")
+            for guild_id_str in confirmed_guild_ids: # Iterate over confirmed list
                 logger.info(f"GameManager: Populating game data via CampaignLoader for guild {guild_id_str}.")
                 try:
                     await self.campaign_loader.populate_all_game_data(guild_id=guild_id_str, campaign_identifier=None)
@@ -565,9 +564,27 @@ class GameManager:
             await self._initialize_dependent_managers()
             await self._initialize_processors_and_command_system()
             await self._initialize_ai_content_services()
-            await self._ensure_guild_configs_exist() # Ensure configs before loading data
-            await self._load_initial_data_and_state()
-            await self._start_background_tasks()
+
+            confirmed_guild_ids_for_data_load = await self._ensure_guild_configs_exist() # Ensure configs before loading data
+
+            # Pass the confirmed list to data loading and persistence manager
+            await self._load_initial_data_and_state(confirmed_guild_ids_for_data_load)
+
+            # Persistence manager also needs to be aware of which guilds are confirmed,
+            # if its load_game_state relies on self._active_guild_ids directly, this might need adjustment.
+            # For now, assuming self._active_guild_ids has been updated correctly if a default was used.
+            # Or, _persistence_manager.load_game_state could also take confirmed_guild_ids.
+            # Let's check PersistenceManager.load_game_state usage. It uses `guild_ids=self._active_guild_ids`.
+            # If _ensure_guild_configs_exist modified self._active_guild_ids (e.g. added the default),
+            # then this is fine. If not, and confirmed_guild_ids could be a subset, then PersistenceManager
+            # might try to load state for guilds that weren't confirmed.
+            # For safety, let's pass confirmed_guild_ids_for_data_load to persistence manager too,
+            # assuming it can take a specific list. If not, this part of PersistenceManager needs review.
+            # The current PersistenceManager.load_game_state takes a `guild_ids: List[str]` argument.
+            if self._persistence_manager:
+                 await self._persistence_manager.load_game_state(guild_ids=confirmed_guild_ids_for_data_load)
+
+            await self._start_background_tasks() # Background tasks will use self._active_guild_ids, which should be up-to-date.
             logger.info("GameManager: Setup complete.")
         except Exception as e:
             is_db_connection_error = isinstance(e, (ConnectionRefusedError, asyncpg_exceptions.CannotConnectNowError)) or (hasattr(e, '__cause__') and isinstance(e.__cause__, (ConnectionRefusedError, asyncpg_exceptions.CannotConnectNowError)))

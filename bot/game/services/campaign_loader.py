@@ -154,7 +154,7 @@ class CampaignLoader:
                         # The call to create_location needs to be updated if its signature changes for i18n
                         # For now, assuming it expects dicts for name_i18n and description_i18n
                         # and a 'properties' field for other static data.
-                        await self._db_service.create_location(
+                        created_location_data = await self._db_service.create_location(
                             loc_id=loc_id,
                             name_i18n=name_i18n,
                             description_i18n=description_i18n,
@@ -165,12 +165,19 @@ class CampaignLoader:
                             properties=properties
                         )
                         display_name = name_i18n.get(default_lang, loc_id)
-                        print(f"CampaignLoader: Created location '{display_name}' (ID: {loc_id}) for guild '{guild_id}'.")
+                        if created_location_data:
+                            print(f"CampaignLoader: Successfully created location '{display_name}' (ID: {loc_id}) for guild '{guild_id}' via DBService.")
+                        else:
+                            # DBService.create_location would have logged the specific FK error.
+                            # CampaignLoader now acknowledges the failure.
+                            print(f"CampaignLoader: ERROR - DBService failed to create location '{display_name}' (ID: {loc_id}) for guild '{guild_id}'. Check previous DBService error logs.")
                     else:
                         display_name = name_i18n.get(default_lang, loc_id)
                         print(f"CampaignLoader: Location '{display_name}' (ID: {loc_id}) already exists for guild '{guild_id}', skipping.")
                 except Exception as e:
-                    print(f"CampaignLoader: Error creating location '{display_name}' (ID: {loc_id}) for guild '{guild_id}': {e}")
+                    # This exception would be if the call to db_service.create_location itself raised an unexpected error
+                    # not caught by db_service's internal try-except, or if get_location failed.
+                    print(f"CampaignLoader: Exception during processing/creation of location '{display_name}' (ID: {loc_id}) for guild '{guild_id}': {e}")
                     traceback.print_exc()
             print(f"CampaignLoader: Location population for guild '{guild_id}' complete.")
         else:
@@ -251,7 +258,7 @@ class CampaignLoader:
                     # Updated call to self._db_service.create_npc
                     # Passing i18n fields and other structured data.
                     # The DBService.create_npc method will need to be adapted to this new signature.
-                    await self._db_service.create_npc(
+                    created_npc_data = await self._db_service.create_npc(
                         npc_id=npc_id,
                         guild_id=guild_id,
                         template_id=npc_id, # Using archetype ID (npc_id from file) as template_id
@@ -278,11 +285,17 @@ class CampaignLoader:
                         # Note: DBService.create_npc will need to be updated to accept these,
                         # possibly via **kwargs or by adding them to its signature.
                     )
-                    print(f"CampaignLoader: Created NPC '{display_name_log}' (ID: {npc_id}, Template: {npc_id}) for guild '{guild_id}'.")
+                    if created_npc_data:
+                        print(f"CampaignLoader: Successfully created NPC '{display_name_log}' (ID: {npc_id}, Template: {npc_id}) for guild '{guild_id}' via DBService.")
+                    else:
+                        # DBService.create_npc would have logged the specific FK error.
+                        print(f"CampaignLoader: ERROR - DBService failed to create NPC '{display_name_log}' (ID: {npc_id}, Template: {npc_id}) for guild '{guild_id}'. Check previous DBService error logs.")
                 else:
                     print(f"CampaignLoader: NPC '{display_name_log}' (ID: {npc_id}) already exists for guild '{guild_id}', skipping.")
             except Exception as e:
-                print(f"CampaignLoader: Error creating NPC '{display_name_log}' (ID: {npc_id}) for guild '{guild_id}': {e}")
+                # This exception would be if the call to db_service.create_npc itself raised an unexpected error
+                # not caught by db_service's internal try-except, or if get_npc failed.
+                print(f"CampaignLoader: Exception during processing/creation of NPC '{display_name_log}' (ID: {npc_id}) for guild '{guild_id}': {e}")
                 traceback.print_exc()
         print(f"CampaignLoader: NPC population for guild '{guild_id}' complete.")
 
