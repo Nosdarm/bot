@@ -81,18 +81,18 @@ class GameLogManager:
                 guild_config_exists = result.scalars().first() is not None
             except Exception as e_check_session:
                 logger.error(f"GameLogManager: Error checking GuildConfig within provided session for guild {guild_id}: {e_check_session}", exc_info=True)
-                # Proceed cautiously, or decide to bail if check fails
+                # Proceed cautiously, or decide to bail if check fails / guild_config_exists will remain False
         else: # Otherwise, use a new session from the factory
             try:
-                async with self._db_service.get_session() as check_session: # Use get_session()
+                async with self._db_service.get_session() as check_session:
                     from bot.database.models import GuildConfig # Local import
                     from sqlalchemy.future import select
                     stmt = select(GuildConfig.guild_id).where(GuildConfig.guild_id == guild_id).limit(1)
                     result = await check_session.execute(stmt)
                     guild_config_exists = result.scalars().first() is not None
-                except Exception as e_check_new_session:
-                    logger.error(f"GameLogManager: Error checking GuildConfig with new session for guild {guild_id}: {e_check_new_session}", exc_info=True)
-                    # Decide whether to bail or proceed; for now, assume it might exist if check fails.
+            except Exception as e_check_new_session:
+                logger.error(f"GameLogManager: Error during GuildConfig check with new session for guild {guild_id}: {e_check_new_session}", exc_info=True)
+                # guild_config_exists will remain False, leading to the last-chance init.
 
         if not guild_config_exists:
             logger.critical(f"GameLogManager: GuildConfig for guild_id '{guild_id}' does NOT exist prior to logging event '{event_type}'. Attempting last-chance initialization.")
