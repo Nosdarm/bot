@@ -529,7 +529,7 @@ class GameManager:
             return
 
         if self.campaign_loader:
-            logger.info(f"GameManager: CampaignLoader found. Processing {_active_guild_ids=}")
+            logger.info(f"GameManager: CampaignLoader found. Processing self._active_guild_ids={self._active_guild_ids}")
             for guild_id_str in self._active_guild_ids:
                 logger.info(f"GameManager: Populating game data via CampaignLoader for guild {guild_id_str}.")
                 try:
