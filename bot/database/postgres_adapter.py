@@ -99,25 +99,51 @@ class PostgresAdapter(BaseDbAdapter):
                     # For now, sticking to the code's direct parameters.
                     # If `self._asyncpg_url` contains `sslmode=require`, asyncpg might handle it.
                     # Let's assume for now the DSN is self-contained regarding SSL if needed by asyncpg.
-                    ssl_options = None
-                    if "sslmode=require" in self._db_url and "ssl=" not in self._asyncpg_url : # Crude check, improve if necessary
-                        # asyncpg needs an SSLContext object or True for default context
-                        # For simplicity, if sslmode=require is in the original URL, we'll pass ssl=True
-                        # A more robust solution would parse the URL properly.
-                        # import ssl # Add if not imported
-                        # context = ssl.create_default_context()
-                        # context.check_hostname = False
-                        # context.verify_mode = ssl.CERT_NONE # Example, adjust for security
-                        # ssl_options = context
-                        ssl_options = True # Use default SSL context
-                        print(f"PostgresAdapter: Detected sslmode=require, attempting to pass ssl=True to asyncpg.create_pool for DSN: {self._asyncpg_url}")
+                    # --- MODIFIED SSL HANDLING ---
+                    from urllib.parse import urlparse, parse_qs, urlunparse, urlencode # Add imports for URL manipulation
 
+                    parsed_original_url = urlparse(self._db_url) # Parse the original SQLAlchemy URL
+                    query_params_original_url = {k: v[0] for k, v in parse_qs(parsed_original_url.query).items()}
+                    ssl_mode = query_params_original_url.get('sslmode')
+
+                    connect_kwargs_for_pool = {}
+                    asyncpg_dsn_for_pool = self._asyncpg_url # Start with the potentially modified asyncpg_url
+
+                    if ssl_mode:
+                        print(f"PostgresAdapter: Found 'sslmode={ssl_mode}' in DB_URL. Configuring for asyncpg pool.")
+                        if ssl_mode in ['require', 'prefer', 'allow']:
+                            # For these modes, asyncpg can often use ssl=True and handle negotiation.
+                            # 'prefer' and 'allow' will use SSL if server supports it.
+                            connect_kwargs_for_pool['ssl'] = True
+                        elif ssl_mode == 'disable':
+                            connect_kwargs_for_pool['ssl'] = False
+                        elif ssl_mode in ['verify-ca', 'verify-full']:
+                            # These modes strictly require SSL and server certificate verification.
+                            # For simplicity, we use ssl=True, which enables SSL with default verification.
+                            # For actual CA verification, an ssl.SSLContext object would be needed.
+                            # This might require providing CA cert paths, which is outside current scope.
+                            connect_kwargs_for_pool['ssl'] = True
+                            print(f"PostgresAdapter: INFO: For sslmode={ssl_mode}, using ssl=True. For full verification, an SSLContext with CA certs might be needed.")
+                        else:
+                            print(f"PostgresAdapter: WARNING: Unsupported 'sslmode={ssl_mode}'. SSL will not be explicitly configured based on this mode for asyncpg pool.")
+
+                        # Remove sslmode from the DSN for asyncpg, as it's handled by the 'ssl' parameter
+                        parsed_asyncpg_dsn = urlparse(self._asyncpg_url)
+                        query_params_asyncpg_dsn = {k: v[0] for k, v in parse_qs(parsed_asyncpg_dsn.query).items()}
+                        if 'sslmode' in query_params_asyncpg_dsn:
+                            del query_params_asyncpg_dsn['sslmode']
+
+                        asyncpg_dsn_for_pool = urlunparse(parsed_asyncpg_dsn._replace(query=urlencode(query_params_asyncpg_dsn)))
+                        print(f"PostgresAdapter: Modified asyncpg DSN (sslmode removed from query): {asyncpg_dsn_for_pool}")
+                    else:
+                        print(f"PostgresAdapter: No 'sslmode' found in DB_URL query parameters. Asyncpg will use its default SSL behavior.")
+                    # --- END MODIFIED SSL HANDLING ---
 
                     self._conn_pool = await asyncpg.create_pool(
-                        dsn=self._asyncpg_url,
+                        dsn=asyncpg_dsn_for_pool, # Use the potentially modified DSN
                         min_size=1,
                         max_size=10,
-                        ssl=ssl_options # Added SSL based on log analysis
+                        **connect_kwargs_for_pool # Pass SSL options here
                     )
 
                     if self._conn_pool is None:
