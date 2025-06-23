@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__) # Added
 
-logger.debug("--- CraftingManager module starts loading ---") # Changed
+# logger.debug("--- CraftingManager module starts loading ---") # Changed
 
 class CraftingManager:
     required_args_for_load: List[str] = ["guild_id"]
@@ -445,4 +445,4 @@ class CraftingManager:
               self.mark_queue_deleted(guild_id_str, entity_id)
          # else: logger.debug("CraftingManager: No crafting queue found for %s %s in guild %s for cleanup.", entity_type, entity_id, guild_id_str) # Too noisy
 
-logger.debug("--- CraftingManager module finished loading ---") # Changed
+# logger.debug("--- CraftingManager module finished loading ---") # Changed

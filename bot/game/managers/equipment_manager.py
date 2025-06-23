@@ -287,4 +287,4 @@ class EquipmentManager:
 
         return equipped_items
 
-logger.debug("DEBUG: equipment_manager.py module loaded.") # Changed
+# logger.debug("DEBUG: equipment_manager.py module loaded.") # Changed

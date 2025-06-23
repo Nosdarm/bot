@@ -64,9 +64,9 @@ class CombatManager:
         self._character_manager = character_manager
         self._npc_manager = npc_manager
 
-        logger.debug("CM_INIT_DEBUG: self._rule_engine is %s", 'NOT None' if self._rule_engine else 'None') # Changed
-        logger.debug("CM_INIT_DEBUG: self._character_manager is %s", 'NOT None' if self._character_manager else 'None') # Changed
-        logger.debug("CM_INIT_DEBUG: self._npc_manager is %s", 'NOT None' if self._npc_manager else 'None') # Changed
+        # logger.debug("CM_INIT_DEBUG: self._rule_engine is %s", 'NOT None' if self._rule_engine else 'None') # Changed
+        # logger.debug("CM_INIT_DEBUG: self._character_manager is %s", 'NOT None' if self._character_manager else 'None') # Changed
+        # logger.debug("CM_INIT_DEBUG: self._npc_manager is %s", 'NOT None' if self._npc_manager else 'None') # Changed
 
         self._party_manager = party_manager
         self._status_manager = status_manager
@@ -132,9 +132,9 @@ class CombatManager:
             logger.warning("CM.mark_participant_acted: Combat %s not found for guild %s.", combat_id, guild_id) # Changed
 
     async def start_combat(self, guild_id: str, location_id: Optional[str], participant_ids_types: List[Tuple[str, str]], **kwargs: Any) -> Optional["Combat"]:
-        logger.debug("CM_START_COMBAT_DEBUG: self._rule_engine is %s", 'NOT None' if self._rule_engine else 'None') # Changed
-        logger.debug("CM_START_COMBAT_DEBUG: self._character_manager is %s", 'NOT None' if self._character_manager else 'None') # Changed
-        logger.debug("CM_START_COMBAT_DEBUG: self._npc_manager is %s", 'NOT None' if self._npc_manager else 'None') # Changed
+        # logger.debug("CM_START_COMBAT_DEBUG: self._rule_engine is %s", 'NOT None' if self._rule_engine else 'None') # Changed
+        # logger.debug("CM_START_COMBAT_DEBUG: self._character_manager is %s", 'NOT None' if self._character_manager else 'None') # Changed
+        # logger.debug("CM_START_COMBAT_DEBUG: self._npc_manager is %s", 'NOT None' if self._npc_manager else 'None') # Changed
 
         guild_id_str = str(guild_id)
         location_id_str = str(location_id) if location_id is not None else None
@@ -941,7 +941,7 @@ class CombatManager:
             except Exception as e:
                 logger.error("CombatManager: Error batch upserting combats for guild %s: %s", guild_id_str, e, exc_info=True) # Changed
 
-        logger.debug("CombatManager: Save state complete for combats in guild %s.", guild_id_str) # Changed to debug
+        # logger.debug("CombatManager: Save state complete for combats in guild %s.", guild_id_str) # Changed to debug
 
     async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
         logger.info("CombatManager: Rebuilding runtime caches for guild %s.", str(guild_id)) # Changed

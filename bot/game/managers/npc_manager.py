@@ -197,7 +197,7 @@ class NpcManager:
 
                 # Update NpcManager's runtime cache
                 self._npcs.setdefault(str(guild_id), {})[new_npc.id] = new_npc
-                logger.debug(f"NpcManager: NPC {new_npc.id} added to runtime cache for guild {guild_id}.")
+                # logger.debug(f"NpcManager: NPC {new_npc.id} added to runtime cache for guild {guild_id}.")
 
                 # Commit is handled by 'async with' if manage_session is True
                 return new_npc
@@ -347,5 +347,5 @@ class NpcManager:
     async def revert_npc_state_variables_change(self, guild_id: str, npc_id: str, old_state_variables_json: str, **kwargs: Any) -> bool: return True
     async def generate_and_save_npcs(self, guild_id: str, context_details: Dict[str, Any]) -> List[DBGeneratedNpc]: return [] # Already existed
 
-logger.debug("DEBUG: npc_manager.py module loaded.")
+# logger.debug("DEBUG: npc_manager.py module loaded.")
 

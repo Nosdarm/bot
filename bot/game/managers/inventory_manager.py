@@ -41,7 +41,7 @@ class InventoryManager:
         character = self._character_manager.get_character(guild_id, character_id) # Assumes this returns cached model
         if character:
             if not hasattr(character, 'inventory') or character.inventory is None: # 'inventory' here is the Pydantic/game model field
-                logger.debug("Character (cache) %s in guild %s inventory is None, initializing to empty list.", character_id, guild_id)
+                # logger.debug("Character (cache) %s in guild %s inventory is None, initializing to empty list.", character_id, guild_id)
                 character.inventory = []
             return character.inventory
         logger.warning("Character (cache) %s not found in guild %s for inventory access.", character_id, guild_id)
@@ -226,5 +226,5 @@ class InventoryManager:
     # if they are intended to work with DB Item models rather than cached Character.inventory list of dicts.
     # For this subtask, focus is on add_item_to_character_inventory.
 
-logger.debug("DEBUG: inventory_manager.py module loaded.")
+# logger.debug("DEBUG: inventory_manager.py module loaded.")
 

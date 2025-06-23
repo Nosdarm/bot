@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__) # Added
 SendToChannelCallback = Callable[..., Awaitable[Any]]
 SendCallbackFactory = Callable[[int], SendToChannelCallback]
 
-logger.debug("DEBUG: dialogue_manager.py module loaded.") # Changed
+# logger.debug("DEBUG: dialogue_manager.py module loaded.") # Changed
 
 class DialogueManager:
     required_args_for_load: List[str] = ["guild_id"] 
@@ -387,7 +387,7 @@ class DialogueManager:
         dialogue = self.get_dialogue(guild_id_str, dialogue_id) 
         if not dialogue or str(dialogue.get('guild_id')) != guild_id_str:
             if guild_id_str in self._deleted_dialogue_ids and dialogue_id in self._deleted_dialogue_ids[guild_id_str]:
-                 logger.debug("DialogueManager: Dialogue %s in guild %s already removed and marked for DB deletion.", dialogue_id, guild_id_str) # Added
+                 # logger.debug("DialogueManager: Dialogue %s in guild %s already removed and marked for DB deletion.", dialogue_id, guild_id_str) # Added
                  return dialogue_id 
             logger.warning("DialogueManager: Dialogue %s not found or guild mismatch for removal in guild %s.", dialogue_id, guild_id_str) # Added
             return None
@@ -577,7 +577,7 @@ class DialogueManager:
              return
 
          guild_id_str = str(guild_id); entity_id_str = str(entity_id)
-         logger.info("DialogueManager: Cleaning up dialogues for entity %s %s in guild %s.", entity_type, entity_id_str, guild_id_str) # Added
+         # logger.info("DialogueManager: Cleaning up dialogues for entity %s %s in guild %s.", entity_type, entity_id_str, guild_id_str) # INFO is too verbose for this
          dialogue_ids_to_end: List[str] = [] # Collect IDs to avoid modifying dict during iteration
 
          guild_dialogues = self._active_dialogues.get(guild_id_str)
@@ -599,7 +599,7 @@ class DialogueManager:
         self, character: Any, message_text: str, channel_id: int, guild_id: str, **kwargs: Any 
     ):
         guild_id_str = str(guild_id); char_id_str = str(character.id)
-        logger.debug("DialogueManager: Processing player message from char %s in guild %s, channel %s: '%s'", char_id_str, guild_id_str, channel_id, message_text) # Added
+         # logger.debug("DialogueManager: Processing player message from char %s in guild %s, channel %s: '%s'", char_id_str, guild_id_str, channel_id, message_text) # Added
         active_dialogue = None; dialogue_id = None
         guild_dialogues = self._active_dialogues.get(guild_id_str, {})
         for d_id, d_data in guild_dialogues.items():
@@ -620,8 +620,8 @@ class DialogueManager:
             action_data = {"type": "player_response", "response_id": chosen_option_id}
             await self.advance_dialogue(guild_id_str, dialogue_id, char_id_str, action_data, **kwargs)
         else:
-            logger.debug("DialogueManager: No active dialogue found for char %s in guild %s to process message.", char_id_str, guild_id_str) # Added
+            # logger.debug("DialogueManager: No active dialogue found for char %s in guild %s to process message.", char_id_str, guild_id_str) # Added
             # Optionally, send a message back to player "You are not in a dialogue."
             pass
 
-logger.debug("DEBUG: dialogue_manager.py module loaded.") # Changed
+# logger.debug("DEBUG: dialogue_manager.py module loaded.") # Changed

@@ -37,7 +37,7 @@ from bot.ai.rules_schema import CoreGameRulesConfig, EquipmentSlotDefinition, It
 from bot.database.models import Item as SQLAlchemyItem
 
 logger = logging.getLogger(__name__)
-logger.debug("DEBUG: item_manager.py module loaded.")
+# logger.debug("DEBUG: item_manager.py module loaded.")
 
 class EquipResult(TypedDict):
     success: bool
@@ -271,7 +271,7 @@ class ItemManager:
                  try: return json.loads(item_def_model.model_dump_json()) # type: ignore
                  except AttributeError: return item_def_model # type: ignore
 
-        logger.debug("ItemManager.get_item_template: Template '%s' not in rules_config, checking legacy _item_templates.", template_id)
+        # logger.debug("ItemManager.get_item_template: Template '%s' not in rules_config, checking legacy _item_templates.", template_id)
         # Fallback to legacy _item_templates
         return self._item_templates.get(str(template_id))
 
@@ -446,5 +446,5 @@ class ItemManager:
             logger.error(f"ItemManager: Error fetching SQLAlchemy item instance {item_instance_id} for guild {guild_id}: {e}", exc_info=True)
             return None
 
-logger.debug("DEBUG: item_manager.py module loaded (after overwrite).")
+# logger.debug("DEBUG: item_manager.py module loaded (after overwrite).")
 

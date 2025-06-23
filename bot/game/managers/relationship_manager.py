@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 from copy import deepcopy
 
 logger = logging.getLogger(__name__) # Added
-logger.debug("DEBUG: relationship_manager.py module loading...") # Changed
+# logger.debug("DEBUG: relationship_manager.py module loading...") # Changed
 
 
 class RelationshipManager:
@@ -261,12 +261,12 @@ class RelationshipManager:
             return updated_relationships
         all_relation_change_rules = rule_engine._rules_data.get("relation_rules", [])
         if not all_relation_change_rules:
-            logger.debug("%s No relation_rules found in rule_engine._rules_data.", log_prefix) # Changed
+            # logger.debug("%s No relation_rules found in rule_engine._rules_data.", log_prefix) # Changed
             return updated_relationships
 
         applicable_rules = [rule for rule in all_relation_change_rules if rule.get("event_type") == event_type]
         if not applicable_rules:
-            logger.debug("%s No relationship change rules found for event type '%s'.", log_prefix, event_type) # Changed
+            # logger.debug("%s No relationship change rules found for event type '%s'.", log_prefix, event_type) # Changed
             return updated_relationships
 
         safe_builtins = {"True": True, "False": False, "None": None, "int": int, "float": float, "str": str, "list": list, "dict": dict, "set": set, "len": len, "abs": abs, "min": min, "max": max, "round": round}
@@ -363,4 +363,4 @@ class RelationshipManager:
         # ... (logic as before)
         return 0.0 # Placeholder
 
-logger.debug("DEBUG: RelationshipManager module defined.") # Changed
+# logger.debug("DEBUG: RelationshipManager module defined.") # Changed
