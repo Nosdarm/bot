@@ -78,54 +78,48 @@ async def run_migrations_online() -> None:
             print(f"Error: DATABASE_URL ('{db_url_for_engine_str}') is not a valid 'postgresql+asyncpg://' or 'postgresql://' URL. Using hardcoded default.")
             db_url_for_engine_str = default_async_url
 
-    # Parse the URL to handle sslmode
+    # Parse the URL to handle sslmode, similar to postgres_adapter.py
     parsed_url = urlparse(db_url_for_engine_str)
-    query_params = parse_qs(parsed_url.query)
+    query_params_dict = dict(parse_qs(parsed_url.query)) # Make it a mutable dict of lists
 
-    if 'sslmode' in query_params:
-        sslmode_val = query_params['sslmode'][0] # Get the value
-        # Remove sslmode from query params as asyncpg takes ssl context directly
-        del query_params['sslmode']
+    # Convert query_params_dict from {'key': ['value']} to {'key': 'value'} for make_url
+    # and for easier processing. Take the first value if multiple are present.
+    processed_query_params = {k: v[0] if isinstance(v, list) and v else v for k, v in query_params_dict.items()}
 
-        if sslmode_val == 'require':
-            # For asyncpg, 'require' often means just enable SSL.
-            ssl_context = ssl.create_default_context()
-            # You might need to adjust context for specific server certs / CAs if default fails
-            # e.g., ssl_context.load_verify_locations(cafile='/path/to/ca.crt')
-            # For simple "require" (encryption without full CA validation against a specific CA cert):
-            # ssl_context.check_hostname = False
-            # ssl_context.verify_mode = ssl.CERT_NONE
-            connect_args["ssl"] = ssl_context
-            print(f"Info: Enabled SSL context due to sslmode={sslmode_val}")
+    ssl_mode_from_url = processed_query_params.get('sslmode')
+
+    if ssl_mode_from_url:
+        print(f"ℹ️ [Alembic env.py] Found 'sslmode={ssl_mode_from_url}' in DATABASE_URL. Processing for connect_args.")
+        if ssl_mode_from_url == 'require':
+            connect_args['ssl'] = 'require'
+        elif ssl_mode_from_url == 'prefer':
+            connect_args['ssl'] = 'prefer'
+        elif ssl_mode_from_url == 'allow':
+            connect_args['ssl'] = False
+        elif ssl_mode_from_url == 'disable':
+            connect_args['ssl'] = False
         else:
-            # If other sslmodes need specific asyncpg connection params, handle them here.
-            # For now, we only explicitly handle 'require'. Other modes might pass through
-            # if asyncpg supports them directly in its DSN or connection params.
-            # We put back the sslmode if it's not 'require' and we don't handle it.
-            # However, it's safer to only allow modes we explicitly support or know asyncpg handles.
-            # For now, if it's not 'require', we'll let the original URL (potentially with sslmode) pass,
-            # which might lead to the same TypeError if asyncpg doesn't like that sslmode value.
-            # A better approach would be to raise an error for unsupported sslmodes.
-            # Let's assume for now only 'require' is intended to be handled this way,
-            # and other sslmodes should not be in the query string for this connect_args method.
-            # So, if sslmode was present and not 'require', we've already removed it.
-            # If it needs to be passed differently, that's a separate logic branch.
-            print(f"Warning: sslmode='{sslmode_val}' found in URL. Only 'require' is explicitly handled by creating an SSLContext. Other modes might not work as expected with asyncpg via this method.")
+            print(f"⚠️ [Alembic env.py] Unsupported 'sslmode={ssl_mode_from_url}' from URL. SSL will not be explicitly configured by Alembic based on this mode.")
 
-        # Rebuild the query string without the original sslmode
-        new_query_string = urlencode(query_params, doseq=True)
-        # Rebuild the URL
-        parsed_url = parsed_url._replace(query=new_query_string)
-        db_url_for_engine_str = urlunparse(parsed_url)
-        print(f"Info: DB URL for engine (potentially modified for SSL): {db_url_for_engine_str}")
+        # Remove sslmode from processed_query_params as it's now handled by connect_args
+        if 'sslmode' in processed_query_params:
+            del processed_query_params['sslmode']
 
+        # Rebuild the URL without sslmode in query string
+        # urlunparse expects query to be a string, so urlencode it back
+        db_url_for_engine_str = urlunparse(parsed_url._replace(query=urlencode(processed_query_params)))
+        print(f"ℹ️ [Alembic env.py] DB URL for engine (sslmode removed from query): {db_url_for_engine_str}")
+    else:
+        print(f"ℹ️ [Alembic env.py] No 'sslmode' found in DATABASE_URL query parameters.")
 
     engine_config_from_ini = config.get_section(config.config_ini_section, {})
     engine_config_from_ini["sqlalchemy.url"] = db_url_for_engine_str
 
-    # Add connect_args if SSL context was created (or other args in the future)
-    if connect_args: # This ensures connect_args is only added if it's populated
+    # Add connect_args if SSL was configured (or for other future args)
+    if connect_args:
         engine_config_from_ini["connect_args"] = connect_args
+        print(f"ℹ️ [Alembic env.py] Using connect_args for engine: {connect_args}")
+
 
     connectable = async_engine_from_config(
         engine_config_from_ini,
