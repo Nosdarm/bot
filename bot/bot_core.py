@@ -485,14 +485,14 @@ async def start_bot():
 
     # Configure discord.py loggers
     discord_logger = logging.getLogger('discord')
-    discord_logger.setLevel(logging.DEBUG)
+    discord_logger.setLevel(logging.INFO) # Уровень логирования изменен на INFO
     discord_http_logger = logging.getLogger('discord.http')
-    discord_http_logger.setLevel(logging.DEBUG)
+    discord_http_logger.setLevel(logging.INFO) # Уровень логирования изменен на INFO
 
     # Enable aiohttp debug logging -- NEWLY ADDED --
     aiohttp_logger = logging.getLogger('aiohttp')
-    aiohttp_logger.setLevel(logging.DEBUG)
-    logging.info(f"{datetime.now()} - RPGBot Core: aiohttp debug logging enabled.") # Log that we did this
+    aiohttp_logger.setLevel(logging.INFO) # Уровень логирования изменен на INFO
+    logging.info(f"{datetime.now()} - RPGBot Core: aiohttp logging level set to INFO.") # Обновлено сообщение
 
     print("--- RPG Bot Core: Starting ---") # Existing print
     # logging.info(f"{datetime.now()} - RPGBot Core: --- RPG Bot Core: Starting ---") # This was moved up or duplicated by the required log line
