@@ -12,7 +12,7 @@ from bot.ai.ai_data_models import (
     GeneratedNpcProfile,
 )
 from bot.database.models.world_related import Location as DBLocation
-from bot.database.models.world_related import NPC as DBNPC
+from bot.database.models.character_related import NPC as DBNPC # Corrected import path
 
 # Helper to create valid GeneratedLocationContent data (as dict) for tests
 def get_valid_parsed_location_data(

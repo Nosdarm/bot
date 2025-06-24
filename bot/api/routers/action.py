@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field # Import BaseModel and Field
 
 from bot.api.dependencies import get_db_session
-from bot.database.models import Character, Ability, RulesConfig, GameLog, Player, Location
+from bot.database.models import Character, Ability, RulesConfig, GameLogEntry, Player, Location # Changed GameLog to GameLogEntry
 # Assuming GameLogEntryCreate is available for logging the event
 from bot.api.schemas.game_log_schemas import GameLogEntryCreate, GameLogEntryResponse, ParticipatingEntity
 
@@ -47,7 +47,7 @@ async def log_ability_activation(
     success: bool,
     message: str,
     consequences: Optional[Dict[str, Any]] = None
-) -> Optional[GameLog]: # Return type changed to actual GameLog model for refresh
+) -> Optional[GameLogEntry]: # Return type changed to actual GameLogEntry model for refresh
     event_type = "ability_activated_success" if success else "ability_activated_failure"
 
     # Construct a user-friendly description
@@ -76,7 +76,7 @@ async def log_ability_activation(
         details={"ability_id": ability_id, "raw_request": request_data.dict(exclude_none=True), "outcome_message": message}
     )
 
-    db_log_entry = GameLog(guild_id=guild_id, **log_create_data.dict(exclude_none=True))
+    db_log_entry = GameLogEntry(guild_id=guild_id, **log_create_data.dict(exclude_none=True)) # Changed GameLog to GameLogEntry
     db.add(db_log_entry)
     try:
         # This commit is part of the session from get_db_session.
@@ -201,7 +201,7 @@ async def log_character_movement(
     new_location_id: str,
     success: bool,
     message: str
-) -> Optional[GameLog]:
+) -> Optional[GameLogEntry]: # Changed GameLog to GameLogEntry
     event_type = "character_move_success" if success else "character_move_failure"
 
     description_map = {
@@ -222,7 +222,7 @@ async def log_character_movement(
         details={"from_location_id": old_location_id, "to_location_id": new_location_id, "raw_message": message}
     )
 
-    db_log_entry = GameLog(guild_id=guild_id, **log_create_data.dict(exclude_none=True))
+    db_log_entry = GameLogEntry(guild_id=guild_id, **log_create_data.dict(exclude_none=True)) # Changed GameLog to GameLogEntry
     # This log entry will be added to session and committed by the main endpoint
     return db_log_entry
 

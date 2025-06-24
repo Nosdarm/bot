@@ -7,6 +7,8 @@ from .quest_related import QuestTable, GeneratedQuest, Questline, QuestStepTable
 from .config_related import GuildConfig, RulesConfig, UserSettings, GlobalState
 from .log_event_related import Timer, Event, StoryLog, PendingConflict, PendingGeneration
 from .game_mechanics import Combat, Ability, Skill, Status, CraftingRecipe, CraftingQueue, Relationship, Spell
+from .game_log_model import GameLogEntry # Added GameLogEntry
+GameLog = GameLogEntry # Alias for backward compatibility or missed internal imports
 
 __all__ = [
     'Base',
@@ -15,6 +17,6 @@ __all__ = [
     'ItemTemplate', 'Item', 'Inventory', 'ItemProperty', 'NewItem', 'NewCharacterItem', 'Shop', 'Currency',
     'QuestTable', 'GeneratedQuest', 'Questline', 'QuestStepTable',
     'GuildConfig', 'RulesConfig', 'UserSettings', 'GlobalState',
-    'Timer', 'Event', 'StoryLog', 'PendingConflict', 'PendingGeneration',
+    'Timer', 'Event', 'StoryLog', 'PendingConflict', 'PendingGeneration', 'GameLogEntry', 'GameLog', # Added GameLogEntry & GameLog alias
     'Combat', 'Ability', 'Skill', 'Spell', 'Status', 'CraftingRecipe', 'CraftingQueue', 'Relationship',
 ]

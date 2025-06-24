@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
 from bot.game.rules.rule_engine import RuleEngine
-from bot.game.models.check_models import DetailedCheckResult, CheckOutcome
+from bot.game.models.check_models import CheckResult, CheckOutcome # Changed DetailedCheckResult to CheckResult
 from bot.game.models.character import Character
 from bot.game.models.npc import NPC
 from bot.game.models.status_effect import StatusEffect 

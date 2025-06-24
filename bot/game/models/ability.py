@@ -7,6 +7,7 @@ class Ability:
     name_i18n: Dict[str, str] # e.g., {"en": "Name", "ru": "Имя"}
     description_i18n: Dict[str, str] # e.g., {"en": "Description", "ru": "Описание"}
     type: str  # e.g., "passive_stat_modifier", "passive_conditional_trigger", "activated_combat", "activated_utility", "innate_racial"
+    static_id: Optional[str] = None # Static identifier, e.g. "fireball_spell", unique per guild in DB
     
     activation_type: Optional[str] = None # If type is "activated_*", e.g., "action", "bonus_action", "reaction", "free"
     resource_cost: Dict[str, Any] = field(default_factory=dict) # e.g., {"stamina": 10, "action_points": 1} or {"uses_per_day": 3}
@@ -50,6 +51,7 @@ class Ability:
         data_copy['effects'] = data.get('effects', [])
         data_copy['requirements'] = data.get('requirements', {})
         data_copy['acquisition_methods'] = data.get('acquisition_methods', [])
+        data_copy['static_id'] = data.get('static_id') # Added for static_id
         
         # Optional fields default to None if not present, which dataclass handles.
         # No specific handling needed for Optional[str], Optional[float] unless type conversion is required.
@@ -62,6 +64,7 @@ class Ability:
         # For now, manual conversion for clarity and future custom needs.
         return {
             "id": self.id,
+            "static_id": self.static_id,
             "name_i18n": self.name_i18n,
             "description_i18n": self.description_i18n,
             "type": self.type,

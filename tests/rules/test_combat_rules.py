@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 import asyncio # Required for running async test methods if not using a dedicated async test runner
 
 from bot.game.rules import combat_rules # Module to test
-from bot.game.models.check_models import DetailedCheckResult, CheckOutcome
+from bot.game.models.check_models import CheckResult, CheckOutcome # Changed DetailedCheckResult to CheckResult
 # Import other necessary models if their instances are directly used/checked
 
 class TestCombatRules(unittest.TestCase):
@@ -53,26 +53,26 @@ class TestCombatRules(unittest.TestCase):
     def test_perform_check_dc_success(self, mock_randint):
         mock_randint.return_value = 15 # Control the dice roll
         # Pass only the "combat_rules" part of the config, as perform_check expects that structure
-        result = combat_rules.perform_check("actor1", self.sample_rules_config, "attack_roll", modifier=5, dc=20)
-        self.assertTrue(result.is_success)
-        self.assertEqual(result.outcome, CheckOutcome.SUCCESS)
-        self.assertEqual(result.actor_total_roll_value, 20)
+        result: CheckResult = combat_rules.perform_check("actor1", self.sample_rules_config, "attack_roll", modifier=5, dc=20)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.details_log.get('outcome_category'), CheckOutcome.SUCCESS.value)
+        self.assertEqual(result.total_roll_value, 20)
 
     @patch('random.randint')
     def test_perform_check_dc_crit_success(self, mock_randint):
         mock_randint.return_value = 20 # Natural 20
-        result = combat_rules.perform_check("actor1", self.sample_rules_config, "attack_roll", modifier=0, dc=25)
-        self.assertTrue(result.is_success) # Nat 20 always hits if rule is true
-        self.assertEqual(result.outcome, CheckOutcome.CRITICAL_SUCCESS)
-        self.assertTrue(result.is_critical)
+        result: CheckResult = combat_rules.perform_check("actor1", self.sample_rules_config, "attack_roll", modifier=0, dc=25)
+        self.assertTrue(result.succeeded) # Nat 20 always hits if rule is true
+        self.assertEqual(result.details_log.get('outcome_category'), CheckOutcome.CRITICAL_SUCCESS.value)
+        self.assertTrue(result.details_log.get('is_critical'))
 
     @patch('random.randint')
     def test_perform_check_dc_crit_failure(self, mock_randint):
         mock_randint.return_value = 1 # Natural 1
-        result = combat_rules.perform_check("actor1", self.sample_rules_config, "attack_roll", modifier=10, dc=5) # Modifier would make it hit
-        self.assertFalse(result.is_success) # Nat 1 always misses if rule is true
-        self.assertEqual(result.outcome, CheckOutcome.CRITICAL_FAILURE)
-        self.assertTrue(result.is_critical)
+        result: CheckResult = combat_rules.perform_check("actor1", self.sample_rules_config, "attack_roll", modifier=10, dc=5) # Modifier would make it hit
+        self.assertFalse(result.succeeded) # Nat 1 always misses if rule is true
+        self.assertEqual(result.details_log.get('outcome_category'), CheckOutcome.CRITICAL_FAILURE.value)
+        self.assertTrue(result.details_log.get('is_critical'))
 
     # For async test methods, we need to run them in an event loop
     def _run_async(self, coro):
@@ -136,8 +136,15 @@ class TestCombatRules(unittest.TestCase):
     @patch('bot.game.rules.combat_rules.process_saving_throw', new_callable=AsyncMock)
     async def _async_test_apply_status_effect_with_save_negate(self, mock_process_save):
         # Configure save to be successful
-        mock_save_result = DetailedCheckResult(check_type="saving_throw_fortitude", entity_doing_check_id="target1", outcome=CheckOutcome.SUCCESS, is_success=True)
-        mock_save_result.description = "Save successful"
+        mock_save_result = CheckResult(
+            succeeded=True,
+            roll_value=15, # Example roll
+            modifier_applied=0, # Example mod
+            total_roll_value=15, # Example total
+            dc_value=15, # Example DC
+            description="Save successful",
+            details_log={'outcome_category': CheckOutcome.SUCCESS.value, 'check_type': "saving_throw_fortitude", 'actor_id': "target1"}
+        )
         mock_process_save.return_value = mock_save_result
 
         requires_save_info = {"save_type": "fortitude", "dc": 15, "effect_on_save": "negate"}
@@ -159,8 +166,15 @@ class TestCombatRules(unittest.TestCase):
 
     @patch('bot.game.rules.combat_rules.process_saving_throw', new_callable=AsyncMock)
     async def _async_test_apply_status_effect_with_save_half_duration(self, mock_process_save):
-        mock_save_result = DetailedCheckResult(check_type="saving_throw_fortitude", entity_doing_check_id="target1", outcome=CheckOutcome.SUCCESS, is_success=True)
-        mock_save_result.description = "Save successful for half duration"
+        mock_save_result = CheckResult(
+            succeeded=True,
+            roll_value=16, # Example roll
+            modifier_applied=0, # Example mod
+            total_roll_value=16, # Example total
+            dc_value=15, # Example DC
+            description="Save successful for half duration",
+            details_log={'outcome_category': CheckOutcome.SUCCESS.value, 'check_type': "saving_throw_fortitude", 'actor_id': "target1"}
+        )
         mock_process_save.return_value = mock_save_result
 
         self.mock_status_mgr.add_status_effect.return_value = "new_status_id_half"

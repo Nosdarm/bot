@@ -2,51 +2,71 @@ import pytest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from pydantic import BaseModel # For local ItemDefinition
+from typing import Dict, Any, Optional, List # For local ItemDefinition
+
 from bot.game.managers.item_manager import ItemManager
 from bot.database.models import Item as SQLAlchemyItem
-from bot.ai.rules_schema import CoreGameRulesConfig, ItemDefinition # For mock template data
+# ItemDefinition will be defined locally for this test file
+from bot.ai.rules_schema import CoreGameRulesConfig # Only need CoreGameRulesConfig for the spec
 from sqlalchemy.ext.asyncio import AsyncSession # For type hinting mock_session
+
+# Local Pydantic model for ItemDefinition, as it's not in rules_schema.py
+class ItemDefinition(BaseModel):
+    name_i18n: Dict[str, str]
+    description_i18n: Dict[str, str]
+    item_type: str
+    base_value: int
+    properties: Optional[Dict[str, Any]] = None
+    equipable_slot_id: Optional[str] = None
+    # Add any other fields that ItemManager.get_item_template is expected to return
+
+# Mock item templates data
+MOCK_ITEM_TEMPLATES = {
+    "test_sword": ItemDefinition(
+        name_i18n={"en": "Test Sword", "ru": "Тестовый Меч"},
+        description_i18n={"en": "A trusty test sword.", "ru": "Надежный тестовый меч."},
+        item_type="weapon",
+        base_value=10,
+        properties={"damage": "1d6 slashing"},
+        equipable_slot_id="weapon_hand"
+    ),
+    "another_item": ItemDefinition(
+        name_i18n={"en": "Another Item"},
+        description_i18n={"en": "Just another item."},
+        item_type="misc",
+        base_value=1
+    )
+}
 
 @pytest.fixture
 def mock_rule_engine():
-    mock = MagicMock(spec=CoreGameRulesConfig) # Use spec for stricter mocking
-    mock.rules_config_data = CoreGameRulesConfig(
-        item_definitions={
-            "test_sword": ItemDefinition(
-                name_i18n={"en": "Test Sword", "ru": "Тестовый Меч"},
-                description_i18n={"en": "A trusty test sword.", "ru": "Надежный тестовый меч."},
-                item_type="weapon",
-                base_value=10,
-                properties={"damage": "1d6 slashing"},
-                equipable_slot_id="weapon_hand"
-            ),
-            "another_item": ItemDefinition(
-                name_i18n={"en": "Another Item"},
-                description_i18n={"en": "Just another item."},
-                item_type="misc",
-                base_value=1
-            )
-        },
-        item_effects={},
-        status_effects={},
-        equipment_slots=[], # Ensure all required fields of CoreGameRulesConfig are present
-        character_classes={},
-        npc_archetypes={},
-        skill_definitions={},
-        ability_definitions={},
-        faction_definitions={},
-        stat_definitions={},
-        game_balance={}
-    )
+    # CoreGameRulesConfig might not be the place for item_definitions.
+    # The ItemManager's get_item_template method is what needs mocking/patching.
+    # This fixture can still provide a mock CoreGameRulesConfig if other parts of ItemManager use it.
+    mock = MagicMock(spec=CoreGameRulesConfig)
+    # Simulate that CoreGameRulesConfig might have some item related rules, but not full definitions.
+    mock.item_effects = {}
+    mock.status_effects = {}
+    mock.equipment_slots = {}
+    # Ensure all required fields for CoreGameRulesConfig if its constructor is called by ItemManager
+    # For this test, the actual content of CoreGameRulesConfig might not be critical if we patch get_item_template.
     return mock
 
 @pytest.fixture
-def item_manager_fixture(mock_rule_engine: MagicMock): # Renamed to avoid conflict
-    # ItemManager constructor takes many optional args.
-    # _load_item_templates runs on init. Ensure settings mock if it relies on it.
-    # For create_item_instance, only rule_engine (for get_item_template) is directly needed from its own methods.
-    mock_settings = {"item_templates": {}}
-    return ItemManager(rule_engine=mock_rule_engine, settings=mock_settings)
+def item_manager_fixture(mock_rule_engine: MagicMock):
+    mock_settings = {"item_templates": {}} # ItemManager might use this for initial load
+
+    # Create an instance of the real ItemManager
+    manager = ItemManager(rule_engine=mock_rule_engine, settings=mock_settings)
+
+    # Patch the get_item_template method of this instance
+    def mock_get_item_template(template_id: str):
+        template = MOCK_ITEM_TEMPLATES.get(template_id)
+        return template.model_dump() if template else None # Return as dict, like templates might be stored
+
+    manager.get_item_template = MagicMock(side_effect=mock_get_item_template)
+    return manager
 
 
 @pytest.mark.asyncio

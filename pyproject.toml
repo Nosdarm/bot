@@ -22,6 +22,11 @@ spacy = {version = ">=3.7.0,<3.8.0"} # Added spacy
 # Poetry can handle URL dependencies too if needed:
 # en-core-web-sm = {url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz"}
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"  # Or any recent, compatible version
+pytest-asyncio = "^0.23.0" # Or any recent, compatible version
+pytest-mock = "^3.12.0" # Added pytest-mock
+
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"

@@ -14,7 +14,7 @@ from bot.api.schemas.combat_schemas import (
     CombatActionRequest, CombatActionResponse, CombatTurnLogEntry, CombatActionEffect,
     CombatResolutionRequest
 )
-from bot.database.models import Combat, Character, NPC, RulesConfig, GameLog # Assuming NPC model exists
+from bot.database.models import Combat, Character, NPC, RulesConfig, GameLogEntry # Assuming NPC model exists, Changed GameLog
 # For logging:
 from bot.api.schemas.game_log_schemas import GameLogEntryCreate, ParticipatingEntity
 from bot.game.combat_rewards import apply_post_combat_updates # Import the new function

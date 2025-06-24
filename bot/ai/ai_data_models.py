@@ -233,9 +233,11 @@ class GeneratedLocationContent(BaseModel):
         validated_list = []
         for index, event_i18n_dict in enumerate(v):
             try:
-                temp_info_dict = {"field_name":f"{info.field_name}[{index}]", "context": info.context, "config": info.config}
-                temp_field_val_info = FieldValidationInfo.from_config(temp_info_dict['config'], field_name=temp_info_dict['field_name'], context=temp_info_dict['context']) # type: ignore
-                validated_list.append(validate_i18n_field(cls, event_i18n_dict, temp_field_val_info))
+                # Pass the main `info` object. validate_i18n_field uses info.context.
+                # The field_name on `info` will be for 'possible_events_i18n' itself,
+                # if validate_i18n_field needs the sub-field name, it would need more specific handling.
+                # Assuming validate_i18n_field can work with the main field's info for context.
+                validated_list.append(validate_i18n_field(cls, event_i18n_dict, info))
             except ValueError as e:
                 raise ValueError(f"Validation failed for item {index} in possible_events_i18n: {e}")
         return validated_list
@@ -299,3 +301,20 @@ class ValidatedAiResponse(BaseModel):
     def is_valid(self) -> bool:
         return self.data is not None and not self.validation_issues
 
+# Placeholder for ParsedAiData if it was intended for structured parsing before Pydantic model
+class ParsedAiData(BaseModel):
+    raw_json: Dict[str, Any]
+    entity_type: Optional[str] = None # e.g., "npc", "quest_list"
+    # Potentially other fields if it was doing more structured parsing
+
+# Placeholder for ValidatedEntity if it was used by an older validator structure
+class ValidatedEntity(BaseModel):
+    entity_type: str
+    data: Optional[Any] = None # Could be specific Pydantic model like GeneratedNpcProfile
+    issues: List[ValidationIssue] = []
+    validation_status: str = "unknown" # E.g., "success", "error", "requires_moderation"
+    original_data: Optional[Dict[str, Any]] = None
+
+    @property
+    def is_strictly_valid(self) -> bool:
+        return self.validation_status == "success" and not self.issues

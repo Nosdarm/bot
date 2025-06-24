@@ -20,19 +20,27 @@ class MobileGroup(BaseModel):
     is_active: bool = True
 
     def __init__(self, **data: Any):
-        super().__init__(**data)
-        if self.id is None:
-            self.id = str(uuid.uuid4())
-        if not hasattr(self, 'name_i18n') or not self.name_i18n:
+        super().__init__(id=data.pop('id', None)) # Pass ID to custom BaseModel's init
+
+        self.guild_id = data.pop("guild_id")
+        self.name_i18n = data.pop("name_i18n", {"en": "Default Mobile Group Name"})
+        self.description_i18n = data.pop("description_i18n", {})
+        self.current_location_id = data.pop("current_location_id", None)
+        self.member_ids = data.pop("member_ids", [])
+        self.destination_location_id = data.pop("destination_location_id", None)
+        self.state_variables = data.pop("state_variables", {})
+        self.is_active = data.pop("is_active", True)
+
+        # Store any other provided data
+        for key, value in data.items():
+            setattr(self, key, value)
+
+        if not self.name_i18n: # Ensure name_i18n is not empty after pop
             self.name_i18n = {"en": "Default Mobile Group Name"}
-        if not hasattr(self, 'description_i18n') or self.description_i18n is None:
-            self.description_i18n = {}
-        if not hasattr(self, 'member_ids') or self.member_ids is None:
-            self.member_ids = []
-        if not hasattr(self, 'state_variables') or self.state_variables is None:
-            self.state_variables = {}
-        if not hasattr(self, 'is_active'):
-            self.is_active = True
+        if self.member_ids is None: # Ensure member_ids is a list
+             self.member_ids = []
+        if self.state_variables is None: # Ensure state_variables is a dict
+             self.state_variables = {}
 
 
     def to_dict(self) -> Dict[str, Any]:

@@ -1,5 +1,13 @@
 from typing import Optional, Dict, Any, List # Ensure List is imported if any field uses it
 from pydantic import BaseModel
+from enum import Enum
+
+class CheckOutcome(str, Enum):
+    SUCCESS = "success"
+    FAILURE = "failure"
+    CRITICAL_SUCCESS = "critical_success"
+    CRITICAL_FAILURE = "critical_failure"
+    # Could add more nuanced outcomes like PARTIAL_SUCCESS if needed later
 
 class CheckResult(BaseModel):
     """

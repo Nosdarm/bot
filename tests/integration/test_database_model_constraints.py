@@ -16,7 +16,8 @@ from bot.database.models import (
 ) # Updated QuestStep to QuestStepTable, Added GuildConfig
 
 # --- Test Database Configuration ---
-TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "postgresql+asyncpg://postgres:test123@localhost:5432/test_kvelin_rpg_bot_constraints")
+# Fallback to SQLite in-memory for environments where PostgreSQL is not available
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 # --- Fixtures ---
 

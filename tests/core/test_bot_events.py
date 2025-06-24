@@ -1,6 +1,6 @@
 # tests/core/test_bot_events.py
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 import discord
 import logging
 
@@ -23,7 +23,7 @@ def mock_guild():
     return guild
 
 @pytest.fixture
-def mock_bot_for_events():
+def mock_bot_for_events(mocker): # Added mocker
     # Create a mock for OpenAI service if needed by RPGBot constructor
     mock_openai_service = MagicMock(spec=OpenAIService)
 
@@ -50,14 +50,25 @@ def mock_bot_for_events():
         intents=intents
     )
     bot.get_db_session = MagicMock(return_value=db_session_cm) # Patch the instance's method
-    bot.user = MagicMock(spec=discord.ClientUser) # Mock bot.user for welcome message
-    bot.user.name = "TestBot"
+
+    # Correctly mock the 'user' property on the bot instance using mocker
+    mock_user_instance = MagicMock(spec=discord.ClientUser)
+    mock_user_instance.name = "TestBot"
+    mock_user_instance.id = 123456789 # A default ID
+
+    # Patch the 'user' property on the *instance* of RPGBot
+    mocker.patch.object(bot, 'user', new_callable=PropertyMock, return_value=mock_user_instance)
+
     return bot, mock_session # Return session for assertions if needed
 
 @pytest.mark.asyncio
 @patch('bot.bot_core.initialize_new_guild', new_callable=AsyncMock) # Patch initializer
-async def test_on_guild_join_initializes_guild_and_welcomes(mock_initialize_new_guild, mock_bot_for_events, mock_guild):
+async def test_on_guild_join_initializes_guild_and_welcomes(mock_initialize_new_guild, mock_bot_for_events, mock_guild, mocker): # Added mocker
     bot, mock_session = mock_bot_for_events
+    # bot.user is now correctly mocked by the fixture.
+    # If specific attributes for bot.user are needed for this test beyond what fixture provides,
+    # they can be set on bot.user (which is the return_value of the PropertyMock).
+    # Example: bot.user.name = "SpecificTestBotName" (if bot.user is the MagicMock instance)
 
     # Simulate a system channel for welcome message
     mock_system_channel = MagicMock(spec=discord.TextChannel)
@@ -68,14 +79,7 @@ async def test_on_guild_join_initializes_guild_and_welcomes(mock_initialize_new_
     await bot.on_guild_join(mock_guild)
 
     mock_initialize_new_guild.assert_awaited_once_with(mock_session, str(mock_guild.id), force_reinitialize=False)
-
-    # Check if welcome message was attempted
-    # This depends on the welcome message logic in on_guild_join
-    # If it tries to send to system_channel:
     mock_system_channel.send.assert_called_once()
-    # Optional: Snapshot test the welcome message content if it's complex
-    # args, kwargs = mock_system_channel.send.call_args
-    # assert "Thanks for adding me to **Omega Test Server**!" in args[0]
 
 
 @pytest.mark.asyncio
@@ -84,62 +88,50 @@ async def test_on_guild_join_init_fails_gracefully(mock_initialize_new_guild, mo
     bot, _ = mock_bot_for_events # Don't need session here
     mock_initialize_new_guild.side_effect = Exception("Initialization DB Error")
 
-    # We expect it to log an error but not crash the event handler itself
     await bot.on_guild_join(mock_guild)
-
-    # Assert that initialize_new_guild was called
     assert mock_initialize_new_guild.call_count > 0
-    # Welcome message might still be attempted or skipped depending on error handling details
-    # For this test, we're primarily concerned that the handler doesn't crash.
+
 
 @pytest.mark.asyncio
 async def test_on_guild_remove_logs_and_clears_cache(mock_bot_for_events, mock_guild):
     bot, _ = mock_bot_for_events
     guild_id_str = str(mock_guild.id)
-
-    # Pre-populate cache for this guild to test clearing
     bot.game_manager._rules_config_cache[guild_id_str] = {"some_rule": "some_value"}
 
     with patch.object(logging.getLogger('bot.bot_core'), 'warning') as mock_log_warning, \
-         patch.object(logging.getLogger('bot.bot_core'), 'info') as mock_log_info: # For cache clear log
+         patch.object(logging.getLogger('bot.bot_core'), 'info') as mock_log_info:
         await bot.on_guild_remove(mock_guild)
 
     mock_log_warning.assert_any_call(f"Bot removed from guild: {mock_guild.name} (ID: {mock_guild.id})")
-
-    # Check if cache was cleared
     assert guild_id_str not in bot.game_manager._rules_config_cache
     mock_log_info.assert_any_call(f"Cleared rules_config_cache for removed guild {guild_id_str}")
 
-# Minimal test for on_ready just to ensure it runs without error with mocks
 @pytest.mark.asyncio
-async def test_on_ready_runs(mock_bot_for_events):
+async def test_on_ready_runs(mock_bot_for_events, mocker): # Added mocker
     bot, _ = mock_bot_for_events
-    bot.user = MagicMock(spec=discord.ClientUser) # on_ready uses self.user
-    bot.user.name = "TestBot"
-    bot.user.id = 12345
-    bot.tree = AsyncMock() # Mock command tree
-    bot.turn_processing_task = None # Ensure it tries to start it
+
+    # Ensure bot.user is mocked if the fixture didn't cover all needs for this test
+    # The fixture now provides a default mock for bot.user.
+    # If this test needs specific attributes for bot.user, configure them on bot.user:
+    # (e.g., bot.user.id = 12345 if the fixture's default ID is not suitable)
+    # The fixture sets id to 123456789, so we can use that or re-patch if needed.
+    # For this test, the fixture's default mock should be sufficient.
+
+    bot.tree = AsyncMock()
+    bot.turn_processing_task = None
 
     await bot.on_ready()
-    # Basic assertion: tree.sync was called, turn_processing_task was created
     bot.tree.sync.assert_called()
     assert bot.turn_processing_task is not None
 
-# Minimal test for on_message (very basic, just that it doesn't crash)
 @pytest.mark.asyncio
-async def test_on_message_bot_message_ignored(mock_bot_for_events):
+async def test_on_message_bot_message_ignored(mock_bot_for_events): # mocker not needed if bot.user isn't directly manipulated here
     bot, _ = mock_bot_for_events
     message = MagicMock(spec=discord.Message)
+    message.author = MagicMock(spec=discord.User) # Ensure author is also a MagicMock
     message.author.bot = True
 
-    # To prevent error if get_prefix is called and not mocked:
     bot.get_prefix = AsyncMock(return_value="!")
 
     await bot.on_message(message)
-    # No specific output to assert, just that it returned early and didn't process.
-    # If there was a processing function, assert it wasn't called.
-    # For now, just ensuring no crash.
-    assert True # Reached here without error
-
-# TODO: More comprehensive on_message tests would involve mocking game_manager, NLU, player states, etc.
-# This is out of scope for "basic" event handler tests here.
+    assert True

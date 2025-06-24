@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload # Ensure selectinload is imported
 
-from bot.database.models import Combat, Character, Player, RulesConfig, GameLog
+from bot.database.models import Combat, Character, Player, RulesConfig, GameLogEntry # Changed GameLog to GameLogEntry
 from bot.api.schemas.game_log_schemas import GameLogEntryCreate, ParticipatingEntity # For logging
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ async def apply_post_combat_updates(
                 consequences_data={"xp_gained": xp_change, "new_total_xp": db_character.xp},
                 details={"combat_id": combat.id, "reason": "combat_completion"}
             )
-            log_entries_to_add.append(GameLog(guild_id=guild_id, **log_xp.dict(exclude_none=True)))
+            log_entries_to_add.append(GameLogEntry(guild_id=guild_id, **log_xp.dict(exclude_none=True))) # Changed GameLog
 
 
         # --- Apply Loot (Placeholder) ---
@@ -117,7 +117,7 @@ async def apply_post_combat_updates(
                 consequences_data={"gold_added": 10, "new_total_gold": db_player.gold},
                 details={"combat_id": combat.id, "reason": "combat_loot"}
             )
-            log_entries_to_add.append(GameLog(guild_id=guild_id, **log_gold.dict(exclude_none=True)))
+            log_entries_to_add.append(GameLogEntry(guild_id=guild_id, **log_gold.dict(exclude_none=True))) # Changed GameLog
 
 
         # --- Apply Injuries/Status Effects (Placeholder) ---
@@ -135,7 +135,7 @@ async def apply_post_combat_updates(
                 involved_entities_ids=[ParticipatingEntity(type="character", id=db_character.id)],
                 details={"combat_id": combat.id, "final_hp": participant_data.get("current_hp")}
             )
-            log_entries_to_add.append(GameLog(guild_id=guild_id, **log_injury.dict(exclude_none=True)))
+            log_entries_to_add.append(GameLogEntry(guild_id=guild_id, **log_injury.dict(exclude_none=True))) # Changed GameLog
 
     if log_entries_to_add:
         db.add_all(log_entries_to_add)
