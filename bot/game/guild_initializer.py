@@ -202,7 +202,9 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                 "starting_race": "human",
                 "starting_mp": 50,
                 "starting_attack_base": 5,
-                "starting_defense_base": 0
+                "starting_defense_base": 0,
+                # Ensure the default starting location rule points to a location created by this initializer
+                "character_creation.defaults.starting_location_id": "village_square"
             }
             rules_to_add = []
             for key, value in default_rules.items():
