@@ -787,24 +787,3 @@ class CharacterActionProcessor:
         return {"success": True, "message": message, "state_changed": True}
 
 # Конец класса CharacterActionProcessor
-            guild_id,
-            current_location_id,
-            item_template_id=item_template_id, # Pass template_id for LocationManager
-            quantity=item_quantity,
-            dropped_item_data=dropped_item_copy # Pass the full original data for state preservation
-        )
-
-        if not added_to_loc_success:
-            # Critical: item removed from inventory but not added to location. Try to give it back.
-            logger.critical(f"{log_prefix} Failed to add '{item_name}' to location {current_location_id}. Attempting to return to inventory.") # Changed
-            await self._inventory_manager.add_item(guild_id, character.id, item_template_id, item_quantity, item_data=dropped_item_copy)
-            # Mark character dirty again as inventory changed back
-            self._character_manager.mark_character_dirty(guild_id, character.id)
-            return {"success": False, "message": f"Не удалось выбросить '{item_name}': ошибка размещения в локации.", "state_changed": False} # State did change then changed back
-
-        message = f"Вы выбросили '{item_name}'."
-        # Mark character dirty because inventory changed. Location is marked dirty by its own manager.
-        self._character_manager.mark_character_dirty(guild_id, character.id)
-        return {"success": True, "message": message, "state_changed": True}
-
-# Конец класса CharacterActionProcessor
