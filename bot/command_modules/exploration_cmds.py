@@ -45,11 +45,18 @@ class ExplorationCog(commands.Cog, name="Exploration Commands"):
 
         action_data = {"target": target} if target else {}
         
-        player_char = game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
+        player_char = await game_mngr.character_manager.get_character_by_discord_id(str(interaction.guild_id), interaction.user.id)
         if not player_char:
             await interaction.followup.send("У вас нет активного персонажа.", ephemeral=True)
             return
-        else: logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Fetched player_char (ID: {player_char.id}), location_id: {player_char.location_id}")
+        # Ensure player_char is not None before accessing attributes for logging
+        # This check is technically redundant if the above 'if not player_char: return' is hit,
+        # but good for robustness if logic changes.
+        if player_char:
+            logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Fetched player_char (ID: {player_char.id}), location_id: {player_char.current_location_id}") # Assuming current_location_id on Character model
+        else: # Should not be reached if the above guard works
+            logging.error(f"ExplorationCog.cmd_look: User {interaction.user.id} - player_char is None after get_character_by_discord_id, though it should have returned early.")
+
 
         logging.debug(f"ExplorationCog.cmd_look: User {interaction.user.id} - Before handle_explore_action. Target: {target}, Action Data: {action_data}")
         # The action_data dictionary ({'target': target} or {}) is suitable for action_params
