@@ -462,12 +462,12 @@ class CharacterActionProcessor:
                 logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing LocationManager): {specific_error_result}")
                 return specific_error_result
 
-            logging.debug(f"CharacterActionProcessor.handle_explore_action: LocationManager found. Attempting to get location_static for template_id: {character.location_id}")
-            location_template_data = self._location_manager.get_location_static(str(character.location_id))
+            logging.debug(f"CharacterActionProcessor.handle_explore_action: LocationManager found. Attempting to get location_static for template_id: {character.current_location_id}")
+            location_template_data = self._location_manager.get_location_static(str(character.current_location_id))
             logging.debug(f"CharacterActionProcessor.handle_explore_action: Received location_template_data: {location_template_data}")
             if not location_template_data:
-                logging.warning(f"CharacterActionProcessor.handle_explore_action: Failed to retrieve location_template_data for template_id: {character.location_id}.")
-                specific_error_result = {'success': False, 'message': f'Exploration failed: Could not find template data for your current location (ID: {character.location_id}).', 'data': {}}
+                logging.warning(f"CharacterActionProcessor.handle_explore_action: Failed to retrieve location_template_data for template_id: {character.current_location_id}.")
+                specific_error_result = {'success': False, 'message': f'Exploration failed: Could not find template data for your current location (ID: {character.current_location_id}).', 'data': {}}
                 logging.debug(f"CharacterActionProcessor.handle_explore_action: Returning (due to missing location_template_data): {specific_error_result}")
                 return specific_error_result
 
@@ -755,17 +755,38 @@ class CharacterActionProcessor:
         if not removed_success:
             return {"success": False, "message": f"Не удалось убрать '{item_name}' из инвентаря.", "state_changed": False}
 
-        current_location_id = str(character.location_id)
-        if not current_location_id: # Should not happen if character is valid
+        current_location_id_val = str(character.current_location_id) if character.current_location_id else None
+        if not current_location_id_val: # Should not happen if character is valid and has a location
              # Attempt to put item back if location is invalid? Or let it be removed.
              # For now, assume location is valid.
-             logger.error(f"{log_prefix} Character {character.id} has no valid location_id. Cannot drop item.") # Changed
+             logger.error(f"{log_prefix} Character {character.id} has no valid current_location_id. Cannot drop item.")
              # Try to add item back to inventory to prevent loss
              await self._inventory_manager.add_item(guild_id, character.id, item_template_id, item_quantity, item_data=dropped_item_copy)
              return {"success": False, "message": "Ошибка: ваше местоположение не определено, некуда выбрасывать предмет.", "state_changed": False}
 
 
         added_to_loc_success = await self._location_manager.add_item_to_location(
+            guild_id,
+            current_location_id_val, # Use the validated string value
+            item_template_id=item_template_id, # Pass template_id for LocationManager
+            quantity=item_quantity,
+            dropped_item_data=dropped_item_copy # Pass the full original data for state preservation
+        )
+
+        if not added_to_loc_success:
+            # Critical: item removed from inventory but not added to location. Try to give it back.
+            logger.critical(f"{log_prefix} Failed to add '{item_name}' to location {current_location_id_val}. Attempting to return to inventory.")
+            await self._inventory_manager.add_item(guild_id, character.id, item_template_id, item_quantity, item_data=dropped_item_copy)
+            # Mark character dirty again as inventory changed back
+            self._character_manager.mark_character_dirty(guild_id, character.id)
+            return {"success": False, "message": f"Не удалось выбросить '{item_name}': ошибка размещения в локации.", "state_changed": False} # State did change then changed back
+
+        message = f"Вы выбросили '{item_name}'."
+        # Mark character dirty because inventory changed. Location is marked dirty by its own manager.
+        self._character_manager.mark_character_dirty(guild_id, character.id)
+        return {"success": True, "message": message, "state_changed": True}
+
+# Конец класса CharacterActionProcessor
             guild_id,
             current_location_id,
             item_template_id=item_template_id, # Pass template_id for LocationManager
