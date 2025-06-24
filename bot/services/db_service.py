@@ -73,26 +73,32 @@ class DBService:
 
     @asynccontextmanager
     async def get_session(self):
-        """Provides a database session/connection from the adapter."""
-        if hasattr(self.adapter, 'db') and self.adapter.db is not None: # PostgresAdapter with SQLAlchemy AsyncSession
-            if hasattr(self.adapter.db, 'begin'): # Check if it's a session object that can begin transactions
-                async with self.adapter.db.begin_nested() as transaction: # Use begin_nested for safety if called within existing transaction
-                    yield self.adapter.db
-            else: # Fallback for simpler session-like objects, though less likely for PostgresAdapter
-                yield self.adapter.db
-        elif hasattr(self.adapter, '_conn') and self.adapter._conn is not None: # SQLiteAdapter with aiosqlite.Connection
-            # aiosqlite connection itself can be used for execution context
-            yield self.adapter._conn
-        elif hasattr(self.adapter, '_SessionLocal'): # For PostgresAdapter, if self.db is None but factory exists
-            session = self.adapter._SessionLocal()
-            try:
-                async with session.begin_nested() as transaction:
-                    yield session
-            finally:
+        """
+        Provides a new database session from the adapter's session factory.
+        The caller is responsible for beginning and managing transactions on this session.
+        """
+        if not hasattr(self.adapter, 'get_session_factory') and not hasattr(self.adapter, '_SessionLocal'):
+            logger.error("DBService.get_session: Adapter does not have a get_session_factory method or _SessionLocal attribute.")
+            raise NotImplementedError("Adapter does not provide a session factory mechanism.")
+
+        # Prefer get_session_factory if it exists (more generic)
+        session_factory = None
+        if hasattr(self.adapter, 'get_session_factory'):
+            session_factory = self.adapter.get_session_factory()
+        elif hasattr(self.adapter, '_SessionLocal'): # Fallback for current PostgresAdapter
+            session_factory = self.adapter._SessionLocal
+
+        if not session_factory or not callable(session_factory):
+            logger.error("DBService.get_session: Could not obtain a valid session factory from the adapter.")
+            raise ConnectionError("DBService: Session factory is invalid or not available.")
+
+        session = session_factory() # Create a new session
+        try:
+            yield session # Yield the bare session; transaction management is up to the caller
+        finally:
+            if hasattr(session, 'close'): # SQLAlchemy AsyncSession has close
                 await session.close()
-        else:
-            logger.error("DBService.get_session: Adapter has no session/connection factory or is not connected.")
-            raise ConnectionError("DBService: No active session or connection available.")
+            # For raw asyncpg connections (if SQLiteAdapter was different), other cleanup might be needed.
 
     async def get_global_state_value(self, key: str) -> Optional[str]:
         """Fetches a single value from the global_state table."""

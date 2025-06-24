@@ -24,6 +24,7 @@ from bot.database.models import Player, Character # For type hinting if needed, 
 from bot.services.nlu_data_service import NLUDataService
 
 from sqlalchemy.ext.asyncio import AsyncSession # For get_db_session
+from sqlalchemy.exc import IntegrityError as SQLAlchemyIntegrityError # ADDED FOR PERIODIC CHECKS
 from contextlib import asynccontextmanager # For get_db_session
 from typing import AsyncIterator # For get_db_session
 
