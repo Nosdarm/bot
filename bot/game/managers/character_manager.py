@@ -668,4 +668,4 @@ class CharacterManager:
         
         return new_char_orm_instance
 
-[end of bot/game/managers/character_manager.py]
+
