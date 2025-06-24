@@ -512,7 +512,18 @@ class GameManager:
                 async with self.db_service.get_session() as session: # type: ignore
                     async with session.begin(): # Start a transaction
                         # initialize_new_guild will now re-raise exceptions on DB error, or return True on logical success
-                        await initialize_new_guild(session, guild_id_str, force_reinitialize=False)
+
+                        # TEMPORARY MODIFICATION FOR TESTING GUILD 1364930265591320586
+                        # THIS SHOULD BE REVERTED AFTER TESTING.
+                        test_guild_id_to_force_reinit = "1364930265591320586"
+                        current_force_reinitialize_flag = False # Default
+
+                        if guild_id_str == test_guild_id_to_force_reinit:
+                            current_force_reinitialize_flag = True
+                            logger.warning(f"GameManager: TEMPORARILY FORCING REINITIALIZE for test guild {guild_id_str}")
+                        # END TEMPORARY MODIFICATION
+
+                        await initialize_new_guild(session, guild_id_str, force_reinitialize=current_force_reinitialize_flag)
                         # If initialize_new_guild completes without raising an error, this transaction block will commit.
                         operation_successful = True
                         # No specific commit needed here, 'async with session.begin()' handles it.
