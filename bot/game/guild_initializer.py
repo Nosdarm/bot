@@ -6,7 +6,8 @@ from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from bot.database.models import RulesConfig, GeneratedFaction, Location, GuildConfig, WorldState, LocationTemplate # Added LocationTemplate
+from bot.database.models import RulesConfig, GeneratedFaction, Location, GuildConfig, WorldState, LocationTemplate
+from bot.database.models.character_related import NPC # Import NPC model
 
 logger = logging.getLogger(__name__)
 
@@ -255,22 +256,32 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
             # The LocationTemplate creation block that was here is removed as it's redundant
             # with the pg_insert block earlier in the function.
 
-            # Deletion of existing Locations if force_reinitialize
+            # Deletion of existing NPCs and Locations if force_reinitialize
             if force_reinitialize: # This specific deletion should only happen if forced.
+
+                # Delete existing NPC entries for this guild first
+                logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing NPC entries for this guild.")
+                existing_npcs_stmt = select(NPC).where(NPC.guild_id == guild_id_str)
+                npc_result = await db_session.execute(existing_npcs_stmt)
+                deleted_npc_count = 0
+                for npc_entity in npc_result.scalars().all():
+                    await db_session.delete(npc_entity)
+                    deleted_npc_count += 1
+                if deleted_npc_count > 0:
+                    await db_session.flush() # Flush NPC deletions before location deletions
+                    logger.info(f"Guild Initializer for {guild_id_str}: Deleted {deleted_npc_count} existing NPC entries.")
+
+                # Then delete existing Location entries for this guild
                 logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing Location entries for this guild.")
-                # This was: existing_locations_stmt = select(Location).where(Location.guild_id == guild_id_str)
-                # And then: result = await db_session.execute(existing_factions_stmt) <- TYPO: used existing_factions_stmt
-                # Corrected:
                 existing_locations_stmt = select(Location).where(Location.guild_id == guild_id_str)
-                result = await db_session.execute(existing_locations_stmt) # Corrected to use existing_locations_stmt
+                result = await db_session.execute(existing_locations_stmt)
                 deleted_loc_count = 0
-                for loc in result.scalars().all(): # Changed variable name from faction to loc
+                for loc in result.scalars().all():
                     await db_session.delete(loc)
                     deleted_loc_count +=1
                 if deleted_loc_count > 0:
                     await db_session.flush()
                     logger.info(f"Guild Initializer for {guild_id_str}: Deleted {deleted_loc_count} existing Location entries.")
-
 
             # This was a duplicate faction creation block, removing it.
             # default_factions_data = [ ... ]
