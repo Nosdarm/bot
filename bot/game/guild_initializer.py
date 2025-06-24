@@ -91,7 +91,8 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
             "town_square", "tavern", "market_street", "guild_hall", "city_gate",
             "alchemist_shop", "wilderness_crossroads", "forest_path", "mountain_trail",
             "clearing_deepwood", "cave_entrance",
-            "village_square", "village_tavern", "village_shop", "forest_edge", "deep_forest" # For guild_initializer's own locations
+            "village_square", "village_tavern", "village_shop", "forest_edge", "deep_forest", # For guild_initializer's own locations
+            "default_start_location" # Ensure template for the actual default start location
         ]
         location_template_values_to_upsert = []
         for template_id_val in default_template_ids_for_upsert:
@@ -202,9 +203,7 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
                 "starting_race": "human",
                 "starting_mp": 50,
                 "starting_attack_base": 5,
-                "starting_defense_base": 0,
-                # Ensure the default starting location rule points to a location created by this initializer
-                "character_creation.defaults.starting_location_id": "village_square"
+                "starting_defense_base": 0
             }
             rules_to_add = []
             for key, value in default_rules.items():
@@ -308,8 +307,18 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
             village_shop_id = f"loc_village_shop_{guild_id_str[:4]}_{str(uuid.uuid4())[:4]}"
             forest_edge_id = f"loc_forest_edge_{guild_id_str[:4]}_{str(uuid.uuid4())[:4]}"
             deep_forest_id = f"loc_deep_forest_{guild_id_str[:4]}_{str(uuid.uuid4())[:4]}"
+            default_start_loc_id = f"loc_default_start_{guild_id_str[:4]}_{str(uuid.uuid4())[:4]}"
 
             default_locations_data = [
+                {
+                    "id": default_start_loc_id,
+                    "name_i18n": {"en": "A Quiet Place", "ru": "Тихое Место"}, # Generic name
+                    "descriptions_i18n": {"en": "A quiet, unassuming place where new adventurers often begin their journey.", "ru": "Тихое, неприметное место, где новые искатели приключений часто начинают свой путь."},
+                    "static_id": "default_start_location", # Critical static_id
+                    "neighbor_locations_json": { # Optionally connect it to village_square
+                        village_square_id: "path_to_village_square"
+                    }
+                },
                 {
                     "id": village_square_id,
                     "name_i18n": {"en": "Village Square", "ru": "Деревенская Площадь"},
