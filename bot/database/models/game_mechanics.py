@@ -41,7 +41,11 @@ class Ability(Base):
     cost = Column(JSONB, nullable=True)
     requirements = Column(JSONB, nullable=True)
     type_i18n = Column(JSONB, nullable=False)
-    __table_args__ = (Index('idx_ability_guild_id', 'guild_id'),)
+    static_id = Column(String, nullable=True, index=True)
+    __table_args__ = (
+        Index('idx_ability_guild_id', 'guild_id'),
+        UniqueConstraint('guild_id', 'static_id', name='uq_ability_guild_static_id'),
+    )
 
 
 class Spell(Base):
@@ -81,6 +85,11 @@ class Status(Base):
     effects = Column(JSONB, nullable=True)
     name_i18n = Column(JSONB, nullable=True)
     description_i18n = Column(JSONB, nullable=True)
+    static_id = Column(String, nullable=False, index=True) # ТЗ: уникален -> nullable=False
+    __table_args__ = (
+        UniqueConstraint('guild_id', 'static_id', name='uq_status_guild_static_id'),
+        Index('idx_status_guild_static_id', 'guild_id', 'static_id'), # Дополнительный индекс для поиска
+    )
 
 
 class CraftingRecipe(Base):

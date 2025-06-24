@@ -99,7 +99,7 @@ class GameManager:
         logger.info("Initializing GameManager…")
         self._discord_client = discord_client
         self._settings = settings
-        self._rules_config_cache: Optional[Dict[str, Any]] = None
+        self._rules_config_cache: Dict[str, Dict[str, Any]] = {} # Changed to Dict
 
         self.db_service: Optional[DBService] = None
         self.rule_engine: Optional["RuleEngine"] = None
@@ -703,26 +703,60 @@ class GameManager:
 
     async def _load_or_initialize_rules_config(self, guild_id: str):
         logger.info(f"GameManager: Loading/Init rules for guild_id: {guild_id}...")
-        if self._rules_config_cache is None: self._rules_config_cache = {}
-        if guild_id not in self._rules_config_cache: self._rules_config_cache[guild_id] = {}
-        if not self.db_service: self._rules_config_cache[guild_id] = {"default_bot_language": "en", "error_state": "DBService unavailable"}; return
+        # Ensure the cache for the guild exists.
+        self._rules_config_cache.setdefault(guild_id, {})
+
+        if not self.db_service:
+            logger.error(f"GameManager: DBService not available for _load_or_initialize_rules_config of guild {guild_id}.")
+            # Ensure a minimal default if DB is down, to prevent other parts from failing if they expect a dict.
+            self._rules_config_cache[guild_id] = {"default_bot_language": "en", "error_state": "DBService unavailable", "emergency_mode": True}
+            return
+
+        from bot.utils.config_utils import load_rules_config as util_load_rules_config # Renamed import
         try:
-            rules_entries = await self.db_service.get_entities_by_conditions(table_name='rules_config', conditions={'guild_id': guild_id})
-            guild_rules_dict = {entry['key']: entry['value'] for entry in rules_entries if 'key' in entry and 'value' in entry}
-            if guild_rules_dict: self._rules_config_cache[guild_id] = guild_rules_dict
+            # Use the utility to load from DB
+            # This utility itself should handle DB session management.
+            # For now, assuming it needs a session, which self.db_service can provide.
+            async with self.db_service.get_session() as session: # type: ignore
+                guild_rules_dict = await util_load_rules_config(session, guild_id)
+
+            if guild_rules_dict:
+                self._rules_config_cache[guild_id] = guild_rules_dict
+                logger.info(f"GameManager: RulesConfig for guild {guild_id} loaded and cached ({len(guild_rules_dict)} rules).")
             else:
+                # If no rules found in DB, attempt to initialize them (idempotent)
+                logger.warning(f"GameManager: No rules found for guild {guild_id} in DB. Attempting initialization.")
                 from bot.game.guild_initializer import initialize_new_guild
-                async with self.db_service.get_session() as session: # type: ignore
-                    if await initialize_new_guild(session, guild_id):
-                        rules_entries_after_init = await self.db_service.get_entities_by_conditions(table_name='rules_config', conditions={'guild_id': guild_id})
-                        self._rules_config_cache[guild_id] = {entry['key']: entry['value'] for entry in rules_entries_after_init if 'key' in entry and 'value' in entry}
-                    else: self._rules_config_cache[guild_id] = {"default_bot_language": "en", "emergency_mode": True, "reason": "Guild initializer failed"}
-        except Exception as e: self._rules_config_cache[guild_id] = {"default_bot_language": "en", "emergency_mode": True, "reason": f"Exception: {str(e)}"}
-        if not self._rules_config_cache.get(guild_id): self._rules_config_cache[guild_id] = {"default_bot_language": "en", "emergency_mode": True, "reason": "Final fallback"}
+                async with self.db_service.get_session() as init_session: # type: ignore
+                    async with init_session.begin(): # Ensure transaction for initialization
+                        # initialize_new_guild should add default rules if missing
+                        await initialize_new_guild(init_session, guild_id, force_reinitialize=False)
+                    # Re-load after initialization
+                    async with self.db_service.get_session() as reload_session: # type: ignore
+                         guild_rules_dict_after_init = await util_load_rules_config(reload_session, guild_id)
+                         self._rules_config_cache[guild_id] = guild_rules_dict_after_init
+                         logger.info(f"GameManager: RulesConfig for guild {guild_id} initialized and cached ({len(guild_rules_dict_after_init)} rules).")
+                if not self._rules_config_cache.get(guild_id): # Still empty after init attempt
+                    self._rules_config_cache[guild_id] = {"default_bot_language": "en", "emergency_mode": True, "reason": "Guild initializer failed or no rules defined"}
+                    logger.error(f"GameManager: Failed to load or initialize rules for guild {guild_id}. Using emergency fallback.")
+
+        except Exception as e:
+            logger.error(f"GameManager: Exception during _load_or_initialize_rules_config for guild {guild_id}: {e}", exc_info=True)
+            self._rules_config_cache[guild_id] = {"default_bot_language": "en", "emergency_mode": True, "reason": f"Exception: {str(e)}"}
+
 
     async def get_rule(self, guild_id: str, key: str, default: Optional[Any] = None) -> Optional[Any]:
-        if self._rules_config_cache is None or guild_id not in self._rules_config_cache: await self._load_or_initialize_rules_config(guild_id)
-        if self._rules_config_cache and guild_id in self._rules_config_cache: return self._rules_config_cache[guild_id].get(key, default)
+        # Ensure cache is loaded for the guild if not already present
+        if guild_id not in self._rules_config_cache:
+            await self._load_or_initialize_rules_config(guild_id)
+
+        # Now, access the cache
+        guild_specific_cache = self._rules_config_cache.get(guild_id)
+        if guild_specific_cache is not None: # Check if it's not None (could be {} if loading failed but key exists)
+            return guild_specific_cache.get(key, default)
+
+        # Fallback if guild_id somehow still not in cache after load attempt (should be rare)
+        logger.warning(f"GameManager.get_rule: Guild {guild_id} not found in cache after load attempt. Returning default for key '{key}'.")
         return default
 
     async def get_location_type_i18n_map(self, guild_id: str, type_key: str) -> Optional[Dict[str, str]]:
@@ -757,24 +791,52 @@ class GameManager:
         return None
 
     async def update_rule_config(self, guild_id: str, key: str, value: Any) -> bool:
-        if not self.db_service: return False
-        try:
-            existing_rule_entry = await self.db_service.get_entity_by_conditions(table_name='rules_config', conditions={'guild_id': guild_id, 'key': key}, model_class=RulesConfig, single_entity=True)
-            db_success = False
-            if existing_rule_entry: update_result = await self.db_service.update_entities_by_conditions(table_name='rules_config', conditions={'guild_id': guild_id, 'key': key}, updates={'value': value}); db_success = bool(update_result)
-            else: new_rule_data = {'guild_id': guild_id, 'key': key, 'value': value}; created_entity = await self.db_service.create_entity(table_name='rules_config', entity_data=new_rule_data, model_class=RulesConfig); db_success = created_entity is not None
-            if db_success:
-                if self._rules_config_cache is None: self._rules_config_cache = {}
-                if guild_id not in self._rules_config_cache: self._rules_config_cache[guild_id] = {}
-                self._rules_config_cache[guild_id][key] = value; return True
+        if not self.db_service:
+            logger.error(f"GameManager: DBService not available for update_rule_config (guild {guild_id}, key {key}).")
             return False
-        except Exception as e: logger.error(f"Exception saving rule '{key}' for guild {guild_id}: {e}", exc_info=True); return False
+
+        from bot.utils.config_utils import update_rule_config as util_update_rule_config # Renamed import
+        try:
+            # Use the utility to update in DB. This utility should handle its own session and commit/rollback.
+            # For now, assuming it needs a session.
+            async with self.db_service.get_session() as session: # type: ignore
+                await util_update_rule_config(session, guild_id, key, value) # This will commit or raise error
+
+            # If DB update was successful, update cache
+            self._rules_config_cache.setdefault(guild_id, {})[key] = value
+            logger.info(f"GameManager: Rule '{key}' for guild {guild_id} updated in DB and cache.")
+            return True
+        except Exception as e:
+            logger.error(f"GameManager: Exception updating rule '{key}' for guild {guild_id}: {e}", exc_info=True)
+            # Optionally, try to reload cache from DB to ensure consistency if partial update occurred,
+            # or mark cache as stale for this guild.
+            # For simplicity now, just log error. Cache might be inconsistent if DB write failed after partial cache update.
+            # A robust solution might involve invalidating the cache entry or the whole guild cache here.
+            if guild_id in self._rules_config_cache:
+                self._rules_config_cache[guild_id].pop(key, None) # Remove potentially inconsistent entry
+                # Or, to be safer: self._rules_config_cache.pop(guild_id, None) to force full reload on next get_rule.
+                logger.info(f"GameManager: Cache for rule '{key}' (guild {guild_id}) cleared due to update error.")
+            return False
 
     async def set_default_bot_language(self, language: str, guild_id: Optional[str] = None) -> bool:
         if not guild_id: return False
         success = await self.update_rule_config(guild_id, "default_language", language)
         if success and self.multilingual_prompt_generator:
-            if self._active_guild_ids and guild_id == self._active_guild_ids[0]: self.multilingual_prompt_generator.update_main_bot_language(language)
+            # Update main language for prompt generator if it's for the "primary" active guild
+            # This logic for "primary active guild" might need refinement if bot serves many guilds simultaneously
+            # with different prompt generator instances or configurations.
+            # For now, assume one main_bot_language for the MultilingualPromptGenerator instance.
+            # A better approach might be for MultilingualPromptGenerator to take guild_id and fetch lang itself.
+            # Or, if GameManager is per-guild, then self.multilingual_prompt_generator.main_bot_language is inherently guild-specific.
+            # Current MultilingualPromptGenerator has one main_bot_language.
+            # This update might be better placed where MultilingualPromptGenerator is used with a specific guild context.
+            # For now, keeping original logic:
+            if self._active_guild_ids and guild_id == self._active_guild_ids[0]: # This condition is very specific
+                 self.multilingual_prompt_generator.update_main_bot_language(language)
+                 logger.info(f"GameManager: Updated MultilingualPromptGenerator main language to '{language}' due to change in primary guild '{guild_id}'.")
+            else:
+                 logger.info(f"GameManager: Default bot language for guild '{guild_id}' set to '{language}', but not updating global prompt generator language as it's not the primary active guild or no active guilds defined for this check.")
+
         return success
 
     async def get_player_model_by_discord_id(self, guild_id: str, discord_id: str) -> Optional[Player]:

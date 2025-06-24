@@ -114,10 +114,12 @@ class StatusManager:
             msg = "DBService not available."
             logger.error(f"StatusManager: {msg} Cannot apply status.")
             return ApplyStatusResult(applied=False, message=msg, status_key=status_id_or_key)
-        if not self._character_manager:
-            msg = "CharacterManager not available."
-            logger.error(f"StatusManager: {msg} Cannot apply status (for stat recalc).")
+        if not self._character_manager or not hasattr(self._character_manager, '_game_log_manager'):
+            msg = "CharacterManager or its GameLogManager not available."
+            logger.error(f"StatusManager: {msg} Cannot apply status.")
             return ApplyStatusResult(applied=False, message=msg, status_key=status_id_or_key)
+
+        game_log_manager = self._character_manager._game_log_manager
 
         status_definition_dict = self.get_status_template(status_id_or_key)
         if not status_definition_dict:
@@ -178,6 +180,26 @@ class StatusManager:
 
                 logger.info(f"StatusManager: Applied status '{status_id_or_key}' to char {character_id}, guild {guild_id}. Pending commit.")
 
+                # Log event to StoryLog
+                if game_log_manager:
+                    log_details = {
+                        "character_id": character_id,
+                        "status_id": status_id_or_key,
+                        "status_name": applied_status_data.get("name_i18n", {}).get(char_language, status_id_or_key),
+                        "duration_turns": final_duration,
+                        "source_id": source_id,
+                        "source_type": source_type,
+                        "instance_id": status_instance_id,
+                        "effects_detail": applied_status_data.get("effects_detail")
+                    }
+                    await game_log_manager.log_event(
+                        guild_id=guild_id,
+                        event_type="STATUS_APPLIED",
+                        details=log_details,
+                        player_id=character_model.player_id, # Logged under the player account
+                        location_id=character_model.current_location_id
+                    )
+
             self._character_manager._characters.setdefault(str(guild_id), {})[character_id] = character_model
 
             localized_status_name = self._get_localized_status_name(status_definition_dict, char_language)
@@ -193,9 +215,11 @@ class StatusManager:
         except Exception as e:
             msg = f"Error applying status '{status_id_or_key}' to char {character_id}: {e}"
             logger.error(f"StatusManager: {msg}", exc_info=True)
+            # Rollback is handled by 'async with' if manage_session is True
             return ApplyStatusResult(applied=False, message=msg, status_key=status_id_or_key)
         finally:
-            if manage_session: await actual_session.close()
+            if manage_session and actual_session: # Close session only if it was created here
+                await actual_session.close()
 
     # ... (Other placeholder methods) ...
     def get_status_display_name(self, status_instance: PydanticStatusEffect, lang: str = "en", default_lang: str = "en") -> str: return "Неизвестный статус"

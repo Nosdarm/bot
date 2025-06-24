@@ -114,21 +114,48 @@ class AIGenerationService:
 
         logger.info(f"AIGenerationService: PendingGeneration record {pending_gen_record.id} created with status '{pending_status}'.")
 
-        if pending_status == "pending_moderation" and self.game_manager.notification_service:
-            guild_config_obj: Optional[GuildConfig] = await self.game_manager.db_service.get_entity_by_pk(GuildConfig, pk_value=guild_id)
-            if guild_config_obj:
-                notification_channel_id_to_use = guild_config_obj.notification_channel_id or \
-                                                 guild_config_obj.master_channel_id or \
-                                                 guild_config_obj.system_channel_id
-                if notification_channel_id_to_use:
+        if pending_status == "pending_moderation":
+            if self.game_manager.notification_service:
+                guild_config_obj: Optional[GuildConfig] = await self.game_manager.db_service.get_entity_by_pk(GuildConfig, pk_value=guild_id)
+                if guild_config_obj:
+                    notification_channel_id_to_use = guild_config_obj.notification_channel_id or \
+                                                     guild_config_obj.master_channel_id or \
+                                                     guild_config_obj.system_channel_id
+                    if notification_channel_id_to_use:
+                        try:
+                            message_to_send = f"🔔 New AI Content (Type: '{pending_gen_record.request_type}', ID: `{pending_gen_record.id}`) is awaiting moderation. Use `/master review_ai id:{pending_gen_record.id}` to review."
+                            await self.game_manager.notification_service.send_notification(
+                                target_channel_id=int(notification_channel_id_to_use),
+                                message=message_to_send
+                            )
+                        except ValueError: logger.error(f"Invalid channel ID format: {notification_channel_id_to_use}")
+                        except Exception as e: logger.error(f"Failed to send moderation notification: {e}", exc_info=True)
+
+            # Set player status if generation was user-initiated and successful so far
+            if created_by_user_id and request_type in [
+                "npc_profile_generation", # Example type that might be player-initiated
+                "location_content_generation" # If player requests details for current loc
+            ]: # Add other relevant request_types
+                if self.game_manager.character_manager:
                     try:
-                        message_to_send = f"🔔 New AI Content (Type: '{pending_gen_record.request_type}', ID: `{pending_gen_record.id}`) is awaiting moderation. Use `/master review_ai id:{pending_gen_record.id}` to review."
-                        await self.game_manager.notification_service.send_notification(
-                            target_channel_id=int(notification_channel_id_to_use),
-                            message=message_to_send
-                        )
-                    except ValueError: logger.error(f"Invalid channel ID format: {notification_channel_id_to_use}")
-                    except Exception as e: logger.error(f"Failed to send moderation notification: {e}", exc_info=True)
+                        player_char = await self.game_manager.character_manager.get_character_by_discord_id(guild_id, int(created_by_user_id))
+                        if player_char:
+                            # Directly update status (assuming CharacterManager handles DB persistence for this field)
+                            # This is a simplified approach. A more robust way might involve a specific method in CharacterManager.
+                            if hasattr(player_char, 'current_game_status'):
+                                setattr(player_char, 'current_game_status', 'ожидание_модерации')
+                                self.game_manager.character_manager.mark_character_dirty(guild_id, player_char.id)
+                                # Ensure CharacterManager.save_state is called or this change is part of a transaction
+                                logger.info(f"Set character {player_char.id} status to 'ожидание_модерации' for AI generation {pending_gen_record.id}.")
+                            else:
+                                logger.warning(f"Character model for {player_char.id} does not have 'current_game_status'. Cannot set status.")
+                        else:
+                            logger.warning(f"Could not find active character for user {created_by_user_id} in guild {guild_id} to set status for AI generation.")
+                    except ValueError:
+                        logger.error(f"Invalid created_by_user_id format '{created_by_user_id}'. Cannot parse to int.")
+                    except Exception as e_status:
+                        logger.error(f"Error setting player status for AI generation {pending_gen_record.id}: {e_status}", exc_info=True)
+
         return pending_gen_record.id
 
     async def apply_approved_generation(
