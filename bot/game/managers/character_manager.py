@@ -140,33 +140,92 @@ class CharacterManager:
 
     async def get_character_by_discord_id(self, guild_id: str, discord_user_id: int, session: Optional[AsyncSession] = None) -> Optional[Character]:
         guild_id_str = str(guild_id)
+        # Attempt to retrieve player_id from the discord_to_player_map cache first
         player_id_in_cache = self._discord_to_player_map.get(guild_id_str, {}).get(discord_user_id)
-        active_char_id: Optional[str] = None
-        db_session_is_external = session is not None
-        actual_session: AsyncSession = session if db_session_is_external else self._db_service.get_session() # type: ignore
-        if not actual_session and not self._db_service :
-            logger.error("CM.get_character_by_discord_id: DBService not available and no session passed.")
-            return None
-        try:
-            if not db_session_is_external: await actual_session.__aenter__() # type: ignore
-            if player_id_in_cache:
-                player = await actual_session.get(Player, player_id_in_cache)
-                if player and str(player.guild_id) == guild_id_str: active_char_id = player.active_character_id
-                else: logger.debug(f"Player {player_id_in_cache} for Discord {discord_user_id} not found or guild mismatch in DB.")
-            else:
+        active_char_id: Optional[str] = None  # To store the active character ID once resolved
+
+        # Helper function to perform the core logic given an active session
+        async def _fetch_character_logic(current_session: AsyncSession, cached_player_id: Optional[str]) -> Optional[Character]:
+            nonlocal active_char_id # Allow modification of outer scope active_char_id
+
+            resolved_player_id = cached_player_id # Start with the player_id from the discord_id -> player_id cache
+
+            # Step 1: Resolve Player and active_char_id
+            if resolved_player_id:
+                player = await current_session.get(Player, resolved_player_id)
+                if player and str(player.guild_id) == guild_id_str:
+                    active_char_id = player.active_character_id
+                else:
+                    # Player from cache was invalid (not found or guild mismatch)
+                    logger.debug(f"Player {resolved_player_id} (from discord_to_player_map cache) for Discord User {discord_user_id} "
+                                 f"not found in DB or guild mismatch. Invalidating this cache entry.")
+                    if guild_id_str in self._discord_to_player_map and discord_user_id in self._discord_to_player_map[guild_id_str]:
+                        del self._discord_to_player_map[guild_id_str][discord_user_id]
+                    resolved_player_id = None # Force DB lookup for Player by discord_id in the next block
+
+            if not resolved_player_id: # If not found via initial cache, or cache was invalidated
                 from bot.database.crud_utils import get_entity_by_attributes
-                player_account = await get_entity_by_attributes(session, Player, {"discord_id": str(discord_user_id)}, guild_id_str)
+                # Query DB for Player by discord_id and guild_id
+                player_account = await get_entity_by_attributes(current_session, Player,
+                                                               {"discord_id": str(discord_user_id)},
+                                                               guild_id=guild_id_str)
                 if player_account:
+                    # Update discord_to_player_map cache with the fetched player_id
                     self._discord_to_player_map.setdefault(guild_id_str, {})[discord_user_id] = player_account.id
-                    active_character_id_to_fetch = player_account.active_character_id
+                    active_char_id = player_account.active_character_id
+                    resolved_player_id = player_account.id # Keep track of the resolved player ID
                 else:
                     logger.info(f"Player account not found in DB for Discord ID {discord_user_id} in guild {guild_id_str}.")
+                    return None # No player, so no character can be fetched
+
+            # Step 2: Fetch Character if active_char_id is known
+            if active_char_id:
+                # Check local Character object cache (self._characters) first
+                character_in_cm_cache = self._characters.get(guild_id_str, {}).get(active_char_id)
+                if character_in_cm_cache:
+                    # logger.debug(f"Character {active_char_id} found in CharacterManager's character cache for player {resolved_player_id}.")
+                    return character_in_cm_cache
+
+                # If not in CM's character cache, fetch from DB using the current session
+                character_from_db = await current_session.get(Character, active_char_id)
+                if character_from_db and str(character_from_db.guild_id) == guild_id_str:
+                    # Add to CharacterManager's character cache
+                    self._characters.setdefault(guild_id_str, {})[character_from_db.id] = character_from_db
+                    # logger.debug(f"Character {active_char_id} fetched from DB for player {resolved_player_id} and cached in CharacterManager.")
+                    return character_from_db
+                else:
+                    # This case means player.active_character_id points to a non-existent/mismatched character
+                    logger.warning(f"Active character ID {active_char_id} for player {resolved_player_id} (Discord: {discord_user_id}) "
+                                   f"either not found in DB or belongs to a different guild. Expected guild: {guild_id_str}, "
+                                   f"character's guild: {getattr(character_from_db, 'guild_id', 'N/A') if character_from_db else 'Not Found In DB'}.")
+                    # Future enhancement: Consider clearing player.active_character_id in the DB if it's invalid.
+                    # This would require fetching the player object again if not already available, marking field dirty, and flushing.
+                    return None # Character not found or does not match guild
+            else:
+                # This means the player exists but has no active character (active_character_id is None or empty)
+                logger.info(f"No active character ID associated with player {resolved_player_id} (Discord: {discord_user_id}) in guild {guild_id_str}.")
+                return None
+
+        # Main execution flow for get_character_by_discord_id:
+        # Determines whether to use a provided session or create an internal one.
+        try:
+            if session:
+                # An external session was provided by the caller. Use it directly.
+                # logger.debug(f"Using provided external session for get_character_by_discord_id (Discord: {discord_user_id}, Guild: {guild_id_str}).")
+                return await _fetch_character_logic(session, player_id_in_cache)
+            else:
+                # No external session was provided. Create and manage one internally.
+                if not self._db_service:
+                    logger.error("CM.get_character_by_discord_id: DBService not available and no external session passed. Cannot create internal session.")
                     return None
+                # logger.debug(f"Creating internal session for get_character_by_discord_id (Discord: {discord_user_id}, Guild: {guild_id_str}).")
+                async with self._db_service.get_session() as internal_session: # type: ignore
+                    # internal_session is the actual AsyncSession object yielded by the context manager
+                    return await _fetch_character_logic(internal_session, player_id_in_cache)
         except Exception as e:
-            logger.error(f"Error in get_character_by_discord_id for {discord_user_id} in guild {guild_id_str}: {e}", exc_info=True)
+            # Catch any unexpected errors during the process and log them.
+            logger.error(f"Unexpected error in get_character_by_discord_id for Discord User {discord_user_id}, Guild {guild_id_str}: {e}", exc_info=True)
             return None
-        finally:
-            if not db_session_is_external and actual_session: await actual_session.__aexit__(None, None, None) # type: ignore
 
     async def update_health(
         self,
