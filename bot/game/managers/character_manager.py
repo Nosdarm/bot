@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm.attributes import flag_modified
 
-from bot.database.models import Player, Character
+from bot.database.models import Player, Character # Ensure Character is imported if used in type hints directly
 from builtins import dict, set, list, int
 
 from bot.game.utils import stats_calculator
@@ -140,11 +140,9 @@ class CharacterManager:
 
     async def get_character_by_discord_id(self, guild_id: str, discord_user_id: int, session: Optional[AsyncSession] = None) -> Optional[Character]:
         guild_id_str = str(guild_id)
-        # Attempt to retrieve player_id from the discord_to_player_map cache first
         player_id_in_cache = self._discord_to_player_map.get(guild_id_str, {}).get(discord_user_id)
-        active_char_id: Optional[str] = None  # To store the active character ID once resolved
+        active_char_id: Optional[str] = None
 
-        # Helper function to perform the core logic given an active session
         async def _fetch_character_logic(current_session: AsyncSession, cached_player_id: Optional[str]) -> Optional[Character]:
             nonlocal active_char_id
             resolved_player_id = cached_player_id
@@ -152,7 +150,6 @@ class CharacterManager:
 
             logger.debug(f"_fetch_character_logic: Start. discord_user_id={discord_user_id}, cached_player_id={resolved_player_id}, guild_id_str={guild_id_str}")
 
-            # Path 1: Try cache for player_id, then session.get(Player, player_id)
             if resolved_player_id:
                 logger.debug(f"_fetch_character_logic: Path A - Using cached_player_id: {resolved_player_id}")
                 player = await current_session.get(Player, resolved_player_id)
@@ -166,16 +163,15 @@ class CharacterManager:
                         logger.warning(f"_fetch_character_logic: Path A - Guild mismatch for Player {getattr(player, 'id', 'N/A')}. Actual: {getattr(player, 'guild_id', 'N/A')}, Expected: {guild_id_str}. Invalidating cache.")
                         if guild_id_str in self._discord_to_player_map and discord_user_id in self._discord_to_player_map[guild_id_str]:
                             del self._discord_to_player_map[guild_id_str][discord_user_id]
-                        resolved_player_id = None # Force DB lookup by attributes
+                        resolved_player_id = None
                 else:
                     logger.debug(f"_fetch_character_logic: Path A - Player with ID {resolved_player_id} (from cache) not found via session.get(). Invalidating cache.")
                     if guild_id_str in self._discord_to_player_map and discord_user_id in self._discord_to_player_map[guild_id_str]:
                         del self._discord_to_player_map[guild_id_str][discord_user_id]
-                    resolved_player_id = None # Force DB lookup by attributes
+                    resolved_player_id = None
 
             logger.debug(f"_fetch_character_logic: After Path A. resolved_player_id: {resolved_player_id}. fetched_player_obj is {'NOT None' if fetched_player_obj else 'None'}")
 
-            # Path 2: If Path 1 failed (resolved_player_id became None) or no cached player_id initially
             if not resolved_player_id:
                 logger.debug(f"_fetch_character_logic: Path B - resolved_player_id is None or was invalidated. Fetching by attributes for discord_id: {discord_user_id}, guild_id: {guild_id_str}")
                 from bot.database.crud_utils import get_entity_by_attributes
@@ -183,7 +179,7 @@ class CharacterManager:
                                                                {"discord_id": str(discord_user_id)},
                                                                guild_id=guild_id_str)
                 logger.debug(f"_fetch_character_logic: Path B - get_entity_by_attributes returned: {repr(player_account)}")
-                if player_account: # Ensure player_account is not None and is a Player instance
+                if player_account:
                     logger.debug(f"_fetch_character_logic: Path B - Player {getattr(player_account, 'id', 'N/A')} found via attributes. Updating cache.")
                     self._discord_to_player_map.setdefault(guild_id_str, {})[discord_user_id] = player_account.id
                     fetched_player_obj = player_account
@@ -191,30 +187,27 @@ class CharacterManager:
                     logger.debug(f"_fetch_character_logic: Path B - fetched_player_obj assigned: {getattr(fetched_player_obj, 'id', 'None')}")
                 else:
                     logger.info(f"_fetch_character_logic: Path B - Player account not found by attributes for Discord ID {discord_user_id} in guild {guild_id_str}.")
-                    # fetched_player_obj remains as it was (None if Path A also failed/didn't set it)
 
             logger.debug(f"_fetch_character_logic: FINAL PRE-CHECK before refresh block. fetched_player_obj: {repr(fetched_player_obj)}, type: {type(fetched_player_obj)}")
-
-            # Explicitly refresh the Player object to get the latest active_character_id
             logger.debug(f"_fetch_character_logic: Checkpoint before 'isinstance' and 'is not None'. fetched_player_obj is {repr(fetched_player_obj)}, type: {type(fetched_player_obj)}")
-            if fetched_player_obj is not None and isinstance(fetched_player_obj, Player): # Doubly sure it's a Player instance
+
+            if fetched_player_obj is not None and isinstance(fetched_player_obj, Player):
                 player_id_log = fetched_player_obj.id
                 pre_refresh_ac_id_log = fetched_player_obj.active_character_id
                 logger.debug(f"_fetch_character_logic: Player {player_id_log} (Discord: {discord_user_id}) confirmed as Player instance. Pre-refresh active_char_id: {pre_refresh_ac_id_log}")
 
                 try:
                     # logger.debug(f"_fetch_character_logic: Attempting to EXPIRE Player {player_id_log}. Object: {repr(fetched_player_obj)}")
-                    # await current_session.expire(fetched_player_obj) # Intentionally commented out to isolate TypeError
+                    # await current_session.expire(fetched_player_obj) # Intentionally commented out
                     # logger.debug(f"_fetch_character_logic: EXPIRE successful for Player {player_id_log}. Object state after expire: {repr(fetched_player_obj)}")
 
                     logger.debug(f"_fetch_character_logic: Attempting to REFRESH Player {player_id_log} (all attributes). Object state before refresh: {repr(fetched_player_obj)}")
-                    await current_session.refresh(fetched_player_obj) # Refresh all attributes
+                    await current_session.refresh(fetched_player_obj)
 
                     active_char_id = fetched_player_obj.active_character_id
                     logger.debug(f"_fetch_character_logic: Player {fetched_player_obj.id} (Discord: {discord_user_id}) REFRESHED. Post-refresh active_char_id: {active_char_id}")
                 except Exception as refresh_exc:
                     logger.error(f"_fetch_character_logic: Exception during refresh for Player {player_id_log}: {refresh_exc}", exc_info=True)
-                    # If refresh fails, use the active_char_id we had before attempting refresh
                     active_char_id = pre_refresh_ac_id_log
             elif fetched_player_obj is None:
                  logger.error(f"_fetch_character_logic: fetched_player_obj IS NONE before refresh block for Discord ID {discord_user_id}. Returning None.")
@@ -223,52 +216,33 @@ class CharacterManager:
                 logger.error(f"_fetch_character_logic: fetched_player_obj is not a Player instance (type: {type(fetched_player_obj)}) but was not None for Discord ID {discord_user_id}. Cannot fetch character.")
                 return None
 
-            # Step 2: Fetch Character if active_char_id is known
             if active_char_id:
-                # Check local Character object cache (self._characters) first
                 character_in_cm_cache = self._characters.get(guild_id_str, {}).get(active_char_id)
                 if character_in_cm_cache:
-                    # logger.debug(f"Character {active_char_id} found in CharacterManager's character cache for player {resolved_player_id}.")
                     return character_in_cm_cache
-
-                # If not in CM's character cache, fetch from DB using the current session
                 character_from_db = await current_session.get(Character, active_char_id)
                 if character_from_db and str(character_from_db.guild_id) == guild_id_str:
-                    # Add to CharacterManager's character cache
                     self._characters.setdefault(guild_id_str, {})[character_from_db.id] = character_from_db
-                    # logger.debug(f"Character {active_char_id} fetched from DB for player {resolved_player_id} and cached in CharacterManager.")
                     return character_from_db
                 else:
-                    # This case means player.active_character_id points to a non-existent/mismatched character
                     logger.warning(f"Active character ID {active_char_id} for player {resolved_player_id} (Discord: {discord_user_id}) "
                                    f"either not found in DB or belongs to a different guild. Expected guild: {guild_id_str}, "
                                    f"character's guild: {getattr(character_from_db, 'guild_id', 'N/A') if character_from_db else 'Not Found In DB'}.")
-                    # Future enhancement: Consider clearing player.active_character_id in the DB if it's invalid.
-                    # This would require fetching the player object again if not already available, marking field dirty, and flushing.
-                    return None # Character not found or does not match guild
+                    return None
             else:
-                # This means the player exists but has no active character (active_character_id is None or empty)
                 logger.info(f"No active character ID associated with player {resolved_player_id} (Discord: {discord_user_id}) in guild {guild_id_str}.")
                 return None
 
-        # Main execution flow for get_character_by_discord_id:
-        # Determines whether to use a provided session or create an internal one.
         try:
             if session:
-                # An external session was provided by the caller. Use it directly.
-                # logger.debug(f"Using provided external session for get_character_by_discord_id (Discord: {discord_user_id}, Guild: {guild_id_str}).")
                 return await _fetch_character_logic(session, player_id_in_cache)
             else:
-                # No external session was provided. Create and manage one internally.
                 if not self._db_service:
                     logger.error("CM.get_character_by_discord_id: DBService not available and no external session passed. Cannot create internal session.")
                     return None
-                # logger.debug(f"Creating internal session for get_character_by_discord_id (Discord: {discord_user_id}, Guild: {guild_id_str}).")
                 async with self._db_service.get_session() as internal_session: # type: ignore
-                    # internal_session is the actual AsyncSession object yielded by the context manager
                     return await _fetch_character_logic(internal_session, player_id_in_cache)
         except Exception as e:
-            # Catch any unexpected errors during the process and log them.
             logger.error(f"Unexpected error in get_character_by_discord_id for Discord User {discord_user_id}, Guild {guild_id_str}: {e}", exc_info=True)
             return None
 
@@ -276,9 +250,9 @@ class CharacterManager:
         self,
         guild_id: str,
         character_id: str,
-        amount: float, # This is the amount to change health by (can be negative for damage)
+        amount: float,
         session: Optional[AsyncSession] = None,
-        **kwargs: Any # For potential future use, e.g., source of damage/healing
+        **kwargs: Any
     ) -> Optional[UpdateHealthResult]:
         if not self._db_service:
             logger.error(f"CM: DBService not available for update_health: char {character_id}.")
@@ -294,57 +268,30 @@ class CharacterManager:
                 return None
 
             original_hp = float(char_model.current_hp)
-
             char_model.current_hp = float(char_model.current_hp) + amount
-
-            # Ensure max_hp is float for comparison and storage
             char_model.max_hp = float(char_model.max_hp)
-            if char_model.current_hp < 0:
-                char_model.current_hp = 0.0
-            if char_model.current_hp > char_model.max_hp:
-                char_model.current_hp = char_model.max_hp
-
+            if char_model.current_hp < 0: char_model.current_hp = 0.0
+            if char_model.current_hp > char_model.max_hp: char_model.current_hp = char_model.max_hp
             actual_hp_change = char_model.current_hp - original_hp
-
             char_model.is_alive = char_model.current_hp > 0
-
             flag_modified(char_model, "current_hp")
             flag_modified(char_model, "is_alive")
-
             logger.info(f"Character {character_id} health updated by {amount}. Original: {original_hp}, New: {char_model.current_hp}, Max: {char_model.max_hp}. Applied in session.")
-
-            # char_model is already part of the session and changes are tracked.
-            # If manage_session is true, session.commit() will be called by async with.
-
             return UpdateHealthResult(
-                applied_amount=amount,
-                actual_hp_change=actual_hp_change,
-                current_hp=char_model.current_hp,
-                max_hp=char_model.max_hp,
-                is_alive=char_model.is_alive,
-                original_hp=original_hp
-            )
-
+                applied_amount=amount, actual_hp_change=actual_hp_change, current_hp=char_model.current_hp,
+                max_hp=char_model.max_hp, is_alive=char_model.is_alive, original_hp=original_hp)
 
     async def save_state(self, guild_id: str, **kwargs: Any) -> None:
         if self._db_service is None:
             logger.error(f"CharacterManager: DB service not available for save_state in guild {guild_id}.")
             return
-
         guild_id_str = str(guild_id)
         dirty_ids = self._dirty_characters.get(guild_id_str, set()).copy()
         deleted_ids = self._deleted_characters_ids.get(guild_id_str, set()).copy()
-
-        if not dirty_ids and not deleted_ids:
-            logger.debug(f"CharacterManager: No dirty or deleted characters to save for guild {guild_id_str}.")
-            return
-
-        # Ensure db_service and its session_factory are available
+        if not dirty_ids and not deleted_ids: return
         if not self._db_service or not hasattr(self._db_service, 'get_session_factory'):
             logger.error(f"CharacterManager: DB service or session factory not available for save_state in guild {guild_id_str}.")
             return
-
-        # Use GuildTransaction for saving state
         from bot.database.guild_transaction import GuildTransaction
         try:
             async with GuildTransaction(self._db_service.get_session_factory, guild_id_str) as session:
@@ -352,25 +299,14 @@ class CharacterManager:
                     ids_to_delete_list = list(deleted_ids)
                     if ids_to_delete_list:
                         from sqlalchemy import delete as sqlalchemy_delete
-                        stmt = sqlalchemy_delete(Character).where(
-                            Character.id.in_(ids_to_delete_list)
-                            # Guild ID check is implicitly handled by GuildTransaction's pre-commit checks
-                            # if we were fetching and then deleting, or if Character model had a before_delete hook.
-                            # For a bulk delete like this, ensuring the IDs actually BELONG to the guild
-                            # before adding to deleted_ids is important.
-                            # The GuildTransaction won't catch deleting an object from another guild if it's not loaded.
-                            # However, mark_character_deleted operates on cache which is guild-segregated.
-                        )
+                        stmt = sqlalchemy_delete(Character).where(Character.id.in_(ids_to_delete_list))
                         await session.execute(stmt)
                         logger.info(f"CharacterManager: Executed delete for {len(ids_to_delete_list)} characters in DB for guild {guild_id_str}: {ids_to_delete_list}")
-
                 guild_cache = self._characters.get(guild_id_str, {})
                 processed_dirty_ids_in_transaction = set()
                 for char_id in dirty_ids:
                     if char_id in guild_cache:
                         char_obj = guild_cache[char_id]
-                        # Ensure the character object's guild_id matches before merging.
-                        # GuildTransaction pre-commit check will also verify this.
                         if hasattr(char_obj, 'guild_id') and str(getattr(char_obj, 'guild_id')) != guild_id_str:
                             logger.error(f"CRITICAL: Character {char_id} in guild {guild_id_str} cache has mismatched guild_id {getattr(char_obj, 'guild_id')}. Skipping save.")
                             continue
@@ -378,94 +314,52 @@ class CharacterManager:
                         processed_dirty_ids_in_transaction.add(char_id)
                     else:
                         logger.warning(f"Character {char_id} marked dirty but not found in cache for guild {guild_id_str}.")
-
                 logger.info(f"CharacterManager: Processed {len(processed_dirty_ids_in_transaction)} dirty characters for guild {guild_id_str} via merge.")
-                # No explicit session.commit() needed due to GuildTransaction
-
-            # Cleanup local dirty/deleted sets only after successful transaction
-            if guild_id_str in self._deleted_characters_ids:
-                    self._deleted_characters_ids[guild_id_str].clear()
+            if guild_id_str in self._deleted_characters_ids: self._deleted_characters_ids[guild_id_str].clear()
             if guild_id_str in self._dirty_characters:
                 self._dirty_characters[guild_id_str].difference_update(processed_dirty_ids_in_transaction)
                 if not self._dirty_characters[guild_id_str]: del self._dirty_characters[guild_id_str]
             logger.info(f"CharacterManager: Successfully saved state for guild {guild_id_str}.")
-
-        except ValueError as ve: # Catch GuildTransaction specific errors
-            logger.error(f"CharacterManager: GuildTransaction integrity error during save_state for guild {guild_id_str}: {ve}", exc_info=True)
-        except Exception as e:
-            logger.error(f"CharacterManager: Error during save_state for guild {guild_id_str}: {e}", exc_info=True)
-
+        except ValueError as ve: logger.error(f"CharacterManager: GuildTransaction integrity error during save_state for guild {guild_id_str}: {ve}", exc_info=True)
+        except Exception as e: logger.error(f"CharacterManager: Error during save_state for guild {guild_id_str}: {e}", exc_info=True)
 
     async def load_state(self, guild_id: str, **kwargs: Any) -> None:
         if self._db_service is None or not hasattr(self._db_service, 'get_session_factory'):
             logger.error(f"CharacterManager: DB service or session factory not available for load_state in guild {guild_id}.")
             return
-
         guild_id_str = str(guild_id)
         logger.info(f"CharacterManager: Loading state for guild {guild_id_str}.")
-
-        self._characters[guild_id_str] = {}
-        self._discord_to_player_map[guild_id_str] = {}
-        self._entities_with_active_action.pop(guild_id_str, None)
-        self._dirty_characters.pop(guild_id_str, None)
-        self._deleted_characters_ids.pop(guild_id_str, None)
-
+        self._characters[guild_id_str] = {}; self._discord_to_player_map[guild_id_str] = {}
+        self._entities_with_active_action.pop(guild_id_str, None); self._dirty_characters.pop(guild_id_str, None); self._deleted_characters_ids.pop(guild_id_str, None)
         from bot.database.crud_utils import get_entities
-        from bot.database.guild_transaction import GuildTransaction # Recommended for consistency, though reads might use simpler session
-
+        from bot.database.guild_transaction import GuildTransaction
         try:
-            # Using GuildTransaction for consistency, though for pure reads, a simpler session might also work
-            # if crud_utils are used which internally apply guild_id filtering.
-            # GuildTransaction ensures session.info["current_guild_id"] is set, which crud_utils can use for verification.
-            async with GuildTransaction(self._db_service.get_session_factory, guild_id_str, commit_on_exit=False) as session: # commit_on_exit=False for read-only
+            async with GuildTransaction(self._db_service.get_session_factory, guild_id_str, commit_on_exit=False) as session:
                 all_players_in_guild = await get_entities(session, Player, guild_id=guild_id_str)
                 for player_obj in all_players_in_guild:
                     if player_obj.discord_id:
-                        try:
-                            self._discord_to_player_map.setdefault(guild_id_str, {})[int(player_obj.discord_id)] = player_obj.id
-                        except ValueError:
-                            logger.warning(f"Could not parse discord_id '{player_obj.discord_id}' to int for player mapping for player {player_obj.id}.")
+                        try: self._discord_to_player_map.setdefault(guild_id_str, {})[int(player_obj.discord_id)] = player_obj.id
+                        except ValueError: logger.warning(f"Could not parse discord_id '{player_obj.discord_id}' to int for player mapping for player {player_obj.id}.")
                 logger.info(f"CharacterManager: Loaded {len(self._discord_to_player_map.get(guild_id_str, {}))} player ID mappings for guild {guild_id_str}.")
-
                 all_characters_in_guild = await get_entities(session, Character, guild_id=guild_id_str)
                 loaded_char_count = 0
                 for char_obj in all_characters_in_guild:
                     self._characters.setdefault(guild_id_str, {})[char_obj.id] = char_obj
-                    current_action_q_str = char_obj.action_queue_json or "[]"
-                    current_action_q = []
-                    try:
-                        current_action_q = json.loads(current_action_q_str)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Corrupt action_queue_json for char {char_obj.id}: {current_action_q_str}")
-
-                    if char_obj.current_action_json or current_action_q: # Check if current_action_json is not None or empty
-                        if isinstance(char_obj.current_action_json, str) and not char_obj.current_action_json.strip(): # handle empty string case for JSON
-                             pass # treat empty string as no action
-                        elif char_obj.current_action_json or current_action_q: # check again after potential empty string handling
-                            self._entities_with_active_action.setdefault(guild_id_str, set()).add(char_obj.id)
-
+                    current_action_q_str = char_obj.action_queue_json or "[]"; current_action_q = []
+                    try: current_action_q = json.loads(current_action_q_str)
+                    except json.JSONDecodeError: logger.warning(f"Corrupt action_queue_json for char {char_obj.id}: {current_action_q_str}")
+                    if char_obj.current_action_json or current_action_q:
+                        if isinstance(char_obj.current_action_json, str) and not char_obj.current_action_json.strip(): pass
+                        elif char_obj.current_action_json or current_action_q: self._entities_with_active_action.setdefault(guild_id_str, set()).add(char_obj.id)
                     loaded_char_count += 1
                 logger.info(f"CharacterManager: Loaded {loaded_char_count} characters for guild {guild_id_str}.")
+        except ValueError as ve: logger.error(f"CharacterManager: GuildTransaction integrity error during load_state for guild {guild_id_str}: {ve}", exc_info=True)
+        except Exception as e: logger.error(f"CharacterManager: DB error during load_state for guild {guild_id_str}: {e}", exc_info=True)
 
-        except ValueError as ve: # Catch GuildTransaction specific errors if they arise
-            logger.error(f"CharacterManager: GuildTransaction integrity error during load_state for guild {guild_id_str}: {ve}", exc_info=True)
-        except Exception as e:
-            logger.error(f"CharacterManager: DB error during load_state for guild {guild_id_str}: {e}", exc_info=True)
-
-    async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-        logger.info(f"CharacterManager: Rebuilding runtime caches for guild {guild_id} (currently a pass-through).")
-        pass
-
+    async def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None: logger.info(f"CharacterManager: Rebuilding runtime caches for guild {guild_id} (currently a pass-through).")
     def mark_character_dirty(self, guild_id: str, character_id: str) -> None:
-         if str(guild_id) in self._characters and character_id in self._characters[str(guild_id)]:
-              self._dirty_characters.setdefault(str(guild_id), set()).add(character_id)
-    async def save_state(self, guild_id: str, **kwargs: Any) -> None: pass # Assumes DB writes are transactional per method now
-    async def load_state(self, guild_id: str, **kwargs: Any) -> None: # Needs full DB load
-        if self._db_service is None: logger.error(f"CM: DB service NA for load_state guild {guild_id}."); return
-        # ... (full load logic as previously provided) ...
-    async def get_character_details_context(self, guild_id: str, character_id: str) -> Optional[Dict[str, Any]]: return None # Placeholder
-
-    # Other methods would need similar review for direct DB interaction with sessions or cache management
+         if str(guild_id) in self._characters and character_id in self._characters[str(guild_id)]: self._dirty_characters.setdefault(str(guild_id), set()).add(character_id)
+    async def get_character_details_context(self, guild_id: str, character_id: str) -> Optional[Dict[str, Any]]: return None
     def get_character_by_name(self, guild_id: str, name: str) -> Optional[Character]: return None
     def get_all_characters(self, guild_id: str) -> List[Character]: return []
     def get_characters_in_location(self, guild_id: str, location_id: str, **kwargs: Any) -> List[Character]: return []
@@ -482,7 +376,7 @@ class CharacterManager:
     async def save_character(self, character: Character, guild_id: str) -> bool: return False
     async def set_current_party_id(self, guild_id: str, character_id: str, party_id: Optional[str], **kwargs: Any) -> bool: return False
     async def save_character_field(self, guild_id: str, character_id: str, field_name: str, value: Any, **kwargs: Any) -> bool: return False
-    async def gain_xp(self, guild_id: str, character_id: str, amount: int, session: Optional[AsyncSession] = None) -> Optional[Dict[str, Any]]: return None # Placeholder
+    async def gain_xp(self, guild_id: str, character_id: str, amount: int, session: Optional[AsyncSession] = None) -> Optional[Dict[str, Any]]: return None
     async def update_character_stats(self, guild_id: str, character_id: str, stats_update: Dict[str, Any], session: Optional[AsyncSession] = None, **kwargs: Any) -> bool: return False
 
     async def create_new_character(
@@ -493,9 +387,6 @@ class CharacterManager:
         language: str, # Effective language for character
         session: Optional[AsyncSession] = None # Optional session for transaction control
     ) -> Optional[Character]:
-        """
-        Creates a new character for a given player (user_id) in a guild.
-        """
         if not self._db_service or not self._game_manager or not self._rule_engine or not self._location_manager:
             logger.error(f"CM.create_new_character: Required services (DB, GameManager, RuleEngine, LocationManager) not available for guild {guild_id}.")
             return None
@@ -515,7 +406,7 @@ class CharacterManager:
                 return None
 
             transaction_successful = False
-            player_record_in_scope: Optional[Player] = None # To hold player_record for this scope
+            player_record_in_scope: Optional[Player] = None
 
             async with self._db_service.get_session() as active_db_session:
                 async with active_db_session.begin():
@@ -570,9 +461,16 @@ class CharacterManager:
                         await self._recalculate_and_store_effective_stats(guild_id_str, char_orm_to_add.id, char_orm_to_add, session_for_db=active_db_session)
                         active_db_session.add(char_orm_to_add)
 
+                        # Flush to ensure character is persisted and ID is available before Player update
+                        await active_db_session.flush()
+                        logger.debug(f"CM.create_new_character (managed session): Flushed new Character {char_orm_to_add.id} to session.")
+
                         player_record.active_character_id = char_orm_to_add.id
                         flag_modified(player_record, "active_character_id")
                         active_db_session.add(player_record)
+
+                        # Optionally flush again if other operations depend on Player update immediately
+                        # await active_db_session.flush()
 
                         new_char_orm_instance = char_orm_to_add
                         transaction_successful = True
@@ -585,7 +483,7 @@ class CharacterManager:
                     except Exception as e_managed:
                         logger.error(f"CM.create_new_character (managed session): General Exception for Discord ID {discord_id_str}: {e_managed}. Transaction will roll back.", exc_info=True)
 
-            final_player_record_for_caching = player_record_in_scope # Use the record from the transaction scope
+            final_player_record_for_caching = player_record_in_scope
             if transaction_successful and new_char_orm_instance:
                 logger.info(f"CM.create_new_character (managed session): Transaction for Discord ID {discord_id_str} COMMITTED successfully. Character ID: {new_char_orm_instance.id}")
             elif not new_char_orm_instance :
@@ -593,7 +491,6 @@ class CharacterManager:
 
         else: # manage_session is False, session was passed in
             active_db_session = session
-            # player_record_external_session will be used here, and then assigned to final_player_record_for_caching
             player_record_external_session: Optional[Player] = None
             try:
                 async with active_db_session.begin_nested():
@@ -639,16 +536,20 @@ class CharacterManager:
                         "flags_json": json.dumps({"appearance": {"description": "An ordinary looking individual."}, "backstory": {"summary": "A mysterious past."}, "personality": {"traits": ["brave"]},}),
                         "active_quests_json": "[]", "state_variables_json": "{}"
                     }
-                    char_orm_to_add = Character(**character_data)
+                    char_orm_to_add = Character(**character_data) # Renamed from new_char_orm to avoid confusion
                     await self._recalculate_and_store_effective_stats(guild_id_str, char_orm_to_add.id, char_orm_to_add, session_for_db=active_db_session)
                     active_db_session.add(char_orm_to_add)
+
+                    # Flush to ensure character is persisted and ID is available before Player update
+                    await active_db_session.flush()
+                    logger.debug(f"CM.create_new_character (external session): Flushed new Character {char_orm_to_add.id} to session.")
                     
                     player_record_external_session.active_character_id = char_orm_to_add.id
                     flag_modified(player_record_external_session, "active_character_id")
                     active_db_session.add(player_record_external_session)
                     new_char_orm_instance = char_orm_to_add
 
-                final_player_record_for_caching = player_record_external_session # Set it from this scope
+                final_player_record_for_caching = player_record_external_session
             
             except CharacterAlreadyExistsError as caee_external:
                 logger.info(f"CM.create_new_character (external session): CharacterAlreadyExistsError for Discord ID {discord_id_str}. Nested transaction will roll back.")
