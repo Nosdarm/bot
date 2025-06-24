@@ -2,7 +2,7 @@ import logging
 import random # Added for _on_enter_location logic
 from typing import Optional, List, Dict, Any, Tuple, TYPE_CHECKING, Callable, Awaitable
 
-# from sqlalchemy.ext.asyncio import AsyncSession # Removed unused import
+from sqlalchemy.ext.asyncio import AsyncSession # Removed unused import
 
 # Assuming models are accessible via bot.database.models after refactoring
 from bot.database.models import Player, Location, Character, Party # Added Character, Party

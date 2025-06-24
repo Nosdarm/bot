@@ -413,7 +413,7 @@ class AIGenerationManager:
                                                 reciprocal_direction_i18n[lang] = f"Towards {new_location_name_i18n.get(lang, new_location_name_i18n.get(default_lang_for_reciprocal, 'the new area'))}" # Simplified
 
                                             if not reciprocal_direction_i18n : # fallback if original direction was empty
-                                                 reciprocal_direction_i18n = {default_lang_for_reciprocal: f"Towards {new_location_name_i18n.get(default_lang_for_reciprocal, 'the new area'))}"}
+                                                 reciprocal_direction_i18n = {default_lang_for_reciprocal: f"Towards {new_location_name_i18n.get(default_lang_for_reciprocal, 'the new area')}"}
 
 
                                             reciprocal_connection = {

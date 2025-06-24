@@ -14,7 +14,7 @@ from bot.utils.discord_utils import (
     send_error_message,
     send_success_message
 )
-from bot.localization.localization import LocalizedString, translate_string # Assuming this path
+from bot.utils.i18n_utils import LocalizedString, translate_string # Assuming this path
 from bot.database.guild_transaction import GuildTransaction # For database operations
 
 logger = logging.getLogger(__name__)
