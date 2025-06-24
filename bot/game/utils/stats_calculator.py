@@ -2,9 +2,10 @@ import logging
 from typing import Dict, Union, TYPE_CHECKING, Any, List # Add List
 import copy # For deepcopy
 
+import json # Ensure json is imported
 # Assuming Player and NPC models are correctly imported where this function is called
 # or passed as type hints effectively.
-from bot.database.models import Player, NPC, Item, Status # Added Item, Status, NPC
+from bot.database.models import Player, NPC, Item, Status, Character # Added Character, Item, Status, NPC
 # For NPC, if it's defined in bot.game.models.npc (not bot.database.models.NPC)
 # from bot.game.models.npc import NPC # Adjust if NPC model path is different
 
@@ -15,35 +16,72 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 async def calculate_effective_stats(
-    entity: Union[Player, "NPC"], # Use "NPC" in quotes for forward reference if defined later or causing circular issues
+    entity: Union[Player, NPC, Character],
     guild_id: str,
     game_manager: 'GameManager'
 ) -> Dict[str, Any]:
     """
-    Calculates the effective stats for a given entity (Player or NPC)
+    Calculates the effective stats for a given entity (Player, Character or NPC)
     by applying modifiers from equipment, status effects, etc.
     """
-    if not entity or not hasattr(entity, 'stats'):
-        logger.warning(f"StatsCalculator: Entity {getattr(entity, 'id', 'Unknown')} has no base 'stats' attribute.")
+    base_stats_source = None
+    entity_id_for_log = getattr(entity, 'id', 'Unknown Entity')
+    entity_type_str = "unknown" # Default entity type for logging/processing
+
+    if isinstance(entity, Character):
+        entity_type_str = "character"
+        if hasattr(entity, 'stats_json') and entity.stats_json:
+            if isinstance(entity.stats_json, str):
+                try:
+                    base_stats_source = json.loads(entity.stats_json)
+                except json.JSONDecodeError:
+                    logger.warning(f"StatsCalculator: Invalid JSON in stats_json for Character {entity_id_for_log}.")
+                    base_stats_source = {}
+            elif isinstance(entity.stats_json, dict):
+                base_stats_source = entity.stats_json # Already a dict
+            else:
+                logger.warning(f"StatsCalculator: stats_json for Character {entity_id_for_log} is not a string or dict, type: {type(entity.stats_json)}.")
+                base_stats_source = {}
+        else:
+            logger.warning(f"StatsCalculator: Character {entity_id_for_log} has no stats_json attribute or it's empty.")
+            base_stats_source = {}
+    elif isinstance(entity, NPC):
+        entity_type_str = "npc"
+        # NPCs from DB model have 'stats' as a dict, or 'stats_json' if that's how templates are stored before instantiation
+        if hasattr(entity, 'stats') and isinstance(entity.stats, dict):
+            base_stats_source = entity.stats
+        elif hasattr(entity, 'stats_json') and entity.stats_json: # Fallback for NPC if it uses stats_json
+            if isinstance(entity.stats_json, str):
+                try:
+                    base_stats_source = json.loads(entity.stats_json)
+                except json.JSONDecodeError:
+                    logger.warning(f"StatsCalculator: Invalid JSON in stats_json for NPC {entity_id_for_log}.")
+                    base_stats_source = {}
+            elif isinstance(entity.stats_json, dict):
+                 base_stats_source = entity.stats_json
+            else:
+                logger.warning(f"StatsCalculator: stats_json for NPC {entity_id_for_log} is not a string or dict, type: {type(entity.stats_json)}.")
+                base_stats_source = {}
+        else:
+            logger.warning(f"StatsCalculator: NPC {entity_id_for_log} has neither 'stats' (dict) nor 'stats_json' attribute.")
+            base_stats_source = {}
+    elif isinstance(entity, Player):
+        entity_type_str = "player" # For logging/equipment fetching context
+        logger.warning(f"StatsCalculator: Received a Player entity ({entity_id_for_log}) directly. Effective stats should be calculated for its active Character. This function might not yield complete results for Player type directly if it expects character-specific stats sources like stats_json.")
+        # Player model itself doesn't have stats_json. If this path is taken, base_stats_source will remain None.
+        # The function will then likely return {} or stats based on defaults only.
+        # This case should ideally be handled by the caller by passing the Character object.
+        base_stats_source = {} # Player has no direct stats, stats come from Character
+    else:
+        logger.warning(f"StatsCalculator: Unknown entity type for {entity_id_for_log}. Type: {type(entity)}. Cannot determine base stats source.")
         return {}
 
-    entity_type_str = "unknown"
-    if isinstance(entity, Player):
-        entity_type_str = "player"
-    elif isinstance(entity, NPC): # Assuming NPC model is imported
-        entity_type_str = "npc"
-    else:
-        logger.warning(f"StatsCalculator: Unknown entity type for {getattr(entity, 'id', 'Unknown')} in stats calculation. Type: {type(entity)}")
-        # Fallback or raise error depending on desired strictness
-        # For now, let it proceed, but equipment/status fetching might fail or be incorrect.
+    if not base_stats_source: # Catches if base_stats_source remained None or was set to {}
+        logger.warning(f"StatsCalculator: No base stats successfully loaded for entity {entity_id_for_log} (type: {type(entity).__name__}). Effective stats will be based on defaults or be empty.")
+        # Initialize with empty dict if it's None, to allow deepcopy and default attribute setting
+        base_stats_source = {}
 
-    # Start with a deep copy of base stats
-    # Ensure entity.stats is a dict. It's JSONB, so it should be loaded as dict.
-    if isinstance(entity.stats, dict):
-        effective_stats = copy.deepcopy(entity.stats)
-    else:
-        logger.warning(f"StatsCalculator: entity.stats for {entity.id} is not a dict, type: {type(entity.stats)}. Initializing empty stats.")
-        effective_stats = {}
+    effective_stats = copy.deepcopy(base_stats_source)
 
     # Ensure base attributes are integers, default to 10 if missing or invalid
     base_attributes = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
