@@ -6,7 +6,7 @@ from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from bot.database.models import RulesConfig, GeneratedFaction, Location, GuildConfig, WorldState, LocationTemplate
+from bot.database.models import RulesConfig, GeneratedFaction, Location, GuildConfig, WorldState, LocationTemplate, Character # Added Character
 from bot.database.models.character_related import NPC # Import NPC model
 
 logger = logging.getLogger(__name__)
@@ -259,7 +259,19 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
             # Deletion of existing NPCs and Locations if force_reinitialize
             if force_reinitialize: # This specific deletion should only happen if forced.
 
-                # Delete existing NPC entries for this guild first
+                # Delete existing Character entries for this guild first
+                logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing Character entries for this guild.")
+                existing_chars_stmt = select(Character).where(Character.guild_id == guild_id_str)
+                char_result = await db_session.execute(existing_chars_stmt)
+                deleted_char_count = 0
+                for char_entity in char_result.scalars().all():
+                    await db_session.delete(char_entity)
+                    deleted_char_count += 1
+                if deleted_char_count > 0:
+                    await db_session.flush()
+                    logger.info(f"Guild Initializer for {guild_id_str}: Deleted {deleted_char_count} existing Character entries.")
+
+                # Then delete existing NPC entries for this guild
                 logger.info(f"Guild Initializer for {guild_id_str}: Force reinitialize - Deleting existing NPC entries for this guild.")
                 existing_npcs_stmt = select(NPC).where(NPC.guild_id == guild_id_str)
                 npc_result = await db_session.execute(existing_npcs_stmt)
