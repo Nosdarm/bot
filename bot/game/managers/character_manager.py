@@ -151,10 +151,12 @@ class CharacterManager:
             resolved_player_id = cached_player_id # Start with the player_id from the discord_id -> player_id cache
 
             # Step 1: Resolve Player and active_char_id
+            fetched_player_obj: Optional[Player] = None
+
             if resolved_player_id:
                 player = await current_session.get(Player, resolved_player_id)
                 if player and str(player.guild_id) == guild_id_str:
-                    active_char_id = player.active_character_id
+                    fetched_player_obj = player
                 else:
                     # Player from cache was invalid (not found or guild mismatch)
                     logger.debug(f"Player {resolved_player_id} (from discord_to_player_map cache) for Discord User {discord_user_id} "
@@ -172,11 +174,25 @@ class CharacterManager:
                 if player_account:
                     # Update discord_to_player_map cache with the fetched player_id
                     self._discord_to_player_map.setdefault(guild_id_str, {})[discord_user_id] = player_account.id
-                    active_char_id = player_account.active_character_id
+                    fetched_player_obj = player_account
                     resolved_player_id = player_account.id # Keep track of the resolved player ID
                 else:
                     logger.info(f"Player account not found in DB for Discord ID {discord_user_id} in guild {guild_id_str}.")
                     return None # No player, so no character can be fetched
+
+            # Explicitly refresh the Player object to get the latest active_character_id
+            if fetched_player_obj:
+                logger.debug(f"Player {fetched_player_obj.id} (Discord: {discord_user_id}) fetched. Pre-refresh active_char_id: {fetched_player_obj.active_character_id}")
+                # Expire only specific attributes if you want to be targeted, or expire all.
+                # Expiring all is safer if other Player attributes might also be relevant and recently changed.
+                await current_session.expire(fetched_player_obj)
+                await current_session.refresh(fetched_player_obj) # Refresh all attributes
+                active_char_id = fetched_player_obj.active_character_id
+                logger.debug(f"Player {fetched_player_obj.id} (Discord: {discord_user_id}) refreshed. Post-refresh active_char_id: {active_char_id}")
+            else:
+                # This path should ideally not be reached if logic above is correct (should have returned None if no player found)
+                logger.error(f"Logic error: fetched_player_obj is None for Discord ID {discord_user_id} before active_char_id assignment.")
+                return None
 
             # Step 2: Fetch Character if active_char_id is known
             if active_char_id:
