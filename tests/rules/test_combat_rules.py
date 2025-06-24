@@ -116,18 +116,20 @@ class TestCombatRules(unittest.TestCase):
         self._run_async(self._async_test_apply_status_effect_no_save())
 
     async def _async_test_apply_status_effect_no_save(self):
-        self.mock_status_mgr.add_status_effect.return_value = "new_status_id_123"
+        self.mock_status_mgr.add_status_effect.return_value = "new_status_id_123" # This mock is for StatusManager.add_status_effect
 
-        outcome = await combat_rules.apply_status_effect(
+        # combat_rules.apply_status_effect returns a boolean
+        success_flag = await combat_rules.apply_status_effect(
             "target1", "Character", "poisoned_test", self.sample_rules_config,
             self.mock_status_mgr, self.mock_char_mgr, self.mock_npc_mgr, self.mock_log_mgr,
             current_game_time=100.0
         )
-        self.assertTrue(outcome["success"])
-        self.assertTrue(outcome["status_actually_applied_or_resisted"])
+        self.assertTrue(success_flag) # Check the boolean return value
+        # The status_actually_applied_or_resisted logic is now internal to apply_status_effect
+        # If it returns True, it means StatusManager.add_status_effect was called and succeeded (or save negated)
         self.mock_status_mgr.add_status_effect.assert_awaited_once_with(
             guild_id="test_guild", target_id="target1", target_type="Character",
-            status_type="poisoned_test", duration_seconds=18.0, # 3 rounds * 6s/round
+            status_type="poisoned_test", duration_seconds=18.0,
             applied_by_source_id=None, applied_by_source_type=None,
             current_game_time=100.0
         )
@@ -149,14 +151,13 @@ class TestCombatRules(unittest.TestCase):
 
         requires_save_info = {"save_type": "fortitude", "dc": 15, "effect_on_save": "negate"}
 
-        outcome = await combat_rules.apply_status_effect(
+        success_flag = await combat_rules.apply_status_effect(
             "target1", "Character", "stun_test", self.sample_rules_config,
             self.mock_status_mgr, self.mock_char_mgr, self.mock_npc_mgr, self.mock_log_mgr,
             requires_save_info=requires_save_info, current_game_time=100.0
         )
 
-        self.assertTrue(outcome["success"]) # Processed correctly
-        self.assertTrue(outcome["status_actually_applied_or_resisted"]) # Resisted via save
+        self.assertTrue(success_flag) # Function call itself was successful (save was processed, status negated)
         self.mock_status_mgr.add_status_effect.assert_not_called() # Status was negated
         mock_process_save.assert_awaited_once()
         self.assertTrue(any("Successfully saved and negated" in msg for msg in outcome["log_messages"]))
@@ -180,15 +181,14 @@ class TestCombatRules(unittest.TestCase):
         self.mock_status_mgr.add_status_effect.return_value = "new_status_id_half"
         requires_save_info = {"save_type": "fortitude", "dc": 15, "effect_on_save": "half_duration"}
 
-        outcome = await combat_rules.apply_status_effect(
+        success_flag = await combat_rules.apply_status_effect(
             "target1", "Character", "slow_test", self.sample_rules_config,
             self.mock_status_mgr, self.mock_char_mgr, self.mock_npc_mgr, self.mock_log_mgr,
             duration_override_rounds=10, # Explicit duration to be halved
             requires_save_info=requires_save_info, current_game_time=100.0
         )
 
-        self.assertTrue(outcome["success"])
-        self.assertTrue(outcome["status_actually_applied_or_resisted"])
+        self.assertTrue(success_flag) # Function call was successful, status applied (at half duration)
         self.mock_status_mgr.add_status_effect.assert_awaited_once()
         args, kwargs = self.mock_status_mgr.add_status_effect.call_args
         # Expected duration: 10 rounds / 2 = 5 rounds. 5 rounds * 6s/round = 30s

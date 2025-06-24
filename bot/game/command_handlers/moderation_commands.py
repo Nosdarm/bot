@@ -123,9 +123,11 @@ async def handle_approve_content_command(message: Message, args: List[str], cont
 
     request_id = args[0]
     persistence_manager = context.get('persistence_manager')
-    if not persistence_manager or not hasattr(persistence_manager, '_db_adapter') or not persistence_manager._db_adapter:
+    if not persistence_manager or not hasattr(persistence_manager, '_db_service') or \
+       not persistence_manager._db_service or not hasattr(persistence_manager._db_service, 'adapter') or \
+       not persistence_manager._db_service.adapter:
         await send_callback("Error: DB service unavailable."); return
-    db_adapter = persistence_manager._db_adapter
+    db_adapter = persistence_manager._db_service.adapter
 
     try:
         moderation_request = await db_adapter.get_pending_moderation_request(request_id)
@@ -162,9 +164,11 @@ async def handle_reject_content_command(message: Message, args: List[str], conte
     request_id = args[0]
     reason = " ".join(args[1:]) if len(args) > 1 else "No reason provided."
     persistence_manager = context.get('persistence_manager')
-    if not persistence_manager or not hasattr(persistence_manager, '_db_adapter') or not persistence_manager._db_adapter:
+    if not persistence_manager or not hasattr(persistence_manager, '_db_service') or \
+       not persistence_manager._db_service or not hasattr(persistence_manager._db_service, 'adapter') or \
+       not persistence_manager._db_service.adapter:
         await send_callback("Error: DB service unavailable."); return
-    db_adapter = persistence_manager._db_adapter
+    db_adapter = persistence_manager._db_service.adapter
 
     try:
         moderation_request = await db_adapter.get_pending_moderation_request(request_id)
@@ -227,9 +231,11 @@ async def handle_edit_content_command(message: Message, args: List[str], context
     persistence_manager = context.get('persistence_manager')
     ai_validator = context.get('ai_validator')
 
-    if not persistence_manager or not hasattr(persistence_manager, '_db_adapter') or not persistence_manager._db_adapter:
+    if not persistence_manager or not hasattr(persistence_manager, '_db_service') or \
+       not persistence_manager._db_service or not hasattr(persistence_manager._db_service, 'adapter') or \
+       not persistence_manager._db_service.adapter:
         await send_callback("Error: DB service unavailable."); return
-    db_adapter = persistence_manager._db_adapter
+    db_adapter = persistence_manager._db_service.adapter
     if not ai_validator: await send_callback("Error: AIResponseValidator unavailable."); return
 
     try:

@@ -203,7 +203,7 @@ class TurnProcessingService:
 
         for action_request in player_actions_to_process:
             self.action_scheduler.update_action_status(guild_id, action_request.action_id, "processing")
-            player_char = await self.character_manager.get_character(guild_id, action_request.actor_id)
+            player_char = self.character_manager.get_character(guild_id, action_request.actor_id) # Removed await
             if not player_char:
                 err_msg = f"Player character {action_request.actor_id} not found for action {action_request.action_id}."
                 print(f"TPS Error: {err_msg}")
@@ -272,7 +272,7 @@ class TurnProcessingService:
 
         for action_request in npc_actions_to_process:
             self.action_scheduler.update_action_status(guild_id, action_request.action_id, "processing")
-            npc_actor = await self.npc_manager.get_npc(guild_id, action_request.actor_id)
+            npc_actor = self.npc_manager.get_npc(guild_id, action_request.actor_id) # Removed await
             if not npc_actor:
                 err_msg = f"NPC {action_request.actor_id} not found for action {action_request.action_id}."
                 print(f"TPS Error: {err_msg}")
@@ -306,7 +306,7 @@ class TurnProcessingService:
 
         # Update status for all characters after all actions are processed
         for char_id in all_player_character_ids:
-            char_to_update = await self.character_manager.get_character(guild_id, char_id)
+            char_to_update = self.character_manager.get_character(guild_id, char_id) # Removed await
             if char_to_update:
                  # If no specific error status, mark as turn processed.
                 if getattr(char_to_update, 'current_game_status', '') not in ['action_submission_error', 'action_processing_error']:

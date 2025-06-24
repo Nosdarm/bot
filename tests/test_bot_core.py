@@ -16,92 +16,82 @@ import discord # For discord.Message
 
 class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
 
-    @patch('bot.bot_core.parse_player_action') # Key NLU parser
-    @patch('bot.bot_core.OpenAIService') # RPGBot dependency
-    @patch('bot.bot_core.GameManager') # RPGBot dependency
+    @patch('bot.bot_core.parse_player_action')
+    @patch('bot.bot_core.OpenAIService')
+    @patch('bot.bot_core.GameManager')
     async def test_on_message_action_accumulation(self, MockGameManager, MockOpenAIService, mock_parse_player_action):
         # --- Setup Mocks ---
-        mock_settings = {'discord_token': 'fake_token', 'openai_api_key': 'fake_key'} # Dummy settings
-        
-        # Mock GameManager instance and its components
         mock_gm_instance = MockGameManager.return_value
-        mock_character_manager = AsyncMock()
         mock_nlu_data_service = AsyncMock()
-        mock_gm_instance.character_manager = mock_character_manager
+        mock_db_service = AsyncMock() # For update_player_field
         mock_gm_instance.nlu_data_service = mock_nlu_data_service
+        mock_gm_instance.db_service = mock_db_service
+        mock_gm_instance.settings = {'discord_command_prefix': '!'} # Add settings to gm_instance
 
-        # Mock Character
-        mock_char = MagicMock()
-        mock_char.id = "char1"
-        mock_char.name = "Player"
-        mock_char.current_game_status = "исследование" # NLU processing state
-        mock_char.selected_language = "ru"
-        mock_char.собранные_действия_JSON = None # Start with no actions
+        # Mock Player object
+        mock_player_obj = MockPlayer(
+            player_id="player1_db_id",
+            discord_id_str="discord_user1",
+            guild_id_str="guild1",
+            current_game_status="исследование",
+            selected_language="ru",
+            collected_actions_json=None
+        )
+        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_player_obj)
+        mock_gm_instance.db_service.update_player_field = AsyncMock(return_value=True)
 
-        # Ensure get_player_by_discord_id on GameManager is an AsyncMock
-        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_char)
-        # mock_character_manager.get_character_by_discord_id.return_value = mock_char # This is for CharacterManager
-        mock_character_manager.update_character = AsyncMock()
 
-        # Mock discord.Message
         mock_message = AsyncMock(spec=discord.Message)
-        mock_message.author = AsyncMock(spec=discord.User)
-        mock_message.author.bot = False
-        mock_message.author.id = "discord_user1"
-        mock_message.guild = AsyncMock(spec=discord.Guild)
-        mock_message.guild.id = "guild1"
+        mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user1") # String ID
+        mock_message.guild = AsyncMock(spec=discord.Guild, id="guild1") # String ID
         mock_message.content = "первое действие"
         mock_message.channel = AsyncMock(spec=discord.TextChannel)
+        mock_message.add_reaction = AsyncMock()
         
-        # Instantiate RPGBot - its on_message will be called
-        # RPGBot constructor: game_manager, openai_service, command_prefix, intents, debug_guild_ids
         intents = discord.Intents.default()
-        intents.message_content = True # Explicitly set for on_message testing
+        intents.message_content = True
         
-        # We pass the mocked GameManager and OpenAIService instances to RPGBot
         bot = RPGBot(
             game_manager=mock_gm_instance, 
             openai_service=MockOpenAIService(), 
-            command_prefix="!", 
+            command_prefix="!", # Matches settings
             intents=intents
         )
-        # Ensure game_manager is set on bot for on_message
-        bot.game_manager = mock_gm_instance
-
+        bot.game_manager = mock_gm_instance # Ensure it's set
 
         # --- First message: Accumulate one action ---
-        mock_parse_player_action.return_value = ("intent_1", {"entity_1": "value_1"})
+        mock_parse_player_action.return_value = {"intent_type": "intent_1", "entities": {"entity_1": "value_1"}, "original_text": "первое действие"}
         
         await bot.on_message(mock_message)
 
         # Assertions for first action
-        mock_character_manager.get_character_by_discord_id.assert_called_with(user_id="discord_user1", guild_id="guild1")
-        mock_parse_player_action.assert_called_with(text="первое действие", language="ru", guild_id="guild1", game_terms_db=mock_nlu_data_service)
+        mock_gm_instance.get_player_by_discord_id.assert_called_with("discord_user1", "guild1")
+        mock_parse_player_action.assert_called_with(text="первое действие", language="ru", guild_id="guild1", nlu_data_service=mock_nlu_data_service)
         
-        expected_actions_after_first = [{"intent": "intent_1", "entities": {"entity_1": "value_1"}, "original_text": "первое действие"}]
-        self.assertIsNotNone(mock_char.собранные_действия_JSON)
-        self.assertEqual(json.loads(mock_char.собранные_действия_JSON), expected_actions_after_first)
-        mock_character_manager.update_character.assert_called_with(mock_char)
+        expected_actions_after_first = [{"intent_type": "intent_1", "entities": {"entity_1": "value_1"}, "original_text": "первое действие"}]
+        self.assertIsNotNone(mock_player_obj.collected_actions_json)
+        self.assertEqual(json.loads(mock_player_obj.collected_actions_json), expected_actions_after_first)
+        mock_gm_instance.db_service.update_player_field.assert_called_with(
+            player_id="player1_db_id", field_name='collected_actions_json',
+            value=mock_player_obj.collected_actions_json, guild_id="guild1"
+        )
+        mock_message.add_reaction.assert_called_with("👍")
         
         # --- Second message: Accumulate another action ---
         mock_message.content = "второе действие"
-        mock_parse_player_action.return_value = ("intent_2", {"entity_2": "value_2"})
-        # Reset call count for update_character for this new call context if needed, or check call_count increment
-        # update_character_call_count_before_second = mock_character_manager.update_character.call_count
+        mock_parse_player_action.return_value = {"intent_type": "intent_2", "entities": {"entity_2": "value_2"}, "original_text": "второе действие"}
 
         await bot.on_message(mock_message)
 
-        # Assertions for second action
-        mock_parse_player_action.assert_called_with(text="второе действие", language="ru", guild_id="guild1", game_terms_db=mock_nlu_data_service)
-        
         expected_actions_after_second = [
-            {"intent": "intent_1", "entities": {"entity_1": "value_1"}, "original_text": "первое действие"},
-            {"intent": "intent_2", "entities": {"entity_2": "value_2"}, "original_text": "второе действие"}
+            {"intent_type": "intent_1", "entities": {"entity_1": "value_1"}, "original_text": "первое действие"},
+            {"intent_type": "intent_2", "entities": {"entity_2": "value_2"}, "original_text": "второе действие"}
         ]
-        self.assertIsNotNone(mock_char.собранные_действия_JSON)
-        self.assertEqual(json.loads(mock_char.собранные_действия_JSON), expected_actions_after_second)
-        # self.assertEqual(mock_character_manager.update_character.call_count, update_character_call_count_before_second + 1)
-        mock_character_manager.update_character.assert_called_with(mock_char) # Called again with updated actions
+        self.assertIsNotNone(mock_player_obj.collected_actions_json)
+        self.assertEqual(json.loads(mock_player_obj.collected_actions_json), expected_actions_after_second)
+        # update_player_field would be called again
+        self.assertEqual(mock_gm_instance.db_service.update_player_field.call_count, 2)
+        mock_message.add_reaction.assert_called_with("👍") # Called again
 
     @patch('bot.bot_core.parse_player_action') 
     @patch('bot.bot_core.OpenAIService') 
@@ -109,25 +99,29 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
     async def test_on_message_input_routing_dialogue(self, MockGameManager, MockOpenAIService, mock_parse_player_action):
         # --- Setup Mocks ---
         mock_gm_instance = MockGameManager.return_value
-        mock_character_manager = AsyncMock()
-        mock_dialogue_manager = AsyncMock() # Key manager for this test
-        mock_gm_instance.character_manager = mock_character_manager
+        mock_dialogue_manager = AsyncMock()
+        mock_character_manager = AsyncMock() # For get_character_by_player_id
         mock_gm_instance.dialogue_manager = mock_dialogue_manager
-        mock_gm_instance.nlu_data_service = AsyncMock() # NLU service needed for general on_message path
+        mock_gm_instance.character_manager = mock_character_manager # Add to GM
+        mock_gm_instance.nlu_data_service = AsyncMock()
+        mock_gm_instance.settings = {'discord_command_prefix': '!'}
 
-        mock_char = MagicMock()
-        mock_char.id = "char_dialogue"
-        mock_char.name = "Talker"
-        mock_char.current_game_status = "диалог" # Busy state: dialogue
-        mock_char.selected_language = "ru"
-        mock_char.собранные_действия_JSON = None 
 
-        # Ensure get_player_by_discord_id on GameManager is an AsyncMock
-        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_char)
-        # mock_character_manager.get_character_by_discord_id.return_value = mock_char
+        mock_player_obj = MockPlayer(
+            player_id="player_talker_db_id",
+            discord_id_str="discord_user_talker",
+            guild_id_str="guild_dialogue",
+            current_game_status="диалог", # Busy state: dialogue
+            selected_language="ru"
+        )
+        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_player_obj)
+
+        mock_character_obj = MockCharacter(char_id="char_dialogue_active") # The actual character model
+        mock_gm_instance.character_manager.get_character_by_player_id = AsyncMock(return_value=mock_character_obj)
+
 
         mock_message = AsyncMock(spec=discord.Message)
-        mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user_talker")
+        mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user_talker") # String ID
         mock_message.guild = AsyncMock(spec=discord.Guild, id="guild_dialogue")
         mock_message.content = "это мое сообщение в диалоге" # Non-command message
         mock_message.channel = AsyncMock(spec=discord.TextChannel, id="channel_dialogue")
@@ -145,14 +139,14 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
         mock_parse_player_action.assert_not_called()
         
         # DialogueManager's method SHOULD be called
-        mock_dialogue_manager.process_player_dialogue_message.assert_called_once_with(
-            character=mock_char,
+        mock_gm_instance.dialogue_manager.process_player_dialogue_message.assert_called_once_with(
+            character=mock_character_obj, # Expecting the Character model
             message_text="это мое сообщение в диалоге",
-            channel_id="channel_dialogue",
+            channel_id="channel_dialogue", # Ensure this is string if handler expects str
             guild_id="guild_dialogue"
         )
-        # Character update should not be called by the NLU block in on_message
-        mock_character_manager.update_character.assert_not_called() 
+        # db_service.update_player_field for collected_actions_json should not be called by NLU block
+        mock_gm_instance.db_service.update_player_field.assert_not_called()
 
     @patch('bot.bot_core.parse_player_action')
     @patch('bot.bot_core.OpenAIService')
@@ -160,25 +154,24 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
     async def test_on_message_input_routing_combat_logs_no_dialogue_call(self, MockGameManager, MockOpenAIService, mock_parse_player_action):
         # --- Setup Mocks ---
         mock_gm_instance = MockGameManager.return_value
-        mock_character_manager = AsyncMock()
         mock_dialogue_manager = AsyncMock() 
-        mock_gm_instance.character_manager = mock_character_manager
-        mock_gm_instance.dialogue_manager = mock_dialogue_manager # Available, but shouldn't be called for 'бой'
+        mock_gm_instance.dialogue_manager = mock_dialogue_manager
         mock_gm_instance.nlu_data_service = AsyncMock()
+        mock_gm_instance.settings = {'discord_command_prefix': '!'}
 
-        mock_char = MagicMock()
-        mock_char.id = "char_fighter"
-        mock_char.name = "Fighter"
-        mock_char.current_game_status = "бой" # Busy state: combat
-        mock_char.selected_language = "ru"
-        mock_char.собранные_действия_JSON = None
 
-        # Ensure get_player_by_discord_id on GameManager is an AsyncMock
-        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_char)
-        # mock_character_manager.get_character_by_discord_id.return_value = mock_char
+        mock_player_obj = MockPlayer(
+            player_id="player_fighter_db_id",
+            discord_id_str="discord_user_fighter",
+            guild_id_str="guild_combat",
+            name="Fighter", # Name is on Player model for the log message
+            current_game_status="бой",
+            selected_language="ru"
+        )
+        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_player_obj)
 
         mock_message = AsyncMock(spec=discord.Message)
-        mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user_fighter")
+        mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user_fighter") # String ID
         mock_message.guild = AsyncMock(spec=discord.Guild, id="guild_combat")
         mock_message.content = "some raw text during combat" # Non-command
         mock_message.channel = AsyncMock(spec=discord.TextChannel)
@@ -214,32 +207,31 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
     async def test_on_message_nlu_language_fallback(self, MockGameManager, MockOpenAIService, mock_parse_player_action):
         # --- Setup Mocks ---
         mock_gm_instance = MockGameManager.return_value
-        mock_character_manager = AsyncMock()
         mock_nlu_data_service = AsyncMock()
-        mock_gm_instance.character_manager = mock_character_manager
+        mock_db_service = AsyncMock()
         mock_gm_instance.nlu_data_service = mock_nlu_data_service
+        mock_gm_instance.db_service = mock_db_service # For update_player_field
+        mock_gm_instance.settings = {'discord_command_prefix': '!'}
+
 
         # Mock GameManager's get_default_bot_language
-        mock_gm_instance.get_default_bot_language = MagicMock(return_value="ru") # GM default is 'ru'
+        mock_gm_instance.get_default_bot_language = AsyncMock(return_value="ru") # GM default is 'ru'
 
-        # Mock Character with selected_language = None
-        mock_char = MagicMock()
-        mock_char.id = "char_lang_fallback"
-        mock_char.name = "LangFallbacker"
-        mock_char.current_game_status = "исследование" # NLU processing state
-        mock_char.selected_language = None # Player has NOT set a language
-        mock_char.собранные_действия_JSON = None
-
-        # Ensure get_player_by_discord_id on GameManager is an AsyncMock
-        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_char)
-        # mock_character_manager.get_character_by_discord_id.return_value = mock_char
-        # Mock save_character as it's called after NLU processing
-        mock_character_manager.save_character = AsyncMock()
-        mock_character_manager.mark_character_dirty = MagicMock()
+        mock_player_obj = MockPlayer(
+            player_id="player_lang_fallback_db_id",
+            discord_id_str="discord_user_lang_fallback",
+            guild_id_str="guild_lang_fallback",
+            name="LangFallbacker",
+            current_game_status="исследование",
+            selected_language=None, # Player has NOT set a language
+            collected_actions_json=None
+        )
+        mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_player_obj)
+        mock_gm_instance.db_service.update_player_field = AsyncMock(return_value=True)
 
 
         mock_message = AsyncMock(spec=discord.Message)
-        mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user_lang_fallback")
+        mock_message.author = AsyncMock(spec=discord.User, bot=False, id="discord_user_lang_fallback") # String ID
         mock_message.guild = AsyncMock(spec=discord.Guild, id="guild_lang_fallback")
         mock_message.content = "какое-то действие"
         mock_message.channel = AsyncMock(spec=discord.TextChannel)
@@ -260,30 +252,31 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
         await bot.on_message(mock_message)
 
         # --- Assertions ---
-        # Verify character was fetched
-        mock_character_manager.get_character_by_discord_id.assert_called_with(
-            discord_user_id="discord_user_lang_fallback", # Corrected key based on RPGBot.on_message
-            guild_id="guild_lang_fallback"
-        )
+        # Verify player was fetched
+        mock_gm_instance.get_player_by_discord_id.assert_called_with("discord_user_lang_fallback", "guild_lang_fallback")
 
         # Verify get_default_bot_language was called on GameManager
-        mock_gm_instance.get_default_bot_language.assert_called_once()
+        mock_gm_instance.get_default_bot_language.assert_called_once_with("guild_lang_fallback")
 
         # Verify parse_player_action was called with the GM's default language ("ru")
         mock_parse_player_action.assert_called_once_with(
             text="какое-то действие",
             language="ru", # Expected fallback language
             guild_id="guild_lang_fallback",
-            game_terms_db=mock_nlu_data_service
+            nlu_data_service=mock_nlu_data_service # Corrected kwarg name
         )
 
-        # Verify character save was attempted
-        expected_actions = [{"intent": "intent_fallback", "entities": {"entity_fallback": "value_fallback"}, "original_text": "какое-то действие"}]
-        self.assertIsNotNone(mock_char.собранные_действия_JSON) # Corrected attribute name
-        self.assertEqual(json.loads(mock_char.собранные_действия_JSON), expected_actions) # Corrected attribute name
+        # Verify player data update was attempted
+        expected_actions = [{"intent_type": "intent_fallback", "entities": {"entity_fallback": "value_fallback"}, "original_text": "какое-то действие"}]
+        self.assertIsNotNone(mock_player_obj.collected_actions_json)
+        self.assertEqual(json.loads(mock_player_obj.collected_actions_json), expected_actions)
 
-        mock_character_manager.mark_character_dirty.assert_called_once_with("guild_lang_fallback", mock_char.id)
-        mock_character_manager.save_character.assert_called_once_with(mock_char, guild_id="guild_lang_fallback")
+        mock_gm_instance.db_service.update_player_field.assert_called_once_with(
+            player_id="player_lang_fallback_db_id",
+            field_name='collected_actions_json',
+            value=mock_player_obj.collected_actions_json,
+            guild_id="guild_lang_fallback"
+        )
 
 
 if __name__ == '__main__':

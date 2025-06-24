@@ -140,7 +140,13 @@ class TestCombatManager(unittest.IsolatedAsyncioTestCase):
             action_data=action_data, **kwargs_context
         )
         self.mock_db_service.rollback_transaction.assert_called_once()
-        self.mock_game_log_manager.log_error.assert_any_call(unittest.mock.ANY, guild_id="guild1", combat_id="combat1", actor_id="player_actor_id")
+        self.mock_game_log_manager.log_error.assert_any_call(
+            unittest.mock.ANY,
+            guild_id="guild1",
+            combat_id="combat1",
+            actor_id="player_actor_id",
+            exception_info=True # Added missing kwarg
+        )
         self.assertEqual(self.active_combat.current_turn_index, 1) # Turn still advances
 
 

@@ -12,14 +12,32 @@ class TestLocationManagerRevertLogic(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         # Mock dependencies for LocationManager
         self.mock_db_service = AsyncMock()
-        self.mock_game_log_manager = AsyncMock()
-        # ... mock other necessary managers if LocationManager's revert methods interact with them ...
+        self.mock_game_log_manager = AsyncMock() # This will be an attribute of mock_game_manager
+
+        mock_game_manager = AsyncMock()
+        mock_game_manager.db_service = self.mock_db_service
+        mock_game_manager.game_log_manager = self.mock_game_log_manager
+        # Add other managers to mock_game_manager if LocationManager's revert methods use them
+        mock_game_manager.rule_engine = AsyncMock()
+        mock_game_manager.event_manager = AsyncMock()
+        mock_game_manager.character_manager = AsyncMock()
+        mock_game_manager.npc_manager = AsyncMock()
+        mock_game_manager.item_manager = AsyncMock()
+        mock_game_manager.combat_manager = AsyncMock()
+        mock_game_manager.status_manager = AsyncMock()
+        mock_game_manager.party_manager = AsyncMock()
+        mock_game_manager.time_manager = AsyncMock()
+        mock_game_manager._event_stage_processor = AsyncMock()
+        mock_game_manager._event_action_processor = AsyncMock()
+        mock_game_manager._on_enter_action_executor = AsyncMock()
+        mock_game_manager._stage_description_generator = AsyncMock()
+
 
         self.location_manager = LocationManager(
             db_service=self.mock_db_service,
-            settings={}, # Provide minimal settings
-            game_log_manager=self.mock_game_log_manager
-            # ... pass other mocked managers ...
+            settings={},
+            game_manager=mock_game_manager,
+            send_callback_factory=MagicMock() # Add if required by constructor
         )
 
         self.guild_id = "test_guild_loc"
@@ -43,19 +61,9 @@ class TestLocationManagerRevertLogic(unittest.IsolatedAsyncioTestCase):
         # to return a controllable Location instance.
         self.mock_location_instance = Location.from_dict(self.sample_location_data.copy())
 
-        async def get_location_instance_mock(guild_id, instance_id):
-            if guild_id == self.guild_id and instance_id == self.loc_id:
-                # Return a fresh copy if tests modify it and expect original state later
-                # For simple attribute changes, returning self.mock_location_instance is fine
-                return Location.from_dict(self.sample_location_data.copy()) # Or return self.mock_location_instance
-            return None
-
-        # If get_location_instance is async, use AsyncMock
-        if asyncio.iscoroutinefunction(self.location_manager.get_location_instance):
-             self.location_manager.get_location_instance = AsyncMock(side_effect=get_location_instance_mock)
-        else: # If it's synchronous (as per current LocationManager)
-             self.location_manager.get_location_instance = MagicMock(side_effect=get_location_instance_mock)
-
+        # Populate the cache directly for the tests, as get_location_instance is not the way to get Pydantic models usually.
+        # The manager's internal methods would work with the _location_instances cache (dicts).
+        self.location_manager._location_instances.setdefault(self.guild_id, {})[self.loc_id] = self.sample_location_data.copy()
 
         self.location_manager.mark_location_instance_dirty = MagicMock()
 

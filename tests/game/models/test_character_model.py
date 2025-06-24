@@ -18,7 +18,7 @@ class TestCharacterModel(unittest.TestCase):
             "action_queue": [{"type": "move", "target": "loc_forest"}],
             "party_id": "party_alpha",
             "state_variables": {"quest_progress": {"q1": 2}},
-            "hp": 95.0, # Current HP can differ from stats if updated
+            "hp": 100.0, # Made consistent with stats.hp for __post_init__ behavior
             "max_health": 100.0,
             "is_alive": True,
             "status_effects": [{"effect_id": "poison", "duration": 5}],

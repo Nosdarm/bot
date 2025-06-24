@@ -679,13 +679,64 @@ class QuestManager:
 
     async def start_quest_from_moderated_data(self, guild_id: str, character_id: str, quest_data_from_ai: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         guild_id_str, character_id_str = str(guild_id), str(character_id)
-        logger.info("Starting quest from moderated AI data for char %s in guild %s. Quest ID (from AI data): %s", character_id_str, guild_id_str, quest_data_from_ai.get('id','N/A')) # Added guild_id
+        quest_id_from_data = quest_data_from_ai.get('id', str(uuid.uuid4())) # Use provided ID or generate
+        quest_data_from_ai['id'] = quest_id_from_data # Ensure ID is in the dict for from_dict
+
+        logger.info(f"Starting quest from moderated AI data for char {character_id_str} in guild {guild_id_str}. Quest ID: {quest_id_from_data}")
+
         if not self._character_manager or not await self._character_manager.get_character(guild_id_str, character_id_str):
-            logger.warning("Char %s not found for AI quest in guild %s.", character_id_str, guild_id_str) # Added guild_id
+            logger.warning(f"Char {character_id_str} not found for AI quest in guild {guild_id_str}.")
             return None
-        # ... (Rest of logic, ensure guild_id in logs for errors) ...
-        # Example: logger.error("Failed to save AI quest %s for guild %s.", quest_obj.id, guild_id_str, exc_info=True)
-        return None # Placeholder
+
+        # Ensure guild_id is in the quest data for Quest.from_dict
+        quest_data_from_ai.setdefault('guild_id', guild_id_str)
+        quest_data_from_ai.setdefault('is_ai_generated', True) # Moderated AI data is still AI generated
+
+        quest_to_save = Quest.from_dict(quest_data_from_ai)
+        quest_to_save.status = "active" # Explicitly set to active
+
+        save_success = await self.save_generated_quest(quest_to_save)
+
+        if not save_success:
+            logger.error(f"Failed to save AI quest {quest_to_save.id} for guild {guild_id_str}.", exc_info=True)
+            return None
+
+        active_char_quests = self._active_quests.setdefault(guild_id_str, {}).setdefault(character_id_str, {})
+
+        quest_dict_for_cache_and_return = quest_to_save.to_dict()
+        quest_dict_for_cache_and_return.update({
+            "character_id": character_id_str,
+            "start_time": time.time(),
+            "template_id": quest_data_from_ai.get("template_id"), # Get template_id from original AI data
+            "progress": {}
+        })
+
+        active_char_quests[quest_to_save.id] = quest_dict_for_cache_and_return
+        self._all_quests.setdefault(guild_id_str, {})[quest_to_save.id] = quest_to_save
+        self._dirty_quests.setdefault(guild_id_str, set()).add(character_id_str)
+
+        logger.info("Quest %s activated for char %s from moderated data in guild %s.", quest_to_save.id, character_id_str, guild_id_str)
+
+        # Process on_start consequences if defined
+        if self._consequence_processor and quest_to_save.consequences_json_str:
+            try:
+                consequences = json.loads(quest_to_save.consequences_json_str)
+                if isinstance(consequences, dict) and "on_start" in consequences:
+                    consequence_context = self._build_consequence_context(guild_id_str, character_id_str, quest_to_save)
+                    logger.debug(f"Processing on_start consequences for quest {quest_to_save.id}. Context: {consequence_context}")
+                    # Run as task to not block
+                    asyncio.create_task(self._consequence_processor.process_consequences(
+                        guild_id_str,
+                        json.dumps(consequences["on_start"]), # Pass only on_start part
+                        consequence_context,
+                        actor_id=character_id_str
+                    ))
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse consequences_json_str for quest {quest_to_save.id} in guild {guild_id_str}", exc_info=True)
+            except Exception as e_conseq:
+                 logger.error(f"Error processing on_start consequences for quest {quest_to_save.id}: {e_conseq}", exc_info=True)
+
+        return quest_dict_for_cache_and_return
 
     def list_quests_for_character(self, guild_id: str, character_id: str) -> List[Dict[str, Any]]:
         guild_id_str, character_id_str = str(guild_id), str(character_id)

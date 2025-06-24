@@ -51,10 +51,10 @@ class TestRelationshipManagerUpdates(unittest.IsolatedAsyncioTestCase):
         npc_id = "npc_quest_giver"
 
         event_data = {
-            "player_id": player_id,
-            "details": {
-                "npc_involved_id": npc_id,
-                "quest_value": 20 # Example custom data in details
+            "resolved_player_id": player_id, # Use direct keys for refs
+            "resolved_npc_id": npc_id,
+            "details": { # Keep details for strength_change eval
+                "quest_value": 20
             }
         }
 
@@ -65,11 +65,11 @@ class TestRelationshipManagerUpdates(unittest.IsolatedAsyncioTestCase):
                     "event_type": "QUEST_SUCCESS",
                     "condition": "event_data.get('details', {}).get('quest_value', 0) > 10",
                     "changes": [{
-                        "entity1_ref": "player_id", "entity1_type": "PLAYER",
-                        "entity2_ref": "details.npc_involved_id", "entity2_type": "NPC",
-                        "relationship_type": "trust", # Changed from relationship_type_affected for clarity
+                        "entity1_ref": "resolved_player_id", "entity1_type": "PLAYER", # Changed ref
+                        "entity2_ref": "resolved_npc_id", "entity2_type": "NPC",       # Changed ref
+                        "relationship_type": "trust",
                         "strength_change": "float(event_data.get('details', {}).get('quest_value', 0)) / 2.0",
-                        "details_i18n": {"en": "Completed a significant quest together."} # Example details
+                        "details_i18n": {"en": "Completed a significant quest together."}
                     }]
                 }
             ]

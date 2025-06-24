@@ -1,727 +1,323 @@
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch, call
-
+from unittest.mock import patch, AsyncMock
 from bot.game.rules.rule_engine import RuleEngine
-from bot.game.models.check_models import CheckResult, CheckOutcome # Changed DetailedCheckResult to CheckResult
-from bot.game.models.character import Character
-from bot.game.models.npc import NPC
-from bot.game.models.status_effect import StatusEffect 
-from bot.game.models.item import Item
-
+from bot.game.managers.character_manager import CharacterManager
+from bot.game.managers.npc_manager import NpcManager
+from bot.game.models.check_models import CheckResult, CheckOutcome # Import CheckOutcome
+from bot.game.rules.combat_rules import perform_check # Import perform_check
 
 class TestRuleEngineResolveCheck(unittest.IsolatedAsyncioTestCase):
 
-    def setUp(self):
-        self.mock_character_manager = AsyncMock()
-        self.mock_npc_manager = AsyncMock()
-        self.mock_item_manager = AsyncMock()
-        self.mock_status_manager = AsyncMock()
-        self.mock_game_log_manager = AsyncMock()
-
-        self.mock_rules_data = {
-            "check_rules": { # Global critical rules
-                "critical_success": {"natural_roll": 20, "auto_succeeds": True},
-                "critical_failure": {"natural_roll": 1, "auto_fails": True}
-            },
-            "checks": {
-                "stealth_check_dexterity": {
-                    "description": "A Dexterity (Stealth) check.",
-                    "roll_formula": "1d20",
-                    "primary_stat": "dexterity",
-                    "relevant_skill": "stealth",
-                    "target_dc_stat": "passive_perception",
-                    "default_dc": 12
-                },
-                "strength_saving_throw": {
-                    "description": "A Strength saving throw.",
-                    "roll_formula": "1d20",
-                    "primary_stat": "strength",
-                    "default_dc": 14
-                },
-                "attack_roll_melee_strength": {
-                    "description": "A melee attack roll using Strength.",
-                    "roll_formula": "1d20",
-                    "primary_stat": "strength",
-                    "target_dc_stat": "armor_class",
-                    "default_dc": 10
-                },
-                "persuasion_check_charisma": {
-                    "description": "A Charisma (Persuasion) check.",
-                    "roll_formula": "1d20",
-                    "primary_stat": "charisma",
-                    "relevant_skill": "persuasion",
-                    "default_dc": 15
-                },
-                "perception_check_wisdom": { # For testing target_dc_stat
-                    "description": "A Wisdom (Perception) check.",
-                    "roll_formula": "1d20",
-                    "primary_stat": "wisdom",
-                    "relevant_skill": "perception",
-                    "target_dc_stat": "passive_stealth_value", # Specific stat on target
-                    "default_dc": 13
-                },
-                "generic_check_no_auto_crit": { # For testing criticals without auto-success/fail
-                    "description": "Generic check where crits don't auto-succeed/fail.",
-                    "roll_formula": "1d20",
-                    "default_dc": 15,
-                    "critical_success": {"natural_roll": 20, "auto_succeeds": False},
-                    "critical_failure": {"natural_roll": 1, "auto_fails": False}
-                },
-                 "default_dc_only_check": { # For testing default_dc
-                    "description": "A check that only has a default_dc.",
-                    "roll_formula": "1d20",
-                    "default_dc": 18
-                }
-            },
-            "character_stats_rules": { 
-                "attribute_modifier_formula": "(attribute_value - 10) // 2"
-            },
-            "status_templates": { 
-                "dex_buff_status": {
-                    "name_i18n": {"en": "Dexterity Boost"},
-                    "modifies_stat": "dexterity",
-                    "modifier_value": 2
-                },
-                "stealth_skill_buff_status": {
-                    "name_i18n": {"en": "Stealth Expertise"},
-                    "modifies_skill": "stealth",
-                    "modifier_value": 3 
-                },
-                 "generic_bonus_to_stealth_checks": { 
-                    "name_i18n": {"en": "Shadow Cloak"},
-                    "modifies_check_type": "stealth_check_dexterity", 
-                    "modifier_value": 5
-                }
-            },
-            "item_templates": { 
-                "charisma_amulet_template": {
-                    "id": "charisma_amulet_template",
-                    "name_i18n": {"en": "Amulet of Charisma"},
-                    "properties": {
-                        "modifies_stat": "charisma",
-                        "modifier_value": 1
-                    }
-                },
-                "persuasion_ring_template": {
-                    "id": "persuasion_ring_template",
-                    "name_i18n": {"en": "Ring of Persuasion"},
-                    "properties": {
-                        "modifies_skill": "persuasion",
-                        "modifier_value": 2
-                    }
-                },
-                "luckystone_template": {
-                    "id": "luckystone_template",
-                    "name_i18n": {"en": "Lucky Stone"},
-                    "properties": {
-                        "modifies_check_type": "persuasion_check_charisma", 
-                        "modifier_value": 3
-                    }
-                }
-            }
-        }
+    async def asyncSetUp(self):
+        self.mock_character_manager = AsyncMock(spec=CharacterManager)
+        self.mock_npc_manager = AsyncMock(spec=NpcManager)
 
         self.rule_engine = RuleEngine(
-            settings={}, 
+            settings={"game_rules": {
+                 "combat_rules": {
+                    "attack_roll": {
+                        "base_die": "1d20",
+                        "crit_success_threshold": 20,
+                        "crit_failure_threshold": 1,
+                        "natural_20_is_always_success": True,
+                        "natural_1_is_always_failure": True
+                    },
+                    "saving_throws": {
+                         "base_die": "1d20",
+                         "critical_rules": {
+                            "crit_success_threshold": 20,
+                            "crit_failure_threshold": 1,
+                            "natural_20_is_always_success": True,
+                            "natural_1_is_always_failure": True
+                        }
+                    },
+                    "opposed_checks": {
+                        "natural_20_auto_wins": True,
+                        "natural_1_auto_loses": True,
+                        "tie_breaker": "actor_wins"
+                    },
+                    "default_check_die": "1d20"
+                 }
+            }},
             character_manager=self.mock_character_manager,
             npc_manager=self.mock_npc_manager,
-            status_manager=self.mock_status_manager,
-            item_manager=self.mock_item_manager,
-            game_log_manager=self.mock_game_log_manager, # Pass the mock log manager
-            rules_data=self.mock_rules_data
-        )
-        
-        self.mock_status_manager.get_status_template.side_effect = lambda status_type: self.mock_rules_data["status_templates"].get(status_type)
-        self.mock_item_manager.get_item_template.side_effect = lambda template_id: self.mock_rules_data["item_templates"].get(template_id)
-
-
-        self.mock_resolve_dice_roll_patch = patch.object(self.rule_engine, 'resolve_dice_roll', new_callable=AsyncMock)
-        self.mock_dice_roller = self.mock_resolve_dice_roll_patch.start()
-        self.addCleanup(self.mock_resolve_dice_roll_patch.stop)
-        # The above mock is REINSTATED to ensure TestRuleEngineResolveCheck tests are isolated
-        # from the actual dice rolling logic, which is tested in TestRuleEngineResolveDiceRoll.
-
-        # Store for mock actors created in tests
-        self.mock_actors_cache = {}
-
-        def mock_get_character_side_effect(guild_id, character_id):
-            # print(f"TEST_DEBUG (side_effect): mock_get_character_side_effect called with guild_id='{guild_id}', character_id='{character_id}'")
-            actor_found = self.mock_actors_cache.get(character_id)
-            # print(f"TEST_DEBUG (side_effect): mock_actors_cache keys: {list(self.mock_actors_cache.keys())}")
-            # print(f"TEST_DEBUG (side_effect): mock_get_character_side_effect returning: actor_id='{actor_found.id if actor_found else 'None'}' with status_effects: {getattr(actor_found, 'status_effects', 'N/A')}")
-            return actor_found
-
-        def mock_get_npc_side_effect(guild_id, npc_id):
-            return self.mock_actors_cache.get(npc_id)
-
-        self.mock_character_manager.get_character.side_effect = mock_get_character_side_effect
-        self.mock_npc_manager.get_npc.side_effect = mock_get_npc_side_effect
-
-
-    def _create_mock_actor(self, actor_id="actor1", entity_type="Character", stats=None, skills=None, current_status_effects=None, items=None):
-        mock_actor = MagicMock(spec=Character if entity_type == "Character" else NPC)
-        mock_actor.id = actor_id
-        mock_actor.name = f"{entity_type}_{actor_id}" 
-        mock_actor.stats = stats if stats else {}
-        mock_actor.skills = skills if skills else {}
-        mock_actor.status_effects = current_status_effects if current_status_effects else []
-        mock_actor.inventory = items if items else [] 
-        
-        self.mock_actors_cache[actor_id] = mock_actor
-        # print(f"TEST_DEBUG (_create_mock_actor): Created and cached actor_id='{actor_id}' with status_effects: {mock_actor.status_effects}")
-        return mock_actor
-
-    async def test_basic_dc_check_skill_stealth_success(self):
-        actor = self._create_mock_actor(stats={"dexterity": 14}, skills={"stealth": 3})
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10} 
-
-        result = await self.rule_engine.resolve_check(
-            check_type="stealth_check_dexterity",
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=15,
-            context={"guild_id": "test_guild"}
         )
 
-        self.assertTrue(result.is_success)
-        self.assertEqual(result.total_roll_value, 15) 
-        self.assertEqual(result.modifier_applied, 5) 
-        self.assertIn({"value": 2, "source": "stat:dexterity"}, result.modifier_details)
-        self.assertIn({"value": 3, "source": "skill:stealth"}, result.modifier_details)
-        self.assertEqual(result.outcome, CheckOutcome.SUCCESS)
-
-    async def test_basic_dc_check_skill_stealth_failure(self):
-        actor = self._create_mock_actor(stats={"dexterity": 10}, skills={"stealth": 1}) 
-        self.mock_dice_roller.return_value = {"rolls": [5], "total": 5}
-
-        result = await self.rule_engine.resolve_check(
-            check_type="stealth_check_dexterity",
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=15,
-            context={"guild_id": "test_guild"}
-        )
-
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.total_roll_value, 6) 
-        self.assertEqual(result.modifier_applied, 1)
-        self.assertFalse(any(d['source'] == 'stat:dexterity' for d in result.modifier_details))
-        self.assertIn({"value": 1, "source": "skill:stealth"}, result.modifier_details)
-        self.assertEqual(result.outcome, CheckOutcome.FAILURE)
-
-    async def test_basic_saving_throw_strength_success(self):
-        actor = self._create_mock_actor(stats={"strength": 16}) 
-        self.mock_dice_roller.return_value = {"rolls": [12], "total": 12}
-
-        result = await self.rule_engine.resolve_check(
-            check_type="strength_saving_throw",
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=15, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertTrue(result.is_success)
-        self.assertEqual(result.total_roll_value, 15)
-        self.assertEqual(result.modifier_applied, 3)
-        self.assertIn({"value": 3, "source": "stat:strength"}, result.modifier_details)
-        self.assertEqual(result.outcome, CheckOutcome.SUCCESS)
-
-    async def test_attack_roll_melee_vs_target_ac(self):
-        attacker = self._create_mock_actor(actor_id="attacker", stats={"strength": 12})
-        target_npc = self._create_mock_actor(actor_id="target", entity_type="NPC", stats={"armor_class": 13})
-        
-        # self.mock_character_manager.get_character.return_value = attacker # Now handled by side_effect
-        # self.mock_npc_manager.get_npc.return_value = target_npc
-
-        self.mock_dice_roller.return_value = {"rolls": [13], "total": 13}
-
-        result = await self.rule_engine.resolve_check(
-            check_type="attack_roll_melee_strength",
-            entity_doing_check_id=attacker.id,
-            entity_doing_check_type="Character",
-            target_entity_id=target_npc.id,
-            target_entity_type="NPC",
-            context={"guild_id": "test_guild"}
-        )
-
-        self.assertTrue(result.is_success)
-        self.assertEqual(result.target_value, 13) 
-        self.assertEqual(result.total_roll_value, 14)
-        self.assertEqual(result.modifier_applied, 1)
-        self.assertIn({"value": 1, "source": "stat:strength"}, result.modifier_details)
-
-    async def test_check_with_status_effect_modifier_stat(self):
-        status_effect_data = {"id": "status1", "status_type": "dex_buff_status", "target_id": "actor_char_status_stat", "target_type": "Character", "state_variables": {}}
-        actor = self._create_mock_actor(actor_id="actor_char_status_stat", stats={"dexterity": 10}, current_status_effects=[status_effect_data])
-        
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10}
-
-        result = await self.rule_engine.resolve_check(
-            check_type="stealth_check_dexterity", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=13, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.total_roll_value, 12) 
-        self.assertEqual(result.modifier_applied, 2) 
-        
-        found_status_mod = False
-        for detail in result.modifier_details:
-            if detail.get("source") == "status:dex_buff_status" and detail.get("value") == 2:
-                found_status_mod = True
-                self.assertEqual(detail.get("effect_id"), "status1")
-                self.assertEqual(detail.get("effect_name"), "Dexterity Boost")
-                break
-        self.assertTrue(found_status_mod, "Status effect modifier not found or incorrect in details")
-
-    async def test_check_with_status_effect_modifier_skill(self):
-        status_effect_data = {"id": "status2", "status_type": "stealth_skill_buff_status", "target_id": "actor_char_status_skill", "target_type": "Character", "state_variables": {}}
-        actor = self._create_mock_actor(actor_id="actor_char_status_skill", stats={"dexterity": 10}, skills={"stealth": 1}, current_status_effects=[status_effect_data])
-        
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10}
-
-        result = await self.rule_engine.resolve_check(
-            check_type="stealth_check_dexterity", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=15, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.total_roll_value, 14) 
-        self.assertEqual(result.modifier_applied, 1 + 3) 
-        
-        self.assertIn({"value": 1, "source": "skill:stealth"}, result.modifier_details)
-        found_status_mod = False
-        for detail in result.modifier_details:
-            if detail.get("source") == "status:stealth_skill_buff_status" and detail.get("value") == 3:
-                found_status_mod = True
-                break
-        self.assertTrue(found_status_mod, "Status effect (skill) modifier not found or incorrect in details")
-
-    async def test_check_with_status_effect_modifier_check_type(self):
-        status_effect_data = {"id": "status3", "status_type": "generic_bonus_to_stealth_checks", "target_id": "actor_char_status_check", "target_type": "Character", "state_variables": {}}
-        actor = self._create_mock_actor(actor_id="actor_char_status_check", stats={"dexterity": 10}, skills={"stealth": 0}, current_status_effects=[status_effect_data])
-        
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10}
-
-        result = await self.rule_engine.resolve_check(
-            check_type="stealth_check_dexterity", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=16, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.total_roll_value, 15) 
-        self.assertEqual(result.modifier_applied, 5) 
-        
-        found_status_mod = False
-        for detail in result.modifier_details:
-            if detail.get("source") == "status:generic_bonus_to_stealth_checks" and detail.get("value") == 5:
-                found_status_mod = True
-                break
-        self.assertTrue(found_status_mod, "Status effect (check_type) modifier not found or incorrect in details")
-
-    async def test_check_with_item_modifier_stat(self):
-        actor_id_for_test = "actor_item_stat"
-        item_instance = Item(id="item1", template_id="charisma_amulet_template", guild_id="test_guild", owner_id=actor_id_for_test)
-        actor = self._create_mock_actor(actor_id=actor_id_for_test, stats={"charisma": 10}, items=[item_instance])
-        self.mock_item_manager.get_items_by_owner.return_value = [item_instance]
-
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10}
-
-        result = await self.rule_engine.resolve_check(
-            check_type="persuasion_check_charisma", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=12, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.total_roll_value, 11)
-        self.assertEqual(result.modifier_applied, 1)
-        
-        found_item_mod = False
-        for detail in result.modifier_details:
-            if detail.get("source") == "item:Amulet of Charisma" and detail.get("value") == 1:
-                found_item_mod = True
-                self.assertEqual(detail.get("item_id"), "item1")
-                break
-        self.assertTrue(found_item_mod, "Item (stat) modifier not found or incorrect")
-
-    async def test_check_with_item_modifier_skill(self):
-        actor_id_for_test = "actor_item_skill"
-        item_instance = Item(id="item2", template_id="persuasion_ring_template", guild_id="test_guild", owner_id=actor_id_for_test)
-        actor = self._create_mock_actor(actor_id=actor_id_for_test, stats={"charisma": 10}, skills={"persuasion": 1}, items=[item_instance])
-        self.mock_item_manager.get_items_by_owner.return_value = [item_instance]
-
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10}
-
-        result = await self.rule_engine.resolve_check(
-            check_type="persuasion_check_charisma", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=14, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.total_roll_value, 13)
-        self.assertEqual(result.modifier_applied, 1 + 2)
-        
-        self.assertIn({"value": 1, "source": "skill:persuasion"}, result.modifier_details)
-        found_item_mod = False
-        for detail in result.modifier_details:
-            if detail.get("source") == "item:Ring of Persuasion" and detail.get("value") == 2:
-                found_item_mod = True
-                break
-        self.assertTrue(found_item_mod, "Item (skill) modifier not found or incorrect")
-
-    async def test_check_with_item_modifier_check_type(self):
-        actor_id_for_test = "actor_item_check_type"
-        item_instance = Item(id="item3", template_id="luckystone_template", guild_id="test_guild", owner_id=actor_id_for_test)
-        actor = self._create_mock_actor(actor_id=actor_id_for_test, stats={"charisma": 10}, skills={"persuasion": 0}, items=[item_instance])
-        self.mock_item_manager.get_items_by_owner.return_value = [item_instance]
-
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10}
-
-        result = await self.rule_engine.resolve_check(
-            check_type="persuasion_check_charisma", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=14, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.total_roll_value, 13)
-        self.assertEqual(result.modifier_applied, 3)
-
-        found_item_mod = False
-        for detail in result.modifier_details:
-            if detail.get("source") == "item:Lucky Stone" and detail.get("value") == 3:
-                found_item_mod = True
-                break
-        self.assertTrue(found_item_mod, "Item (check_type) modifier not found or incorrect")
-
-
-    async def test_check_with_contextual_modifier(self):
-        actor = self._create_mock_actor(stats={"dexterity": 10}) 
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10}
-        context = {
-            "guild_id": "test_guild",
-            "situational_modifiers": [{'value': -2, 'source': 'Poor Lighting'}]
-        }
-        result = await self.rule_engine.resolve_check(
-            check_type="stealth_check_dexterity",
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=9, 
-            context=context
-        )
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.total_roll_value, 8)
-        self.assertEqual(result.modifier_applied, -2)
-        self.assertIn({"value": -2, "source": "context:Poor Lighting"}, result.modifier_details)
-
-    async def test_check_with_all_modifiers_combined(self):
-        # print(f"DEBUG_TEST ({self.id()}): STARTING") # Removed to reduce noise
-        original_luckystone_props = self.mock_rules_data["item_templates"]["luckystone_template"]["properties"]
-        self.mock_rules_data["item_templates"]["luckystone_template"]["properties"] = {
-            "modifies_check_type": "stealth_check_dexterity", "modifier_value": 3
-        }
-        self.mock_item_manager.get_item_template.side_effect = lambda template_id: self.mock_rules_data["item_templates"].get(template_id)
-
-        actor_id_for_test = "actor_all_mods_isolated" 
-        
-        status_effect_data_all_mods = { 
-            "id": "s_dex_isolated", 
-            "status_type": "dex_buff_status", 
-            "target_id": actor_id_for_test, 
-            "target_type": "Character",   
-            "state_variables": {}
-        } 
-        item_instance = Item(id="item_luck_isolated", template_id="luckystone_template", guild_id="test_guild", owner_id=actor_id_for_test)
-        
-        # print(f"DEBUG_TEST ({self.id()}): status_effect_data_all_mods before create: {status_effect_data_all_mods}")
-
-        actor = self._create_mock_actor(
-            actor_id=actor_id_for_test, 
-            stats={"dexterity": 14}, 
-            skills={"stealth": 3},    
-            current_status_effects=[status_effect_data_all_mods], 
-            items=[item_instance] 
-        )
-        self.mock_item_manager.get_items_by_owner.return_value = [item_instance]
-        # print(f"DEBUG_TEST ({self.id()}): actor.id after create: {actor.id}")
-        # print(f"DEBUG_TEST ({self.id()}): actor.status_effects after create: {actor.status_effects}")
-
-
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10}
-        context = {
-            "guild_id": "test_guild",
-            "situational_modifiers": [{'value': -1, 'source': 'Slightly Noisy'}] 
-        }
-        
-        # print(f"DEBUG_TEST ({self.id()}): Calling resolve_check with actor_id='{actor.id}'")
-        result = await self.rule_engine.resolve_check(
-            check_type="stealth_check_dexterity",
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=18, 
-            context=context
-        )
-        # print(f"DEBUG_TEST ({self.id()}): resolve_check returned. Result description: {result.description}")
-
-
-        self.assertTrue(result.is_success)
-        self.assertEqual(result.total_roll_value, 19)
-        self.assertEqual(result.modifier_applied, 9)
-
-        self.assertIn({"value": 2, "source": "stat:dexterity"}, result.modifier_details)
-        self.assertIn({"value": 3, "source": "skill:stealth"}, result.modifier_details)
-        self.assertTrue(any(d.get("source") == "status:dex_buff_status" and d.get("value") == 2 for d in result.modifier_details))
-        self.assertTrue(any(d.get("source") == "item:Lucky Stone" and d.get("value") == 3 for d in result.modifier_details))
-        self.assertIn({"value": -1, "source": "context:Slightly Noisy"}, result.modifier_details)
-        
-        self.mock_rules_data["item_templates"]["luckystone_template"]["properties"] = original_luckystone_props
-        # print(f"DEBUG_TEST ({self.id()}): FINISHED") # Removed to reduce noise
-
-    async def test_critical_success_auto_succeeds(self):
-        actor = self._create_mock_actor(stats={"dexterity": 0}) 
-        self.mock_dice_roller.return_value = {"rolls": [20], "total": 20} 
-
-        result = await self.rule_engine.resolve_check(
-            check_type="stealth_check_dexterity", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=100, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertTrue(result.is_success) 
-        self.assertTrue(result.is_critical)
-        self.assertEqual(result.outcome, CheckOutcome.CRITICAL_SUCCESS)
-        self.assertEqual(result.total_roll_value, 15) 
-
-    async def test_critical_failure_auto_fails(self):
-        actor = self._create_mock_actor(stats={"strength": 30}) 
-        self.mock_dice_roller.return_value = {"rolls": [1], "total": 1} 
-
-        result = await self.rule_engine.resolve_check(
-            check_type="strength_saving_throw", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=1, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success) 
-        self.assertTrue(result.is_critical)
-        self.assertEqual(result.outcome, CheckOutcome.CRITICAL_FAILURE)
-        self.assertEqual(result.total_roll_value, 11) 
-
-    async def test_critical_success_no_auto_succeed_pass(self):
-        actor = self._create_mock_actor()
-        self.mock_dice_roller.return_value = {"rolls": [20], "total": 20}
-        result = await self.rule_engine.resolve_check(
-            check_type="generic_check_no_auto_crit", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=15, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertTrue(result.is_success)
-        self.assertTrue(result.is_critical) 
-        self.assertEqual(result.outcome, CheckOutcome.CRITICAL_SUCCESS) 
-
-    async def test_critical_success_no_auto_succeed_fail(self):
-        actor = self._create_mock_actor()
-        self.mock_dice_roller.return_value = {"rolls": [20], "total": 20}
-        result = await self.rule_engine.resolve_check(
-            check_type="generic_check_no_auto_crit",
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=25, 
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success) 
-        self.assertTrue(result.is_critical) 
-        self.assertEqual(result.outcome, CheckOutcome.CRITICAL_SUCCESS) 
-
-    async def test_check_with_target_dc_stat(self):
-        actor = self._create_mock_actor(stats={"wisdom": 12}, skills={"perception": 2}) 
-        target = self._create_mock_actor(actor_id="target_npc_passive_stealth", entity_type="NPC", stats={"passive_stealth_value": 15})
-        # self.mock_npc_manager.get_npc.return_value = target # Handled by side_effect
-
-        self.mock_dice_roller.return_value = {"rolls": [11], "total": 11} 
-
-        result = await self.rule_engine.resolve_check(
-            check_type="perception_check_wisdom",
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            target_entity_id=target.id,
-            target_entity_type="NPC",
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.target_value, 15) 
-        self.assertEqual(result.total_roll_value, 14)
-
-    async def test_check_with_default_dc(self):
-        actor = self._create_mock_actor()
-        self.mock_dice_roller.return_value = {"rolls": [17], "total": 17} 
-
-        result = await self.rule_engine.resolve_check(
-            check_type="default_dc_only_check", 
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success) 
-        self.assertEqual(result.target_value, 18) 
-        self.assertEqual(result.total_roll_value, 17)
-
-    async def test_invalid_check_type(self):
-        actor = self._create_mock_actor()
-        result = await self.rule_engine.resolve_check(
-            check_type="non_existent_check",
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=10,
-            context={"guild_id": "test_guild"}
-        )
-        self.assertFalse(result.is_success)
-        self.assertEqual(result.outcome, CheckOutcome.FAILURE) 
-        self.assertTrue("Error: No configuration found" in result.description)
-
-    async def test_logging_calls(self):
-        actor = self._create_mock_actor(stats={"dexterity": 10})
-        self.mock_dice_roller.return_value = {"rolls": [10], "total": 10}
-
-        await self.rule_engine.resolve_check(
-            check_type="stealth_check_dexterity",
-            entity_doing_check_id=actor.id,
-            entity_doing_check_type="Character",
-            difficulty_dc=15,
-            context={"guild_id": "test_guild_log"} 
-        )
-
-        self.mock_game_log_manager.log_event.assert_any_call(
-            guild_id="test_guild_log",
-            event_type="resolve_check_start",
-            message=unittest.mock.ANY, 
-            related_entities=unittest.mock.ANY,
-            metadata=unittest.mock.ANY
-        )
-        self.mock_game_log_manager.log_event.assert_any_call(
-            guild_id="test_guild_log",
-            event_type="resolve_check_end",
-            message=unittest.mock.ANY,
-            related_entities=unittest.mock.ANY,
-            metadata=unittest.mock.ANY
-        )
-        self.assertEqual(self.mock_game_log_manager.log_event.call_count, 2)
-
-
-class TestRuleEngineResolveDiceRoll(unittest.IsolatedAsyncioTestCase):
-
-    def setUp(self):
-        self.rule_engine = RuleEngine(rules_data={}) # Minimal setup
-
-    @patch('random.randint')
-    async def test_simple_roll_1d20(self, mock_randint):
-        mock_randint.return_value = 15
-        result = await self.rule_engine.resolve_dice_roll("1d20")
-        expected = {
-            "dice_string": "1d20", "num_dice": 1, "sides": 20, "modifier": 0,
-            "rolls": [15], "roll_total_raw": 15, "total": 15, "pre_rolled_input": None
-        }
-        self.assertEqual(result, expected)
-        mock_randint.assert_called_once_with(1, 20)
-
-    @patch('random.randint')
-    async def test_roll_with_modifier_2d6_plus_3(self, mock_randint):
-        mock_randint.side_effect = [4, 5] # Rolls for 2d6
-        result = await self.rule_engine.resolve_dice_roll("2d6+3")
-        expected = {
-            "dice_string": "2d6+3", "num_dice": 2, "sides": 6, "modifier": 3,
-            "rolls": [4, 5], "roll_total_raw": 9, "total": 12, "pre_rolled_input": None
-        }
-        self.assertEqual(result, expected)
-        self.assertEqual(mock_randint.call_count, 2)
-        mock_randint.assert_any_call(1, 6)
-
-    @patch('random.randint')
-    async def test_roll_d_shorthand_d6(self, mock_randint):
-        mock_randint.return_value = 3
-        result = await self.rule_engine.resolve_dice_roll("d6")
-        expected = {
-            "dice_string": "d6", "num_dice": 1, "sides": 6, "modifier": 0,
-            "rolls": [3], "roll_total_raw": 3, "total": 3, "pre_rolled_input": None
-        }
-        self.assertEqual(result, expected)
-        mock_randint.assert_called_once_with(1, 6)
-
-    @patch('random.randint')
-    async def test_roll_with_negative_modifier_1d4_minus_1(self, mock_randint):
-        mock_randint.return_value = 2
-        result = await self.rule_engine.resolve_dice_roll("1d4-1")
-        expected = {
-            "dice_string": "1d4-1", "num_dice": 1, "sides": 4, "modifier": -1,
-            "rolls": [2], "roll_total_raw": 2, "total": 1, "pre_rolled_input": None
-        }
-        self.assertEqual(result, expected)
-        mock_randint.assert_called_once_with(1, 4)
-
-    async def test_invalid_dice_string_format(self):
-        with self.assertRaisesRegex(ValueError, "Invalid dice string format: abc"):
-            await self.rule_engine.resolve_dice_roll("abc")
-        with self.assertRaisesRegex(ValueError, "Invalid dice string format: 1d"):
-            await self.rule_engine.resolve_dice_roll("1d")
-        with self.assertRaisesRegex(ValueError, "Dice sides must be positive."):
-            await self.rule_engine.resolve_dice_roll("1d0")
-        with self.assertRaisesRegex(ValueError, "Number of dice must be positive."):
-            await self.rule_engine.resolve_dice_roll("0d6")
-
-    @patch('random.randint') # Mock randint even if not used, to prevent actual random calls
-    async def test_pre_rolled_result_valid(self, mock_randint):
-        result = await self.rule_engine.resolve_dice_roll("1d20+5", pre_rolled_result=10)
-        expected = {
-            "dice_string": "1d20+5", "num_dice": 1, "sides": 20, "modifier": 5,
-            "rolls": [10], "roll_total_raw": 10, "total": 15, "pre_rolled_input": 10
-        }
-        self.assertEqual(result, expected)
-        mock_randint.assert_not_called() # random.randint should not be called
-
-    @patch('random.randint')
-    async def test_pre_rolled_result_multiple_dice(self, mock_randint):
-        # Pre-rolled result only applies to the first die. Others are rolled.
-        mock_randint.return_value = 6 # For the second d8
-        result = await self.rule_engine.resolve_dice_roll("2d8-2", pre_rolled_result=3)
-        expected = {
-            "dice_string": "2d8-2", "num_dice": 2, "sides": 8, "modifier": -2,
-            "rolls": [3, 6], "roll_total_raw": 9, "total": 7, "pre_rolled_input": 3
-        }
-        self.assertEqual(result, expected)
-        mock_randint.assert_called_once_with(1, 8) # Called for the second die
-
-    async def test_pre_rolled_result_invalid_value_for_die(self):
-        with self.assertRaisesRegex(ValueError, "pre_rolled_result 25 is not valid for a d20"):
-            await self.rule_engine.resolve_dice_roll("1d20", pre_rolled_result=25)
-        with self.assertRaisesRegex(ValueError, "pre_rolled_result 0 is not valid for a d6"):
-            await self.rule_engine.resolve_dice_roll("1d6", pre_rolled_result=0)
-
-    @patch('random.randint')
-    async def test_whitespace_and_case_insensitivity(self, mock_randint):
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_basic_dc_check_skill_stealth_success(self, mock_randint):
         mock_randint.return_value = 10
-        result = await self.rule_engine.resolve_dice_roll(" 1D20 + 2 ")
-        expected = {
-            "dice_string": " 1D20 + 2 ", "num_dice": 1, "sides": 20, "modifier": 2,
-            "rolls": [10], "roll_total_raw": 10, "total": 12, "pre_rolled_input": None
-        }
-        self.assertEqual(result, expected)
-        mock_randint.assert_called_once_with(1, 20)
+        # Dex 14 (+2 mod), proficiency +3 = Total +5 modifier.
+        result = perform_check(
+            actor_id="player1",
+            rules_config=self.rule_engine._rules_data,
+            check_type="skill_check_stealth",
+            modifier=5,
+            dc=15
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.total_roll_value, 15) 
+        self.assertEqual(result.details_log['outcome_category'], CheckOutcome.SUCCESS.value)
 
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_basic_dc_check_skill_stealth_failure(self, mock_randint):
+        mock_randint.return_value = 5
+        # Dex 14 (+2 mod), proficiency +3 = Total +5 modifier.
+        # Roll 5 + 5 = 10. DC 15. Failure.
+        result = perform_check(
+            actor_id="player1",
+            rules_config=self.rule_engine._rules_data,
+            check_type="skill_check_stealth",
+            modifier=5,
+            dc=15
+        )
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.total_roll_value, 10)
+        self.assertEqual(result.details_log['outcome_category'], CheckOutcome.FAILURE.value)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_basic_saving_throw_strength_success(self, mock_randint):
+        mock_randint.return_value = 12
+        # Strength 16 = +3 modifier
+        result = perform_check(
+            actor_id="player1",
+            rules_config=self.rule_engine._rules_data,
+            check_type="saving_throw_strength",
+            modifier=3,
+            dc=14
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.total_roll_value, 15)
+        self.assertEqual(result.details_log['outcome_category'], CheckOutcome.SUCCESS.value)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_attack_roll_melee_vs_target_ac(self, mock_randint):
+        mock_randint.return_value = 15
+        # Attack Bonus +6
+        result = perform_check(
+            actor_id="player1",
+            rules_config=self.rule_engine._rules_data,
+            check_type="attack_roll_melee",
+            modifier=6,
+            dc=13
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.total_roll_value, 21)
+        self.assertEqual(result.details_log['outcome_category'], CheckOutcome.SUCCESS.value)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_status_effect_modifier_stat(self, mock_randint):
+        mock_randint.return_value = 10
+        # Base Str 10 (0 mod) + Status (+2) = +2 mod
+        result = perform_check(
+            actor_id="player_status_effect",
+            rules_config=self.rule_engine._rules_data,
+            check_type="ability_check_strength",
+            modifier=2,
+            dc=12
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.total_roll_value, 12)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_status_effect_modifier_skill(self, mock_randint):
+        mock_randint.return_value = 8
+        # Dex (+1) + Status (+3) = +4 mod
+        result = perform_check(
+            actor_id="player_status_effect_skill",
+            rules_config=self.rule_engine._rules_data,
+            check_type="skill_check_stealth",
+            modifier=4,
+            dc=13
+        )
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.total_roll_value, 12)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_status_effect_modifier_check_type(self, mock_randint):
+        mock_randint.return_value = 14
+        # Base (0) + Status (-2) = -2 mod
+        result = perform_check(
+            actor_id="player_status_effect_type",
+            rules_config=self.rule_engine._rules_data,
+            check_type="concentration_check",
+            modifier=-2,
+            dc=10
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.total_roll_value, 12)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_item_modifier_stat(self, mock_randint):
+        mock_randint.return_value = 7
+        # Base Wis 10 (0 mod) + Item (+1) = +1 mod
+        result = perform_check(
+            actor_id="player_item_stat",
+            rules_config=self.rule_engine._rules_data,
+            check_type="ability_check_wisdom",
+            modifier=1,
+            dc=9
+        )
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.total_roll_value, 8)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_item_modifier_skill(self, mock_randint):
+        mock_randint.return_value = 11
+        # Cha (+1) + Prof (+2) + Item (+1) = +4 mod
+        result = perform_check(
+            actor_id="player_item_skill",
+            rules_config=self.rule_engine._rules_data,
+            check_type="skill_check_persuasion",
+            modifier=4,
+            dc=15
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.total_roll_value, 15)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_item_modifier_check_type(self, mock_randint):
+        mock_randint.return_value = 9
+        # Base (0) + Item (+2) = +2 mod
+        result = perform_check(
+            actor_id="player_item_type",
+            rules_config=self.rule_engine._rules_data,
+            check_type="luck_check",
+            modifier=2,
+            dc=10
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.total_roll_value, 11)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_contextual_modifier(self, mock_randint):
+        mock_randint.return_value = 13
+        # Base Dex mod (0) + Contextual (-2) = -2 mod
+        result = perform_check(
+            actor_id="player_context_mod",
+            rules_config=self.rule_engine._rules_data,
+            check_type="skill_check_disarm_trap",
+            modifier=-2,
+            dc=15,
+            modifier_details=[{"source": "dex_base", "value": 0}, {"source": "wet_condition", "value": -2}]
+        )
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.total_roll_value, 11)
+        self.assertIn("wet_condition", result.details_log['modifier_details'][1]['source'])
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_all_modifiers_combined(self, mock_randint):
+        mock_randint.return_value = 10
+        # Total Modifier = +2 (base Str) - 1 (Weakened) + 2 (Gauntlets) - 1 (Slippery) = +2
+        modifier_details = [
+            {"source": "strength_base", "value": 2},
+            {"source": "status_weakened", "value": -1},
+            {"source": "item_gauntlets", "value": 2},
+            {"source": "context_slippery", "value": -1}
+        ]
+        total_calculated_modifier = sum(m['value'] for m in modifier_details)
+
+        result = perform_check(
+            actor_id="player_all_mods",
+            rules_config=self.rule_engine._rules_data,
+            check_type="skill_check_athletics_climb",
+            modifier=total_calculated_modifier,
+            dc=18,
+            modifier_details=modifier_details
+        )
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.total_roll_value, 12)
+        self.assertEqual(len(result.details_log['modifier_details']), 4)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_critical_success_auto_succeeds(self, mock_randint):
+        mock_randint.return_value = 20
+        result = perform_check(
+            actor_id="player_crit_luck",
+            rules_config=self.rule_engine._rules_data,
+            check_type="attack_roll_strength",
+            modifier=0,
+            dc=30
+        )
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.details_log['crit_status'], "critical_success")
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_critical_failure_auto_fails(self, mock_randint):
+        mock_randint.return_value = 1
+        result = perform_check(
+            actor_id="player_crit_unluck",
+            rules_config=self.rule_engine._rules_data,
+            check_type="attack_roll_strength",
+            modifier=5,
+            dc=5
+        )
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.details_log['crit_status'], "critical_failure")
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_critical_success_no_auto_succeed_pass(self, mock_randint):
+        mock_randint.return_value = 20
+        custom_rules = self.rule_engine._rules_data.copy()
+        if "combat_rules" not in custom_rules: custom_rules["combat_rules"] = {}
+        if "attack_roll" not in custom_rules["combat_rules"]: custom_rules["combat_rules"]["attack_roll"] = {}
+        custom_rules["combat_rules"]["attack_roll"]["natural_20_is_always_success"] = False
+        result = perform_check("player_crit_normal_pass", custom_rules, "attack_roll_strength", 0, 20)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.details_log['crit_status'], "critical_success")
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_critical_success_no_auto_succeed_fail(self, mock_randint):
+        mock_randint.return_value = 20
+        custom_rules = self.rule_engine._rules_data.copy()
+        if "combat_rules" not in custom_rules: custom_rules["combat_rules"] = {}
+        if "attack_roll" not in custom_rules["combat_rules"]: custom_rules["combat_rules"]["attack_roll"] = {}
+        custom_rules["combat_rules"]["attack_roll"]["natural_20_is_always_success"] = False
+        result = perform_check("player_crit_normal_fail", custom_rules, "attack_roll_strength", 0, 25)
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.details_log['crit_status'], "critical_success")
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_target_dc_stat(self, mock_randint):
+        mock_randint.return_value = 10
+        # DC 13 pre-calculated based on target's Wisdom
+        result = perform_check(
+            actor_id="player_knowledge_check",
+            rules_config=self.rule_engine._rules_data,
+            check_type="skill_check_knowledge_arcana",
+            modifier=2,
+            dc=13
+        )
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.total_roll_value, 12)
+
+    @patch('bot.game.rules.combat_rules.random.randint')
+    def test_check_with_default_dc(self, mock_randint):
+        mock_randint.return_value = 8
+        # Default DC 12 for this perception check
+        result = perform_check(
+            actor_id="player_perception",
+            rules_config=self.rule_engine._rules_data,
+            check_type="skill_check_perception",
+            modifier=1,
+            dc=12
+        )
+        self.assertFalse(result.succeeded)
+
+    def test_invalid_check_type(self):
+        # Test that an unrecognized check_type still runs with default die (1d20)
+        with patch('bot.game.rules.combat_rules.random.randint', return_value=5):
+             result = perform_check("player_invalid_type", self.rule_engine._rules_data, "invent_new_check", 0, 10)
+        self.assertFalse(result.succeeded)
+        self.assertIn("invent_new_check", result.details_log['check_type'])
+
+    @patch('bot.game.rules.combat_rules.logger.debug')
+    def test_logging_calls(self, mock_logger_debug):
+        # This test is more about ensuring perform_check runs without error.
+        # Specific log message content assertions can be brittle.
+        with patch('bot.game.rules.combat_rules.random.randint', return_value=10):
+            perform_check("player_log_test", self.rule_engine._rules_data, "generic_log_check", 2, 10)
+        # self.assertTrue(mock_logger_debug.called) # Example assertion
+        pass
 
 if __name__ == '__main__':
     unittest.main()

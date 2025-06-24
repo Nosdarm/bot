@@ -16,7 +16,7 @@ def create_mock_char(char_id: str, name: str, guild_id: str, location_id: Option
     char.name = name
     char.guild_id = guild_id
     char.location_id = location_id
-    char.party_id = party_id
+    char.current_party_id = party_id # Changed from party_id to current_party_id
     # Add other attributes if PartyHandler or its callees access them
     return char
 
@@ -73,14 +73,13 @@ class TestPartyCommandHandler(unittest.IsolatedAsyncioTestCase):
         await self.party_handler.handle(MagicMock(), ["create"], self.context)
 
         self.mock_party_manager.create_party.assert_called_once_with(
-            leader_id=self.player_char_id,
-            member_ids=[self.player_char_id],
             guild_id=self.guild_id,
-            current_location_id=self.player_location,
-            **self.context 
+            leader_character_id=self.player_char_id,
+            party_name_i18n={"en": f"Party of {player_char.name}", self.context.get('lang', 'en'): f"Party of {player_char.name}"}
+            # member_ids and current_location_id are handled internally by PartyManager.create_party
         )
+        # guild_id is in self.context, so no need to pass it explicitly for set_party_id either
         self.mock_char_manager.set_party_id.assert_called_once_with(
-            guild_id=self.guild_id,
             character_id=self.player_char_id,
             party_id=created_party_id,
             **self.context
@@ -103,18 +102,16 @@ class TestPartyCommandHandler(unittest.IsolatedAsyncioTestCase):
         target_party = create_mock_party(target_party_id, "Target Party", self.guild_id, "leader2", ["leader2"], self.player_location)
         self.mock_party_manager.get_party.return_value = target_party
         
-        # Assume add_member_to_party is the new method in PartyManager
-        self.mock_party_manager.add_member_to_party.return_value = True 
+        self.mock_party_manager.join_party.return_value = True
         self.mock_char_manager.set_party_id.return_value = True
 
         await self.party_handler.handle(MagicMock(), ["join", target_party_id], self.context)
 
         self.mock_party_manager.get_party.assert_called_once_with(self.guild_id, target_party_id)
-        self.mock_party_manager.add_member_to_party.assert_called_once_with(
-            party_id=target_party_id,
-            character_id=self.player_char_id,
+        self.mock_party_manager.join_party.assert_called_once_with(
             guild_id=self.guild_id,
-            context=self.context
+            character_id=self.player_char_id,
+            party_id=target_party_id
         )
         self.mock_char_manager.set_party_id.assert_called_once_with(
             self.guild_id, self.player_char_id, target_party_id, **self.context
@@ -132,7 +129,7 @@ class TestPartyCommandHandler(unittest.IsolatedAsyncioTestCase):
         await self.party_handler.handle(MagicMock(), ["join", target_party_id], self.context)
         
         self.mock_send_callback.assert_called_with(f"❌ Вы должны находиться в той же локации, что и партия, чтобы присоединиться. Вы в `player_loc_A`, партия в `party_loc_B`.")
-        self.mock_party_manager.add_member_to_party.assert_not_called()
+        self.mock_party_manager.join_party.assert_not_called()
 
 
     async def test_handle_party_leave_success(self):
@@ -143,19 +140,16 @@ class TestPartyCommandHandler(unittest.IsolatedAsyncioTestCase):
         party_obj = create_mock_party(current_party_id, "Leaving Party", self.guild_id, "other_leader", [self.player_char_id, "other_leader"], self.player_location)
         self.mock_party_manager.get_party.return_value = party_obj
         
-        # Assume remove_member_from_party is the new method
-        self.mock_party_manager.remove_member_from_party.return_value = True
+        self.mock_party_manager.leave_party.return_value = True
         self.mock_char_manager.set_party_id.return_value = True
 
         await self.party_handler.handle(MagicMock(), ["leave"], self.context)
 
-        self.mock_party_manager.remove_member_from_party.assert_called_once_with(
-            party_id=current_party_id,
-            character_id=self.player_char_id,
+        self.mock_party_manager.leave_party.assert_called_once_with(
             guild_id=self.guild_id,
-            context=self.context
+            character_id=self.player_char_id
         )
-        self.mock_char_manager.set_party_id.assert_called_with( # May be called multiple times if remove_member also calls it
+        self.mock_char_manager.set_party_id.assert_called_with(
             self.guild_id, self.player_char_id, None, **self.context
         )
         self.mock_send_callback.assert_called_with(f"✅ Вы покинули партию `{party_obj.name}`.")
@@ -163,25 +157,23 @@ class TestPartyCommandHandler(unittest.IsolatedAsyncioTestCase):
     async def test_handle_party_leave_leader_migration(self):
         current_party_id = "party_leader_leaves"
         other_member_id = "player2"
-        player_char = create_mock_char(self.player_char_id, "LeaderChar", self.guild_id, self.player_location, current_party_id) # This player is the leader
+        player_char = create_mock_char(self.player_char_id, "LeaderChar", self.guild_id, self.player_location, current_party_id)
         self.mock_char_manager.get_character_by_discord_id.return_value = player_char
         
         party_obj = create_mock_party(current_party_id, "Leader Leaving Party", self.guild_id, self.player_char_id, [self.player_char_id, other_member_id], self.player_location)
         self.mock_party_manager.get_party.return_value = party_obj
         
-        # Mock remove_member_from_party to simulate leader migration
-        # It should return True, and PartyManager is responsible for changing leader in party_obj
-        async def mock_remove_leader_and_migrate(party_id, character_id, guild_id, context):
-            party_obj.player_ids_list.remove(character_id) # Simulate removal
-            party_obj.leader_id = party_obj.player_ids_list[0] # Simulate migration
+        async def mock_leave_leader_and_migrate(guild_id, character_id):
+            party_obj.player_ids_list.remove(character_id)
+            party_obj.leader_id = party_obj.player_ids_list[0]
             return True
-        self.mock_party_manager.remove_member_from_party.side_effect = mock_remove_leader_and_migrate
+        self.mock_party_manager.leave_party.side_effect = mock_leave_leader_and_migrate
         
         await self.party_handler.handle(MagicMock(), ["leave"], self.context)
         
         self.mock_char_manager.set_party_id.assert_called_with(self.guild_id, self.player_char_id, None, **self.context)
         self.mock_send_callback.assert_called_with(f"✅ Вы покинули партию `{party_obj.name}`.")
-        # Further assertions could be on PartyManager to ensure leader_id was changed in its internal state if needed
+
 
     async def test_handle_party_leave_last_member_disbands(self):
         current_party_id = "party_last_member_leaves"
@@ -191,18 +183,14 @@ class TestPartyCommandHandler(unittest.IsolatedAsyncioTestCase):
         party_obj = create_mock_party(current_party_id, "Last Member Party", self.guild_id, self.player_char_id, [self.player_char_id], self.player_location)
         self.mock_party_manager.get_party.return_value = party_obj
 
-        # remove_member_from_party in PartyManager should detect this and call self.remove_party
-        # For this test, we assume remove_member_from_party returns True after initiating disband.
-        self.mock_party_manager.remove_member_from_party.return_value = True 
+        self.mock_party_manager.leave_party.return_value = True
         
         await self.party_handler.handle(MagicMock(), ["leave"], self.context)
 
-        self.mock_party_manager.remove_member_from_party.assert_called_once()
-        # PartyManager.remove_party would then call char_manager.set_party_id for all members (which is just this one)
+        self.mock_party_manager.leave_party.assert_called_once()
         self.mock_char_manager.set_party_id.assert_called_with(self.guild_id, self.player_char_id, None, **self.context)
         self.mock_send_callback.assert_called_with(f"✅ Вы покинули партию `{party_obj.name}`.")
-        # We'd expect PartyManager.remove_party to be called internally by remove_member_from_party
-        # This could be tested by adding a mock for party_manager.remove_party if we want to be very thorough here.
+
 
     async def test_handle_party_leave_different_location(self):
         current_party_id = "party_loc_leave_test"
@@ -215,26 +203,25 @@ class TestPartyCommandHandler(unittest.IsolatedAsyncioTestCase):
         await self.party_handler.handle(MagicMock(), ["leave"], self.context)
         
         self.mock_send_callback.assert_called_with(f"❌ Вы должны находиться в той же локации, что и партия, чтобы покинуть ее. Вы в `player_loc_A`, партия в `party_loc_B`.")
-        self.mock_party_manager.remove_member_from_party.assert_not_called()
+        self.mock_party_manager.leave_party.assert_not_called()
 
 
     async def test_handle_party_disband_success_by_leader(self):
         current_party_id = "party_to_disband"
-        player_char = create_mock_char(self.player_char_id, "PartyLeader", self.guild_id, self.player_location, current_party_id) # This player is the leader
+        player_char = create_mock_char(self.player_char_id, "PartyLeader", self.guild_id, self.player_location, current_party_id)
         self.mock_char_manager.get_character_by_discord_id.return_value = player_char
 
         party_obj = create_mock_party(current_party_id, "Disbanding Party", self.guild_id, self.player_char_id, [self.player_char_id, "member2"], self.player_location)
         self.mock_party_manager.get_party.return_value = party_obj
         
-        # remove_party in PartyManager is responsible for clearing party_id for all members
-        self.mock_party_manager.remove_party.return_value = True # Assume disband is successful
+        self.mock_party_manager.disband_party.return_value = True
 
         await self.party_handler.handle(MagicMock(), ["disband"], self.context)
 
-        self.mock_party_manager.remove_party.assert_called_once_with(
-            party_id=current_party_id,
+        self.mock_party_manager.disband_party.assert_called_once_with(
             guild_id=self.guild_id,
-            context=self.context
+            party_id=current_party_id,
+            disbanding_character_id=self.player_char_id
         )
         self.mock_send_callback.assert_called_with(f"✅ Партия `{party_obj.name}` успешно распущена.")
 

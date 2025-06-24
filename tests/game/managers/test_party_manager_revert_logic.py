@@ -12,14 +12,28 @@ class TestPartyManagerRevertLogic(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         # Mock dependencies for PartyManager
         self.mock_db_service = AsyncMock()
-        self.mock_character_manager = AsyncMock() # For add/remove member calls
-        # ... mock other necessary managers if PartyManager's revert methods interact with them ...
+        self.mock_character_manager = AsyncMock()
+
+        mock_game_manager = AsyncMock()
+        mock_game_manager.db_service = self.mock_db_service
+        mock_game_manager.character_manager = self.mock_character_manager
+        # Add other managers game_manager might provide if PartyManager uses them
+        mock_game_manager.rule_engine = AsyncMock()
+        mock_game_manager.event_manager = AsyncMock()
+        mock_game_manager.npc_manager = AsyncMock()
+        mock_game_manager.combat_manager = AsyncMock()
+        mock_game_manager.location_manager = AsyncMock()
+        mock_game_manager.item_manager = AsyncMock()
+        mock_game_manager.status_manager = AsyncMock()
+        mock_game_manager.time_manager = AsyncMock()
+        mock_game_manager.game_log_manager = AsyncMock()
+
 
         self.party_manager = PartyManager(
-            db_service=self.mock_db_service,
-            settings={}, # Provide minimal settings
-            character_manager=self.mock_character_manager
-            # ... pass other mocked managers ...
+            db_service=self.mock_db_service, # Still passed directly as per PartyManager constructor
+            settings={},
+            character_manager=self.mock_character_manager, # Still passed directly
+            game_manager=mock_game_manager # Pass the new mock_game_manager
         )
 
         self.guild_id = "test_guild_party"

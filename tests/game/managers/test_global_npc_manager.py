@@ -186,7 +186,11 @@ class TestGlobalNpcManager(unittest.IsolatedAsyncioTestCase):
         # In the next tick, it would move to loc2.
         # For this tick, it arrived at loc1 (was already there), so index should update.
         self.manager.update_global_npc.assert_called_once()
-        called_npc_arg = self.manager.update_global_npc.call_args[0][1] # Get the PydanticGlobalNpc instance
+        # Access keyword arguments: call_args is a tuple (pos_args_tuple, kw_args_dict)
+        # The method is called as update_global_npc(npc.id, npc_data=npc_object)
+        called_kwargs = self.manager.update_global_npc.call_args[1]
+        called_npc_arg = called_kwargs['npc_data']
+
 
         self.assertEqual(called_npc_arg.state_variables["current_patrol_index"], 1)
         self.assertEqual(called_npc_arg.current_location_id, "loc1") # Still at loc1, but index updated
@@ -201,8 +205,9 @@ class TestGlobalNpcManager(unittest.IsolatedAsyncioTestCase):
 
         await self.manager.process_tick(guild_id=guild_id, game_time_delta=1.0, location_manager=self.mock_location_manager)
 
-        self.manager.update_global_npc.assert_called_once() # This will now be an AsyncMock
-        called_npc_arg_2 = self.manager.update_global_npc.call_args[0][1]
+        self.manager.update_global_npc.assert_called_once()
+        called_kwargs_2 = self.manager.update_global_npc.call_args[1]
+        called_npc_arg_2 = called_kwargs_2['npc_data']
         self.assertEqual(called_npc_arg_2.current_location_id, "loc2") # Moved to loc2
         self.assertEqual(called_npc_arg_2.state_variables["current_patrol_index"], 1) # Index remains 1 until arrival at loc2 in next tick
 
@@ -234,8 +239,9 @@ class TestGlobalNpcManager(unittest.IsolatedAsyncioTestCase):
         await self.manager.process_tick(guild_id=guild_id, game_time_delta=1.0, location_manager=self.mock_location_manager)
 
         self.manager.update_global_npc.assert_called_once()
-        called_npc_arg = self.manager.update_global_npc.call_args[0][1]
-        self.assertEqual(called_npc_arg.current_location_id, exit_loc_id)
+        called_kwargs_random = self.manager.update_global_npc.call_args[1]
+        called_npc_arg_random = called_kwargs_random['npc_data']
+        self.assertEqual(called_npc_arg_random.current_location_id, exit_loc_id)
 
 
 if __name__ == '__main__':

@@ -82,7 +82,35 @@ class TestNLUDataService(unittest.IsolatedAsyncioTestCase):
             "FROM npcs": [{"id": "npc1", "name_i18n": json.dumps({"en": "Guard"}), "guild_id": guild_id}],
             "FROM skills": [{"id": "skill1", "name_i18n": json.dumps({"en": "Sneak", "ru": "Скрытность"})}] # Global
         }
-        self._mock_db_fetchall(mock_data)
+        # self._mock_db_fetchall(mock_data) # Original general mock
+
+        async def specific_side_effect(query: str, params: Tuple = ()):
+            # print(f"Specific Fetchall: Query='{query}', Params='{params}'")
+            if "FROM location_templates" in query:
+                # print("Specific Fetchall: Matched location_templates")
+                # Directly return the expected data for location_templates, applying manual filter
+                guild_id_to_filter = params[0] if params else None
+                data_for_table = mock_data["FROM location_templates"]
+                if "OR guild_id IS NULL" in query.upper():
+                    return [row for row in data_for_table if row.get("guild_id") == guild_id_to_filter or row.get("guild_id") is None]
+                elif guild_id_to_filter:
+                    return [row for row in data_for_table if row.get("guild_id") == guild_id_to_filter]
+                return data_for_table # Should not happen if params always present for guild queries
+
+            # Fallback to original general mock logic for other tables
+            original_mock_data_source = mock_data
+            for key_substring, data_for_table in original_mock_data_source.items():
+                if key_substring in query:
+                    if params and len(params) > 0 and isinstance(params[0], str):
+                        guild_id_to_filter = params[0]
+                        if "OR guild_id IS NULL" in query.upper():
+                             return [row for row in data_for_table if row.get("guild_id") == guild_id_to_filter or row.get("guild_id") is None]
+                        return [row for row in data_for_table if row.get("guild_id") == guild_id_to_filter]
+                    return data_for_table
+            return []
+
+        self.mock_db_service.fetchall.side_effect = specific_side_effect
+
 
         entities = await self.nlu_service.get_game_entities(guild_id, lang, fetch_global_too=True)
 

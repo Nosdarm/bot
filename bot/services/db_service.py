@@ -886,7 +886,8 @@ class DBService:
                 return None
         elif model_class and not session:
             # Model-based creation but no session provided - use crud_utils with its own session
-            logger.debug(f"DBService.create_entity: model_class {model_class.__name__} provided but no session. Using internal session with crud_utils.")
+            model_class_name_for_log = model_class.__name__ if hasattr(model_class, '__name__') else str(model_class)
+            logger.debug(f"DBService.create_entity: model_class {model_class_name_for_log} provided but no session. Using internal session with crud_utils.")
             try:
                 async with self.get_session() as internal_session: # type: ignore
                     # For SQLAlchemy sessions from PostgresAdapter, crud_utils will handle begin/commit within the session.

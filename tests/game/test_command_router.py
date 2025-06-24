@@ -48,8 +48,11 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
         self.mock_character_manager = AsyncMock(spec=CharacterManager)
         self.mock_event_manager = AsyncMock()
         self.mock_persistence_manager = AsyncMock(spec=PersistenceManager)
-        self.mock_db_adapter = AsyncMock(spec=PostgresAdapter) # Mock for DB adapter
-        self.mock_persistence_manager.get_db_adapter.return_value = self.mock_db_adapter
+        self.mock_db_adapter = AsyncMock(spec=PostgresAdapter)
+
+        # Setup mock_persistence_manager._db_service.adapter
+        self.mock_persistence_manager._db_service = MagicMock()
+        self.mock_persistence_manager._db_service.adapter = self.mock_db_adapter
 
         self.mock_settings = {
             "command_prefix": "/",

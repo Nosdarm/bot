@@ -189,7 +189,7 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
         
         # Assume execute for UPDATE doesn't return a specific value, but success is no error
         # and potentially rowcount > 0 (though our mock adapter doesn't provide rowcount easily here)
-        self.mock_adapter.execute.return_value = None # Or some mock cursor if needed
+        self.mock_adapter.execute.return_value = "UPDATE 1" # Simulate successful DB update
 
         success = await self.db_service.update_entity(
             table_name="assets",
@@ -223,6 +223,7 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
         entity_id = "guild_asset_abc"
         guild_id = "finance_guild"
         update_data = {"value": 5000}
+        self.mock_adapter.execute.return_value = "UPDATE 1" # Simulate successful DB update
 
         success = await self.db_service.update_entity(
             table_name="guild_finances",
@@ -309,17 +310,15 @@ class TestDBService(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(success)
         mock_log_error_on_instance.assert_called_once()
-        log_call_args, log_call_kwargs = mock_log_error_on_instance.call_args
-        format_string = log_call_args[0]
-        log_params = log_call_args[1:]
 
-        self.assertIn("DBService: Error updating entity '%s' in table '%s' (Guild: %s): %s", format_string)
-        self.assertEqual("id1", log_params[0])
-        self.assertEqual("error_table", log_params[1])
-        # self.assertEqual("N/A (or not applicable)", log_params[2]) # Guild ID
-        self.assertIsInstance(log_params[3], Exception)
-        self.assertEqual(str(log_params[3]), "DB update error")
-        self.assertTrue(log_call_kwargs.get('exc_info', False))
+        # Get the actual logged message string
+        logged_message = mock_log_error_on_instance.call_args[0][0]
+
+        self.assertIn("DBService: Error updating entity", logged_message)
+        self.assertIn("'id1'", logged_message)
+        self.assertIn("'error_table'", logged_message)
+        self.assertIn("DB update error", logged_message) # This part comes from the mocked exception's string representation
+        self.assertTrue(mock_log_error_on_instance.call_args[1].get('exc_info', False)) # Check exc_info was passed
 
     async def test_delete_entity_handles_db_error(self):
         """Test delete_entity handles database execution errors."""

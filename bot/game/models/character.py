@@ -130,7 +130,7 @@ class Character:
             'guild_id': data.get('guild_id'),
             'selected_language': data.get('selected_language', "en"), # Default to "en"
             'location_id': data.get('current_location_id', data.get('location_id')),
-            'stats': data.get('stats', {}),
+            'stats': data.get('stats', {}), # Will be processed below
             'inventory': data.get('inventory', []),
             'current_action': data.get('current_action'),
             'action_queue': data.get('action_queue', []),
@@ -166,6 +166,17 @@ class Character:
             'current_party_id': data.get('current_party_id'),
         }
         
+        # Ensure stats is a dictionary
+        if isinstance(init_data['stats'], str):
+            try:
+                init_data['stats'] = json.loads(init_data['stats'])
+            except json.JSONDecodeError:
+                print(f"Warning: Character '{init_data.get('id')}' has malformed JSON in 'stats'. Using empty dict.")
+                init_data['stats'] = {}
+        elif not isinstance(init_data['stats'], dict):
+            print(f"Warning: Character '{init_data.get('id')}' has 'stats' that is not a dict or string. Using empty dict.")
+            init_data['stats'] = {}
+
         # If stats from data doesn't have health/max_health, use the top-level ones
         if 'hp' not in init_data['stats'] and 'hp' in init_data :
              init_data['stats']['hp'] = init_data['hp']

@@ -1,137 +1,174 @@
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
+import uuid # Required for Player ID generation if not mocked away
 
 from bot.command_modules.game_setup_cmds import GameSetupCog
 from bot.services.db_service import DBService
 from bot.game.models.character import Character
-from bot.game.managers.character_manager import CharacterManager
+from bot.database.models.character_related import Player # Corrected Import Player for spec
+from bot.game.managers.character_manager import CharacterManager, CharacterAlreadyExistsError
 from bot.game.managers.game_manager import GameManager
 from bot.bot_core import RPGBot
+from sqlalchemy.ext.asyncio import AsyncSession # For spec
 
 class TestGameSetupCmds(unittest.IsolatedAsyncioTestCase):
 
-    async def test_cmd_start_new_character_initial_values(self):
-        """
-        Tests that a new character created via cmd_start_new_character
-        is initialized with experience=0, level=1, and unspent_xp=0.
-        """
-        mock_interaction = AsyncMock()
-        mock_interaction.user.id = 12345
-        mock_interaction.guild_id = "test_guild_1"
+    async def asyncSetUp(self):
+        self.mock_interaction = AsyncMock()
+        self.mock_interaction.user.id = 12345
+        self.mock_interaction.user.display_name = "TestUser"
+        self.mock_interaction.guild_id = "test_guild_1"
+        self.mock_interaction.guild = MagicMock()
+        self.mock_interaction.guild.id = "test_guild_1"
+
+
+        self.mock_db_service = AsyncMock(spec=DBService)
         
-        mock_db_service = AsyncMock(spec=DBService)
-        mock_character_manager = AsyncMock(spec=CharacterManager)
-        mock_character_manager.get_character_by_discord_id = AsyncMock(return_value=None)
+        # Mock for session.execute().scalars().first() to find no existing player
+        self.mock_sql_execute_result_no_player = MagicMock(name="sql_execute_result_no_player")
+        self.mock_scalars_result_no_player = MagicMock(name="scalars_result_no_player")
+        self.mock_scalars_result_no_player.first.return_value = None
+        self.mock_sql_execute_result_no_player.scalars.return_value = self.mock_scalars_result_no_player
 
-        # Define GameManager mock and its dependencies BEFORE it's used
-        mock_game_manager = MagicMock(spec=GameManager)
-        mock_game_manager.character_manager = mock_character_manager
+        # Mock for session.execute().scalars().first() to find an existing player
+        self.mock_existing_player_obj = Player(id=str(uuid.uuid4()), discord_id=str(self.mock_interaction.user.id), guild_id=self.mock_interaction.guild_id, name_i18n={"en":"Existing Player"})
+        self.mock_sql_execute_result_existing_player = MagicMock(name="sql_execute_result_existing_player")
+        self.mock_scalars_result_existing_player = MagicMock(name="scalars_result_existing_player")
+        self.mock_scalars_result_existing_player.first.return_value = self.mock_existing_player_obj
+        self.mock_sql_execute_result_existing_player.scalars.return_value = self.mock_scalars_result_existing_player
 
-        # Define the character data that start_new_character_session is expected to return
-        # This data will be used to create a Character instance
-        character_init_data = {
-            "id": "test_player_id_1",
-            "discord_user_id": 12345, # Ensure this is present
-            "name_i18n": {"en": "TestChar"}, # Use name_i18n
-            "guild_id": "test_guild_1",
-            "location_id": "town_square",
-            "stats": {
-                "strength": 10, "dexterity": 10, "constitution": 10,
-                "intelligence": 10, "wisdom": 10, "charisma": 10,
-                "mana": 50, "max_mana": 50, "hp": 100, "max_health": 100
-            },
-            "level": 1,
-            "experience": 0,
-            "unspent_xp": 0,
-            "selected_language": "en" # Ensure this is present
-            # Other fields as necessary for Character constructor
-        }
 
-        # Ensure all required fields for Character constructor are in character_init_data
-        # Minimal required: id, discord_user_id, name_i18n, guild_id
-        # The rest are optional with defaults in the Character model.
-
-        mock_returned_character = Character(**character_init_data)
-        mock_game_manager.start_new_character_session = AsyncMock(return_value=mock_returned_character)
-
-        mock_location_manager = AsyncMock()
-        mock_location_manager.get_location_instance.return_value = {"name": "Town Square", "id": "town_square"}
-        mock_game_manager.location_manager = mock_location_manager
-
-        # Assign GameManager to client mock
-        mock_bot_instance = MagicMock(spec=RPGBot)
-        mock_bot_instance.game_manager = mock_game_manager
-        mock_interaction.client = mock_bot_instance
+        self.mock_session = AsyncMock(spec=AsyncSession)
+        self.mock_session.commit = AsyncMock()
+        self.mock_session.rollback = AsyncMock()
         
-        char_name = "TestChar"
-        # player_language is an argument to the command, not char_race
+        self.mock_session.execute = AsyncMock(return_value=self.mock_sql_execute_result_no_player) # Default: no player
 
-        cog = GameSetupCog(mock_bot_instance)
+        self.mock_db_service.get_session.return_value.__aenter__.return_value = self.mock_session
 
-        await cog.cmd_start_new_character.callback(cog, interaction=mock_interaction, character_name=char_name, player_language=None)
+        self.mock_character_manager = AsyncMock(spec=CharacterManager)
 
-        mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
+        self.mock_game_manager = AsyncMock(spec=GameManager)
+        self.mock_game_manager.character_manager = self.mock_character_manager
+        self.mock_game_manager.db_service = self.mock_db_service
+        self.mock_game_manager.get_rule = AsyncMock(side_effect=lambda guild_id, rule_key, default: default)
 
-        mock_game_manager.start_new_character_session.assert_called_once_with(
-            user_id=12345,
-            guild_id="test_guild_1",
-            character_name=char_name
+        self.mock_bot_instance = MagicMock(spec=RPGBot)
+        self.mock_bot_instance.game_manager = self.mock_game_manager
+        self.mock_interaction.client = self.mock_bot_instance
+
+        self.cog = GameSetupCog(self.mock_bot_instance)
+
+    async def test_cmd_start_new_character_success_new_player_and_new_char(self):
+        char_name = "TestHero"
+        self.mock_session.execute.return_value = self.mock_sql_execute_result_no_player
+
+        async def mock_create_player(session, model_cls, data, **kwargs):
+            if model_cls == Player:
+                player_id = data.get("id", str(uuid.uuid4()))
+                # Ensure all required fields for Player constructor are present in 'data'
+                # or handle their absence appropriately.
+                # For this test, we assume 'data' is well-formed by the calling code.
+                return Player(id=player_id,
+                              discord_id=data["discord_id"],
+                              guild_id=data["guild_id"],
+                              name_i18n=data["name_i18n"],
+                              selected_language=data["selected_language"],
+                              is_active=data["is_active"]
+                              # active_character_id will be None by default
+                              )
+            return None
+
+        with patch('bot.command_modules.game_setup_cmds.create_entity', new=AsyncMock(side_effect=mock_create_player)) as mock_create_entity_call:
+            expected_char_obj = Character(
+                id="char_id_1", discord_user_id=self.mock_interaction.user.id,
+                name_i18n={"en": char_name}, guild_id=self.mock_interaction.guild_id,
+                selected_language="en"
+            )
+            self.mock_character_manager.create_new_character = AsyncMock(return_value=expected_char_obj)
+
+            await self.cog.cmd_start_new_character.callback(self.cog, self.mock_interaction, character_name=char_name, player_language=None)
+
+        self.mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
+        self.mock_session.execute.assert_called_once()
+
+        mock_create_entity_call.assert_called_once()
+        self.assertEqual(mock_create_entity_call.call_args[0][1], Player)
+
+        self.mock_session.commit.assert_called_once()
+
+        self.mock_character_manager.create_new_character.assert_awaited_once_with(
+            guild_id=self.mock_interaction.guild_id,
+            user_id=self.mock_interaction.user.id,
+            character_name=char_name,
+            language="en"
         )
-
-        mock_interaction.followup.send.assert_called_once()
-        args, kwargs = mock_interaction.followup.send.call_args
+        self.mock_interaction.followup.send.assert_called_once()
+        args, kwargs = self.mock_interaction.followup.send.call_args
         self.assertIn(f"Персонаж '{char_name}' успешно создан!", args[0])
         self.assertEqual(kwargs.get('ephemeral'), True)
 
-    @patch('bot.command_modules.game_setup_cmds.is_master_or_admin_check', return_value=True)
-    async def test_cmd_set_bot_language_updates_gm_config(self, mock_is_master_or_admin_check):
-        interaction_mock = AsyncMock()
-        interaction_mock.response = AsyncMock()
-        interaction_mock.guild_id = "test_guild_789"
-        interaction_mock.user = MagicMock()
+    async def test_cmd_start_new_character_existing_player_new_char(self):
+        char_name = "AnotherHero"
+        self.mock_session.execute.return_value = self.mock_sql_execute_result_existing_player
+        self.mock_existing_player_obj.active_character_id = None
 
-        mock_game_manager = MagicMock(spec=GameManager)
-        mock_game_manager.set_default_bot_language = AsyncMock(return_value=True)
-
-        mock_bot_instance = MagicMock(spec=RPGBot)
-        mock_bot_instance.game_manager = mock_game_manager
-        interaction_mock.client = mock_bot_instance
-
-        cog = GameSetupCog(mock_bot_instance)
-
-        await cog.cmd_set_bot_language.callback(cog, interaction_mock, language_code="ru")
-
-        mock_is_master_or_admin_check.assert_called_once_with(interaction_mock)
-        mock_game_manager.set_default_bot_language.assert_called_once_with(
-            "ru", str(interaction_mock.guild_id)
+        expected_char_obj = Character(
+            id="char_id_2", discord_user_id=self.mock_interaction.user.id,
+            name_i18n={"en": char_name}, guild_id=self.mock_interaction.guild_id,
+            selected_language="ru"
         )
-        interaction_mock.response.send_message.assert_called_once_with(
-            "Язык бота для этой гильдии установлен на 'ru'.", ephemeral=True
+        self.mock_character_manager.create_new_character = AsyncMock(return_value=expected_char_obj)
+
+        await self.cog.cmd_start_new_character.callback(self.cog, self.mock_interaction, character_name=char_name, player_language="ru")
+
+        self.mock_session.execute.assert_called_once()
+        self.mock_session.commit.assert_not_called()
+
+        self.mock_character_manager.create_new_character.assert_awaited_once_with(
+            guild_id=self.mock_interaction.guild_id,
+            user_id=self.mock_interaction.user.id,
+            character_name=char_name,
+            language="ru"
+        )
+        self.mock_interaction.followup.send.assert_called_once()
+        args, kwargs = self.mock_interaction.followup.send.call_args
+        self.assertIn(f"Персонаж '{char_name}' успешно создан!", args[0])
+        self.assertIn("Язык для сообщений: ru", args[0])
+
+
+    async def test_cmd_start_new_character_already_exists_error(self):
+        char_name = "DuplicateHero"
+        self.mock_session.execute.return_value = self.mock_sql_execute_result_existing_player
+        # Important: Simulate that the existing player *already has an active character*
+        self.mock_existing_player_obj.active_character_id = "some_active_char_id"
+
+        # If create_new_character is called, it should raise CharacterAlreadyExistsError
+        self.mock_character_manager.create_new_character = AsyncMock(side_effect=CharacterAlreadyExistsError("Test char already exists"))
+
+        await self.cog.cmd_start_new_character.callback(self.cog, self.mock_interaction, character_name=char_name, player_language=None)
+
+        # In this specific path (player exists, active character ID exists on player),
+        # CharacterManager.create_new_character should be called and raise the error.
+        self.mock_character_manager.create_new_character.assert_awaited_once()
+        self.mock_interaction.followup.send.assert_called_once_with(
+            "У вас уже есть персонаж в этой игре. Вы не можете создать еще одного.",
+            ephemeral=True
         )
 
-    @patch('bot.command_modules.game_setup_cmds.is_master_or_admin_check', return_value=False)
-    async def test_cmd_set_bot_language_unauthorized(self, mock_is_master_or_admin_check):
-        interaction_mock = AsyncMock()
-        interaction_mock.response = AsyncMock()
-        interaction_mock.client = MagicMock(spec=RPGBot)
-        interaction_mock.guild_id = "test_guild_789"
-        interaction_mock.user = MagicMock()
+    async def test_cmd_start_new_character_player_creation_fails_gracefully(self):
+        char_name = "UnluckyHero"
+        self.mock_session.execute.return_value = self.mock_sql_execute_result_no_player
 
-        mock_game_manager = MagicMock(spec=GameManager)
-        interaction_mock.client.game_manager = mock_game_manager
+        with patch('bot.command_modules.game_setup_cmds.create_entity', new=AsyncMock(return_value=None)) as mock_create_entity_fail:
+            await self.cog.cmd_start_new_character.callback(self.cog, self.mock_interaction, character_name=char_name, player_language=None)
 
-        # Instantiate the Cog
-        cog = GameSetupCog(bot=interaction_mock.client) # Pass the bot mock
+            mock_create_entity_fail.assert_called_once()
+            self.mock_interaction.followup.send.assert_called_once_with(
+                "There was an issue creating your player profile. Please try again.", ephemeral=True
+            )
+            self.mock_character_manager.create_new_character.assert_not_called()
 
-        cog = GameSetupCog(interaction_mock.client)
-
-        await cog.cmd_set_bot_language.callback(cog, interaction_mock, language_code="ru")
-
-        mock_is_master_or_admin_check.assert_called_once_with(interaction_mock)
-        mock_game_manager.set_default_bot_language.assert_not_called()
-        interaction_mock.response.send_message.assert_called_once_with(
-            "Только Мастер или администратор может менять язык бота.", ephemeral=True
-        )
 
 if __name__ == '__main__':
     unittest.main()

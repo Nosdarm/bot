@@ -2,11 +2,11 @@ import unittest
 from unittest.mock import MagicMock, AsyncMock, patch, ANY, AsyncMock
 import uuid
 import json
-import logging // Added for logger patching
+import logging # Added for logger patching
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-from bot.game.managers.character_manager import CharacterManager, UpdateHealthResult
+from bot.game.managers.character_manager import CharacterManager, UpdateHealthResult, CharacterAlreadyExistsError
 import bot.game.managers.character_manager as character_manager_module # For logger patching
 from bot.game.models.character import Character
 from bot.game.constants import DEFAULT_BASE_STATS, GUILD_DEFAULT_INITIAL_LOCATION_ID
@@ -158,7 +158,8 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         self.char_manager._characters[guild_id] = {}
         # Simulate Player already has an active character
         mock_player_obj_with_active_char = Player(id="player_uuid_existing", discord_id=str(discord_id_int), guild_id=guild_id, active_character_id="existing_char_id")
-        mock_existing_char_obj = Character(id="existing_char_id", player_id=mock_player_obj_with_active_char.id, guild_id=guild_id, discord_user_id=discord_id_int, name_i18n={"en":"Existing"})
+        # player_id is not a direct attribute of Character. The link is via Player.active_character_id == Character.id
+        mock_existing_char_obj = Character(id="existing_char_id", guild_id=guild_id, discord_user_id=discord_id_int, name_i18n={"en":"Existing"}, selected_language="en")
 
         mock_session = AsyncMock(spec=AsyncSession)
 
@@ -179,7 +180,7 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         char_name = "TestChar"
         expected_char = Character(
             id=char_id, guild_id=guild_id, discord_user_id=12345, name_i18n={"en": char_name, "ru": char_name},
-            stats={}, inventory=[], location_id="loc1", hp=100, max_health=100
+            stats={'hp': 100.0, 'max_health': 100.0}, inventory=[], location_id="loc1", hp=100.0, max_health=100.0, selected_language="en"
         )
         self.char_manager._characters[guild_id] = {char_id: expected_char}
 
@@ -190,21 +191,22 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         guild_id = "guild1"
         discord_id_int = 12345
         char_id = "char1"
-        player_id = "player_for_char1"
+        # player_id is not directly on Character model, it's linked via Player.active_character_id
         char_name = "TestChar"
         expected_char = Character(
-            id=char_id, player_id=player_id, guild_id=guild_id, discord_user_id=discord_id_int, name_i18n={"en": char_name, "ru": char_name},
-            stats={}, inventory=[], location_id="loc1", hp=100, max_health=100
+            id=char_id, guild_id=guild_id, discord_user_id=discord_id_int, name_i18n={"en": char_name, "ru": char_name},
+            stats={'hp': 100.0, 'max_health': 100.0}, inventory=[], location_id="loc1", hp=100.0, max_health=100.0, selected_language="en"
         )
-        mock_player = Player(id=player_id, discord_id=str(discord_id_int), guild_id=guild_id, active_character_id=char_id)
+        # mock_player is used to simulate DB state for Player with active_character_id
+        mock_player = Player(id="player_for_char1", discord_id=str(discord_id_int), guild_id=guild_id, active_character_id=char_id)
 
         self.char_manager._characters.setdefault(guild_id, {})[char_id] = expected_char
-        self.char_manager._discord_to_player_map.setdefault(guild_id, {})[discord_id_int] = player_id
+        self.char_manager._discord_to_player_map.setdefault(guild_id, {})[discord_id_int] = mock_player.id # Use mock_player.id
 
         mock_session = AsyncMock(spec=AsyncSession)
 
         async def mock_session_get(model_cls, pk_id):
-            if model_cls == Player and pk_id == player_id: return mock_player
+            if model_cls == Player and pk_id == mock_player.id: return mock_player # Use mock_player.id
             if model_cls == Character and pk_id == char_id: return expected_char
             return None
         mock_session.get = AsyncMock(side_effect=mock_session_get)
@@ -225,14 +227,23 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         char_id = "char_death_test"
         character_to_die = Character(
             id=char_id, guild_id=guild_id, discord_user_id=999, name_i18n={"en": "Hero"},
-            hp=10.0, max_health=100.0, stats={}, inventory=[], is_alive=True,
-            current_combat_id="combat_active", party_id="party_active", location_id="loc_active"
+            hp=10.0, max_health=100.0, stats={'hp': 10.0, 'max_health': 100.0}, inventory=[], is_alive=True,
+            party_id="party_active", location_id="loc_active", selected_language="en"
+            # current_combat_id is not a direct Character field
         )
 
         mock_session = AsyncMock(spec=AsyncSession)
         mock_session.get = AsyncMock(return_value=character_to_die) # Simulate session.get(Character, char_id)
         mock_session.add = AsyncMock()
-        mock_session.begin_nested = AsyncMock(return_value=AsyncMock()) # Mock for nested transaction
+
+        # Configure mock_session.begin() and begin_nested() to return a proper async context manager
+        async_context_manager_mock = AsyncMock()
+        # __aenter__ needs to return an awaitable that resolves to the context for the 'as' clause (often the session or a transaction object)
+        async_context_manager_mock.__aenter__ = AsyncMock(return_value=mock_session) # Or a dedicated transaction mock if needed
+        async_context_manager_mock.__aexit__ = AsyncMock(return_value=False) # Return False to not suppress exceptions
+
+        mock_session.begin.return_value = async_context_manager_mock
+        mock_session.begin_nested.return_value = async_context_manager_mock
 
         # Ensure dependent managers are set and are AsyncMocks
         self.char_manager._status_manager = AsyncMock()
@@ -249,7 +260,9 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(character_to_die.is_alive)
         self.assertEqual(character_to_die.hp, 0.0)
-        mock_session.add.assert_called_with(character_to_die) # Ensure merged/added
+        # mock_session.add.assert_called_with(character_to_die) # Removed: update_health now marks dirty, save_state handles DB persistence.
+        self.char_manager.mark_character_dirty.assert_called_once_with(guild_id, char_id)
+
 
         self.mock_status_manager.clean_up_for_character.assert_awaited_once_with(guild_id, char_id, session=mock_session)
         self.mock_combat_manager.remove_participant_from_combat.assert_awaited_once_with(guild_id, "combat_active", char_id, session=mock_session)
@@ -269,7 +282,13 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         guild_id = "guild1"
         char1_id = "char1"
         char1_name = "Char1"
-        char1 = Character(id=char1_id, guild_id=guild_id, discord_user_id=1, name_i18n={"en": char1_name}, max_health=100.0, hp=100.0, stats={"str":10}, inventory=[{"item_id":"potion","quantity":1}], location_id="loc1", status_effects_json="[\"poisoned\"]", is_alive=True, level=1, experience=10)
+        char1 = Character(
+            id=char1_id, guild_id=guild_id, discord_user_id=1, name_i18n={"en": char1_name},
+            max_health=100.0, hp=100.0, stats={"str":10, "hp": 100.0, "max_health": 100.0},
+            inventory=[{"item_id":"potion","quantity":1}], location_id="loc1",
+            status_effects=[{"id": "poisoned", "name": "Poisoned", "duration": 5}], # Changed from status_effects_json
+            is_alive=True, level=1, experience=10, selected_language="en"
+        )
 
         self.char_manager._characters[guild_id] = {char1_id: char1}
         self.char_manager._dirty_characters[guild_id] = {char1_id}
@@ -280,7 +299,7 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         mock_guild_transaction_context = AsyncMock()
         mock_guild_transaction_context.__aenter__.return_value = mock_session_in_transaction
 
-        with patch('bot.game.managers.character_manager.GuildTransaction', return_value=mock_guild_transaction_context):
+        with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context): # Patched correct location
             await self.char_manager.save_state(guild_id)
 
         mock_session_in_transaction.merge.assert_called_once_with(char1)
@@ -297,7 +316,7 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         mock_guild_transaction_context = AsyncMock()
         mock_guild_transaction_context.__aenter__.return_value = mock_session_in_transaction
 
-        with patch('bot.game.managers.character_manager.GuildTransaction', return_value=mock_guild_transaction_context):
+        with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context): # Patched correct location
             await self.char_manager.save_state(guild_id)
 
         mock_session_in_transaction.execute.assert_called_once()
@@ -314,7 +333,12 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         char1_id_db = "char1_db"
         # Mock data from Player and Character tables
         mock_player_from_db = Player(id=player1_id, discord_id="discord1", guild_id=guild_id, active_character_id=char1_id_db)
-        mock_char_from_db = Character(id=char1_id_db, player_id=player1_id, guild_id=guild_id, name_i18n={"en": "CharFromDB"}, discord_user_id=123) # Fill other required fields
+        # player_id is not a direct Character field. It's linked via Player.active_character_id
+        mock_char_from_db = Character(
+            id=char1_id_db, guild_id=guild_id, name_i18n={"en": "CharFromDB"}, discord_user_id=123, selected_language="en"
+            # Add other required fields like hp, max_health, stats if CharacterManager.load_state relies on them
+            # For now, assuming basic fields are enough for this test's scope if it just checks loading into cache.
+        )
 
         mock_session_in_transaction = AsyncMock(spec=AsyncSession)
         mock_guild_transaction_context = AsyncMock()
@@ -326,7 +350,7 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
             if model_class == Character: return [mock_char_from_db]
             return []
 
-        with patch('bot.game.managers.character_manager.GuildTransaction', return_value=mock_guild_transaction_context):
+        with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context): # Patched correct location
             with patch('bot.database.crud_utils.get_entities', side_effect=mock_get_entities) as mock_crud_get_entities:
                 await self.char_manager.load_state(guild_id)
 

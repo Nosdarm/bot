@@ -349,10 +349,12 @@ class CommandRouter:
 
     async def _notify_master_of_pending_content(self, request_id: str, guild_id: str, user_id: str, context: Dict[str, Any]):
         persistence_manager: Optional["PersistenceManager"] = context.get('persistence_manager')
-        if not persistence_manager or not hasattr(persistence_manager, '_db_adapter') or not persistence_manager._db_adapter:
-             print("CommandRouter: ERROR - PersistenceManager or DB adapter not in context for _notify_master_of_pending_content.")
+        if not persistence_manager or not hasattr(persistence_manager, '_db_service') or \
+           not persistence_manager._db_service or not hasattr(persistence_manager._db_service, 'adapter') or \
+           not persistence_manager._db_service.adapter:
+             print("CommandRouter: ERROR - PersistenceManager, its DBService, or DB adapter not in context for _notify_master_of_pending_content.")
              return
-        db_adapter = persistence_manager._db_adapter
+        db_adapter = persistence_manager._db_service.adapter
         master_channel_id_str_template = self._settings.get('guild_specific_settings', {}).get(guild_id, {}).get('master_notification_channel_id')
         master_channel_id_str = master_channel_id_str_template if master_channel_id_str_template else self._settings.get('default_master_notification_channel_id')
 

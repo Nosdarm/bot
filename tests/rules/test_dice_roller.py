@@ -146,26 +146,17 @@ class TestDiceRoller(unittest.TestCase):
             roll_dice("2d6p3") # Invalid operator
 
     def test_zero_dice(self):
-        # The regex `^(\d*)d(\d+)(?:([+-])(\d+))?$` captures the number of dice in the first group.
-        # If `dice_string` is "0d6", `num_dice_str` is "0", so `num_dice` becomes 0.
-        # `rolls = [random.randint(1, num_sides) for _ in range(num_dice)]` correctly yields an empty list.
-        # `sum(rolls)` is 0. The modifier is added to this.
-        # This behavior (0 dice means 0 result from dice, plus modifier) is considered acceptable.
-        total, details = roll_dice("0d6")
-        self.assertEqual(total, 0)
-        self.assertEqual(len(details), 0)
-
-        total, details = roll_dice("0d20+5")
-        self.assertEqual(total, 5)
-        self.assertEqual(len(details), 0)
-
+        with self.assertRaisesRegex(ValueError, "Number of dice must be positive."):
+            roll_dice("0d6")
+        with self.assertRaisesRegex(ValueError, "Number of dice must be positive."):
+            roll_dice("0d20+5")
 
     def test_zero_sides(self):
-        with self.assertRaisesRegex(ValueError, "Number of sides cannot be zero."):
+        with self.assertRaisesRegex(ValueError, "Die sides must be positive."): # Corrected expected message
             roll_dice("1d0")
-        with self.assertRaisesRegex(ValueError, "Number of sides cannot be zero."):
+        with self.assertRaisesRegex(ValueError, "Die sides must be positive."): # Corrected expected message
             roll_dice("d0")
-        with self.assertRaisesRegex(ValueError, "Number of sides cannot be zero."):
+        with self.assertRaisesRegex(ValueError, "Die sides must be positive."): # Corrected expected message
             roll_dice("2d0+5")
 
 if __name__ == '__main__':

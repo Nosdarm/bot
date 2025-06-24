@@ -421,7 +421,7 @@ async def apply_status_effect(
 
         await game_log_manager.add_log_entry(f"{log_prefix} Save attempt result: {save_result.description}", "status_debug")
 
-        if save_result.is_success:
+        if save_result.succeeded: # Changed from is_success to succeeded
             if effect_on_save == "negate":
                 await game_log_manager.add_log_entry(f"{log_prefix} Successfully saved and negated.", "status_info")
                 return True

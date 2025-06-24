@@ -5,25 +5,43 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from bot.game.managers.game_log_manager import GameLogManager
 from bot.game.ai.narrative_generator import AINarrativeGenerator # Added
+from bot.database.models import GameLogEntry as GameLogEntryDB # Import the SQLAlchemy model
 # Assuming DBService and its adapter structure for mocking
 # If these are actual classes, they might need to be imported for isinstance checks or type hinting,
 # but for pure mocking, string paths or MagicMock can suffice.
 
-class MockPostgresAdapter:
-    def __init__(self):
-        self.execute = AsyncMock()
-        self.fetchall = AsyncMock()
-        self.fetchone = AsyncMock() # Added for get_log_by_id tests
-
-class MockDBService:
-    def __init__(self):
-        self.adapter = MockPostgresAdapter()
+# Removed MockPostgresAdapter and MockDBService classes
 
 class TestGameLogManager(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
-        self.mock_db_service = MockDBService()
-        self.mock_relationship_processor = AsyncMock() # Assuming it's used or optional
+        self.mock_db_service = AsyncMock() # Direct AsyncMock for DBService
+
+        # Setup session mocking
+        self.mock_session = AsyncMock(spec=AsyncSession) # This will be the session object yielded by the context manager
+        self.mock_session.add = MagicMock()
+        self.mock_session.execute = AsyncMock() # Ensure execute is an AsyncMock
+
+        # Factory function to create a new async context manager mock each time get_session is called
+        def create_async_session_context_manager(*args, **kwargs):
+            context_manager = AsyncMock()
+            context_manager.__aenter__ = AsyncMock(return_value=self.mock_session)
+            context_manager.__aexit__ = AsyncMock(return_value=None)
+            return context_manager
+
+        self.mock_db_service.get_session.side_effect = create_async_session_context_manager
+
+        # Mock session.begin() to also be an async context manager that can be called multiple times if needed
+        def create_async_transaction_context_manager(*args, **kwargs):
+            transaction_manager = AsyncMock()
+            # When session.begin() is entered, it should yield the session (or a transaction object that has an execute method)
+            transaction_manager.__aenter__ = AsyncMock(return_value=self.mock_session)
+            transaction_manager.__aexit__ = AsyncMock(return_value=None)
+            return transaction_manager
+
+        self.mock_session.begin.side_effect = create_async_transaction_context_manager
+
+        self.mock_relationship_processor = AsyncMock()
         self.mock_narrative_generator = AsyncMock(spec=AINarrativeGenerator)
         self.settings = {
             "guilds": {
@@ -78,40 +96,30 @@ class TestGameLogManager(unittest.IsolatedAsyncioTestCase):
             generate_narrative=False # Explicitly disable for this test
         )
 
-        self.mock_db_service.adapter.execute.assert_called_once()
-        call_args = self.mock_db_service.adapter.execute.call_args
+        self.mock_session.add.assert_called_once()
+        added_log_entry_instance = self.mock_session.add.call_args[0][0]
 
-        sql_statement = call_args[0][0]
-        params = call_args[0][1]
-
-        # Check SQL statement structure (basic check)
-        self.assertIn("INSERT INTO game_logs", sql_statement)
-        self.assertIn("VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)", sql_statement)
-        self.assertIn("(id, timestamp, guild_id, player_id, party_id, event_type, description_key, description_params_json, location_id, involved_entities_ids, details, channel_id, source_entity_id, source_entity_type, target_entity_id, target_entity_type)", sql_statement)
-
-        # Check parameters
-        self.assertEqual(len(params), 15) # Now 15 placeholders
-
-        # Param 0: id (should be a UUID string)
+        self.assertIsInstance(added_log_entry_instance, GameLogEntryDB)
         try:
-            uuid.UUID(params[0], version=4)
+            uuid.UUID(added_log_entry_instance.id, version=4)
         except ValueError:
-            self.fail("First parameter (id) is not a valid UUID4 string.")
+            self.fail("Log entry ID is not a valid UUID4 string.")
 
-        self.assertEqual(params[1], guild_id)
-        self.assertEqual(params[2], player_id)
-        self.assertEqual(params[3], party_id)
-        self.assertEqual(params[4], event_type)
-        self.assertEqual(params[5], description_key_val) # description_key
-        self.assertEqual(params[6], json.dumps(description_params_val)) # description_params_json
-        self.assertEqual(params[7], location_id)
-        self.assertEqual(params[8], json.dumps(involved_entities_ids)) # involved_entities_ids_json
-        self.assertEqual(params[9], json.dumps(details)) # details_json
-        self.assertEqual(params[10], channel_id)
-        self.assertEqual(params[11], source_entity_id_val) # source_entity_id
-        self.assertEqual(params[12], source_entity_type_val) # source_entity_type
-        self.assertEqual(params[13], target_entity_id_val) # target_entity_id
-        self.assertEqual(params[14], target_entity_type_val) # target_entity_type
+        self.assertEqual(added_log_entry_instance.guild_id, guild_id)
+        self.assertEqual(added_log_entry_instance.player_id, player_id)
+        self.assertEqual(added_log_entry_instance.party_id, party_id)
+        self.assertEqual(added_log_entry_instance.event_type, event_type)
+        self.assertEqual(added_log_entry_instance.description_key, description_key_val)
+        self.assertEqual(json.loads(added_log_entry_instance.description_params_json), description_params_val)
+        self.assertEqual(added_log_entry_instance.location_id, location_id)
+        self.assertEqual(json.loads(added_log_entry_instance.involved_entities_ids_json), involved_entities_ids)
+        self.assertEqual(json.loads(added_log_entry_instance.details_json), details)
+        self.assertEqual(added_log_entry_instance.channel_id, channel_id) # channel_id is int in DB model
+        self.assertEqual(added_log_entry_instance.source_entity_id, source_entity_id_val)
+        self.assertEqual(added_log_entry_instance.source_entity_type, source_entity_type_val)
+        self.assertEqual(added_log_entry_instance.target_entity_id, target_entity_id_val)
+        self.assertEqual(added_log_entry_instance.target_entity_type, target_entity_type_val)
+        # self.assertIsNotNone(added_log_entry_instance.timestamp) # Timestamp is set by DB (NOW())
 
     async def test_get_logs_by_guild_fetches_and_returns_data(self):
         guild_id = "test_guild_456"
@@ -220,11 +228,11 @@ class TestGameLogManager(unittest.IsolatedAsyncioTestCase):
             generate_narrative=True
         )
 
-        self.mock_db_service.adapter.execute.assert_called_once()
-        sql_params = self.mock_db_service.adapter.execute.call_args[0][1]
-        details_json_param = sql_params[9] # details is param index 9
+        self.mock_session.add.assert_called_once()
+        added_log_entry_instance = self.mock_session.add.call_args[0][0]
+        self.assertIsInstance(added_log_entry_instance, GameLogEntryDB)
 
-        logged_details = json.loads(details_json_param)
+        logged_details = json.loads(added_log_entry_instance.details_json)
         self.assertEqual(logged_details["story_point"], "A great discovery")
         self.assertEqual(logged_details["ai_narrative_en"], "Narrative in en for narrator_player")
         self.assertEqual(logged_details["ai_narrative_ru"], "Narrative in ru for narrator_player")
@@ -259,10 +267,11 @@ class TestGameLogManager(unittest.IsolatedAsyncioTestCase):
 
         self.mock_narrative_generator.generate_narrative_for_event.assert_not_called()
 
-        self.mock_db_service.adapter.execute.assert_called_once()
-        sql_params = self.mock_db_service.adapter.execute.call_args[0][1]
-        details_json_param = sql_params[9]
-        logged_details = json.loads(details_json_param)
+        self.mock_session.add.assert_called_once()
+        added_log_entry_instance = self.mock_session.add.call_args[0][0]
+        self.assertIsInstance(added_log_entry_instance, GameLogEntryDB)
+
+        logged_details = json.loads(added_log_entry_instance.details_json)
         self.assertEqual(logged_details["data"], "simple_data")
         self.assertNotIn("ai_narrative_en", logged_details)
         self.assertNotIn("ai_narrative_ru", logged_details)
@@ -281,10 +290,11 @@ class TestGameLogManager(unittest.IsolatedAsyncioTestCase):
             generate_narrative=True
         )
 
-        self.mock_db_service.adapter.execute.assert_called_once()
-        sql_params = self.mock_db_service.adapter.execute.call_args[0][1]
-        details_json_param = sql_params[9]
-        logged_details = json.loads(details_json_param)
+        self.mock_session.add.assert_called_once()
+        added_log_entry_instance = self.mock_session.add.call_args[0][0]
+        self.assertIsInstance(added_log_entry_instance, GameLogEntryDB)
+
+        logged_details = json.loads(added_log_entry_instance.details_json)
 
         self.assertEqual(logged_details["error_test"], True)
         self.assertIn("ai_narrative_en_error", logged_details)

@@ -38,8 +38,10 @@ class TestNotificationService(unittest.IsolatedAsyncioTestCase): # Changed to Is
 
         self.mock_send_callback_factory.assert_called_once_with(987654321098765432) # Guild specific ID
         mock_send_func.assert_awaited_once()
-        args, _ = mock_send_func.call_args
-        message_content = args[0] # Assuming content is the first positional arg
+        # Access kwargs for content and embed
+        kwargs = mock_send_func.call_args.kwargs
+        message_content = kwargs.get('content', '')
+        # message_embed = kwargs.get('message_embed') # If we need to check embed fields
 
         self.assertIn(f"**Type:** `{content_type.capitalize()}`", message_content)
         self.assertIn(f"**Request ID:** `{request_id}`", message_content)
@@ -67,8 +69,8 @@ class TestNotificationService(unittest.IsolatedAsyncioTestCase): # Changed to Is
 
         self.mock_send_callback_factory.assert_called_once_with(123456789012345678) # Global ID
         mock_send_func.assert_awaited_once()
-        args, _ = mock_send_func.call_args
-        message_content = args[0]
+        kwargs = mock_send_func.call_args.kwargs
+        message_content = kwargs.get('content', '')
         self.assertIn(f"**Type:** `{content_type.capitalize()}`", message_content)
         self.assertIn(f"**Title:** Big Adventure", message_content) # Check formatted summary
 

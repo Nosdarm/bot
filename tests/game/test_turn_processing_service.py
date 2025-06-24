@@ -54,9 +54,16 @@ class TestTurnProcessingService(unittest.IsolatedAsyncioTestCase):
         self.sample_rules_config = CoreGameRulesConfig(action_conflicts=[])
         self.mock_rule_engine.rules_config_data = self.sample_rules_config
 
+        # Add mocks for new required __init__ params
+        self.mock_action_scheduler = AsyncMock()
+        self.mock_npc_action_planner = AsyncMock()
+        self.mock_npc_action_processor = AsyncMock()
+        self.mock_npc_manager = AsyncMock()
+
+
         self.tps = TurnProcessingService(
             character_manager=self.mock_character_manager,
-            conflict_resolver=self.mock_conflict_resolver,
+            # conflict_resolver=self.mock_conflict_resolver, # Removed
             rule_engine=self.mock_rule_engine,
             game_manager=self.mock_game_manager,
             game_log_manager=self.mock_game_log_manager,
@@ -68,6 +75,10 @@ class TestTurnProcessingService(unittest.IsolatedAsyncioTestCase):
             inventory_manager=self.mock_inventory_manager,
             equipment_manager=self.mock_equipment_manager,
             item_manager=self.mock_item_manager,
+            action_scheduler=self.mock_action_scheduler, # Added
+            npc_action_planner=self.mock_npc_action_planner, # Added
+            npc_action_processor=self.mock_npc_action_processor, # Added
+            npc_manager=self.mock_npc_manager, # Added
             settings=self.mock_settings
         )
 

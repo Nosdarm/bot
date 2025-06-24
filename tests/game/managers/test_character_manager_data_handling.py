@@ -22,7 +22,43 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
         self.mock_db_adapter.fetchall = AsyncMock()
         self.mock_db_adapter.execute_insert = AsyncMock(return_value=1) # Assuming returns lastrowid
 
-        self.character_manager = CharacterManager(db_adapter=self.mock_db_adapter)
+        # CharacterManager expects db_service, settings, and other managers.
+        # For this test suite focusing on data persistence aspects handled *by* CharacterManager
+        # (like how it calls its db_adapter, or how it structures data for DB),
+        # we might only need to mock db_service if CharacterManager directly uses it
+        # for session management before calling adapter methods.
+        # If CharacterManager's save_state/load_state directly use self._db_adapter,
+        # then passing the mock_db_adapter as 'db_service' (if it duck-types)
+        # or ensuring CharacterManager can be initialized with just the adapter for these specific tests
+        # might be needed.
+        # The error indicates `db_adapter` is not an expected kwarg.
+        # Let's assume CharacterManager constructor needs `db_service`.
+        # We'll also need to provide other required non-optional args for CharacterManager.
+        mock_settings = {} # Minimal settings
+        # Mocks for other required managers, if any, based on CharacterManager.__init__
+        # For now, assuming only db_service and settings are strictly needed if other managers are Optional.
+        # The original error was about db_adapter, let's fix that first.
+        # If other TypeErrors appear for missing managers, they'll need to be added.
+        self.mock_game_manager = AsyncMock() # If game_manager is needed for rules etc.
+
+        self.character_manager = CharacterManager(
+            db_service=self.mock_db_adapter, # Pass the adapter as db_service
+            settings=mock_settings,
+            item_manager=AsyncMock(), # Add mocks for other required managers
+            location_manager=AsyncMock(),
+            rule_engine=AsyncMock(),
+            status_manager=AsyncMock(),
+            party_manager=AsyncMock(),
+            combat_manager=AsyncMock(),
+            dialogue_manager=AsyncMock(),
+            relationship_manager=AsyncMock(),
+            game_log_manager=AsyncMock(),
+            npc_manager=AsyncMock(),
+            inventory_manager=AsyncMock(),
+            equipment_manager=AsyncMock(),
+            game_manager=self.mock_game_manager
+        )
+
 
         # Default character data for tests
         self.character_id = "test_char_123"

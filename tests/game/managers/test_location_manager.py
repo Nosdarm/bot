@@ -84,23 +84,30 @@ class TestLocationManagerMoveEntity(unittest.IsolatedAsyncioTestCase):
         self.mock_on_enter_action_executor = AsyncMock()
         self.mock_stage_description_generator = AsyncMock()
 
+        # Create a mock for GameManager
+        mock_game_manager = AsyncMock()
+        mock_game_manager.db_service = self.mock_db_service # Though LM also takes db_service directly
+        mock_game_manager.rule_engine = self.mock_rule_engine
+        mock_game_manager.event_manager = self.mock_event_manager
+        mock_game_manager.character_manager = self.mock_character_manager
+        mock_game_manager.npc_manager = self.mock_npc_manager
+        mock_game_manager.item_manager = self.mock_item_manager
+        mock_game_manager.combat_manager = self.mock_combat_manager
+        mock_game_manager.status_manager = self.mock_status_manager
+        mock_game_manager.party_manager = self.mock_party_manager
+        mock_game_manager.time_manager = self.mock_time_manager
+        mock_game_manager.game_log_manager = AsyncMock() # Add game_log_manager
+        mock_game_manager._event_stage_processor = self.mock_event_stage_processor
+        mock_game_manager._event_action_processor = self.mock_event_action_processor
+        mock_game_manager._on_enter_action_executor = self.mock_on_enter_action_executor
+        mock_game_manager._stage_description_generator = self.mock_stage_description_generator
+
+
         self.location_manager = LocationManager(
-            db_service=self.mock_db_service,
+            db_service=self.mock_db_service, # LocationManager takes db_service directly
             settings=self.mock_settings,
-            rule_engine=self.mock_rule_engine,
-            event_manager=self.mock_event_manager,
-            character_manager=self.mock_character_manager,
-            npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager,
-            combat_manager=self.mock_combat_manager,
-            status_manager=self.mock_status_manager,
-            party_manager=self.mock_party_manager,
-            time_manager=self.mock_time_manager,
-            send_callback_factory=self.mock_send_callback_factory,
-            event_stage_processor=self.mock_event_stage_processor,
-            event_action_processor=self.mock_event_action_processor,
-            on_enter_action_executor=self.mock_on_enter_action_executor,
-            stage_description_generator=self.mock_stage_description_generator
+            game_manager=mock_game_manager, # Pass the GameManager mock
+            send_callback_factory=self.mock_send_callback_factory
         )
 
         self.guild_id = "test_guild_1"
@@ -292,26 +299,40 @@ class TestLocationManagerAICreation(unittest.IsolatedAsyncioTestCase):
 
         self.guild_id = "test_guild_aic"
 
+        # Create a mock for GameManager
+        mock_game_manager = AsyncMock()
+        mock_game_manager.db_service = self.mock_db_service
+        mock_game_manager.rule_engine = self.mock_rule_engine
+        mock_game_manager.event_manager = self.mock_event_manager
+        mock_game_manager.character_manager = self.mock_character_manager
+        mock_game_manager.npc_manager = self.mock_npc_manager
+        mock_game_manager.item_manager = self.mock_item_manager
+        mock_game_manager.combat_manager = self.mock_combat_manager
+        mock_game_manager.status_manager = self.mock_status_manager
+        mock_game_manager.party_manager = self.mock_party_manager
+        mock_game_manager.time_manager = self.mock_time_manager
+        mock_game_manager.game_log_manager = AsyncMock()
+        mock_game_manager._event_stage_processor = self.mock_event_stage_processor
+        mock_game_manager._event_action_processor = self.mock_event_action_processor
+        mock_game_manager._on_enter_action_executor = self.mock_on_enter_action_executor
+        mock_game_manager._stage_description_generator = self.mock_stage_description_generator
+        # For AI creation specific mocks, if LM gets them via GM
+        mock_game_manager._multilingual_prompt_generator = self.mock_prompt_generator
+        mock_game_manager._openai_service = self.mock_openai_service
+        mock_game_manager._ai_validator = self.mock_ai_validator
+
+
         self.location_manager = LocationManager(
             db_service=self.mock_db_service,
             settings=self.mock_settings,
-            rule_engine=self.mock_rule_engine,
-            event_manager=self.mock_event_manager,
-            character_manager=self.mock_character_manager,
-            npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager,
-            combat_manager=self.mock_combat_manager,
-            status_manager=self.mock_status_manager,
-            party_manager=self.mock_party_manager,
-            time_manager=self.mock_time_manager,
-            send_callback_factory=self.mock_send_callback_factory,
-            event_stage_processor=self.mock_event_stage_processor,
-            event_action_processor=self.mock_event_action_processor,
-            on_enter_action_executor=self.mock_on_enter_action_executor,
-            stage_description_generator=self.mock_stage_description_generator
+            game_manager=mock_game_manager,
+            send_callback_factory=self.mock_send_callback_factory
         )
-        self.location_manager._multilingual_prompt_generator = self.mock_prompt_generator
-        self.location_manager._openai_service = self.mock_openai_service
+        # These are set directly on location_manager in the original test,
+        # but LocationManager __init__ does not take them.
+        # If LM needs them, it should get them from game_manager.
+        # self.location_manager._multilingual_prompt_generator = self.mock_prompt_generator
+        # self.location_manager._openai_service = self.mock_openai_service
         self.location_manager._ai_validator = self.mock_ai_validator
 
 
@@ -502,15 +523,29 @@ class TestLocationManagerTriggerHandling(unittest.IsolatedAsyncioTestCase):
         mock_settings.get.side_effect = lambda key, default=None: {"location_templates": {DUMMY_LOCATION_TEMPLATE_DATA["id"]: DUMMY_LOCATION_TEMPLATE_DATA.copy()}} if key == "location_templates" else default
 
 
+        # Create a mock for GameManager
+        mock_game_manager = AsyncMock()
+        mock_game_manager.db_service = self.mock_db_service
+        mock_game_manager.rule_engine = self.mock_rule_engine # This mock_rule_engine will be used by LM
+        mock_game_manager.event_manager = AsyncMock()
+        mock_game_manager.character_manager = AsyncMock()
+        mock_game_manager.npc_manager = AsyncMock()
+        mock_game_manager.item_manager = AsyncMock()
+        mock_game_manager.combat_manager = AsyncMock()
+        mock_game_manager.status_manager = AsyncMock()
+        mock_game_manager.party_manager = AsyncMock()
+        mock_game_manager.time_manager = AsyncMock()
+        mock_game_manager.game_log_manager = AsyncMock()
+        mock_game_manager._event_stage_processor = AsyncMock()
+        mock_game_manager._event_action_processor = AsyncMock()
+        mock_game_manager._on_enter_action_executor = AsyncMock()
+        mock_game_manager._stage_description_generator = AsyncMock()
+
         self.location_manager = LocationManager(
             db_service=self.mock_db_service,
             settings=mock_settings,
-            rule_engine=self.mock_rule_engine,
-            event_manager=AsyncMock(), character_manager=AsyncMock(),npc_manager=AsyncMock(),
-            item_manager=AsyncMock(),combat_manager=AsyncMock(),status_manager=AsyncMock(),
-            party_manager=AsyncMock(),time_manager=AsyncMock(),send_callback_factory=MagicMock(),
-            event_stage_processor=AsyncMock(), event_action_processor=AsyncMock(),
-            on_enter_action_executor=AsyncMock(),stage_description_generator=AsyncMock()
+            game_manager=mock_game_manager,
+            send_callback_factory=MagicMock()
         )
         self.guild_id = "trigger_guild"
         self.entity_id = "triggered_entity"
@@ -635,23 +670,28 @@ class TestLocationManager(unittest.IsolatedAsyncioTestCase):
 
         self.guild_id = "test_guild_main"
 
+        mock_game_manager = AsyncMock()
+        mock_game_manager.db_service = self.mock_db_service
+        mock_game_manager.rule_engine = self.mock_rule_engine
+        mock_game_manager.event_manager = self.mock_event_manager
+        mock_game_manager.character_manager = self.mock_character_manager
+        mock_game_manager.npc_manager = self.mock_npc_manager
+        mock_game_manager.item_manager = self.mock_item_manager
+        mock_game_manager.combat_manager = self.mock_combat_manager
+        mock_game_manager.status_manager = self.mock_status_manager
+        mock_game_manager.party_manager = self.mock_party_manager
+        mock_game_manager.time_manager = self.mock_time_manager
+        mock_game_manager.game_log_manager = AsyncMock()
+        mock_game_manager._event_stage_processor = self.mock_event_stage_processor
+        mock_game_manager._event_action_processor = self.mock_event_action_processor
+        mock_game_manager._on_enter_action_executor = self.mock_on_enter_action_executor
+        mock_game_manager._stage_description_generator = self.mock_stage_description_generator
+
         self.location_manager = LocationManager(
             db_service=self.mock_db_service,
             settings=self.mock_settings,
-            rule_engine=self.mock_rule_engine,
-            event_manager=self.mock_event_manager,
-            character_manager=self.mock_character_manager,
-            npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager,
-            combat_manager=self.mock_combat_manager,
-            status_manager=self.mock_status_manager,
-            party_manager=self.mock_party_manager,
-            time_manager=self.mock_time_manager,
-            send_callback_factory=self.mock_send_callback_factory,
-            event_stage_processor=self.mock_event_stage_processor,
-            event_action_processor=self.mock_event_action_processor,
-            on_enter_action_executor=self.mock_on_enter_action_executor,
-            stage_description_generator=self.mock_stage_description_generator
+            game_manager=mock_game_manager,
+            send_callback_factory=self.mock_send_callback_factory
         )
 
         self.location_manager._location_instances = {}
@@ -745,23 +785,28 @@ class TestLocationManagerContinued(unittest.IsolatedAsyncioTestCase):
 
         self.guild_id = "test_guild_continued"
 
+        mock_game_manager = AsyncMock()
+        mock_game_manager.db_service = self.mock_db_service
+        mock_game_manager.rule_engine = self.mock_rule_engine
+        mock_game_manager.event_manager = self.mock_event_manager
+        mock_game_manager.character_manager = self.mock_character_manager
+        mock_game_manager.npc_manager = self.mock_npc_manager
+        mock_game_manager.item_manager = self.mock_item_manager
+        mock_game_manager.combat_manager = self.mock_combat_manager
+        mock_game_manager.status_manager = self.mock_status_manager
+        mock_game_manager.party_manager = self.mock_party_manager
+        mock_game_manager.time_manager = self.mock_time_manager
+        mock_game_manager.game_log_manager = AsyncMock()
+        mock_game_manager._event_stage_processor = self.mock_event_stage_processor
+        mock_game_manager._event_action_processor = self.mock_event_action_processor
+        mock_game_manager._on_enter_action_executor = self.mock_on_enter_action_executor
+        mock_game_manager._stage_description_generator = self.mock_stage_description_generator
+
         self.location_manager = LocationManager(
             db_service=self.mock_db_service,
             settings=self.mock_settings,
-            rule_engine=self.mock_rule_engine,
-            event_manager=self.mock_event_manager,
-            character_manager=self.mock_character_manager,
-            npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager,
-            combat_manager=self.mock_combat_manager,
-            status_manager=self.mock_status_manager,
-            party_manager=self.mock_party_manager,
-            time_manager=self.mock_time_manager,
-            send_callback_factory=self.mock_send_callback_factory,
-            event_stage_processor=self.mock_event_stage_processor,
-            event_action_processor=self.mock_event_action_processor,
-            on_enter_action_executor=self.mock_on_enter_action_executor,
-            stage_description_generator=self.mock_stage_description_generator
+            game_manager=mock_game_manager,
+            send_callback_factory=self.mock_send_callback_factory
         )
 
         self.location_manager._location_instances = {self.guild_id: {}}

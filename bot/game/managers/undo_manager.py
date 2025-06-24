@@ -173,74 +173,226 @@ class UndoManager:
         event_type = log_entry.get('event_type')
         details_raw = log_entry.get('details', log_entry.get('metadata'))
         player_id = log_entry.get('player_id', log_entry.get('actor_id'))
-        party_id = log_entry.get('party_id')
-        log_id_for_error = log_entry.get('id', 'UnknownLogID') # For logging
+        # party_id = log_entry.get('party_id') # party_id is available if needed
+        log_id_for_error = log_entry.get('id', 'UnknownLogID')
 
         details: Optional[Dict[str, Any]] = None
-        if isinstance(details_raw, dict): details = details_raw
+        if isinstance(details_raw, dict):
+            details = details_raw
         elif isinstance(details_raw, str):
-            try: details = json.loads(details_raw)
+            try:
+                details = json.loads(details_raw)
             except json.JSONDecodeError:
-                logger.error("UndoManager Error: Failed to parse JSON details for log entry %s in guild %s. Details: %s", log_id_for_error, guild_id, details_raw, exc_info=True) # Changed
+                logger.error(f"UndoManager Error: Failed to parse JSON details for log entry {log_id_for_error} in guild {guild_id}. Details: {details_raw}", exc_info=True)
                 return False
         else:
-            logger.warning("UndoManager Warning: Log entry %s in guild %s has no details or details are of unexpected type %s. Cannot revert event type %s.", log_id_for_error, guild_id, type(details_raw), event_type) # Changed
-            return False
-        if not details:
-            logger.warning("UndoManager Warning: Log entry %s in guild %s resulted in empty details after parsing. Cannot revert event type %s.", log_id_for_error, guild_id, event_type) # Changed
+            logger.warning(f"UndoManager Warning: Log entry {log_id_for_error} in guild {guild_id} has no details or details are of unexpected type {type(details_raw)}. Cannot revert event type {event_type}.")
             return False
 
-        logger.info("UndoManager: Processing revert for log %s, event type %s in guild %s...", log_id_for_error, event_type, guild_id) # Changed
+        if not details: # Should be redundant if the above block handles it, but good as a safeguard
+            logger.warning(f"UndoManager Warning: Log entry {log_id_for_error} in guild {guild_id} resulted in empty details after parsing. Cannot revert event type {event_type}.")
+            return False
+
+        logger.info(f"UndoManager: Processing revert for log {log_id_for_error}, event type {event_type} in guild {guild_id}...")
         revert_successful = False
         action_specific_details = details.get("completed_action_details", details)
-        revert_data = action_specific_details.get("revert_data", {}) # Centralize revert_data access
+        revert_data = action_specific_details.get("revert_data", {})
 
-        # Corrected if/elif structure
         if event_type == "PLAYER_ACTION_COMPLETED":
             action_type_for_log = action_specific_details.get("type", action_specific_details.get("action_type", "UNKNOWN"))
+
             if action_type_for_log == "move" or action_type_for_log == "MOVE":
                 old_loc_id = revert_data.get("old_location_id")
-                if self._character_manager and player_id and old_loc_id is not None: revert_successful = await self._character_manager.revert_location_change(guild_id, player_id, old_loc_id)
-                elif not self._character_manager: logger.error("UndoManager Error: CharacterManager not available for MOVE revert in guild %s.", guild_id) # Changed
-                else: logger.error("UndoManager Error: Missing data for MOVE revert in log %s, guild %s. PlayerID: %s, OldLocID: %s", log_id_for_error, guild_id, player_id, old_loc_id) # Changed
+                if self._character_manager and player_id and old_loc_id is not None:
+                    if hasattr(self._character_manager, 'revert_location_change'):
+                        revert_successful = await self._character_manager.revert_location_change(guild_id, player_id, old_loc_id)
+                    else:
+                        logger.warning(f"UndoManager: CharacterManager does not have 'revert_location_change' method. Cannot revert move for log {log_id_for_error}, player {player_id}.")
+                        revert_successful = False
+                elif not self._character_manager: logger.error(f"UndoManager Error: CharacterManager not available for MOVE revert in guild {guild_id}.")
+                else: logger.error(f"UndoManager Error: Missing data for MOVE revert in log {log_id_for_error}, guild {guild_id}. PlayerID: {player_id}, OldLocID: {old_loc_id}")
+
             elif action_type_for_log == "use_item" and revert_data.get("hp_changed"):
                 old_hp, old_is_alive = revert_data.get("old_hp"), revert_data.get("old_is_alive")
-                if self._character_manager and player_id and old_hp is not None and old_is_alive is not None: revert_successful = await self._character_manager.revert_hp_change(guild_id, player_id, old_hp, old_is_alive)
-                elif not self._character_manager: logger.error("UndoManager Error: CharacterManager not available for HP_CHANGE revert in guild %s.", guild_id) # Changed
-                else: logger.error("UndoManager Error: Missing data for HP_CHANGE revert in log %s, guild %s.", log_id_for_error, guild_id) # Changed
-            elif revert_data.get("stat_changes"):
-                if self._character_manager and player_id: revert_successful = await self._character_manager.revert_stat_changes(guild_id, player_id, revert_data["stat_changes"])
-                elif not self._character_manager: logger.error("UndoManager Error: CharacterManager not available for stat_changes revert in guild %s.", guild_id) # Changed
-            elif revert_data.get("inventory_changes"):
-                 if self._character_manager and player_id: revert_successful = await self._character_manager.revert_inventory_changes(guild_id, player_id, revert_data["inventory_changes"])
-                 elif not self._character_manager: logger.error("UndoManager Error: CharacterManager not available for inventory_changes revert in guild %s.", guild_id) # Changed
-            elif revert_data.get("status_effect_change"):
+                if self._character_manager and player_id and old_hp is not None and old_is_alive is not None:
+                    if hasattr(self._character_manager, 'revert_hp_change'):
+                        revert_successful = await self._character_manager.revert_hp_change(guild_id, player_id, old_hp, old_is_alive)
+                    else:
+                        logger.warning(f"UndoManager: CharacterManager does not have 'revert_hp_change' method. Cannot revert HP for log {log_id_for_error}, player {player_id}.")
+                        revert_successful = False
+                elif not self._character_manager: logger.error(f"UndoManager Error: CharacterManager not available for HP_CHANGE revert in guild {guild_id}.")
+                else: logger.error(f"UndoManager Error: Missing data for HP_CHANGE revert in log {log_id_for_error}, guild {guild_id}.")
+
+            elif "stat_changes" in revert_data:
+                if self._character_manager and player_id:
+                    if hasattr(self._character_manager, 'revert_stat_changes'):
+                        revert_successful = await self._character_manager.revert_stat_changes(guild_id, player_id, revert_data["stat_changes"])
+                    else:
+                        logger.warning(f"UndoManager: CharacterManager does not have 'revert_stat_changes' method. Cannot revert stats for log {log_id_for_error}, player {player_id}.")
+                        revert_successful = False
+                elif not self._character_manager: logger.error(f"UndoManager Error: CharacterManager not available for stat_changes revert in guild {guild_id}.")
+
+            elif "inventory_changes" in revert_data:
+                 if self._character_manager and player_id:
+                     if hasattr(self._character_manager, 'revert_inventory_changes'):
+                         revert_successful = await self._character_manager.revert_inventory_changes(guild_id, player_id, revert_data["inventory_changes"])
+                     else:
+                         logger.warning(f"UndoManager: CharacterManager does not have 'revert_inventory_changes' method. Cannot revert inventory for log {log_id_for_error}, player {player_id}.")
+                         revert_successful = False
+                 elif not self._character_manager: logger.error(f"UndoManager Error: CharacterManager not available for inventory_changes revert in guild {guild_id}.")
+
+            elif "status_effect_change" in revert_data:
                 if self._character_manager and player_id:
                     change_info = revert_data["status_effect_change"]
-                    revert_successful = await self._character_manager.revert_status_effect_change(guild_id, player_id, change_info.get("action_taken"), change_info.get("status_effect_id"), change_info.get("full_status_effect_data"))
-                elif not self._character_manager: logger.error("UndoManager Error: CharacterManager not available for status_effect_change revert in guild %s.", guild_id) # Changed
-            else: logger.warning("UndoManager Warning: No specific revert logic for PLAYER_ACTION_COMPLETED subtype '%s' in log %s, guild %s.", action_type_for_log, log_id_for_error, guild_id) # Changed
+                    if hasattr(self._character_manager, 'revert_status_effect_change'):
+                         revert_successful = await self._character_manager.revert_status_effect_change(guild_id, player_id, change_info.get("action_taken"), change_info.get("status_effect_id"), change_info.get("full_status_effect_data"))
+                    else:
+                        logger.warning(f"UndoManager: CharacterManager does not have 'revert_status_effect_change' method for log {log_id_for_error}, player {player_id}.")
+                        revert_successful = False
+                elif not self._character_manager: logger.error(f"UndoManager Error: CharacterManager not available for status_effect_change revert in guild {guild_id}.")
+            else: logger.warning(f"UndoManager Warning: No specific revert logic for PLAYER_ACTION_COMPLETED subtype '{action_type_for_log}' in log {log_id_for_error}, guild {guild_id}.")
+
         elif event_type == "ENTITY_DEATH":
-            # ... (logic as before, ensure guild_id in logs) ...
-            pass
+            deceased_entity_id = details.get("deceased_entity_id")
+            deceased_entity_type = details.get("deceased_entity_type")
+            old_hp = revert_data.get("previous_hp")
+            old_is_alive = revert_data.get("previous_is_alive_status")
+            if deceased_entity_id and old_hp is not None and old_is_alive is not None:
+                if deceased_entity_type == "Player" and self._character_manager:
+                    if hasattr(self._character_manager, 'revert_hp_change'):
+                        revert_successful = await self._character_manager.revert_hp_change(guild_id, deceased_entity_id, old_hp, old_is_alive)
+                    else: logger.warning(f"UndoManager: CharacterManager missing 'revert_hp_change' for ENTITY_DEATH Player log {log_id_for_error}.")
+                elif deceased_entity_type == "NPC" and self._npc_manager:
+                    if hasattr(self._npc_manager, 'revert_npc_hp_change'):
+                        revert_successful = await self._npc_manager.revert_npc_hp_change(guild_id, deceased_entity_id, old_hp, old_is_alive)
+                    else: logger.warning(f"UndoManager: NPCManager missing 'revert_npc_hp_change' for ENTITY_DEATH NPC log {log_id_for_error}.")
+            else: logger.warning(f"UndoManager: Missing data for ENTITY_DEATH revert in log {log_id_for_error}, guild {guild_id}.")
+
         elif event_type == "ITEM_CREATED":
-            # ... (logic as before, ensure guild_id in logs) ...
-            pass
-        # ... (all other elif blocks for event_types, ensuring guild_id is used in logging calls) ...
-        # Make sure to use log_prefix or pass guild_id to logger calls within these blocks.
-        # Corrected duplicated blocks:
-        elif event_type == "PLAYER_XP_CHANGED": # This was duplicated, now it's an elif
-            if self._character_manager and player_id:
-                # ... (logic as before)
-                pass
-            # ... (logging with guild_id)
-        # ... (continue with other event types) ...
+            if self._item_manager and "item_id" in details:
+                if hasattr(self._item_manager, 'revert_item_creation'):
+                     revert_successful = await self._item_manager.revert_item_creation(guild_id, details["item_id"])
+                else: logger.warning(f"UndoManager: ItemManager missing 'revert_item_creation' for log {log_id_for_error}.")
+            elif not self._item_manager: logger.error("UndoManager Error: ItemManager not available for ITEM_CREATED revert.")
+
+        elif event_type == "ITEM_DELETED":
+            if self._item_manager and "original_item_data" in revert_data:
+                if hasattr(self._item_manager, 'revert_item_deletion'):
+                    revert_successful = await self._item_manager.revert_item_deletion(guild_id, revert_data["original_item_data"])
+                else: logger.warning(f"UndoManager: ItemManager missing 'revert_item_deletion' for log {log_id_for_error}.")
+            elif not self._item_manager: logger.error("UndoManager Error: ItemManager not available for ITEM_DELETED revert.")
+
+        elif event_type == "ITEM_UPDATED":
+            if self._item_manager and "item_id" in details and "old_field_values" in revert_data:
+                if hasattr(self._item_manager, 'revert_item_update'):
+                    revert_successful = await self._item_manager.revert_item_update(guild_id, details["item_id"], revert_data["old_field_values"])
+                else: logger.warning(f"UndoManager: ItemManager missing 'revert_item_update' for log {log_id_for_error}.")
+            elif not self._item_manager: logger.error("UndoManager Error: ItemManager not available for ITEM_UPDATED revert.")
+
+        elif event_type == "PLAYER_HEALTH_CHANGE":
+            old_hp, old_is_alive = revert_data.get("old_hp"), revert_data.get("old_is_alive")
+            if self._character_manager and player_id and old_hp is not None and old_is_alive is not None:
+                if hasattr(self._character_manager, 'revert_hp_change'):
+                    revert_successful = await self._character_manager.revert_hp_change(guild_id, player_id, old_hp, old_is_alive)
+                else:
+                    logger.warning(f"UndoManager: CharacterManager missing 'revert_hp_change' for PLAYER_HEALTH_CHANGE log {log_id_for_error}.")
+                    revert_successful = False
+            elif not self._character_manager: logger.error("UndoManager Error: CharacterManager not available for PLAYER_HEALTH_CHANGE revert.")
+            else: logger.warning(f"UndoManager: Missing data for PLAYER_HEALTH_CHANGE revert in log {log_id_for_error}.")
+
+        elif event_type == "PLAYER_XP_CHANGED":
+            if self._character_manager and player_id and revert_data:
+                if hasattr(self._character_manager, "revert_xp_change"):
+                    revert_successful = await self._character_manager.revert_xp_change(guild_id, player_id, revert_data.get("old_xp"), revert_data.get("old_level"), revert_data.get("old_unspent_xp"))
+                else:
+                    logger.warning(f"UndoManager: CharacterManager missing 'revert_xp_change' for log {log_id_for_error}.")
+                    revert_successful = False
+            elif not self._character_manager: logger.error("UndoManager Error: CharacterManager not available for PLAYER_XP_CHANGED revert.")
+            else: logger.warning(f"UndoManager: Missing data or CharacterManager for PLAYER_XP_CHANGED revert log {log_id_for_error}.")
+
+        elif event_type == "QUEST_PROGRESS_UPDATED":
+            if self._quest_manager and player_id and "quest_id" in details and "objective_id" in details and revert_data.get("old_progress") is not None:
+                if hasattr(self._quest_manager, 'revert_quest_progress_update'):
+                    revert_successful = await self._quest_manager.revert_quest_progress_update(guild_id, player_id, details["quest_id"], details["objective_id"], revert_data["old_progress"])
+                else:
+                    logger.warning(f"UndoManager: QuestManager does not have 'revert_quest_progress_update' method. Cannot revert for log {log_id_for_error}.")
+                    revert_successful = False
+            elif not self._quest_manager: logger.error("UndoManager Error: QuestManager not available for QUEST_PROGRESS_UPDATED revert.")
+            else: logger.warning(f"UndoManager: Missing data for QUEST_PROGRESS_UPDATED revert in log {log_id_for_error}.")
+
+        elif event_type == "QUEST_STARTED":
+            if self._quest_manager and player_id and "quest_id" in details:
+                if hasattr(self._quest_manager, 'revert_quest_start'):
+                    revert_successful = await self._quest_manager.revert_quest_start(guild_id, player_id, details["quest_id"])
+                else:
+                    logger.warning(f"UndoManager: QuestManager does not have 'revert_quest_start' method. Cannot revert for log {log_id_for_error}.")
+                    revert_successful = False
+            elif not self._quest_manager: logger.error("UndoManager Error: QuestManager not available for QUEST_STARTED revert.")
+            else: logger.warning(f"UndoManager: Missing data for QUEST_STARTED revert in log {log_id_for_error}.")
+
+        elif event_type == "QUEST_STATUS_CHANGED":
+            if self._quest_manager and player_id and "quest_id" in details and revert_data.get("old_status") is not None and revert_data.get("old_quest_data") is not None:
+                if hasattr(self._quest_manager, 'revert_quest_status_change'):
+                    revert_successful = await self._quest_manager.revert_quest_status_change(guild_id, player_id, details["quest_id"], revert_data["old_status"], revert_data["old_quest_data"])
+                else:
+                    logger.warning(f"UndoManager: QuestManager does not have 'revert_quest_status_change' method. Cannot revert for log {log_id_for_error}.")
+                    revert_successful = False
+            elif not self._quest_manager: logger.error("UndoManager Error: QuestManager not available for QUEST_STATUS_CHANGED revert.")
+            else: logger.warning(f"UndoManager: Missing data for QUEST_STATUS_CHANGED revert in log {log_id_for_error}.")
+
+        elif event_type == "GM_ACTION_DELETE_CHARACTER":
+            char_id = details.get("character_id")
+            original_data = revert_data.get("original_character_data")
+            logger.warning(f"UndoManager: GM_ACTION_DELETE_CHARACTER for char {char_id} (log {log_id_for_error}). Recreate logic not fully implemented. Original data: {original_data is not None}")
+            revert_successful = True
+
+        elif event_type == "NPC_SPAWNED" and self._npc_manager and "npc_id" in details:
+            if hasattr(self._npc_manager, "revert_npc_spawn"): revert_successful = await self._npc_manager.revert_npc_spawn(guild_id, details["npc_id"])
+            else: logger.warning(f"UndoManager: NPCManager missing 'revert_npc_spawn' for log {log_id_for_error}.")
+
+        elif event_type == "GM_NPC_RECREATED" and self._npc_manager and "npc_id" in details:
+            if hasattr(self._npc_manager, "revert_npc_spawn"): revert_successful = await self._npc_manager.revert_npc_spawn(guild_id, details["npc_id"])
+            else: logger.warning(f"UndoManager: NPCManager missing 'revert_npc_spawn' for GM_NPC_RECREATED log {log_id_for_error}.")
+
+        elif event_type == "NPC_LOCATION_CHANGED" and self._npc_manager and "npc_id" in details and revert_data.get("old_location_id") is not None:
+            if hasattr(self._npc_manager, "revert_npc_location_change"): revert_successful = await self._npc_manager.revert_npc_location_change(guild_id, details["npc_id"], revert_data["old_location_id"])
+            else: logger.warning(f"UndoManager: NPCManager missing 'revert_npc_location_change' for log {log_id_for_error}.")
+
+        elif event_type == "ITEM_OWNER_CHANGED":
+            item_id = details.get("item_id")
+            old_owner_id = revert_data.get("old_owner_id")
+            old_owner_type = revert_data.get("old_owner_type")
+            old_loc_id_if_unowned = revert_data.get("old_location_id_if_unowned")
+            if self._item_manager and item_id and old_owner_id and old_owner_type:
+                if hasattr(self._item_manager, "revert_item_owner_change"):
+                    revert_successful = await self._item_manager.revert_item_owner_change(guild_id, item_id, old_owner_id, old_owner_type, old_loc_id_if_unowned)
+                else:
+                    logger.warning(f"UndoManager: ItemManager missing 'revert_item_owner_change' for log {log_id_for_error}.")
+                    revert_successful = False
+            elif not self._item_manager: logger.error("UndoManager Error: ItemManager not available for ITEM_OWNER_CHANGED revert.")
+            else: logger.warning(f"UndoManager: Missing data for ITEM_OWNER_CHANGED revert in log {log_id_for_error}.")
+
+        # Add other specific event handlers here using elif event_type == "EVENT_NAME":
+        # Example for LOCATION_ACTIVATION_STATUS_CHANGED
+        elif event_type == "LOCATION_ACTIVATION_STATUS_CHANGED":
+            location_id = details.get("location_id")
+            old_is_active_status = revert_data.get("old_is_active_status")
+            if self._location_manager and location_id is not None and old_is_active_status is not None:
+                if hasattr(self._location_manager, "revert_location_activation_status"):
+                    revert_successful = await self._location_manager.revert_location_activation_status(guild_id, location_id, old_is_active_status)
+                else:
+                    logger.warning(f"UndoManager: LocationManager missing 'revert_location_activation_status' for log {log_id_for_error}.")
+                    revert_successful = False
+            elif not self._location_manager: logger.error("UndoManager Error: LocationManager not available for LOCATION_ACTIVATION_STATUS_CHANGED revert.")
+            else: logger.warning(f"UndoManager: Missing data for LOCATION_ACTIVATION_STATUS_CHANGED revert in log {log_id_for_error}.")
+
+
         else:
-            logger.warning("UndoManager Warning: No revert logic defined for event type '%s'. Log ID: %s, Guild: %s", event_type, log_id_for_error, guild_id) # Changed
-            return False
+            logger.warning(f"UndoManager Warning: No revert logic defined for event type '{event_type}'. Log ID: {log_id_for_error}, Guild: {guild_id}")
+            return False # Explicitly false if no handler matches
 
         if revert_successful:
-            logger.info("UndoManager: Successfully processed revert for log %s, event type %s in guild %s.", log_id_for_error, event_type, guild_id) # Changed
+            logger.info(f"UndoManager: Successfully processed revert for log {log_id_for_error}, event type {event_type} in guild {guild_id}.")
         else:
-            logger.error("UndoManager Error: Failed to process revert for log %s, event type %s in guild %s. Check previous logs for specific reason.", log_id_for_error, event_type, guild_id) # Changed
+            logger.error(f"UndoManager Error: Failed to process revert for log {log_id_for_error}, event type {event_type} in guild {guild_id}. Check previous logs for specific reason.")
         return revert_successful

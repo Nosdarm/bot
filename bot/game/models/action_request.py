@@ -20,10 +20,11 @@ class ActionRequest(BaseModel):
         # For Pydantic V2, use model_config instead of Config class if applicable
         # Pydantic V1 example:
         # anystr_strip_whitespace = True # Removed as it's not standard and depends on Pydantic version features
-        validate_assignment = True # Ensure that model fields are validated on assignment
+        validate_assignment = True
 
     def __lt__(self, other: "ActionRequest") -> bool:
-        """Comparison for sorting, primarily by execute_at, then by priority."""
+        # Ensures sorting by execute_at time first, then by priority (lower number is higher priority)
         if self.execute_at != other.execute_at:
             return self.execute_at < other.execute_at
+        # For same execute_at time, sort by priority. Lower priority number means earlier execution.
         return self.priority < other.priority

@@ -146,7 +146,12 @@ class GameSetupCog(commands.Cog, name="Game Setup"):
                 # Check if Player already exists
                 existing_player_stmt = select(Player).where(Player.discord_id == discord_id_str, Player.guild_id == guild_id_str)
                 result = await session.execute(existing_player_stmt)
-                existing_player = result.scalars().first()
+                # Attempting to await scalars() if it's an async generator/iterable
+                try:
+                    existing_player = (await result.scalars()).first()
+                except TypeError: # If scalars() is not awaitable, use it directly
+                    existing_player = result.scalars().first()
+
 
                 if not existing_player:
                     logging.info(f"No existing Player found for {discord_id_str} in guild {guild_id_str}. Creating new Player.")

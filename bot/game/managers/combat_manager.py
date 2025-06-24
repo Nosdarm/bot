@@ -288,7 +288,7 @@ class CombatManager:
         guild_id_str = str(guild_id)
         combat = self.get_combat(guild_id_str, combat_id)
 
-        if not combat or getattr(combat, 'status', 'completed') not in ('active', 'pending'): # Changed from is_active
+        if not combat or not combat.is_active:
             return True # Combat ended or not found, nothing to process
 
         current_actor_id = combat.get_current_actor_id()
@@ -297,7 +297,7 @@ class CombatManager:
             if combat.turn_order:
                 combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
             else:
-                combat.status = 'completed' # Changed from is_active = False
+                combat.is_active = False
                 logger.warning("CombatManager: Combat %s (guild %s) has no participants in turn_order. Ending combat.", combat_id, guild_id_str) # Changed
                 self.mark_combat_dirty(guild_id_str, combat_id)
                 return True # Combat ended
@@ -478,7 +478,7 @@ class CombatManager:
         try:
             combat = self.get_combat(guild_id_str, combat_instance_id)
 
-            if not combat or getattr(combat, 'status', 'completed') not in ('active', 'pending') or str(getattr(combat, 'guild_id', None)) != guild_id_str: # Changed from is_active
+            if not combat or not combat.is_active or str(getattr(combat, 'guild_id', None)) != guild_id_str:
                 log_msg_inactive = f"Action for non-active/mismatched combat {combat_instance_id} in guild {guild_id_str}. Ignoring." # Added guild_id
                 if game_log_manager: await game_log_manager.log_warning(log_msg_inactive, guild_id=guild_id_str, combat_id=combat_instance_id)
                 else: logger.warning("CombatManager: %s", log_msg_inactive) # Changed
@@ -597,7 +597,7 @@ class CombatManager:
                 if game_log_manager: await game_log_manager.log_error(no_re_msg, guild_id=guild_id_str, combat_id=combat_instance_id)
                 else: logger.error("CombatManager: %s", no_re_msg) # Changed
 
-            if combat.status == 'active' and combat.get_current_actor_id() == actor_id: # Changed from is_active
+            if combat.is_active and combat.get_current_actor_id() == actor_id:
                 if combat.turn_order:
                     combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
                     if combat.current_turn_index == 0:
@@ -609,7 +609,7 @@ class CombatManager:
                             if p_data_reset.hp > 0: p_data_reset.acted_this_round = False
                             else: p_data_reset.acted_this_round = True
                 else:
-                    combat.status = 'completed' # Changed from is_active = False
+                    combat.is_active = False
                     no_turn_order_msg = f"Combat {combat_instance_id} (guild {guild_id_str}) has no participants in turn_order after action. Ending combat." # Added guild_id
                     if game_log_manager: await game_log_manager.log_warning(no_turn_order_msg, guild_id=guild_id_str, combat_id=combat_instance_id)
                     else: logger.warning("CombatManager: %s", no_turn_order_msg) # Changed
@@ -765,16 +765,16 @@ class CombatManager:
             else: logger.error(err_msg) # Changed
             return
 
-        if combat.status not in ('active', 'pending'): # Changed from is_active
-            info_msg = f"CombatManager: Combat {combat_id} in guild {guild_id_str} already ended (status: {combat.status})." # Added guild_id and status
+        if not combat.is_active: # Use the actual boolean field from the Combat model
+            info_msg = f"CombatManager: Combat {combat_id} in guild {guild_id_str} already ended (is_active: {combat.is_active})."
             if game_log_manager: await game_log_manager.log_info(info_msg, guild_id=guild_id_str, combat_id=combat_id)
-            else: logger.info(info_msg) # Changed
-            # return # Optionally return
+            else: logger.info(info_msg)
+            # return # Optionally return if strict no-double-end is required
 
-        combat.status = 'completed' # Changed from is_active = False
+        combat.is_active = False # Set the actual boolean field
         self.mark_combat_dirty(guild_id_str, combat_id)
 
-        log_message_ending = f"Combat {combat_id} (guild {guild_id_str}) ended with status 'completed'. Winners: {winning_entity_ids}." # Added guild_id and status
+        log_message_ending = f"Combat {combat_id} (guild {guild_id_str}) ended. is_active set to False. Winners: {winning_entity_ids}."
         if game_log_manager: await game_log_manager.log_info(log_message_ending, guild_id=guild_id_str, combat_id=combat_id)
         else: logger.info("CombatManager: %s", log_message_ending) # Changed
 

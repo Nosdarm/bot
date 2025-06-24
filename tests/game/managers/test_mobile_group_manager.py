@@ -177,7 +177,8 @@ class TestMobileGroupManager(unittest.IsolatedAsyncioTestCase):
 
         # Verify group moved
         self.manager.update_mobile_group.assert_called_once()
-        called_group_arg = self.manager.update_mobile_group.call_args[0][1]
+        called_kwargs_group = self.manager.update_mobile_group.call_args[1]
+        called_group_arg = called_kwargs_group['group_data']
         self.assertEqual(called_group_arg.current_location_id, dest_loc)
 
         # Verify member NPC was fetched and updated
@@ -218,8 +219,9 @@ class TestMobileGroupManager(unittest.IsolatedAsyncioTestCase):
         )
 
         self.manager.update_mobile_group.assert_called_once()
-        called_group_arg = self.manager.update_mobile_group.call_args[0][1]
-        self.assertEqual(called_group_arg.destination_location_id, possible_dest_loc)
+        called_kwargs_group_random = self.manager.update_mobile_group.call_args[1]
+        called_group_arg_random = called_kwargs_group_random['group_data']
+        self.assertEqual(called_group_arg_random.destination_location_id, possible_dest_loc)
 
 
 if __name__ == '__main__':
