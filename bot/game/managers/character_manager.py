@@ -146,52 +146,81 @@ class CharacterManager:
 
         # Helper function to perform the core logic given an active session
         async def _fetch_character_logic(current_session: AsyncSession, cached_player_id: Optional[str]) -> Optional[Character]:
-            nonlocal active_char_id # Allow modification of outer scope active_char_id
-
-            resolved_player_id = cached_player_id # Start with the player_id from the discord_id -> player_id cache
-
-            # Step 1: Resolve Player and active_char_id
+            nonlocal active_char_id
+            resolved_player_id = cached_player_id
             fetched_player_obj: Optional[Player] = None
 
+            logger.debug(f"_fetch_character_logic: Start. discord_user_id={discord_user_id}, cached_player_id={resolved_player_id}, guild_id_str={guild_id_str}")
+
+            # Path 1: Try cache for player_id, then session.get(Player, player_id)
             if resolved_player_id:
+                logger.debug(f"_fetch_character_logic: Path A - Using cached_player_id: {resolved_player_id}")
                 player = await current_session.get(Player, resolved_player_id)
-                if player and str(player.guild_id) == guild_id_str:
-                    fetched_player_obj = player
+                logger.debug(f"_fetch_character_logic: Path A - current_session.get(Player, '{resolved_player_id}') returned: {repr(player)}")
+                if player:
+                    logger.debug(f"_fetch_character_logic: Path A - Player object found: ID {getattr(player, 'id', 'N/A')}, Guild ID {getattr(player, 'guild_id', 'N/A')}. Expected guild: {guild_id_str}")
+                    if str(getattr(player, 'guild_id', 'None')) == guild_id_str:
+                        fetched_player_obj = player
+                        logger.debug(f"_fetch_character_logic: Path A - Guild match. fetched_player_obj assigned: {getattr(fetched_player_obj, 'id', 'None')}")
+                    else:
+                        logger.warning(f"_fetch_character_logic: Path A - Guild mismatch for Player {getattr(player, 'id', 'N/A')}. Actual: {getattr(player, 'guild_id', 'N/A')}, Expected: {guild_id_str}. Invalidating cache.")
+                        if guild_id_str in self._discord_to_player_map and discord_user_id in self._discord_to_player_map[guild_id_str]:
+                            del self._discord_to_player_map[guild_id_str][discord_user_id]
+                        resolved_player_id = None # Force DB lookup by attributes
                 else:
-                    # Player from cache was invalid (not found or guild mismatch)
-                    logger.debug(f"Player {resolved_player_id} (from discord_to_player_map cache) for Discord User {discord_user_id} "
-                                 f"not found in DB or guild mismatch. Invalidating this cache entry.")
+                    logger.debug(f"_fetch_character_logic: Path A - Player with ID {resolved_player_id} (from cache) not found via session.get(). Invalidating cache.")
                     if guild_id_str in self._discord_to_player_map and discord_user_id in self._discord_to_player_map[guild_id_str]:
                         del self._discord_to_player_map[guild_id_str][discord_user_id]
-                    resolved_player_id = None # Force DB lookup for Player by discord_id in the next block
+                    resolved_player_id = None # Force DB lookup by attributes
 
-            if not resolved_player_id: # If not found via initial cache, or cache was invalidated
+            logger.debug(f"_fetch_character_logic: After Path A. resolved_player_id: {resolved_player_id}. fetched_player_obj is {'NOT None' if fetched_player_obj else 'None'}")
+
+            # Path 2: If Path 1 failed (resolved_player_id became None) or no cached player_id initially
+            if not resolved_player_id:
+                logger.debug(f"_fetch_character_logic: Path B - resolved_player_id is None or was invalidated. Fetching by attributes for discord_id: {discord_user_id}, guild_id: {guild_id_str}")
                 from bot.database.crud_utils import get_entity_by_attributes
-                # Query DB for Player by discord_id and guild_id
                 player_account = await get_entity_by_attributes(current_session, Player,
                                                                {"discord_id": str(discord_user_id)},
                                                                guild_id=guild_id_str)
-                if player_account:
-                    # Update discord_to_player_map cache with the fetched player_id
+                logger.debug(f"_fetch_character_logic: Path B - get_entity_by_attributes returned: {repr(player_account)}")
+                if player_account: # Ensure player_account is not None and is a Player instance
+                    logger.debug(f"_fetch_character_logic: Path B - Player {getattr(player_account, 'id', 'N/A')} found via attributes. Updating cache.")
                     self._discord_to_player_map.setdefault(guild_id_str, {})[discord_user_id] = player_account.id
                     fetched_player_obj = player_account
-                    resolved_player_id = player_account.id # Keep track of the resolved player ID
+                    resolved_player_id = player_account.id
+                    logger.debug(f"_fetch_character_logic: Path B - fetched_player_obj assigned: {getattr(fetched_player_obj, 'id', 'None')}")
                 else:
-                    logger.info(f"Player account not found in DB for Discord ID {discord_user_id} in guild {guild_id_str}.")
-                    return None # No player, so no character can be fetched
+                    logger.info(f"_fetch_character_logic: Path B - Player account not found by attributes for Discord ID {discord_user_id} in guild {guild_id_str}.")
+                    # fetched_player_obj remains as it was (None if Path A also failed/didn't set it)
+
+            logger.debug(f"_fetch_character_logic: FINAL PRE-CHECK before refresh block. fetched_player_obj: {repr(fetched_player_obj)}, type: {type(fetched_player_obj)}")
 
             # Explicitly refresh the Player object to get the latest active_character_id
-            if fetched_player_obj:
-                logger.debug(f"Player {fetched_player_obj.id} (Discord: {discord_user_id}) fetched. Pre-refresh active_char_id: {fetched_player_obj.active_character_id}")
-                # Expire only specific attributes if you want to be targeted, or expire all.
-                # Expiring all is safer if other Player attributes might also be relevant and recently changed.
-                await current_session.expire(fetched_player_obj)
-                await current_session.refresh(fetched_player_obj) # Refresh all attributes
-                active_char_id = fetched_player_obj.active_character_id
-                logger.debug(f"Player {fetched_player_obj.id} (Discord: {discord_user_id}) refreshed. Post-refresh active_char_id: {active_char_id}")
-            else:
-                # This path should ideally not be reached if logic above is correct (should have returned None if no player found)
-                logger.error(f"Logic error: fetched_player_obj is None for Discord ID {discord_user_id} before active_char_id assignment.")
+            logger.debug(f"_fetch_character_logic: Checkpoint before 'isinstance' and 'is not None'. fetched_player_obj is {repr(fetched_player_obj)}, type: {type(fetched_player_obj)}")
+            if fetched_player_obj is not None and isinstance(fetched_player_obj, Player): # Doubly sure it's a Player instance
+                player_id_log = fetched_player_obj.id
+                pre_refresh_ac_id_log = fetched_player_obj.active_character_id
+                logger.debug(f"_fetch_character_logic: Player {player_id_log} (Discord: {discord_user_id}) confirmed as Player instance. Pre-refresh active_char_id: {pre_refresh_ac_id_log}")
+
+                try:
+                    # logger.debug(f"_fetch_character_logic: Attempting to EXPIRE 'active_character_id' for Player {player_id_log}. Object: {repr(fetched_player_obj)}")
+                    # await current_session.expire(fetched_player_obj, attribute_names=['active_character_id']) # Temporarily commented out
+                    # logger.debug(f"_fetch_character_logic: EXPIRE successful for Player {player_id_log}. Attempting to REFRESH 'active_character_id'. Object state after expire: {repr(fetched_player_obj)}")
+
+                    logger.debug(f"_fetch_character_logic: Attempting to REFRESH Player {player_id_log} (all attributes). Object state before refresh: {repr(fetched_player_obj)}")
+                    await current_session.refresh(fetched_player_obj) # Refresh all attributes
+
+                    active_char_id = fetched_player_obj.active_character_id
+                    logger.debug(f"_fetch_character_logic: Player {fetched_player_obj.id} (Discord: {discord_user_id}) REFRESHED. Post-refresh active_char_id: {active_char_id}")
+                except Exception as refresh_exc:
+                    logger.error(f"_fetch_character_logic: Exception during refresh for Player {player_id_log}: {refresh_exc}", exc_info=True)
+                    # If refresh fails, use the active_char_id we had before attempting refresh
+                    active_char_id = pre_refresh_ac_id_log
+            elif fetched_player_obj is None: # Explicitly handle if it's None
+                 logger.error(f"_fetch_character_logic: fetched_player_obj IS NONE before expire/refresh block for Discord ID {discord_user_id}. Returning None.")
+                 return None
+            else: # Not a Player instance but not None (e.g. if type check failed for some reason)
+                logger.error(f"_fetch_character_logic: fetched_player_obj is not a Player instance (type: {type(fetched_player_obj)}) but was not None. Discord ID {discord_user_id}. Cannot fetch character.")
                 return None
 
             # Step 2: Fetch Character if active_char_id is known
@@ -481,108 +510,102 @@ class CharacterManager:
         new_char_orm_instance: Optional[Character] = None 
 
         if manage_session:
-            # DBService.get_session() is an async context manager.
-            # We enter it, and it yields the actual session instance.
-            # This outer context manager should handle the overall transaction commit/rollback.
-            async with self._db_service.get_session() as session_instance: # type: ignore
-                active_db_session = session_instance
-                # All operations within this block use active_db_session.
-                # No explicit .begin() here, assuming the get_session() context manager handles it.
-                try:
-                    from bot.database.crud_utils import get_entity_by_attributes
-                    player_record = await get_entity_by_attributes(active_db_session, Player, {"discord_id": discord_id_str}, guild_id=guild_id_str)
+            if not self._db_service:
+                logger.error(f"CM.create_new_character (managed session): DBService not available.")
+                return None
 
-                    if not player_record:
-                        logger.error(f"CM.create_new_character: Player record not found for Discord ID {discord_id_str} in guild {guild_id_str}. Character creation aborted.")
-                        return None
+            transaction_successful = False # Flag to track transaction outcome
+            # Hold player_record in a scope accessible by the final cache update
+            outer_player_record_ref: Optional[Player] = None
 
-                    if player_record.active_character_id:
-                        existing_char_check = await active_db_session.get(Character, player_record.active_character_id)
-                        if existing_char_check and str(existing_char_check.guild_id) == guild_id_str:
-                            logger.info(f"CM.create_new_character: Player {player_record.id} (Discord: {discord_id_str}) already has an active character {player_record.active_character_id}.")
-                            raise CharacterAlreadyExistsError(f"Player already has an active character.")
-                        else:
-                            logger.warning(f"CM.create_new_character: Player {player_record.id} had an invalid active_character_id {player_record.active_character_id}. Clearing.")
-                            player_record.active_character_id = None
-                            flag_modified(player_record, "active_character_id")
-                    
-                    new_character_id = str(uuid.uuid4())
-                    default_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.hp", 100.0)
-                    default_max_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.max_hp", 100.0)
-                    default_location_id = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
-                    
-                    starting_location_obj = await self._location_manager.get_location_by_static_id(guild_id_str, default_location_id, session=active_db_session)
-                    if not starting_location_obj:
-                        logger.error(f"CM.create_new_character: Default starting location '{default_location_id}' (static_id) not found for guild {guild_id_str}. Character will have no starting location.")
-                        # This might be acceptable if characters can exist without a location temporarily.
-                        # If a starting location is mandatory, this should perhaps raise an error or return None earlier.
+            async with self._db_service.get_session() as active_db_session:
+                async with active_db_session.begin(): # START TRANSACTION, handles commit/rollback
+                    try:
+                        from bot.database.crud_utils import get_entity_by_attributes
+                        player_record = await get_entity_by_attributes(active_db_session, Player, {"discord_id": discord_id_str}, guild_id=guild_id_str)
+                        outer_player_record_ref = player_record # Store ref for logging after transaction
 
-                    character_data = {
-                        "id": new_character_id, "player_id": player_record.id, "guild_id": guild_id_str,
-                        "name_i18n": {language: character_name, "en": character_name},
-                        "description_i18n": {"en": "A new adventurer.", language: "Новый искатель приключений."},
-                        "current_hp": float(default_hp), "max_hp": float(default_max_hp),
-                        "mp": 0, # Model field is 'mp'
-                        "level": 1, "xp": 0, "unspent_xp": 0,
-                        "gold": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.gold", 10),
-                        "stats_json": json.dumps(await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})), # Renamed from base_stats_json
-                        "skills_data_json": "{}", # Renamed from skills_json
-                        "inventory_json": "[]",
-                        "equipment_slots_json": "{}", # Renamed from equipment_json
-                        "status_effects_json": "[]",
-                        "current_location_id": starting_location_obj.id if starting_location_obj else None,
-                        "action_queue_json": "[]",
-                        "current_action_json": None,
-                        "is_alive": True,
-                        "current_party_id": None, # Renamed from party_id
-                        "effective_stats_json": "{}",
-                        "abilities_data_json": "[]", # Renamed from abilities_json
-                        "spells_data_json": "{}", # Renamed from spellbook_json (model has spells_data_json and known_spells_json)
-                        "known_spells_json": "[]", # Added for specific known spells
-                        "race_key": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.race", "human"), # Renamed from race
-                        "character_class_i18n": { # Renamed from char_class and ensuring i18n structure
-                            language: await self._game_manager.get_rule(guild_id_str, f"character_creation.defaults.char_class.{language}", "Adventurer"),
-                            "en": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.char_class.en", "Adventurer")
-                        },
-                        # Consolidating other _json fields into flags_json or specific model fields
-                        "flags_json": json.dumps({
-                            "appearance": {"description": "An ordinary looking individual."}, # from appearance_json
-                            "backstory": {"summary": "A mysterious past."}, # from backstory_json
-                            "personality": {"traits": ["brave"]}, # from personality_json
-                            # relationships_json and quests_json are better handled by their specific model fields if they exist
-                            # or remain in flags if they are simple key-value pairs.
-                        }),
-                        "active_quests_json": "[]", # Model has active_quests_json
-                        "state_variables_json": "{}", # General purpose state variables
-                        # Removed: appearance_json, backstory_json, personality_json, relationships_json, quests_json as separate keys
-                    }
+                        if not player_record:
+                            logger.error(f"CM.create_new_character: Player record not found for Discord ID {discord_id_str} in guild {guild_id_str}. Character creation aborted.")
+                            # Return None inside 'try' will lead to rollback by 'async with begin()'
+                            return None
+
+                        if player_record.active_character_id:
+                            existing_char_check = await active_db_session.get(Character, player_record.active_character_id)
+                            if existing_char_check and str(existing_char_check.guild_id) == guild_id_str:
+                                logger.info(f"CM.create_new_character: Player {player_record.id} (Discord: {discord_id_str}) already has an active character {player_record.active_character_id}.")
+                                raise CharacterAlreadyExistsError(f"Player already has an active character.")
+                            else:
+                                logger.warning(f"CM.create_new_character: Player {player_record.id} had an invalid active_character_id {player_record.active_character_id}. Clearing.")
+                                player_record.active_character_id = None
+                                flag_modified(player_record, "active_character_id")
+
+                        new_character_id = str(uuid.uuid4())
+                        default_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.hp", 100.0)
+                        default_max_hp = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.max_hp", 100.0)
+                        default_location_id = await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.starting_location_id", "default_start_location")
+
+                        starting_location_obj = await self._location_manager.get_location_by_static_id(guild_id_str, default_location_id, session=active_db_session)
+                        if not starting_location_obj:
+                            logger.error(f"CM.create_new_character: Default starting location '{default_location_id}' (static_id) not found for guild {guild_id_str}. Character will have no starting location. Aborting creation.")
+                            raise ValueError(f"Starting location {default_location_id} not found.")
+
+                        character_data = {
+                            "id": new_character_id, "player_id": player_record.id, "guild_id": guild_id_str,
+                            "name_i18n": {language: character_name, "en": character_name},
+                            "description_i18n": {"en": "A new adventurer.", language: "Новый искатель приключений."},
+                            "current_hp": float(default_hp), "max_hp": float(default_max_hp), "mp": 0,
+                            "level": 1, "xp": 0, "unspent_xp": 0,
+                            "gold": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.gold", 10),
+                            "stats_json": json.dumps(await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.base_stats", {"strength":10, "dexterity":10, "constitution":10, "intelligence":10, "wisdom":10, "charisma":10})),
+                            "skills_data_json": "{}", "inventory_json": "[]", "equipment_slots_json": "{}",
+                            "status_effects_json": "[]", "current_location_id": starting_location_obj.id,
+                            "action_queue_json": "[]", "current_action_json": None, "is_alive": True,
+                            "current_party_id": None, "effective_stats_json": "{}",
+                            "abilities_data_json": "[]", "spells_data_json": "{}", "known_spells_json": "[]",
+                            "race_key": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.race", "human"),
+                            "character_class_i18n": { language: await self._game_manager.get_rule(guild_id_str, f"character_creation.defaults.char_class.{language}", "Adventurer"), "en": await self._game_manager.get_rule(guild_id_str, "character_creation.defaults.char_class.en", "Adventurer")},
+                            "flags_json": json.dumps({"appearance": {"description": "An ordinary looking individual."}, "backstory": {"summary": "A mysterious past."}, "personality": {"traits": ["brave"]},}),
+                            "active_quests_json": "[]", "state_variables_json": "{}"
+                        }
+
+                        temp_char_orm = Character(**character_data)
+                        await self._recalculate_and_store_effective_stats(guild_id_str, temp_char_orm.id, temp_char_orm, session_for_db=active_db_session)
+                        active_db_session.add(temp_char_orm)
+
+                        player_record.active_character_id = temp_char_orm.id
+                        flag_modified(player_record, "active_character_id")
+                        active_db_session.add(player_record)
+
+                        new_char_orm_instance = temp_char_orm
+                        transaction_successful = True # Mark success for logging after block
                     
-                    new_char_orm = Character(**character_data)
-                    await self._recalculate_and_store_effective_stats(guild_id_str, new_char_orm.id, new_char_orm, session_for_db=active_db_session)
-                    active_db_session.add(new_char_orm)
-                    
-                    player_record.active_character_id = new_char_orm.id
-                    flag_modified(player_record, "active_character_id")
-                    active_db_session.add(player_record)
-                    
-                    new_char_orm_instance = new_char_orm # For caching after successful commit by context manager
-                
-                except CharacterAlreadyExistsError as caee:
-                    logger.info(f"CM.create_new_character (managed session): Character already exists for Discord ID {discord_id_str} in guild {guild_id_str}.")
-                    raise caee # Let the context manager handle rollback due to exception
-                except Exception as e:
-                    logger.error(f"CM.create_new_character (managed session): Error for Discord ID {discord_id_str} in guild {guild_id_str}: {e}", exc_info=True)
-                    # Let the context manager handle rollback
-                    return None # Or re-raise e if preferred
+                    except CharacterAlreadyExistsError:
+                        logger.info(f"CM.create_new_character (managed session): CharacterAlreadyExistsError for Discord ID {discord_id_str}. Transaction will roll back.")
+                        raise
+                    except ValueError as ve:
+                         logger.error(f"CM.create_new_character (managed session): ValueError (likely starting location for {default_location_id}) for Discord ID {discord_id_str}: {ve}. Transaction will roll back.")
+                         # new_char_orm_instance remains None, transaction_successful remains False
+                    except Exception as e:
+                        logger.error(f"CM.create_new_character (managed session): General Exception for Discord ID {discord_id_str}: {e}. Transaction will roll back.", exc_info=True)
+                        # new_char_orm_instance remains None, transaction_successful remains False
+
+            # Log after the transaction block
+            if transaction_successful and new_char_orm_instance: # new_char_orm_instance should be set if transaction_successful is True
+                logger.info(f"CM.create_new_character (managed session): Transaction for Discord ID {discord_id_str} COMMITTED successfully. Character ID: {new_char_orm_instance.id}")
+            elif not new_char_orm_instance :
+                 logger.warning(f"CM.create_new_character (managed session): Transaction for Discord ID {discord_id_str} ROLLED BACK or character not created (new_char_orm_instance is None).")
 
         else: # manage_session is False, session was passed in
-            active_db_session = session
-            try:
-                # Assuming the passed session is already in a transaction or caller handles it.
-                # If a savepoint is desired within the caller's transaction:
-                async with active_db_session.begin_nested(): # type: ignore 
-                    from bot.database.crud_utils import get_entity_by_attributes
-                    player_record = await get_entity_by_attributes(active_db_session, Player, {"discord_id": discord_id_str}, guild_id=guild_id_str)
+            active_db_session = session # session is not None here
+            # The caller is managing the transaction. We operate within a nested transaction (savepoint).
+            # Keep outer_player_record_ref accessible for the final caching step if session is external
+            outer_player_record_ref = None
+            async with active_db_session.begin_nested(): # type: ignore
+                # This block remains largely the same, as it correctly uses the passed-in session
+                # and begin_nested() for savepoint behavior.
+                from bot.database.crud_utils import get_entity_by_attributes
+                player_record = await get_entity_by_attributes(active_db_session, Player, {"discord_id": discord_id_str}, guild_id=guild_id_str)
 
                     if not player_record:
                         logger.error(f"CM.create_new_character (external session): Player record not found for Discord ID {discord_id_str} in guild {guild_id_str}.")
