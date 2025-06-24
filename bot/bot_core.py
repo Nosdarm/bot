@@ -293,6 +293,7 @@ class RPGBot(commands.Bot):
             "bot.command_modules.world_state_cmds", # Added WorldState commands cog
             "bot.command_modules.quest_cmds", # Added Quest commands cog
             "bot.command_modules.settings_cmds", # Added Settings commands cog
+            "bot.cogs.master_commands", # Added new Master Cog for map management etc.
             # "bot.command_modules.moderation_cmds" # Removed due to redundancy with gm_app_cmds.py AI moderation
         ]
         

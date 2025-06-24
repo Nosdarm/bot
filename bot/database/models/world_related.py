@@ -35,6 +35,7 @@ class Location(Base):
     ai_metadata_json = Column(JSONB, nullable=True, comment="Stores metadata for AI generation purposes")
     points_of_interest_json = Column(JSONB, nullable=True, comment="List of Points of Interest objects/dictionaries")
     on_enter_events_json = Column(JSONB, nullable=True, default=lambda: [])
+    generated_details_json = Column(JSONB, nullable=True, comment="Additional AI-generated descriptive details for the location")
 
     __table_args__ = (
         UniqueConstraint('guild_id', 'static_id', name='uq_location_guild_static_id'),

@@ -328,11 +328,111 @@ class AIGenerationManager:
 
                         try:
                             await session.merge(location_to_persist)
-                            # The ID is now fixed, either new or existing
+                            await session.flush() # Ensure location_to_persist.id is populated if new
                             record.entity_id = location_to_persist.id # Store created/updated entity ID back on PendingGeneration
                             persisted_location_id = location_to_persist.id # Use this for NPCs
                             logger.info(f"Successfully merged location {persisted_location_id} (template: {location_to_persist.template_id}, static: {location_to_persist.static_id}) for PG ID {record.id}.")
                             application_success = True
+
+                            # Call on_enter_location if a new location was effectively created or significantly updated
+                            # We need to determine the "entity" that "entered".
+                            # If this generation was triggered by a player moving to an "unknown" area, that player is the entity.
+                            # If it's a GM creating a location, there might not be an immediate entering entity.
+                            # For now, let's assume if record.created_by_user_id exists, it's a player character.
+                            # This is a simplification. A more robust system would pass the triggering entity's ID and type.
+
+                            entering_entity_id_for_event: Optional[str] = None
+                            entering_entity_type_for_event: Optional[str] = None
+
+                            if record.created_by_user_id: # Assume this is a discord_id
+                                request_params = record.request_params_json or {}
+                                if isinstance(request_params, str): # Should be dict if from DB JSONB
+                                    try: request_params = json.loads(request_params)
+                                    except: request_params = {}
+
+                                entering_entity_id_for_event = request_params.get("triggering_character_id")
+                                if entering_entity_id_for_event:
+                                    entering_entity_type_for_event = "Character"
+                                else: # Fallback to party if character not specified but party is
+                                    entering_entity_id_for_event = request_params.get("triggering_party_id")
+                                    if entering_entity_id_for_event:
+                                        entering_entity_type_for_event = "Party"
+
+                            if entering_entity_id_for_event and entering_entity_type_for_event and self.game_manager.location_interaction_service and persisted_location_id:
+                                logger.info(f"AIGenerationManager: Scheduling on_enter_location for entity {entering_entity_id_for_event} ({entering_entity_type_for_event}) into new/updated location {persisted_location_id}")
+                                import asyncio # Make sure asyncio is imported
+                                asyncio.create_task(
+                                    self.game_manager.location_interaction_service.process_on_enter_location_events(
+                                        guild_id_str=guild_id, # Ensure this is string
+                                        entity_id=str(entering_entity_id_for_event),
+                                        entity_type=str(entering_entity_type_for_event),
+                                        location_id=str(persisted_location_id)
+                                    )
+                                )
+                            elif persisted_location_id:
+                                logger.info(f"AIGenerationManager: Location {persisted_location_id} created/updated, but no specific entering entity identified from PendingGeneration record to trigger on_enter_location.")
+
+                            # --- Update Neighbor Connections Start (Задача 4.3.1) ---
+                            if application_success and persisted_location_id and ai_location_data.connections:
+                                logger.info(f"Updating neighbor connections for new/updated location {persisted_location_id} (PG ID {record.id}).")
+                                new_location_name_i18n = location_to_persist.name_i18n or {"en": "Newly discovered area"}
+
+                                for connection_data in ai_location_data.connections:
+                                    if not isinstance(connection_data, ConnectionModel): # Should already be parsed
+                                        logger.warning(f"Connection data is not a ConnectionModel instance for PG ID {record.id}. Skipping: {connection_data}")
+                                        continue
+
+                                    neighbor_id = connection_data.to_location_id
+                                    if not neighbor_id or neighbor_id == persisted_location_id: # Don't connect to self
+                                        continue
+
+                                    neighbor_location = await session.get(Location, neighbor_id)
+                                    if neighbor_location:
+                                        if neighbor_location.guild_id != guild_id: # Security check
+                                            logger.warning(f"Attempted to connect to location {neighbor_id} in different guild. Skipping.")
+                                            continue
+
+                                        if neighbor_location.neighbor_locations_json is None:
+                                            neighbor_location.neighbor_locations_json = []
+
+                                        # Check if reciprocal connection already exists
+                                        reciprocal_exists = any(
+                                            conn.get("to_location_id") == persisted_location_id
+                                            for conn in neighbor_location.neighbor_locations_json
+                                        )
+
+                                        if not reciprocal_exists:
+                                            # Create reciprocal connection
+                                            # For direction_i18n and path_description_i18n, it's complex to auto-generate
+                                            # For now, we can use a generic or reuse parts of original if sensible.
+                                            # A more advanced system might try to flip directions (e.g., "North" -> "South")
+                                            reciprocal_direction_i18n = {}
+                                            default_lang_for_reciprocal = await self.game_manager.get_rule(guild_id, "default_language", "en")
+
+                                            for lang, desc in (connection_data.direction_i18n or {}).items():
+                                                reciprocal_direction_i18n[lang] = f"Towards {new_location_name_i18n.get(lang, new_location_name_i18n.get(default_lang_for_reciprocal, 'the new area'))}" # Simplified
+
+                                            if not reciprocal_direction_i18n : # fallback if original direction was empty
+                                                 reciprocal_direction_i18n = {default_lang_for_reciprocal: f"Towards {new_location_name_i18n.get(default_lang_for_reciprocal, 'the new area'))}"}
+
+
+                                            reciprocal_connection = {
+                                                "to_location_id": persisted_location_id,
+                                                "path_description_i18n": connection_data.description_i18n or \
+                                                                         {default_lang_for_reciprocal: f"A path leading to {new_location_name_i18n.get(default_lang_for_reciprocal, 'a newly discovered area')}"},
+                                                "direction_i18n": reciprocal_direction_i18n,
+                                                "travel_time_hours": connection_data.travel_time_hours,
+                                                "required_items": connection_data.required_items or [],
+                                                "visibility_conditions_json": connection_data.visibility_conditions_json or {}
+                                            }
+                                            neighbor_location.neighbor_locations_json.append(reciprocal_connection)
+                                            flag_modified(neighbor_location, "neighbor_locations_json")
+                                            logger.info(f"Added reciprocal connection from {neighbor_id} to {persisted_location_id} (PG ID {record.id}).")
+                                        else:
+                                            logger.info(f"Reciprocal connection from {neighbor_id} to {persisted_location_id} already exists. Skipping. (PG ID {record.id})")
+                                    else:
+                                        logger.warning(f"Neighbor location ID '{neighbor_id}' specified in connections for PG ID {record.id} not found. Cannot create reciprocal link.")
+                            # --- Update Neighbor Connections End ---
 
                             # --- NPC Persistence Start ---
                             if application_success and ai_location_data.initial_npcs_json:

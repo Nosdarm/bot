@@ -79,11 +79,84 @@ class AbilityManager:
             if loaded_count > 3:
                 logger.debug("  ... and %s more.", loaded_count - 3)
 
-    async def get_ability(self, guild_id: str, ability_id: str) -> Optional[AbilityPydanticModel]: # Returns Pydantic model
-        """Retrieves a specific ability object (Pydantic model) from the cache for a guild."""
+    async def get_ability(self, guild_id: str, ability_id_or_static_id: str) -> Optional[AbilityPydanticModel]: # Returns Pydantic model
+        """
+        Retrieves a specific ability object (Pydantic model) for a guild.
+        Searches by ID or static_id in cache first, then DB.
+        """
         guild_id_str = str(guild_id)
-        ability_id_str = str(ability_id)
-        return self._ability_templates.get(guild_id_str, {}).get(ability_id_str)
+        id_str = str(ability_id_or_static_id)
+
+        # 1. Check cache by ID
+        cached_ability = self._ability_templates.get(guild_id_str, {}).get(id_str)
+        if cached_ability:
+            logger.debug(f"AbilityManager: Cache hit for ability ID '{id_str}' in guild '{guild_id_str}'.")
+            return cached_ability
+
+        # 2. Check cache by static_id (if different from ID)
+        # This requires iterating if static_id is not the primary key in cache.
+        # For simplicity, if templates are primarily keyed by their DB ID, this is harder.
+        # If static_id is a reliable unique key, cache could also store by static_id.
+        # For now, let's assume templates loaded from campaign_data might use static_id as their key.
+        for ab_id, ab_template in self._ability_templates.get(guild_id_str, {}).items():
+            if hasattr(ab_template, 'static_id') and ab_template.static_id == id_str: # Assuming Pydantic model has static_id
+                logger.debug(f"AbilityManager: Cache hit for ability static_id '{id_str}' (maps to ID '{ab_id}') in guild '{guild_id_str}'.")
+                return ab_template
+
+        # 3. Fetch from DB if not in cache
+        if not self._db_service:
+            logger.warning(f"AbilityManager: DBService not available. Cannot fetch ability '{id_str}' from DB for guild '{guild_id_str}'.")
+            return None
+
+        logger.debug(f"AbilityManager: Ability '{id_str}' not in cache for guild '{guild_id_str}'. Querying DB.")
+        db_ability_model: Optional[AbilityDbModel] = None
+        async with self._db_service.get_session() as session: # type: ignore
+            # Try fetching by primary key first
+            try:
+                # Check if id_str could be a UUID (primary key)
+                # This is a basic check; UUID format validation might be more robust.
+                is_potential_uuid = len(id_str) == 36 and id_str.count('-') == 4
+                if is_potential_uuid:
+                    stmt_by_id = select(AbilityDbModel).where(AbilityDbModel.id == id_str, AbilityDbModel.guild_id == guild_id_str)
+                    result_by_id = await session.execute(stmt_by_id)
+                    db_ability_model = result_by_id.scalars().first()
+            except Exception as e_uuid_check: # Catch errors if id_str is not UUID format for DB
+                logger.debug(f"AbilityManager: ID '{id_str}' not a valid UUID format for direct PK lookup, or other DB error: {e_uuid_check}")
+
+
+            if not db_ability_model: # If not found by ID, try by static_id
+                stmt_by_static_id = select(AbilityDbModel).where(AbilityDbModel.static_id == id_str, AbilityDbModel.guild_id == guild_id_str)
+                result_by_static_id = await session.execute(stmt_by_static_id)
+                db_ability_model = result_by_static_id.scalars().first()
+
+            if db_ability_model:
+                logger.info(f"AbilityManager: Fetched ability '{db_ability_model.id}' (static_id: {db_ability_model.static_id}) from DB for guild '{guild_id_str}'.")
+                # Convert SQLAlchemy model to Pydantic model and cache it
+                # This requires a new method or logic here.
+                # For now, assuming AbilityPydanticModel can be created from AbilityDbModel fields.
+                # This is a simplified conversion. A proper from_orm or manual mapping is needed.
+                try:
+                    pydantic_ability = AbilityPydanticModel(
+                        id=db_ability_model.id,
+                        static_id=db_ability_model.static_id, # Ensure Pydantic model has static_id
+                        name_i18n=db_ability_model.name_i18n or {},
+                        description_i18n=db_ability_model.description_i18n or {},
+                        effect_i18n=db_ability_model.effect_i18n or {}, # Renamed from properties_json
+                        cost=db_ability_model.cost or {},
+                        requirements=db_ability_model.requirements or {},
+                        type= (db_ability_model.type_i18n or {}).get("en", "unknown_type"), # Assuming type_i18n exists and has 'en'
+                        # Add other fields as necessary, ensuring type compatibility
+                        # e.g. cooldown might be in properties_json / effect_i18n
+                    )
+                    # Cache the loaded Pydantic model
+                    self._ability_templates.setdefault(guild_id_str, {})[pydantic_ability.id] = pydantic_ability
+                    return pydantic_ability
+                except Exception as e_pydantic:
+                    logger.error(f"AbilityManager: Failed to convert DB model to Pydantic for ability {db_ability_model.id}: {e_pydantic}", exc_info=True)
+                    return None
+            else:
+                logger.warning(f"AbilityManager: Ability with ID or static_id '{id_str}' not found in DB for guild '{guild_id_str}'.")
+                return None
 
     async def get_all_ability_definitions_for_guild(self, guild_id: str, session: Optional[AsyncSession] = None) -> List[AbilityDbModel]:
         """
@@ -162,9 +235,11 @@ class AbilityManager:
     async def activate_ability(self, guild_id: str, character_id: str, ability_id: str, target_id: Optional[str] = None, **kwargs: Any) -> Dict[str, Any]:
         guild_id_str = str(guild_id)
 
-        if not self._character_manager or not self._rule_engine:
-            logger.error("AbilityManager: CharacterManager or RuleEngine not available for activate_ability in guild %s.", guild_id_str)
-            return {"success": False, "message": "Internal server error: Manager not available."}
+        if not self._character_manager or not self._rule_engine or not hasattr(self._character_manager, '_game_log_manager'):
+            logger.error("AbilityManager: CharacterManager, RuleEngine or GameLogManager not available for activate_ability in guild %s.", guild_id_str)
+            return {"success": False, "message": "Internal server error: Required manager not available."}
+
+        game_log_manager = self._character_manager._game_log_manager # Assuming CharacterManager has GameLogManager
 
         ability = await self.get_ability(guild_id_str, ability_id) # Pydantic model
         if not ability:
@@ -232,6 +307,27 @@ class AbilityManager:
                 guild_id=guild_id_str, **kwargs
             )
             logger.info("AbilityManager: Ability '%s' activated by '%s' in guild %s. Outcomes: %s", ability_display_name, character_id, guild_id_str, outcomes)
+
+            # Log event to StoryLog
+            if game_log_manager:
+                log_details = {
+                    "caster_id": character_id,
+                    "ability_id": ability_id,
+                    "ability_name": ability_display_name,
+                    "target_id": target_id if target_id else "self/area",
+                    "outcomes": outcomes # Outcomes from RuleEngine processing
+                }
+                # Assuming caster is a Character, get player_id for the log
+                player_id_for_log = getattr(caster, 'player_id', None)
+
+                await game_log_manager.log_event(
+                    guild_id=guild_id_str,
+                    event_type="ABILITY_ACTIVATED",
+                    details=log_details,
+                    player_id=player_id_for_log, # Logged under the player account
+                    # location_id might be available in caster.current_location_id
+                    location_id=getattr(caster, 'current_location_id', None)
+                )
             return {"success": True, "message": f"{ability_display_name} activated successfully!", "outcomes": outcomes}
         except Exception as e:
             logger.error("AbilityManager: Error during ability effect processing for '%s' in guild %s: %s", ability_display_name, guild_id_str, e, exc_info=True)

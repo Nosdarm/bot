@@ -143,43 +143,147 @@ class LocationInteractionService:
 
         db_service = self.game_manager.db_service
 
-        async with db_service.get_session() as session: # type: ignore
-            try:
-                player = await get_entity_by_id(session, Player, player_id)
-                if not player or player.guild_id != guild_id:
-                    logger.warning(f"{log_prefix}: Player not found or guild mismatch."); return False, "Player data error."
-                if not player.current_location_id:
-                    logger.warning(f"{log_prefix}: Player has no current_location_id."); return False, "Your location is unknown."
-                location = await get_entity_by_id(session, Location, player.current_location_id)
-                if not location or location.guild_id != guild_id:
-                    logger.warning(f"{log_prefix}: Current location not found or guild mismatch."); return False, "Location data error."
+        # Method now expects an active session to be passed
+        session: Optional[AsyncSession] = action_data.get("session") # Expect session in action_data
+        if not session:
+            logger.error(f"{log_prefix}: DB session not provided in action_data.")
+            return False, "Internal error: Database session missing."
 
-                intent = action_data.get("intent")
-                target_object_name = ""
-                entities = action_data.get("entities", [])
-                if entities: target_object_name = next((e.get("name", "").lower().strip() for e in entities if e.get("type") in ["target_object_name", "target_npc_name", "target_location_identifier"]), "")
+        try:
+            # Load RuleConfig for the guild
+            if not self.game_manager.rule_engine:
+                logger.error(f"{log_prefix}: RuleEngine not available.")
+                return False, "Game rules are currently unavailable."
 
-                if not intent: return False, "Your action's intent is unclear."
+            rules_config = await self.game_manager.rule_engine.get_rules_config(guild_id)
+            if not rules_config:
+                logger.error(f"{log_prefix}: Could not load RuleConfig for guild {guild_id}.")
+                return False, "Game rules configuration is missing for this area."
 
-                location_name_for_log = location.name_i18n.get('en', location.id) if location.name_i18n else location.id
-                logger.info(f"{log_prefix}: Player {player.id} attempts '{intent}' with target '{target_object_name}' in loc {location.id} ('{location_name_for_log}').")
+            # Get active character (not Player DB model directly)
+            character_model = await session.get(Character, player_id) # player_id is character_id
+            if not character_model or str(character_model.guild_id) != guild_id:
+                logger.warning(f"{log_prefix}: Character {player_id} not found or guild mismatch."); return False, "Character data error."
 
-                if intent == "examine_object":
-                    if not target_object_name: return False, "What exactly do you want to examine?"
-                    normalized_target_key = target_object_name.lower().strip().replace(" ", "_")
-                    player_lang = player.selected_language or await self.game_manager.get_rule(guild_id, 'default_language', 'en')
-                    description_to_send = None; description_found = False
-                    if location.details_i18n and isinstance(location.details_i18n, dict):
-                        lang_specific_details = location.details_i18n.get(player_lang)
-                        if isinstance(lang_specific_details, dict) and lang_specific_details.get(normalized_target_key):
-                            description_to_send = lang_specific_details[normalized_target_key]; description_found = True
-                        elif player_lang != 'en' and isinstance(location.details_i18n.get('en'), dict) and location.details_i18n['en'].get(normalized_target_key):
-                            description_to_send = location.details_i18n['en'][normalized_target_key]; description_found = True
-                    if not description_found: return False, f"You look at the {target_object_name}, but find nothing special."
-                    return True, description_to_send
-                elif intent in ["take_item", "use_item", "open_container", "search_container_or_area", "initiate_dialogue"]:
-                    if not target_object_name and intent != "search_container_or_area": return False, f"What do you want to {intent.replace('_', ' ')}?"
-                    return True, f"You attempt to {intent.replace('_', ' ')} '{target_object_name if target_object_name else 'the area'}'. (WIP)"
-                else: return False, f"You're not sure how to '{intent}'."
-            except Exception as e:
-                logger.error(f"{log_prefix}: Error: {e}", exc_info=True); return False, "An unexpected error occurred."
+            if not character_model.current_location_id:
+                logger.warning(f"{log_prefix}: Character {player_id} has no current_location_id."); return False, "Your location is unknown."
+
+            location = await session.get(Location, character_model.current_location_id)
+            if not location or str(location.guild_id) != guild_id:
+                logger.warning(f"{log_prefix}: Current location {character_model.current_location_id} not found or guild mismatch."); return False, "Location data error."
+
+            intent = action_data.get("intent") # e.g., "INTENT_EXAMINE_OBJECT", "INTENT_TAKE_ITEM_POI"
+            # target_id might be POI_id, item_id within POI, etc.
+            target_id = action_data.get("target_id") # This should be the ID of the POI or specific feature.
+            # sub_target_id could be item_id if intent is to take item from a POI.
+            sub_target_id = action_data.get("sub_target_id")
+
+            if not intent: return False, "Your action's intent is unclear."
+
+            location_name_for_log = location.name_i18n.get('en', location.id) if location.name_i18n else location.id
+            logger.info(f"{log_prefix}: Character {character_model.id} attempts '{intent}' (target: {target_id}, sub_target: {sub_target_id}) in loc {location.id} ('{location_name_for_log}').")
+
+            interaction_definition_key = target_id # POI_id or feature_id
+            interaction_rule = rules_config.location_interactions.get(interaction_definition_key)
+
+            if not interaction_rule and intent == "INTENT_EXAMINE_OBJECT": # Fallback for simple examine if no specific rule
+                # This is the old logic, can be kept as a fallback or removed if all examines must be rule-based
+                target_object_name = target_id # Assume target_id is the name for examine if no rule
+                if not target_object_name: return False, "What exactly do you want to examine?"
+                normalized_target_key = target_object_name.lower().strip().replace(" ", "_")
+                player_lang = character_model.selected_language or await self.game_manager.get_rule(guild_id, 'default_language', 'en')
+                description_to_send = None; description_found = False
+                if location.details_i18n and isinstance(location.details_i18n, dict):
+                    lang_specific_details = location.details_i18n.get(player_lang)
+                    if isinstance(lang_specific_details, dict) and lang_specific_details.get(normalized_target_key):
+                        description_to_send = lang_specific_details[normalized_target_key]; description_found = True
+                    elif player_lang != 'en' and isinstance(location.details_i18n.get('en'), dict) and location.details_i18n['en'].get(normalized_target_key):
+                        description_to_send = location.details_i18n['en'][normalized_target_key]; description_found = True
+                if not description_found: return False, f"You look at the {target_object_name}, but find nothing special."
+                return True, description_to_send
+
+            if not interaction_rule:
+                logger.warning(f"{log_prefix}: No interaction rule found for target '{interaction_definition_key}' in location '{location.id}'.")
+                return False, f"You can't seem to interact with '{target_id}' in that way."
+
+            # Check required items
+            if interaction_rule.required_items:
+                if not self.game_manager.inventory_manager:
+                    logger.error(f"{log_prefix}: InventoryManager not available for checking required items."); return False, "Internal error: Inventory system unavailable."
+                for req_item_template_id in interaction_rule.required_items:
+                    if not await self.game_manager.inventory_manager.character_has_item_template(guild_id, character_model.id, req_item_template_id, session=session):
+                        # TODO: Get localized item name for feedback
+                        return False, f"You need a specific item ({req_item_template_id}) to do that."
+
+            outcome_to_process: Optional[Dict[str, Any]] = None # This will be Pydantic LocationInteractionOutcome.model_dump()
+            check_passed = True # Assume success if no check is required
+
+            if interaction_rule.check_type:
+                if not self.game_manager.check_resolver:
+                    logger.error(f"{log_prefix}: CheckResolver not available for interaction check."); return False, "Internal error: Check system unavailable."
+
+                # difficulty_dc might come from the interaction_rule itself, or be dynamic
+                # For now, assume it's part of the rule or a default is used by CheckResolver
+                check_result = await self.game_manager.check_resolver.resolve_check(
+                    guild_id=guild_id,
+                    check_type=interaction_rule.check_type,
+                    performing_entity_id=character_model.id,
+                    performing_entity_type="Character", # Assuming player character for now
+                    difficulty_dc=interaction_rule.success_outcome.get("dc") # Example: DC might be on the outcome
+                )
+                check_passed = check_result.succeeded
+                # TODO: Send feedback about the check result to the player
+                if self.game_manager.notification_service:
+                    await self.game_manager.notification_service.send_character_feedback(
+                        guild_id, character_model.id, check_result.description, "check_result"
+                    )
+
+            outcome_definition = interaction_rule.success_outcome if check_passed else interaction_rule.failure_outcome
+            if outcome_definition:
+                outcome_to_process = outcome_definition.model_dump()
+
+            if outcome_to_process:
+                # Process consequences using ConsequenceProcessor
+                if not self.game_manager.consequence_processor:
+                    logger.error(f"{log_prefix}: ConsequenceProcessor not available."); return False, "Internal error: Consequence system unavailable."
+
+                # Context for consequence processor
+                consequence_context = {
+                    "character": character_model, # Pass the SQLAlchemy model
+                    "location": location,       # Pass the SQLAlchemy model
+                    "interaction_target_id": target_id,
+                    "interaction_rule": interaction_rule.model_dump(), # Pass rule data
+                    "session": session # Pass the active session
+                }
+
+                # The outcome_to_process itself is the list of consequence instructions
+                # The ConsequenceProcessor needs to be adapted to take this structure or iterate through it.
+                # For now, let's assume a single outcome type is processed.
+                # This needs to be a list of consequence dicts.
+                # For a single outcome, wrap it in a list.
+                consequences_to_apply = [outcome_to_process] # Wrap the single outcome
+
+                # The ConsequenceProcessor.process_consequences expects a JSON string or a list of dicts.
+                # We pass the list of dicts directly.
+                await self.game_manager.consequence_processor.process_consequences(
+                    guild_id=guild_id,
+                    consequences_list=consequences_to_apply, # Pass the list of outcome dicts
+                    context=consequence_context,
+                    actor_id=character_model.id,
+                    actor_type="Character"
+                )
+
+                # Message is now handled by ConsequenceProcessor if it's a 'display_message' type
+                # If there's a specific message from the outcome, it should have been processed.
+                # We can return a generic success/failure or a specific message if the outcome was just info.
+                final_message = outcome_to_process.get("message_i18n", {}).get(character_model.selected_language or "en")
+                if final_message:
+                    return True, final_message
+                return True, f"You interact with {target_id}. (Outcome processed)"
+
+            return False, f"You interact with {target_id}, but nothing seems to happen."
+
+        except Exception as e:
+            logger.error(f"{log_prefix}: Error: {e}", exc_info=True)
+            # Important: Do not rollback here if session was passed in. Caller handles it.
+            return False, "An unexpected error occurred during interaction."

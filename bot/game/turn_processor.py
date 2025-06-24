@@ -38,24 +38,105 @@ class TurnProcessor:
 
         async with db_service.get_session() as session:
             try:
+                # Fetch RuleConfig for the guild
+                if not self.game_manager.rule_engine:
+                    logger.error(f"TurnProcessor: RuleEngine not available for guild {guild_id}. Cannot process turns with conflict resolution.")
+                    return
+
+                # Assuming RuleEngine has a way to provide the CoreGameRulesConfig
+                # This might involve RuleEngine loading it if not already cached for the guild.
+                # For now, let's assume RuleEngine has a property or method for this.
+                # This part might need adjustment based on RuleEngine's exact API.
+                rules_config_data = await self.game_manager.rule_engine.get_rules_config(guild_id) # Expects CoreGameRulesConfig Pydantic model
+                if not rules_config_data:
+                    logger.error(f"TurnProcessor: Failed to load RuleConfig for guild {guild_id}. Cannot process turns with conflict resolution.")
+                    return
+
                 # Fetch characters who have submitted actions
-                characters_to_process = await get_entities(
+                characters_with_submitted_actions = await get_entities(
                     db_session=session,
                     model_class=Character,
-                    guild_id=guild_id, # MODIFIED: Pass guild_id explicitly
-                    conditions=[Character.current_game_status == "actions_submitted"] # guild_id condition is implicitly handled by get_entities
+                    guild_id=guild_id,
+                    conditions=[Character.current_game_status == "actions_submitted"]
                 )
 
-                if not characters_to_process:
+                if not characters_with_submitted_actions:
                     logger.info(f"No characters with submitted actions found in guild {guild_id}.")
                     return
 
-                logger.info(f"Found {len(characters_to_process)} characters with submitted actions in guild {guild_id}.")
+                logger.info(f"Found {len(characters_with_submitted_actions)} characters with submitted actions in guild {guild_id}.")
 
-                for character in characters_to_process: # MODIFIED: Iterate through characters
+                # --- Stage 1: Collect all actions for conflict analysis ---
+                player_actions_map_for_conflict: Dict[str, List[Dict[str, Any]]] = {}
+                character_map: Dict[str, Character] = {char.id: char for char in characters_with_submitted_actions}
+
+                for character in characters_with_submitted_actions:
+                    actions_json_str = character.collected_actions_json
+                    if actions_json_str:
+                        try:
+                            actions_list = json.loads(actions_json_str)
+                            if isinstance(actions_list, list) and actions_list:
+                                player_actions_map_for_conflict[character.id] = actions_list
+                        except json.JSONDecodeError:
+                            logger.error(f"Failed to decode actions JSON for conflict analysis, character {character.id}: '{actions_json_str}'", exc_info=True)
+
+                # --- Stage 2: Conflict Resolution ---
+                conflict_analysis_result = None
+                if player_actions_map_for_conflict and self.game_manager.conflict_resolver:
+                    conflict_analysis_result = await self.game_manager.conflict_resolver.analyze_actions_for_conflicts(
+                        player_actions_map=player_actions_map_for_conflict,
+                        guild_id=guild_id,
+                        rules_config=rules_config_data # Pass the loaded CoreGameRulesConfig
+                    )
+
+                actions_to_execute_this_turn: List[Dict[str, Any]] = []
+                if conflict_analysis_result:
+                    if conflict_analysis_result.get("requires_manual_resolution"):
+                        logger.info(f"TurnProcessor: Manual conflict resolution required for guild {guild_id}.")
+                        for conflict_detail in conflict_analysis_result.get("pending_conflict_details", []):
+                            # Save PendingConflict to DB (this should ideally be a service call)
+                            # For now, conceptual:
+                            # await self.game_manager.db_service.create_entity(PendingConflict, conflict_detail_with_guild_id_and_status)
+                            logger.info(f"Conflict details for manual resolution: {conflict_detail}")
+                            # Notify GM (NotificationService should be used here by ConflictResolver or GMAppCmds)
+
+                            # Update status for involved characters
+                            for char_id_in_conflict in conflict_detail.get("involved_player_ids", []):
+                                if char_id_in_conflict in character_map:
+                                    char_in_conflict = character_map[char_id_in_conflict]
+                                    char_in_conflict.current_game_status = "ожидание_разрешения_конфликта"
+                                    # Keep their actions in collected_actions_json until resolved
+                                    session.add(char_in_conflict)
+                                    logger.info(f"Character {char_id_in_conflict} status set to 'ожидание_разрешения_конфликта'.")
+
+                    # Add auto-resolved or non-conflicting actions to the execution list
+                    actions_to_execute_this_turn.extend(conflict_analysis_result.get("actions_to_execute", []))
+
+                    # Log auto-resolution outcomes (if any)
+                    for auto_res_outcome in conflict_analysis_result.get("auto_resolution_outcomes", []):
+                        logger.info(f"Auto-resolved conflict outcome: {auto_res_outcome}")
+                        # Potentially send feedback to players involved in auto-resolved conflicts
+                else: # No conflicts or resolver not available, all actions go to execution
+                    for char_id, actions in player_actions_map_for_conflict.items():
+                        for action_data in actions:
+                            actions_to_execute_this_turn.append({"character_id": char_id, "action_data": action_data})
+
+                # --- Stage 3: Execute Cleared Actions ---
+                # Group actions by character_id for sequential processing per character
+                actions_by_character: Dict[str, List[Dict[str,Any]]] = {}
+                for exec_action in actions_to_execute_this_turn:
+                    char_id = exec_action["character_id"]
+                    actions_by_character.setdefault(char_id, []).append(exec_action["action_data"])
+
+                for character_id, char_actions_list in actions_by_character.items():
+                    character = character_map.get(character_id)
+                    if not character or character.current_game_status == "ожидание_разрешения_конфликта":
+                        # Skip if character not found (should not happen if actions_by_character is built correctly)
+                        # or if character is now waiting for manual conflict resolution
+                        continue
+
                     try:
-                        # Attempt to get player_id for logging, if available
-                        player_discord_id_for_log = "N/A"
+                        player_discord_id_for_log = "N/A" # Default
                         if character.player_id and self.game_manager.character_manager: # CharacterManager has Player cache
                             player_obj = await self.game_manager.character_manager.get_player_account_by_char_id(character.id, guild_id)
                             if player_obj:
@@ -85,72 +166,135 @@ class TurnProcessor:
                                 original_text = action_data.get("original_text", "")
                                 logger.debug(f"Character {character.id} action: Intent='{intent}', Entities='{entities}', Original='{original_text}'")
 
-                                if intent == "move":
-                                    target_identifier = None
-                                    for entity in entities:
-                                        if entity.get("type") == "target_location_identifier":
-                                            target_identifier = entity.get("name")
-                                            break
+                                # --- Action Execution (Placeholder for new dispatcher) ---
+                        # --- Action Execution Dispatcher ---
+                        # This loop processes actions for a single character sequentially.
+                        # Each action should ideally be in its own GuildTransaction if it modifies DB state.
+                        # However, if CharacterActionProcessor methods are already transactional, that's fine.
 
-                                    if not target_identifier:
-                                        logger.error(f"Move intent for character {character.id} missing 'target_location_identifier' entity. Action: {action_data}")
-                                        if self.game_manager.notification_service:
-                                            await self.game_manager.notification_service.send_character_feedback( # MODIFIED: send_character_feedback
-                                                guild_id, character.id, "Your move command was unclear. Please specify a target.", "action_error"
-                                            )
-                                        continue
+                        character_had_successful_action = False
+                        for action_data_to_exec in char_actions_list:
+                            intent = action_data_to_exec.get("intent")
+                            original_text = action_data_to_exec.get("original_text", "")
+                            logger.debug(f"Character {character.id} executing action: Intent='{intent}', Data='{action_data_to_exec}'")
 
-                                    if not self.game_manager.location_manager:
-                                        logger.error(f"LocationManager not available for move action, character {character.id}.")
-                                        if self.game_manager.notification_service:
-                                            await self.game_manager.notification_service.send_character_feedback( # MODIFIED
-                                                guild_id, character.id, "Movement system is currently unavailable. Please try again later.", "system_error"
-                                            )
-                                        continue
+                            action_result: Optional[Dict[str, Any]] = None
 
-                                    logger.info(f"Executing move for character {character.id} to '{target_identifier}'.")
-                                    # handle_move_action in LocationManager likely expects character_id
-                                    success, message = await self.game_manager.location_manager.handle_move_action(
-                                        guild_id, character.id, target_identifier
+                            # We need CharacterActionProcessor here. GameManager should have it.
+                            if not self.game_manager.character_action_processor:
+                                logger.error(f"CharacterActionProcessor not available for guild {guild_id}. Cannot execute action for char {character.id}.")
+                                if self.game_manager.notification_service:
+                                    await self.game_manager.notification_service.send_character_feedback(
+                                        guild_id, character.id, "Action processing system is currently unavailable.", "system_error"
                                     )
-                                    logger.info(f"Move action for character {character.id} to '{target_identifier}': Success={success}, Msg='{message}'")
+                                break # Stop processing actions for this character if CAP is missing
 
-                                    if self.game_manager.notification_service:
-                                        await self.game_manager.notification_service.send_character_feedback( # MODIFIED
-                                            guild_id, character.id, message, "action_result" if success else "action_error"
-                                        )
+                            # Context for CharacterActionProcessor
+                            cap_context = {
+                                'guild_id': guild_id,
+                                'author_id': player_discord_id_for_log, # Assuming this is discord_id str
+                                'channel_id': None, # TurnProcessor doesn't have a specific channel, feedback goes via NotificationService
+                                'game_manager': self.game_manager,
+                                'db_session': session, # Pass the current session
+                                # Other managers are accessed via game_manager inside CAP
+                            }
+
+                            try:
+                                # CharacterActionProcessor.process_action is a placeholder name;
+                                # it should be a method that takes character_id, intent, action_data (entities etc.), and context.
+                                # For now, using a conceptual routing based on intent.
+                                # This needs to be mapped to actual CharacterActionProcessor methods.
+
+                                # Example of how it might be structured:
+                                # action_request = ActionRequest(guild_id=guild_id, actor_id=character.id, action_type=intent, action_data=action_data_to_exec)
+                                # action_result = await self.game_manager.character_action_processor.process_action_from_request(
+                                #    action_request, character, cap_context
+                                # )
+
+                                # Simplified direct calls for now, assuming CAP has methods per intent or a dispatcher
+                                if intent == "INTENT_MOVE":
+                                    target_entity_data = action_data_to_exec.get('primary_target_entity')
+                                    target_identifier = None
+                                    if target_entity_data and target_entity_data.get('type') in ['location', 'direction', 'location_feature', 'location_tag']:
+                                        target_identifier = target_entity_data.get('name')
+                                    elif action_data_to_exec.get('entities'):
+                                        for ent in action_data_to_exec.get('entities', []):
+                                            if ent.get('type') in ['location', 'direction']: target_identifier = ent.get('name'); break
+                                    if not target_identifier and action_data_to_exec.get('original_text'):
+                                        parts = action_data_to_exec['original_text'].lower().split("to "); target_identifier = parts[1].strip() if len(parts) > 1 else None
+
+                                    if target_identifier:
+                                        move_success = await self.game_manager.handle_move_action(guild_id, character.id, target_identifier, session=session)
+                                        action_result = {"success": move_success, "message": "Moved." if move_success else "Could not move."}
                                     else:
-                                        logger.warning(f"NotificationService not available to send move feedback to character {character.id}.")
+                                        action_result = {"success": False, "message": "Move target unclear."}
+
+                                elif intent == "INTENT_LOOK":
+                                     action_result = await self.game_manager.character_action_processor.handle_explore_action(
+                                         character, guild_id, action_data_to_exec.get('primary_target_entity', {}).get('name'), cap_context.get('channel_id'), session=session
+                                     )
+                                # ... other intent handlers ...
                                 else:
-                                    logger.info(f"Character {character.id} action intent '{intent}' not yet supported or understood in this context.")
-                                    if self.game_manager.notification_service:
-                                        await self.game_manager.notification_service.send_character_feedback( # MODIFIED
-                                            guild_id, character.id, f"The action '{original_text}' (intent: {intent}) is not recognized or supported yet.", "action_error"
+                                    logger.info(f"Intent '{intent}' for char {character.id} not fully handled by TurnProcessor yet.")
+                                    action_result = {"success": True, "message": f"Action '{original_text}' acknowledged (Intent: {intent}). Full processing pending."}
+
+                                if action_result and action_result.get("success"):
+                                    character_had_successful_action = True
+                                    if action_result.get("message") and self.game_manager.notification_service:
+                                        await self.game_manager.notification_service.send_character_feedback(
+                                            guild_id, character.id, action_result["message"], "action_result"
                                         )
+                                elif action_result and self.game_manager.notification_service: # Action failed
+                                    await self.game_manager.notification_service.send_character_feedback(
+                                        guild_id, character.id, action_result.get("message", "Action failed."), "action_error"
+                                    )
 
-                        character.collected_actions_json = "[]"
-                        character.current_game_status = "active"
+                                # If an action has significant consequences (e.g., starting combat, ending dialogue),
+                                # it might change character.current_game_status.
+                                # The loop should break if status is no longer 'active' or 'actions_submitted'.
+                                if character.current_game_status not in ["active", "actions_submitted"]:
+                                    logger.info(f"Character {character.id} status changed to '{character.current_game_status}' during action processing. Ending turn early.")
+                                    break
 
-                        session.add(character) # MODIFIED: Add character to session
+                            except Exception as e_action_exec:
+                                logger.error(f"Error executing action '{intent}' for character {character.id}: {e_action_exec}", exc_info=True)
+                                if self.game_manager.notification_service:
+                                    await self.game_manager.notification_service.send_character_feedback(
+                                        guild_id, character.id, f"An error occurred while performing action: {original_text}", "system_error"
+                                    )
+                                # Decide if we should break or continue other actions for this character.
+                                # For now, let's break if one action errors out.
+                                break
 
-                        players_processed_count += 1 # This counter now refers to characters
-                        logger.info(f"Character {character.id} actions cleared and status set to 'active'.")
+                        # After all actions for a character are attempted:
+                        if character.current_game_status == "actions_submitted": # Only change if not already changed by an action
+                            character.current_game_status = "active"
+                        character.collected_actions_json = "[]" # Clear actions
+                        session.add(character) # Mark for update
 
-                    except Exception as e_player: # Renamed to e_char for clarity
-                        logger.error(f"Error processing turn for character {character.id} in guild {guild_id}: {e_player}", exc_info=True)
-                        # Decide on error strategy: continue with other players, or rollback this player's changes?
-                        # The current structure will commit successful player updates even if one fails.
-                        # If atomicity per player is needed, a nested session or savepoint might be used,
-                        # but for now, one failed player won't stop others.
-                        # The overall session commit is outside this inner loop.
+                        players_processed_count += 1
+                        logger.info(f"Character {character.id} actions processed. Status set to 'active'.")
 
-                # Commit all changes for the processed players in this guild
+                    except Exception as e_char_processing:
+                        logger.error(f"Error processing turn for character {character.id} in guild {guild_id}: {e_char_processing}", exc_info=True)
+                        # Optionally, set character status to 'error' or similar
+                        try:
+                            character.current_game_status = "error_processing_turn"
+                            character.collected_actions_json = "[]" # Clear actions even on error to prevent reprocessing loop
+                            session.add(character)
+                        except Exception as e_status_update:
+                            logger.error(f"Failed to update character {character.id} status to error: {e_status_update}", exc_info=True)
+                        # Continue to next character
+
                 await session.commit()
-                logger.info(f"Successfully processed and committed turns for {players_processed_count} players in guild {guild_id}.")
+                logger.info(f"Successfully processed and committed turns for {players_processed_count} characters in guild {guild_id}.")
 
-            except Exception as e_guild:
-                logger.error(f"Error during turn processing for guild {guild_id} (before or during commit): {e_guild}", exc_info=True)
-                await session.rollback() # Rollback any changes if error occurs during fetching or outer loop
-                logger.info(f"Session rolled back for guild {guild_id} due to error.")
+            except Exception as e_guild_processing:
+                logger.error(f"Critical error during turn processing for guild {guild_id} (outer loop or commit): {e_guild_processing}", exc_info=True)
+                try:
+                    await session.rollback()
+                    logger.info(f"Session rolled back for guild {guild_id} due to critical error.")
+                except Exception as e_rollback:
+                    logger.error(f"Failed to rollback session for guild {guild_id} after critical error: {e_rollback}", exc_info=True)
 
-        logger.info(f"Turn processing finished for guild {guild_id}.")
+        logger.info(f"Turn processing cycle finished for guild {guild_id}.")
