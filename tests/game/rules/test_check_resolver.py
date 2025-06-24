@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import patch, MagicMock # For mocking roll_dice
+from unittest.mock import patch, MagicMock, AsyncMock
 from typing import Dict, Any, List, Optional
 
 from bot.ai.rules_schema import CoreGameRulesConfig, CheckDefinition

@@ -1,8 +1,10 @@
 import unittest
-from unittest.mock import MagicMock, AsyncMock, patch, ANY
+from unittest.mock import MagicMock, AsyncMock, patch, ANY, AsyncMock
 import uuid
 import json
 import logging // Added for logger patching
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from bot.game.managers.character_manager import CharacterManager, UpdateHealthResult
 import bot.game.managers.character_manager as character_manager_module # For logger patching
