@@ -67,29 +67,60 @@ async def update_rule_config(db_session: AsyncSession, guild_id: str, key: str, 
     # If the row (based on guild_id, key) exists, its 'value' is updated.
     # If it does not exist, a new row is inserted.
 
-    stmt = pg_insert(RulesConfig).values(
-        guild_id=guild_id,
-        key=key,
-        value=value
-    )
+    # Check dialect for upsert strategy
+    dialect_name = db_session.bind.dialect.name if db_session.bind else "unknown"
 
-    # Define the conflict target (the columns that define uniqueness)
-    # and the update action if there's a conflict.
-    # The `excluded` object refers to the values that would have been inserted.
-    stmt = stmt.on_conflict_do_update(
-        index_elements=['guild_id', 'key'], # Columns forming the unique constraint
-        set_={'value': stmt.excluded.value}
-    )
+    if dialect_name == 'postgresql':
+        stmt = pg_insert(RulesConfig).values(
+            guild_id=guild_id,
+            key=key,
+            value=value
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['guild_id', 'key'],
+            set_={'value': stmt.excluded.value}
+        )
+        try:
+            await db_session.execute(stmt)
+            # Commit is handled by the transactional_session decorator or calling context
+            # await db_session.commit()
+            logger.info(f"Successfully upserted rule '{key}' for guild {guild_id} using pg_insert.")
+        except Exception as e:
+            # Rollback is handled by the transactional_session decorator or calling context
+            # await db_session.rollback()
+            logger.error(f"Error upserting rule '{key}' for guild {guild_id} with pg_insert: {e}", exc_info=True)
+            raise
+    else: # Fallback for SQLite and other dialects
+        logger.debug(f"Using SELECT-then-UPDATE/INSERT for rule '{key}' in guild {guild_id} (dialect: {dialect_name}).")
+        try:
+            # Check if rule exists
+            select_stmt = select(RulesConfig).where(
+                RulesConfig.guild_id == guild_id,
+                RulesConfig.key == key
+            )
+            result = await db_session.execute(select_stmt)
+            existing_rule = result.scalars().first()
 
-    try:
-        await db_session.execute(stmt)
-        await db_session.commit() # Commit the transaction
-        logger.info(f"Successfully upserted rule '{key}' for guild {guild_id}.")
-    except Exception as e:
-        await db_session.rollback() # Rollback on error
-        logger.error(f"Error upserting rule '{key}' for guild {guild_id}: {e}", exc_info=True)
-        # Potentially re-raise or handle as needed
-        raise # Re-raise to make the caller aware of the failure
+            if existing_rule:
+                # Update existing rule
+                existing_rule.value = value
+                db_session.add(existing_rule)
+                logger.info(f"Updating existing rule '{key}' for guild {guild_id}.")
+            else:
+                # Insert new rule
+                new_rule = RulesConfig(guild_id=guild_id, key=key, value=value)
+                db_session.add(new_rule)
+                logger.info(f"Inserting new rule '{key}' for guild {guild_id}.")
+
+            await db_session.flush() # Apply changes to session to check for errors before commit
+            # Commit is handled by the transactional_session decorator or calling context
+            # await db_session.commit()
+            logger.info(f"Successfully saved rule '{key}' for guild {guild_id} using fallback method.")
+        except Exception as e:
+            # Rollback is handled by the transactional_session decorator or calling context
+            # await db_session.rollback()
+            logger.error(f"Error saving rule '{key}' for guild {guild_id} with fallback: {e}", exc_info=True)
+            raise
 
 # Example usage (for testing, not part of the module's public API directly)
 async def _example_usage(db_session: AsyncSession, test_guild_id: str):

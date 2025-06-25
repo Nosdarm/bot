@@ -127,6 +127,195 @@ class TestQuestManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, expected_response)
         # self.mock_db_service.adapter.save_pending_moderation_request.assert_not_called() # See comment in previous test
 
+    # --- Tests for accept_quest ---
+    async def test_accept_quest_success(self):
+        guild_id = "guild_accept_q1"
+        player_pk = "player_pk_for_accept" # This is Player.id (PK)
+        quest_db_id = "db_quest_to_accept_1"
+        first_step_id = "step_1_of_db_quest_1"
+
+        mock_player_db = MagicMock(spec=Player)
+        mock_player_db.id = player_pk
+        mock_player_db.guild_id = guild_id
+        mock_player_db.level = 5
+        mock_player_db.active_quests = None # No active quests initially
+        mock_player_db.selected_language = "en"
+
+        mock_quest_to_accept_db = MagicMock(spec=DBGeneratedQuest)
+        mock_quest_to_accept_db.id = quest_db_id
+        mock_quest_to_accept_db.guild_id = guild_id
+        mock_quest_to_accept_db.prerequisites_json = json.dumps({"min_level": 3})
+        mock_quest_to_accept_db.title_i18n = {"en": "The Grand Test Quest"}
+        mock_quest_to_accept_db.suggested_level = 1
+
+
+        mock_first_step_db = MagicMock(spec=DBQuestStepTable)
+        mock_first_step_db.id = first_step_id
+        mock_first_step_db.quest_id = quest_db_id
+        mock_first_step_db.guild_id = guild_id
+        mock_first_step_db.step_order = 0
+        mock_first_step_db.title_i18n = {"en": "First Objective"}
+
+        # Mock DBService.get_session and its context manager
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.get = AsyncMock(side_effect=lambda model, pk: mock_player_db if model == Player and pk == player_pk else (mock_quest_to_accept_db if model == DBGeneratedQuest and pk == quest_db_id else None))
+
+        mock_execute_result_for_steps = AsyncMock()
+        mock_execute_result_for_steps.scalars.return_value.all.return_value = [mock_first_step_db]
+        mock_session.execute.return_value = mock_execute_result_for_steps
+
+        mock_session.add = MagicMock()
+        mock_session.commit = AsyncMock()
+
+        self.mock_db_service.get_session.return_value.__aenter__.return_value = mock_session
+        self.mock_db_service.get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        success, message = await self.quest_manager.accept_quest(guild_id, player_pk, quest_db_id)
+
+        self.assertTrue(success)
+        self.assertIn("Quest 'The Grand Test Quest' accepted!", message)
+        self.assertIn("First Objective", message)
+
+        mock_session.get.assert_any_call(Player, player_pk)
+        mock_session.get.assert_any_call(DBGeneratedQuest, quest_db_id)
+        mock_session.execute.assert_awaited_once() # For fetching steps
+
+        mock_session.add.assert_called_once_with(mock_player_db) # Player with updated active_quests
+        self.assertIsNotNone(mock_player_db.active_quests)
+        active_quests_list = json.loads(mock_player_db.active_quests)
+        self.assertEqual(len(active_quests_list), 1)
+        self.assertEqual(active_quests_list[0]["quest_id"], quest_db_id)
+        self.assertEqual(active_quests_list[0]["current_step_id"], first_step_id)
+        self.assertEqual(active_quests_list[0]["status"], "in_progress")
+
+        mock_session.commit.assert_awaited_once()
+        self.mock_game_log_manager.log_event.assert_awaited_once() # Check logging
+
+    async def test_accept_quest_already_active(self):
+        guild_id = "guild_accept_q_active"
+        player_pk = "player_pk_active"
+        quest_db_id = "db_quest_active_1"
+
+        active_quest_entry = {"quest_id": quest_db_id, "status": "in_progress", "current_step_id": "s1"}
+        mock_player_db = MagicMock(spec=Player)
+        mock_player_db.id = player_pk; mock_player_db.guild_id = guild_id
+        mock_player_db.active_quests = json.dumps([active_quest_entry]) # Already on this quest
+
+        mock_quest_to_accept_db = MagicMock(spec=DBGeneratedQuest) # Quest itself
+        mock_quest_to_accept_db.id = quest_db_id; mock_quest_to_accept_db.guild_id = guild_id
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.get = AsyncMock(side_effect=lambda model, pk: mock_player_db if model == Player else (mock_quest_to_accept_db if model == DBGeneratedQuest else None))
+        self.mock_db_service.get_session.return_value.__aenter__.return_value = mock_session
+
+        success, message = await self.quest_manager.accept_quest(guild_id, player_pk, quest_db_id)
+        self.assertFalse(success)
+        self.assertEqual(message, "You are already on this quest.")
+        mock_session.commit.assert_not_called()
+
+    # --- End of tests for accept_quest ---
+
+    # --- Tests for handle_player_event_for_quest ---
+    async def _setup_quest_for_event_handling(self, guild_id: str, char_id: str, quest_id: str, steps_data: list, initial_status: str = "active") -> Quest:
+        """Helper to set up a Quest object in the manager's cache."""
+        pydantic_steps = []
+        for i, step_d in enumerate(steps_data):
+            step_d.setdefault("id", f"step_{quest_id}_{i}")
+            step_d.setdefault("guild_id", guild_id)
+            step_d.setdefault("quest_id", quest_id)
+            step_d.setdefault("step_order", i)
+            step_d.setdefault("status", "pending")
+            pydantic_steps.append(QuestStep.from_dict(step_d))
+
+        quest_obj = Quest(
+            id=quest_id,
+            guild_id=guild_id,
+            name_i18n={"en": f"Test Quest {quest_id}"},
+            description_i18n={"en": "A quest for testing events."},
+            steps=pydantic_steps,
+            status=initial_status,
+            is_ai_generated=False # Assuming standard quest for these tests
+        )
+        # Populate _all_quests cache
+        self.quest_manager._all_quests.setdefault(guild_id, {})[quest_id] = quest_obj
+
+        # Populate _active_quests cache (stores dicts)
+        active_quest_dict_for_cache = quest_obj.to_dict() # Pydantic to_dict
+        active_quest_dict_for_cache.update({ # Add contextual info not in Pydantic Quest model
+            "character_id": char_id,
+            "start_time": time.time()
+        })
+        self.quest_manager._active_quests.setdefault(guild_id, {}).setdefault(char_id, {})[quest_id] = active_quest_dict_for_cache
+
+        return quest_obj
+
+    @patch('bot.game.managers.quest_manager.QuestManager._evaluate_abstract_goal', new_callable=AsyncMock)
+    @patch('bot.game.managers.quest_manager.QuestManager._mark_step_complete', new_callable=AsyncMock)
+    @patch('bot.game.managers.quest_manager.QuestManager.complete_quest', new_callable=AsyncMock)
+    async def test_handle_event_completes_step_not_quest(
+        self, mock_complete_quest: AsyncMock, mock_mark_step_complete: AsyncMock, mock_evaluate_goal: AsyncMock,
+    ):
+        guild_id = "event_guild1"
+        char_id = "event_char1"
+        quest_id = "event_quest_step_done"
+
+        steps_data = [
+            {"title_i18n": {"en": "Step 1"}, "description_i18n": {"en": "Do A"}, "abstract_goal_json": json.dumps({"type": "EVENT_A"})},
+            {"title_i18n": {"en": "Step 2"}, "description_i18n": {"en": "Do B"}, "abstract_goal_json": json.dumps({"type": "EVENT_B"})}
+        ]
+        quest_obj = await self._setup_quest_for_event_handling(guild_id, char_id, quest_id, steps_data)
+
+        mock_evaluate_goal.return_value = True # Event matches first step's goal
+        mock_mark_step_complete.return_value = True # Marking step as complete succeeds
+
+        event_data = {"event_type": "EVENT_A_TRIGGER", "details": {}} # Example event
+
+        await self.quest_manager.handle_player_event_for_quest(guild_id, char_id, event_data)
+
+        mock_evaluate_goal.assert_awaited_once_with(guild_id, char_id, quest_obj, quest_obj.steps[0], event_data)
+        mock_mark_step_complete.assert_awaited_once_with(guild_id, char_id, quest_id, 0) # Step order 0
+
+        # Check if _are_all_objectives_complete was called and returned False (implicitly)
+        # This is harder to check directly without patching it too or checking its effects.
+        # For now, we check that complete_quest was NOT called.
+        mock_complete_quest.assert_not_called()
+        self.assertEqual(quest_obj.steps[0].status, "completed") # Verify Pydantic model updated by _mark_step_complete
+        self.assertEqual(quest_obj.steps[1].status, "pending")
+
+
+    @patch('bot.game.managers.quest_manager.QuestManager._evaluate_abstract_goal', new_callable=AsyncMock)
+    @patch('bot.game.managers.quest_manager.QuestManager._mark_step_complete', new_callable=AsyncMock)
+    @patch('bot.game.managers.quest_manager.QuestManager.complete_quest', new_callable=AsyncMock)
+    async def test_handle_event_completes_last_step_and_quest(
+        self, mock_complete_quest: AsyncMock, mock_mark_step_complete: AsyncMock, mock_evaluate_goal: AsyncMock,
+    ):
+        guild_id = "event_guild2"
+        char_id = "event_char2"
+        quest_id = "event_quest_all_done"
+
+        steps_data = [
+            {"title_i18n": {"en": "Final Step"}, "description_i18n": {"en": "Finish it!"}, "abstract_goal_json": json.dumps({"type": "FINAL_EVENT"})}
+        ]
+        # Quest setup will mark this step as 'pending' initially
+        quest_obj = await self._setup_quest_for_event_handling(guild_id, char_id, quest_id, steps_data)
+
+        mock_evaluate_goal.return_value = True
+        mock_mark_step_complete.return_value = True
+
+        # Simulate _are_all_objectives_complete returning True after the step is marked
+        # This means we need the Pydantic step object to actually change status for _are_all_objectives_complete
+        # We can patch _are_all_objectives_complete directly for simplicity for this test's focus
+        with patch.object(self.quest_manager, '_are_all_objectives_complete', return_value=True) as mock_are_all_complete:
+            event_data = {"event_type": "FINAL_EVENT_TRIGGER"}
+            await self.quest_manager.handle_player_event_for_quest(guild_id, char_id, event_data)
+
+            mock_evaluate_goal.assert_awaited_once_with(guild_id, char_id, quest_obj, quest_obj.steps[0], event_data)
+            mock_mark_step_complete.assert_awaited_once_with(guild_id, char_id, quest_id, 0)
+            mock_are_all_complete.assert_called_once_with(quest_obj) # Check it was called
+            mock_complete_quest.assert_awaited_once_with(guild_id, char_id, quest_id)
+            # The status of the quest_obj itself would be updated by complete_quest
+            # For this test, we mainly check complete_quest was called.
+
 
     async def test_start_quest_non_ai_from_template(self):
         guild_id = "test_guild_q_template"

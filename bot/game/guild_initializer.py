@@ -44,46 +44,71 @@ async def initialize_new_guild(db_session: AsyncSession, guild_id: str, force_re
             # or later updates, to avoid overwriting them here if they were set manually.
         }
 
-        stmt_guild_config = pg_insert(GuildConfig).values(guild_config_values)
-        stmt_guild_config = stmt_guild_config.on_conflict_do_update(
-            index_elements=['guild_id'],
-            set_={
-                # Only update bot_language if it's explicitly part of the insert,
-                # otherwise, preserve existing. Since it's always in values, it will be set.
-                "bot_language": stmt_guild_config.excluded.bot_language
-                # To preserve existing channel IDs if they are already set and not part of `guild_config_values`:
-                # "game_channel_id": GuildConfig.game_channel_id, # Keep existing
-                # "master_channel_id": GuildConfig.master_channel_id, # Keep existing
-                # ... and so on for other fields not intended to be reset by this basic init.
-                # However, the current structure of on_conflict_do_update in SQLAlchemy
-                # might require listing them if you want to selectively update.
-                # The provided example for on_conflict_do_update implies that only fields in `set_` are touched.
-                # If a field is not in `set_`, its existing value is retained on conflict.
-                # If it's a new insert, fields not in `guild_config_values` get their SQL defaults.
-            }
-        )
-        await db_session.execute(stmt_guild_config)
-        logger.info(f"GuildConfig for guild {guild_id_str} upserted successfully.")
+        stmt_guild_config_insert = pg_insert(GuildConfig).values(guild_config_values)
+        if force_reinitialize or not original_existing_guild_config:
+            # If forcing reinitialization OR if the guild config didn't exist, then upsert (which will insert or update fully)
+            stmt_guild_config_final = stmt_guild_config_insert.on_conflict_do_update(
+                index_elements=['guild_id'],
+                set_={
+                    "bot_language": stmt_guild_config_insert.excluded.bot_language
+                    # Add other fields here if they should be reset on force_reinitialize
+                    # For example, if channel IDs should be cleared on force:
+                    # "game_channel_id": None, # Or some default from guild_config_values
+                    # "master_channel_id": None,
+                    # "system_channel_id": None,
+                    # "notification_channel_id": None,
+                }
+            )
+            logger.info(f"GuildConfig for guild {guild_id_str}: Using on_conflict_do_update (force or new).")
+        else:
+            # If GuildConfig exists and not forcing, do nothing on conflict for user-settable fields.
+            # This preserves existing game_channel_id, master_channel_id etc.
+            # It will still insert if it somehow didn't exist but original_existing_guild_config was true (unlikely).
+            stmt_guild_config_final = stmt_guild_config_insert.on_conflict_do_nothing(
+                index_elements=['guild_id']
+            )
+            logger.info(f"GuildConfig for guild {guild_id_str}: Using on_conflict_do_nothing (exists, no force).")
+
+        await db_session.execute(stmt_guild_config_final)
+        logger.info(f"GuildConfig for guild {guild_id_str} processed.")
 
         # Initialize WorldState for the guild
-        logger.info(f"Guild Initializer for {guild_id_str}: Attempting to upsert WorldState.")
-        world_state_values = {
+        logger.info(f"Guild Initializer for {guild_id_str}: Attempting to process WorldState.")
+        world_state_values = { # These are the defaults for a *new* WorldState
             "guild_id": guild_id_str,
             "global_narrative_state_i18n": {},
             "current_era_i18n": {},
             "custom_flags": {}
         }
-        stmt_world_state = pg_insert(WorldState).values(world_state_values)
-        stmt_world_state = stmt_world_state.on_conflict_do_update(
-            index_elements=['guild_id'], # WorldState.guild_id is unique
-            set_={
-                "global_narrative_state_i18n": stmt_world_state.excluded.global_narrative_state_i18n,
-                "current_era_i18n": stmt_world_state.excluded.current_era_i18n,
-                "custom_flags": stmt_world_state.excluded.custom_flags
-            }
-        )
-        await db_session.execute(stmt_world_state)
-        logger.info(f"WorldState for guild {guild_id_str} upserted successfully.")
+        stmt_world_state_insert = pg_insert(WorldState).values(world_state_values)
+
+        # Check if WorldState already exists for this guild for more nuanced update
+        existing_world_state_stmt = select(WorldState).where(WorldState.guild_id == guild_id_str)
+        ws_result = await db_session.execute(existing_world_state_stmt)
+        existing_world_state = ws_result.scalars().first()
+
+        if force_reinitialize or not existing_world_state:
+            # If forcing, or if WorldState doesn't exist, insert or update all fields to defaults
+            stmt_world_state_final = stmt_world_state_insert.on_conflict_do_update(
+                index_elements=['guild_id'],
+                set_={
+                    "global_narrative_state_i18n": stmt_world_state_insert.excluded.global_narrative_state_i18n,
+                    "current_era_i18n": stmt_world_state_insert.excluded.current_era_i18n,
+                    "custom_flags": stmt_world_state_insert.excluded.custom_flags
+                }
+            )
+            logger.info(f"WorldState for guild {guild_id_str}: Using on_conflict_do_update (force or new).")
+        else:
+            # If WorldState exists and not forcing, only update specific non-user-modifiable fields if necessary,
+            # or do nothing to preserve user-modifiable fields like custom_flags.
+            # For now, let's assume we do nothing on conflict if not forcing, to preserve custom_flags.
+            stmt_world_state_final = stmt_world_state_insert.on_conflict_do_nothing(
+                index_elements=['guild_id']
+            )
+            logger.info(f"WorldState for guild {guild_id_str}: Using on_conflict_do_nothing (exists, no force).")
+
+        await db_session.execute(stmt_world_state_final)
+        logger.info(f"WorldState for guild {guild_id_str} processed.")
 
         # Always attempt to upsert default Location Templates.
         # This ensures they exist for CampaignLoader, regardless of force_reinitialize or GuildConfig existence.
