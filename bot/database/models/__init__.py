@@ -5,7 +5,8 @@ from .world_related import Location, GeneratedLocation, LocationTemplate, Mobile
 from .item_related import ItemTemplate, Item, Inventory, ItemProperty, NewItem, NewCharacterItem, Shop, Currency
 from .quest_related import QuestTable, GeneratedQuest, Questline, QuestStepTable
 from .config_related import GuildConfig, RulesConfig, UserSettings, GlobalState
-from .log_event_related import Timer, Event, StoryLog, PendingConflict, PendingGeneration
+from .log_event_related import Timer, Event, StoryLog, PendingConflict # PendingGeneration removed
+from bot.models.pending_generation import PendingGeneration # Added import from new location
 from .game_mechanics import Combat, Ability, Skill, Status, CraftingRecipe, CraftingQueue, Relationship, Spell
 from .game_log_model import GameLogEntry # Added GameLogEntry
 GameLog = GameLogEntry # Alias for backward compatibility or missed internal imports

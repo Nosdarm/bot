@@ -36,7 +36,8 @@ async def _ensure_player(db_session: AsyncSession, guild_id: str, discord_id_suf
         db_player = Player(
             id=str(uuid.uuid4()), guild_id=guild_id, discord_id=discord_id,
             name_i18n={"en": f"CharTestPlayer {discord_id_suffix}"},
-            level=1, xp=0, gold=0, is_active=True
+            is_active=True
+            # level, xp, gold are character attributes, not player account attributes
         )
         db_session.add(db_player)
         await db_session.commit()

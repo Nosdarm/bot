@@ -212,8 +212,9 @@ async def startup_event():
     # passing them the db_service, relevant settings, and each other as needed.
     logger.info("Initializing GameManager...")
     game_manager = GameManager(
-        settings=game_settings,
-        db_service=db_service
+        discord_client=None, # Placeholder for API context
+        settings=game_settings
+        # db_service is initialized internally by GameManager.setup()
     )
 
     # Assuming GameManager has a method to initialize its sub-managers and load initial data.

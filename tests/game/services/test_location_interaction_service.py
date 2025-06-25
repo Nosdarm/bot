@@ -18,23 +18,27 @@ class TestLocationInteractionService(unittest.TestCase):
         self.mock_notification_service = MagicMock()
         self.mock_game_log_manager = MagicMock()
 
-        # Instantiate the service with mock dependencies
+        # Create a mock GameManager
+        self.mock_game_manager = MagicMock()
+        self.mock_game_manager.db_service = self.mock_db_service
+        self.mock_game_manager.character_manager = self.mock_character_manager
+        self.mock_game_manager.item_manager = self.mock_item_manager
+        self.mock_game_manager.status_manager = self.mock_status_manager
+        self.mock_game_manager.check_resolver = self.mock_check_resolver # If LIS accesses it via GM
+        self.mock_game_manager.notification_service = self.mock_notification_service
+        self.mock_game_manager.game_log_manager = self.mock_game_log_manager
+        # Add other managers to mock_game_manager if LIS uses them, e.g., rule_engine, location_manager
+
+        # Instantiate the service with the mock game_manager
         self.lis = LocationInteractionService(
-            db_service=self.mock_db_service,
-            character_manager=self.mock_character_manager,
-            item_manager=self.mock_item_manager,
-            status_manager=self.mock_status_manager,
-            check_resolver=self.mock_check_resolver,
-            notification_service=self.mock_notification_service,
-            game_log_manager=self.mock_game_log_manager
+            game_manager=self.mock_game_manager
         )
 
     def test_instantiation(self):
         """Test that LocationInteractionService can be instantiated with mock dependencies."""
         self.assertIsNotNone(self.lis)
-        self.assertEqual(self.lis.db_service, self.mock_db_service)
-        self.assertEqual(self.lis.character_manager, self.mock_character_manager)
-        # ... and so on for other dependencies if needed
+        self.assertEqual(self.lis.game_manager, self.mock_game_manager)
+        # Specific checks for managers can be done on self.mock_game_manager if needed
 
     def test_process_interaction_placeholder_generic(self):
         """Test the placeholder response of process_interaction for a generic intent."""

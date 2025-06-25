@@ -99,6 +99,7 @@ class TestPromptContextCollector(unittest.TestCase):
         self.mock_ability_manager = MagicMock()
         self.mock_spell_manager = MagicMock()
         self.mock_event_manager = MagicMock()
+        self.mock_db_service = MagicMock() # Added mock for DBService
 
         # Mock for TimeManager accessed via settings
         self.mock_time_manager_instance = MockTimeManager()
@@ -106,6 +107,7 @@ class TestPromptContextCollector(unittest.TestCase):
 
         self.collector = PromptContextCollector(
             settings=self.mock_settings,
+            db_service=self.mock_db_service, # Added db_service
             character_manager=self.mock_character_manager,
             npc_manager=self.mock_npc_manager,
             quest_manager=self.mock_quest_manager,
@@ -115,6 +117,7 @@ class TestPromptContextCollector(unittest.TestCase):
             ability_manager=self.mock_ability_manager,
             spell_manager=self.mock_spell_manager,
             event_manager=self.mock_event_manager
+            # Assuming game_manager is optional and can be None for these tests
         )
         self.guild_id = "test_guild"
         self.character_id = "char_test_id"
@@ -132,29 +135,31 @@ class TestPromptContextCollector(unittest.TestCase):
 
     # Example test for one method (get_faction_data_context)
     def test_get_faction_data_context(self):
+        game_rules_data_mock = self.mock_settings["game_rules"]
         # Test with detailed definitions
-        faction_data = self.collector.get_faction_data_context(self.guild_id)
+        faction_data = self.collector.get_faction_data_context(self.guild_id, game_rules_data=game_rules_data_mock)
         self.assertEqual(len(faction_data), 2)
         self.assertIn("empire", [f["id"] for f in faction_data])
         self.assertEqual(faction_data[0]["name_i18n"]["en"], "The Empire")
 
         # Test fallback to faction_rules
-        original_factions_def = self.mock_settings["game_rules"]["factions_definition"]
-        self.mock_settings["game_rules"]["factions_definition"] = {} # Remove detailed defs
-        faction_data_fallback = self.collector.get_faction_data_context(self.guild_id)
+        original_factions_def = game_rules_data_mock["factions_definition"]
+        game_rules_data_mock["factions_definition"] = {} # Remove detailed defs
+        faction_data_fallback = self.collector.get_faction_data_context(self.guild_id, game_rules_data=game_rules_data_mock)
         self.assertEqual(len(faction_data_fallback), 3)
         self.assertIn("neutral_guild", [f["id"] for f in faction_data_fallback])
         self.assertEqual(faction_data_fallback[2]["name_i18n"]["en"], "neutral_guild")
-        self.mock_settings["game_rules"]["factions_definition"] = original_factions_def # Restore
+        game_rules_data_mock["factions_definition"] = original_factions_def # Restore
 
         # Test no data
-        original_faction_rules = self.mock_settings["game_rules"]["faction_rules"]
-        self.mock_settings["game_rules"]["factions_definition"] = {}
-        self.mock_settings["game_rules"]["faction_rules"] = {}
-        faction_data_none = self.collector.get_faction_data_context(self.guild_id)
+        original_faction_rules = game_rules_data_mock["faction_rules"]
+        game_rules_data_mock["factions_definition"] = {}
+        game_rules_data_mock["faction_rules"] = {}
+        faction_data_none = self.collector.get_faction_data_context(self.guild_id, game_rules_data=game_rules_data_mock)
         self.assertEqual(len(faction_data_none), 0)
-        self.mock_settings["game_rules"]["factions_definition"] = original_factions_def
-        self.mock_settings["game_rules"]["faction_rules"] = original_faction_rules
+        # Restore for other tests if game_rules_data_mock is self.mock_settings["game_rules"]
+        game_rules_data_mock["factions_definition"] = original_factions_def
+        game_rules_data_mock["faction_rules"] = original_faction_rules
 
 
     @patch('builtins.open', new_callable=mock_open)
@@ -450,9 +455,6 @@ class TestPromptContextCollector(unittest.TestCase):
         self.assertEqual(context_not_found["character_level"], 1)
         self.assertEqual(context_not_found["party_average_level"], 1)
 
-        # Reset side effect for other tests
-        self.mock_character_manager.get_character.side_effect = None
-
     def test_get_game_terms_dictionary(self):
         # Settings already provide stats and skills
         # Mock AbilityManager
@@ -490,11 +492,26 @@ class TestPromptContextCollector(unittest.TestCase):
                 "q_template_001": {"name_i18n": {"en": "The Grand Quest", "ru": "Великий Квест"}, "description_i18n": {"en": "An epic journey.", "ru": "Эпическое путешествие."}}
             }
         }
+        game_rules_data_mock = self.mock_settings["game_rules"]
+        # Mocking the return of get_all_ability_definitions_for_guild and get_all_spell_definitions_for_guild for the kwargs
+        # These are now fetched within get_full_context, but get_game_terms_dictionary can be tested standalone.
+        mock_abilities = [mock_ability1]
+        mock_spells = [mock_spell1]
 
-        terms = self.collector.get_game_terms_dictionary(self.guild_id)
+
+        terms = self.collector.get_game_terms_dictionary(
+            self.guild_id,
+            game_rules_data=game_rules_data_mock,
+            _ability_definitions_for_terms=mock_abilities, # Pass mocked data for abilities
+            _fetched_abilities=True,
+            _spell_definitions_for_terms=mock_spells,     # Pass mocked data for spells
+            _fetched_spells=True
+        )
 
         # Check total number of terms (2 stats + 2 skills + 1 ability + 1 spell + 1 npc_arch + 1 item_tpl + 1 loc_tpl + 2 factions + 1 quest_tpl = 12)
-        self.assertEqual(len(terms), 12)
+        # This count was based on placeholder abilities/spells. Now it's based on actual mocked ones.
+        # Stats (2) + Skills (2) + Abilities (1) + Spells (1) + NPC Archetypes (1) + Item Templates (1) + Location Templates (1) + Factions (2) + Quest Templates (1) = 12
+        self.assertEqual(len(terms), 12) # Count should remain same if placeholders were 1 each
 
         term_types_collected = [t.term_type for t in terms]
         self.assertIn("stat", term_types_collected)
@@ -535,8 +552,8 @@ class TestPromptContextCollector(unittest.TestCase):
         # Settings already provide character_stats_rules.stat_ranges_by_role,
         # quest_rules.reward_rules.xp_reward_range, item_rules.price_ranges_by_type,
         # and xp_rules.level_difference_modifier
-
-        params = self.collector.get_scaling_parameters(self.guild_id)
+        game_rules_data_mock = self.mock_settings["game_rules"]
+        params = self.collector.get_scaling_parameters(self.guild_id, game_rules_data=game_rules_data_mock)
 
         # Expected parameters:
         # Warrior stats: str_min, str_max, dex_min, dex_max (4)
@@ -599,8 +616,19 @@ class TestPromptContextCollector(unittest.TestCase):
         self.collector.get_faction_data_context = MagicMock(return_value=mock_faction_data)
 
         # For player-specific context
-        mock_player_level_context = {"character_level": 10, "party_average_level": 9.5}
-        self.collector.get_player_level_context = MagicMock(return_value=mock_player_level_context)
+        # get_player_level_context was removed from PromptContextCollector.
+        # This logic is now part of CharacterManager.get_character_details_context
+        # which is called by get_full_context.
+        mock_char_details_context_val = {
+            "player_id": self.character_id, # Assuming this is expected by the test assertion structure
+            "level_info": {"character_level": 10, "party_average_level": 9.5},
+            # Add other fields that get_character_details_context might return
+            # and that GenerationContext might expect under player_context
+            "name_i18n": {"en": "Test Character"},
+            "current_location_id": "loc_test"
+        }
+        self.mock_character_manager.get_character_details_context = AsyncMock(return_value=mock_char_details_context_val)
+
 
         mock_quest_context = {"active_quests": [{"id": "q1", "name_i18n": {"en": "Main Quest"}}]}
         self.collector.get_quest_context = MagicMock(return_value=mock_quest_context)

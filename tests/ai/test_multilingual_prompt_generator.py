@@ -29,7 +29,7 @@ class TestMultilingualPromptGenerator(unittest.TestCase):
             faction_data=[{"id": "f1", "name_i18n": {"en": "Faction1"}}],
             relationship_data=[{"entity1_id": "p1", "entity2_id": "npc1", "type": "friendly"}],
             active_quests_summary=[{"id": "q1", "name_i18n": {"en": "Active Quest 1"}}],
-            game_lore_snippets=[{"id": "lore1", "text_en": "Ancient lore"}],
+            lore_snippets=[{"id": "lore1", "text_en": "Ancient lore", "relevance_score": 0.8}], # Added lore_snippets
             game_terms_dictionary=self.sample_game_terms_data,
             scaling_parameters=self.sample_scaling_params_data, # Use the list of dicts
             game_rules_summary={"max_level": 50},
