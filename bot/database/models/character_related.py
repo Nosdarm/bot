@@ -3,13 +3,13 @@ from sqlalchemy import (
     Column, Integer, String, JSON, ForeignKey, Boolean, Text,
     PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID # JSONB removed
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.sql import func
 import uuid
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
-from ..base import Base # Import Base from the new location
+from ..base import Base, JsonVariant # Import Base and JsonVariant
 
 if TYPE_CHECKING:
     from .config_related import UserSettings, GuildConfig # For type hinting
@@ -26,7 +26,7 @@ class Player(Base):
     discord_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
 
-    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     selected_language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 
@@ -60,11 +60,11 @@ class Character(Base):
     player_id: Mapped[str] = mapped_column(String, ForeignKey('players.id', ondelete='CASCADE'), nullable=False, index=True)
     guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
 
-    name_i18n: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    character_class_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    name_i18n: Mapped[Dict[str, Any]] = mapped_column(JsonVariant, nullable=False)
+    character_class_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     race_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    race_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    race_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
 
     level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     xp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -78,27 +78,27 @@ class Character(Base):
     base_defense: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_alive: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    effective_stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    effective_stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
 
-    status_effects_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
-    skills_data_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    abilities_data_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    spells_data_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    known_spells_json: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
-    spell_cooldowns_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    status_effects_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JsonVariant, nullable=True) # Adjusted typing
+    skills_data_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    abilities_data_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    spells_data_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    known_spells_json: Mapped[Optional[List[str]]] = mapped_column(JsonVariant, nullable=True) # Adjusted typing
+    spell_cooldowns_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
 
-    inventory_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
-    equipment_slots_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True, default=lambda: {})
+    inventory_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JsonVariant, nullable=True) # Adjusted typing
+    equipment_slots_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True, default=lambda: {})
 
-    active_quests_json: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
-    flags_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    state_variables_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    active_quests_json: Mapped[Optional[List[str]]] = mapped_column(JsonVariant, nullable=True) # Adjusted typing
+    flags_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    state_variables_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
 
     current_game_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    current_action_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    action_queue_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
-    collected_actions_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted typing
+    current_action_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    action_queue_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JsonVariant, nullable=True) # Adjusted typing
+    collected_actions_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JsonVariant, nullable=True) # Adjusted typing
 
     current_location_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('locations.id'), nullable=True, index=True)
     current_party_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('parties.id', name='fk_character_current_party'), nullable=True, index=True)
@@ -123,13 +123,13 @@ class Character(Base):
 class Party(Base):
     __tablename__ = 'parties'
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    player_ids_json: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True)
+    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    player_ids_json: Mapped[Optional[List[str]]] = mapped_column(JsonVariant, nullable=True)
     current_location_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('locations.id'), nullable=True)
     turn_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     leader_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('characters.id', name='fk_party_leader_character'), nullable=True)
-    state_variables: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    state_variables: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     current_action: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     location: Mapped[Optional["Location"]] = relationship("Location", foreign_keys=[current_location_id]) # type: ignore
@@ -144,36 +144,36 @@ class NPC(Base):
     __tablename__ = 'npcs'
     id: Mapped[str] = mapped_column(String, primary_key=True)
     template_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    backstory_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    persona_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    backstory_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    persona_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     location_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('locations.id'), nullable=True)
-    stats: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    inventory: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    stats: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    inventory: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JsonVariant, nullable=True) # Adjusted
     current_action: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    action_queue: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    action_queue: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JsonVariant, nullable=True) # Adjusted
     party_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('parties.id'), nullable=True)
-    state_variables: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    state_variables: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     health: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     max_health: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     is_alive: Mapped[bool] = mapped_column(Boolean, default=True)
-    status_effects: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    status_effects: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JsonVariant, nullable=True) # Adjusted
     is_temporary: Mapped[bool] = mapped_column(Boolean, default=False)
     archetype: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    traits: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted
-    desires: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted
-    motives: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted
-    skills_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    equipment_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    abilities_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    faction: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True) # Or string if it's an ID
-    behavior_tags: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True) # Adjusted
+    traits: Mapped[Optional[List[str]]] = mapped_column(JsonVariant, nullable=True) # Adjusted
+    desires: Mapped[Optional[List[str]]] = mapped_column(JsonVariant, nullable=True) # Adjusted
+    motives: Mapped[Optional[List[str]]] = mapped_column(JsonVariant, nullable=True) # Adjusted
+    skills_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    equipment_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    abilities_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    faction: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True) # Or string if it's an ID
+    behavior_tags: Mapped[Optional[List[str]]] = mapped_column(JsonVariant, nullable=True) # Adjusted
     loot_table_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    effective_stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    effective_stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     faction_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True) # Assuming this might link to a Factions table later
-    schedule_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    schedule_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
 
     location: Mapped[Optional["Location"]] = relationship("Location", foreign_keys=[location_id]) # type: ignore
     party: Mapped[Optional["Party"]] = relationship("Party", foreign_keys=[party_id]) # type: ignore
@@ -184,11 +184,11 @@ class NPC(Base):
 class GeneratedNpc(Base):
     __tablename__ = 'generated_npcs'
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    backstory_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    persona_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    effective_stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    name_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    backstory_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    persona_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
+    effective_stats_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
 
     guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref
@@ -201,11 +201,11 @@ class GlobalNpc(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    name_i18n: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    name_i18n: Mapped[Dict[str, Any]] = mapped_column(JsonVariant, nullable=False)
+    description_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     current_location_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('locations.id'), nullable=True)
     npc_template_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    state_variables: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    state_variables: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     faction_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 
@@ -228,7 +228,7 @@ class PlayerNpcMemory(Base):
     guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     character_id: Mapped[str] = mapped_column(String, ForeignKey('characters.id', ondelete='CASCADE'), nullable=False, index=True)
     npc_id: Mapped[str] = mapped_column(String, ForeignKey('npcs.id', ondelete='CASCADE'), nullable=False, index=True) # Assuming npcs.id is String
-    memory_details_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    memory_details_i18n: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
 
     guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref
     character: Mapped["Character"] = relationship(foreign_keys=[character_id]) # Add back_populates if Character has a memories list

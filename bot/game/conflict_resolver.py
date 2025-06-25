@@ -55,6 +55,28 @@ class ConflictResolver:
         self.game_log_manager = game_log_manager
         print(f"ConflictResolver initialized with db_service and game_log_manager {'present' if game_log_manager else 'not present'}.")
 
+    # Helper to get rules_config from rule_engine, assuming it's stored there
+    # This might need adjustment based on actual RuleEngine implementation
+    def _get_rules_config(self, guild_id: str) -> Optional[CoreGameRulesConfig]:
+        if hasattr(self.rule_engine, 'get_guild_rules_config'):
+            # Ideal: Rule engine has a method to get config for a guild
+            return self.rule_engine.get_guild_rules_config(guild_id)
+        elif hasattr(self.rule_engine, 'rules_config_data'):
+            # Fallback: Rule engine directly holds the config (might be simplified for some tests)
+            # This assumes it's the correct one for the guild or a global one.
+            # For multi-guild, the above method is better.
+            if isinstance(self.rule_engine.rules_config_data, CoreGameRulesConfig):
+                return self.rule_engine.rules_config_data
+            elif isinstance(self.rule_engine.rules_config_data, dict):
+                 # If it's a dict, try to parse. This might be risky if structure isn't guaranteed.
+                 try:
+                     return CoreGameRulesConfig(**self.rule_engine.rules_config_data)
+                 except Exception:
+                     logger.error("Failed to parse rules_config_data from rule_engine into CoreGameRulesConfig.")
+                     return None
+        logger.warning("ConflictResolver: Could not retrieve rules_config from rule_engine.")
+        return None
+
     async def analyze_actions_for_conflicts(
         self,
         player_actions_map: Dict[str, List[Dict[str, Any]]],
@@ -297,22 +319,29 @@ class ConflictResolver:
             conflict["outcome"] = {"description": error_msg}
             return conflict
 
-        rule = self.rules_config[conflict_type_id]
-        auto_res_config = rule.get("automatic_resolution", {})
-        config_check_type = auto_res_config.get("check_type")
-        outcome_rules = auto_res_config.get("outcome_rules", {})
-
-        if not config_check_type:
-            error_msg = f"Automatic resolution rule for '{conflict_type_id}' missing 'check_type'."
-            print(f"Error for conflict {conflict_id}: {error_msg}")
-
-        # The 'check_type' from rules_config will be passed to RuleEngine.resolve_check
-        rule_engine_check_type = auto_res_config.get("check_type")
-
-        if not rule_engine_check_type:
-            conflict["status"] = "resolution_failed_no_check_type"
+        rules_config_from_engine = self._get_rules_config(guild_id_log)
+        if not rules_config_from_engine or conflict_type_id not in rules_config_from_engine.action_conflicts_map: # Check against map
+            error_msg = f"Error resolving automatically: Rule config or conflict type '{conflict_type_id}' not found via rule_engine for conflict {conflict_id}."
+            # Log this error
+            conflict["status"] = "resolution_failed_no_rule_config"
             conflict["outcome"] = {"description": error_msg}
             return conflict
+
+        rule_def = rules_config_from_engine.action_conflicts_map[conflict_type_id]
+        auto_res_config = rule_def.automatic_resolution if rule_def.automatic_resolution else {}
+        config_check_type = auto_res_config.get("check_type") # Keep using .get for dict-like access if auto_res_config is dict
+        outcome_rules = auto_res_config.get("outcome_rules", {})
+
+        if not config_check_type: # This check might be redundant if schema enforces check_type
+            error_msg = f"Automatic resolution rule for '{conflict_type_id}' missing 'check_type' (or auto_res_config is not as expected)."
+            # Log this error
+            conflict["status"] = "resolution_failed_no_check_type_in_rule" # More specific
+            conflict["outcome"] = {"description": error_msg}
+            return conflict
+
+        rule_engine_check_type = config_check_type # Use the validated check_type
+
+        # The original 'if not rule_engine_check_type:' check is now covered above.
 
         involved_entities = conflict.get("involved_entities", [])
         if not involved_entities:
@@ -463,13 +492,16 @@ class ConflictResolver:
         """
         conflict_type_id = conflict.get("type")
         guild_id = conflict.get("guild_id")
+        guild_id_log = str(guild_id) if guild_id else "UNKNOWN_GUILD_PREPARE"
 
-        if not conflict_type_id or conflict_type_id not in self.rules_config:
-            error_msg = f"Error preparing for manual resolution: Unknown conflict type '{conflict_type_id}'."
-            print(f"❌ {error_msg}")
-            return {"status": "preparation_failed_unknown_type", "message": error_msg, "original_conflict": conflict}
 
-        rule = self.rules_config[conflict_type_id]
+        rules_config_from_engine = self._get_rules_config(guild_id_log)
+        if not rules_config_from_engine or conflict_type_id not in rules_config_from_engine.action_conflicts_map:
+            error_msg = f"Error preparing for manual resolution: Rule config or conflict type '{conflict_type_id}' not found for conflict."
+            # Log this error
+            return {"status": "preparation_failed_no_rule_config", "message": error_msg, "original_conflict": conflict}
+
+        rule_def = rules_config_from_engine.action_conflicts_map[conflict_type_id]
 
         conflict_id = conflict.get("conflict_id") or uuid.uuid4().hex
         conflict["conflict_id"] = conflict_id # Ensure it's set in the conflict dict
@@ -520,13 +552,13 @@ class ConflictResolver:
             conflict["status"] = "preparation_failed_db_error"
             return {"status": "preparation_failed_db_error", "message": error_msg, "original_conflict": conflict}
 
-        notification_fmt = rule.get("notification_format", {})
+        notification_fmt = rule_def.notification_format if rule_def.notification_format else {} # Use rule_def
         message_template = notification_fmt.get("message", "Manual resolution required for {conflict_id}: {type}")
 
         placeholders: Dict[str, Any] = {
             "conflict_id": conflict_id,
             "type": conflict_type_id,
-            "description": rule.get("description", "N/A"),
+            "description": rule_def.description if rule_def.description else "N/A", # Use rule_def
             "involved_entities": conflict.get("involved_entities", []),
             "entity_ids_str": ", ".join([e.get('id', 'Unknown') for e in conflict.get("involved_entities", [])]),
             "entity_types_str": ", ".join([e.get('type', 'Unknown') for e in conflict.get("involved_entities", [])]),
@@ -692,22 +724,23 @@ class ConflictResolver:
         print(f"Retrieved original conflict data for {conflict_id} ({original_conflict.get('type')}): {original_conflict.get('involved_entities')}")
 
         conflict_type_id = original_conflict.get("type")
-        rule = self.rules_config.get(conflict_type_id)
 
-        if not rule:
-            error_msg = f"Error processing manual resolution: Rule definition for conflict type '{conflict_type_id}' not found."
-            print(f"❌ {error_msg}")
-            original_conflict["status"] = "resolved_manually_failed_no_rule"
+        rules_config_from_engine = self._get_rules_config(guild_id_from_db) # Use guild_id from DB record
+        if not rules_config_from_engine or conflict_type_id not in rules_config_from_engine.action_conflicts_map:
+            error_msg = f"Error processing manual resolution: Rule config or conflict type '{conflict_type_id}' not found for conflict {conflict_id}."
+            # Log this error
+            original_conflict["status"] = "resolved_manually_failed_no_rule_config"
             original_conflict["outcome"] = {"description": error_msg}
             return {
-                 "success": False,
-                 "conflict_id": conflict_id,
-                 "message": error_msg,
-                 "resolution_details": original_conflict
+                 "success": False, "conflict_id": conflict_id,
+                 "message": error_msg, "resolution_details": original_conflict
             }
 
-        manual_res_config = rule.get("manual_resolution", {})
-        allowed_outcomes = manual_res_config.get("outcomes", {})
+        rule_def = rules_config_from_engine.action_conflicts_map[conflict_type_id]
+        manual_res_config = rule_def.manual_resolution if rule_def.manual_resolution else {}
+        # Access outcomes using dict.get() if manual_res_config might not be a dict or might lack 'outcomes'
+        allowed_outcomes = manual_res_config.get("outcomes", {}) if isinstance(manual_res_config, dict) else {}
+
 
         chosen_outcome_details = allowed_outcomes.get(outcome_type)
 

@@ -1,35 +1,43 @@
 import enum
 import uuid
-from sqlalchemy import Column, String, JSON, ForeignKey, DateTime, Enum as SAEnum, Text, Index
+from sqlalchemy import Column, String, ForeignKey, DateTime, Enum as SAEnum, Text, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from sqlalchemy.dialects.postgresql import JSONB # For PostgreSQL specific JSONB
+# JSONB removed from sqlalchemy.dialects.postgresql as JsonVariant will be used
 
-from .base import Base # Assuming Base is in bot/models/base.py or accessible via .base
+from .base import Base, JsonVariant # Assuming Base is in bot/models/base.py or accessible via .base
+# Attempt to import GuildConfig directly for the relationship
+try:
+    from bot.database.models.config_related import GuildConfig
+except ImportError:
+    # This fallback might be hit if there's a circular dependency during initial load,
+    # but SQLAlchemy might resolve it later if GuildConfig is part of the same Base metadata.
+    # For type hinting and explicit relationship, direct import is preferred.
+    GuildConfig = "GuildConfig" # Keep as string if direct import fails, rely on SQLAlchemy's deferred resolution
 
 class GenerationType(enum.Enum):
     LOCATION_DESCRIPTION = "location_description"
-    LOCATION_DETAILS = "location_details" # Comprehensive content like PoIs, connections
+    LOCATION_DETAILS = "location_details"
     NPC_PROFILE = "npc_profile"
-    QUEST_IDEATION = "quest_ideation" # Initial idea
-    QUEST_FULL = "quest_full" # Full quest structure with steps
+    QUEST_IDEATION = "quest_ideation"
+    QUEST_FULL = "quest_full"
     ITEM_PROFILE = "item_profile"
     FACTION_PROFILE = "faction_profile"
     LORE_ENTRY = "lore_entry"
     DIALOGUE_LINE = "dialogue_line"
     EVENT_DESCRIPTION = "event_description"
-    CUSTOM_PROMPT = "custom_prompt" # For GM-defined prompts
+    CUSTOM_PROMPT = "custom_prompt"
 
 class PendingStatus(enum.Enum):
-    PENDING_GENERATION = "pending_generation" # AI request queued or in progress
-    PENDING_VALIDATION = "pending_validation" # AI output received, awaiting structural/semantic validation
-    FAILED_VALIDATION = "failed_validation"   # Validation found errors
-    PENDING_MODERATION = "pending_moderation" # Validation passed, awaiting GM approval
-    APPROVED = "approved"                   # GM approved
-    REJECTED = "rejected"                   # GM rejected
-    APPLIED = "applied"                     # Content successfully integrated into game state
-    APPLICATION_FAILED = "application_failed" # Error occurred during integration
-    ARCHIVED = "archived"                   # Kept for records but not active
+    PENDING_GENERATION = "pending_generation"
+    PENDING_VALIDATION = "pending_validation"
+    FAILED_VALIDATION = "failed_validation"
+    PENDING_MODERATION = "pending_moderation"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    APPLIED = "applied"
+    APPLICATION_FAILED = "application_failed"
+    ARCHIVED = "archived"
 
 class PendingGeneration(Base):
     __tablename__ = 'pending_generations'
@@ -38,25 +46,23 @@ class PendingGeneration(Base):
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete="CASCADE"), nullable=False, index=True)
 
     request_type = Column(SAEnum(GenerationType, name="generation_type_enum"), nullable=False, index=True)
-    request_params_json = Column(JSONB, nullable=True) # Parameters used for the AI prompt
+    request_params_json = Column(JsonVariant, nullable=True) # Changed from JSONB
 
-    raw_ai_output_text = Column(Text, nullable=True)    # The raw text from AI
-    parsed_data_json = Column(JSONB, nullable=True)     # Parsed and Pydantic-validated JSON data
-    validation_issues_json = Column(JSONB, nullable=True) # List of ValidationIssue dicts
+    raw_ai_output_text = Column(Text, nullable=True)
+    parsed_data_json = Column(JsonVariant, nullable=True)     # Changed from JSONB
+    validation_issues_json = Column(JsonVariant, nullable=True) # Changed from JSONB
 
     status = Column(SAEnum(PendingStatus, name="pending_status_enum"), nullable=False, default=PendingStatus.PENDING_GENERATION, index=True)
 
-    # User who initiated the request, if applicable (e.g., a GM using a command)
-    created_by_user_id = Column(String, nullable=True, index=True) # Discord user ID
+    created_by_user_id = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    # Moderation details
-    moderated_by_user_id = Column(String, nullable=True) # Discord user ID of GM who moderated
+    moderated_by_user_id = Column(String, nullable=True)
     moderated_at = Column(DateTime(timezone=True), nullable=True)
-    moderator_notes = Column(Text, nullable=True) # Renamed from moderator_notes_i18n for simplicity
+    moderator_notes = Column(Text, nullable=True) # Kept as Text, was moderator_notes_i18n (JSONB)
 
-    # Relationship to GuildConfig (optional, but good practice)
-    guild = relationship("GuildConfig") # Assumes GuildConfig model exists
+    # Relationship to GuildConfig
+    guild = relationship("GuildConfig")
 
     __table_args__ = (
         Index('idx_pending_generation_guild_status_type', 'guild_id', 'status', 'request_type'),
@@ -64,13 +70,3 @@ class PendingGeneration(Base):
 
     def __repr__(self):
         return f"<PendingGeneration(id='{self.id}', guild_id='{self.guild_id}', type='{self.request_type.value if self.request_type else None}', status='{self.status.value if self.status else None}')>"
-
-# Ensure GuildConfig model is defined in bot.models or accessible for the FK.
-# If GuildConfig is in bot.database.models, the import might need adjustment based on package structure.
-# For now, assuming it's accessible as 'guild_configs.guild_id'.
-# Similarly, ensure Base is correctly imported.
-# If Base is in the same directory in base.py: from .base import Base
-# If Base is in bot.database.models: from bot.database.models import Base (but this creates circular if this file is bot.models.pending_generation)
-# The prompt implies this file IS bot.models.pending_generation, so Base should be imported from a common location like bot.models.base.
-# The ForeignKey to 'guild_configs.guild_id' implies a table named 'guild_configs' with a column 'guild_id'.
-# This matches the GuildConfig model definition from previous tasks.

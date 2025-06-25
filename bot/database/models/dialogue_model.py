@@ -1,6 +1,6 @@
-from sqlalchemy import Column, Text, JSON, BOOLEAN, DOUBLE_PRECISION, ForeignKey, Index
-from sqlalchemy.dialects.postgresql import JSONB
-from ..base import Base # Assuming your Base is in bot/database/base.py
+from sqlalchemy import Column, Text, BOOLEAN, DOUBLE_PRECISION, ForeignKey, Index # JSON removed as JsonVariant handles it
+# JSONB removed from sqlalchemy.dialects.postgresql
+from ..base import Base, JsonVariant # Assuming your Base is in bot/database/base.py
 
 class Dialogue(Base):
     __tablename__ = 'dialogues'
@@ -8,10 +8,10 @@ class Dialogue(Base):
     id = Column(Text, primary_key=True)
     template_id = Column(Text, nullable=True)
     guild_id = Column(Text, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    participants = Column(JSONB, nullable=True)
+    participants = Column(JsonVariant, nullable=True)
     channel_id = Column(Text, nullable=True)
     current_stage_id = Column(Text, nullable=True)
-    state_variables = Column(JSONB, nullable=True)
+    state_variables = Column(JsonVariant, nullable=True)
     last_activity_game_time = Column(DOUBLE_PRECISION, nullable=True)
     event_id = Column(Text, nullable=True)
     is_active = Column(BOOLEAN, default=True, nullable=False, index=True)

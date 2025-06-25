@@ -1,14 +1,14 @@
 from sqlalchemy import (
-    Column, Integer, String, JSON, ForeignKey, Boolean, Text,
+    Column, Integer, String, ForeignKey, Boolean, Text, # JSON removed
     PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID # JSONB removed
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from typing import Dict, Any, List # Add other typing imports if model uses them
 
-from ..base import Base # Import Base from the new location
+from ..base import Base, JsonVariant # Import Base and JsonVariant
 
 class Combat(Base):
     __tablename__ = 'combats'
@@ -16,16 +16,16 @@ class Combat(Base):
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     location_id = Column(String, ForeignKey('locations.id'), nullable=False)
     status = Column(String(50), nullable=False, default="pending", index=True)
-    participants = Column(JSONB, nullable=False, default=lambda: [])
-    initial_positions = Column(JSONB, nullable=True)
+    participants = Column(JsonVariant, nullable=False, default=lambda: [])
+    initial_positions = Column(JsonVariant, nullable=True)
     current_round = Column(Integer, default=0)
     combat_log = Column(Text, nullable=True)
-    turn_log_structured = Column(JSONB, nullable=True, default=lambda: [])
-    state_variables = Column(JSONB, nullable=True)
-    combat_rules_snapshot = Column(JSONB, nullable=True)
+    turn_log_structured = Column(JsonVariant, nullable=True, default=lambda: [])
+    state_variables = Column(JsonVariant, nullable=True)
+    combat_rules_snapshot = Column(JsonVariant, nullable=True)
     channel_id = Column(String, nullable=True)
     event_id = Column(String, ForeignKey('events.id'), nullable=True)
-    turn_order = Column(JSON, nullable=True)
+    turn_order = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant for consistency
     current_turn_index = Column(Integer, default=0)
     location = relationship("Location")
     event = relationship("Event")
@@ -34,13 +34,13 @@ class Combat(Base):
 class Ability(Base):
     __tablename__ = 'abilities'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    name_i18n = Column(JSONB, nullable=False)
-    description_i18n = Column(JSONB, nullable=False)
+    name_i18n = Column(JsonVariant, nullable=False)
+    description_i18n = Column(JsonVariant, nullable=False)
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    effect_i18n = Column(JSONB, nullable=False)
-    cost = Column(JSONB, nullable=True)
-    requirements = Column(JSONB, nullable=True)
-    type_i18n = Column(JSONB, nullable=False)
+    effect_i18n = Column(JsonVariant, nullable=False)
+    cost = Column(JsonVariant, nullable=True)
+    requirements = Column(JsonVariant, nullable=True)
+    type_i18n = Column(JsonVariant, nullable=False)
     static_id = Column(String, nullable=True, index=True)
     __table_args__ = (
         Index('idx_ability_guild_id', 'guild_id'),
@@ -51,21 +51,21 @@ class Ability(Base):
 class Spell(Base):
     __tablename__ = 'spells'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    name_i18n = Column(JSONB, nullable=False)
-    description_i18n = Column(JSONB, nullable=False)
+    name_i18n = Column(JsonVariant, nullable=False)
+    description_i18n = Column(JsonVariant, nullable=False)
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    effect_i18n = Column(JSONB, nullable=False)
-    cost = Column(JSONB, nullable=True)
-    requirements = Column(JSONB, nullable=True)
-    type_i18n = Column(JSONB, nullable=False)  # e.g., school of magic
+    effect_i18n = Column(JsonVariant, nullable=False)
+    cost = Column(JsonVariant, nullable=True)
+    requirements = Column(JsonVariant, nullable=True)
+    type_i18n = Column(JsonVariant, nullable=False)  # e.g., school of magic
     __table_args__ = (Index('idx_spell_guild_id', 'guild_id'),)
 
 
 class Skill(Base):
     __tablename__ = 'skills'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    name_i18n = Column(JSONB, nullable=True)
-    description_i18n = Column(JSONB, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=True)
+    description_i18n = Column(JsonVariant, nullable=True)
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     __table_args__ = (Index('idx_skill_guild_id', 'guild_id'),)
 
@@ -80,11 +80,11 @@ class Status(Base):
     duration_turns = Column(Float, nullable=True)
     applied_at = Column(Float, nullable=True)
     source_id = Column(String, nullable=True)
-    state_variables = Column(JSONB, nullable=True)
+    state_variables = Column(JsonVariant, nullable=True)
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    effects = Column(JSONB, nullable=True)
-    name_i18n = Column(JSONB, nullable=True)
-    description_i18n = Column(JSONB, nullable=True)
+    effects = Column(JsonVariant, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=True)
+    description_i18n = Column(JsonVariant, nullable=True)
     static_id = Column(String, nullable=False, index=True) # ТЗ: уникален -> nullable=False
     __table_args__ = (
         UniqueConstraint('guild_id', 'static_id', name='uq_status_guild_static_id'),
@@ -98,10 +98,10 @@ class CraftingRecipe(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
 
-    name_i18n = Column(JSONB, nullable=False)
-    description_i18n = Column(JSONB, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=False)
+    description_i18n = Column(JsonVariant, nullable=True)
 
-    ingredients_json = Column(JSONB, nullable=False, default=lambda: [])
+    ingredients_json = Column(JsonVariant, nullable=False, default=lambda: [])
 
     output_item_template_id = Column(String, ForeignKey('item_templates.id'), nullable=False)
     output_quantity = Column(Integer, default=1, nullable=False)
@@ -109,8 +109,8 @@ class CraftingRecipe(Base):
     required_skill_id = Column(String, ForeignKey('skills.id'), nullable=True)
     required_skill_level = Column(Integer, nullable=True)
 
-    other_requirements_json = Column(JSONB, nullable=True, default=lambda: {})
-    ai_metadata_json = Column(JSONB, nullable=True, default=lambda: {})
+    other_requirements_json = Column(JsonVariant, nullable=True, default=lambda: {})
+    ai_metadata_json = Column(JsonVariant, nullable=True, default=lambda: {})
 
     __table_args__ = (
         Index('idx_craftingrecipe_guild_output_item', 'guild_id', 'output_item_template_id'),
@@ -127,8 +127,8 @@ class CraftingQueue(Base):
     entity_id = Column(String, nullable=False)
     entity_type = Column(String, nullable=False)
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    queue = Column(JSONB, nullable=True)
-    state_variables = Column(JSONB, nullable=True)
+    queue = Column(JsonVariant, nullable=True)
+    state_variables = Column(JsonVariant, nullable=True)
     __table_args__ = (PrimaryKeyConstraint('entity_id', 'entity_type', 'guild_id'),)
 
 
@@ -155,7 +155,7 @@ class Relationship(Base):
     source_log_id = Column(String, ForeignKey('story_logs.id', ondelete='SET NULL'), nullable=True, index=True)
 
     # Optional: For storing more nuanced details about the relationship if 'value' and 'type' aren't enough
-    details_json = Column(JSONB, nullable=True)
+    details_json = Column(JsonVariant, nullable=True)
 
     __table_args__ = (
         UniqueConstraint('guild_id', 'entity1_type', 'entity1_id', 'entity2_type', 'entity2_id', name='uq_relationship_between_entities'),

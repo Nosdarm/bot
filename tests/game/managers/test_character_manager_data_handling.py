@@ -1,50 +1,37 @@
 import unittest
 from unittest.mock import MagicMock, patch, AsyncMock
 import json
+import uuid # Added for unique IDs in tests
 
-import unittest
-from unittest.mock import MagicMock, patch, AsyncMock
-import json
-
-from bot.game.models.character import Character
+from bot.game.models.character import Character # Pydantic model
+from bot.database.models import Character as CharacterDBModel # SQLAlchemy model
 from bot.game.managers.character_manager import CharacterManager
-from bot.database.postgres_adapter import PostgresAdapter # Corrected path
+from bot.services.db_service import DBService # For type hinting
+from bot.database.postgres_adapter import PostgresAdapter # Or your actual adapter
 
 class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
-        # self.mock_db_adapter = MagicMock()
-        # If SqliteAdapter is a class that needs instantiation:
-        self.mock_db_adapter = MagicMock(spec=PostgresAdapter) # Use spec for better mocking
-        # If SqliteAdapter methods are async, use AsyncMock for them:
-        self.mock_db_adapter.execute = AsyncMock()
-        self.mock_db_adapter.fetchone = AsyncMock()
-        self.mock_db_adapter.fetchall = AsyncMock()
-        self.mock_db_adapter.execute_insert = AsyncMock(return_value=1) # Assuming returns lastrowid
+        self.guild_id = "test_guild_789"
+        self.character_id = "test_char_123"
+        self.discord_user_id = 1234567890
 
-        # CharacterManager expects db_service, settings, and other managers.
-        # For this test suite focusing on data persistence aspects handled *by* CharacterManager
-        # (like how it calls its db_adapter, or how it structures data for DB),
-        # we might only need to mock db_service if CharacterManager directly uses it
-        # for session management before calling adapter methods.
-        # If CharacterManager's save_state/load_state directly use self._db_adapter,
-        # then passing the mock_db_adapter as 'db_service' (if it duck-types)
-        # or ensuring CharacterManager can be initialized with just the adapter for these specific tests
-        # might be needed.
-        # The error indicates `db_adapter` is not an expected kwarg.
-        # Let's assume CharacterManager constructor needs `db_service`.
-        # We'll also need to provide other required non-optional args for CharacterManager.
-        mock_settings = {} # Minimal settings
-        # Mocks for other required managers, if any, based on CharacterManager.__init__
-        # For now, assuming only db_service and settings are strictly needed if other managers are Optional.
-        # The original error was about db_adapter, let's fix that first.
-        # If other TypeErrors appear for missing managers, they'll need to be added.
-        self.mock_game_manager = AsyncMock() # If game_manager is needed for rules etc.
+        self.mock_db_adapter = AsyncMock(spec=PostgresAdapter)
+        self.mock_db_service = MagicMock(spec=DBService)
+        self.mock_db_service.adapter = self.mock_db_adapter
+        self.mock_db_service.get_session_factory = MagicMock() # Crucial for save/load_state
 
+        self.mock_settings = {
+            "default_initial_location_id": "start_loc_default",
+            # Add other settings CharacterManager might use during init or operations
+        }
+        self.mock_game_manager = AsyncMock() # For CharacterManager init
+
+        # Provide all necessary mocks for CharacterManager constructor
         self.character_manager = CharacterManager(
-            db_service=self.mock_db_adapter, # Pass the adapter as db_service
-            settings=mock_settings,
-            item_manager=AsyncMock(), # Add mocks for other required managers
+            db_service=self.mock_db_service,
+            settings=self.mock_settings,
+            item_manager=AsyncMock(),
             location_manager=AsyncMock(),
             rule_engine=AsyncMock(),
             status_manager=AsyncMock(),
@@ -59,251 +46,224 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
             game_manager=self.mock_game_manager
         )
 
-
-        # Default character data for tests
-        self.character_id = "test_char_123"
-        self.guild_id = "test_guild_789"
-        self.discord_user_id = 1234567890
-        self.base_char_data = {
+        self.base_char_db_dict = { # Data representing a row from DB for CharacterDBModel
             "id": self.character_id,
             "guild_id": self.guild_id,
-            "discord_user_id": self.discord_user_id,
-            "name": "Test Character",
-            "stats": json.dumps({"strength": 10, "dexterity": 12}),
-            "inventory": json.dumps(["item1", "item2"]),
-            "location_id": "start_town",
-            "party_id": None,
-            "hp": 100.0,
-            "max_health": 100.0,
-            "is_alive": 1,
-            # Add other fields as per your Character model and DB schema
-            "collected_actions_json": None # Default to None for loading tests
+            "player_id": str(uuid.uuid4()), # Needs a player_id for CharacterDBModel
+            "discord_user_id": str(self.discord_user_id), # Ensure string if DB stores as string
+            "name_i18n": json.dumps({"en": "Test Character"}), # Stored as JSON string in DB
+            "character_class_i18n": None, "race_key": None, "race_i18n": None, "description_i18n": None,
+            "level": 1, "xp": 0, "unspent_xp": 0, "gold": 0,
+            "current_hp": 100.0, "max_hp": 100.0, "mp": None, "base_attack": None, "base_defense": None,
+            "is_alive": True,
+            "stats_json": json.dumps({"strength": 10, "dexterity": 12}),
+            "effective_stats_json": None,
+            "status_effects_json": json.dumps([]),
+            "skills_data_json": json.dumps([]),
+            "abilities_data_json": json.dumps([]),
+            "spells_data_json": json.dumps([]),
+            "known_spells_json": json.dumps([]),
+            "spell_cooldowns_json": json.dumps({}),
+            "inventory_json": json.dumps([{"item_id":"item1", "quantity":1}]), # Example structure for Pydantic Character
+            "equipment_slots_json": json.dumps({}),
+            "active_quests_json": json.dumps([]),
+            "flags_json": json.dumps({}),
+            "state_variables_json": json.dumps({}),
+            "current_game_status": None,
+            "current_action_json": None,
+            "action_queue_json": None,
+            "collected_actions_json": None,
+            "current_location_id": "start_town",
+            "current_party_id": None,
+            "selected_language": "en"
         }
 
+        # This is the Pydantic model representation, used for setting up cache or comparing
+        self.base_char_pydantic_data = Character.from_db_dict(self.base_char_db_dict)
+
+
     async def test_save_character_with_collected_actions(self):
-        """
-        Test that save_character correctly serializes collected_actions_json
-        and includes it in the SQL query.
-        """
-        char = Character.from_dict({
-            **self.base_char_data,
-            # No need to set collected_actions_json here, set it on the object
-        })
+        char_pydantic = self.base_char_pydantic_data.model_copy(deep=True)
         sample_actions = [{"action": "move", "target": "north"}, {"action": "search"}]
-        char.collected_actions_json = sample_actions # Store as Python object
+        char_pydantic.collected_actions_json = json.dumps(sample_actions) # Pydantic model stores it as string
 
-        # The save_character method in CharacterManager should handle the to_dict() and serialization
-        # We need to mock the Character.to_dict method to ensure it includes collected_actions_json
-        # or trust that CharacterManager's save logic correctly calls json.dumps on this field.
+        self.character_manager._characters[self.guild_id] = {char_pydantic.id: char_pydantic}
+        self.character_manager.mark_character_dirty(self.guild_id, char_pydantic.id)
 
-        # Let's assume CharacterManager.save_character constructs the SQL and params
-        # based on the character object's attributes directly or via a to_db_dict method.
+        # Mock the session and merge behavior for save_state
+        mock_session = AsyncMock(spec=AsyncSession)
+        async def mock_merge(obj): return obj # Simulate merge returning the object
+        mock_session.merge = AsyncMock(side_effect=mock_merge)
 
-        # For this test, we'll focus on the CharacterManager's responsibility to pass it to DB.
-        # The save_character method is not defined in the provided CharacterManager snippet,
-        # so we'll assume a general structure for it.
-        # Let's assume `save_character` calls `_db_adapter.execute` with appropriate SQL.
+        mock_guild_transaction_context = AsyncMock()
+        mock_guild_transaction_context.__aenter__.return_value = mock_session
 
-        # We need to find which method in CharacterManager does the actual saving.
-        # Based on previous files, it's likely save_state which calls save_character.
-        # Let's assume `self.character_manager.save_character(char, self.guild_id)` exists and works.
+        with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context):
+            await self.character_manager.save_state(self.guild_id)
 
-        # If save_character is the direct method:
-        # await self.character_manager.save_character(char)
+        mock_session.merge.assert_called_once()
+        merged_orm_instance = mock_session.merge.call_args[0][0]
+        self.assertIsInstance(merged_orm_instance, CharacterDBModel)
+        self.assertEqual(merged_orm_instance.collected_actions_json, json.dumps(sample_actions))
 
-        # If it's through save_state (more likely for batching):
-        self.character_manager._characters[self.guild_id] = {char.id: char} # Add to cache
-        self.character_manager.mark_character_dirty(self.guild_id, char.id) # Mark as dirty
-        await self.character_manager.save_state(self.guild_id)
-
-        self.mock_db_adapter.execute.assert_called()
-
-        # Get the arguments of the last call to db_adapter.execute
-        args, kwargs = self.mock_db_adapter.execute.call_args
-        sql_query = args[0]
-        params = args[1]
-
-        self.assertIn("collected_actions_json", sql_query.lower())
-
-        # Find the index of collected_actions_json in the SQL query's column list
-        # This is a bit brittle and depends on the exact SQL query structure.
-        # A more robust way would be to check if the serialized JSON is in params,
-        # and its corresponding placeholder is in the SQL.
-
-        # Example: Assuming collected_actions_json is one of the later params.
-        # And that params is a tuple.
-        serialized_actions = json.dumps(sample_actions)
-        self.assertIn(serialized_actions, params)
 
     async def test_load_character_with_collected_actions(self):
-        """
-        Test that load_character (or its internal DB fetch) correctly parses
-        collected_actions_json from the DB into a Python object.
-        """
-        sample_actions_json_str = json.dumps([{"action": "attack", "target_id": "mob1"}])
-        db_row_data = {**self.base_char_data, "collected_actions_json": sample_actions_json_str}
+        sample_actions_list = [{"action": "attack", "target_id": "mob1"}]
+        sample_actions_json_str = json.dumps(sample_actions_list)
 
-        # Mock the DB response
-        self.mock_db_adapter.fetchone.return_value = db_row_data # Direct dict if row_factory is good
+        db_row_data = self.base_char_db_dict.copy()
+        db_row_data["collected_actions_json"] = sample_actions_json_str
 
-        # Call the method in CharacterManager that loads a single character by ID.
-        # This method might be `load_character(id, guild_id)` or similar.
-        # Or, if load_state populates the cache, we can check the cache.
-        # Let's assume a direct load method for simplicity or that load_state calls such a method.
+        mock_player_db = MagicMock(spec=Player) # from bot.database.models
+        mock_player_db.id = self.base_char_db_dict["player_id"]
+        mock_player_db.discord_id = str(self.discord_user_id)
 
-        # If CharacterManager.load_state populates the cache after fetching:
-        self.mock_db_adapter.fetchall.return_value = [db_row_data] # fetchall for load_state
-        await self.character_manager.load_state(self.guild_id)
+        mock_char_db = CharacterDBModel(**db_row_data)
+
+        async def mock_get_entities_load(session, model_class, *, guild_id):
+            if model_class == Player and guild_id == self.guild_id: return [mock_player_db]
+            if model_class == CharacterDBModel and guild_id == self.guild_id: return [mock_char_db]
+            return []
+
+        with patch('bot.database.crud_utils.get_entities', side_effect=mock_get_entities_load):
+            await self.character_manager.load_state(self.guild_id)
 
         loaded_char = self.character_manager.get_character(self.guild_id, self.character_id)
-
         self.assertIsNotNone(loaded_char)
-        self.assertIsInstance(loaded_char.collected_actions_json, list)
-        self.assertEqual(loaded_char.collected_actions_json, json.loads(sample_actions_json_str))
+        # Pydantic Character.collected_actions_json is Optional[str]
+        # from_db_model should directly assign the string if it's not None
+        self.assertEqual(loaded_char.collected_actions_json, sample_actions_json_str)
+        # If you want to compare the parsed list:
+        self.assertEqual(json.loads(loaded_char.collected_actions_json), sample_actions_list)
+
 
     async def test_load_character_with_null_collected_actions(self):
-        """
-        Test loading a character where collected_actions_json is NULL/None in the DB.
-        """
-        db_row_data_null_actions = {**self.base_char_data, "collected_actions_json": None}
+        db_row_data_null_actions = self.base_char_db_dict.copy()
+        db_row_data_null_actions["collected_actions_json"] = None
 
-        self.mock_db_adapter.fetchone.return_value = db_row_data_null_actions
+        mock_player_db = MagicMock(spec=Player)
+        mock_player_db.id = self.base_char_db_dict["player_id"]
+        mock_player_db.discord_id = str(self.discord_user_id)
+        mock_char_db = CharacterDBModel(**db_row_data_null_actions)
 
-        # Assuming load_state is the entry point for loading from DB
-        self.mock_db_adapter.fetchall.return_value = [db_row_data_null_actions]
-        await self.character_manager.load_state(self.guild_id)
+        async def mock_get_entities_load_null(session, model_class, *, guild_id):
+            if model_class == Player and guild_id == self.guild_id: return [mock_player_db]
+            if model_class == CharacterDBModel and guild_id == self.guild_id: return [mock_char_db]
+            return []
+
+        with patch('bot.database.crud_utils.get_entities', side_effect=mock_get_entities_load_null):
+            await self.character_manager.load_state(self.guild_id)
 
         loaded_char = self.character_manager.get_character(self.guild_id, self.character_id)
-
         self.assertIsNotNone(loaded_char)
-        # The Character model's from_dict should handle None and default it,
-        # typically to None or an empty list/dict based on its definition.
-        # If Character.collected_actions_json defaults to None if the DB field is NULL:
         self.assertIsNone(loaded_char.collected_actions_json)
-        # Or, if it defaults to an empty list:
-        # self.assertEqual(loaded_char.collected_actions_json, [])
+
 
     async def test_save_character_with_empty_collected_actions(self):
-        """
-        Test that save_character correctly serializes an empty list for collected_actions_json.
-        """
-        char = Character.from_dict(self.base_char_data) # base_char_data has collected_actions_json: None
-        empty_actions_str = json.dumps([])
-        char.collected_actions_json = empty_actions_str # Model expects string
+        char_pydantic = self.base_char_pydantic_data.model_copy(deep=True)
+        empty_actions_json_str = json.dumps([])
+        char_pydantic.collected_actions_json = empty_actions_json_str
 
-        self.character_manager._characters[self.guild_id] = {char.id: char}
-        self.character_manager.mark_character_dirty(self.guild_id, char.id)
-        await self.character_manager.save_state(self.guild_id)
+        self.character_manager._characters[self.guild_id] = {char_pydantic.id: char_pydantic}
+        self.character_manager.mark_character_dirty(self.guild_id, char_pydantic.id)
 
-        self.mock_db_adapter.execute.assert_called()
-        args, kwargs = self.mock_db_adapter.execute.call_args
-        sql_query = args[0]
-        params = args[1]
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.merge = AsyncMock(side_effect=lambda obj: obj)
+        mock_guild_transaction_context = AsyncMock()
+        mock_guild_transaction_context.__aenter__.return_value = mock_session
 
-        self.assertIn("collected_actions_json", sql_query.lower())
-        # The CharacterManager's save logic should pull `char.collected_actions_json` (which is already a string)
-        self.assertIn(empty_actions_str, params)
+        with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context):
+            await self.character_manager.save_state(self.guild_id)
+
+        mock_session.merge.assert_called_once()
+        merged_orm_instance = mock_session.merge.call_args[0][0]
+        self.assertEqual(merged_orm_instance.collected_actions_json, empty_actions_json_str)
+
 
     async def test_save_character_with_null_collected_actions(self):
-        """
-        Test that save_character correctly handles None for collected_actions_json,
-        serializing it as SQL NULL (json.dumps(None) is 'null').
-        """
-        char = Character.from_dict(self.base_char_data)
-        char.collected_actions_json = None # Model attribute is Optional[str]
+        char_pydantic = self.base_char_pydantic_data.model_copy(deep=True)
+        char_pydantic.collected_actions_json = None
 
-        self.character_manager._characters[self.guild_id] = {char.id: char}
-        self.character_manager.mark_character_dirty(self.guild_id, char.id)
-        await self.character_manager.save_state(self.guild_id)
+        self.character_manager._characters[self.guild_id] = {char_pydantic.id: char_pydantic}
+        self.character_manager.mark_character_dirty(self.guild_id, char_pydantic.id)
 
-        self.mock_db_adapter.execute.assert_called()
-        args, kwargs = self.mock_db_adapter.execute.call_args
-        sql_query = args[0]
-        params = args[1]
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.merge = AsyncMock(side_effect=lambda obj: obj)
+        mock_guild_transaction_context = AsyncMock()
+        mock_guild_transaction_context.__aenter__.return_value = mock_session
 
-        self.assertIn("collected_actions_json", sql_query.lower())
-        # When CharacterManager calls to_dict(), it gets None for collected_actions_json.
-        # The save logic in CharacterManager should then pass json.dumps(None) or SQL NULL.
-        # Assuming it passes json.dumps(None) which results in the string 'null'.
-        self.assertIn(json.dumps(None), params)
+        with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context):
+            await self.character_manager.save_state(self.guild_id)
+
+        mock_session.merge.assert_called_once()
+        merged_orm_instance = mock_session.merge.call_args[0][0]
+        self.assertIsNone(merged_orm_instance.collected_actions_json)
 
 
     async def test_save_character_all_complex_fields(self):
-        """Test saving character with all new i18n and JSON fields."""
-        char_data_py_objects = {
-            "id": self.character_id,
-            "discord_user_id": self.discord_user_id,
-            "name_i18n": {"en": "Complex Hero", "ru": "Сложный Герой"}, # attribute on model
-            "guild_id": self.guild_id,
-            "skills_data": [{"skill": "alchemy", "level": 15}],       # attribute on model
-            "abilities_data": [{"ability": "double_strike", "rank": 2}],# attribute on model
-            "spells_data": [{"spell": "invisibility", "duration": 60}],# attribute on model
-            "character_class": "Rogue",                                # attribute on model
-            "flags": {"is_hidden": True, "can_fly": False},            # attribute on model
-            "collected_actions_json": json.dumps([{"action": "hide"}]),# model expects string
-            # Fill other required fields for Character.from_dict
-            "stats": json.dumps({"hp":100}), "inventory": json.dumps([]), "hp":100, "max_health":100,
-        }
-        char = Character.from_dict(char_data_py_objects)
+        char_pydantic = self.base_char_pydantic_data.model_copy(deep=True)
+        char_pydantic.name_i18n = {"en": "Complex Hero", "ru": "Сложный Герой"}
+        char_pydantic.skills_data = [{"skill_id": "alchemy", "level": 15}]
+        char_pydantic.abilities_data = [{"ability_id": "double_strike", "rank": 2}]
+        char_pydantic.spells_data = [{"spell_id": "invisibility", "duration": 60}]
+        char_pydantic.character_class = "Rogue"
+        char_pydantic.flags = {"is_hidden": True, "can_fly": False}
+        char_pydantic.collected_actions_json = json.dumps([{"action": "hide"}])
 
-        self.character_manager._characters[self.guild_id] = {char.id: char}
-        self.character_manager.mark_character_dirty(self.guild_id, char.id)
-        await self.character_manager.save_state(self.guild_id)
+        self.character_manager._characters[self.guild_id] = {char_pydantic.id: char_pydantic}
+        self.character_manager.mark_character_dirty(self.guild_id, char_pydantic.id)
 
-        self.mock_db_adapter.execute.assert_called_once()
-        args, _ = self.mock_db_adapter.execute.call_args
-        sql_query_lower = args[0].lower()
-        params = args[1]
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.merge = AsyncMock(side_effect=lambda obj: obj)
+        mock_guild_transaction_context = AsyncMock()
+        mock_guild_transaction_context.__aenter__.return_value = mock_session
 
-        # Check that JSON serialized versions are in params
-        # The CharacterManager's save_character_to_db (or similar) should handle this.
-        # It typically gets these from character.to_dict() and then json.dumps them.
-        # Character.to_dict() returns Python objects for these complex fields.
+        with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context):
+            await self.character_manager.save_state(self.guild_id)
 
-        # For name_i18n (saved in 'name' column as JSON string)
-        self.assertIn("name", sql_query_lower) # DB column is 'name'
-        self.assertIn(json.dumps(char_data_py_objects["name_i18n"]), params)
+        mock_session.merge.assert_called_once()
+        merged_orm_instance = mock_session.merge.call_args[0][0]
 
-        self.assertIn("skills_data_json", sql_query_lower)
-        self.assertIn(json.dumps(char_data_py_objects["skills_data"]), params)
+        self.assertEqual(merged_orm_instance.name_i18n, char_pydantic.name_i18n)
+        self.assertEqual(merged_orm_instance.skills_data_json, json.dumps(char_pydantic.skills_data))
+        self.assertEqual(merged_orm_instance.abilities_data_json, json.dumps(char_pydantic.abilities_data))
+        self.assertEqual(merged_orm_instance.spells_data_json, json.dumps(char_pydantic.spells_data))
+        # self.assertEqual(merged_orm_instance.character_class, char_pydantic.character_class) # character_class is not on CharacterDBModel
+        self.assertEqual(merged_orm_instance.flags_json, json.dumps(char_pydantic.flags))
+        self.assertEqual(merged_orm_instance.collected_actions_json, char_pydantic.collected_actions_json)
 
-        self.assertIn("abilities_data_json", sql_query_lower)
-        self.assertIn(json.dumps(char_data_py_objects["abilities_data"]), params)
-
-        self.assertIn("spells_data_json", sql_query_lower)
-        self.assertIn(json.dumps(char_data_py_objects["spells_data"]), params)
-
-        self.assertIn("character_class", sql_query_lower) # direct column
-        self.assertIn(char_data_py_objects["character_class"], params)
-
-        self.assertIn("flags_json", sql_query_lower)
-        self.assertIn(json.dumps(char_data_py_objects["flags"]), params)
-
-        self.assertIn("collected_actions_json", sql_query_lower)
-        self.assertIn(char_data_py_objects["collected_actions_json"], params) # Already a string
 
     async def test_load_character_all_complex_fields(self):
-        """Test loading character with all new i18n and JSON fields from DB."""
         name_i18n_obj = {"en": "Loaded Hero", "ru": "Загруженный Герой"}
-        skills_data_obj = [{"skill": "herbalism", "level": 5}]
-        abilities_data_obj = [{"ability": "quick_shot", "rank": 1}]
-        spells_data_obj = [{"spell": "heal_light", "cost": 10}]
+        skills_data_obj = [{"skill_id": "herbalism", "level": 5}] # Changed from skill to skill_id for Pydantic
+        abilities_data_obj = [{"ability_id": "quick_shot", "rank": 1}]
+        spells_data_obj = [{"spell_id": "heal_light", "cost": 10}]
         flags_obj = {"is_leader": True, "is_merchant": False}
         coll_actions_list = [{"action": "trade", "item": "potion"}]
 
-        db_row_data = {
-            **self.base_char_data, # from setUp, but override specific fields
-            "name": json.dumps(name_i18n_obj), # name_i18n stored in 'name' column as JSON
+        db_row_data = self.base_char_db_dict.copy()
+        db_row_data.update({
+            "name_i18n": json.dumps(name_i18n_obj),
             "skills_data_json": json.dumps(skills_data_obj),
             "abilities_data_json": json.dumps(abilities_data_obj),
             "spells_data_json": json.dumps(spells_data_obj),
-            "character_class": "Archer",
+            "character_class_i18n": json.dumps({"en":"Archer"}), # Stored as i18n
             "flags_json": json.dumps(flags_obj),
             "collected_actions_json": json.dumps(coll_actions_list),
-        }
+        })
 
-        self.mock_db_adapter.fetchall.return_value = [db_row_data] # For load_state
-        await self.character_manager.load_state(self.guild_id)
+        mock_player_db = MagicMock(spec=Player)
+        mock_player_db.id = self.base_char_db_dict["player_id"]
+        mock_player_db.discord_id = str(self.discord_user_id)
+        mock_char_db = CharacterDBModel(**db_row_data)
+
+        async def mock_get_entities_load_complex(session, model_class, *, guild_id):
+            if model_class == Player and guild_id == self.guild_id: return [mock_player_db]
+            if model_class == CharacterDBModel and guild_id == self.guild_id: return [mock_char_db]
+            return []
+
+        with patch('bot.database.crud_utils.get_entities', side_effect=mock_get_entities_load_complex):
+            await self.character_manager.load_state(self.guild_id)
 
         loaded_char = self.character_manager.get_character(self.guild_id, self.character_id)
         self.assertIsNotNone(loaded_char)
@@ -312,9 +272,8 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(loaded_char.skills_data, skills_data_obj)
         self.assertEqual(loaded_char.abilities_data, abilities_data_obj)
         self.assertEqual(loaded_char.spells_data, spells_data_obj)
-        self.assertEqual(loaded_char.character_class, "Archer")
+        self.assertEqual(loaded_char.character_class_i18n, {"en":"Archer"})
         self.assertEqual(loaded_char.flags, flags_obj)
-        # Character model stores collected_actions_json as string, manager should provide it as string to model
         self.assertEqual(loaded_char.collected_actions_json, json.dumps(coll_actions_list))
 
 

@@ -1,5 +1,8 @@
 import random
 from typing import List, Optional, Dict, Any, TYPE_CHECKING
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Assuming these models and managers exist and are importable.
 # For subtask environment, direct imports might be tricky.
@@ -508,7 +511,7 @@ async def process_direct_damage(
     elif target_type == "NPC":
         await npc_manager.update_npc_stats(guild_id, target_id, {"health": new_hp})
 
-    log_msg = f"{target_name} took {actual_damage_taken} {damage_type} direct damage. HP: {initial_hp:.1f} -> {new_hp:.1f}."
+    log_msg = f"{target_name} took {float(actual_damage_taken):.1f} {damage_type} direct damage. HP: {initial_hp:.1f} -> {new_hp:.1f}."
     outcome["log_messages"].append(log_msg)
     if game_log_manager:
         await game_log_manager.add_log_entry(log_msg, "combat_direct_damage",

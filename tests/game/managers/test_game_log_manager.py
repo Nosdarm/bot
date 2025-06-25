@@ -2,6 +2,7 @@ import unittest
 import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.game.managers.game_log_manager import GameLogManager
 from bot.game.ai.narrative_generator import AINarrativeGenerator # Added

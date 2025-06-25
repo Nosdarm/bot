@@ -24,7 +24,7 @@ DEFAULT_FACTION_EN_NAME = "Neutral Observers"
 # --- Test Database Configuration ---
 # Use environment variables for database configuration, fallback to a default test DSN
 # Example: postgresql+asyncpg://testuser:testpass@localhost:5432/test_kvelin_rpg_bot
-TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "postgresql+asyncpg://postgres:test123@localhost:5432/test_kvelin_rpg_bot")
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 # For local testing without a PG server, one might fallback to SQLite, but integration tests should ideally match prod DB.
 # TEST_DATABASE_URL = "sqlite+aiosqlite_memory:///:memory:"
 

@@ -231,9 +231,12 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
             party_id="party_active", location_id="loc_active", selected_language="en"
             # current_combat_id is not a direct Character field
         )
+        self.char_manager._characters.setdefault(guild_id, {})[char_id] = character_to_die # Add to cache
 
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.get = AsyncMock(return_value=character_to_die) # Simulate session.get(Character, char_id)
+        # mock_session.get is not strictly needed here for update_health if _recalculate_and_store_effective_stats is fully mocked
+        # and update_health operates on the cached Pydantic model.
+        # mock_session.get = AsyncMock(return_value=character_to_die)
         mock_session.add = AsyncMock()
 
         # Configure mock_session.begin() and begin_nested() to return a proper async context manager
@@ -272,8 +275,7 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
             guild_id=guild_id,
             event_type="PLAYER_HEALTH_CHANGE", # Or specific death event type
             details=ANY,
-            player_id=character_to_die.player_id, # Or character_id if source is character
-            character_id=char_id,
+            character_id=char_id, # Changed from player_id
             session=mock_session
         )
         mock_recalc.assert_awaited_once() # Stats should be recalculated on health change
@@ -302,7 +304,18 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context): # Patched correct location
             await self.char_manager.save_state(guild_id)
 
-        mock_session_in_transaction.merge.assert_called_once_with(char1)
+        mock_session_in_transaction.merge.assert_called_once()
+        args, _ = mock_session_in_transaction.merge.call_args
+        merged_orm_instance = args[0]
+        self.assertIsInstance(merged_orm_instance, CharacterDBModel)
+        self.assertEqual(merged_orm_instance.id, char1.id)
+        # Assuming name_i18n on CharacterDBModel holds the dict directly after being set from Pydantic model's to_dict()
+        # If CharacterDBModel stores it as a JSON string in a field like name_i18n_json, then comparison would be different.
+        # Based on current model structure, name_i18n is the column name for JSONB/JsonVariant.
+        self.assertEqual(merged_orm_instance.name_i18n, char1.name_i18n)
+        self.assertEqual(merged_orm_instance.hp, char1.hp)
+        self.assertEqual(merged_orm_instance.level, char1.level)
+
         self.assertNotIn(guild_id, self.char_manager._dirty_characters) # Should be cleared
 
     async def test_save_state_deleted_characters(self):
@@ -345,16 +358,50 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         mock_guild_transaction_context.__aenter__.return_value = mock_session_in_transaction
 
         # Mock crud_utils.get_entities
-        async def mock_get_entities(session, model_class, guild_id_param):
-            if model_class == Player: return [mock_player_from_db]
-            if model_class == Character: return [mock_char_from_db]
-            return []
+        # mock_char_from_db was Pydantic, this should be a mock of the SQLAlchemy model
+        mock_char_from_db_sqla = MagicMock(spec=CharacterDBModel)
+        # Populate essential fields that char_obj_db.to_dict() would provide for Character.from_db_model()
+        mock_char_from_db_sqla.id = char1_id_db
+        mock_char_from_db_sqla.guild_id = guild_id
+        mock_char_from_db_sqla.name_i18n = {"en": "CharFromDB"} # Assuming to_dict returns dict for JSON fields
+        mock_char_from_db_sqla.discord_user_id = 123 # Needs to be string if Player.discord_id is string
+        mock_char_from_db_sqla.selected_language = "en"
+        # Add all other fields Character.from_db_model expects from to_dict()
+        mock_char_from_db_sqla.hp = 100.0; mock_char_from_db_sqla.max_hp = 100.0; mock_char_from_db_sqla.level = 1;
+        mock_char_from_db_sqla.xp = 0; mock_char_from_db_sqla.unspent_xp = 0; mock_char_from_db_sqla.gold = 0;
+        mock_char_from_db_sqla.stats_json = {}; mock_char_from_db_sqla.inventory_json = [];
+        mock_char_from_db_sqla.status_effects_json = []; mock_char_from_db_sqla.active_quests_json = [];
+        mock_char_from_db_sqla.known_spells_json = []; mock_char_from_db_sqla.spell_cooldowns_json = {};
+        mock_char_from_db_sqla.skills_data_json = []; mock_char_from_db_sqla.abilities_data_json = [];
+        mock_char_from_db_sqla.spells_data_json = []; mock_char_from_db_sqla.flags_json = {};
+        mock_char_from_db_sqla.state_variables_json = {}; mock_char_from_db_sqla.equipment_slots_json = {};
+        mock_char_from_db_sqla.is_alive = True; mock_char_from_db_sqla.player_id = player1_id; # Added player_id
+        mock_char_from_db_sqla.character_class_i18n = None; mock_char_from_db_sqla.race_key = None;
+        mock_char_from_db_sqla.race_i18n = None; mock_char_from_db_sqla.description_i18n = None;
+        mock_char_from_db_sqla.mp = None; mock_char_from_db_sqla.base_attack = None; mock_char_from_db_sqla.base_defense = None;
+        mock_char_from_db_sqla.effective_stats_json = None; mock_char_from_db_sqla.current_game_status = None;
+        mock_char_from_db_sqla.current_action_json = None; mock_char_from_db_sqla.action_queue_json = None;
+        mock_char_from_db_sqla.collected_actions_json = None; mock_char_from_db_sqla.current_location_id = None;
+        mock_char_from_db_sqla.current_party_id = None;
+        # Mock the to_dict method itself
+        mock_char_from_db_sqla.to_dict.return_value = {
+            f.name: getattr(mock_char_from_db_sqla, f.name) for f in CharacterDBModel.__table__.columns
+        }
 
-        with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context): # Patched correct location
-            with patch('bot.database.crud_utils.get_entities', side_effect=mock_get_entities) as mock_crud_get_entities:
+
+        async def mock_get_entities_fixed(session, model_class, *, guild_id):
+            if model_class == Player:
+                if guild_id == guild_id_str: return [mock_player_from_db]
+            if model_class == CharacterDBModel: # Use CharacterDBModel
+                if guild_id == guild_id_str: return [mock_char_from_db_sqla]
+            return []
+        guild_id_str = guild_id # For use in side_effect
+
+        with patch('bot.database.guild_transaction.GuildTransaction', return_value=mock_guild_transaction_context):
+            with patch('bot.database.crud_utils.get_entities', side_effect=mock_get_entities_fixed) as mock_crud_get_entities:
                 await self.char_manager.load_state(guild_id)
 
-        self.assertEqual(mock_crud_get_entities.call_count, 2) # Called for Player and Character
+        self.assertEqual(mock_crud_get_entities.call_count, 2)
         self.assertIn(guild_id, self.char_manager._characters)
         self.assertEqual(len(self.char_manager._characters[guild_id]), 1)
         self.assertEqual(self.char_manager._characters[guild_id][char1_id_db].name, "CharFromDB")

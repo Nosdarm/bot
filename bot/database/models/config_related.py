@@ -3,13 +3,13 @@ from sqlalchemy import (
     PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint,
     ForeignKeyConstraint, and_
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID # JSONB removed
 from sqlalchemy.orm import relationship, Mapped, mapped_column, backref
 from sqlalchemy.sql import func
 import uuid
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
-from ..base import Base
+from ..base import Base, JsonVariant # Import JsonVariant
 
 if TYPE_CHECKING:
     from .character_related import Player # Assuming Player is in character_related
@@ -21,7 +21,7 @@ class RulesConfig(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     key: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    value: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    value: Mapped[Optional[Dict[str, Any]]] = mapped_column(JsonVariant, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # Новое поле для теста
 
     # Relationships if any, e.g., to GuildConfig

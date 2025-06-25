@@ -1,22 +1,22 @@
 from sqlalchemy import (
-    Column, Integer, String, JSON, ForeignKey, Boolean, Text,
+    Column, Integer, String, ForeignKey, Boolean, Text, # JSON removed
     PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID # JSONB removed
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
-from typing import Dict, Any, List # Add other typing imports if model uses them
+from typing import Dict, Any, List
 
-from ..base import Base # Import Base from the new location
+from ..base import Base, JsonVariant # Import Base and JsonVariant
 
 class ItemTemplate(Base):
     __tablename__ = 'item_templates'
     id = Column(String, primary_key=True)
-    name_i18n = Column(JSONB, nullable=False)
-    description_i18n = Column(JSONB, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=False)
+    description_i18n = Column(JsonVariant, nullable=True)
     type = Column(String, nullable=True)
-    properties = Column(JSONB, nullable=True)
+    properties = Column(JsonVariant, nullable=True)
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     __table_args__ = (Index('idx_itemtemplate_guild_id', 'guild_id'),)
 
@@ -30,11 +30,11 @@ class Item(Base):
     owner_type = Column(String, nullable=True)
     location_id = Column(String, ForeignKey('locations.id'), nullable=True)
     quantity = Column(Integer, default=1)
-    state_variables = Column(JSONB, nullable=True)
+    state_variables = Column(JsonVariant, nullable=True)
     is_temporary = Column(Boolean, default=False)
-    name_i18n = Column(JSONB, nullable=True)
-    description_i18n = Column(JSONB, nullable=True)
-    properties = Column(JSONB, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=True)
+    description_i18n = Column(JsonVariant, nullable=True)
+    properties = Column(JsonVariant, nullable=True)
     slot = Column(String, nullable=True)
     value = Column(Integer, nullable=True)
     __table_args__ = (Index('idx_item_guild_id', 'guild_id'),)
@@ -43,8 +43,6 @@ class Item(Base):
 class Inventory(Base):
     __tablename__ = 'inventory'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    # This should ideally be character_id. For now, leaving as player_id.
-    # If Character.inventory_json is used, this table might be for something else or deprecated for characters.
     player_id = Column(String, ForeignKey('players.id', ondelete='CASCADE'), nullable=False, index=True)
     item_id = Column(String, ForeignKey('items.id', ondelete='CASCADE'), nullable=False, index=True)
     quantity = Column(Integer, default=1)
@@ -62,8 +60,8 @@ class Inventory(Base):
 class ItemProperty(Base):
     __tablename__ = 'item_properties'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    name_i18n = Column(JSONB, nullable=True)
-    description_i18n = Column(JSONB, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=True)
+    description_i18n = Column(JsonVariant, nullable=True)
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     __table_args__ = (Index('idx_itemproperty_guild_id', 'guild_id'),)
 
@@ -75,7 +73,7 @@ class NewItem(Base):
     name = Column(String, nullable=False, unique=True)
     description = Column(String, nullable=True)
     item_type = Column(String, nullable=False)
-    item_metadata = Column(JSONB, name="metadata", nullable=True)
+    item_metadata = Column(JsonVariant, name="metadata", nullable=True) # Changed JSONB to JsonVariant
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -95,8 +93,6 @@ class NewCharacterItem(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    # Relationship to Character needs to be defined on the Character model if using back_populates
-    # character = relationship("Character", back_populates="new_items_association")
     item = relationship("NewItem")
 
     __table_args__ = (CheckConstraint('quantity > 0', name='check_new_char_item_quantity_positive'),)
@@ -110,13 +106,13 @@ class Shop(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id = Column(String, nullable=False, index=True)
-    name_i18n = Column(JSON, nullable=False)
-    description_i18n = Column(JSON, nullable=True)
-    type_i18n = Column(JSON, nullable=True)
-    inventory = Column(JSON, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=False) # Changed JSON to JsonVariant
+    description_i18n = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
+    type_i18n = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
+    inventory = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
     owner_id = Column(String, ForeignKey('npcs.id'), nullable=True)
     location_id = Column(String, ForeignKey('locations.id'), nullable=True)
-    economic_parameters_override = Column(JSON, nullable=True)
+    economic_parameters_override = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
 
     owner = relationship("NPC")
     location = relationship("Location")
@@ -134,8 +130,8 @@ class Currency(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id = Column(String, nullable=False, index=True)
-    name_i18n = Column(JSON, nullable=False)
-    symbol_i18n = Column(JSON, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=False) # Changed JSON to JsonVariant
+    symbol_i18n = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
     exchange_rate_to_standard = Column(Float, nullable=False, default=1.0)
     is_default = Column(Boolean, nullable=False, default=False)
 

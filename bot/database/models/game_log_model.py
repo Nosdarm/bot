@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Text, BOOLEAN, ForeignKey, Index, TIMESTAMP
-from sqlalchemy.dialects.postgresql import JSONB
+# JSONB removed
 from sqlalchemy.sql import func
-from ..base import Base # Assuming your Base is in bot/database/base.py
+from ..base import Base, JsonVariant # Assuming your Base is in bot/database/base.py
 import uuid
 
 class GameLogEntry(Base):
@@ -17,10 +17,10 @@ class GameLogEntry(Base):
 
     event_type = Column(Text, nullable=False, index=True)
     description_key = Column(Text, nullable=True)
-    description_params_json = Column(JSONB, nullable=True)
+    description_params_json = Column(JsonVariant, nullable=True)
 
-    involved_entities_ids = Column(JSONB, nullable=True, comment='JSON array or object of involved entity IDs, e.g., {"characters": [], "npcs": []}')
-    details = Column(JSONB, nullable=True, comment='Flexible JSON field for additional structured data about the event')
+    involved_entities_ids = Column(JsonVariant, nullable=True, comment='JSON array or object of involved entity IDs, e.g., {"characters": [], "npcs": []}')
+    details = Column(JsonVariant, nullable=True, comment='Flexible JSON field for additional structured data about the event')
     channel_id = Column(Text, nullable=True)
 
     source_entity_id = Column(Text, nullable=True)

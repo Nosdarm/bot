@@ -56,8 +56,19 @@ def mock_bot_for_events(mocker): # Added mocker
     mock_user_instance.name = "TestBot"
     mock_user_instance.id = 123456789 # A default ID
 
-    # Patch the 'user' property on the *instance* of RPGBot
-    mocker.patch.object(bot, 'user', new_callable=PropertyMock, return_value=mock_user_instance)
+    # Patch discord.Client.user with a PropertyMock *before* RPGBot is instantiated
+    # This PropertyMock will be inherited by the RPGBot instance
+    mocker.patch.object(discord.Client, 'user', new_callable=PropertyMock, return_value=mock_user_instance)
+
+    # Intents are needed for super().__init__
+    intents = discord.Intents.default() # This was already here, ensure it's correctly placed
+    bot = RPGBot(
+        game_manager=mock_game_manager,
+        openai_service=mock_openai_service,
+        command_prefix="!",
+        intents=intents
+    )
+    bot.get_db_session = MagicMock(return_value=db_session_cm) # Patch the instance's method
 
     return bot, mock_session # Return session for assertions if needed
 

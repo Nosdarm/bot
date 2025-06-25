@@ -1,41 +1,41 @@
 from sqlalchemy import (
-    Column, Integer, String, JSON, ForeignKey, Boolean, Text,
+    Column, Integer, String, ForeignKey, Boolean, Text, # JSON removed
     PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID # JSONB removed
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
-from typing import Dict, Any, List # Add other typing imports if model uses them
+from typing import Dict, Any, List
 
-from ..base import Base # Import Base from the new location
+from ..base import Base, JsonVariant # Import Base and JsonVariant
 
 class Location(Base):
     __tablename__ = 'locations'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     static_id = Column(String, nullable=True, index=True)
-    name_i18n = Column(JSONB, nullable=False)
-    descriptions_i18n = Column(JSONB, nullable=False)
-    type_i18n = Column(JSONB, nullable=False)
-    coordinates = Column(JSONB, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=False) # Changed
+    descriptions_i18n = Column(JsonVariant, nullable=False) # Changed
+    type_i18n = Column(JsonVariant, nullable=False) # Changed
+    coordinates = Column(JsonVariant, nullable=True) # Changed
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    neighbor_locations_json = Column(JSONB, nullable=True, comment="Stores a list of connection objects, e.g., [{'to_location_id': 'id1', 'path_description_i18n': {'en': 'a path'}, 'travel_time_hours': 1}]")
-    inventory = Column(JSONB, nullable=True)
-    npc_ids = Column(JSONB, nullable=True, default=lambda: [])
-    event_triggers = Column(JSONB, nullable=True, default=lambda: [])
+    neighbor_locations_json = Column(JsonVariant, nullable=True, comment="Stores a list of connection objects, e.g., [{'to_location_id': 'id1', 'path_description_i18n': {'en': 'a path'}, 'travel_time_hours': 1}]") # Changed
+    inventory = Column(JsonVariant, nullable=True) # Changed
+    npc_ids = Column(JsonVariant, nullable=True, default=lambda: []) # Changed
+    event_triggers = Column(JsonVariant, nullable=True, default=lambda: []) # Changed
     template_id = Column(String, nullable=True)
-    state_variables = Column(JSONB, nullable=True)
+    state_variables = Column(JsonVariant, nullable=True) # Changed
     is_active = Column(Boolean, default=True, nullable=False)
-    details_i18n = Column(JSONB, nullable=True)
-    tags_i18n = Column(JSONB, nullable=True)
-    atmosphere_i18n = Column(JSONB, nullable=True)
-    features_i18n = Column(JSONB, nullable=True)
+    details_i18n = Column(JsonVariant, nullable=True) # Changed
+    tags_i18n = Column(JsonVariant, nullable=True) # Changed
+    atmosphere_i18n = Column(JsonVariant, nullable=True) # Changed
+    features_i18n = Column(JsonVariant, nullable=True) # Changed
     channel_id = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
-    ai_metadata_json = Column(JSONB, nullable=True, comment="Stores metadata for AI generation purposes")
-    points_of_interest_json = Column(JSONB, nullable=True, comment="List of Points of Interest objects/dictionaries")
-    on_enter_events_json = Column(JSONB, nullable=True, default=lambda: [])
-    generated_details_json = Column(JSONB, nullable=True, comment="Additional AI-generated descriptive details for the location")
+    ai_metadata_json = Column(JsonVariant, nullable=True, comment="Stores metadata for AI generation purposes") # Changed
+    points_of_interest_json = Column(JsonVariant, nullable=True, comment="List of Points of Interest objects/dictionaries") # Changed
+    on_enter_events_json = Column(JsonVariant, nullable=True, default=lambda: []) # Changed
+    generated_details_json = Column(JsonVariant, nullable=True, comment="Additional AI-generated descriptive details for the location") # Changed
 
     __table_args__ = (
         UniqueConstraint('guild_id', 'static_id', name='uq_location_guild_static_id'),
@@ -96,12 +96,12 @@ class Location(Base):
 class GeneratedLocation(Base):
     __tablename__ = 'generated_locations'
     id = Column(String, primary_key=True)
-    name_i18n = Column(JSONB, nullable=True)
-    descriptions_i18n = Column(JSONB, nullable=True)
-    details_i18n = Column(JSONB, nullable=True)
-    tags_i18n = Column(JSONB, nullable=True)
-    atmosphere_i18n = Column(JSONB, nullable=True)
-    features_i18n = Column(JSONB, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=True) # Changed
+    descriptions_i18n = Column(JsonVariant, nullable=True) # Changed
+    details_i18n = Column(JsonVariant, nullable=True) # Changed
+    tags_i18n = Column(JsonVariant, nullable=True) # Changed
+    atmosphere_i18n = Column(JsonVariant, nullable=True) # Changed
+    features_i18n = Column(JsonVariant, nullable=True) # Changed
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
     __table_args__ = (Index('idx_generatedlocation_guild_id', 'guild_id'),)
 
@@ -110,8 +110,8 @@ class LocationTemplate(Base):
     __tablename__ = 'location_templates'
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False, unique=True)
-    description_i18n = Column(JSONB, nullable=True)
-    properties = Column(JSONB, nullable=True)
+    description_i18n = Column(JsonVariant, nullable=True) # Changed
+    properties = Column(JsonVariant, nullable=True) # Changed
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
 
 
@@ -119,12 +119,12 @@ class MobileGroup(Base):
     __tablename__ = 'mobile_groups'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    name_i18n = Column(JSONB, nullable=False)
-    description_i18n = Column(JSONB, nullable=True)
+    name_i18n = Column(JsonVariant, nullable=False) # Changed
+    description_i18n = Column(JsonVariant, nullable=True) # Changed
     current_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
-    member_ids = Column(JSONB, nullable=True)
+    member_ids = Column(JsonVariant, nullable=True) # Changed
     destination_location_id = Column(String, ForeignKey('locations.id'), nullable=True)
-    state_variables = Column(JSONB, nullable=True)
+    state_variables = Column(JsonVariant, nullable=True) # Changed
     is_active = Column(Boolean, default=True, nullable=False, index=True)
 
     current_location = relationship("Location", foreign_keys=[current_location_id])
@@ -144,9 +144,9 @@ class WorldState(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), unique=True, nullable=False, index=True)
-    global_narrative_state_i18n = Column(JSONB, nullable=True)
-    current_era_i18n = Column(JSONB, nullable=True)
-    custom_flags = Column(JSONB, nullable=True)
+    global_narrative_state_i18n = Column(JsonVariant, nullable=True) # Changed
+    current_era_i18n = Column(JsonVariant, nullable=True) # Changed
+    custom_flags = Column(JsonVariant, nullable=True) # Changed
 
     guild = relationship("GuildConfig")
 
@@ -159,12 +159,12 @@ class GeneratedFaction(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-    name_i18n = Column(JSONB, nullable=False)
-    ideology_i18n = Column(JSONB, nullable=True)
-    description_i18n = Column(JSONB, nullable=True)
-    leader_concept_i18n = Column(JSONB, nullable=True)
-    resource_notes_i18n = Column(JSONB, nullable=True)
-    ai_metadata_json = Column(JSONB, nullable=True, comment="Stores metadata from AI generation, like prompt details or model version")
+    name_i18n = Column(JsonVariant, nullable=False) # Changed
+    ideology_i18n = Column(JsonVariant, nullable=True) # Changed
+    description_i18n = Column(JsonVariant, nullable=True) # Changed
+    leader_concept_i18n = Column(JsonVariant, nullable=True) # Changed
+    resource_notes_i18n = Column(JsonVariant, nullable=True) # Changed
+    ai_metadata_json = Column(JsonVariant, nullable=True, comment="Stores metadata from AI generation, like prompt details or model version") # Changed
 
     __table_args__ = (Index('idx_generatedfaction_guild_id', 'guild_id'),)
 

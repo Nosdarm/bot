@@ -128,9 +128,10 @@ class TestAIFactionGenerator(unittest.IsolatedAsyncioTestCase):
 
 class TestFactionManagerAI(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.mock_db_service = AsyncMock()
+        self.mock_db_service = AsyncMock() # Keep for NpcManager if it needs it
         self.mock_npc_manager = AsyncMock(spec=NpcManager)
-        self.faction_manager = FactionManager(db_service=self.mock_db_service, settings={})
+        # FactionManager init does not take db_service
+        self.faction_manager = FactionManager(settings={})
 
     async def test_create_faction_from_ai_success_no_leader(self):
         guild_id = "g1"
@@ -211,12 +212,49 @@ class TestFactionManagerAI(unittest.IsolatedAsyncioTestCase):
 class TestNpcManagerAI(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.mock_db_service = AsyncMock()
-        # For NpcManager's __init__, it expects more than just db_service and settings.
-        # We need to provide mocks for all required __init__ args or make them optional.
-        # For this test, we'll mock the specific methods we care about on the instance.
-        self.npc_manager = NpcManager(db_service=self.mock_db_service, settings={})
+        # For NpcManager's __init__, provide mocks for all dependencies
+        self.mock_item_mgr = AsyncMock()
+        self.mock_status_mgr = AsyncMock()
+        self.mock_party_mgr = AsyncMock()
+        self.mock_char_mgr = AsyncMock()
+        self.mock_rule_engine = AsyncMock()
+        self.mock_combat_mgr = AsyncMock()
+        self.mock_dialogue_mgr = AsyncMock()
+        self.mock_loc_mgr = AsyncMock()
+        self.mock_game_log_mgr = AsyncMock()
+        self.mock_mp_prompt_gen = MagicMock() # Often not async
+        self.mock_openai_svc = AsyncMock()
+        self.mock_ai_validator = MagicMock() # Often not async
+        self.mock_campaign_loader = MagicMock() # Often not async
+        self.mock_notification_svc = AsyncMock()
+        self.mock_game_manager_for_npc = AsyncMock()
+
+
+        self.npc_manager = NpcManager(
+            db_service=self.mock_db_service,
+            settings={},
+            item_manager=self.mock_item_mgr,
+            status_manager=self.mock_status_mgr,
+            party_manager=self.mock_party_mgr,
+            character_manager=self.mock_char_mgr,
+            rule_engine=self.mock_rule_engine,
+            combat_manager=self.mock_combat_mgr,
+            dialogue_manager=self.mock_dialogue_mgr,
+            location_manager=self.mock_loc_mgr,
+            game_log_manager=self.mock_game_log_mgr,
+            multilingual_prompt_generator=self.mock_mp_prompt_gen,
+            openai_service=self.mock_openai_svc,
+            ai_validator=self.mock_ai_validator,
+            campaign_loader=self.mock_campaign_loader,
+            notification_service=self.mock_notification_svc,
+            game_manager=self.mock_game_manager_for_npc
+        )
 
         # Mock the internal create_npc that create_npc_from_ai_concept calls
+        # This method IS on NpcManager itself, so we mock it on the instance.
+        # If create_npc_from_ai_concept is the one being tested, we might not want to mock create_npc
+        # unless create_npc has complex side effects we want to isolate from.
+        # The test seems to verify that create_npc_from_ai_concept calls create_npc correctly.
         self.npc_manager.create_npc = AsyncMock()
         # Mock get_npc which is called after create_npc
         self.npc_manager.get_npc = AsyncMock()

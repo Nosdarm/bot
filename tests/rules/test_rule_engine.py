@@ -254,10 +254,17 @@ class TestRuleEngineResolveCheck(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.succeeded)
         self.assertEqual(result.details_log['crit_status'], "critical_failure")
 
+import copy # Add copy for deepcopy
+
+# ... (other imports)
+
+class TestRuleEngineResolveCheck(unittest.IsolatedAsyncioTestCase):
+    # ... (asyncSetUp remains the same) ...
+
     @patch('bot.game.rules.combat_rules.random.randint')
     def test_critical_success_no_auto_succeed_pass(self, mock_randint):
         mock_randint.return_value = 20
-        custom_rules = self.rule_engine._rules_data.copy()
+        custom_rules = copy.deepcopy(self.rule_engine._rules_data) # Use deepcopy
         if "combat_rules" not in custom_rules: custom_rules["combat_rules"] = {}
         if "attack_roll" not in custom_rules["combat_rules"]: custom_rules["combat_rules"]["attack_roll"] = {}
         custom_rules["combat_rules"]["attack_roll"]["natural_20_is_always_success"] = False
@@ -268,7 +275,7 @@ class TestRuleEngineResolveCheck(unittest.IsolatedAsyncioTestCase):
     @patch('bot.game.rules.combat_rules.random.randint')
     def test_critical_success_no_auto_succeed_fail(self, mock_randint):
         mock_randint.return_value = 20
-        custom_rules = self.rule_engine._rules_data.copy()
+        custom_rules = copy.deepcopy(self.rule_engine._rules_data) # Use deepcopy
         if "combat_rules" not in custom_rules: custom_rules["combat_rules"] = {}
         if "attack_roll" not in custom_rules["combat_rules"]: custom_rules["combat_rules"]["attack_roll"] = {}
         custom_rules["combat_rules"]["attack_roll"]["natural_20_is_always_success"] = False

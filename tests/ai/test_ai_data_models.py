@@ -124,14 +124,22 @@ def test_generated_location_content_missing_required_fields(validation_context_e
     for field in required_fields:
         data = get_valid_generated_location_content_data()
         del data[field]
-        with pytest.raises(ValidationError, match=f"Field required.*{field}"):
+        with pytest.raises(ValidationError) as exc_info:
              GeneratedLocationContent.model_validate(data, context=validation_context_en_ru)
+        error_str = str(exc_info.value)
+        assert field in error_str # Check if the field name is mentioned
+        assert "Field required" in error_str # Pydantic v2 style
+        assert "type=missing" in error_str   # Pydantic v2 style
 
     # template_id is also required by the model definition, but not in the prompt's list
     data = get_valid_generated_location_content_data()
     del data["template_id"]
-    with pytest.raises(ValidationError, match="Field required.*template_id"):
+    with pytest.raises(ValidationError) as exc_info:
         GeneratedLocationContent.model_validate(data, context=validation_context_en_ru)
+    error_str = str(exc_info.value)
+    assert "template_id" in error_str
+    assert "Field required" in error_str
+    assert "type=missing" in error_str
 
 
 def test_generated_location_content_i18n_validation(validation_context_en_ru):
@@ -141,9 +149,13 @@ def test_generated_location_content_i18n_validation(validation_context_en_ru):
     with pytest.raises(ValidationError) as exc_info:
         GeneratedLocationContent.model_validate(data, context=validation_context_en_ru)
 
-    # Example check, details might vary based on your validator's exact messages
-    assert "name_i18n" in str(exc_info.value)
-    assert "missing required language(s): en, ru" in str(exc_info.value).lower()
+    # Check the specific error message from our custom validator
+    # Pydantic V2 wraps custom ValueErrors. We need to inspect the errors() list.
+    errors = exc_info.value.errors()
+    assert len(errors) == 1
+    custom_error_msg = errors[0]['msg'] # The message from our ValueError
+    assert "name_i18n" in custom_error_msg
+    assert "missing required language(s): en, ru" in custom_error_msg.lower()
 
 
 def test_generated_location_content_i18n_validation_en_only_context_copies_to_en(validation_context_en_only):
@@ -207,13 +219,18 @@ def test_poi_model_validation():
     invalid_data_instance_ids["contained_item_instance_ids"] = "not_a_list"
     with pytest.raises(ValidationError) as excinfo_instance:
         POIModel(**invalid_data_instance_ids)
-    assert "list[str]" in str(excinfo_instance.value).lower()
+    error_str_1 = str(excinfo_instance.value).lower()
+    assert "input should be a valid list" in error_str_1 # Pydantic v2
+    assert "type=list_type" in error_str_1               # Pydantic v2
 
     invalid_data_instance_ids_list_type = valid_data_with_instance_ids.copy()
     invalid_data_instance_ids_list_type["contained_item_instance_ids"] = [123, "abc"] # Contains non-string
     with pytest.raises(ValidationError) as excinfo_instance_list_type:
         POIModel(**invalid_data_instance_ids_list_type)
-    assert "str_type" in str(excinfo_instance_list_type.value).lower()
+    error_str_2 = str(excinfo_instance_list_type.value).lower()
+    assert "input should be a valid string" in error_str_2 # Pydantic v2
+    assert "type=string_type" in error_str_2              # Pydantic v2
+    assert "input_value=123" in error_str_2               # Identifies the wrong item
 
 
     with pytest.raises(ValidationError):

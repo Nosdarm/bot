@@ -378,9 +378,38 @@ class ItemManager:
         return False
 
     async def revert_item_creation(self, guild_id: str, item_id: str, **kwargs: Any) -> bool: return await self.remove_item_instance(guild_id, item_id, **kwargs)
-    async def revert_item_deletion(self, guild_id: str, item_data: Dict[str, Any], **kwargs: Any) -> bool:
 
-        return False
+    async def revert_item_deletion(self, guild_id: str, item_data: Dict[str, Any], **kwargs: Any) -> bool:
+        log_prefix = f"ItemManager.revert_item_deletion(guild='{guild_id}', item_id='{item_data.get('id')}'):"
+        logger.info(f"{log_prefix} Attempting to recreate item from data.")
+
+        if not item_data or 'id' not in item_data:
+            logger.error(f"{log_prefix} Invalid or missing item_data or item ID.")
+            return False
+
+        try:
+            # Create a Pydantic Item model instance from the provided data
+            # Ensure all required fields for Item model are present in item_data or have defaults
+            # This assumes item_data is a dict that can initialize the Pydantic Item model.
+            # The Pydantic Item model definition might need checking if this fails.
+            recreated_item_pydantic = Item(**item_data)
+        except Exception as e:
+            logger.error(f"{log_prefix} Failed to create Pydantic Item model from item_data: {e}", exc_info=True)
+            return False
+
+        # Call self.save_item (which might be mocked in tests, or needs full implementation for real use)
+        # save_item should handle DB persistence and cache updates.
+        save_successful = await self.save_item(recreated_item_pydantic, guild_id)
+
+        if save_successful:
+            logger.info(f"{log_prefix} Item '{recreated_item_pydantic.id}' successfully recreated and saved (or cache updated by mock).")
+            # Ensure it's removed from the deleted set if it was there
+            self._deleted_items.get(str(guild_id), set()).discard(recreated_item_pydantic.id)
+            return True
+        else:
+            logger.error(f"{log_prefix} Failed to save recreated item '{recreated_item_pydantic.id}'.")
+            return False
+
     async def revert_item_update(self, guild_id: str, item_id: str, old_field_values: Dict[str, Any], **kwargs: Any) -> bool: return await self.update_item_instance(guild_id, item_id, old_field_values, **kwargs)
     async def use_item_in_combat(self, guild_id: str, actor_id: str, item_instance_id: str, target_id: Optional[str] = None, game_log_manager: Optional['GameLogManager'] = None) -> Dict[str, Any]:
         logger.debug("ItemManager.use_item_in_combat called for actor %s, item_instance %s, target %s in guild %s.", actor_id, item_instance_id, target_id, guild_id)

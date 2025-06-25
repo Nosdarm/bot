@@ -14,6 +14,25 @@ from bot.bot_core import RPGBot
 # from bot.game.models.character import Character # Mocked
 import discord # For discord.Message
 
+# Define MockPlayer and MockCharacter for testing
+class MockPlayer:
+    def __init__(self, id, discord_id, guild_id, current_game_status, selected_language, collected_actions_json=None, name=None):
+        self.id = id
+        self.discord_id = discord_id
+        self.guild_id = guild_id
+        self.current_game_status = current_game_status
+        self.selected_language = selected_language
+        self.collected_actions_json = collected_actions_json
+        self.name = name if name else f"Player_{discord_id}"
+
+class MockCharacter:
+    def __init__(self, id, name="TestChar", hp=100.0, max_health=100.0):
+        self.id = id
+        self.name = name
+        self.hp = hp
+        self.max_health = max_health
+        # Add other attributes as needed by tests
+
 class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
 
     @patch('bot.bot_core.parse_player_action')
@@ -30,9 +49,9 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
 
         # Mock Player object
         mock_player_obj = MockPlayer(
-            player_id="player1_db_id",
-            discord_id_str="discord_user1",
-            guild_id_str="guild1",
+            id="player1_db_id",
+            discord_id="discord_user1",
+            guild_id="guild1",
             current_game_status="исследование",
             selected_language="ru",
             collected_actions_json=None
@@ -108,15 +127,15 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
 
 
         mock_player_obj = MockPlayer(
-            player_id="player_talker_db_id",
-            discord_id_str="discord_user_talker",
-            guild_id_str="guild_dialogue",
+            id="player_talker_db_id",
+            discord_id="discord_user_talker",
+            guild_id="guild_dialogue",
             current_game_status="диалог", # Busy state: dialogue
             selected_language="ru"
         )
         mock_gm_instance.get_player_by_discord_id = AsyncMock(return_value=mock_player_obj)
 
-        mock_character_obj = MockCharacter(char_id="char_dialogue_active") # The actual character model
+        mock_character_obj = MockCharacter(id="char_dialogue_active") # The actual character model
         mock_gm_instance.character_manager.get_character_by_player_id = AsyncMock(return_value=mock_character_obj)
 
 
@@ -161,9 +180,9 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
 
 
         mock_player_obj = MockPlayer(
-            player_id="player_fighter_db_id",
-            discord_id_str="discord_user_fighter",
-            guild_id_str="guild_combat",
+            id="player_fighter_db_id",
+            discord_id="discord_user_fighter",
+            guild_id="guild_combat",
             name="Fighter", # Name is on Player model for the log message
             current_game_status="бой",
             selected_language="ru"
@@ -218,9 +237,9 @@ class TestBotCoreOnMessage(unittest.IsolatedAsyncioTestCase):
         mock_gm_instance.get_default_bot_language = AsyncMock(return_value="ru") # GM default is 'ru'
 
         mock_player_obj = MockPlayer(
-            player_id="player_lang_fallback_db_id",
-            discord_id_str="discord_user_lang_fallback",
-            guild_id_str="guild_lang_fallback",
+            id="player_lang_fallback_db_id",
+            discord_id="discord_user_lang_fallback",
+            guild_id="guild_lang_fallback",
             name="LangFallbacker",
             current_game_status="исследование",
             selected_language=None, # Player has NOT set a language

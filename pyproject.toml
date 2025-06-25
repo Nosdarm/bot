@@ -3,6 +3,7 @@ name = "text-rpg-bot-backend"
 version = "0.1.0"
 description = "Backend for AI-Driven Text RPG Bot"
 authors = ["Jules <jules@ai.dev>"]
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.9"
