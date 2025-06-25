@@ -27,19 +27,49 @@ class DBService:
         else:
             # Determine DB type from argument or environment variable
             # In a real application, this might come from a dedicated config service
+            # Determine DB type from argument or environment variable
             effective_db_type = db_type or os.getenv("DATABASE_TYPE", "postgres").lower()
 
+            is_testing_mode = os.getenv("TESTING_MODE") == "true"
+            test_db_url = os.getenv("TEST_DATABASE_URL")
+
+            if is_testing_mode:
+                logger.info("DBService: TESTING_MODE active.")
+                # In testing mode, prioritize TEST_DATABASE_URL.
+                # We'll assume TEST_DATABASE_URL dictates the type (e.g., sqlite via connection string).
+                if test_db_url and ("sqlite" in test_db_url or test_db_url == ":memory:"):
+                    effective_db_type = "sqlite"
+                    sqlite_path = test_db_url if "sqlite" in test_db_url else ":memory:" # Handle raw ":memory:" string
+                    if "sqlite+aiosqlite:///" in sqlite_path : # typical sqlalchemy url
+                        sqlite_path = sqlite_path.replace("sqlite+aiosqlite:///", "")
+                    if sqlite_path == "sqlite+aiosqlite:///:memory:": # specific sqlalchemy in-memory
+                        sqlite_path = ":memory:"
+
+                    logger.info(f"DBService (TESTING_MODE): Forcing SQLite due to TEST_DATABASE_URL='{test_db_url}', path='{sqlite_path}'")
+                elif test_db_url and "postgres" in test_db_url:
+                    effective_db_type = "postgres"
+                    logger.info(f"DBService (TESTING_MODE): Using PostgreSQL due to TEST_DATABASE_URL='{test_db_url}'")
+                else: # Default to SQLite in-memory if TEST_DATABASE_URL is not specific enough or missing
+                    effective_db_type = "sqlite"
+                    sqlite_path = ":memory:"
+                    logger.info(f"DBService (TESTING_MODE): Defaulting to SQLite in-memory (TEST_DATABASE_URL='{test_db_url}')")
+
+
             if effective_db_type == "sqlite":
-                from bot.database.sqlite_adapter import SQLiteAdapter # Import here
-                # Potentially pass db_path from config here if SQLiteAdapter takes it
-                self.adapter: BaseDbAdapter = SQLiteAdapter()
-                logger.info("DBService initialized with SQLiteAdapter.")
+                from bot.database.sqlite_adapter import SQLiteAdapter
+                # Use sqlite_path determined above if in testing_mode, else default behavior
+                db_path_for_sqlite = sqlite_path if is_testing_mode and "sqlite" == effective_db_type else None # Pass None to use SQLiteAdapter's default logic
+                self.adapter: BaseDbAdapter = SQLiteAdapter(db_path=db_path_for_sqlite)
+                logger.info(f"DBService initialized with SQLiteAdapter (Path: {self.adapter._db_path}).")
             elif effective_db_type == "postgres":
-                from bot.database.postgres_adapter import PostgresAdapter # Import here
-                # Potentially pass db_url from config here
-                self.adapter: BaseDbAdapter = PostgresAdapter()
-                logger.info("DBService initialized with PostgresAdapter.")
+                from bot.database.postgres_adapter import PostgresAdapter
+                # Use test_db_url if in testing_mode and type is postgres, else default behavior
+                db_url_for_postgres = test_db_url if is_testing_mode and "postgres" == effective_db_type else None
+                self.adapter: BaseDbAdapter = PostgresAdapter(db_url=db_url_for_postgres)
+                logger.info(f"DBService initialized with PostgresAdapter (URL: {self.adapter._db_url}).")
             else:
+                # This case should ideally not be reached if testing_mode logic correctly defaults to sqlite
+                logger.error(f"DBService: Unsupported or ambiguous database type after considering TESTING_MODE: {effective_db_type}")
                 raise ValueError(f"Unsupported database type: {effective_db_type}")
 
         # Ensure os is imported if not already

@@ -16,35 +16,83 @@ async def get_or_create_rules_config(db: AsyncSession, guild_id: str) -> RulesCo
     """
     Helper function to retrieve RulesConfig for a guild, creating it with defaults if it doesn't exist.
     """
+    """
+    Helper function to retrieve RulesConfig for a guild, assembling it from individual rows,
+    or creating default rows if none exist.
+    Returns a Pydantic RuleConfigData model.
+    """
     stmt = select(RulesConfig).where(RulesConfig.guild_id == guild_id)
     result = await db.execute(stmt)
-    db_config = result.scalars().first()
+    existing_rules_rows = result.scalars().all()
 
-    if not db_config:
-        logger.info(f"No RulesConfig found for guild {guild_id}. Initializing with defaults on-the-fly.")
+    rules_data_dict = {row.key: row.value for row in existing_rules_rows}
+
+    if not existing_rules_rows:
+        logger.info(f"No RulesConfig rows found for guild {guild_id}. Initializing with defaults.")
+        default_rules_pydantic = RuleConfigData() # Pydantic model with defaults
+        default_rules_dict = default_rules_pydantic.model_dump(mode='json') # Get dict representation, mode='json' ensures complex types are serializable if needed
+
+        for key, value in default_rules_dict.items():
+            new_rule_row = RulesConfig(
+                guild_id=guild_id,
+                key=key,
+                value=value, # value should be JSON-compatible (dict, list, str, int, etc.)
+                description=f"Default value for {key}" # Optional: add description
+            )
+            db.add(new_rule_row)
         
-        # Create RulesConfig with defaults from the Pydantic schema
-        default_data = RuleConfigData().dict() # Get Pydantic model defaults
-        db_config = RulesConfig(guild_id=guild_id, config_data=default_data)
-        db.add(db_config)
         try:
-            # This commit is within the session managed by get_db_session.
-            # If get_db_session does a final commit, this might be redundant or could
-            # cause issues if it's a nested transaction.
-            # For now, let's assume this explicit commit is needed for refresh.
-            await db.commit() 
-            await db.refresh(db_config)
-            logger.info(f"Created default RulesConfig for guild {guild_id} on-the-fly.")
-        except Exception as e_create:
-            await db.rollback() # Rollback this specific auto-creation attempt
-            logger.error(f"Failed to create default RulesConfig for guild {guild_id} on-the-fly: {e_create}")
-            # This exception will be caught by the endpoint and result in a 500 for the client.
-            # Re-raising to ensure the calling endpoint knows this failed.
+            # No explicit commit here; let the session from Depends(get_db_session) handle it.
+            # We need to flush to get IDs if necessary, but for simple add, commit at end of request is fine.
+            # For the purpose of returning the RuleConfigData, we can use the default_rules_dict directly.
+            logger.info(f"Prepared default RulesConfig rows for guild {guild_id} to be added in current session.")
+            rules_data_dict = default_rules_dict # Use the defaults we just prepared
+            # The actual commit will happen when get_db_session context manager exits.
+        except Exception as e_create: # Should be less likely now without commit
+            # await db.rollback() # Rollback is handled by get_db_session context manager on exception
+            logger.error(f"Error preparing default RulesConfig rows for guild {guild_id}: {e_create}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"RulesConfig was missing and could not be auto-created for guild {guild_id}."
+                detail=f"Error preparing default RulesConfig for guild {guild_id}."
             )
-    return db_config
+
+    # Construct the Pydantic model from the dictionary of rules
+    # This assumes RuleConfigData can be instantiated from a flat dictionary of its fields
+    # If RuleConfigData has nested Pydantic models, this might need adjustment.
+    # For now, assuming direct field mapping.
+    try:
+        # Ensure that all fields expected by RuleConfigData are present in rules_data_dict,
+        # or that RuleConfigData handles missing fields with defaults.
+        # If a key is in RuleConfigData but not in DB, Pydantic will use its default.
+        return RuleConfigData(**rules_data_dict)
+    except Exception as e_pydantic:
+        logger.error(f"Error creating RuleConfigData Pydantic model for guild {guild_id} from DB data: {e_pydantic}", exc_info=True)
+        # Fallback to default if Pydantic model creation fails from DB data (e.g. schema mismatch)
+        # This might mask underlying issues, but provides a fallback.
+        # A stricter approach would be to raise an HTTPException here.
+        logger.warning(f"Falling back to default RuleConfigData for guild {guild_id} due to Pydantic model creation error.")
+        return RuleConfigData()
+
+
+@router.get(
+    "/",  # Path relative to the router's prefix (e.g., /api/v1/guilds/{guild_id}/config/)
+    response_model=RuleConfigResponse,
+    summary="Get current game rule configuration for the guild"
+)
+async def get_guild_rules_config_endpoint( # Renamed to avoid conflict with model name
+    guild_id: str = Path(..., description="Guild ID from path prefix"),
+    db: AsyncSession = Depends(get_db_session)
+):
+    logger.info(f"Fetching RulesConfig for guild {guild_id}")
+    try:
+        rules_pydantic_data = await get_or_create_rules_config(db, guild_id)
+    except HTTPException:
+        raise # Re-raise if get_or_create_rules_config failed and raised HTTPException
+    except Exception as e:
+        logger.error(f"Unexpected error fetching or creating RulesConfig for guild {guild_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error accessing guild configuration.")
+
+    return RuleConfigResponse(guild_id=guild_id, config_data=rules_pydantic_data)
 
 @router.get(
     "/",  # Path relative to the router's prefix (e.g., /api/v1/guilds/{guild_id}/config/)
@@ -78,28 +126,51 @@ async def update_guild_rules_config_endpoint( # Renamed to avoid conflict
     db: AsyncSession = Depends(get_db_session) # Parameter with default
 ):
     logger.info(f"Updating RulesConfig for guild {guild_id}")
-    try:
-        db_config = await get_or_create_rules_config(db, guild_id)
-    except HTTPException:
-        raise 
-    except Exception as e:
-        logger.error(f"Unexpected error fetching or creating RulesConfig for update for guild {guild_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error accessing guild configuration before update.")
 
-    # config_update_payload.config_data is an instance of RuleConfigData Pydantic model.
-    # .dict() serializes the Pydantic model (with its defaults applied for any missing fields from request)
-    new_config_data_dict = config_update_payload.config_data.dict()
+    # Fetch existing rules to update them or create new ones
+    stmt = select(RulesConfig).where(RulesConfig.guild_id == guild_id)
+    result = await db.execute(stmt)
+    existing_rules_rows = result.scalars().all()
+    current_rules_map = {row.key: row for row in existing_rules_rows}
 
-    db_config.config_data = new_config_data_dict
-    db.add(db_config) # Mark as dirty
+    updated_rules_data_dict = config_update_payload.config_data.model_dump(mode='json') # Get all fields from payload
+
+    for key, new_value in updated_rules_data_dict.items():
+        if key in current_rules_map:
+            # Update existing rule row
+            current_rules_map[key].value = new_value
+            # logger.debug(f"Updating rule {key} for guild {guild_id} to {new_value}")
+            db.add(current_rules_map[key]) # Mark as dirty
+        else:
+            # Create new rule row
+            # Optional: Add a description if one can be inferred or is standard for new rules
+            new_rule_row = RulesConfig(
+                guild_id=guild_id,
+                key=key,
+                value=new_value,
+                description=f"Custom value for {key}"
+            )
+            # logger.debug(f"Creating new rule {key} for guild {guild_id} with value {new_value}")
+            db.add(new_rule_row)
+            current_rules_map[key] = new_rule_row # Add to map for response assembly
+
     try:
-        # The final commit is handled by the get_db_session dependency upon successful exit of the endpoint.
-        # If an explicit commit is needed here (e.g., if get_db_session doesn't commit), uncomment:
-        # await db.commit()
-        await db.refresh(db_config) # Refresh to get the potentially DB-processed JSON data back
-    except Exception as e:
-        # Rollback is handled by get_db_session for general exceptions.
-        logger.error(f"Error updating RulesConfig for guild {guild_id}: {e}", exc_info=True)
+        await db.commit() # Commit all changes (updates and new rows)
+        logger.info(f"Successfully updated/created RulesConfig rows for guild {guild_id}.")
+
+        # Re-assemble the Pydantic model from the potentially updated/newly created DB state
+        # This ensures the response reflects exactly what's in the DB after the transaction.
+        # Alternatively, update rules_data_dict directly and construct RuleConfigData from it,
+        # but re-fetching is safer if DB triggers/defaults could modify data.
+
+        # For simplicity and to reflect the committed state, create RuleConfigData from current_rules_map values
+        # (after they've been added to session and potentially refreshed by commit)
+        final_rules_values = {key: row.value for key, row in current_rules_map.items()}
+        updated_pydantic_data = RuleConfigData(**final_rules_values)
+
+    except Exception as e_update:
+        await db.rollback()
+        logger.error(f"Error updating RulesConfig rows for guild {guild_id}: {e_update}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update RulesConfig.")
-    
-    return db_config
+
+    return RuleConfigResponse(guild_id=guild_id, config_data=updated_pydantic_data)

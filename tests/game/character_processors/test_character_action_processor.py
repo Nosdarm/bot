@@ -272,5 +272,116 @@ class TestCharacterActionProcessor(unittest.IsolatedAsyncioTestCase):
 
     # --- Pickup Item Tests (already good) ---
 
+    # --- Move Action Tests ---
+    async def _setup_move_test(self, guild_id: str, char_id: str, current_loc_id: str,
+                               target_loc_id: str, in_party: bool = False, party_id_val: Optional[str] = None):
+        mock_character = self._create_mock_character(char_id, guild_id, location_id=current_loc_id)
+        if in_party:
+            mock_character.party_id = party_id_val
+
+        self.mock_character_manager.get_character.return_value = mock_character # Used by some internal calls if any
+
+        mock_current_loc = MagicMock(id=current_loc_id, name_i18n={"en": "Current Room"})
+        mock_target_loc = MagicMock(id=target_loc_id, name_i18n={"en": "Target Room"})
+
+        # LocationManager.get_location_instance used by CAP.handle_move_action
+        def get_loc_instance_side_effect(gid, loc_id_to_get, session=None):
+            if gid == guild_id:
+                if loc_id_to_get == current_loc_id: return mock_current_loc
+                if loc_id_to_get == target_loc_id: return mock_target_loc
+            return None
+        self.mock_location_manager.get_location_instance = MagicMock(side_effect=get_loc_instance_side_effect)
+
+        # LocationManager.can_move_between called by CAP.handle_move_action
+        self.mock_location_manager.can_move_between = AsyncMock(return_value=True) # Default to can move
+
+        # CharacterManager.update_character_location called by CAP.handle_move_action
+        self.mock_character_manager.update_character_location = AsyncMock(return_value=True)
+
+        # PartyManager mocks
+        if in_party:
+            mock_party_obj = MagicMock(id=party_id_val, current_location_id=current_loc_id)
+            self.mock_party_manager.get_party_by_member_id.return_value = mock_party_obj
+            self.mock_party_manager.update_party_location = AsyncMock(return_value=True)
+        else:
+            self.mock_party_manager.get_party_by_member_id.return_value = None
+
+        # RuleEngine for party movement rules
+        self.mock_rule_engine.get_rule = MagicMock(return_value=True) # Default: party movement allowed
+
+        # GameLogManager
+        self.mock_game_log_manager.log_event = AsyncMock()
+
+        # LocationManager event triggers
+        self.mock_location_manager.handle_entity_departure = AsyncMock()
+        self.mock_location_manager.handle_entity_arrival = AsyncMock()
+
+        destination_entity_nlu = {"type": "location_id", "id": target_loc_id, "value": "Target Room"}
+        return mock_character, destination_entity_nlu
+
+    async def test_handle_move_action_success_solo_player(self):
+        guild_id, char_id, current_loc, target_loc = "g_move_solo", "c_move_solo", "loc_start_solo", "loc_end_solo"
+        mock_char, dest_nlu = await self._setup_move_test(guild_id, char_id, current_loc, target_loc, in_party=False)
+
+        result = await self.processor.handle_move_action(mock_char, dest_nlu, guild_id)
+
+        self.assertTrue(result["success"])
+        self.assertIn("успешно переместились", result["message"])
+        self.assertTrue(result["state_changed"])
+
+        self.mock_location_manager.can_move_between.assert_awaited_once_with(guild_id, current_loc, target_loc)
+        self.mock_character_manager.update_character_location.assert_awaited_once_with(char_id, target_loc, guild_id)
+        self.mock_game_log_manager.log_event.assert_awaited_once()
+        log_args = self.mock_game_log_manager.log_event.call_args[1] # kwargs
+        self.assertEqual(log_args['guild_id'], guild_id)
+        self.assertEqual(log_args['event_type'], "PLAYER_MOVE")
+        self.assertEqual(log_args['details']['character_id'], char_id)
+        self.assertEqual(log_args['details']['from_location_id'], current_loc)
+        self.assertEqual(log_args['details']['to_location_id'], target_loc)
+
+        self.mock_location_manager.handle_entity_departure.assert_awaited_once_with(current_loc, char_id, "Character", guild_id=guild_id)
+        self.mock_location_manager.handle_entity_arrival.assert_awaited_once_with(target_loc, char_id, "Character", guild_id=guild_id)
+        self.mock_party_manager.update_party_location.assert_not_called()
+
+
+    async def test_handle_move_action_no_connection(self):
+        guild_id, char_id, current_loc, target_loc = "g_move_nocon", "c_move_nocon", "loc_start_nocon", "loc_end_nocon"
+        mock_char, dest_nlu = await self._setup_move_test(guild_id, char_id, current_loc, target_loc)
+        self.mock_location_manager.can_move_between = AsyncMock(return_value=False) # No connection
+
+        result = await self.processor.handle_move_action(mock_char, dest_nlu, guild_id)
+
+        self.assertFalse(result["success"])
+        self.assertIn("нельзя пройти", result["message"])
+        self.mock_character_manager.update_character_location.assert_not_called()
+
+    async def test_handle_move_action_party_success(self):
+        guild_id, char_id, current_loc, target_loc = "g_move_party", "c_move_party", "loc_start_party", "loc_end_party"
+        party_id = "party_move_1"
+        mock_char, dest_nlu = await self._setup_move_test(guild_id, char_id, current_loc, target_loc, in_party=True, party_id_val=party_id)
+
+        result = await self.processor.handle_move_action(mock_char, dest_nlu, guild_id)
+
+        self.assertTrue(result["success"])
+        self.mock_character_manager.update_character_location.assert_awaited_once_with(char_id, target_loc, guild_id)
+        self.mock_party_manager.update_party_location.assert_awaited_once_with(guild_id, party_id, target_loc)
+        self.mock_location_manager.handle_entity_departure.assert_awaited_once_with(current_loc, party_id, "Party", guild_id=guild_id) # Party departs
+        self.mock_location_manager.handle_entity_arrival.assert_awaited_once_with(target_loc, party_id, "Party", guild_id=guild_id)   # Party arrives
+
+    async def test_handle_move_action_party_rule_disallows(self):
+        guild_id, char_id, current_loc, target_loc = "g_move_party_rule", "c_move_party_rule", "loc_start_party_rule", "loc_end_party_rule"
+        party_id = "party_move_rule_1"
+        mock_char, dest_nlu = await self._setup_move_test(guild_id, char_id, current_loc, target_loc, in_party=True, party_id_val=party_id)
+
+        # Simulate RuleEngine disallowing party movement
+        self.mock_rule_engine.get_rule = MagicMock(return_value=False) # Example: "party_can_move" rule returns False
+
+        result = await self.processor.handle_move_action(mock_char, dest_nlu, guild_id)
+
+        self.assertFalse(result["success"])
+        self.assertIn("партия не может сейчас двигаться", result["message"].lower())
+        self.mock_character_manager.update_character_location.assert_not_called()
+        self.mock_party_manager.update_party_location.assert_not_called()
+
 if __name__ == '__main__':
     unittest.main()
