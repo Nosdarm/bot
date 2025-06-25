@@ -401,7 +401,7 @@ class PartyCog(commands.Cog, name="Party Commands"):
             if not target_party:
                 # CharacterManager.get_character_by_name operates on cache.
                 # This might need enhancement in CharacterManager for a DB lookup if not cached.
-                target_character = game_mngr.character_manager.get_character_by_name(guild_id_str, target)
+                target_character = await game_mngr.character_manager.get_character_by_name(guild_id_str, target)
                 if target_character and target_character.current_party_id:
                     target_party = await game_mngr.party_manager.get_party(guild_id_str, target_character.current_party_id)
 
@@ -444,8 +444,13 @@ class PartyCog(commands.Cog, name="Party Commands"):
         party_members_models = await game_mngr.party_manager.get_party_members(guild_id_str, target_party.id)
         for member_char in party_members_models:
             member_name = member_char.name_i18n.get(party_lang, member_char.name_i18n.get("en", member_char.id)) if member_char.name_i18n else member_char.id
-            member_class = member_char.character_class_i18n.get(party_lang, member_char.character_class_i18n.get("en", "Класс не указан")) if member_char.character_class_i18n else "Класс не указан"
-            members_details_list.append(f"- {member_name} (Уровень {member_char.level or 1}, {member_class})")
+            # Assuming character_class is a string like "Warrior", "Mage".
+            # If character_class itself needs to be i18n, it would require a different structure or lookup.
+            member_class_str = member_char.character_class if member_char.character_class else "Класс не указан"
+            # If character_class was an ID for a class definition that has name_i18n:
+            # class_def = await game_mngr.get_class_definition(member_char.character_class) # Hypothetical
+            # member_class_str = class_def.name_i18n.get(party_lang, class_def.name_i18n.get("en", "Класс не указан")) if class_def else "Класс не указан"
+            members_details_list.append(f"- {member_name} (Уровень {member_char.level or 1}, {member_class_str})")
 
         embed = discord.Embed(title=f"Информация о группе: {party_display_name}", color=discord.Color.blue())
         embed.add_field(name="ID Группы", value=f"`{target_party.id}`", inline=False)

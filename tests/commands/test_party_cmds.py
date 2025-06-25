@@ -9,11 +9,13 @@ from bot.command_modules.party_cmds import PartyCog
 
 # Models (primarily for type hinting or if manager methods return them directly)
 from bot.game.models.character import Character
+from bot.game.models.character import Character as Player
 from bot.game.models.party import Party
 
 # Managers
 from bot.game.managers.game_manager import GameManager
 from bot.game.managers.party_manager import PartyManager
+from bot.game.exceptions import CharacterAlreadyInPartyError, CharacterNotInPartyError, NotPartyLeaderError, PartyFullError
 from bot.game.managers.character_manager import CharacterManager
 from bot.game.managers.location_manager import LocationManager
 
@@ -45,6 +47,7 @@ class TestPartyCommands(unittest.IsolatedAsyncioTestCase):
         self.interaction.user.name = "TestUser"
         self.interaction.guild = MagicMock(spec=discord.Guild)
         self.interaction.guild.id = "guild_discord_id_67890" # Use string for guild_id
+        self.interaction.guild_id = self.interaction.guild.id # Ensure guild_id is directly set
         self.interaction.channel = MagicMock(spec=discord.TextChannel)
         self.interaction.response = AsyncMock(spec=discord.InteractionResponse)
         self.interaction.followup = AsyncMock(spec=discord.Webhook) # For deferred responses
@@ -94,7 +97,11 @@ class TestPartyCommands(unittest.IsolatedAsyncioTestCase):
         self.mock_character_manager.get_character.return_value = self.mock_player_character_db
 
         party_name = "The Valiant Few"
-        expected_party_name_i18n = {"en": party_name, "en": party_name} # Assuming default lang is 'en'
+        expected_party_name_i18n = {"en": party_name} # Corrected: only one entry per language
+        # Ensure the mock create_party returns the correct party name for this test
+        self.mock_party_manager.create_party = AsyncMock(
+            return_value=Party(id="new_party_valiant", name_i18n=expected_party_name_i18n, player_ids_list=[self.mock_player_character_db.id])
+        )
 
         await self.cog.cmd_party_create.callback(self.cog, self.interaction, name=party_name)
 
@@ -284,12 +291,15 @@ class TestPartyCommands(unittest.IsolatedAsyncioTestCase):
         self.mock_character_manager.get_character.side_effect = lambda gid, char_id: self.mock_player_character_db if char_id == self.mock_player_character_db.id else None
 
         # Mock party members (just the leader for simplicity here)
+        self.mock_player_character_db.character_class = "TestClass" # Add character_class mock
         self.mock_party_manager.get_party_members.return_value = [self.mock_player_character_db]
 
         # Mock location name
         mock_location_obj = MagicMock()
         mock_location_obj.name_i18n = {"en": "Party Hangout"}
-        self.mock_location_manager.get_location_instance.return_value = mock_location_obj
+        # Ensure get_location_instance is an AsyncMock for this test and returns an awaitable result or a direct MagicMock
+        self.mock_location_manager.get_location_instance = AsyncMock(return_value=mock_location_obj)
+
 
         await self.cog.cmd_party_view.callback(self.cog, self.interaction, target=None)
 
