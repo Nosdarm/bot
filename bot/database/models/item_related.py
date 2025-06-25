@@ -70,49 +70,61 @@ class NewItem(Base):
     __tablename__ = 'new_items'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False) # Removed unique=True, will be unique with guild_id
     description = Column(String, nullable=True)
     item_type = Column(String, nullable=False)
-    item_metadata = Column(JsonVariant, name="metadata", nullable=True) # Changed JSONB to JsonVariant
+    item_metadata = Column(JsonVariant, name="metadata", nullable=True)
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True) # ADDED guild_id
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    __table_args__ = (UniqueConstraint('name', name='uq_new_item_name'),)
+    # guild_config = relationship("GuildConfig") # ADDED relationship - If needed explicitly
+
+    __table_args__ = (
+        UniqueConstraint('guild_id', 'name', name='uq_new_item_guild_name'), # ADDED unique constraint for guild_id and name
+        Index('idx_newitem_guild_id', 'guild_id'), # ADDED index for guild_id
+    )
 
     def __repr__(self):
-        return f"<NewItem(id={self.id}, name='{self.name}', item_type='{self.item_type}')>"
+        return f"<NewItem(id={self.id}, name='{self.name}', item_type='{self.item_type}', guild_id='{self.guild_id}')>"
 
 
 class NewCharacterItem(Base):
     __tablename__ = 'new_character_items'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    character_id = Column(String, ForeignKey('characters.id'), nullable=False, index=True)
-    item_id = Column(UUID(as_uuid=True), ForeignKey('new_items.id'), nullable=False, index=True)
+    character_id = Column(String, ForeignKey('characters.id', ondelete='CASCADE'), nullable=False, index=True) # Corrected FK ondelete
+    item_id = Column(UUID(as_uuid=True), ForeignKey('new_items.id', ondelete='CASCADE'), nullable=False, index=True) # Corrected FK ondelete
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True) # ADDED guild_id
     quantity = Column(Integer, default=1, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
 
     item = relationship("NewItem")
+    # character = relationship("Character") # If needed
+    # guild_config = relationship("GuildConfig") # If needed
 
-    __table_args__ = (CheckConstraint('quantity > 0', name='check_new_char_item_quantity_positive'),)
+    __table_args__ = (
+        CheckConstraint('quantity > 0', name='check_new_char_item_quantity_positive'),
+        Index('idx_newcharitem_guild_char_item', 'guild_id', 'character_id', 'item_id'), # ADDED index
+    )
 
     def __repr__(self):
-        return f"<NewCharacterItem(id={self.id}, character_id='{self.character_id}', item_id='{self.item_id}', quantity={self.quantity})>"
+        return f"<NewCharacterItem(id={self.id}, character_id='{self.character_id}', item_id='{self.item_id}', quantity={self.quantity}, guild_id='{self.guild_id}')>"
 
 
 class Shop(Base):
     __tablename__ = 'shops'
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    guild_id = Column(String, nullable=False, index=True)
-    name_i18n = Column(JsonVariant, nullable=False) # Changed JSON to JsonVariant
-    description_i18n = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
-    type_i18n = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
-    inventory = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
-    owner_id = Column(String, ForeignKey('npcs.id'), nullable=True)
-    location_id = Column(String, ForeignKey('locations.id'), nullable=True)
-    economic_parameters_override = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True) # ADDED FK
+    name_i18n = Column(JsonVariant, nullable=False)
+    description_i18n = Column(JsonVariant, nullable=True)
+    type_i18n = Column(JsonVariant, nullable=True)
+    inventory = Column(JsonVariant, nullable=True)
+    owner_id = Column(String, ForeignKey('npcs.id', ondelete='SET NULL'), nullable=True) # ADDED ondelete
+    location_id = Column(String, ForeignKey('locations.id', ondelete='SET NULL'), nullable=True) # ADDED ondelete
+    economic_parameters_override = Column(JsonVariant, nullable=True)
 
     owner = relationship("NPC")
     location = relationship("Location")
@@ -129,14 +141,14 @@ class Currency(Base):
     __tablename__ = 'currencies'
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    guild_id = Column(String, nullable=False, index=True)
-    name_i18n = Column(JsonVariant, nullable=False) # Changed JSON to JsonVariant
-    symbol_i18n = Column(JsonVariant, nullable=True) # Changed JSON to JsonVariant
+    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True) # ADDED FK
+    name_i18n = Column(JsonVariant, nullable=False)
+    symbol_i18n = Column(JsonVariant, nullable=True)
     exchange_rate_to_standard = Column(Float, nullable=False, default=1.0)
     is_default = Column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
-        Index('idx_currency_guild_id', 'guild_id'),
+        Index('idx_currency_guild_id', 'guild_id'), # Index already exists, FK ensures integrity
     )
 
     def __repr__(self):

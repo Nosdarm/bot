@@ -190,6 +190,94 @@ class TestAIResponseValidator(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(validated_data)
         self.assertIsNone(issues, f"Expected no issues for location, got: {issues}")
 
+    async def test_validate_location_content_semantic_issues(self):
+        loc_data = {
+            "template_id": "loc_tpl_sem_issue",
+            "name_i18n": {"en": "Semantic Issue Loc", "ru": "Локация с сем. ошибками", "fr": "Lieu Erreur Sem"},
+            "atmospheric_description_i18n": {"en": "Desc", "ru": "Опис", "fr":"Desc"},
+            "location_type_key": "cave",
+            "points_of_interest": [{
+                "poi_id": "poi1", "name_i18n": {"en":"POI", "ru":"ПОИ", "fr":"POI"}, "description_i18n": {"en":"D", "ru":"О", "fr":"D"},
+                "contained_item_ids": ["item_sword", "item_unknown_one"] # item_sword is valid, item_unknown_one is not
+            }],
+            "connections": [{
+                "to_location_id": "non_existent_loc_id", # Invalid
+                "path_description_i18n": {"en":"Path", "ru":"Путь", "fr":"Chemin"}
+            }]
+        }
+        raw_json_input = json.dumps(loc_data)
+        validated_data, issues = await self.validator.parse_and_validate_ai_response(
+            raw_json_input, self.guild_id, "location_details", game_manager=self.mock_game_manager
+        )
+        self.assertIsNotNone(validated_data)
+        self.assertIsNotNone(issues)
+        self.assertTrue(any(iss.loc == ['points_of_interest', 0, 'contained_item_ids', 1] and "item_unknown_one" in iss.msg for iss in issues), "Missing item ID issue not found for PoI.")
+        self.assertTrue(any(iss.loc == ['connections', 0, 'to_location_id'] and "non_existent_loc_id" in iss.msg for iss in issues), "Missing connected location ID issue not found.")
+
+
+    async def test_validate_quest_data_semantic_issues(self):
+        quest_data = {
+            "name_i18n": {"en": "Q Sem", "ru": "К Сем", "fr":"Q Sem"},
+            "description_i18n": {"en": "D", "ru": "О", "fr":"D"},
+            "steps": [{"title_i18n": {"en":"S1","ru":"Э1","fr":"E1"}, "description_i18n":{"en":"SD1","ru":"ОЭ1","fr":"DE1"}, "required_mechanics_json":"{}", "abstract_goal_json":"{}", "step_order":0, "consequences_json":"{}"}],
+            "consequences_json": json.dumps({"items": [{"item_id": "item_unknown_reward"}]}), # Invalid item ID
+            "prerequisites_json": "{}",
+            "npc_involvement": {"quest_giver": "unknown_npc_archetype"} # Invalid NPC archetype ID
+        }
+        raw_json_input = json.dumps(quest_data)
+        validated_data, issues = await self.validator.parse_and_validate_ai_response(
+            raw_json_input, self.guild_id, "quest_generation", game_manager=self.mock_game_manager
+        )
+        self.assertIsNotNone(validated_data)
+        self.assertIsNotNone(issues)
+        self.assertTrue(any(iss.loc == ['consequences_json', 'items', 0, 'item_id'] and "item_unknown_reward" in iss.msg for iss in issues), "Quest reward item ID issue not found.")
+        self.assertTrue(any(iss.loc == ['npc_involvement', 'quest_giver'] and "unknown_npc_archetype" in iss.msg for iss in issues), "Quest NPC involvement ID issue not found.")
+
+
+    async def test_validate_item_profile_semantic_issues(self):
+        item_data = {
+            "template_id": "item002_sem_issue_sword",
+            "name_i18n": {"en": "Problem Sword", "ru": "Проблемный меч", "fr":"Épée Problème"},
+            "description_i18n": {"en": "Desc", "ru":"Опис", "fr":"Desc"},
+            "item_type": "weapon",
+            "base_value": 10000, # Out of range for rare weapon (max 500)
+            "properties_json": json.dumps({"grants_skill": "unknown_skill_id", "grants_ability": "unknown_ability_id"}),
+            "rarity_level": "rare" # This should map to item_value_ranges.weapon.rare
+        }
+        raw_json_input = json.dumps(item_data)
+        validated_data, issues = await self.validator.parse_and_validate_ai_response(
+            raw_json_input, self.guild_id, "item_profile_generation", game_manager=self.mock_game_manager
+        )
+        self.assertIsNotNone(validated_data)
+        self.assertIsNotNone(issues)
+        self.assertTrue(any(iss.loc == ['properties_json', 'grants_skill'] and "unknown_skill_id" in iss.msg for iss in issues), "Item grants_skill ID issue not found.")
+        self.assertTrue(any(iss.loc == ['properties_json', 'grants_ability'] and "unknown_ability_id" in iss.msg for iss in issues), "Item grants_ability ID issue not found.")
+        self.assertTrue(any(iss.loc == ['base_value'] and "above maximum 500" in iss.msg for iss in issues), "Item base_value range issue not found.")
+
+    async def test_validate_npc_profile_no_game_manager(self):
+        # Test that stat/value range validation is skipped if game_manager is None
+        npc_data = {
+            "template_id": "npc_no_gm", "name_i18n": {"en": "Guard NoGM", "ru": "Страж БезГМ", "fr":"Garde SansGM"},
+            "role_i18n": {"en":"Guard", "ru":"Страж", "fr":"Garde"}, "archetype": "warrior",
+            "stats": {"strength": 5000}, # Would be out of range if GM was present
+            "backstory_i18n": {"en":"bs"}, "personality_i18n": {"en":"p"},
+            "motivation_i18n": {"en":"m"}, "visual_description_i18n": {"en":"v"},
+            "dialogue_hints_i18n": {"en":"d"}, "skills":{}
+        }
+        raw_json_input = json.dumps(npc_data)
+        # Pass game_manager=None
+        validated_data, issues = await self.validator.parse_and_validate_ai_response(
+            raw_json_input, self.guild_id, "npc_profile_generation", game_manager=None
+        )
+        self.assertIsNotNone(validated_data)
+        # Expect Pydantic issues for missing languages if they are enforced by model,
+        # but no semantic range issues for stats.
+        if issues: # Check that no stat range issues are present
+            self.assertFalse(any("out_of_range" in iss.type for iss in issues if iss.loc and iss.loc[0] == "stats"))
+            # Example: Check if only i18n issues are present (if any)
+            # self.assertTrue(all("missing required language" in iss.msg.lower() for iss in issues if iss.loc == ['name_i18n']))
+
+
     async def test_parse_and_validate_ai_response_invalid_json(self):
         invalid_json_str = "this is not json"
         parsed_data, issues = await self.validator.parse_and_validate_ai_response(

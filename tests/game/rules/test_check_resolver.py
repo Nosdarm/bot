@@ -264,15 +264,117 @@ class TestCheckResolver(unittest.TestCase):
     def test_entity_not_found_raises_value_error(self, mock_roll_dice_func: MagicMock):
         mock_roll_dice_func.return_value = (10, [10]) # Roll value doesn't matter here
 
+        # Mock get_player_model_by_id to return None for the specific ID
+        original_get_player = self.mock_game_manager.get_player_model_by_id
+        async def side_effect_get_player(guild_id, player_id):
+            if player_id == "player_ghost": return None
+            return await original_get_player(guild_id, player_id)
+        self.mock_game_manager.get_player_model_by_id.side_effect = side_effect_get_player
+
         with self.assertRaises(ValueError) as excinfo:
             asyncio.run(self.resolver.resolve_check(
                 guild_id="test_guild",
-                check_type="perception_dc15_beat", # Any valid check type
-                performing_entity_id="player_ghost", # This ID is not in get_player_by_id mock
+                check_type="perception_dc15_beat",
+                performing_entity_id="player_ghost",
                 performing_entity_type="player",
                 difficulty_dc=15
             ))
         self.assertIn("Performing entity player player_ghost not found", str(excinfo.exception))
+        self.mock_game_manager.get_player_model_by_id.side_effect = original_get_player # Restore
+
+    @patch('bot.game.rules.check_resolver.dice_roller.roll_dice')
+    @patch('bot.game.rules.check_resolver.calculate_effective_stats', new=mock_calculate_effective_stats)
+    def test_check_with_additional_modifiers_and_context_notes(self, mock_roll_dice_func: MagicMock):
+        mock_roll_dice_func.return_value = (10, [10])
+        # player_1 perception mod = +3. DC = 15.
+        # Additional mods: +2 (bless), -1 (curse) = +1 total additional
+        # Roll 10 + 3 (base) + 1 (additional) = 14. 14 < 15 = Fail.
+
+        additional_mods = {"item_bonus": 2, "spell_malus": -1} # Net +1
+        notes = "Under pressure"
+
+        result: CheckResult = asyncio.run(self.resolver.resolve_check(
+            guild_id="test_guild",
+            check_type="perception_dc15_beat",
+            performing_entity_id="player_1",
+            performing_entity_type="player",
+            difficulty_dc=15,
+            additional_modifiers=additional_mods,
+            context_notes=notes
+        ))
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.modifier_applied, 3 + 2 - 1) # base_mod + item_bonus + spell_malus
+        self.assertEqual(result.total_roll_value, 10 + 3 + 1) # roll + base_mod + net_additional_mod
+        self.assertIn(notes, result.description)
+        self.assertIn(f"item_bonus: 2", str(result.details_log["modifier_sources"]))
+        self.assertIn(f"spell_malus: -1", str(result.details_log["modifier_sources"]))
+
+    @patch('bot.game.rules.check_resolver.dice_roller.roll_dice')
+    def test_invalid_base_roll_str_raises_error(self, mock_roll_dice_func: MagicMock):
+        mock_roll_dice_func.side_effect = ValueError("Test invalid dice string")
+
+        with self.assertRaises(ValueError) as excinfo:
+            asyncio.run(self.resolver.resolve_check(
+                guild_id="test_guild",
+                check_type="perception_dc15_beat",
+                performing_entity_id="player_1",
+                performing_entity_type="player",
+                difficulty_dc=15,
+                base_roll_str="invalid_dice"
+            ))
+        self.assertIn("Invalid base_roll_str 'invalid_dice' for check", str(excinfo.exception))
+
+
+    @patch('bot.game.rules.check_resolver.dice_roller.roll_dice')
+    @patch('bot.game.rules.check_resolver.calculate_effective_stats', new=mock_calculate_effective_stats)
+    def test_contested_check_target_not_found(self, mock_roll_dice_func: MagicMock):
+        mock_roll_dice_func.return_value = (15, [15]) # Performer's roll doesn't matter as target is not found
+
+        # Mock get_npc to return None for the target ID
+        original_get_npc = self.mock_game_manager.npc_manager.get_npc
+        async def side_effect_get_npc(guild_id, npc_id):
+            if npc_id == "npc_ghost_target": return None
+            return await original_get_npc(guild_id, npc_id)
+        self.mock_game_manager.npc_manager.get_npc.side_effect = side_effect_get_npc
+
+        result: CheckResult = asyncio.run(self.resolver.resolve_check(
+            guild_id="test_guild",
+            check_type="stealth_vs_perception",
+            performing_entity_id="player_1",
+            performing_entity_type="player",
+            target_entity_id="npc_ghost_target", # This target won't be found
+            target_entity_type="npc"
+        ))
+        self.assertFalse(result.succeeded) # Should fail if target not found
+        self.assertIn("Target npc_ghost_target (Not Found)", result.description)
+        self.assertEqual(result.details_log["opposition_type"], "error_target_not_found")
+        self.mock_game_manager.npc_manager.get_npc.side_effect = original_get_npc # Restore
+
+    @patch('bot.game.rules.check_resolver.dice_roller.roll_dice')
+    @patch('bot.game.rules.check_resolver.calculate_effective_stats', new=mock_calculate_effective_stats)
+    def test_contested_check_undefined_opposition_rule(self, mock_roll_dice_func: MagicMock):
+        mock_roll_dice_func.return_value = (15, [15])
+        # Temporarily remove opposition rules for 'stealth_vs_perception'
+        original_opposed_skill_rule = self.rules_data.pop("checks.stealth_vs_perception.opposed_by_skill", None)
+
+        with self.assertLogs('bot.game.rules.check_resolver', level='WARNING') as cm:
+            result: CheckResult = asyncio.run(self.resolver.resolve_check(
+                guild_id="test_guild",
+                check_type="stealth_vs_perception",
+                performing_entity_id="player_1",
+                performing_entity_type="player",
+                target_entity_id="npc_1",
+                target_entity_type="npc"
+            ))
+
+        self.assertFalse(result.succeeded) # Should fail if opposition is undefined
+        self.assertIn("vs Target NPC One (Undefined Opposition)", result.description)
+        self.assertEqual(result.details_log["opposition_type"], "undefined")
+        self.assertIn("No RuleConfig for opposition for check_type 'stealth_vs_perception'", cm.output[0])
+
+        # Restore rule if it was removed
+        if original_opposed_skill_rule:
+            self.rules_data["checks.stealth_vs_perception.opposed_by_skill"] = original_opposed_skill_rule
 
 
 if __name__ == '__main__':

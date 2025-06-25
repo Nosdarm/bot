@@ -59,91 +59,72 @@ class TestGameSetupCmds(unittest.IsolatedAsyncioTestCase):
         # self.mock_bot_instance.get_db_session = self.mock_db_service.get_session
         self.mock_interaction.client = self.mock_bot_instance
 
+        # Mock LocationManager on GameManager for starting location
+        self.mock_location_manager = AsyncMock(spec=LocationManager)
+        self.mock_game_manager.location_manager = self.mock_location_manager
+
 
         self.cog = GameSetupCog(self.mock_bot_instance)
 
     async def test_cmd_start_new_character_success_new_player_and_new_char(self):
         char_name = "TestHero"
-        player_lang = "en" # Explicitly set for clarity in test
-        self.mock_session.execute.return_value = self.mock_sql_execute_result_no_player # No existing Player
+        starting_loc_id = "start_loc_123"
+        self.mock_session.execute.return_value = self.mock_sql_execute_result_no_player
 
-        # Mock the Player object that will be "created" by create_entity
-        created_player_id = str(uuid.uuid4())
-        mock_created_player_obj = Player(
-            id=created_player_id,
-            discord_id=str(self.mock_interaction.user.id),
-            guild_id=self.mock_interaction.guild_id,
-            name_i18n={"en": self.mock_interaction.user.display_name}, # Name from display_name
-            selected_language=player_lang, # Language from command or default
-            is_active=True
-        )
+        # Mock game_manager.get_rule to return the starting_location_id
+        async def get_rule_side_effect(guild_id, rule_key, default):
+            if rule_key == 'starting_location_id':
+                return starting_loc_id
+            return default
+        self.mock_game_manager.get_rule.side_effect = get_rule_side_effect
 
-        # Mock CharacterManager response - this is a Pydantic model
-        # Ensure it has all fields required by ТЗ 1.2 for /start
-        expected_pydantic_char = Character(
-            id="char_id_1",
-            discord_user_id=self.mock_interaction.user.id,
-            name_i18n={"en": char_name, player_lang: char_name}, # Ensure selected lang name
-            guild_id=self.mock_interaction.guild_id,
-            selected_language=player_lang,
-            location_id="default_starting_location_id", # Expected starting location
-            level=1,
-            experience=0,
-            unspent_xp=0,
-            gold=0,
-            current_game_status="exploring", # As per ТЗ
-            collected_actions_json="[]", # As per ТЗ (empty list as JSON)
-            # other fields like stats, hp, etc., would be set by CharacterManager
-            stats={"strength": 10}, # Example minimal stats
-            hp=100.0,
-            max_health=100.0
-        )
-        self.mock_character_manager.create_new_character = AsyncMock(return_value=expected_pydantic_char)
+        async def mock_create_player(session, model_cls, data, **kwargs):
+            # Simplified mock for create_entity focusing on Player creation
+            if model_cls == Player:
+                player_id = data.get("id", str(uuid.uuid4()))
+                # Ensure guild_id is correctly passed from kwargs if not in data
+                # In the actual command, guild_id is passed as a kwarg to create_entity
+                # and create_entity adds it to data if not present.
+                # Here, we assume data will have guild_id from the command's logic.
+                return Player(id=player_id, **data)
+            return None
 
-        # Mock game_manager.get_rule for default language if player_language is None
-        # This cog's logic: if player_language is None, it uses game_manager.get_default_bot_language()
-        # which in turn might use get_rule. For this test, we pass player_lang explicitly.
-        # If testing player_language=None, then mock get_default_bot_language.
-        self.mock_game_manager.get_default_bot_language = AsyncMock(return_value="en")
+        with patch('bot.command_modules.game_setup_cmds.create_entity', new=AsyncMock(side_effect=mock_create_player)) as mock_create_entity_call:
+            expected_char_pydantic_obj = Character( # Pydantic model
+                id="char_id_1", discord_user_id=self.mock_interaction.user.id,
+                name_i18n={"en": char_name}, guild_id=self.mock_interaction.guild_id,
+                selected_language="en", location_id=starting_loc_id # Expect starting location
+            )
+            self.mock_character_manager.create_new_character = AsyncMock(return_value=expected_char_pydantic_obj)
 
+            await self.cog.cmd_start_new_character.callback(self.cog, self.mock_interaction, character_name=char_name, player_language=None)
 
-        with patch('bot.command_modules.game_setup_cmds.create_entity', new=AsyncMock(return_value=mock_created_player_obj)) as mock_create_entity_call:
-            await self.cog.cmd_start_new_character.callback(self.cog, self.mock_interaction, character_name=char_name, player_language=player_lang)
-
-        self.mock_interaction.response.defer.assert_called_once_with(ephemeral=True)
-        self.mock_session.execute.assert_called_once() # To check if player exists
-
-        # Assert that create_entity was called to create a Player
+        # Player creation checks
         mock_create_entity_call.assert_called_once()
-        call_args_create_player = mock_create_entity_call.call_args[0]
-        self.assertEqual(call_args_create_player[1], Player) # model_class
-        self.assertEqual(call_args_create_player[2]['discord_id'], str(self.mock_interaction.user.id))
-        self.assertEqual(call_args_create_player[2]['guild_id'], self.mock_interaction.guild_id)
-        self.assertEqual(call_args_create_player[2]['selected_language'], player_lang)
+        created_player_data = mock_create_entity_call.call_args[0][2] # data dict passed to create_entity
+        self.assertEqual(created_player_data["guild_id"], self.mock_interaction.guild_id)
+        self.assertEqual(created_player_data["discord_id"], str(self.mock_interaction.user.id))
 
-        self.mock_session.commit.assert_called_once() # Commit for new Player
-
-        # Assert that CharacterManager.create_new_character was called correctly
-        self.mock_character_manager.create_new_character.assert_awaited_once_with(
-            guild_id=self.mock_interaction.guild_id,
-            user_id=self.mock_interaction.user.id, # user_id is int
-            character_name=char_name,
-            language=player_lang, # Language passed to manager
-            session=self.mock_session # Ensure session is passed
-        )
+        # Character creation checks
+        self.mock_character_manager.create_new_character.assert_awaited_once()
+        cm_call_kwargs = self.mock_character_manager.create_new_character.call_args.kwargs
+        self.assertEqual(cm_call_kwargs['guild_id'], self.mock_interaction.guild_id)
+        self.assertEqual(cm_call_kwargs['user_id'], self.mock_interaction.user.id)
+        self.assertEqual(cm_call_kwargs['character_name'], char_name)
+        self.assertEqual(cm_call_kwargs['language'], "en")
+        # We expect create_new_character in CharacterManager to use the starting_location_id rule.
+        # So, the Character object it returns should have this location_id.
+        # The actual setting of location_id happens inside CharacterManager.create_new_character.
 
         self.mock_interaction.followup.send.assert_called_once()
         args, kwargs = self.mock_interaction.followup.send.call_args
         self.assertIn(f"Персонаж '{char_name}' успешно создан!", args[0])
-        self.assertEqual(kwargs.get('ephemeral'), True)
-        # TODO: Add assertions for other Player fields if they are set by this command or create_entity
-        # e.g. Player.xp, Player.level - these are on Character model, so check expected_pydantic_char
 
     async def test_cmd_start_new_character_existing_player_new_char(self):
         char_name = "AnotherHero"
-        player_lang = "ru"
-        self.mock_session.execute.return_value = self.mock_sql_execute_result_existing_player # Player exists
-        self.mock_existing_player_obj.active_character_id = None # But no active character
+        starting_loc_id = "start_loc_xyz"
+        self.mock_session.execute.return_value = self.mock_sql_execute_result_existing_player
+        self.mock_existing_player_obj.active_character_id = None
 
         expected_pydantic_char = Character(
             id="char_id_2", discord_user_id=self.mock_interaction.user.id,

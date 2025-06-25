@@ -666,25 +666,86 @@ class TestPromptContextCollector(unittest.TestCase):
         self.assertEqual(full_context_char.relationship_data, mock_relationship_context)
 
         # Test with no target entity
-        full_context_no_target = self.collector.get_full_context(
-            self.guild_id, "generate_world_event", {}
+        # Reset mocks for this specific call path if necessary
+        self.mock_character_manager.get_character_details_context.return_value = None
+        self.mock_quest_manager.list_quests_for_character.return_value = [] # No active quests if no player
+        self.mock_relationship_manager.get_relationships_for_entity.return_value = [] # No relationships if no target
+
+        full_context_no_target = await self.collector.get_full_context(
+            guild_id=self.guild_id,
+            request_type="generate_world_event",
+            request_params={}
+            # session=self.mock_db_session # Pass mock session if methods require it
         )
         self.assertIsNone(full_context_no_target.player_context)
-        self.assertEqual(full_context_no_target.active_quests_summary, []) # Should default to empty
-        self.assertEqual(full_context_no_target.relationship_data, []) # Should default to empty
+        self.assertEqual(full_context_no_target.active_quests_summary, [])
+        self.assertEqual(full_context_no_target.relationship_data, [])
 
         # Test with target_entity_type="npc"
         npc_id_target = "npc_target_001"
-        mock_npc_relationship_context = [{"entity1_id": npc_id_target, "entity2_id": "char002"}]
-        self.collector.get_relationship_context.return_value = mock_npc_relationship_context
+        mock_npc_relationship_context = [{"entity1_id": npc_id_target, "entity2_id": "char002", "type": "neutral", "strength": 0}]
+        self.mock_relationship_manager.get_relationships_for_entity = AsyncMock(return_value=[MagicMock(to_dict=lambda: r) for r in mock_npc_relationship_context]) # Mock to return list of dicts
 
-        full_context_npc = self.collector.get_full_context(
-            self.guild_id, "generate_npc_interaction", {},
-            target_entity_id=npc_id_target, target_entity_type="npc"
+        full_context_npc = await self.collector.get_full_context(
+            guild_id=self.guild_id,
+            request_type="generate_npc_interaction",
+            request_params={},
+            target_entity_id=npc_id_target,
+            target_entity_type="npc"
+            # session=self.mock_db_session
         )
-        self.assertIsNone(full_context_npc.player_context) # No player context for NPC target
-        self.assertEqual(full_context_npc.relationship_data, mock_npc_relationship_context) # Relationship data for NPC
-        self.assertEqual(full_context_npc.active_quests_summary, []) # No quests for NPC target
+        self.assertIsNone(full_context_npc.player_context)
+        # Relationship data should be fetched for the NPC
+        self.mock_relationship_manager.get_relationships_for_entity.assert_awaited_with(self.guild_id, npc_id_target)
+        # Compare the actual data, not just list equality if objects are involved
+        self.assertEqual(len(full_context_npc.relationship_data), len(mock_npc_relationship_context))
+        if full_context_npc.relationship_data: # Ensure it's not empty before indexing
+            self.assertEqual(full_context_npc.relationship_data[0]["entity1_id"], mock_npc_relationship_context[0]["entity1_id"])
+
+
+        # Test with party_id in request_params
+        party_id_param = "party_test_001"
+        mock_party_obj = MagicMock() # Simulate a Party DB model or Pydantic model
+        mock_party_obj.id = party_id_param
+        mock_party_obj.name_i18n = {"en": "The Testers"}
+        mock_party_obj.player_ids_list = [self.character_id, "char_member_2"] # Old field, should be player_ids_json
+        mock_party_obj.player_ids_json = json.dumps([self.character_id, "char_member_2"])
+
+
+        mock_char1_for_party = MagicMock()
+        mock_char1_for_party.id = self.character_id; mock_char1_for_party.name_i18n = {"en": "Char1"}; mock_char1_for_party.level = 5
+        mock_char2_for_party = MagicMock()
+        mock_char2_for_party.id = "char_member_2"; mock_char2_for_party.name_i18n = {"en": "Char2"}; mock_char2_for_party.level = 7
+
+        self.mock_party_manager.get_party = AsyncMock(return_value=mock_party_obj)
+
+        async def get_char_for_party_side_effect(guild_id, char_id_val):
+            if char_id_val == self.character_id: return mock_char1_for_party
+            if char_id_val == "char_member_2": return mock_char2_for_party
+            return None
+        self.mock_character_manager.get_character = AsyncMock(side_effect=get_char_for_party_side_effect)
+
+        full_context_with_party = await self.collector.get_full_context(
+            guild_id=self.guild_id,
+            request_type="party_action",
+            request_params={"party_id": party_id_param, "location_id": "loc_party_test"}, # Added location_id
+            target_entity_id=party_id_param, # Target can be the party itself
+            target_entity_type="party"
+            # session=self.mock_db_session
+        )
+        self.assertIsNotNone(full_context_with_party.party_context)
+        self.assertEqual(full_context_with_party.party_context["party_id"], party_id_param)
+        self.assertEqual(len(full_context_with_party.party_context["member_details"]), 2)
+        self.assertAlmostEqual(full_context_with_party.party_context["average_level"], 6.0)
+        self.mock_party_manager.get_party.assert_awaited_with(self.guild_id, party_id_param)
+
+
+    def test_get_player_level_context(self):
+        # This test is for a method that was removed.
+        # If the logic was integrated elsewhere (e.g., get_character_details_context),
+        # that new place should be tested.
+        # For now, this test can be removed or adapted if get_player_level_context is reinstated.
+        pass # Test removed as method is removed
 
 
 if __name__ == '__main__':
