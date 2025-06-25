@@ -1,6 +1,8 @@
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch, call
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 import discord # type: ignore
 

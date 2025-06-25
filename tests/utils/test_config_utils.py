@@ -2,7 +2,8 @@
 import pytest
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select # Added import
+from sqlalchemy import select
+from unittest.mock import AsyncMock
 # Added for more specific mocking/assertion if needed for pg_insert:
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
