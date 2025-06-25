@@ -13,7 +13,7 @@ from bot.ai.rules_schema import CoreGameRulesConfig
 class TestNpcCombatAI(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
-        self.mock_npc_self = NpcModel(id="npc_ai_1", name_i18n={"en": "AI NPC"}, guild_id="guild1", stats={"strength": 10, "dexterity": 12}, health=60, max_health=60)
+        self.mock_npc_self = NpcModel(id="npc_ai_1", template_id="t_npc_self", name_i18n={"en": "AI NPC"}, guild_id="guild1", stats={"strength": 10, "dexterity": 12}, health=60, max_health=60)
         setattr(self.mock_npc_self, 'available_actions', [
             {"action_type": "attack", "name": "Basic Attack", "weapon_id": "claws"},
             {"action_type": "spell", "name": "Mini Heal", "spell_id": "heal_self_lvl1", "target_type": "self", "hp_threshold_self": 0.5}
@@ -23,7 +23,7 @@ class TestNpcCombatAI(unittest.IsolatedAsyncioTestCase):
 
         self.mock_target_char1 = CharacterModel(id="char1", name="Hero", guild_id="guild1", hp=50, max_health=100, stats={"constitution": 10})
         self.mock_target_char2 = CharacterModel(id="char2", name="Sidekick", guild_id="guild1", hp=30, max_health=80, stats={"constitution": 8})
-        self.mock_target_npc1 = NpcModel(id="npc_ally1", name_i18n={"en":"Friendly Goblin"}, guild_id="guild1", health=40, max_health=40, stats={"constitution": 9})
+        self.mock_target_npc1 = NpcModel(id="npc_ally1", template_id="t_npc_ally1", name_i18n={"en":"Friendly Goblin"}, guild_id="guild1", health=40, max_health=40, stats={"constitution": 9})
 
 
         self.mock_combat_instance = Combat(

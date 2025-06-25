@@ -1,4 +1,3 @@
-from .base import Base
 from .pending_generation import PendingGeneration, GenerationType, PendingStatus
 
 # Import other models here as they are migrated to this package
@@ -9,7 +8,6 @@ from .pending_generation import PendingGeneration, GenerationType, PendingStatus
 # ... etc.
 
 __all__ = [
-    "Base",
     "PendingGeneration",
     "GenerationType",
     "PendingStatus",

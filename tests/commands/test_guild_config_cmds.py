@@ -70,7 +70,7 @@ async def test_set_bot_language_success(guild_config_cog: GuildConfigCmds, mock_
     chosen_lang_choice = LANGUAGE_CHOICES[0] # English, "en"
     guild_id_str = str(mock_interaction_guild.guild_id)
 
-    mock_guild_config_instance = GuildConfig(id="gc_uuid_1", guild_id=guild_id_str, bot_language="ru")
+    mock_guild_config_instance = GuildConfig(guild_id=guild_id_str, bot_language="ru") # Removed id="gc_uuid_1"
 
     mock_execute_result = AsyncMock()
     mock_scalars_result = AsyncMock()
@@ -133,7 +133,7 @@ async def test_set_game_channel_success(guild_config_cog: GuildConfigCmds, mock_
     mock_db_serv, mock_session = mock_db_service_with_session
     guild_id_str = str(mock_interaction_guild.guild_id)
 
-    mock_guild_config_instance = GuildConfig(id="gc_uuid_2", guild_id=guild_id_str)
+    mock_guild_config_instance = GuildConfig(guild_id=guild_id_str) # Removed id="gc_uuid_2"
 
     mock_execute_result = AsyncMock()
     mock_scalars_result = AsyncMock()
@@ -158,7 +158,7 @@ async def test_set_game_channel_success(guild_config_cog: GuildConfigCmds, mock_
 async def test_set_master_channel_success(guild_config_cog: GuildConfigCmds, mock_interaction_guild: discord.Interaction, mock_db_service_with_session, mock_text_channel: discord.TextChannel):
     mock_db_serv, mock_session = mock_db_service_with_session
     guild_id_str = str(mock_interaction_guild.guild_id)
-    mock_guild_config_instance = GuildConfig(id="gc_uuid_3", guild_id=guild_id_str)
+    mock_guild_config_instance = GuildConfig(guild_id=guild_id_str) # Removed id="gc_uuid_3"
     mock_execute_result = AsyncMock(); mock_scalars_result = AsyncMock(); mock_scalars_result.first.return_value = mock_guild_config_instance
     mock_execute_result.scalars.return_value = mock_scalars_result; mock_session.execute.return_value = mock_execute_result
 
@@ -174,7 +174,7 @@ async def test_set_master_channel_success(guild_config_cog: GuildConfigCmds, moc
 async def test_set_system_notifications_channel_success(guild_config_cog: GuildConfigCmds, mock_interaction_guild: discord.Interaction, mock_db_service_with_session, mock_text_channel: discord.TextChannel):
     mock_db_serv, mock_session = mock_db_service_with_session
     guild_id_str = str(mock_interaction_guild.guild_id)
-    mock_guild_config_instance = GuildConfig(id="gc_uuid_4", guild_id=guild_id_str)
+    mock_guild_config_instance = GuildConfig(guild_id=guild_id_str) # Removed id="gc_uuid_4"
     mock_execute_result = AsyncMock(); mock_scalars_result = AsyncMock(); mock_scalars_result.first.return_value = mock_guild_config_instance
     mock_execute_result.scalars.return_value = mock_scalars_result; mock_session.execute.return_value = mock_execute_result
 

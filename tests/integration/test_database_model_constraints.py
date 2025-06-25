@@ -81,12 +81,7 @@ class TestPlayerModelConstraints:
                 discord_id=DISCORD_ID_1,
                 name_i18n={"en": "Test Player"},
                 guild_id=None, # This should violate NOT NULL constraint
-                # Add other required fields with default or valid values
-                level=1,
-                xp=0,
-                unspent_xp=0,
-                gold=0,
-                is_active=True,
+                is_active=True
                 # Ensure all NOT NULL fields without defaults are provided
             )
             db_session.add(new_player)
@@ -100,7 +95,7 @@ class TestPlayerModelConstraints:
         # Create first player
         player1 = Player(
             id=player_id_1, discord_id=DISCORD_ID_1, name_i18n={"en": "Player 1"},
-            guild_id=UNIQUE_GUILD_ID_1, level=1, xp=0, unspent_xp=0, gold=0, is_active=True
+            guild_id=UNIQUE_GUILD_ID_1, is_active=True
         )
         db_session.add(player1)
         await db_session.commit() # Commit to ensure it's in DB for unique check
@@ -109,7 +104,7 @@ class TestPlayerModelConstraints:
         with pytest.raises(IntegrityError):
             player2_same_guild = Player(
                 id=player_id_2, discord_id=DISCORD_ID_1, name_i18n={"en": "Player 2 Same Guild"},
-                guild_id=UNIQUE_GUILD_ID_1, level=1, xp=0, unspent_xp=0, gold=0, is_active=True
+                guild_id=UNIQUE_GUILD_ID_1, is_active=True
             )
             db_session.add(player2_same_guild)
             await db_session.flush() # Check constraint
@@ -120,7 +115,7 @@ class TestPlayerModelConstraints:
         player_id_3 = str(uuid.uuid4())
         player3_diff_guild = Player(
             id=player_id_3, discord_id=DISCORD_ID_1, name_i18n={"en": "Player 3 Diff Guild"},
-            guild_id=UNIQUE_GUILD_ID_2, level=1, xp=0, unspent_xp=0, gold=0, is_active=True
+            guild_id=UNIQUE_GUILD_ID_2, is_active=True
         )
         db_session.add(player3_diff_guild)
         await db_session.commit() # Should succeed
@@ -158,7 +153,7 @@ class TestRulesConfigModelConstraints:
         with pytest.raises(Exception): # Could be IntegrityError or other SA error for None PK
             new_rules_config = RulesConfig(
                 guild_id=None, # Primary Key, cannot be None
-                config_data={"default_language": "en"}
+                key="default_language", value="en" # Corrected
             )
             db_session.add(new_rules_config)
             await db_session.flush()
@@ -168,18 +163,18 @@ class TestRulesConfigModelConstraints:
         # Create first RulesConfig
         rules_config1 = RulesConfig(
             guild_id=UNIQUE_GUILD_ID_1,
-            config_data={"default_language": "en"}
+            key="default_language", value="en" # Corrected
         )
         db_session.add(rules_config1)
         await db_session.commit()
 
-        # Attempt to create a second RulesConfig with the same guild_id
-        with pytest.raises(IntegrityError):
-            rules_config2_same_guild = RulesConfig(
+        # Attempt to create a second RulesConfig with the same guild_id and key
+        with pytest.raises(IntegrityError): # Should fail due to uq_guild_rule_key
+            rules_config2_same_guild_key = RulesConfig(
                 guild_id=UNIQUE_GUILD_ID_1, # Same guild_id
-                config_data={"default_language": "fr"}
+                key="default_language", value="fr" # Same key
             )
-            db_session.add(rules_config2_same_guild)
+            db_session.add(rules_config2_same_guild_key)
             await db_session.flush() # Check constraint
 
         await db_session.rollback()
@@ -187,7 +182,7 @@ class TestRulesConfigModelConstraints:
         # Verify that creating RulesConfig for a DIFFERENT guild_id is allowed
         rules_config3_diff_guild = RulesConfig(
             guild_id=UNIQUE_GUILD_ID_2,
-            config_data={"default_language": "es"}
+            key="default_language", value="es" # Corrected
         )
         db_session.add(rules_config3_diff_guild)
         await db_session.commit() # Should succeed
@@ -256,7 +251,7 @@ class TestGeneratedQuestModel:
         new_quest = GeneratedQuest(
             id=quest_id,
             guild_id=guild_id,
-            name_i18n={"en": "Test Quest"},
+            title_i18n={"en": "Test Quest"}, # Corrected from name_i18n
             description_i18n={"en": "A test quest"}
         )
         db_session.add(new_quest)
@@ -283,7 +278,7 @@ class TestGeneratedQuestModel:
     async def test_quest_guild_id_not_nullable(self, db_session: AsyncSession):
         quest_id = str(uuid.uuid4())
         with pytest.raises(IntegrityError):
-            new_quest = GeneratedQuest(id=quest_id, guild_id=None, name_i18n={"en": "Test Quest"})
+            new_quest = GeneratedQuest(id=quest_id, guild_id=None, title_i18n={"en": "Test Quest"}) # Corrected
             db_session.add(new_quest)
             await db_session.flush()
 
@@ -481,8 +476,9 @@ class TestRelationshipModel:
             guild_id=guild_id,
             entity1_id=entity1_id, entity1_type="player",
             entity2_id=entity2_id, entity2_type="npc",
-            relationship_type_i18n={"en": "Friendly"},
-            status_i18n={"en": "Good"}
+            type="friendly", # Corrected
+            value=50, # Corrected
+            details_json={"status_en": "Good", "status_ru": "Хорошо"} # Optional, example
         )
         db_session.add(new_rel)
         await db_session.commit()
@@ -515,7 +511,7 @@ class TestRelationshipModel:
         base_data = {
             "entity1_id": "e1_val", "entity1_type": "player",
             "entity2_id": "e2_val", "entity2_type": "npc",
-            "relationship_type_i18n": {"en": "Neutral"}
+            "type": "neutral", "value": 0 # Corrected
         }
 
         for field in fields_to_test:

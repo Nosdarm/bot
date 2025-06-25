@@ -58,6 +58,7 @@ def mock_db_session():
 async def test_create_entity_success(mock_db_session):
     data = {"name": "Test Name", "value": 100}
     guild_id = "test_guild_123"
+        mock_db_session.info = {"current_guild_id": guild_id} # Configure session info
 
     # Data for the new entity. guild_id will be added by create_entity
     # or verified if already present.
@@ -109,6 +110,8 @@ async def test_create_entity_with_conflicting_guild_id(mock_db_session):
 async def test_create_entity_integrity_error(mock_db_session):
     data = {"name": "Test Name Duplicate", "value": 200}
     guild_id = "test_guild_456"
+        mock_db_session.info = {"current_guild_id": guild_id} # Configure session info
+        mock_db_session.info = {"current_guild_id": guild_id} # Configure session info
 
     mock_db_session.flush.side_effect = IntegrityError("Mock IntegrityError", params=None, orig=None)
 

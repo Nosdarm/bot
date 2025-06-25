@@ -11,6 +11,8 @@ from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
 from ..base import Base, JsonVariant # Import JsonVariant
 
+from bot.models.pending_generation import PendingGeneration
+
 if TYPE_CHECKING:
     from .character_related import Player # Assuming Player is in character_related
     # If GuildConfig is related to Player or UserSettings via relationship, it should be here too.
@@ -88,9 +90,6 @@ class GuildConfig(Base):
     # players: Mapped[List["Player"]] = relationship(back_populates="guild_config", cascade="all, delete-orphan")
 
     # Relationship to PendingGeneration
-    # Ensure PendingGeneration is imported for this relationship
-    if TYPE_CHECKING:
-        from bot.models.pending_generation import PendingGeneration
     pending_generations: Mapped[List["PendingGeneration"]] = relationship(
         "PendingGeneration", back_populates="guild", cascade="all, delete-orphan"
     )

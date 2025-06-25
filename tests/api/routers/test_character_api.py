@@ -55,7 +55,7 @@ class TestCharacterAPI:
         db_char = DBCharacter(
             id=char_id, player_id=player_id, guild_id=guild_id,
             name_i18n={"en": name_en, "ru": f"Тест {name_en}"},
-            class_i18n={"en": "Warrior", "ru": "Воин"},
+            character_class_i18n={"en": "Warrior", "ru": "Воин"},
             description_i18n={"en": "A brave warrior.", "ru": "Храбрый воин."},
             level=1, xp=0
         )
@@ -72,7 +72,7 @@ class TestCharacterAPI:
             "player_id": player.id, # From CharacterCreate schema
             "guild_id": TEST_GUILD_ID_CHAR_API, # From CharacterCreate schema
             "name_i18n": {"en": "API Char", "ru": "АПИ Персонаж"},
-            "class_i18n": {"en": "Mage", "ru": "Маг"},
+            "character_class_i18n": {"en": "Mage", "ru": "Маг"},
             "description_i18n": {"en": "Wise mage", "ru": "Мудрый маг"},
             "level": 1,
             "xp": 0 # schema uses 'experience', model uses 'xp'. Router handles this.

@@ -68,34 +68,32 @@ class PostgresAdapter(BaseDbAdapter):
 
         # --- Define final_engine_connect_args and _db_url_for_engine ---
         final_engine_connect_args: Dict[str, Any] = {}
-        parsed_url = urlparse(self._db_url)
-        query_params = parse_qs(parsed_url.query)
+        original_parsed_url = urlparse(self._db_url) # Parse the original full URL
+        original_query_params = parse_qs(original_parsed_url.query)
 
-        ssl_mode = query_params.get('sslmode', [None])[0]
+        ssl_mode_value = original_query_params.get('sslmode', [None])[0]
 
-        if ssl_mode:
-            print(f"PostgresAdapter __init__: Found 'sslmode={ssl_mode}' in DB_URL. Configuring for SQLAlchemy engine.")
-            if ssl_mode in ['require', 'prefer', 'allow', 'verify-ca', 'verify-full']:
-                # For asyncpg, True enables SSL, default context.
-                # 'verify-ca', 'verify-full' might need specific SSLContext objects for cert verification.
-                # For simplicity, using True, which is a common approach.
-                # If specific CA verification is needed, this would need to be an ssl.SSLContext object.
+        # Determine 'ssl' for connect_args based on ssl_mode_value
+        if ssl_mode_value:
+            print(f"PostgresAdapter __init__: Found 'sslmode={ssl_mode_value}' in DB_URL. Configuring for SQLAlchemy engine.")
+            if ssl_mode_value in ['require', 'prefer', 'allow', 'verify-ca', 'verify-full']:
                 final_engine_connect_args['ssl'] = True
-                if ssl_mode in ['verify-ca', 'verify-full']:
-                     print(f"PostgresAdapter __init__: INFO: For sslmode={ssl_mode}, using ssl=True. For full CA verification, a custom SSLContext might be required.")
-            elif ssl_mode == 'disable':
+                if ssl_mode_value in ['verify-ca', 'verify-full']:
+                     print(f"PostgresAdapter __init__: INFO: For sslmode={ssl_mode_value}, using ssl=True. For full CA verification, a custom SSLContext might be required.")
+            elif ssl_mode_value == 'disable':
                 final_engine_connect_args['ssl'] = False
-            else:
-                print(f"PostgresAdapter __init__: WARNING: Unsupported 'sslmode={ssl_mode}'. SSL will not be explicitly configured for SQLAlchemy engine based on this mode.")
+            # else: A warning for unsupported ssl_mode would be printed if encountered, no specific action for connect_args.
 
-            # Remove sslmode from query_params as it's now handled in connect_args
-            if 'sslmode' in query_params:
-                del query_params['sslmode']
-            if 'ssl' in query_params: # Also remove 'ssl' if we are handling it via connect_args
-                del query_params['ssl']
+        # Construct _db_url_for_engine by stripping sslmode/ssl from the original URL's query parameters.
+        # This ensures that if 'ssl' is in final_engine_connect_args, these params are not in the URL string given to the engine.
+        query_params_for_engine_url_list = []
+        for key, val_list in original_query_params.items():
+            if key.lower() not in ['sslmode', 'ssl']: # Always strip these if 'ssl' might be in connect_args
+                for val_item in val_list:
+                    query_params_for_engine_url_list.append((key, val_item))
 
-        # Reconstruct the URL without sslmode if it was processed
-        self._db_url_for_engine = urlunparse(parsed_url._replace(query=urlencode(query_params, doseq=True)))
+        clean_query_string_for_engine = urlencode(query_params_for_engine_url_list, doseq=True)
+        self._db_url_for_engine = urlunparse(original_parsed_url._replace(query=clean_query_string_for_engine))
         # --- End Define ---
 
         # The 'ssl' parameter for asyncpg.create_pool should come from the final derived connect_args

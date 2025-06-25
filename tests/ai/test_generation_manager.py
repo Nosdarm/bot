@@ -317,7 +317,8 @@ async def test_process_location_success_update_existing(
     existing_db_location = DBLocation(
         id=existing_loc_id, guild_id=guild_id, static_id=existing_static_id,
         name_i18n={"en": "Original Haunted Forest"},
-        template_id="forest_template_01", location_type_key="forest_haunted",
+            template_id="forest_template_01",
+            type_i18n={"en": "Haunted Forest", "_key": "forest_haunted"}, # Corrected: use type_i18n
         descriptions_i18n={"en": "Old spooky forest."}
     )
     mock_select_result = AsyncMock()

@@ -1,22 +1,16 @@
 import enum
 import uuid
 from sqlalchemy import Column, String, ForeignKey, DateTime, Enum as SAEnum, Text, Index
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Mapped
 from sqlalchemy.sql import func
 # JSONB removed from sqlalchemy.dialects.postgresql as JsonVariant will be used
 
-from .base import Base
-from sqlalchemy import JSON as JsonVariant # Assuming Base is in bot/models/base.py or accessible via .base
-# Attempt to import GuildConfig directly for the relationship
-try:
+from bot.database.base import Base # Use the central Base
+from sqlalchemy import JSON as JsonVariant
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
     from bot.database.models.config_related import GuildConfig
-except ImportError:
-    # This fallback might be hit if there's a circular dependency during initial load,
-    # but SQLAlchemy might resolve it later if GuildConfig is part of the same Base metadata.
-    # For type hinting and explicit relationship, direct import is preferred.
-    # GuildConfig = "GuildConfig" # Keep as string if direct import fails, rely on SQLAlchemy's deferred resolution
-    # No, we need Mapped from sqlalchemy.orm
-    from sqlalchemy.orm import Mapped
 
 class GenerationType(enum.Enum):
     LOCATION_DESCRIPTION = "location_description"
@@ -65,7 +59,7 @@ class PendingGeneration(Base):
     moderator_notes = Column(Text, nullable=True) # Kept as Text, was moderator_notes_i18n (JSONB)
 
     # Relationship to GuildConfig
-    guild: Mapped["GuildConfig"] = relationship(back_populates="pending_generations")
+    guild: Mapped["GuildConfig"] = relationship("GuildConfig", back_populates="pending_generations")
 
 
     __table_args__ = (
