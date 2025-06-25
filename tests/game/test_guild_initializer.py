@@ -166,16 +166,18 @@ async def test_initialize_new_guild_no_force_if_exists(db_session: AsyncSession)
     # If the goal is to preserve it, the upsert logic needs to change.
     # For now, testing current behavior:
     await db_session.refresh(guild_config)
-    assert guild_config.bot_language == "en" # It will be reset to 'en' by the current initializer logic
+    # With on_conflict_do_nothing, custom_lang should be preserved
+    assert guild_config.bot_language == "custom_lang"
+    assert guild_config.game_channel_id == "12345" # Should also be preserved
 
     # Verify the rule was not reset (because ensure_rules_are_added should be false)
     await db_session.refresh(rule_to_change)
     assert rule_to_change.value == 50.0 # Should remain 50.0
 
     # Verify WorldState custom_flags were NOT reset by the upsert
-    # Similar to GuildConfig, the WorldState upsert will use its internal values.
+    # With on_conflict_do_nothing, custom_flags should be preserved
     await db_session.refresh(world_state)
-    assert world_state.custom_flags == {} # It will be reset to {} by current initializer
+    assert world_state.custom_flags == {"event_active": True} # Should remain as set
 
 
 @pytest.mark.asyncio

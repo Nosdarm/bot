@@ -255,4 +255,101 @@ async def test_master_edit_ai_success_valid_new_data(
     assert f"⚙️ AI Content ID `{pending_id}`" in mock_interaction.followup.send.call_args[0][0]
     assert "New validation status: pending_moderation" in mock_interaction.followup.send.call_args[0][0]
 
-print("DEBUG: tests/commands/test_gm_app_cmds.py created.")
+# --- Tests for /master_set_rule ---
+@pytest.mark.asyncio
+@patch('bot.utils.decorators.is_master_role', return_value=lambda func: func) # Bypass decorator
+async def test_master_set_rule_success_new_rule(
+    gm_app_cog: GMAppCog,
+    mock_interaction: discord.Interaction,
+    mock_db_session: AsyncMock # Used by db_service.adapter
+):
+    bot_instance = gm_app_cog.bot
+    game_mngr = bot_instance.game_manager
+    db_service = bot_instance.db_service # This is the mock_db_service from mock_rpg_bot
+
+    guild_id_str = str(mock_interaction.guild_id)
+    rule_key = "economy.trade_markup_percentage"
+    value_json_str = "15.5" # Example float value
+    expected_parsed_value = 15.5
+
+    # Mock DBService adapter behavior for RuleConfig
+    # 1. Initial fetch of rules_config (to get current dict)
+    #    - In cmd_master_set_rule, it uses game_mngr.rule_engine if available,
+    #      else direct db.adapter.fetchone. Let's mock the direct path first.
+    #    - If RuleEngine is used, mock game_mngr.rule_engine.get_raw_rules_config_dict_for_guild
+    #      and game_mngr.rule_engine.save_rules_config_for_guild_from_dict
+
+    # Assume RuleEngine path is taken and it returns an empty dict (new config)
+    game_mngr.rule_engine.get_raw_rules_config_dict_for_guild = AsyncMock(return_value={})
+    game_mngr.rule_engine.save_rules_config_for_guild_from_dict = AsyncMock()
+    game_mngr.rule_engine.load_rules_config_for_guild = AsyncMock() # For reloading cache
+
+    # Mock game_log_manager
+    game_mngr.game_log_manager.log_event = AsyncMock()
+
+    await gm_app_cog.cmd_master_set_rule.callback(gm_app_cog, mock_interaction, rule_key=rule_key, value_json=value_json_str)
+
+    game_mngr.rule_engine.get_raw_rules_config_dict_for_guild.assert_awaited_once_with(guild_id_str)
+
+    # Check that save_rules_config_for_guild_from_dict was called with the updated dict
+    game_mngr.rule_engine.save_rules_config_for_guild_from_dict.assert_awaited_once()
+    saved_config_arg = game_mngr.rule_engine.save_rules_config_for_guild_from_dict.call_args[0][1]
+
+    # Traverse the dict based on rule_key
+    keys = rule_key.split('.')
+    current_level = saved_config_arg
+    for k_part in keys[:-1]:
+        assert k_part in current_level
+        current_level = current_level[k_part]
+    assert keys[-1] in current_level
+    assert current_level[keys[-1]] == expected_parsed_value # Type conversion happened
+
+    game_mngr.rule_engine.load_rules_config_for_guild.assert_awaited_once_with(guild_id_str) # Cache reloaded
+    game_mngr.game_log_manager.log_event.assert_awaited_once() # Logged
+
+    mock_interaction.followup.send.assert_awaited_once()
+    assert f"Правило '{rule_key}' установлено на '{expected_parsed_value}'" in mock_interaction.followup.send.call_args[0][0]
+
+@pytest.mark.asyncio
+@patch('bot.utils.decorators.is_master_role', return_value=lambda func: func)
+async def test_master_set_rule_update_existing_typed(
+    gm_app_cog: GMAppCog,
+    mock_interaction: discord.Interaction
+):
+    game_mngr = gm_app_cog.bot.game_manager
+    guild_id_str = str(mock_interaction.guild_id)
+    rule_key = "player.max_hp_on_start"
+    value_json_str = "\"100\"" # Int value, but passed as JSON string containing a string
+    expected_parsed_value = 100 # Should be converted to int based on existing type
+
+    existing_config = {"player": {"max_hp_on_start": 50}} # Current value is int
+
+    game_mngr.rule_engine.get_raw_rules_config_dict_for_guild = AsyncMock(return_value=existing_config)
+    game_mngr.rule_engine.save_rules_config_for_guild_from_dict = AsyncMock()
+    game_mngr.rule_engine.load_rules_config_for_guild = AsyncMock()
+    game_mngr.game_log_manager.log_event = AsyncMock()
+
+    await gm_app_cog.cmd_master_set_rule.callback(gm_app_cog, mock_interaction, rule_key=rule_key, value_json=value_json_str)
+
+    saved_config_arg = game_mngr.rule_engine.save_rules_config_for_guild_from_dict.call_args[0][1]
+    assert saved_config_arg["player"]["max_hp_on_start"] == expected_parsed_value # Check type conversion
+    mock_interaction.followup.send.assert_awaited_once()
+    assert f"Правило '{rule_key}' установлено на '{expected_parsed_value}'" in mock_interaction.followup.send.call_args[0][0]
+
+
+@pytest.mark.asyncio
+@patch('bot.utils.decorators.is_master_role', return_value=lambda func: func)
+async def test_master_set_rule_invalid_json_value(
+    gm_app_cog: GMAppCog,
+    mock_interaction: discord.Interaction
+):
+    game_mngr = gm_app_cog.bot.game_manager
+    game_mngr.rule_engine.get_raw_rules_config_dict_for_guild = AsyncMock(return_value={}) # No existing config needed for this test path
+
+    await gm_app_cog.cmd_master_set_rule.callback(gm_app_cog, mock_interaction, rule_key="any.key", value_json="not_a_valid_json")
+
+    mock_interaction.followup.send.assert_awaited_once()
+    assert "Ошибка JSON: `not_a_valid_json`" in mock_interaction.followup.send.call_args[0][0]
+    game_mngr.rule_engine.save_rules_config_for_guild_from_dict.assert_not_called()
+
+# print("DEBUG: tests/commands/test_gm_app_cmds.py created.") # Removed print from previous merge

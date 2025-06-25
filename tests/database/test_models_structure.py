@@ -285,4 +285,39 @@ def test_model_i18n_fields_are_json_variant_updated(model_class, i18n_field_name
         assert isinstance(columns[field_name].type, CustomJsonVariantType), \
             f"Field '{field_name}' in {model_class.__name__} is not JsonVariant (found {columns[field_name].type})"
 
-print("DEBUG: tests/database/test_models_structure.py created/overwritten")
+
+# --- Test for Combat (CombatEncounter) structure (Task 22) ---
+def test_combat_encounter_model_structure():
+    inspector = inspect(Combat) # Make sure Combat is imported from game_mechanics
+    columns = {col.name: col for col in inspector.columns}
+    from bot.database.base import JsonVariant as CustomJsonVariantType
+    from sqlalchemy import Text # For combat_log
+
+    # Fields from ТЗ 22 (mapping to model 'Combat')
+    # id: PK (String, default uuid) - Covered by default model structure
+    # guild_id: FK (String) - Covered by test_model_has_guild_id_column_updated
+
+    assert 'location_id' in columns
+    assert isinstance(columns['location_id'].type, String)
+    assert any(fk.column.table.name == 'locations' for fk in columns['location_id'].foreign_keys)
+
+    assert 'status' in columns
+    assert isinstance(columns['status'].type, String)
+    assert columns['status'].type.length == 50
+
+    assert 'current_turn_index' in columns # Model uses current_turn_index
+    assert isinstance(columns['current_turn_index'].type, Integer)
+    assert 'turn_order' in columns # ТЗ: turn_order_json
+    assert isinstance(columns['turn_order'].type, CustomJsonVariantType)
+
+    assert 'participants' in columns # ТЗ: participants_json
+    assert isinstance(columns['participants'].type, CustomJsonVariantType)
+
+    assert 'combat_rules_snapshot' in columns # ТЗ: rules_config_snapshot_json
+    assert isinstance(columns['combat_rules_snapshot'].type, CustomJsonVariantType)
+
+    assert 'combat_log' in columns # ТЗ: combat_log_json (JSONB), Model: Text
+    assert isinstance(columns['combat_log'].type, Text)
+    assert 'turn_log_structured' in columns # This is likely the JSONB equivalent for combat log
+    assert isinstance(columns['turn_log_structured'].type, CustomJsonVariantType)
+# Removed the print statement below as it's not part of the test code itself

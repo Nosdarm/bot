@@ -303,6 +303,98 @@ class TestGameLogManager(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ai_narrative_ru_error", logged_details) # Should attempt for all configured langs
         self.assertIn("Failed to generate narrative for ru: AI boom!", logged_details["ai_narrative_ru_error"])
 
+    @patch('bot.game.guild_initializer.initialize_new_guild', new_callable=AsyncMock)
+    async def test_log_event_guild_config_missing_triggers_init_success(self, mock_initialize_new_guild: AsyncMock):
+        guild_id_no_config = "guild_needs_init_success"
+        event_type = "EVENT_AFTER_INIT"
+        details = {"info": "initialized and logged"}
+
+        # Mock DBService.get_session to control the GuildConfig check
+        # First call to get_session (for GuildConfig check inside log_event):
+        #   - session.execute for GuildConfig returns no result
+        # Second call to get_session (for initialize_new_guild itself):
+        #   - initialize_new_guild succeeds
+        # Third call to get_session (for the actual log_event INSERT, if session not passed):
+        #   - session.execute for the INSERT
+
+        # Simulate GuildConfig not found on first check
+        mock_select_gc_result_not_found = AsyncMock()
+        mock_select_gc_result_not_found.scalars.return_value.first.return_value = None
+
+        # Simulate GuildConfig found after successful initialization
+        mock_select_gc_result_found = AsyncMock()
+        mock_gc_instance = MagicMock() # Mocked GuildConfig instance
+        mock_select_gc_result_found.scalars.return_value.first.return_value = mock_gc_instance
+
+        # The session mock's execute needs to handle these different scenarios
+        # This is tricky as the same session object might be reused by the SUT if not careful with mocking.
+        # Let's assume log_event uses a new session for its initial check if one isn't passed.
+        # And initialize_new_guild uses its own session.
+        # And then the final log uses a new session if one isn't passed.
+
+        # For simplicity, let's mock the execute calls on self.mock_session which is reused.
+        self.mock_session.execute.side_effect = [
+            mock_select_gc_result_not_found, # For initial check in log_event
+            AsyncMock(), # Placeholder for execute calls within initialize_new_guild (if it uses the same session)
+            AsyncMock()  # For the actual INSERT of the game_log
+        ]
+
+        mock_initialize_new_guild.return_value = True # Init succeeds
+
+        await self.game_log_manager.log_event(
+            guild_id=guild_id_no_config,
+            event_type=event_type,
+            details=details,
+            generate_narrative=False,
+            session=self.mock_session # Pass the session to control its execute calls
+        )
+
+        mock_initialize_new_guild.assert_awaited_once_with(unittest.mock.ANY, guild_id_no_config, force_reinitialize=False) # Session, guild_id
+
+        # Check that the log event was actually added after successful init
+        # self.mock_session.add.assert_called_once() # GameLogManager uses session.execute(text(sql)) not session.add for GameLogEntryDB
+        # Check the execute call for the INSERT
+        insert_call = None
+        for call_item in self.mock_session.execute.call_args_list:
+            sql_text = str(call_item.args[0]) # First arg is the statement
+            if "INSERT INTO game_logs" in sql_text:
+                insert_call = call_item
+                break
+        self.assertIsNotNone(insert_call, "INSERT INTO game_logs was not executed")
+        # Further assertions on insert_call.args[1] (params) can be added here.
+
+
+    @patch('bot.game.guild_initializer.initialize_new_guild', new_callable=AsyncMock)
+    async def test_log_event_guild_config_missing_init_fails(self, mock_initialize_new_guild: AsyncMock):
+        guild_id_init_fails = "guild_init_fails"
+        event_type = "EVENT_SHOULD_BE_SKIPPED"
+        details = {"info": "init failed"}
+
+        mock_select_gc_result_not_found = AsyncMock()
+        mock_select_gc_result_not_found.scalars.return_value.first.return_value = None
+        self.mock_session.execute.return_value = mock_select_gc_result_not_found # For initial check
+
+        mock_initialize_new_guild.side_effect = Exception("Simulated init failure")
+
+        await self.game_log_manager.log_event(
+            guild_id=guild_id_init_fails,
+            event_type=event_type,
+            details=details,
+            generate_narrative=False,
+            session=self.mock_session
+        )
+
+        mock_initialize_new_guild.assert_awaited_once()
+
+        # Assert that no INSERT into game_logs happened
+        insert_call_found = False
+        for call_item in self.mock_session.execute.call_args_list:
+            sql_text = str(call_item.args[0])
+            if "INSERT INTO game_logs" in sql_text:
+                insert_call_found = True
+                break
+        self.assertFalse(insert_call_found, "INSERT INTO game_logs should not have been executed after init failure")
+
 
 if __name__ == '__main__':
     unittest.main()
