@@ -6,6 +6,7 @@ game conflicts based on player actions and defined rules.
 
 # Импорты, необходимые для ConflictResolver
 import json
+import logging
 import uuid
 import logging
 import traceback # <- Добавьте импорт traceback, он используется в Error handling
@@ -28,6 +29,8 @@ import enum # Added for ActionStatus
 # Placeholder for actual RuleEngine classes
 # from ..core.rule_engine import RuleEngine # Assuming RuleEngine might be in a core module
 from ..services.notification_service import NotificationService # Actual import
+
+logger = logging.getLogger(__name__)
 
 
 class ConflictResolver:
