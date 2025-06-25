@@ -592,7 +592,7 @@ class TestPromptContextCollector(unittest.TestCase):
         self.assertEqual(len(params_no_item_rules), 17 - 6) # 6 item price params should be missing
         self.mock_settings["game_rules"]["item_rules"] = original_item_rules # Restore
 
-    def test_get_full_context(self):
+    async def test_get_full_context(self):
         # Mock all individual get_* methods of the collector
         self.collector.get_main_language_code = MagicMock(return_value="en")
         self.collector.settings["target_languages"] = ["en", "ru"] # Ensure this is set for the test
@@ -640,7 +640,7 @@ class TestPromptContextCollector(unittest.TestCase):
         request_params = {"npc_id": "npc001", "situation": "greeting"}
 
         # Test with target_entity_type="character"
-        full_context_char = self.collector.get_full_context(
+        full_context_char = await self.collector.get_full_context(
             self.guild_id, request_type, request_params,
             target_entity_id=self.character_id, target_entity_type="character"
         )
@@ -666,7 +666,7 @@ class TestPromptContextCollector(unittest.TestCase):
         self.assertEqual(full_context_char.relationship_data, mock_relationship_context)
 
         # Test with no target entity
-        full_context_no_target = self.collector.get_full_context(
+        full_context_no_target = await self.collector.get_full_context(
             self.guild_id, "generate_world_event", {}
         )
         self.assertIsNone(full_context_no_target.player_context)
@@ -678,7 +678,7 @@ class TestPromptContextCollector(unittest.TestCase):
         mock_npc_relationship_context = [{"entity1_id": npc_id_target, "entity2_id": "char002"}]
         self.collector.get_relationship_context.return_value = mock_npc_relationship_context
 
-        full_context_npc = self.collector.get_full_context(
+        full_context_npc = await self.collector.get_full_context(
             self.guild_id, "generate_npc_interaction", {},
             target_entity_id=npc_id_target, target_entity_type="npc"
         )
