@@ -1,219 +1,241 @@
-import asyncio
+# tests/game/utils/test_stats_calculator.py
+import pytest
 import json
-import unittest
 from unittest.mock import MagicMock, AsyncMock
 
 from bot.game.utils.stats_calculator import calculate_effective_stats
-from bot.ai.rules_schema import CoreGameRulesConfig, BaseStatDefinition, StatModifierRule, StatusEffectDefinition, GrantedAbilityOrSkill # MODIFIED: ItemDefinition removed
-from bot.game.models.character import Character
-from bot.game.models.npc import NPC as NpcModel
-from bot.database.models import ItemTemplate # Corrected import path
-from bot.game.models.status_effect import StatusEffect as StatusEffectInstance
-# StatusEffectTemplate removed
+from bot.database.models import Player, Character as DBCharacter, NPC as DBNPC, Item as DBItem, Status as DBStatus
+# Assuming Pydantic models are not directly used by calculate_effective_stats, but DB models are.
+# If Pydantic models are indeed passed, those should be mocked/used.
+# Based on calculate_effective_stats signature, it takes Union[Player, NPC, Character] which are DB models.
 
-class TestStatsCalculator(unittest.IsolatedAsyncioTestCase):
+from bot.game.managers.game_manager import GameManager
+from bot.game.managers.equipment_manager import EquipmentManager
+from bot.game.managers.status_manager import StatusManager
+from bot.game.managers.rule_engine import RuleEngine # For get_rule
 
-    def setUp(self):
-        self.mock_db_service = AsyncMock()
-        self.mock_character_manager = AsyncMock()
-        self.mock_npc_manager = AsyncMock()
-        self.mock_item_manager = AsyncMock()
-        self.mock_status_manager = AsyncMock()
+# --- Mock Data & Fixtures ---
 
-        self.rules_config = CoreGameRulesConfig(
-            base_stats={
-                "STRENGTH": BaseStatDefinition(name_i18n={"en": "Strength"}, description_i18n={"en": "Measures physical power"}, default_value=10, min_value=1, max_value=30),
-                "DEXTERITY": BaseStatDefinition(name_i18n={"en": "Dexterity"}, description_i18n={"en": "Measures agility"}, default_value=10, min_value=1, max_value=30),
-                "CONSTITUTION": BaseStatDefinition(name_i18n={"en": "Constitution"}, description_i18n={"en": "Measures endurance"}, default_value=10, min_value=1, max_value=30),
-                "MAX_HP": BaseStatDefinition(name_i18n={"en": "Max HP"}, description_i18n={"en": "Maximum health points"}, default_value=50, min_value=1, max_value=1000),
-                "ATTACK_BONUS": BaseStatDefinition(name_i18n={"en": "Attack Bonus"}, description_i18n={"en": "Bonus to attack rolls"}, default_value=0, min_value=-5, max_value=20),
-                "FIRE_RESISTANCE": BaseStatDefinition(name_i18n={"en": "Fire Resistance"}, description_i18n={"en": "Resistance to fire damage"}, default_value=0, min_value=0, max_value=100),
-            },
-            # derived_stat_rules is removed
-            item_effects={}, # Changed from item_definitions
-            status_effects={},
-            equipment_slots={},
-            checks={},
-            damage_types={},
-            xp_rules=None, # Assuming XPRule is optional and can be None
-            loot_tables={},
-            action_conflicts=[],
-            location_interactions={},
-            relation_rules=[], # Added missing required field
-            relationship_influence_rules=[] # Added missing required field
-        )
+@pytest.fixture
+def mock_game_manager():
+    gm = MagicMock(spec=GameManager)
+    gm.db_service = AsyncMock(name="DBService") # Not directly used by calc, but often part of GM
 
-        self.player_entity = Character(
-            id="player1", name_i18n={"en": "Test Player"}, guild_id="guild1", discord_user_id=123,
-            stats={"strength": 12, "dexterity": 11, "constitution": 14},
-            skills_data=[{"skill_id": "sword_skill", "level": 5}],
-            inventory=[],
-            status_effects=[]
-            # effective_stats_json removed
-        )
-        self.npc_entity = NpcModel(
-            id="npc1", name_i18n={"en": "Test NPC"}, guild_id="guild1", template_id="goblin_warrior",
-            stats={"strength": 15, "dexterity": 8, "constitution": 13},
-            skills_data=[{"skill_id": "axe_skill", "level": 3}],
-            inventory=[],
-            status_effects=[]
-        )
+    gm.equipment_manager = AsyncMock(spec=EquipmentManager)
+    gm.equipment_manager.get_equipped_item_instances = AsyncMock(return_value=[]) # Default no items
 
-    async def test_base_stats_no_modifiers_player(self):
-        self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
-        self.mock_item_manager.get_item_template = AsyncMock(return_value=None)
-        self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[])
+    gm.status_manager = AsyncMock(spec=StatusManager)
+    gm.status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[]) # Default no statuses
 
-        effective_stats = await calculate_effective_stats(
-            db_service=self.mock_db_service, guild_id="guild1", entity_id="player1", entity_type="Character",
-            rules_config_data=self.rules_config,
-            character_manager=self.mock_character_manager, npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager, status_manager=self.mock_status_manager
-        )
+    gm.rule_engine = AsyncMock(spec=RuleEngine)
+    # Default get_rule behavior
+    async def default_get_rule(guild_id, rule_key, default=None):
+        rules = {
+            "rules.combat.base_hp": 10,
+            "rules.combat.hp_per_con_point": 2,
+            "rules.combat.base_ac": 10,
+            "rules.character.proficiency_bonus_per_level": 0.25,
+            "rules.character.base_proficiency_bonus": 2,
+            "rules.magic.spell_dc_base": 8
+        }
+        return rules.get(rule_key, default)
+    gm.get_rule = AsyncMock(side_effect=default_get_rule)
 
-        self.assertEqual(effective_stats.get("strength"), 12)
-        self.assertEqual(effective_stats.get("dexterity"), 11)
-        self.assertEqual(effective_stats.get("constitution"), 14)
-        self.assertEqual(effective_stats.get("max_hp"), 43) # Corrected expected value: 10 + (14*2) + (1*5) = 43
-        self.assertEqual(effective_stats.get("sword_skill"), 5)
-        self.assertEqual(effective_stats.get("attack_bonus"), 0)
-        self.assertEqual(len(effective_stats.get("granted_abilities_skills", [])), 0)
+    # Mock other managers if they become relevant for stat calculation (e.g., passive abilities from AbilityManager)
+    return gm
 
-    async def test_item_flat_bonus(self):
-        self.player_entity.inventory = [{"template_id": "strong_ring", "equipped": True, "id": "ring1"}] # Added 'id' for instance
+@pytest.fixture
+def db_character_entity():
+    char = MagicMock(spec=DBCharacter)
+    char.id = "char1"
+    char.guild_id = "guild1"
+    char.stats_json = json.dumps({
+        "strength": 12, "dexterity": 14, "constitution": 13,
+        "intelligence": 10, "wisdom": 8, "charisma": 15,
+        "level": 5 # Add level for proficiency bonus calculation
+    })
+    # Ensure other attributes that might be accessed exist, even if None
+    char.name_i18n = {"en": "Test Char"} # For logging
+    return char
 
-        strong_ring_template = ItemTemplate(
-            id="strong_ring", name_i18n={"en":"Ring of Strength"}, type="ring",
-            properties={"stat_modifiers": [StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=2.0).model_dump()]} # Store in properties
-        )
-        self.mock_item_manager.get_item_template = AsyncMock(return_value=strong_ring_template)
-        self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
-        self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[])
+@pytest.fixture
+def db_npc_entity():
+    npc = MagicMock(spec=DBNPC)
+    npc.id = "npc1"
+    npc.guild_id = "guild1"
+    # DBNPC uses 'stats' directly as a dict, not stats_json
+    npc.stats = {
+        "strength": 10, "dexterity": 10, "constitution": 10,
+        "intelligence": 10, "wisdom": 10, "charisma": 10,
+        "level": 3
+    }
+    npc.name_i18n = {"en": "Test NPC"} # For logging
+    return npc
 
-        effective_stats = await calculate_effective_stats(
-            db_service=self.mock_db_service, guild_id="guild1", entity_id="player1", entity_type="Character",
-            rules_config_data=self.rules_config,
-            character_manager=self.mock_character_manager, npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager, status_manager=self.mock_status_manager
-        )
-        self.assertEqual(effective_stats.get("strength"), 14)
+# --- Test Cases ---
 
-    async def test_item_multiplier_bonus(self):
-        self.player_entity.inventory = [{"template_id": "agile_boots", "equipped": True, "id": "boots1"}]
-        agile_boots_template = ItemTemplate(
-            id="agile_boots", name_i18n={"en":"Boots of Agility"}, type="feet",
-            properties={"stat_modifiers": [StatModifierRule(stat_name="DEXTERITY", bonus_type="multiplier", value=1.1).model_dump()]} # Store in properties
-        )
-        self.mock_item_manager.get_item_template = AsyncMock(return_value=agile_boots_template)
-        self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
-        self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[])
+@pytest.mark.asyncio
+async def test_calculate_base_stats_character(db_character_entity: DBCharacter, mock_game_manager: GameManager):
+    effective_stats = await calculate_effective_stats(db_character_entity, "guild1", mock_game_manager)
 
-        effective_stats = await calculate_effective_stats(
-            db_service=self.mock_db_service, guild_id="guild1", entity_id="player1", entity_type="Character",
-            rules_config_data=self.rules_config,
-            character_manager=self.mock_character_manager, npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager, status_manager=self.mock_status_manager
-        )
-        self.assertEqual(effective_stats.get("dexterity"), 12) # 11 * 1.1 = 12.1, rounded to 12
+    assert effective_stats["strength"] == 12
+    assert effective_stats["dexterity"] == 14
+    assert effective_stats["constitution"] == 13
+    assert effective_stats["intelligence"] == 10
+    assert effective_stats["wisdom"] == 8
+    assert effective_stats["charisma"] == 15
+    assert effective_stats["level"] == 5
 
-    async def test_status_flat_bonus(self):
-        blessed_status_instance = StatusEffectInstance(id="status1", status_type="blessed_buff", target_id="player1", target_type="Character", duration=3.0) # template_id removed
-        # StatusEffectTemplate removed, using StatusEffectDefinition from rules_schema
-        blessed_template_data = StatusEffectDefinition(
-            id="blessed_buff", name_i18n={"en":"Blessed"}, description_i18n={"en":"Feeling blessed."},
-            stat_modifiers=[StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=3.0)]
-        )
-        self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[blessed_status_instance])
-        self.mock_status_manager.get_status_template = AsyncMock(return_value=blessed_template_data)
-        self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
-        self.mock_item_manager.get_item_template = AsyncMock(return_value=None)
+    # Check derived stats (based on mocked rules)
+    # Proficiency = 2 + (5-1)*0.25 = 2 + 1 = 3
+    # CON mod = (13-10)//2 = 1
+    # DEX mod = (14-10)//2 = 2
+    # STR mod = (12-10)//2 = 1
+    # INT mod = (10-10)//2 = 0
+    assert effective_stats["proficiency_bonus"] == 3
+    assert effective_stats["max_hp"] == 10 + (13 * 2) # base_hp + (con_val * hp_per_con)
+    assert effective_stats["armor_class"] == 10 + 2 # base_ac + dex_mod
+    assert effective_stats["attack_bonus_melee"] == 1 + 3 # str_mod + prof
+    assert effective_stats["attack_bonus_ranged"] == 2 + 3 # dex_mod + prof
+    assert effective_stats["damage_bonus_melee"] == 1 # str_mod
+    assert effective_stats["damage_bonus_ranged"] == 2 # dex_mod
+    assert effective_stats["spell_save_dc"] == 8 + 3 + 0 # spell_dc_base + prof + int_mod
+    assert effective_stats["spell_attack_bonus"] == 3 + 0 # prof + int_mod
 
-        effective_stats = await calculate_effective_stats(
-            db_service=self.mock_db_service, guild_id="guild1", entity_id="player1", entity_type="Character",
-            rules_config_data=self.rules_config,
-            character_manager=self.mock_character_manager, npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager, status_manager=self.mock_status_manager
-        )
-        self.assertEqual(effective_stats.get("strength"), 15)
+@pytest.mark.asyncio
+async def test_calculate_base_stats_npc(db_npc_entity: DBNPC, mock_game_manager: GameManager):
+    effective_stats = await calculate_effective_stats(db_npc_entity, "guild1", mock_game_manager)
+    assert effective_stats["strength"] == 10
+    assert effective_stats["level"] == 3
+    # Proficiency = 2 + (3-1)*0.25 = 2 + 0.5 = 2 (due to int conversion)
+    assert effective_stats["proficiency_bonus"] == 2
 
-    async def test_combined_item_status_flat_multiplier_order(self):
-        self.player_entity.inventory = [{"template_id": "strong_ring", "equipped": True, "id": "ring1"}]
-        strong_ring_template = ItemTemplate(
-            id="strong_ring", name_i18n={"en":"Ring of Strength"}, type="ring",
-            properties={"stat_modifiers": [StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=2.0).model_dump()]} # Store in properties
-        )
-        titans_status_instance = StatusEffectInstance(id="status_titan", status_type="might_of_titans", target_id="player1", target_type="Character", duration=2.0) # template_id removed
-        # StatusEffectTemplate removed, using StatusEffectDefinition from rules_schema
-        titans_template_data = StatusEffectDefinition(
-            id="might_of_titans", name_i18n={"en":"Might of Titans"}, description_i18n={"en":"Feeling mighty."},
-            stat_modifiers=[StatModifierRule(stat_name="STRENGTH", bonus_type="multiplier", value=1.5)]
-        )
 
-        self.mock_item_manager.get_item_template = AsyncMock(return_value=strong_ring_template)
-        self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[titans_status_instance])
-        self.mock_status_manager.get_status_template = AsyncMock(return_value=titans_template_data)
-        self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
+@pytest.mark.asyncio
+async def test_stats_with_equipment_modifiers(db_character_entity: DBCharacter, mock_game_manager: GameManager):
+    # Mock equipped items
+    item1 = MagicMock(spec=DBItem)
+    item1.id = "item_str_sword"
+    item1.properties = {"modifies_stat_strength": 2, "grants_bonus_attack_bonus_melee": 1} # Example properties
 
-        effective_stats = await calculate_effective_stats(
-            db_service=self.mock_db_service, guild_id="guild1", entity_id="player1", entity_type="Character",
-            rules_config_data=self.rules_config,
-            character_manager=self.mock_character_manager, npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager, status_manager=self.mock_status_manager
-        )
-        self.assertEqual(effective_stats.get("strength"), 21) # Base 12 + 2 (item_flat) = 14. Then 14 * 1.5 (status_multi) = 21.
+    item2 = MagicMock(spec=DBItem)
+    item2.id = "item_dex_shield"
+    item2.properties = {"modifies_stat_dexterity": -1, "grants_bonus_armor_class": 2} # AC is just armor_class
 
-    async def test_stat_capping(self):
-        self.player_entity.inventory = [{"template_id": "godly_ring", "equipped": True, "id": "ring_god"}]
-        godly_ring_template = ItemTemplate(
-            id="godly_ring", name_i18n={"en":"Godly Ring of Strength"}, type="ring",
-            properties={"stat_modifiers": [StatModifierRule(stat_name="STRENGTH", bonus_type="flat", value=100.0).model_dump()]} # Store in properties
-        )
-        self.mock_item_manager.get_item_template = AsyncMock(return_value=godly_ring_template)
-        self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
-        self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[])
+    mock_game_manager.equipment_manager.get_equipped_item_instances = AsyncMock(return_value=[item1, item2])
 
-        effective_stats = await calculate_effective_stats(
-            db_service=self.mock_db_service, guild_id="guild1", entity_id="player1", entity_type="Character",
-            rules_config_data=self.rules_config,
-            character_manager=self.mock_character_manager, npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager, status_manager=self.mock_status_manager
-        )
-        self.assertEqual(effective_stats.get("strength"), 30)
+    effective_stats = await calculate_effective_stats(db_character_entity, "guild1", mock_game_manager)
 
-    async def test_granted_abilities(self):
-        self.player_entity.inventory = [{"template_id": "skill_helm", "equipped": True, "id": "helm1"}]
-        skill_helm_template = ItemTemplate(
-            id="skill_helm", name_i18n={"en":"Helm of Knowing"}, type="head",
-            properties={"grants_abilities_or_skills": [GrantedAbilityOrSkill(type="skill", id="ancient_knowledge", level=1).model_dump()]} # Store in properties
-        )
-        self.mock_item_manager.get_item_template = AsyncMock(return_value=skill_helm_template)
-        self.mock_character_manager.get_character = AsyncMock(return_value=self.player_entity)
-        self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[])
+    assert effective_stats["strength"] == 12 + 2 # Base 12 + 2 from sword
+    assert effective_stats["dexterity"] == 14 - 1 # Base 14 - 1 from shield
 
-        effective_stats = await calculate_effective_stats(
-            db_service=self.mock_db_service, guild_id="guild1", entity_id="player1", entity_type="Character",
-            rules_config_data=self.rules_config,
-            character_manager=self.mock_character_manager, npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager, status_manager=self.mock_status_manager
-        )
-        # Adjusted assertion: 'level' is not part of GrantedAbilityOrSkill model dump if not defined in model
-        self.assertIn({"id": "ancient_knowledge", "type": "skill"}, effective_stats.get("granted_abilities_skills", []))
+    # Recalculate derived stats based on new effective STR/DEX
+    # STR mod = (14-10)//2 = 2
+    # DEX mod = (13-10)//2 = 1
+    # Proficiency = 3 (level 5)
+    assert effective_stats["armor_class"] == 10 + 1 + 2 # base + new_dex_mod + shield_ac_bonus
+    assert effective_stats["attack_bonus_melee"] == 2 + 3 + 1 # new_str_mod + prof + sword_attack_bonus
 
-    async def test_npc_stats(self):
-        self.mock_npc_manager.get_npc = AsyncMock(return_value=self.npc_entity)
-        self.mock_item_manager.get_item_template = AsyncMock(return_value=None)
-        self.mock_status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[])
+@pytest.mark.asyncio
+async def test_stats_with_status_effect_modifiers(db_character_entity: DBCharacter, mock_game_manager: GameManager):
+    status1 = MagicMock(spec=DBStatus)
+    status1.name = "Weakened"
+    status1.effects = {"stat_change": {"strength": -2, "wisdom": 1}}
 
-        effective_stats = await calculate_effective_stats(
-            db_service=self.mock_db_service, guild_id="guild1", entity_id="npc1", entity_type="NPC",
-            rules_config_data=self.rules_config,
-            character_manager=self.mock_character_manager, npc_manager=self.mock_npc_manager,
-            item_manager=self.mock_item_manager, status_manager=self.mock_status_manager
-        )
-        self.assertEqual(effective_stats.get("strength"), 15)
-        self.assertEqual(effective_stats.get("constitution"), 13)
-        self.assertEqual(effective_stats.get("max_hp"), 41) # Corrected expected value: 10 + (13*2) + (1*5) = 41
-        self.assertEqual(effective_stats.get("axe_skill"), 3)
+    status2 = MagicMock(spec=DBStatus)
+    status2.name = "Agile"
+    status2.effects = {"ac_bonus": 1} # This should map to bonuses['armor_class_bonus']
 
-if __name__ == '__main__':
-    unittest.main()
+    mock_game_manager.status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[status1, status2])
+
+    effective_stats = await calculate_effective_stats(db_character_entity, "guild1", mock_game_manager)
+
+    assert effective_stats["strength"] == 12 - 2 # Base 12 - 2 from status
+    assert effective_stats["wisdom"] == 8 + 1   # Base 8 + 1 from status
+
+    # DEX mod = (14-10)//2 = 2
+    # AC = 10 (base) + 2 (dex_mod) + 1 (status_ac_bonus)
+    assert effective_stats["armor_class"] == 10 + 2 + 1
+
+
+@pytest.mark.asyncio
+async def test_stats_with_equipment_and_status_effects(db_character_entity: DBCharacter, mock_game_manager: GameManager):
+    item_shield = MagicMock(spec=DBItem)
+    item_shield.id = "item_magic_shield"
+    item_shield.properties = {"grants_bonus_armor_class": 1} # AC is armor_class
+
+    status_blessed = MagicMock(spec=DBStatus)
+    status_blessed.name = "Blessed"
+    status_blessed.effects = {"stat_change": {"strength": 2}, "attack_melee_bonus": 1} # attack_melee_bonus -> bonuses['attack_bonus_melee']
+
+    mock_game_manager.equipment_manager.get_equipped_item_instances = AsyncMock(return_value=[item_shield])
+    mock_game_manager.status_manager.get_active_statuses_for_entity = AsyncMock(return_value=[status_blessed])
+
+    effective_stats = await calculate_effective_stats(db_character_entity, "guild1", mock_game_manager)
+
+    assert effective_stats["strength"] == 12 + 2 # Base 12 + 2 from status
+
+    # STR mod = (14-10)//2 = 2
+    # DEX mod = (14-10)//2 = 2
+    # Proficiency = 3 (level 5)
+    assert effective_stats["armor_class"] == 10 + 2 + 1 # base + dex_mod + shield_ac_bonus
+    assert effective_stats["attack_bonus_melee"] == 2 + 3 + 1 # new_str_mod + prof + status_attack_bonus
+
+@pytest.mark.asyncio
+async def test_malformed_stats_json_character(db_character_entity: DBCharacter, mock_game_manager: GameManager):
+    db_character_entity.stats_json = "this is not json"
+    effective_stats = await calculate_effective_stats(db_character_entity, "guild1", mock_game_manager)
+    # Should default to base 10 for core attributes if stats_json is invalid
+    assert effective_stats["strength"] == 10
+    assert effective_stats["dexterity"] == 10
+    # And level should default to 1 if not found in (now empty) stats
+    assert effective_stats["level"] == 1
+    # Proficiency = 2 + (1-1)*0.25 = 2
+    assert effective_stats["proficiency_bonus"] == 2
+
+
+@pytest.mark.asyncio
+async def test_character_with_no_stats_json(db_character_entity: DBCharacter, mock_game_manager: GameManager):
+    db_character_entity.stats_json = None
+    effective_stats = await calculate_effective_stats(db_character_entity, "guild1", mock_game_manager)
+    assert effective_stats["strength"] == 10 # Defaults
+    assert effective_stats["level"] == 1 # Defaults
+    assert effective_stats["proficiency_bonus"] == 2
+
+@pytest.mark.asyncio
+async def test_npc_with_no_stats_attribute(db_npc_entity: DBNPC, mock_game_manager: GameManager):
+    del db_npc_entity.stats # Remove the stats attribute
+    effective_stats = await calculate_effective_stats(db_npc_entity, "guild1", mock_game_manager)
+    assert effective_stats.get("strength", 10) == 10 # Defaults if stats missing
+    assert effective_stats.get("level", 1) == 1
+    assert effective_stats.get("proficiency_bonus", 2) == 2
+    # Restore for other tests if fixture is session scoped, but it's function scoped here.
+    # db_npc_entity.stats = {"strength": 10, "level": 3}
+
+@pytest.mark.asyncio
+async def test_player_entity_passed_directly(mock_game_manager: GameManager):
+    # This tests the warning/fallback path if a Player DB model is passed
+    player_db_model = MagicMock(spec=Player)
+    player_db_model.id = "player_db_direct"
+    player_db_model.guild_id = "guild1"
+    player_db_model.name_i18n = {"en": "Player DB Direct"}
+    # Player model does not have stats_json or level directly
+
+    with pytest.logs('bot.game.utils.stats_calculator', level='WARNING') as log_capture:
+        effective_stats = await calculate_effective_stats(player_db_model, "guild1", mock_game_manager)
+
+    assert any("Received a Player entity" in record.getMessage() for record in log_capture.records)
+    assert effective_stats["strength"] == 10 # Defaults
+    assert effective_stats["level"] == 1 # Defaults
+    assert effective_stats["proficiency_bonus"] == 2
+
+@pytest.mark.asyncio
+async def test_unknown_entity_type(mock_game_manager: GameManager):
+    unknown_entity = MagicMock() # Not Player, Character, or NPC
+    unknown_entity.id = "unknown_ent"
+
+    with pytest.logs('bot.game.utils.stats_calculator', level='WARNING') as log_capture:
+        effective_stats = await calculate_effective_stats(unknown_entity, "guild1", mock_game_manager)
+
+    assert any("Unknown entity type" in record.getMessage() for record in log_capture.records)
+    assert effective_stats == {} # Returns empty dict for unknown type

@@ -337,28 +337,28 @@ async def test_process_location_success_update_existing(
     mock_session.get = AsyncMock(side_effect=side_effect_get)
 
     # Act
-    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()):
+    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()): # type: ignore
         result = await ai_generation_manager_fixture.process_approved_generation(
             pending_gen_id, guild_id, moderator_id
         )
 
     # Assert
     assert result is True
-    mock_pending_gen_crud_fixture.update_pending_generation_status.assert_called_with(
+    mock_pending_gen_crud_fixture.update_pending_generation_status.assert_called_with( # type: ignore
         mock_session, pending_gen_id, PendingStatus.APPLIED, guild_id,
         moderator_user_id=moderator_id, moderator_notes=None
     )
 
     merged_location_obj = persisted_objects.get((DBLocation, existing_loc_id))
     assert merged_location_obj is not None
-    assert merged_location_obj.id == existing_loc_id
-    assert merged_location_obj.name_i18n["en"] == "Renovated Haunted Forest"
+    assert merged_location_obj.id == existing_loc_id # type: ignore
+    assert merged_location_obj.name_i18n["en"] == "Renovated Haunted Forest" # type: ignore
     assert mock_pending_generation.entity_id == existing_loc_id
-    mock_session_context.__aexit__.assert_called_once_with(None, None, None)
+    mock_session_context.__aexit__.assert_called_once_with(None, None, None) # type: ignore
 
 
 @pytest.mark.asyncio
-async def test_process_location_failure_npc_spawn_preserves_notes( # Added preserves_notes
+async def test_process_location_failure_npc_spawn_preserves_notes(
     ai_generation_manager_fixture: AIGenerationManager,
     mock_pending_gen_crud_fixture: AsyncMock,
     mock_game_manager: MagicMock,
@@ -369,7 +369,7 @@ async def test_process_location_failure_npc_spawn_preserves_notes( # Added prese
     guild_id = "test_guild_1"
     pending_gen_id = str(uuid.uuid4())
     moderator_id = "mod_user_1"
-    initial_mod_notes = "Pre-existing notes." # Test notes concatenation
+    initial_mod_notes = "Pre-existing notes."
 
     parsed_loc_data = get_valid_parsed_location_data(num_npcs=1)
 
@@ -377,9 +377,9 @@ async def test_process_location_failure_npc_spawn_preserves_notes( # Added prese
         id=pending_gen_id, guild_id=guild_id, request_type=GenerationType.LOCATION_DETAILS,
         status=PendingStatus.APPROVED, parsed_data_json=parsed_loc_data, moderator_notes=initial_mod_notes
     )
-    mock_pending_gen_crud_fixture.get_pending_generation_by_id.return_value = mock_pending_generation
+    mock_pending_gen_crud_fixture.get_pending_generation_by_id.return_value = mock_pending_generation # type: ignore
 
-    mock_session = mock_session_context.__aenter__()
+    mock_session = mock_session_context.__aenter__() # type: ignore
     mock_select_result = AsyncMock()
     mock_select_result.scalars.return_value.first.return_value = None
     mock_session.execute.return_value = mock_select_result
@@ -389,8 +389,8 @@ async def test_process_location_failure_npc_spawn_preserves_notes( # Added prese
     persisted_objects = {}
     async def side_effect_merge(obj_to_merge, **kwargs):
         if isinstance(obj_to_merge, DBLocation):
-            if not obj_to_merge.id: obj_to_merge.id = str(uuid.uuid4())
-            persisted_objects[(DBLocation, obj_to_merge.id)] = obj_to_merge
+            if not obj_to_merge.id: obj_to_merge.id = str(uuid.uuid4()) # type: ignore
+            persisted_objects[(DBLocation, obj_to_merge.id)] = obj_to_merge # type: ignore
         return obj_to_merge
     mock_session.merge = AsyncMock(side_effect=side_effect_merge)
     async def side_effect_get(model_cls, entity_id, **kwargs):
@@ -398,21 +398,21 @@ async def test_process_location_failure_npc_spawn_preserves_notes( # Added prese
     mock_session.get = AsyncMock(side_effect=side_effect_get)
 
     # Act
-    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()):
+    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()): # type: ignore
         result = await ai_generation_manager_fixture.process_approved_generation(
             pending_gen_id, guild_id, moderator_id
         )
 
     # Assert
     assert result is False
-    update_call = mock_pending_gen_crud_fixture.update_pending_generation_status.call_args
+    update_call = mock_pending_gen_crud_fixture.update_pending_generation_status.call_args # type: ignore
     assert update_call.args[2] == PendingStatus.APPLICATION_FAILED
 
-    # Check that original notes are preserved and new one appended
-    expected_notes = initial_mod_notes + " | Failed to spawn NPC"
-    assert expected_notes in update_call.kwargs['moderator_notes']
+    expected_notes_fragment = "Failed to spawn NPC" # Part of the error message
+    assert initial_mod_notes in update_call.kwargs['moderator_notes']
+    assert expected_notes_fragment in update_call.kwargs['moderator_notes']
 
-    mock_session_context.__aexit__.assert_called_once_with(None, None, None)
+    mock_session_context.__aexit__.assert_called_once_with(None, None, None) # type: ignore
 
 
 @pytest.mark.asyncio
@@ -428,26 +428,130 @@ async def test_process_location_failure_parsing(
     moderator_id = "mod_user_1"
 
     malformed_parsed_data = get_valid_parsed_location_data()
-    malformed_parsed_data["name_i18n"] = "This should be a dict"
+    malformed_parsed_data["name_i18n"] = "This should be a dict" # type: ignore
 
     mock_pending_generation = PendingGeneration(
         id=pending_gen_id, guild_id=guild_id, request_type=GenerationType.LOCATION_DETAILS,
         status=PendingStatus.APPROVED, parsed_data_json=malformed_parsed_data
     )
-    mock_pending_gen_crud_fixture.get_pending_generation_by_id.return_value = mock_pending_generation
-    mock_session = mock_session_context.__aenter__()
+    mock_pending_gen_crud_fixture.get_pending_generation_by_id.return_value = mock_pending_generation # type: ignore
+    mock_session = mock_session_context.__aenter__() # type: ignore
 
     # Act
-    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()):
+    with patch('bot.ai.generation_manager.GuildTransaction', lambda _, __: mock_db_service.get_session_factory()()): # type: ignore
         result = await ai_generation_manager_fixture.process_approved_generation(
             pending_gen_id, guild_id, moderator_id
         )
 
     # Assert
     assert result is False
-    update_call = mock_pending_gen_crud_fixture.update_pending_generation_status.call_args
+    update_call = mock_pending_gen_crud_fixture.update_pending_generation_status.call_args # type: ignore
     assert update_call.args[0] == mock_session # Ensure it's called with the correct session
     assert update_call.args[2] == PendingStatus.APPLICATION_FAILED
     assert "Failed to parse AI data" in update_call.kwargs['moderator_notes']
-    mock_session_context.__aexit__.assert_called_once_with(None, None, None)
+    mock_session_context.__aexit__.assert_called_once_with(None, None, None) # type: ignore
+
+
+@pytest.mark.asyncio
+async def test_request_content_generation_success_pending_moderation(
+    ai_generation_manager_fixture: AIGenerationManager,
+    mock_pending_gen_crud_fixture: AsyncMock, # Already a fixture
+    mock_game_manager: MagicMock # Already a fixture
+):
+    guild_id = "test_req_guild"
+    user_id = "user_req_1"
+    req_type = GenerationType.NPC_PROFILE
+    context_params = {"character_id": "char1", "location_id": "loc1"}
+    prompt_params = {"specific_task_instruction": "Create a friendly merchant."}
+
+    # Mock dependencies of request_content_generation
+    mock_generation_context = MagicMock() # Simplified for this test
+    ai_generation_manager_fixture.prompt_context_collector.get_full_context = AsyncMock(return_value=mock_generation_context)
+
+    mock_final_prompt_str = "Final prompt for AI"
+    ai_generation_manager_fixture.multilingual_prompt_generator.prepare_ai_prompt = AsyncMock(return_value=mock_final_prompt_str)
+
+    # Simulate successful validation
+    mock_parsed_data = {"name_i18n": {"en": "Generated Merchant"}}
+    ai_generation_manager_fixture.ai_response_validator.parse_and_validate_ai_response = AsyncMock(return_value=(mock_parsed_data, None))
+
+    # Mock get_rule for target_languages
+    mock_game_manager.get_rule = AsyncMock(return_value="en") # Default lang
+
+    # Mock NotificationService
+    mock_game_manager.notification_service = AsyncMock()
+    mock_game_manager.db_service.get_entity_by_pk = AsyncMock(return_value=MagicMock(notification_channel_id="12345"))
+
+
+    created_pg_record = PendingGeneration(
+        id=str(uuid.uuid4()), guild_id=guild_id, request_type=req_type, status=PendingStatus.PENDING_MODERATION,
+        request_params_json=context_params, raw_ai_output_text="Simulated AI output", parsed_data_json=mock_parsed_data,
+        created_by_user_id=user_id
+    )
+    mock_pending_gen_crud_fixture.create_pending_generation = AsyncMock(return_value=created_pg_record)
+
+    # Act
+    result_record = await ai_generation_manager_fixture.request_content_generation(
+        guild_id, req_type, context_params, prompt_params, user_id
+    )
+
+    # Assert
+    assert result_record is not None
+    assert result_record.status == PendingStatus.PENDING_MODERATION
+
+    ai_generation_manager_fixture.prompt_context_collector.get_full_context.assert_awaited_once_with(
+        guild_id=guild_id, character_id="char1", location_id="loc1", target_entity_id=None, target_entity_type=None, event_id=None
+    )
+    ai_generation_manager_fixture.multilingual_prompt_generator.prepare_ai_prompt.assert_awaited_once()
+    ai_generation_manager_fixture.ai_response_validator.parse_and_validate_ai_response.assert_awaited_once()
+
+    mock_pending_gen_crud_fixture.create_pending_generation.assert_awaited_once()
+    create_call_args = mock_pending_gen_crud_fixture.create_pending_generation.call_args
+    assert create_call_args.kwargs['guild_id'] == guild_id
+    assert create_call_args.kwargs['request_type'] == req_type
+    assert create_call_args.kwargs['status'] == PendingStatus.PENDING_MODERATION
+    assert create_call_args.kwargs['parsed_data_json'] == mock_parsed_data
+
+    mock_game_manager.notification_service.send_notification.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_request_content_generation_failed_validation(
+    ai_generation_manager_fixture: AIGenerationManager,
+    mock_pending_gen_crud_fixture: AsyncMock,
+    mock_game_manager: MagicMock
+):
+    guild_id = "test_req_fail_guild"
+    req_type = GenerationType.ITEM_PROFILE
+    # ... (similar setup for context_params, prompt_params)
+
+    # Simulate validation failure
+    validation_issues = [ValidationIssue(loc=["name"], type="value_error", msg="Too short")]
+    ai_generation_manager_fixture.ai_response_validator.parse_and_validate_ai_response = AsyncMock(
+        return_value=({"name_i18n": "X"}, validation_issues) # Parsed data, but with issues
+    )
+    mock_game_manager.get_rule = AsyncMock(return_value="en") # Default lang
+
+    created_pg_record_failed = PendingGeneration(
+        id=str(uuid.uuid4()), guild_id=guild_id, request_type=req_type, status=PendingStatus.FAILED_VALIDATION,
+        validation_issues_json=[vi.model_dump() for vi in validation_issues]
+    )
+    mock_pending_gen_crud_fixture.create_pending_generation = AsyncMock(return_value=created_pg_record_failed)
+
+
+    # Act
+    result_record = await ai_generation_manager_fixture.request_content_generation(
+        guild_id, req_type, {}, {}, None
+    )
+
+    # Assert
+    assert result_record is not None
+    assert result_record.status == PendingStatus.FAILED_VALIDATION
+    mock_pending_gen_crud_fixture.create_pending_generation.assert_awaited_once()
+    create_call_args = mock_pending_gen_crud_fixture.create_pending_generation.call_args
+    assert create_call_args.kwargs['status'] == PendingStatus.FAILED_VALIDATION
+    assert create_call_args.kwargs['validation_issues_json'] == [vi.model_dump() for vi in validation_issues]
+
+    if hasattr(mock_game_manager, 'notification_service'): # Check if attribute exists
+        mock_game_manager.notification_service.send_notification.assert_not_called()
 

@@ -1,85 +1,165 @@
-import unittest
-from typing import Dict, Any
-# Adjust import path based on where the test file is relative to the bot package
-# Assuming tests/ is at the same level as bot/
-import sys
-import os
+# tests/utils/test_i18n_utils.py
+import pytest
+from unittest.mock import MagicMock, patch
+import json # Добавил json для MOCK_TRANSLATIONS_FILE_CONTENT
 
-# Add the project root to the Python path to allow imports from 'bot'
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+from bot.utils.i18n_utils import get_entity_localized_text
 
-from bot.utils.i18n_utils import get_i18n_text
+# Простой мок для сущности с i18n полями
+class MockEntity:
+    def __init__(self, name_i18n=None, description_i18n=None, title_i18n=None):
+        if name_i18n is not None:
+            self.name_i18n = name_i18n
+        if description_i18n is not None:
+            self.description_i18n = description_i18n
+        if title_i18n is not None: # Для примера другого поля
+            self.title_i18n = title_i18n
 
-class TestGetI18nText(unittest.TestCase):
+def test_get_entity_localized_text_exact_match():
+    entity = MockEntity(name_i18n={"en": "Hello", "ru": "Привет"})
+    assert get_entity_localized_text(entity, "name_i18n", "ru") == "Привет"
+    assert get_entity_localized_text(entity, "name_i18n", "en") == "Hello"
 
-    def test_fetch_primary_language(self):
-        data = {"name_i18n": {"en": "Hello", "es": "Hola"}}
-        self.assertEqual(get_i18n_text(data, "name", "en", "es"), "Hello")
-        self.assertEqual(get_i18n_text(data, "name", "es", "en"), "Hola")
+def test_get_entity_localized_text_fallback_to_default():
+    entity = MockEntity(description_i18n={"en": "Description", "de": "Beschreibung"})
+    assert get_entity_localized_text(entity, "description_i18n", "ru", default_lang="en") == "Description"
 
-    def test_fallback_to_default_language(self):
-        data = {"name_i18n": {"en": "Hello", "es": "Hola"}}
-        self.assertEqual(get_i18n_text(data, "name", "fr", "en"), "Hello") # fr not present, fallback to en
-        self.assertEqual(get_i18n_text(data, "name", "de", "es"), "Hola") # de not present, fallback to es
+def test_get_entity_localized_text_fallback_to_first_available():
+    entity = MockEntity(title_i18n={"de": "Titel", "fr": "Titre"})
+    # Порядок в словарях Python 3.7+ сохраняется, но для надежности лучше не полагаться на "первый" без сортировки.
+    # Однако, текущая реализация get_entity_localized_text использует next(iter(i18n_data.values())),
+    # что вернет значение для одного из ключей.
+    result = get_entity_localized_text(entity, "title_i18n", "es", default_lang="it")
+    assert result in ["Titel", "Titre"]
 
-    def test_fallback_to_first_available(self):
-        data1 = {"title_i18n": {"fr": "Bonjour", "de": "Guten Tag"}}
-        # Request 'it', default 'en' (neither present), should pick first from title_i18n (fr or de)
-        # Order of items in dict prior to Python 3.7 is not guaranteed.
-        # For 3.7+ it's insertion order. Let's assume 'fr' is "first" for this test.
-        # To make it robust, we check if it's one of the available ones.
-        self.assertIn(get_i18n_text(data1, "title", "it", "en"), ["Bonjour", "Guten Tag"])
+def test_get_entity_localized_text_lang_and_default_not_found():
+    entity = MockEntity(name_i18n={"de": "Hallo"})
+    # Попытка получить "es", фолбэк на "en", но есть только "de"
+    # Должен вернуть значение для "de" как единственное доступное
+    assert get_entity_localized_text(entity, "name_i18n", "es", default_lang="en") == "Hallo"
 
-        data2 = {"text_i18n": {"ru": "Привет"}}
-        self.assertEqual(get_i18n_text(data2, "text", "en", "fr"), "Привет")
+def test_get_entity_localized_text_field_not_present():
+    entity = MockEntity(name_i18n={"en": "Name"})
+    assert get_entity_localized_text(entity, "non_existent_i18n_field", "en") is None
 
+def test_get_entity_localized_text_i18n_data_is_none():
+    entity = MockEntity(name_i18n=None)
+    assert get_entity_localized_text(entity, "name_i18n", "en") is None
 
-    def test_fallback_to_plain_field(self):
-        data1 = {"name": "Plain Name"} # No name_i18n
-        self.assertEqual(get_i18n_text(data1, "name", "en", "es"), "Plain Name")
+def test_get_entity_localized_text_i18n_data_is_empty_dict():
+    entity = MockEntity(name_i18n={})
+    assert get_entity_localized_text(entity, "name_i18n", "en") is None
 
-        data2 = {"description_i18n": {}, "description": "Plain Description"} # Empty i18n dict
-        self.assertEqual(get_i18n_text(data2, "description", "en", "es"), "Plain Description")
+def test_get_entity_localized_text_entity_is_none():
+    assert get_entity_localized_text(None, "name_i18n", "en") is None
 
-        data3 = {"info_i18n": "not a dict", "info": "Plain Info"} # Malformed i18n field
-        self.assertEqual(get_i18n_text(data3, "info", "en", "es"), "Plain Info")
+def test_get_entity_localized_text_non_dict_i18n_data():
+    entity = MagicMock()
+    entity.name_i18n = "Just a string" # Не словарь
+    assert get_entity_localized_text(entity, "name_i18n", "en") is None
 
-    def test_handling_missing_fields(self):
-        data = {"name_i18n": {"en": "Hello"}}
-        self.assertEqual(get_i18n_text(data, "unknown_field", "en"), "unknown_field not found")
+def test_get_entity_localized_text_default_lang_used_when_lang_missing():
+    entity = MockEntity(name_i18n={"en": "Hello English", "ru": "Привет Русский"})
+    assert get_entity_localized_text(entity, "name_i18n", "de", default_lang="ru") == "Привет Русский"
 
-    def test_handling_empty_or_none_data(self):
-        self.assertEqual(get_i18n_text({}, "name", "en"), "name not found (empty data)")
-        self.assertEqual(get_i18n_text(None, "name", "en"), "name not found (empty data)")
+def test_get_entity_localized_text_no_matching_keys_returns_none():
+    entity = MockEntity(name_i18n={"fr": "Bonjour"})
+    # Запрашиваем 'es', по умолчанию 'it', есть только 'fr'. Должен вернуть "Bonjour" из-за `next(iter(i18n_data.values()))`
+    assert get_entity_localized_text(entity, "name_i18n", "es", default_lang="it") == "Bonjour"
 
-    def test_i18n_dict_exists_but_no_matching_lang_and_no_plain_field(self):
-        data = {"name_i18n": {"fr": "Bonjour"}}
-        # lang 'en', default_lang 'es' -> neither in name_i18n. Falls back to first in name_i18n.
-        self.assertEqual(get_i18n_text(data, "name", "en", "es"), "Bonjour")
-        # If name_i18n was empty, and no plain 'name', it would be "name not found"
-        data_empty_i18n = {"name_i18n": {}}
-        self.assertEqual(get_i18n_text(data_empty_i18n, "name", "en", "es"), "name not found")
+    # Чтобы проверить None, если нет совпадений и нет "первого доступного" (т.е. пустой словарь)
+    entity_empty = MockEntity(name_i18n={})
+    assert get_entity_localized_text(entity_empty, "name_i18n", "es", default_lang="it") is None
 
-    def test_i18n_field_not_dict_no_plain_field(self):
-        data = {"name_i18n": "just a string"}
-        self.assertEqual(get_i18n_text(data, "name", "en", "es"), "name not found")
+# Тесты для функции get_localized_string (если она также используется для локализации данных локаций)
+# На данный момент, она загружает из файлов, а не из полей сущности.
+# Если она будет использоваться для форматирования строк, полученных из get_entity_localized_text,
+# то тесты на форматирование могут быть здесь.
 
-    def test_complex_item_examples(self):
-        complex_item = {
-            "id": "sword_001",
-            "name_i18n": {"en": "Magic Sword", "ru": "Волшебный Меч"},
-            "description_i18n": {"en": "A sword pulsing with arcane energy.", "ru": "Меч, пульсирующий тайной энергией."},
-            "type": "weapon",
-        }
-        self.assertEqual(get_i18n_text(complex_item, 'name', 'en', 'ru'), "Magic Sword")
-        self.assertEqual(get_i18n_text(complex_item, 'name', 'ru', 'en'), "Волшебный Меч")
-        self.assertEqual(get_i18n_text(complex_item, 'name', 'fr', 'en'), "Magic Sword") # Fallback to default_lang 'en'
-        self.assertEqual(get_i18n_text(complex_item, 'description', 'ru', 'en'), "Меч, пульсирующий тайной энергией.")
-        self.assertEqual(get_i18n_text(complex_item, 'type', 'en', 'ru'), "weapon") # Plain field
-        self.assertEqual(get_i18n_text(complex_item, 'color', 'en', 'ru'), "color not found") # Missing field
+# Пример, если бы мы тестировали load_translations и get_localized_string
+# Для этого нужно мокнуть open и json.load
+MOCK_TRANSLATIONS_FILE_CONTENT = {
+    "en": {
+        "location.welcome": "Welcome to {location_name}!",
+        "location.danger": "Be careful, danger lurks here."
+    },
+    "ru": {
+        "location.welcome": "Добро пожаловать в {location_name}!",
+        "location.danger": "Осторожно, здесь таится опасность."
+    }
+}
 
+@patch("builtins.open", new_callable=MagicMock) # Используем MagicMock напрямую для mock_open
+@patch("json.load")
+@patch("os.path.exists", return_value=True) # Предполагаем, что файл существует
+def test_get_localized_string_loaded_from_file(mock_exists, mock_json_load, mock_file_open_builtin, monkeypatch):
+    # Настраиваем mock_open, чтобы он вел себя как файловый объект
+    mock_file_open_builtin.return_value.__enter__.return_value.read.return_value = json.dumps(MOCK_TRANSLATIONS_FILE_CONTENT)
+    mock_json_load.return_value = MOCK_TRANSLATIONS_FILE_CONTENT
 
-if __name__ == '__main__':
-    unittest.main()
+    # Перезагружаем переводы, так как они могли быть загружены при импорте модуля
+    from bot.utils import i18n_utils # Импорт внутри, чтобы повлиять на _loaded
+
+    # Сохраняем и восстанавливаем исходные значения, чтобы не влиять на другие тесты
+    original_translations = i18n_utils._translations
+    original_loaded = i18n_utils._loaded
+    original_i18n_files = i18n_utils._i18n_files
+
+    i18n_utils._translations = {}
+    i18n_utils._loaded = False
+    # Указываем, какой файл должен быть "загружен"
+    # Этот путь должен соответствовать тому, что ожидает `load_translations` внутри
+    # Если `_i18n_files` не меняется, то `load_translations` будет пытаться загрузить стандартные файлы.
+    # Для этого теста лучше явно указать, какой файл мокается.
+    # Пусть `load_translations` вызовется с путем, который мы мокаем.
+    # Однако, `load_translations` вызывается без аргументов при первом вызове `get_localized_string`.
+    # Поэтому мы мокаем `_i18n_files`
+    monkeypatch.setattr(i18n_utils, '_i18n_files', ["dummy_path/feedback_i18n.json"])
+
+    # Первый вызов get_localized_string вызовет load_translations
+    welcome_en = i18n_utils.get_localized_string("location.welcome", "en", location_name="Tavern")
+    assert welcome_en == "Welcome to Tavern!"
+    # Проверяем, что open был вызван с ожидаемым путем из _i18n_files
+    mock_file_open_builtin.assert_called_with("dummy_path/feedback_i18n.json", 'r', encoding='utf-8')
+
+    welcome_ru = i18n_utils.get_localized_string("location.welcome", "ru", location_name="Таверна")
+    assert welcome_ru == "Добро пожаловать в Таверна!"
+
+    danger_de_fallback_en = i18n_utils.get_localized_string("location.danger", "de", default_lang="en")
+    assert danger_de_fallback_en == "Be careful, danger lurks here."
+
+    non_existent_key = i18n_utils.get_localized_string("non.existent.key", "en")
+    assert non_existent_key == "non.existent.key" # Возвращает ключ, если не найден
+
+    # Восстанавливаем исходные значения
+    monkeypatch.setattr(i18n_utils, '_translations', original_translations)
+    monkeypatch.setattr(i18n_utils, '_loaded', original_loaded)
+    monkeypatch.setattr(i18n_utils, '_i18n_files', original_i18n_files)
+
+# Исправляем использование mock_open из unittest.mock, если pytest.helpers.mock_open недоступен
+# или если хотим использовать стандартный mock_open.
+from unittest.mock import mock_open as unittest_mock_open
+
+@patch("builtins.open", new_callable=unittest_mock_open) # Используем unittest.mock.mock_open
+@patch("json.load")
+@patch("os.path.exists", return_value=True)
+def test_get_localized_string_loaded_from_file_unittest_mock(mock_exists, mock_json_load, mock_file_open_builtin, monkeypatch):
+    mock_file_open_builtin.return_value.read.return_value = json.dumps(MOCK_TRANSLATIONS_FILE_CONTENT)
+    mock_json_load.return_value = MOCK_TRANSLATIONS_FILE_CONTENT
+
+    from bot.utils import i18n_utils
+    original_translations = i18n_utils._translations
+    original_loaded = i18n_utils._loaded
+    original_i18n_files = i18n_utils._i18n_files
+
+    i18n_utils._translations = {}
+    i18n_utils._loaded = False
+    monkeypatch.setattr(i18n_utils, '_i18n_files', ["dummy_path_unittest/feedback_i18n.json"])
+
+    welcome_en = i18n_utils.get_localized_string("location.welcome", "en", location_name="Tavern")
+    assert welcome_en == "Welcome to Tavern!"
+    mock_file_open_builtin.assert_called_with("dummy_path_unittest/feedback_i18n.json", 'r', encoding='utf-8')
+
+    monkeypatch.setattr(i18n_utils, '_translations', original_translations)
+    monkeypatch.setattr(i18n_utils, '_loaded', original_loaded)
+    monkeypatch.setattr(i18n_utils, '_i18n_files', original_i18n_files)

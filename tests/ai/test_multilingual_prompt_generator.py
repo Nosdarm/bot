@@ -135,68 +135,155 @@ class TestMultilingualPromptGenerator(unittest.TestCase):
         # Configure get_full_context to be called by the generator method
         # The mock_context_collector is already set up to return self.sample_generation_context
         # We might want to customize the context per test if needed, by re-patching the return_value
+        # For specific generators, they now directly call self.context_collector.get_full_context
+        # So, we'll mock that call within each test.
+
+        self.mock_context_collector.get_full_context.reset_mock() # Reset before each specific generator test
+        # The mock_context_collector.get_full_context is already set up to return self.sample_generation_context
+        # We can override this per test if a different GenerationContext is needed for a specific prompt type.
 
         generator_method = getattr(self.prompt_generator, generator_method_name)
 
-        # If the generator method itself calls get_full_context:
-        # self.mock_context_collector.get_full_context.reset_mock() # Reset if called multiple times
-        # result_prompts = await generator_method(guild_id="test_guild", **request_params)
+        # The specific generator methods (e.g., generate_npc_profile_prompt) now internally call
+        # self.context_collector.get_full_context and then self._build_full_prompt_for_openai.
+        # The request_params passed to _test_specific_generator are part of what's passed to get_full_context.
 
-        # Current structure: specific generators build a task string and call _build_full_prompt_for_openai
-        # which takes context_data as an argument. The specific generators get this context_data
-        # by calling self.context_collector.get_full_context.
+        # Example: generate_npc_profile_prompt takes GenerationContext as input
+        # We need to ensure that the GenerationContext passed to it (or used by it) is correct.
+        # The refactored specific generators (e.g., generate_npc_profile_prompt) now take GenerationContext directly.
+        # The `await generator_method(guild_id="test_guild", **request_params)` pattern is for the old `prepare_ai_prompt` style.
 
-        result_prompts = await generator_method(guild_id="test_guild", **request_params)
+        # For the new structure, we pass GenerationContext to the specific generators.
+        # The test for these generators should verify the task_prompt string they create,
+        # and then separately test _build_full_prompt_for_openai.
+        # However, the prompt in the problem asks to test `prepare_ai_prompt` and ensure context is correct.
+        # The specific `generate_..._prompt` methods in the provided code *do* call `_build_full_prompt_for_openai`
+        # and take `GenerationContext` as an argument.
+        # It seems `prepare_ai_prompt` is the more generic one to test for context collection.
+
+        # Let's assume _test_specific_generator is testing the output of methods like `generate_npc_profile_prompt(self, generation_context: GenerationContext)`
+        # So, `request_params` here are actually used to form the `generation_context` that is passed.
+        # For these tests, we'll use the self.sample_generation_context and modify its request_params if needed.
+
+        current_test_context = self.sample_generation_context.model_copy(deep=True) # Use model_copy for Pydantic v2
+        current_test_context.request_params = request_params
+
+        result_prompts = generator_method(generation_context=current_test_context) # Pass the context
+
+        # Assert that get_full_context was NOT called directly by these specific generators anymore,
+        # as they now receive GenerationContext as an argument.
+        # This assertion is tricky if the helper _test_specific_generator is too generic.
+        # The main thing is that the `user_prompt` part of `result_prompts` is correct.
 
         self.assertIn("system", result_prompts)
         self.assertIn("user", result_prompts)
-
         user_prompt = result_prompts["user"]
-        # Check for general instructions
-        self.assertIn("Use the <game_context> data extensively", user_prompt)
-        self.assertIn("game_terms_dictionary", user_prompt)
-        self.assertIn("scaling_parameters", user_prompt)
-        self.assertIn("multilingual JSON object format", user_prompt) # This is in system prompt, but task can reiterate
 
+        # Check that the specific task prompt part is correct
         for keyword in expected_keywords:
             self.assertIn(keyword, user_prompt)
-
         for field in expected_fields:
-            self.assertIn(field, user_prompt) # Check if field names are mentioned in the task
+            self.assertIn(field, user_prompt)
+
+        # Check that the <game_context> was embedded
+        self.assertIn("<game_context>", user_prompt)
+        # Pydantic v1 uses .json(), v2 uses .model_dump_json()
+        if hasattr(current_test_context, 'model_dump_json'):
+            expected_context_json = current_test_context.model_dump_json(indent=2, exclude_none=True)
+        else:
+            expected_context_json = current_test_context.json(indent=2, exclude_none=True) # type: ignore
+        self.assertIn(expected_context_json, user_prompt)
+
 
     async def test_generate_npc_profile_prompt(self):
-        await self._test_specific_generator(
-            "generate_npc_profile_prompt",
-            {"npc_id_idea": "strong_warrior_npc", "player_level_override": 10},
-            expected_keywords=["NPC profile", "archetype", "backstory", "stats based on scaling parameters"],
-            expected_fields=["name_i18n", "description_i18n", "archetype", "level", "stats", "skills", "inventory", "faction_affiliations", "visual_description_i18n"]
-        )
+        # This method now takes GenerationContext. We use self.sample_generation_context.
+        # The request_params for NPC idea would be part of this context.
+        context = self.sample_generation_context.model_copy(deep=True)
+        context.request_params = {"npc_id_idea": "strong_warrior_npc"}
+        # The target_languages for the prompt are derived from context.target_languages
+
+        # No await needed as it's not an async method anymore
+        prompts = self.prompt_generator.generate_npc_profile_prompt(context)
+
+        self.assertIn("NPC Identifier/Concept: strong_warrior_npc", prompts["user"])
+        self.assertIn("`name_i18n`: {\"en\": \"...\", \"ru\": \"...\"}", prompts["user"]) # Check lang example
+        self.assertIn("`stats`: A dictionary", prompts["user"])
+
 
     async def test_generate_quest_prompt(self):
-        await self._test_specific_generator(
-            "generate_quest_prompt",
-            {"quest_idea": "a lost artifact retrieval", "triggering_entity_id": "player1"},
-            expected_keywords=["quest design", "objectives", "rewards", "suggested_level according to scaling"],
-            expected_fields=["title_i18n", "description_i18n", "suggested_level", "stages", "rewards_i18n", "quest_giver_id"]
-        )
+        context = self.sample_generation_context.model_copy(deep=True)
+        context.request_params = {"quest_idea": "a lost artifact retrieval"}
+        prompts = self.prompt_generator.generate_quest_prompt(context)
+        self.assertIn("Quest Idea/Trigger: a lost artifact retrieval", prompts["user"])
+        self.assertIn("`name_i18n`: {\"en\": \"...\", \"ru\": \"...\"}", prompts["user"])
+        self.assertIn("`steps`: An array of step objects", prompts["user"])
+        self.assertIn("`required_mechanics_json`: string", prompts["user"])
 
     async def test_generate_item_description_prompt(self):
-        item_properties_example = {"material": "steel", "damage_type": "slashing"}
-        await self._test_specific_generator(
-            "generate_item_description_prompt",
-            {"item_name": "Sword of Flames", "item_type": "weapon", "rarity": "rare", "properties": item_properties_example},
-            expected_keywords=["item description", "game world lore", "visual details", "functional properties"],
-            expected_fields=["description_i18n", "flavor_text_i18n"] # The method primarily generates descriptions
-        )
+        context = self.sample_generation_context.model_copy(deep=True)
+        context.request_params = {"item_idea": "Sword of Flames"}
+        prompts = self.prompt_generator.generate_item_description_prompt(context)
+        self.assertIn("Item Idea/Keywords: Sword of Flames", prompts["user"])
+        self.assertIn("`name_i18n`: {\"en\": \"...\", \"ru\": \"...\"}", prompts["user"])
+        self.assertIn("`item_type`: string", prompts["user"])
+        self.assertIn("`base_price`", prompts["user"]) # Check for base_price mention
 
     async def test_generate_location_description_prompt(self):
-        entities_present = ["npc_merchant", "player_hero"]
-        await self._test_specific_generator(
-            "generate_location_description_prompt",
-            {"location_name": "Old Mill", "location_type": "building", "atmosphere": "eerie", "entities_present_ids": entities_present},
-            expected_keywords=["location description", "sensory details", "points of interest", "atmosphere"],
-            expected_fields=["description_i18n", "interactive_elements_i18n"] # Example fields expected for location
+        context = self.sample_generation_context.model_copy(deep=True)
+        context.request_params = {"location_idea": "Old Mill"}
+        prompts = self.prompt_generator.generate_location_description_prompt(context)
+        self.assertIn("Location Idea/Current Location ID (if updating): Old Mill", prompts["user"])
+        self.assertIn("`name_i18n`: {\"en\": \"...\", \"ru\": \"...\"}", prompts["user"])
+        self.assertIn("`atmospheric_description_i18n`", prompts["user"])
+        self.assertIn("`points_of_interest`", prompts["user"])
+
+    async def test_prepare_ai_prompt_generic(self):
+        """ Test the generic prepare_ai_prompt method. """
+        guild_id = "test_guild"
+        location_id = "loc1"
+        specific_task = "Describe the weather."
+        player_id = "player1"
+
+        # get_full_context is already mocked in setUp to return self.sample_generation_context
+        # We need to ensure it's called with the correct parameters by prepare_ai_prompt.
+        self.mock_context_collector.get_full_context.reset_mock() # Reset from setUp
+
+        user_prompt_str = await self.prompt_generator.prepare_ai_prompt(
+            guild_id=guild_id,
+            location_id=location_id,
+            specific_task_instruction=specific_task,
+            player_id=player_id,
+            additional_request_params={"mood": "gloomy"}
         )
+
+        self.mock_context_collector.get_full_context.assert_awaited_once()
+        call_args = self.mock_context_collector.get_full_context.call_args
+
+        self.assertEqual(call_args.kwargs['guild_id'], guild_id)
+        self.assertEqual(call_args.kwargs['request_type'], "player_specific_task") # Since player_id is provided
+
+        expected_request_params = {
+            "location_id": location_id,
+            "player_id": player_id,
+            "mood": "gloomy", # from additional_request_params
+            "event": { # Added by prepare_ai_prompt
+                "type": "player_specific_task",
+                "specific_task_instruction": specific_task,
+                "player_id": player_id
+            }
+        }
+        self.assertEqual(call_args.kwargs['request_params'], expected_request_params)
+        self.assertEqual(call_args.kwargs['target_entity_id'], player_id)
+        self.assertEqual(call_args.kwargs['target_entity_type'], "character")
+
+        self.assertIn(specific_task, user_prompt_str)
+        self.assertIn("<game_context>", user_prompt_str)
+        # Pydantic v1 uses .json(), v2 uses .model_dump_json()
+        if hasattr(self.sample_generation_context, 'model_dump_json'):
+            expected_context_json = self.sample_generation_context.model_dump_json(indent=2, exclude_none=True)
+        else:
+            expected_context_json = self.sample_generation_context.json(indent=2, exclude_none=True) # type: ignore
+        self.assertIn(expected_context_json, user_prompt_str)
 
 if __name__ == '__main__':
     unittest.main()

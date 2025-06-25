@@ -251,16 +251,20 @@ class RPGCharacter(Base): # This seems like a different style of model, maybe fr
     level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     health: Mapped[int] = mapped_column(Integer, nullable=False)
     mana: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[str] = mapped_column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True) # ADDED guild_id
     created_at: Mapped[datetime.datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now()) # type: ignore
     updated_at: Mapped[datetime.datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()) # type: ignore
 
+    guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # ADDED relationship
+
     __table_args__ = (
+        Index('idx_rpgcharacter_guild_id', 'guild_id'), # ADDED index for guild_id
         CheckConstraint('level >= 0', name='check_level_non_negative'),
         CheckConstraint('health >= 0', name='check_health_non_negative'),
         CheckConstraint('mana >= 0', name='check_mana_non_negative'),
     )
 
     def __repr__(self):
-        return f"<RPGCharacter(id={self.id}, name='{self.name}', class_name='{self.class_name}')>"
+        return f"<RPGCharacter(id={self.id}, name='{self.name}', class_name='{self.class_name}', guild_id='{self.guild_id}')>"
 
 # Removed the import datetime from the end as it's now at the top.
