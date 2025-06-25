@@ -47,9 +47,10 @@ class TurnProcessor:
                 # This might involve RuleEngine loading it if not already cached for the guild.
                 # For now, let's assume RuleEngine has a property or method for this.
                 # This part might need adjustment based on RuleEngine's exact API.
-                rules_config_data = await self.game_manager.rule_engine.get_rules_config(guild_id) # Expects CoreGameRulesConfig Pydantic model
+                # rules_config_data = await self.game_manager.rule_engine.get_rules_config(guild_id) # Expects CoreGameRulesConfig Pydantic model
+                rules_config_data = await self.game_manager.get_core_rules_config_for_guild(guild_id) # Use the new method
                 if not rules_config_data:
-                    logger.error(f"TurnProcessor: Failed to load RuleConfig for guild {guild_id}. Cannot process turns with conflict resolution.")
+                    logger.error(f"TurnProcessor: Failed to load CoreGameRulesConfig for guild {guild_id}. Cannot process turns with conflict resolution.")
                     return
 
                 # Fetch characters who have submitted actions

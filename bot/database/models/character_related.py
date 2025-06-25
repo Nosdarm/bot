@@ -104,8 +104,8 @@ class Character(Base):
     current_party_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey('parties.id', name='fk_character_current_party'), nullable=True, index=True)
 
     player_account: Mapped["Player"] = relationship("Player", back_populates="characters", foreign_keys=[player_id])
-    current_location: Mapped[Optional["Location"]] = relationship("Location", foreign_keys=[current_location_id], lazy="joined") # type: ignore
-    current_party: Mapped[Optional["Party"]] = relationship("Party", foreign_keys=[current_party_id], lazy="joined") # type: ignore
+    current_location: Mapped[Optional["Location"]] = relationship("Location", foreign_keys=[current_location_id], lazy="select") # type: ignore
+    current_party: Mapped[Optional["Party"]] = relationship("Party", foreign_keys=[current_party_id], lazy="select") # type: ignore
 
     guild_config: Mapped["GuildConfig"] = relationship(foreign_keys=[guild_id]) # Assuming GuildConfig has a backref
 

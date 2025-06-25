@@ -81,6 +81,8 @@ if TYPE_CHECKING:
     from bot.game.managers.faction_manager import FactionManager
     from bot.game.services.location_interaction_service import LocationInteractionService
     # AIGenerationService already imported
+    from bot.ai.rules_schema import CoreGameRulesConfig # Added for new method
+    from pydantic import ValidationError # Added for new method
 
 logger = logging.getLogger(__name__)
 logger.debug("--- Начинается загрузка: game_manager.py")
@@ -769,26 +771,71 @@ class GameManager:
             return None
 
         try:
-            # Assuming rule_engine has a method to get the fully loaded CoreGameRulesConfig
-            # This matches the assumption made when designing this method.
-            # If RuleEngine stores it as a direct attribute (e.g., self.rule_engine.core_config_data after parsing),
-            # this would be: rules_config = self.rule_engine.core_config_data.get(guild_id) or self.rule_engine.core_config_data
-            # For now, proceeding with get_rules_config as an async method on RuleEngine.
-            rules_config = await self.rule_engine.get_rules_config(guild_id)
+            # This method now correctly uses get_core_rules_config_for_guild
+            rules_config_model = await self.get_core_rules_config_for_guild(guild_id)
 
-            if rules_config and rules_config.location_type_definitions:
-                i18n_map = rules_config.location_type_definitions.get(type_key)
+            if rules_config_model and rules_config_model.location_type_definitions:
+                i18n_map = rules_config_model.location_type_definitions.get(type_key)
                 if i18n_map is None:
                     logger.warning(f"Location type key '{type_key}' not found in location_type_definitions for guild {guild_id}. Definitions are present but key is missing.")
                 return i18n_map
-            elif rules_config:
+            elif rules_config_model: # Model exists but definitions are missing
                 logger.warning(f"location_type_definitions not found in CoreGameRulesConfig for guild {guild_id}.")
-            else:
-                logger.warning(f"CoreGameRulesConfig not loaded for guild {guild_id}.")
+            else: # Model itself couldn't be loaded/parsed
+                logger.warning(f"CoreGameRulesConfig (parsed model) not available for guild {guild_id} when fetching location type definitions.")
         except Exception as e:
             logger.error(f"Error retrieving location type definitions for guild {guild_id}, key '{type_key}': {e}", exc_info=True)
 
         return None
+
+    async def get_core_rules_config_for_guild(self, guild_id: str) -> Optional[CoreGameRulesConfig]:
+        """
+        Loads (if necessary) and returns the CoreGameRulesConfig Pydantic model for a guild.
+        Returns None if rules cannot be loaded or parsed.
+        """
+        if guild_id not in self._rules_config_cache:
+            await self._load_or_initialize_rules_config(guild_id)
+
+        raw_rules_dict = self._rules_config_cache.get(guild_id)
+        if not raw_rules_dict:
+            logger.warning(f"GameManager: No raw rules dictionary found in cache for guild {guild_id} after load attempt.")
+            return None
+
+        # The raw_rules_dict is expected to be a flat key-value store.
+        # CoreGameRulesConfig Pydantic model expects a nested structure.
+        # We need to ensure the `raw_rules_dict` is structured correctly for Pydantic parsing,
+        # or that Pydantic model can handle a flat dict if that's what `load_rules_config` provides.
+        # For now, assume `raw_rules_dict` is already structured as CoreGameRulesConfig expects.
+        # If `load_rules_config` returns a flat dict where keys are like "checks.example_check_id.dice_formula",
+        # then this parsing will fail. The `MASTER_RULES_CONFIG_STRUCTURE` suggests a nested structure.
+        # The `util_load_rules_config` likely converts the flat DB representation to this nested structure.
+
+        try:
+            # Filter out keys that are not part of CoreGameRulesConfig model to avoid validation errors for extra keys
+            # This assumes that load_rules_config might return a dict with more keys than defined in CoreGameRulesConfig
+            # (e.g. simple key-value pairs like 'default_language').
+            # Pydantic by default ignores extra fields, so this might not be strictly necessary
+            # unless `Config.extra = 'forbid'` is set on CoreGameRulesConfig.
+            # However, it's safer to provide only expected fields if the source dict is "wider".
+
+            # Let's assume raw_rules_dict is ALREADY structured correctly for CoreGameRulesConfig.
+            # If load_rules_config returns a flat dict like {'checks.example_check_id.dice_formula': '1d20', 'default_language': 'en'},
+            # then it needs preprocessing here.
+            # Given the log "Successfully loaded 44 rules for guild", it's likely a flat dict.
+            # The `CoreGameRulesConfig` model expects nested dicts for `checks`, `damage_types` etc.
+            # This part needs careful handling based on what `util_load_rules_config` actually returns.
+
+            # For now, let's try direct parsing. If it fails, we know `raw_rules_dict` structure is the issue.
+            core_config = CoreGameRulesConfig(**raw_rules_dict)
+            return core_config
+        except ValidationError as ve:
+            logger.error(f"GameManager: Pydantic validation error parsing rules for guild {guild_id}: {ve}", exc_info=True)
+            # Log the problematic raw_rules_dict for debugging
+            logger.debug(f"Problematic raw_rules_dict for guild {guild_id}: {raw_rules_dict}")
+            return None
+        except Exception as e:
+            logger.error(f"GameManager: Unexpected error parsing rules for guild {guild_id}: {e}", exc_info=True)
+            return None
 
     async def update_rule_config(self, guild_id: str, key: str, value: Any) -> bool:
         if not self.db_service:
