@@ -10,7 +10,7 @@ from bot.game.managers.character_manager import CharacterManager, UpdateHealthRe
 import bot.game.managers.character_manager as character_manager_module # For logger patching
 from bot.game.models.character import Character
 from bot.game.constants import DEFAULT_BASE_STATS, GUILD_DEFAULT_INITIAL_LOCATION_ID
-from bot.database.models import Player # For type hinting if needed in player related tests
+from bot.database.models import Player, Character as CharacterDBModel # For type hinting if needed in player related tests
 
 # Temporarily disable logging to reduce noise during tests, can be enabled for debugging
 # logging.disable(logging.CRITICAL)
@@ -213,7 +213,7 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
 
         # Mock refresh to do nothing or update attributes if necessary
         async def mock_refresh(obj, attribute_names=None):
-            if isinstance(obj, Player) and obj.id == player_id:
+            if isinstance(obj, Player) and obj.id == mock_player.id:
                 obj.active_character_id = char_id # Ensure it's set after "refresh"
             return None
         mock_session.refresh = AsyncMock(side_effect=mock_refresh)

@@ -661,7 +661,7 @@ class TestPromptContextCollector(unittest.TestCase):
 
         self.assertIsNotNone(full_context_char.player_context)
         self.assertEqual(full_context_char.player_context["player_id"], self.character_id)
-        self.assertEqual(full_context_char.player_context["level_info"], mock_player_level_context)
+        self.assertEqual(full_context_char.player_context["level_info"], mock_char_details_context_val["level_info"])
         self.assertEqual(full_context_char.active_quests_summary, mock_quest_context["active_quests"])
         self.assertEqual(full_context_char.relationship_data, mock_relationship_context)
 
