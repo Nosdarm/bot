@@ -91,6 +91,7 @@ class TestCharacterActionProcessor(unittest.IsolatedAsyncioTestCase):
         self.mock_party_manager = AsyncMock(spec=PartyManager)
         self.mock_event_stage_processor = AsyncMock(spec=EventStageProcessor)
         self.mock_event_action_processor = AsyncMock(spec=EventActionProcessor)
+        self.mock_db_service = AsyncMock(spec=DBService) # Added mock for DBService
 
         async def async_send_callback(message: str): pass
         self.mock_send_callback = AsyncMock(side_effect=async_send_callback)
@@ -105,6 +106,7 @@ class TestCharacterActionProcessor(unittest.IsolatedAsyncioTestCase):
         self.processor = CharacterActionProcessor(
             character_manager=self.mock_character_manager,
             send_callback_factory=self.mock_send_callback_factory,
+            db_service=self.mock_db_service, # Added db_service
             item_manager=self.mock_item_manager,
             inventory_manager=self.mock_inventory_manager, # Added
             equipment_manager=self.mock_equipment_manager,
@@ -119,6 +121,7 @@ class TestCharacterActionProcessor(unittest.IsolatedAsyncioTestCase):
             game_log_manager=self.mock_game_log_manager,
             event_stage_processor=self.mock_event_stage_processor,
             event_action_processor=self.mock_event_action_processor
+            # location_interaction_service is optional and defaults to None
         )
 
     def _create_mock_character(self, char_id: str, guild_id: str, name: str = "Test Character",

@@ -87,6 +87,13 @@ class GuildConfig(Base):
     # user_settings_entries: Mapped[List["UserSettings"]] = relationship(back_populates="guild_config", cascade="all, delete-orphan")
     # players: Mapped[List["Player"]] = relationship(back_populates="guild_config", cascade="all, delete-orphan")
 
+    # Relationship to PendingGeneration
+    # Ensure PendingGeneration is imported for this relationship
+    if TYPE_CHECKING:
+        from bot.models.pending_generation import PendingGeneration
+    pending_generations: Mapped[List["PendingGeneration"]] = relationship(
+        "PendingGeneration", back_populates="guild", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<GuildConfig(guild_id='{self.guild_id}', bot_language='{self.bot_language}')>"

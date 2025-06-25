@@ -91,6 +91,8 @@ class PostgresAdapter(BaseDbAdapter):
             # Remove sslmode from query_params as it's now handled in connect_args
             if 'sslmode' in query_params:
                 del query_params['sslmode']
+            if 'ssl' in query_params: # Also remove 'ssl' if we are handling it via connect_args
+                del query_params['ssl']
 
         # Reconstruct the URL without sslmode if it was processed
         self._db_url_for_engine = urlunparse(parsed_url._replace(query=urlencode(query_params, doseq=True)))

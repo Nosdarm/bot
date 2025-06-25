@@ -59,24 +59,30 @@ class TestAIResponseValidator(unittest.IsolatedAsyncioTestCase):
 
         self.mock_game_manager = AsyncMock(spec=GameManager)
 
+        # Simplified get_rule mock logic
         async def get_rule_side_effect(guild_id, rule_key, default=None):
-            if rule_key == "character_stats_rules": return self.mock_core_game_rules.character_stats_rules
-            if rule_key == "skill_rules": return self.mock_core_game_rules.skill_rules
-            if rule_key == "item_rules": return self.mock_core_game_rules.item_rules
-            if rule_key == "faction_rules": return self.mock_core_game_rules.faction_rules
-            if rule_key == "quest_rules": return self.mock_core_game_rules.quest_rules
-            if rule_key == "general_settings": return self.mock_core_game_rules.general_settings
-            if rule_key == "default_language": return self.mock_core_game_rules.general_settings.default_language
-            if rule_key == "target_languages": return self.mock_core_game_rules.general_settings.target_languages
-            if rule_key == "npc_stat_ranges": return self.mock_core_game_rules.character_stats_rules.stat_ranges_by_role
-            if rule_key == "npc_global_stat_limits": return self.mock_core_game_rules.character_stats_rules.stat_ranges_by_role.get("commoner", {}).get("stats", {})
-            if rule_key == "item_value_ranges": return self.mock_core_game_rules.item_rules.price_ranges_by_type
-            # Fallback for other keys if general_settings is a Pydantic model with arbitrary attributes
+            # Direct access for top-level rule structures
+            if hasattr(self.mock_core_game_rules, rule_key):
+                return getattr(self.mock_core_game_rules, rule_key)
+            # Access for nested general settings like default_language
             if hasattr(self.mock_core_game_rules.general_settings, rule_key):
-                 return getattr(self.mock_core_game_rules.general_settings, rule_key, default)
+                return getattr(self.mock_core_game_rules.general_settings, rule_key)
+
+            # Specific mapped keys from validator's expectations
+            if rule_key == "npc_stat_ranges":
+                return self.mock_core_game_rules.character_stats_rules.stat_ranges_by_role
+            if rule_key == "npc_global_stat_limits":
+                return self.mock_core_game_rules.character_stats_rules.stat_ranges_by_role.get("commoner", {}).get("stats", {})
+            if rule_key == "item_value_ranges":
+                return self.mock_core_game_rules.item_rules.price_ranges_by_type
+
+            logger.warning(f"Mock get_rule: Unhandled rule_key '{rule_key}', returning default: {default}")
             return default
 
         self.mock_game_manager.get_rule = AsyncMock(side_effect=get_rule_side_effect)
+
+        # Ensure general_settings itself can be returned if requested by that key
+        # This is implicitly handled by hasattr(self.mock_core_game_rules, rule_key) check above.
 
         self.mock_game_terms_list_data = [
             {"id": "strength", "name_i18n": {"en": "Strength"}, "term_type": "stat"},
@@ -85,10 +91,15 @@ class TestAIResponseValidator(unittest.IsolatedAsyncioTestCase):
             {"id": "item_sword", "name_i18n": {"en": "Sword"}, "term_type": "item_template"},
             {"id": "empire", "name_i18n": {"en": "The Empire"}, "term_type": "faction"},
             {"id": "commoner", "name_i18n": {"en": "Commoner"}, "term_type": "npc_archetype"},
-             {"id": "warrior", "name_i18n": {"en": "Warrior"}, "term_type": "npc_archetype"},
+            {"id": "warrior", "name_i18n": {"en": "Warrior"}, "term_type": "npc_archetype"},
         ]
-        mock_prompt_collector = MagicMock()
-        mock_prompt_collector.get_game_terms_dictionary.return_value = self.mock_game_terms_list_data
+
+        # Setup mock_prompt_collector correctly
+        mock_prompt_collector = AsyncMock() # Use AsyncMock for awaitable methods
+        mock_prompt_collector.get_game_terms_dictionary = AsyncMock(return_value=self.mock_game_terms_list_data)
+        # Ensure get_game_rules_summary is an AsyncMock and returns a dict
+        mock_prompt_collector.get_game_rules_summary = AsyncMock(return_value=self.sample_rules_dict) # Or a more specific subset if needed
+
         self.mock_game_manager.prompt_context_collector = mock_prompt_collector
 
         self.validator = AIResponseValidator()

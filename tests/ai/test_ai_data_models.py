@@ -155,7 +155,11 @@ def test_generated_location_content_i18n_validation(validation_context_en_ru):
     assert len(errors) == 1
     custom_error_msg = errors[0]['msg'] # The message from our ValueError
     assert "name_i18n" in custom_error_msg
-    assert "missing required language(s): en, ru" in custom_error_msg.lower()
+    # The validator attempts to fill 'en' from other available languages.
+    # Since 'fr' was provided, 'en' gets copied from 'fr'.
+    # So, only 'ru' should be reported as missing in the final error message.
+    assert "missing required language(s): ru" in custom_error_msg.lower()
+    assert "provided: ['fr', 'en']" in custom_error_msg.lower()
 
 
 def test_generated_location_content_i18n_validation_en_only_context_copies_to_en(validation_context_en_only):

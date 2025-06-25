@@ -6,14 +6,20 @@ from sqlalchemy.dialects.postgresql import UUID # JSONB removed
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
-from typing import Dict, Any, List
+from typing import Dict, Any, List, TYPE_CHECKING # Added TYPE_CHECKING
 
 from ..base import Base, JsonVariant # Import Base and JsonVariant
+
+# Explicitly import GuildConfig for ForeignKey definitions
+from .config_related import GuildConfig
+
+if TYPE_CHECKING: # Keep other type-only imports here if any are added later
+    pass
 
 class Timer(Base):
     __tablename__ = 'timers'
     id = Column(String, primary_key=True)
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    guild_id = Column(String, ForeignKey(GuildConfig.guild_id, ondelete='CASCADE'), nullable=False, index=True)
     type = Column(String, nullable=False)
     ends_at = Column(Float, nullable=False)
     callback_data = Column(JsonVariant, nullable=True) # Changed
@@ -32,13 +38,13 @@ class Event(Base):
     state_variables = Column(JsonVariant, nullable=True) # Changed
     stages_data = Column(JsonVariant, nullable=True) # Changed
     end_message_template_i18n = Column(JsonVariant, nullable=True) # Changed
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    guild_id = Column(String, ForeignKey(GuildConfig.guild_id, ondelete='CASCADE'), nullable=False, index=True)
 
 
 class PendingConflict(Base):
     __tablename__ = 'pending_conflicts'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    guild_id = Column(String, ForeignKey(GuildConfig.guild_id, ondelete='CASCADE'), nullable=False, index=True)
     conflict_data_json = Column(JsonVariant, nullable=False) # Changed
     status = Column(String, nullable=False, default='pending_gm_resolution', index=True)
     resolution_data_json = Column(JsonVariant, nullable=True) # Changed
@@ -46,41 +52,11 @@ class PendingConflict(Base):
     resolved_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
 
-class PendingGeneration(Base):
-    __tablename__ = 'pending_generations'
-
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
-
-    request_type = Column(String, nullable=False, index=True)
-    request_params_json = Column(JsonVariant, nullable=True) # Changed
-
-    raw_ai_output_text = Column(Text, nullable=True)
-    parsed_data_json = Column(JsonVariant, nullable=True)     # Changed
-    validation_issues_json = Column(JsonVariant, nullable=True) # Changed
-
-    status = Column(String, nullable=False, default="pending_validation", index=True)
-
-    created_by_user_id = Column(String, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
-
-    moderated_by_user_id = Column(String, nullable=True)
-    moderated_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    moderator_notes_i18n = Column(JsonVariant, nullable=True) # Changed
-
-    __table_args__ = (
-        Index('idx_pendinggeneration_guild_status', 'guild_id', 'status'),
-    )
-
-    def __repr__(self):
-        return f"<PendingGeneration(id='{self.id}', guild_id='{self.guild_id}', type='{self.request_type}', status='{self.status}')>"
-
-
 class StoryLog(Base):
     __tablename__ = 'story_logs'
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    guild_id = Column(String, ForeignKey('guild_configs.guild_id', ondelete='CASCADE'), nullable=False, index=True)
+    guild_id = Column(String, ForeignKey(GuildConfig.guild_id, ondelete='CASCADE'), nullable=False, index=True) # Changed to direct class attribute
     timestamp = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     location_id = Column(String, ForeignKey('locations.id'), nullable=True, index=True)

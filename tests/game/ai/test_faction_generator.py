@@ -130,8 +130,9 @@ class TestFactionManagerAI(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.mock_db_service = AsyncMock() # Keep for NpcManager if it needs it
         self.mock_npc_manager = AsyncMock(spec=NpcManager)
-        # FactionManager init does not take db_service
-        self.faction_manager = FactionManager(settings={})
+        self.mock_game_manager = MagicMock() # Mock GameManager
+        # FactionManager init expects game_manager
+        self.faction_manager = FactionManager(game_manager=self.mock_game_manager)
 
     async def test_create_faction_from_ai_success_no_leader(self):
         guild_id = "g1"

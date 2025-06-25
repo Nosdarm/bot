@@ -221,7 +221,7 @@ class TestPlayerMovementFlow(unittest.IsolatedAsyncioTestCase):
         self.mock_settings_dict = DUMMY_SETTINGS.copy() # Re-use if applicable, or define specific for movement
 
         # RuleEngine needs to be less mocked here to verify trigger content, but execute_triggers itself spied on
-        self.rule_engine = RuleEngine(settings=self.mock_settings_dict, event_manager=AsyncMock()) # Basic RuleEngine
+        self.rule_engine = RuleEngine(settings=self.mock_settings_dict) # Basic RuleEngine, event_manager is not an init arg
         self.rule_engine.execute_triggers = AsyncMock(return_value=({}, True)) # Spy on execute_triggers
 
         # LocationManager setup

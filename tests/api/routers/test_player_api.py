@@ -38,7 +38,8 @@ class TestPlayerAPI:
             guild_id=guild_id,
             discord_id=discord_id,
             name_i18n={"en": name},
-            level=1, xp=0, gold=0, is_active=True
+            is_active=True
+            # level, xp, gold are character attributes, not player account attributes
         )
         db_session.add(db_player)
         await db_session.commit()
