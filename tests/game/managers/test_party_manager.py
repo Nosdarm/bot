@@ -176,13 +176,366 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         #     settings=self.mock_settings,
         #     character_manager=self.mock_char_manager
         # )
-        pass
+        # pass # Removed pass, setUp should complete.
 
         # Initialize/reset internal caches for each test
-        self.party_manager._parties = {}
+        self.party_manager._parties = {} # This is done in the PartyManager's constructor by default
         self.party_manager._dirty_parties = {}
         self.party_manager._member_to_party_map = {}
-        self.party_manager._deleted_parties = {} # Ensure this is also reset
+        self.party_manager._deleted_parties = {}
+
+    async def test_create_party_success(self):
+        guild_id = self.guild_id
+        leader_char_id = "leader_char_id_for_create"
+        leader_location_id = "leader_loc_for_create"
+        party_name = "The Brave Companions"
+        party_name_i18n = {"en": party_name}
+
+        mock_leader_char = MagicMock(spec=Character)
+        mock_leader_char.id = leader_char_id
+        mock_leader_char.location_id = leader_location_id
+        # Pydantic Character model does not have update_party_id directly.
+        # CharacterManager would handle updating the character instance then saving.
+        # For this test, we'll mock CharacterManager's method that sets party_id.
+        # Let's assume it's `set_character_party_id(guild_id, char_id, party_id, session)`
+        self.mock_character_manager.set_character_party_id = AsyncMock()
+
+
+        # Mock uuid.uuid4 that might be used inside PartyManager.create_party
+        # If Party constructor generates ID, this is not needed here.
+        # Party Pydantic model expects ID to be passed. PartyManager's create_party generates it.
+        test_uuid = uuid.uuid4()
+        with patch('uuid.uuid4', return_value=test_uuid):
+            created_party_object = await self.party_manager.create_party(
+                guild_id=guild_id,
+                leader_char_id=leader_char_id,
+                party_name=party_name, # Assuming create_party takes string and constructs i18n
+                leader_location_id=leader_location_id
+            )
+
+        self.assertIsNotNone(created_party_object)
+        self.assertEqual(created_party_object.id, str(test_uuid))
+        self.assertEqual(created_party_object.guild_id, guild_id)
+        self.assertEqual(created_party_object.name_i18n, party_name_i18n) # Assuming create_party defaults to 'en'
+        self.assertEqual(created_party_object.leader_id, leader_char_id)
+        self.assertIn(leader_char_id, created_party_object.player_ids_list)
+        self.assertEqual(len(created_party_object.player_ids_list), 1)
+        self.assertEqual(created_party_object.current_location_id, leader_location_id)
+        self.assertEqual(created_party_object.turn_status, "active") # Or "сбор_действий" or whatever is default
+
+        # Check CharacterManager call to update leader's party_id
+        # This depends on how CharacterManager is called by PartyManager.
+        # If PartyManager updates Character Pydantic model and calls save_character:
+        # self.mock_character_manager.save_character.assert_called_once()
+        # If PartyManager calls a specific method like set_character_party_id:
+        self.mock_character_manager.set_character_party_id.assert_awaited_once_with(
+            guild_id, leader_char_id, created_party_object.id
+        )
+
+        # Check internal caches
+        self.assertIn(guild_id, self.party_manager._parties)
+        self.assertIn(created_party_object.id, self.party_manager._parties[guild_id])
+        self.assertEqual(self.party_manager._parties[guild_id][created_party_object.id], created_party_object)
+
+        self.assertIn(guild_id, self.party_manager._member_to_party_map)
+        self.assertIn(leader_char_id, self.party_manager._member_to_party_map[guild_id])
+        self.assertEqual(self.party_manager._member_to_party_map[guild_id][leader_char_id], created_party_object.id)
+
+        self.party_manager.mark_party_dirty.assert_called_once_with(guild_id, created_party_object.id)
+
+    async def test_add_member_to_party_success(self):
+        guild_id = self.guild_id
+        party_id_to_join = self.test_party.id # Use existing party from setUp
+
+        new_member_char_id = "new_member_char_id"
+        new_member_location_id = self.test_party.current_location_id # Same location
+
+        mock_new_member_char = MagicMock(spec=Character)
+        mock_new_member_char.id = new_member_char_id
+        mock_new_member_char.location_id = new_member_location_id
+        mock_new_member_char.party_id = None # Not in a party yet
+
+        self.mock_character_manager.get_character_by_id = AsyncMock(return_value=mock_new_member_char)
+        # Assume CharacterManager.set_character_party_id is used internally by PartyManager or directly
+        self.mock_character_manager.set_character_party_id = AsyncMock()
+
+        # Ensure the party exists in the manager's cache
+        self.party_manager._parties[guild_id] = {party_id_to_join: self.test_party}
+        # Ensure leader is in member_to_party_map for consistency, though not strictly needed for add_member if not checking leader's party status
+        self.party_manager._member_to_party_map.setdefault(guild_id, {})[self.test_party.leader_id] = party_id_to_join
+
+
+        result = await self.party_manager.add_member_to_party(
+            guild_id=guild_id,
+            party_id=party_id_to_join,
+            character_id=new_member_char_id,
+            character_location_id=new_member_location_id # Corrected param name
+        )
+
+        self.assertTrue(result)
+        self.assertIn(new_member_char_id, self.test_party.player_ids_list)
+
+        self.mock_character_manager.set_character_party_id.assert_awaited_once_with(
+            guild_id, new_member_char_id, party_id_to_join
+        )
+
+        self.assertIn(new_member_char_id, self.party_manager._member_to_party_map[guild_id])
+        self.assertEqual(self.party_manager._member_to_party_map[guild_id][new_member_char_id], party_id_to_join)
+        self.party_manager.mark_party_dirty.assert_called_with(guild_id, party_id_to_join) # Called once for create, once for add
+
+    async def test_add_member_already_in_party(self):
+        guild_id = self.guild_id
+        party_id_val = self.test_party.id
+        member_already_in_id = self.test_party.leader_id # Leader is already in party
+
+        # Setup member_to_party_map to reflect member is in a party
+        self.party_manager._member_to_party_map.setdefault(guild_id, {})[member_already_in_id] = party_id_val
+
+        result = await self.party_manager.add_member_to_party(
+            guild_id, party_id_val, member_already_in_id, self.test_party.current_location_id
+        )
+        self.assertFalse(result) # Should fail or return specific status
+        self.mock_character_manager.set_character_party_id.assert_not_called()
+
+
+    async def test_add_member_location_mismatch(self):
+        guild_id = self.guild_id
+        party_id_val = self.test_party.id
+        new_member_char_id = "new_member_loc_mismatch"
+        # Party is at self.test_party.current_location_id ("loc1")
+        member_different_location_id = "different_loc_for_member"
+
+        mock_new_member_char_diff_loc = MagicMock(spec=Character)
+        mock_new_member_char_diff_loc.id = new_member_char_id
+        mock_new_member_char_diff_loc.location_id = member_different_location_id
+
+        self.mock_character_manager.get_character_by_id = AsyncMock(return_value=mock_new_member_char_diff_loc)
+
+        result = await self.party_manager.add_member_to_party(
+            guild_id, party_id_val, new_member_char_id, member_different_location_id
+        )
+        self.assertFalse(result) # Or specific error/status
+        self.mock_character_manager.set_character_party_id.assert_not_called()
+
+    # TODO: Add test_add_member_party_full if max_party_size rule is implemented and checked in PartyManager
+
+    async def test_remove_member_from_party_success(self):
+        guild_id = self.guild_id
+        party_to_leave_id = self.test_party.id
+        member_to_remove_id = "member_2" # Assumed to be in self.test_party.player_ids_list
+
+        # Ensure member_to_remove_id is in the party for the test
+        if member_to_remove_id not in self.test_party.player_ids_list:
+            self.test_party.player_ids_list.append(member_to_remove_id)
+
+        # Setup caches
+        self.party_manager._parties[guild_id] = {party_to_leave_id: self.test_party}
+        self.party_manager._member_to_party_map.setdefault(guild_id, {})
+        for member_id in self.test_party.player_ids_list:
+            self.party_manager._member_to_party_map[guild_id][member_id] = party_to_leave_id
+
+        self.mock_character_manager.set_character_party_id = AsyncMock()
+
+        result = await self.party_manager.remove_member_from_party(
+            guild_id, party_to_leave_id, member_to_remove_id
+        )
+
+        self.assertTrue(result)
+        self.assertNotIn(member_to_remove_id, self.test_party.player_ids_list)
+        self.mock_character_manager.set_character_party_id.assert_awaited_once_with(
+            guild_id, member_to_remove_id, None # Party ID set to None
+        )
+        self.assertNotIn(member_to_remove_id, self.party_manager._member_to_party_map.get(guild_id, {}))
+        self.party_manager.mark_party_dirty.assert_called_with(guild_id, party_to_leave_id)
+
+    async def test_remove_member_leader_leaves_party_disbands(self):
+        guild_id = self.guild_id
+        party_to_leave_id = self.test_party.id # Party from setUp
+        leader_id_leaving = self.test_party.leader_id # Leader is leaving
+
+        # Assume only leader was in the party, or that leader leaving always disbands
+        # For this test, let's make leader the only member to simplify disband logic check
+        self.test_party.player_ids_list = [leader_id_leaving]
+        self.party_manager._parties[guild_id] = {party_to_leave_id: self.test_party}
+        self.party_manager._member_to_party_map.setdefault(guild_id, {})[leader_id_leaving] = party_to_leave_id
+
+        self.mock_character_manager.set_character_party_id = AsyncMock()
+        # Mock disband_party to check if it's called
+        self.party_manager.disband_party = AsyncMock(return_value=True)
+
+
+        result = await self.party_manager.remove_member_from_party(
+            guild_id, party_to_leave_id, leader_id_leaving
+        )
+        self.assertTrue(result) # remove_member should succeed
+        # Disband should have been called because the leader left (and was possibly the last member)
+        self.party_manager.disband_party.assert_awaited_once_with(guild_id, party_to_leave_id, leader_id_leaving)
+        # set_character_party_id for the leader would be handled within disband_party or by its caller
+        # For this direct test of remove_member, if it delegates to disband,
+        # then set_character_party_id might not be called directly by remove_member itself for the leader.
+        # If disband_party is mocked, we verify it was called.
+        # If we were testing the full flow without mocking disband_party, then we'd check
+        # set_character_party_id for the leader here.
+        # Let's assume remove_member calls set_character_party_id first, then checks for disband.
+        self.mock_character_manager.set_character_party_id.assert_awaited_once_with(
+            guild_id, leader_id_leaving, None
+        )
+
+
+    async def test_disband_party_success_as_leader(self):
+        guild_id = self.guild_id
+        party_to_disband_id = self.test_party.id
+        leader_char_id = self.test_party.leader_id
+        other_member_id = "member_2_in_disband"
+        self.test_party.player_ids_list = [leader_char_id, other_member_id]
+
+        self.party_manager._parties[guild_id] = {party_to_disband_id: self.test_party}
+        self.party_manager._member_to_party_map.setdefault(guild_id, {})
+        self.party_manager._member_to_party_map[guild_id][leader_char_id] = party_to_disband_id
+        self.party_manager._member_to_party_map[guild_id][other_member_id] = party_to_disband_id
+
+        self.mock_character_manager.set_character_party_id = AsyncMock()
+
+        result = await self.party_manager.disband_party(guild_id, party_to_disband_id, leader_char_id)
+
+        self.assertTrue(result)
+        # Check party_id reset for all members
+        expected_calls = [
+            call(guild_id, leader_char_id, None),
+            call(guild_id, other_member_id, None)
+        ]
+        self.mock_character_manager.set_character_party_id.assert_has_awaits(expected_calls, any_order=True)
+
+        self.assertNotIn(party_to_disband_id, self.party_manager._parties.get(guild_id, {}))
+        self.assertNotIn(leader_char_id, self.party_manager._member_to_party_map.get(guild_id, {}))
+        self.assertNotIn(other_member_id, self.party_manager._member_to_party_map.get(guild_id, {}))
+        self.assertIn(party_to_disband_id, self.party_manager._deleted_parties.get(guild_id, set()))
+        self.party_manager.mark_party_dirty.assert_not_called() # Not dirty, but deleted
+
+    async def test_disband_party_not_leader_fails(self):
+        guild_id = self.guild_id
+        party_to_disband_id = self.test_party.id
+        non_leader_char_id = "member_2_not_leader"
+        self.test_party.player_ids_list = [self.test_party.leader_id, non_leader_char_id]
+
+        self.party_manager._parties[guild_id] = {party_to_disband_id: self.test_party}
+        # ... setup _member_to_party_map ...
+
+        result = await self.party_manager.disband_party(guild_id, party_to_disband_id, non_leader_char_id)
+        self.assertFalse(result)
+        self.mock_character_manager.set_character_party_id.assert_not_called()
+        self.assertIn(party_to_disband_id, self.party_manager._parties.get(guild_id, {})) # Still exists
+
+
+    async def test_get_party_success(self):
+        guild_id = self.guild_id
+        party_id_to_get = self.test_party.id
+        self.party_manager._parties[guild_id] = {party_id_to_get: self.test_party}
+
+        party = self.party_manager.get_party(guild_id, party_id_to_get) # This is a synchronous method
+        self.assertEqual(party, self.test_party)
+
+    async def test_get_party_not_found(self):
+        guild_id = self.guild_id
+        party = self.party_manager.get_party(guild_id, "non_existent_party_for_get")
+        self.assertIsNone(party)
+
+    async def test_get_party_by_member_id_success(self):
+        guild_id = self.guild_id
+        member_id = self.test_party.leader_id
+        party_id_of_member = self.test_party.id
+
+        self.party_manager._parties[guild_id] = {party_id_of_member: self.test_party}
+        self.party_manager._member_to_party_map.setdefault(guild_id, {})[member_id] = party_id_of_member
+
+        party = self.party_manager.get_party_by_member_id(guild_id, member_id) # Synchronous
+        self.assertEqual(party, self.test_party)
+
+    async def test_get_party_by_member_id_not_in_party(self):
+        guild_id = self.guild_id
+        member_id_not_in_party = "char_not_in_any_party"
+
+        party = self.party_manager.get_party_by_member_id(guild_id, member_id_not_in_party)
+        self.assertIsNone(party)
+
+    # --- Tests for save_state and load_state_for_guild ---
+    async def test_save_state_saves_dirty_and_deletes_parties(self):
+        guild_id = self.guild_id
+
+        # Party 1: Dirty (exists in _parties and _dirty_parties)
+        dirty_party_id = "dirty_party_1"
+        dirty_party_data = self.dummy_party_data.copy()
+        dirty_party_data["id"] = dirty_party_id
+        dirty_party_data["name_i18n"] = {"en": "Dirty Party"}
+        dirty_party = Party.from_dict(dirty_party_data)
+        self.party_manager._parties.setdefault(guild_id, {})[dirty_party_id] = dirty_party
+        self.party_manager._dirty_parties.setdefault(guild_id, set()).add(dirty_party_id)
+
+        # Party 2: To be deleted (exists in _deleted_parties)
+        deleted_party_id = "deleted_party_1"
+        self.party_manager._deleted_parties.setdefault(guild_id, set()).add(deleted_party_id)
+        # Ensure it's not in _parties if it's marked for deletion and processed by save_state logic
+        if guild_id in self.party_manager._parties and deleted_party_id in self.party_manager._parties[guild_id]:
+            del self.party_manager._parties[guild_id][deleted_party_id]
+
+
+        # Mock DB adapter methods
+        self.mock_db_adapter.upsert_party = AsyncMock()
+        self.mock_db_adapter.delete_party_by_id = AsyncMock()
+
+        await self.party_manager.save_state(guild_id)
+
+        # Check upsert for dirty party
+        self.mock_db_adapter.upsert_party.assert_awaited_once()
+        upsert_call_args = self.mock_db_adapter.upsert_party.call_args[0]
+        self.assertEqual(upsert_call_args[0]['id'], dirty_party_id) # Assuming first arg is party_data dict
+        self.assertEqual(upsert_call_args[0]['guild_id'], guild_id)
+
+        # Check delete for deleted party
+        self.mock_db_adapter.delete_party_by_id.assert_awaited_once_with(deleted_party_id, guild_id)
+
+        # Check caches are cleared
+        self.assertNotIn(dirty_party_id, self.party_manager._dirty_parties.get(guild_id, set()))
+        self.assertNotIn(deleted_party_id, self.party_manager._deleted_parties.get(guild_id, set()))
+
+    async def test_load_state_for_guild_success(self):
+        guild_id = self.guild_id
+
+        # Mock data returned by DB adapter
+        party1_data_from_db = self.dummy_party_data.copy() # leader_1, member_2
+        party1_data_from_db["id"] = "db_party_1"
+        party1_data_from_db["name_i18n"] = {"en": "DB Party One"}
+
+        party2_data_from_db = self.dummy_party_data.copy()
+        party2_data_from_db["id"] = "db_party_2"
+        party2_data_from_db["name_i18n"] = {"en": "DB Party Two"}
+        party2_data_from_db["leader_id"] = "leader_3"
+        party2_data_from_db["player_ids_list"] = ["leader_3", "member_4"]
+
+        loaded_parties_from_db = [party1_data_from_db, party2_data_from_db]
+        self.mock_db_adapter.load_parties_for_guild = AsyncMock(return_value=loaded_parties_from_db)
+
+        await self.party_manager.load_state_for_guild(guild_id)
+
+        # Check _parties cache
+        self.assertIn(guild_id, self.party_manager._parties)
+        self.assertEqual(len(self.party_manager._parties[guild_id]), 2)
+        self.assertIn("db_party_1", self.party_manager._parties[guild_id])
+        self.assertEqual(self.party_manager._parties[guild_id]["db_party_1"].name_i18n["en"], "DB Party One")
+        self.assertIn("db_party_2", self.party_manager._parties[guild_id])
+
+        # Check _member_to_party_map cache
+        self.assertIn(guild_id, self.party_manager._member_to_party_map)
+        member_map = self.party_manager._member_to_party_map[guild_id]
+        self.assertEqual(member_map.get(self.party_leader_id), "db_party_1") # leader_1 from dummy_party_data
+        self.assertEqual(member_map.get("member_2"), "db_party_1")
+        self.assertEqual(member_map.get("leader_3"), "db_party_2")
+        self.assertEqual(member_map.get("member_4"), "db_party_2")
+
+        # Ensure dirty/deleted sets are initialized for the guild
+        self.assertIn(guild_id, self.party_manager._dirty_parties)
+        self.assertIn(guild_id, self.party_manager._deleted_parties)
+
 
     async def test_placeholder_party_manager(self):
         # This is a placeholder test.

@@ -309,12 +309,28 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         merged_orm_instance = args[0]
         self.assertIsInstance(merged_orm_instance, CharacterDBModel)
         self.assertEqual(merged_orm_instance.id, char1.id)
-        # Assuming name_i18n on CharacterDBModel holds the dict directly after being set from Pydantic model's to_dict()
-        # If CharacterDBModel stores it as a JSON string in a field like name_i18n_json, then comparison would be different.
-        # Based on current model structure, name_i18n is the column name for JSONB/JsonVariant.
         self.assertEqual(merged_orm_instance.name_i18n, char1.name_i18n)
-        self.assertEqual(merged_orm_instance.hp, char1.hp)
+        # current_hp in CharacterDBModel corresponds to char1.hp (Pydantic)
+        self.assertEqual(merged_orm_instance.current_hp, char1.hp)
         self.assertEqual(merged_orm_instance.level, char1.level)
+        self.assertEqual(merged_orm_instance.xp, char1.experience)
+        self.assertEqual(merged_orm_instance.gold, char1.gold)
+        self.assertEqual(merged_orm_instance.unspent_xp, char1.unspent_xp)
+        self.assertEqual(merged_orm_instance.is_alive, char1.is_alive)
+        self.assertEqual(merged_orm_instance.selected_language, char1.selected_language) # Assuming selected_language is on CharacterDBModel
+
+        # Assuming char1.stats is the dict for stats_json
+        # and Character.to_db_dict() or direct mapping handles this.
+        # If CharacterDBModel.stats_json is JsonVariant, direct comparison should work.
+        self.assertEqual(merged_orm_instance.stats_json, char1.stats)
+        self.assertEqual(merged_orm_instance.inventory_json, char1.inventory)
+        self.assertEqual(merged_orm_instance.status_effects_json, char1.status_effects)
+        self.assertEqual(merged_orm_instance.active_quests_json, char1.active_quests)
+        self.assertEqual(merged_orm_instance.skills_data_json, char1.skills_data)
+        self.assertEqual(merged_orm_instance.abilities_data_json, char1.abilities_data)
+        self.assertEqual(merged_orm_instance.spells_data_json, char1.spells_data)
+        self.assertEqual(merged_orm_instance.equipment_slots_json, char1.equipment_slots_json if hasattr(char1, 'equipment_slots_json') else {})
+
 
         self.assertNotIn(guild_id, self.char_manager._dirty_characters) # Should be cleared
 
@@ -373,20 +389,45 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
         mock_char_from_db_sqla.status_effects_json = []; mock_char_from_db_sqla.active_quests_json = [];
         mock_char_from_db_sqla.known_spells_json = []; mock_char_from_db_sqla.spell_cooldowns_json = {};
         mock_char_from_db_sqla.skills_data_json = []; mock_char_from_db_sqla.abilities_data_json = [];
-        mock_char_from_db_sqla.spells_data_json = []; mock_char_from_db_sqla.flags_json = {};
-        mock_char_from_db_sqla.state_variables_json = {}; mock_char_from_db_sqla.equipment_slots_json = {};
-        mock_char_from_db_sqla.is_alive = True; mock_char_from_db_sqla.player_id = player1_id; # Added player_id
-        mock_char_from_db_sqla.character_class_i18n = None; mock_char_from_db_sqla.race_key = None;
-        mock_char_from_db_sqla.race_i18n = None; mock_char_from_db_sqla.description_i18n = None;
-        mock_char_from_db_sqla.mp = None; mock_char_from_db_sqla.base_attack = None; mock_char_from_db_sqla.base_defense = None;
-        mock_char_from_db_sqla.effective_stats_json = None; mock_char_from_db_sqla.current_game_status = None;
-        mock_char_from_db_sqla.current_action_json = None; mock_char_from_db_sqla.action_queue_json = None;
-        mock_char_from_db_sqla.collected_actions_json = None; mock_char_from_db_sqla.current_location_id = None;
-        mock_char_from_db_sqla.current_party_id = None;
-        # Mock the to_dict method itself
-        mock_char_from_db_sqla.to_dict.return_value = {
-            f.name: getattr(mock_char_from_db_sqla, f.name) for f in CharacterDBModel.__table__.columns
-        }
+        mock_char_from_db_sqla.spells_data_json = [] # Pydantic Character.spells_data
+        mock_char_from_db_sqla.flags_json = {} # Pydantic Character.flags
+        mock_char_from_db_sqla.state_variables_json = {} # Pydantic Character.state_variables
+        mock_char_from_db_sqla.equipment_slots_json = {} # Pydantic Character.equipment_slots_json (if exists)
+        mock_char_from_db_sqla.is_alive = True
+        mock_char_from_db_sqla.player_id = player1_id
+        mock_char_from_db_sqla.character_class_i18n = {"en": "Adventurer"} # Example
+        mock_char_from_db_sqla.race_key = "human" # Example
+        mock_char_from_db_sqla.race_i18n = {"en": "Human"} # Example
+        mock_char_from_db_sqla.description_i18n = {"en": "A brave hero."} # Example
+        mock_char_from_db_sqla.current_hp = 100.0 # Renamed from hp
+        mock_char_from_db_sqla.max_hp = 100.0 # Renamed from max_hp
+        mock_char_from_db_sqla.mp = 50
+        mock_char_from_db_sqla.base_attack = 10
+        mock_char_from_db_sqla.base_defense = 5
+        mock_char_from_db_sqla.effective_stats_json = {} # Example
+        mock_char_from_db_sqla.current_game_status = "exploring" # Example
+        mock_char_from_db_sqla.current_action_json = None
+        mock_char_from_db_sqla.action_queue_json = []
+        mock_char_from_db_sqla.collected_actions_json = [] # Example
+        mock_char_from_db_sqla.current_location_id = "start_loc" # Example
+        mock_char_from_db_sqla.current_party_id = None
+
+        # Mock the to_dict method if Character.from_db_model uses it.
+        # If from_db_model directly accesses attributes, this is not strictly needed here
+        # but ensures all fields are present if from_db_model expects a dict.
+        # The Character.from_db_model method seems to directly access attributes.
+        # So, ensuring the mock_char_from_db_sqla object has all attributes is key.
+
+        # Helper to convert the mock SQLAlchemy object to a dict similar to what from_db_model might expect
+        # This is only needed if from_db_model expects a dictionary.
+        # Based on Character.from_db_model, it seems to take the ORM object directly.
+        # So this mock_to_dict is not strictly needed if the ORM object is correctly populated.
+        # def mock_to_dict(obj):
+        #     d = {}
+        #     for col in obj.__table__.columns: # type: ignore
+        #         d[col.name] = getattr(obj, col.name)
+        #     return d
+        # mock_char_from_db_sqla.to_dict = MagicMock(side_effect=lambda: mock_to_dict(mock_char_from_db_sqla))
 
 
         async def mock_get_entities_fixed(session, model_class, *, guild_id):
@@ -411,6 +452,53 @@ class TestCharacterManager(unittest.IsolatedAsyncioTestCase):
     # Placeholder for other tests like JSON parsing errors, no characters in DB, etc.
     # They would need more specific mocking of crud_utils.get_entities or session.execute directly
     # if CharacterManager uses session.execute for loading.
+
+    # --- Tests for get_characters_in_location ---
+    def test_get_characters_in_location_success(self):
+        guild_id = "guild_loc_test"
+        loc_a_id = "loc_A"
+        loc_b_id = "loc_B"
+
+        char1_loc_a = Character(id="char1", discord_user_id=1, name_i18n={"en":"Char1A"}, guild_id=guild_id, location_id=loc_a_id, selected_language="en")
+        char2_loc_a = Character(id="char2", discord_user_id=2, name_i18n={"en":"Char2A"}, guild_id=guild_id, location_id=loc_a_id, selected_language="en")
+        char3_loc_b = Character(id="char3", discord_user_id=3, name_i18n={"en":"Char3B"}, guild_id=guild_id, location_id=loc_b_id, selected_language="en")
+        char4_no_loc = Character(id="char4", discord_user_id=4, name_i18n={"en":"Char4NoLoc"}, guild_id=guild_id, location_id=None, selected_language="en")
+
+        self.char_manager._characters[guild_id] = {
+            "char1": char1_loc_a,
+            "char2": char2_loc_a,
+            "char3": char3_loc_b,
+            "char4": char4_no_loc,
+        }
+
+        # Test for loc_A
+        chars_in_loc_a = self.char_manager.get_characters_in_location(guild_id, loc_a_id)
+        self.assertEqual(len(chars_in_loc_a), 2)
+        self.assertIn(char1_loc_a, chars_in_loc_a)
+        self.assertIn(char2_loc_a, chars_in_loc_a)
+        self.assertNotIn(char3_loc_b, chars_in_loc_a)
+        self.assertNotIn(char4_no_loc, chars_in_loc_a)
+
+        # Test for loc_B
+        chars_in_loc_b = self.char_manager.get_characters_in_location(guild_id, loc_b_id)
+        self.assertEqual(len(chars_in_loc_b), 1)
+        self.assertIn(char3_loc_b, chars_in_loc_b)
+        self.assertNotIn(char1_loc_a, chars_in_loc_b)
+
+    def test_get_characters_in_location_empty_result(self):
+        guild_id = "guild_loc_empty"
+        loc_empty_id = "loc_Empty"
+
+        char1_other_loc = Character(id="char_other", discord_user_id=1, name_i18n={"en":"CharOther"}, guild_id=guild_id, location_id="some_other_loc", selected_language="en")
+        self.char_manager._characters[guild_id] = {"char_other": char1_other_loc}
+
+        chars_in_loc_empty = self.char_manager.get_characters_in_location(guild_id, loc_empty_id)
+        self.assertEqual(len(chars_in_loc_empty), 0)
+
+    def test_get_characters_in_location_guild_not_found(self):
+        # Guild ID not in self.char_manager._characters
+        chars_in_loc = self.char_manager.get_characters_in_location("non_existent_guild", "any_loc")
+        self.assertEqual(len(chars_in_loc), 0)
 
 if __name__ == '__main__':
     unittest.main()

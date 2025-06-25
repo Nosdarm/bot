@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngin
 from sqlalchemy.future import select
 import json # For json.loads if needed in assertions
 
-from bot.database.models import Base, GuildConfig, RulesConfig, GeneratedFaction, Location
+from bot.database.models import Base, GuildConfig, RulesConfig, GeneratedFaction, Location, WorldState # Added WorldState
 from bot.game.guild_initializer import initialize_new_guild
 
 # Use environment variables for test DB to avoid hardcoding credentials
@@ -62,6 +62,10 @@ async def test_initialize_new_guild_creates_guild_config_and_rules(db_session: A
     assert guild_config is not None
     assert guild_config.guild_id == test_guild_id
     assert guild_config.bot_language == "en" # Default from initializer
+    assert guild_config.game_channel_id is None # Check default channel IDs
+    assert guild_config.master_channel_id is None
+    assert guild_config.system_channel_id is None
+    assert guild_config.notification_channel_id is None
 
     # Verify default RulesConfig entries (key-value structure)
     rules_stmt = select(RulesConfig).where(RulesConfig.guild_id == test_guild_id)
@@ -94,7 +98,45 @@ async def test_initialize_new_guild_creates_guild_config_and_rules(db_session: A
     locations_result = await db_session.execute(locations_stmt)
     # Check for at least the number of locations created by the initializer
     # (e.g., default_start_location + 5 village/forest locations)
-    assert len(locations_result.scalars().all()) >= 6
+    locations_from_db = locations_result.scalars().all()
+    assert len(locations_from_db) >= 6 # Should be exactly 6 based on current initializer
+
+    # Detailed check for some default locations
+    static_ids_to_check = {
+        "default_start_location": {"en_name_part": "A Quiet Place"},
+        "village_square": {"en_name_part": "Village Square"},
+        # Add more if specific checks are needed for others like tavern, shop, forest_edge, deep_forest
+    }
+
+    found_locs_by_static_id = {loc.static_id: loc for loc in locations_from_db}
+
+    for static_id, checks in static_ids_to_check.items():
+        assert static_id in found_locs_by_static_id, f"Default location with static_id '{static_id}' not found."
+        loc = found_locs_by_static_id[static_id]
+        assert loc.guild_id == test_guild_id
+        assert loc.name_i18n.get("en") is not None and checks["en_name_part"] in loc.name_i18n["en"]
+        assert loc.name_i18n.get("ru") is not None
+        assert loc.descriptions_i18n.get("en") is not None
+        assert loc.descriptions_i18n.get("ru") is not None
+        assert loc.type_i18n == {"en": "Area", "ru": "Область"} # Assuming this default
+        assert isinstance(loc.neighbor_locations_json, dict)
+        assert loc.generated_details_json == {} # Expect empty dict
+        assert loc.ai_metadata_json == {}       # Expect empty dict
+        assert loc.coordinates is None          # Expect None as it's not set
+        assert isinstance(loc.on_enter_events_json, list)
+
+    # Verify WorldState
+    world_state_stmt = select(WorldState).where(WorldState.guild_id == test_guild_id)
+    result = await db_session.execute(world_state_stmt)
+    world_state = result.scalars().first()
+
+    assert world_state is not None
+    assert world_state.guild_id == test_guild_id
+    # Check default values for WorldState fields (assuming they are nullable or have defaults)
+    # Adjust these checks based on actual default values set by initialize_new_guild
+    assert world_state.global_narrative_state_i18n is None or world_state.global_narrative_state_i18n == {}
+    assert world_state.current_era_i18n is None or world_state.current_era_i18n == {}
+    assert world_state.custom_flags is None or world_state.custom_flags == {}
 
 
 @pytest.mark.asyncio

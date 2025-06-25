@@ -9,7 +9,7 @@ import logging
 
 from bot.api.dependencies import get_db_session
 from bot.api.schemas.player_schemas import PlayerCreate, PlayerUpdate, PlayerRead # Updated PlayerResponse to PlayerRead
-from bot.database.models import Player
+from bot.database.models import Player, GuildConfig
 
 logger = logging.getLogger(__name__)
 router = APIRouter() # Prefix will be added in main.py: /api/v1/guilds/{guild_id}/players
@@ -21,37 +21,42 @@ async def create_player(
     path_guild_id: str = Path(..., description="Guild ID from path", alias="guild_id"),
     db: AsyncSession = Depends(get_db_session)
 ):
-    logger.info(f"Attempting to create player for discord_id {player_data.discord_id} in guild {player_data.guild_id}")
-
-    if path_guild_id != player_data.guild_id:
+    # Verify guild exists first
+    guild_config = await db.get(GuildConfig, path_guild_id)
+    if not guild_config:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Guild ID in path ({path_guild_id}) does not match Guild ID in body ({player_data.guild_id})."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Guild with ID '{path_guild_id}' not found."
         )
+
+    logger.info(f"Attempting to create player for discord_id {player_data.discord_id} in guild {path_guild_id}")
+
+    # Removed check: if path_guild_id != player_data.guild_id:
+    # as player_data.guild_id no longer exists in PlayerCreate schema.
 
     player_id = str(uuid.uuid4())
 
     # Ensure discord_id is not already taken for this guild (UniqueConstraint handles this at DB)
     # but a pre-check can give a nicer error.
-    existing_player_stmt = select(Player).where(Player.discord_id == player_data.discord_id, Player.guild_id == player_data.guild_id)
+    existing_player_stmt = select(Player).where(Player.discord_id == player_data.discord_id, Player.guild_id == path_guild_id) # Use path_guild_id
     result = await db.execute(existing_player_stmt)
     if result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Player with Discord ID {player_data.discord_id} already exists in guild {player_data.guild_id}"
+            detail=f"Player with Discord ID {player_data.discord_id} already exists in guild {path_guild_id}" # Use path_guild_id
         )
 
-    # Create Player instance using all fields from PlayerCreate schema
-    db_player_data = player_data.dict()
-    # guild_id is already in player_data.dict() due to schema change
+    # Create Player instance using all fields from PlayerCreate schema and path_guild_id
+    db_player_data = player_data.model_dump(exclude_unset=True) # Use model_dump for Pydantic v2
     db_player = Player(
         id=player_id,
+        guild_id=path_guild_id, # Explicitly set guild_id from path
         **db_player_data
     )
     db.add(db_player)
     try:
         await db.commit()
-        await db.refresh(db_player) # To get DB defaults and relationships if any immediately
+        await db.refresh(db_player, attribute_names=['characters']) # Eagerly load/initialize characters collection
     except IntegrityError as e: # Handles the UniqueConstraint uq_player_discord_guild
         await db.rollback()
         logger.error(f"IntegrityError creating player: {e}")
@@ -66,8 +71,8 @@ async def create_player(
 
     # Manually load characters for the response as they might not be loaded by default after refresh
     # If PlayerResponse expects characters, ensure they are loaded.
-    # For creation, characters list will be empty.
-    db_player.characters = [] # Initialize as empty list for new player response
+    # For creation, characters list will be empty. The PlayerRead schema defaults `characters` to [].
+    # No need to explicitly set db_player.characters = [] if the relationship is fresh.
     # Ensure all fields expected by PlayerRead are present, or adjust PlayerRead schema
     # For example, if PlayerRead expects xp, level, etc., ensure they have default values in the Player model or are set here.
     # The Player model has defaults for xp, level, etc.

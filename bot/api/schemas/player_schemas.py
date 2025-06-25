@@ -35,7 +35,7 @@ class PlayerBase(BaseModel):
 
 class PlayerCreate(PlayerBase):
     discord_id: str = Field(..., description="Player's Discord User ID")
-    guild_id: str = Field(..., description="Guild ID this player record belongs to")
+    # guild_id: str = Field(..., description="Guild ID this player record belongs to") # Removed, will be taken from path
     # name_i18n is inherited from PlayerBase
 
 

@@ -81,8 +81,10 @@ if TYPE_CHECKING:
     from bot.game.managers.faction_manager import FactionManager
     from bot.game.services.location_interaction_service import LocationInteractionService
     # AIGenerationService already imported
-    from bot.ai.rules_schema import CoreGameRulesConfig # Added for new method
+    # from bot.ai.rules_schema import CoreGameRulesConfig # Moved out of TYPE_CHECKING
     from pydantic import ValidationError # Added for new method
+
+from bot.ai.rules_schema import CoreGameRulesConfig # MOVED HERE
 
 logger = logging.getLogger(__name__)
 logger.debug("--- Начинается загрузка: game_manager.py")
@@ -159,10 +161,21 @@ class GameManager:
 
     async def _initialize_database(self):
         logger.info("GameManager: Initializing database service...")
-        self.db_service = DBService()
+        self.db_service = DBService() # DBService __init__ is now test-aware
         await self.db_service.connect()
-        await self.db_service.initialize_database()
-        logger.info("GameManager: DBService initialized.")
+
+        # In TESTING_MODE, schema is created by test fixtures (Base.metadata.create_all).
+        # Avoid running manual DDL from SQLiteAdapter.initialize_database().
+        # MIGRATE_ON_INIT was originally for Alembic, not for this manual DDL.
+        if os.getenv("TESTING_MODE") == "true":
+            logger.info("GameManager (TESTING_MODE): Skipping db_service.initialize_database() as schema is handled by test fixtures.")
+        elif os.getenv("MIGRATE_ON_INIT", "false").lower() == "true":
+            logger.info("GameManager: MIGRATE_ON_INIT is true, calling db_service.initialize_database().")
+            await self.db_service.initialize_database()
+        else:
+            logger.info("GameManager: MIGRATE_ON_INIT is false or not set, and not in TESTING_MODE. Skipping db_service.initialize_database().")
+
+        logger.info("GameManager: DBService connection established and initialization logic (if applicable) completed.")
 
     async def _initialize_core_managers_and_services(self):
         logger.info("GameManager: Initializing core managers and services (RuleEngine, TimeManager, LocationManager, EventManager, OpenAIService)...")

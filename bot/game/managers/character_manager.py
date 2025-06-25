@@ -437,7 +437,22 @@ class CharacterManager:
     async def get_character_details_context(self, guild_id: str, character_id: str) -> Optional[Dict[str, Any]]: return None
     def get_character_by_name(self, guild_id: str, name: str) -> Optional[Character]: return None
     def get_all_characters(self, guild_id: str) -> List[Character]: return list(self._characters.get(str(guild_id), {}).values())
-    def get_characters_in_location(self, guild_id: str, location_id: str, **kwargs: Any) -> List[Character]: return []
+
+    def get_characters_in_location(self, guild_id: str, location_id: str, **kwargs: Any) -> List[Character]:
+        """
+        Returns a list of Pydantic Character models that are currently in the specified location for the given guild.
+        """
+        guild_id_str = str(guild_id)
+        all_guild_chars = self.get_all_characters(guild_id_str)
+        if not all_guild_chars:
+            return []
+
+        chars_in_location = [
+            char for char in all_guild_chars if str(char.location_id) == str(location_id)
+        ]
+        logger.debug(f"Found {len(chars_in_location)} characters in location {location_id} for guild {guild_id_str}.")
+        return chars_in_location
+
     def get_entities_with_active_action(self, guild_id: str) -> Set[str]: return self._entities_with_active_action.get(str(guild_id), set())
     def is_busy(self, guild_id: str, character_id: str) -> bool: return False
     def mark_character_deleted(self, guild_id: str, character_id: str) -> None:

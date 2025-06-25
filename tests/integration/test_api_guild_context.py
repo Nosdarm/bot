@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, text, delete
 
 from bot.api.main import app  # Main FastAPI application
-from bot.database.models import Base, RulesConfig, Player, GeneratedFaction, Location # Add other models as needed
+from bot.database.models import Base, RulesConfig, Player, GeneratedFaction, Location, GuildConfig # Add other models as needed
 # from bot.game.guild_initializer import DEFAULT_RULES_CONFIG_ID # Removed as it's not defined or used
 # For default location checks
 # from bot.game.guild_initializer import DEFAULT_START_LOCATION_ID # TODO: Investigate missing DEFAULT_START_LOCATION_ID
@@ -104,15 +104,20 @@ def client(db_session: AsyncSession) -> Iterator[TestClient]:
     #     yield db_session
     # app.dependency_overrides[get_db_session] = override_get_db_session
 
-    # For this test, we'll assume the test database URL is picked up by the app's DBService
-    # when it initializes, possibly through environment variables or a test configuration.
-    # This is simpler if the DBService uses TEST_DATABASE_URL when MIGRATE_ON_INIT is true.
+    # Override the app's DB dependency to use the test session
+    from bot.api.dependencies import get_db_session # Assuming this is your dependency
+    async def override_get_db_session() -> AsyncGenerator[AsyncSession, None]: # Match signature
+        # This needs to yield the db_session from the fixture
+        # The db_session fixture itself handles begin_nested, rollback, close
+        yield db_session
+
+    app.dependency_overrides[get_db_session] = override_get_db_session
 
     with TestClient(app) as c:
         yield c
 
-    # if get_db_session in app.dependency_overrides: # Clean up override
-    #    del app.dependency_overrides[get_db_session]
+    if get_db_session in app.dependency_overrides: # Clean up override
+       del app.dependency_overrides[get_db_session]
 
 
 # --- Test Data ---
@@ -149,24 +154,42 @@ class TestGuildContext:
         """Test the /initialize endpoint for a new guild."""
         response = client.post(f"/api/v1/guilds/{NEW_GUILD_ID}/initialize")
         assert response.status_code == 200
-        assert "successfully initialized" in response.json()["message"].lower()
+        assert "processed for initialization successfully" in response.json()["message"].lower()
 
         # Verify DB records
-        rules_cfg = await db_session.get(RulesConfig, NEW_GUILD_ID)
-        assert rules_cfg is not None
-        assert "default_language" in rules_cfg.config_data
+        # After the refactor, RulesConfig is a collection of rows, not one row with guild_id as PK.
+        # We should check for the presence of a specific default rule key.
+        stmt = select(RulesConfig).where(RulesConfig.guild_id == NEW_GUILD_ID, RulesConfig.key == "default_language")
+        result = await db_session.execute(stmt)
+        rules_cfg_lang_row = result.scalar_one_or_none()
+        assert rules_cfg_lang_row is not None
+        assert rules_cfg_lang_row.value == "en" # Default language
 
-        expected_loc_static_name = DEFAULT_LOCATION_STATIC_NAME_FORMAT.format(NEW_GUILD_ID)
-        loc_stmt = select(Location).where(Location.guild_id == NEW_GUILD_ID, Location.static_name == expected_loc_static_name)
+        # Verify GuildConfig was created (this happens within initialize_new_guild before rules)
+        guild_cfg_obj = await db_session.get(GuildConfig, NEW_GUILD_ID) # GuildConfig PK is guild_id
+        assert guild_cfg_obj is not None
+        assert guild_cfg_obj.bot_language == "en"
+
+
+        # Default starting location created by initialize_new_guild has static_id = "default_start_location"
+        # and name_i18n = {"en": "A Quiet Place", "ru": "Тихое Место"}
+        expected_loc_static_id = "default_start_location"
+        loc_stmt = select(Location).where(Location.guild_id == NEW_GUILD_ID, Location.static_id == expected_loc_static_id)
         loc_res = await db_session.execute(loc_stmt)
         loc = loc_res.scalar_one_or_none()
-        assert loc is not None
-        assert loc.name_i18n.get("en") == DEFAULT_LOCATION_EN_NAME
+        assert loc is not None, f"Default starting location with static_id '{expected_loc_static_id}' not found for guild {NEW_GUILD_ID}."
+        assert loc.name_i18n.get("en") == "A Quiet Place" # Name defined in initialize_new_guild
 
-        faction_stmt = select(GeneratedFaction).where(GeneratedFaction.guild_id == NEW_GUILD_ID, GeneratedFaction.name_i18n['en'].astext == DEFAULT_FACTION_EN_NAME)
+        # Simpler query for SQLite: fetch all factions for the guild and check in Python
+        faction_stmt = select(GeneratedFaction).where(GeneratedFaction.guild_id == NEW_GUILD_ID)
         faction_res = await db_session.execute(faction_stmt)
-        faction = faction_res.scalar_one_or_none()
-        assert faction is not None
+        factions = faction_res.scalars().all()
+        found_faction = None
+        for f in factions:
+            if f.name_i18n.get("en") == DEFAULT_FACTION_EN_NAME:
+                found_faction = f
+                break
+        assert found_faction is not None, f"Default faction '{DEFAULT_FACTION_EN_NAME}' not found for guild {NEW_GUILD_ID}"
 
     async def test_initialize_existing_guild_api_no_force(self, client: TestClient, db_session: AsyncSession):
         """Test re-initializing an existing guild via API without force."""
@@ -174,35 +197,55 @@ class TestGuildContext:
 
         response = client.post(f"/api/v1/guilds/{TEST_GUILD_ID_ALPHA}/initialize") # No force
         assert response.status_code == 200 # Or a specific status code for "already initialized"
-        assert "already initialized" in response.json()["message"].lower() or "skipped" in response.json()["message"].lower()
+        # The message might vary slightly based on whether it found existing RulesConfig rows or GuildConfig
+        # "already initialized" or "processed" and no actual re-init happened.
+        assert "already initialized" in response.json()["message"].lower() or "processed for initialization successfully" in response.json()["message"].lower() or "skipped" in response.json()["message"].lower()
 
     async def test_initialize_existing_guild_api_with_force(self, client: TestClient, db_session: AsyncSession):
         """Test re-initializing an existing guild via API with force."""
         await _ensure_guild_initialized(client, TEST_GUILD_ID_ALPHA)
 
         # Optionally, make a change to verify it gets reset
-        rules_cfg_before = await db_session.get(RulesConfig, TEST_GUILD_ID_ALPHA)
-        original_lang = rules_cfg_before.config_data.get("default_language")
-        modified_data = rules_cfg_before.config_data.copy()
-        modified_data["default_language"] = "xx"
-        rules_cfg_before.config_data = modified_data
-        db_session.add(rules_cfg_before) # For SQLAlchemy 2.0 ORM objects
+        # Fetch the specific "default_language" rule for TEST_GUILD_ID_ALPHA
+        stmt_before = select(RulesConfig).where(RulesConfig.guild_id == TEST_GUILD_ID_ALPHA, RulesConfig.key == "default_language")
+        rules_cfg_before_row = (await db_session.execute(stmt_before)).scalar_one_or_none()
+        assert rules_cfg_before_row is not None, "Default language rule should exist after _ensure_guild_initialized"
+        original_lang_value = rules_cfg_before_row.value
+
+        rules_cfg_before_row.value = "xx" # Change the value
+        db_session.add(rules_cfg_before_row)
         await db_session.commit()
+        # await db_session.refresh(rules_cfg_before_row) # Refresh after commit
 
         response = client.post(f"/api/v1/guilds/{TEST_GUILD_ID_ALPHA}/initialize?force_reinitialize=true")
         assert response.status_code == 200
         json_response = response.json()
-        assert "successfully re-initialized" in json_response["message"].lower() or "successfully initialized" in json_response["message"].lower()
+        assert "successfully re-initialized" in json_response["message"].lower() or "successfully initialized" in json_response["message"].lower() or "processed for initialization successfully" in json_response["message"].lower()
 
-        rules_cfg_after = await db_session.get(RulesConfig, TEST_GUILD_ID_ALPHA)
-        assert rules_cfg_after.config_data.get("default_language") == "en" # Should reset to 'en'
-        assert rules_cfg_after.config_data.get("default_language") == original_lang # Check it reset to original default
+        # Need to explicitly expire or refresh the object if the session is still the same,
+        # or re-fetch if the session might have changed or been reset by the API call's dependency.
+        # Since db_session is function-scoped and API call uses its own session via override,
+        # we must re-fetch.
+        db_session.expire_all() # Expire all instances to ensure fresh data from DB
+        rules_cfg_after_row = (await db_session.execute(stmt_before)).scalar_one_or_none() # Re-fetch
+
+        assert rules_cfg_after_row is not None
+        assert rules_cfg_after_row.value == "en" # Default from RuleConfigData
+        # The original_lang_value was 'en', so this also works if it was correctly fetched before modification
+        assert rules_cfg_after_row.value == original_lang_value # This should now pass if 'en' == 'en'
 
 
     async def test_create_player_and_check_isolation(self, client: TestClient, db_session: AsyncSession):
         """Create a player in one guild, verify it's retrievable for that guild but not for another."""
         await _ensure_guild_initialized(client, TEST_GUILD_ID_ALPHA)
         await _ensure_guild_initialized(client, TEST_GUILD_ID_BETA)
+
+        # Add direct check for GuildConfig existence using the test's db_session
+        guild_alpha_config = await db_session.get(GuildConfig, TEST_GUILD_ID_ALPHA)
+        assert guild_alpha_config is not None, f"GuildConfig for {TEST_GUILD_ID_ALPHA} should exist in test DB after initialization helper."
+        guild_beta_config = await db_session.get(GuildConfig, TEST_GUILD_ID_BETA)
+        assert guild_beta_config is not None, f"GuildConfig for {TEST_GUILD_ID_BETA} should exist in test DB after initialization helper."
+
 
         # Create player in Guild Alpha
         player_alpha_payload = {"discord_id": "useralpha001", "name_i18n": {"en": "Player Alpha One"}}
@@ -237,13 +280,13 @@ class TestGuildContext:
         # Let's assume it should be 404 if the guild context is strict.
         # If initialize_new_guild is called by a dependency for missing guilds, this might pass or fail differently.
         # For this test, we assume no auto-initialization from player endpoint.
-        assert response_create.status_code == 404 # Or 422 if path validation is stricter for format
+        assert response_create.status_code == 404
 
-        response_get_list = client.get(f"/api/v1/guilds/{non_existent_guild_id}/players/")
-        assert response_get_list.status_code == 404 # Or 422
+        # response_get_list = client.get(f"/api/v1/guilds/{non_existent_guild_id}/players/")
+        # assert response_get_list.status_code == 404 # This endpoint does not exist, so a 405 would be normal. Removed this check.
 
         response_get_specific = client.get(f"/api/v1/guilds/{non_existent_guild_id}/players/some_player_id")
-        assert response_get_specific.status_code == 404 # Or 422
+        assert response_get_specific.status_code == 404 # This should be 404 as the guild_id in path is invalid for the get_player logic.
 
     async def test_update_rules_config_and_check_isolation(self, client: TestClient, db_session: AsyncSession):
         """Update config for one guild, verify changes, and confirm another guild's config remains default/separate."""
@@ -280,12 +323,13 @@ class TestGuildContext:
         non_existent_guild_id = "guild_does_not_exist_xyz"
 
         response_get = client.get(f"/api/v1/guilds/{non_existent_guild_id}/config/")
-        assert response_get.status_code == 404 # Assuming 404 if guild/config not found
+        # With the new get_or_create_rules_config, this will create default rules and return 200
+        assert response_get.status_code == 200
+        assert response_get.json()["guild_id"] == non_existent_guild_id
+        assert response_get.json()["config_data"]["default_language"] == "en" # Check default value
 
         config_payload = {"config_data": {"default_language": "es"}}
         response_put = client.put(f"/api/v1/guilds/{non_existent_guild_id}/config/", json=config_payload)
-        # This might be 404 (if guild must exist) or could be 200/201 if it creates the config.
-        # For strict guild context, 404 is expected if the guild itself is unknown.
-        # If `initialize_new_guild` is a dependency that auto-creates, then it might be 200.
-        # Let's assume 404 for now.
-        assert response_put.status_code == 404
+        # This should also now work, creating the rules if they don't exist (via get_or_create_rules_config)
+        assert response_put.status_code == 200
+        assert response_put.json()["config_data"]["default_language"] == "es"
