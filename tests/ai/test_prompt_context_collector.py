@@ -592,7 +592,7 @@ class TestPromptContextCollector(unittest.TestCase):
         self.assertEqual(len(params_no_item_rules), 17 - 6) # 6 item price params should be missing
         self.mock_settings["game_rules"]["item_rules"] = original_item_rules # Restore
 
-    def test_get_full_context(self):
+    async def test_get_full_context(self):
         # Mock all individual get_* methods of the collector
         self.collector.get_main_language_code = MagicMock(return_value="en")
         self.collector.settings["target_languages"] = ["en", "ru"] # Ensure this is set for the test
@@ -640,7 +640,7 @@ class TestPromptContextCollector(unittest.TestCase):
         request_params = {"npc_id": "npc001", "situation": "greeting"}
 
         # Test with target_entity_type="character"
-        full_context_char = self.collector.get_full_context(
+        full_context_char = await self.collector.get_full_context(
             self.guild_id, request_type, request_params,
             target_entity_id=self.character_id, target_entity_type="character"
         )
@@ -666,16 +666,8 @@ class TestPromptContextCollector(unittest.TestCase):
         self.assertEqual(full_context_char.relationship_data, mock_relationship_context)
 
         # Test with no target entity
-        # Reset mocks for this specific call path if necessary
-        self.mock_character_manager.get_character_details_context.return_value = None
-        self.mock_quest_manager.list_quests_for_character.return_value = [] # No active quests if no player
-        self.mock_relationship_manager.get_relationships_for_entity.return_value = [] # No relationships if no target
-
         full_context_no_target = await self.collector.get_full_context(
-            guild_id=self.guild_id,
-            request_type="generate_world_event",
-            request_params={}
-            # session=self.mock_db_session # Pass mock session if methods require it
+            self.guild_id, "generate_world_event", {}
         )
         self.assertIsNone(full_context_no_target.player_context)
         self.assertEqual(full_context_no_target.active_quests_summary, [])
@@ -687,12 +679,8 @@ class TestPromptContextCollector(unittest.TestCase):
         self.mock_relationship_manager.get_relationships_for_entity = AsyncMock(return_value=[MagicMock(to_dict=lambda: r) for r in mock_npc_relationship_context]) # Mock to return list of dicts
 
         full_context_npc = await self.collector.get_full_context(
-            guild_id=self.guild_id,
-            request_type="generate_npc_interaction",
-            request_params={},
-            target_entity_id=npc_id_target,
-            target_entity_type="npc"
-            # session=self.mock_db_session
+            self.guild_id, "generate_npc_interaction", {},
+            target_entity_id=npc_id_target, target_entity_type="npc"
         )
         self.assertIsNone(full_context_npc.player_context)
         # Relationship data should be fetched for the NPC

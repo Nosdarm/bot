@@ -10,6 +10,7 @@ from bot.ai.ai_data_models import (
     POIModel,
     ConnectionModel,
     GeneratedNpcProfile,
+    ValidationIssue, # Added import
 )
 from bot.database.models.world_related import Location as DBLocation
 from bot.database.models.character_related import NPC as DBNPC # Corrected import path

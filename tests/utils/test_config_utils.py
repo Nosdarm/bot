@@ -2,9 +2,9 @@
 import pytest
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from bot.utils import config_utils
-from bot.database.models import RulesConfig, GuildConfig
+from sqlalchemy import select # Added import
+# Added for more specific mocking/assertion if needed for pg_insert:
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 # Assuming the same test DB setup fixtures from other integration tests are available via conftest.py
 # or we redefine minimal ones here if this test file is meant to be standalone for utils.
