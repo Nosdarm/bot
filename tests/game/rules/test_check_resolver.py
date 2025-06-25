@@ -87,9 +87,12 @@ class TestCheckResolver(unittest.TestCase):
         # Adjust rule mock for this specific test to simplify if needed, or rely on generic setup.
         # For perception_dc15_beat, primary stat is "perception" (value 16, mod +3)
 
+        guild_id_for_test = "test_guild"
+        check_type_for_test = "perception_dc15_beat"
+
         result: CheckResult = asyncio.run(self.resolver.resolve_check(
-            guild_id="test_guild",
-            check_type="perception_dc15_beat",
+            guild_id=guild_id_for_test,
+            check_type=check_type_for_test,
             performing_entity_id="player_1",
             performing_entity_type="player",
             difficulty_dc=15
@@ -101,6 +104,11 @@ class TestCheckResolver(unittest.TestCase):
         self.assertEqual(result.total_roll_value, 15)
         self.assertEqual(result.dc_value, 15)
         # self.assertEqual(result.description, "...") # Check description content
+
+        # Assert that get_rule was called to determine the skill/attribute for the check
+        # It will be called for "checks.perception_dc15_beat.skill"
+        # and potentially for "checks.perception_dc15_beat.attribute" if skill is not found or is not a string.
+        self.mock_game_manager.get_rule.assert_any_call(guild_id_for_test, f"checks.{check_type_for_test}.skill", default=None) # Example check
 
     @patch('bot.game.rules.check_resolver.dice_roller.roll_dice')
     @patch('bot.game.rules.check_resolver.calculate_effective_stats', new=mock_calculate_effective_stats)
