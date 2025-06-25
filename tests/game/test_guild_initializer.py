@@ -262,3 +262,33 @@ async def test_initialize_new_guild_force_reinitialize(db_session: AsyncSession)
 # default and skip if it's unavailable (unless CI=true is set in env).
 # The tests will drop and recreate all tables in this database at the start of the test session.
 # USE WITH CAUTION and point to a dedicated test database.
+
+@pytest.mark.asyncio
+async def test_initialize_new_guild_db_integrity_error_propagates(db_session: AsyncSession, caplog):
+    """
+    Tests that an IntegrityError during initialization is propagated,
+    allowing the calling context (like on_guild_join) to handle transaction rollback.
+    """
+    guild_id = f"fail_guild_{str(uuid.uuid4())[:8]}"
+
+    # Mock db_session.execute to raise IntegrityError when specific insert happens
+    original_execute = db_session.execute
+    async def mock_execute_that_fails(statement, *args, **kwargs):
+        # Check if it's an insert statement targeting GuildConfig table
+        # This is a simplified check; real statement inspection can be more complex.
+        if hasattr(statement, 'is_insert') and statement.is_insert:
+            if hasattr(statement, 'table') and statement.table.name == GuildConfig.__tablename__:
+                raise IntegrityError("Simulated GuildConfig insert failure", params=None, orig=None)
+        return await original_execute(statement, *args, **kwargs)
+
+    with patch.object(db_session, 'execute', side_effect=mock_execute_that_fails):
+        with pytest.raises(IntegrityError, match="Simulated GuildConfig insert failure"):
+            await initialize_new_guild(db_session, guild_id, force_reinitialize=False)
+            # If initialize_new_guild completes and error is not raised, this line won't be hit:
+            # await db_session.commit() # Should not commit due to error
+
+    # Check logs for the error message from initialize_new_guild
+    assert f"IntegrityError during guild initialization: {guild_id}" in caplog.text
+    assert "Simulated GuildConfig insert failure" in caplog.text
+    # The actual rollback is handled by the test's db_session fixture or the calling code's transaction manager.
+    # initialize_new_guild re-raises the exception, so it won't try to commit.

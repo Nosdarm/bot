@@ -159,5 +159,24 @@ class TestDiceRoller(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Die sides must be positive."): # Corrected expected message
             roll_dice("2d0+5")
 
+    def test_max_dice_and_sides(self):
+        # Test maximum allowed dice
+        total, details = roll_dice("1000d1")
+        self.assertEqual(total, 1000)
+        self.assertEqual(len(details), 1000)
+
+        # Test maximum allowed sides
+        total, details = roll_dice("1d1000")
+        self.assertTrue(1 <= total <= 1000)
+        self.assertEqual(len(details), 1)
+
+    def test_exceed_max_dice(self):
+        with self.assertRaisesRegex(ValueError, "Cannot roll more than 1000 dice at once."):
+            roll_dice("1001d6")
+
+    def test_exceed_max_sides(self):
+        with self.assertRaisesRegex(ValueError, "Die sides cannot exceed 1000."):
+            roll_dice("1d1001")
+
 if __name__ == '__main__':
     unittest.main()

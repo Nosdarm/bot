@@ -121,6 +121,22 @@ class TestPartyCommands(unittest.IsolatedAsyncioTestCase):
 
         self.interaction.followup.send.assert_awaited_once_with("Вы уже состоите в группе. Сначала покиньте текущую группу.", ephemeral=True)
 
+    async def test_party_create_no_active_character(self):
+        self._reset_party_manager_mocks()
+        # Simulate player having no active character
+        self.mock_player_account.active_character_id = None
+        # GameManager.get_player_model_by_discord_id will return this player object
+        self.mock_game_manager.get_player_model_by_discord_id.return_value = self.mock_player_account
+
+        await self.cog.cmd_party_create.callback(self.cog, self.interaction, name="A Party")
+
+        self.interaction.followup.send.assert_awaited_once_with(
+            "У вас должен быть активный персонаж для создания группы. Используйте `/character select` или `/character create`.",
+            ephemeral=True
+        )
+        self.mock_party_manager.create_party.assert_not_called()
+
+
     async def test_party_join_successful(self):
         self._reset_party_manager_mocks()
         self.mock_player_character_db.current_party_id = None # Not in a party
@@ -248,6 +264,62 @@ class TestPartyCommands(unittest.IsolatedAsyncioTestCase):
 
     # TODO: Add tests for /party view command
     # This will involve mocking get_party, get_party_members, get_character (for leader/members), get_location_instance
+
+    async def test_party_view_current_party_success(self):
+        self._reset_party_manager_mocks()
+        party_id = "current_party_view_id"
+        self.mock_player_character_db.current_party_id = party_id
+        self.mock_character_manager.get_character.return_value = self.mock_player_character_db
+
+        mock_party_to_view = MagicMock(spec=Party) # Assuming PartyManager returns Pydantic/DB model
+        mock_party_to_view.id = party_id
+        mock_party_to_view.name_i18n = {"en": "My Current Crew"}
+        mock_party_to_view.leader_id = self.mock_player_character_db.id
+        mock_party_to_view.current_location_id = "loc_party_view"
+        mock_party_to_view.player_ids_list = [self.mock_player_character_db.id] # Simulate as list if that's what model has
+
+        self.mock_party_manager.get_party.return_value = mock_party_to_view
+
+        # Mock leader character details (same as current player for this test)
+        self.mock_character_manager.get_character.side_effect = lambda gid, char_id: self.mock_player_character_db if char_id == self.mock_player_character_db.id else None
+
+        # Mock party members (just the leader for simplicity here)
+        self.mock_party_manager.get_party_members.return_value = [self.mock_player_character_db]
+
+        # Mock location name
+        mock_location_obj = MagicMock()
+        mock_location_obj.name_i18n = {"en": "Party Hangout"}
+        self.mock_location_manager.get_location_instance.return_value = mock_location_obj
+
+        await self.cog.cmd_party_view.callback(self.cog, self.interaction, target=None)
+
+        self.mock_party_manager.get_party.assert_awaited_once_with(str(self.interaction.guild.id), party_id)
+        self.interaction.followup.send.assert_awaited_once()
+        args, kwargs = self.interaction.followup.send.call_args
+        self.assertIsInstance(kwargs.get('embed'), discord.Embed)
+        embed = kwargs['embed']
+        self.assertEqual(embed.title, "Информация о группе: My Current Crew")
+        # Add more assertions for embed fields if needed
+
+    async def test_party_view_target_not_found(self):
+        self._reset_party_manager_mocks()
+        self.mock_character_manager.get_character.return_value = self.mock_player_character_db
+        self.mock_party_manager.get_party.return_value = None # Target party ID not found
+
+        # Mock CharacterManager.get_character_by_name to also return None (no character found by name)
+        self.mock_character_manager.get_character_by_name = AsyncMock(return_value=None)
+
+        # Mock PartyManager's cache for name lookup to be empty or not match
+        self.mock_party_manager._parties_cache = {str(self.interaction.guild.id): {}}
+
+
+        target_identifier = "NonExistentParty123"
+        await self.cog.cmd_party_view.callback(self.cog, self.interaction, target=target_identifier)
+
+        self.interaction.followup.send.assert_awaited_once_with(
+            f"Не удалось найти группу по указателю: '{target_identifier}'.",
+            ephemeral=True
+        )
 
 if __name__ == '__main__':
     unittest.main()

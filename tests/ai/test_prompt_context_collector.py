@@ -377,6 +377,9 @@ class TestPromptContextCollector(unittest.TestCase):
         context_empty = self.collector.get_quest_context(self.guild_id, self.character_id)
         self.assertEqual(len(context_empty["active_quests"]), 0)
         self.assertEqual(len(context_empty["completed_quests_summary"]), 0)
+        # Check guild_id was passed to manager
+        self.mock_quest_manager.list_quests_for_character.assert_called_with(self.guild_id, self.character_id)
+
 
         # Test QuestManager unavailable
         original_manager = self.collector.quest_manager
@@ -386,9 +389,15 @@ class TestPromptContextCollector(unittest.TestCase):
         self.assertEqual(len(context_no_manager["completed_quests_summary"]), 0)
         self.collector.quest_manager = original_manager # Restore
 
-    def test_get_game_rules_summary(self):
+    @patch('bot.services.db_service.DBService.get_rules_config', new_callable=AsyncMock)
+    async def test_get_game_rules_summary(self, mock_get_rules_config_db: AsyncMock):
+        # Mock the DB call made by get_game_rules_summary
+        mock_get_rules_config_db.return_value = self.mock_settings["game_rules"]
+
         # Settings already have game_rules for attributes, skills, and item_templates
-        summary = self.collector.get_game_rules_summary(self.guild_id)
+        summary = await self.collector.get_game_rules_summary(self.guild_id) # Make it async if it is
+
+        mock_get_rules_config_db.assert_awaited_once_with(self.guild_id) # Verify guild_id used for DB call
 
         # Attributes
         self.assertIn("strength", summary["attributes"])

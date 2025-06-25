@@ -491,6 +491,68 @@ class TestLocationManagerProcessCharacterMove(unittest.IsolatedAsyncioTestCase):
             self.guild_id, self.char_id, "Character", self.loc_from_id
         )
 
+    async def test_move_transaction_rollback_on_party_update_failure(self):
+        """
+        Tests that if updating the party fails after the character's location has been changed
+        in the session, the entire transaction is rolled back, and the character's location
+        is not actually updated in the DB (simulated by checking the mock object's state).
+        """
+        self.db_character.current_party_id = self.party_id # Character is in a party
+        self.db_party.leader_id = self.char_id # Character is leader
+        self.mock_rule_engine.get_rule = AsyncMock(return_value={"allow_leader_only_move": True, "teleport_all_members": True})
+
+        original_char_location = self.db_character.current_location_id
+
+        # Simulate that adding/flushing Party object fails
+        # The session mock is used by GuildTransaction
+        # We need to make session.add or session.flush raise an error when called for the Party object.
+        async def mock_session_add_side_effect(instance):
+            if isinstance(instance, discord.ext.commands.Cog): # Workaround for add_cog being called with self
+                return
+            if hasattr(instance, '__tablename__') and instance.__tablename__ == 'parties':
+                # print(f"DEBUG: Mocking session.add to fail for Party: {instance}")
+                raise Exception("Simulated DB error on party update")
+            # print(f"DEBUG: Mocking session.add for other instance: {type(instance)}")
+            # Default behavior for other adds (like Character)
+            # No explicit return needed for session.add
+
+        self.mock_session.add.side_effect = mock_session_add_side_effect
+
+        # Ensure commit is not called on the session mock if an error occurs and rollback is hit
+        self.mock_session.commit = AsyncMock()
+        self.mock_session.rollback = AsyncMock()
+
+
+        with pytest.raises(Exception, match="Simulated DB error on party update"):
+            await self.location_manager.process_character_move(self.guild_id, self.char_id, self.pydantic_loc_to.static_id)
+
+        # Assertions
+        # 1. Character's location attribute might have been changed in Python object,
+        #    but the commit should not have happened.
+        #    In a real DB test, we'd query the DB. Here, we check mock_session.commit.
+        #    The test setup for db_character is such that its state is modified by the SUT.
+        #    We check if the SUT *attempted* to change it.
+        #    The crucial part is that session.commit was NOT called, and session.rollback WAS.
+
+        # Check that Character object's location was attempted to be set to new loc
+        # (this happens before the party error)
+        assert self.db_character.current_location_id == self.loc_to_id
+
+        # 2. Rollback was called on the session by GuildTransaction
+        self.mock_session.rollback.assert_awaited_once()
+        self.mock_session.commit.assert_not_awaited() # Commit should not have been reached
+
+        # 3. GameLogManager should not have logged the move if transaction failed before logging
+        #    (Current process_character_move logs *before* commit, so this might still be called)
+        #    If logging happens after commit, then assert_not_called.
+        #    If logging happens before commit (as it seems to), it would be called.
+        #    Let's assume for now logging happens within the transaction attempt.
+        # self.mock_game_log_manager.log_event.assert_not_awaited() # This depends on log_event placement
+
+        # 4. on_enter_location should not be triggered
+        self.mock_location_interaction_service.process_on_enter_location_events.assert_not_awaited()
+
+
     async def test_move_party_member_not_leader_fails_if_rule_disallows(self):
         self.db_character.current_party_id = self.party_id
         self.db_party.leader_id = "other_char_leader" # Current char is not leader
