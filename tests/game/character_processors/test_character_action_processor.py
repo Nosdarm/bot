@@ -20,6 +20,7 @@ from bot.game.managers.status_manager import StatusManager
 from bot.game.managers.dialogue_manager import DialogueManager
 from bot.game.managers.event_manager import EventManager
 from bot.game.rules.rule_engine import RuleEngine
+from bot.services.db_service import DBService
 from bot.services.openai_service import OpenAIService
 from bot.game.managers.game_log_manager import GameLogManager
 from bot.game.managers.party_manager import PartyManager
