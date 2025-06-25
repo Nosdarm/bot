@@ -1,6 +1,6 @@
 import unittest
 import json
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch, mock_open, AsyncMock
 
 from bot.ai.prompt_context_collector import PromptContextCollector
 from bot.ai.ai_data_models import GenerationContext # Assuming these are in this path. GameTerm and ScalingParameter removed.

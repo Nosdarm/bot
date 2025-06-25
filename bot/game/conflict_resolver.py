@@ -7,6 +7,7 @@ game conflicts based on player actions and defined rules.
 # Импорты, необходимые для ConflictResolver
 import json
 import uuid
+import logging
 import traceback # <- Добавьте импорт traceback, он используется в Error handling
 from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union, Tuple # <- Убедитесь, что Union и Tuple импортированы
 from typing import Set

@@ -8,6 +8,8 @@ from bot.database.models import Character as CharacterDBModel # SQLAlchemy model
 from bot.game.managers.character_manager import CharacterManager
 from bot.services.db_service import DBService # For type hinting
 from bot.database.postgres_adapter import PostgresAdapter # Or your actual adapter
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
 
