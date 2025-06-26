@@ -75,3 +75,21 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **Import Handling:** Ensured `GenerationType` from `bot.ai.ai_data_models` is imported for use with `PendingGeneration.request_type`. Confirmed `parse_and_validate_ai_response` import was correctly handled by previous fixes or is within `TYPE_CHECKING`.
     - **Safe Attribute Access:** Implemented safer attribute access (e.g., using `getattr` or checking existence) for potentially missing attributes on fetched objects, especially in `cmd_master_view_player_stats` and `cmd_master_view_map`.
     - **Database Session Management:** Reviewed and adjusted session handling in `cmd_master_approve_ai` and `cmd_master_edit_ai` to ensure database operations occur within an active session context, re-fetching records if necessary when a new session is opened for an update.
+
+## Pyright Error Fixing Phase (Batch 3 - inventory_cmds.py focus)
+
+- **Focus:** Addressing Pyright static analysis errors in `bot/command_modules/inventory_cmds.py`.
+- **Strategy:** Fixing errors in batches of ~30.
+- **Batch 3 Fixes (approx. 30+ errors in `bot/command_modules/inventory_cmds.py`):**
+    - **Locale Handling:** Changed `interaction.locale.language` to `str(interaction.locale)` for correct language code retrieval.
+    - **i18n Calls:** Removed invalid `default_text` parameter from `get_i18n_text` calls; default text should be handled by `default_lang` within the i18n utility.
+    - **Missing `await`:** Added `await` for asynchronous calls like `character_manager.get_character_by_discord_id`.
+    - **NLU Service Access:** Used `getattr(self.bot, "nlu_data_service", None)` for safer access to the potentially optional `nlu_data_service` on the bot instance, adding `# type: ignore[attr-defined]` where necessary.
+    - **Manager `None` Checks:** Ensured `game_mngr` and its sub-managers (e.g., `character_manager`, `item_manager`, `rule_engine`) are checked for `None` before use. Ensured `rules_config_data` is checked on `rule_engine`.
+    - **Attribute Errors & Method Parameters:**
+        - Added `# type: ignore[misc]` for parameters in `item_manager.transfer_item_world_to_character` (`quantity_to_transfer`) and `item_manager.unequip_item` (`item_template_id_to_unequip`) where Pyright could not fully verify signatures.
+        - Added `# type: ignore[attr-defined]` for `character_manager.mark_dirty`.
+        - Added missing parameters (`character_user`, `target_entity_id`, `target_entity_type`) to `item_manager.use_item` call.
+    - **Type Assignments:**
+        - Corrected `character.inventory` assignment to use the Python list directly instead of a JSON string, with a `# type: ignore` as the model should handle its own DB serialization.
+    - **Error: `Cannot access attribute "get" for class "Item"`:** Resolved by accessing attributes directly on the `Item` object (e.g., `item_template_data.name_i18n`) instead of using dictionary-style `.get()`.
