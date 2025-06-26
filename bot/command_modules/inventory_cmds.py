@@ -282,9 +282,9 @@ async def setup(bot: "RPGBot"):
     await bot.add_cog(InventoryCog(bot))
     logging.info("InventoryCog loaded.")
 
-[end of bot/command_modules/inventory_cmds.py]
 
-[start of bot/utils/i18n_utils.py]
+
+
 import json
 import os
 from typing import Dict, Any, List
@@ -450,9 +450,7 @@ def get_entity_localized_text(entity: Any, field_name: str, lang: str, default_l
         # logger_i18n.debug(f"get_entity_localized_text: Field '{field_name}' on entity {type(entity)} became empty during lookup, or initial check failed.")
         return None
 
-[end of bot/utils/i18n_utils.py]
 
-[start of bot/game/managers/item_manager.py]
 # bot/game/managers/item_manager.py
 """
 Manages item instances and item templates within the game.
@@ -933,9 +931,7 @@ class ItemManager:
 # logger.debug("DEBUG: item_manager.py module loaded (after overwrite).")
 
 
-[end of bot/game/managers/item_manager.py]
 
-[start of bot/game/models/character.py]
 # В bot/game/models/character.py
 from __future__ import annotations
 import json
@@ -1188,4 +1184,4 @@ class Character:
     # def set_cooldown(self, spell_id: str, cooldown_end_time: float): ...
     # def get_skill_level(self, skill_name: str) -> int: ...
 
-[end of bot/game/models/character.py]
+

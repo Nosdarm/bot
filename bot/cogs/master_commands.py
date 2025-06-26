@@ -240,9 +240,7 @@ async def setup(bot: commands.Bot): # Added type hint for bot
     await bot.add_cog(MasterCog(bot))
     logger.info("MasterCog added to bot.")
 
-[end of bot/cogs/master_commands.py]
 
-[start of bot/game/managers/game_manager.py]
 # bot/game/managers/game_manager.py
 
 import asyncio
@@ -1050,9 +1048,7 @@ class GameManager:
 
 # logger.debug("DEBUG: Finished loading game_manager.py from: %s", __file__) # Debug log can be noisy
 
-[end of bot/game/managers/game_manager.py]
 
-[start of bot/database/models/world_related.py]
 from sqlalchemy import (
     Column, Integer, String, ForeignKey, Boolean, Text, # JSON removed
     PrimaryKeyConstraint, Float, TIMESTAMP, Index, UniqueConstraint, CheckConstraint
@@ -1227,4 +1223,4 @@ class GeneratedFaction(Base):
         name_en = self.name_i18n.get('en', 'Unknown Faction') if isinstance(self.name_i18n, dict) else 'Unknown Faction'
         return f"<GeneratedFaction(id='{self.id}', name_en='{name_en}', guild_id='{self.guild_id}')>"
 
-[end of bot/database/models/world_related.py]
+
