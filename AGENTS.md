@@ -47,3 +47,14 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
 - **Dependency Installation:** Encountered multiple `ModuleNotFoundError` errors when attempting to run `poetry run pytest`. This indicated missing dependencies.
 - **Action Taken:** Ran `poetry install --with dev` to install all project dependencies, including development ones. This step completed successfully, installing 81 packages.
 - **Next Step:** Re-run `poetry run pytest` to execute the tests now that dependencies should be correctly installed.
+
+## Pyright Error Fixing Phase (Batch 1)
+
+- **Focus:** Addressing Pyright static analysis errors from `pyright_summary.txt`.
+- **Strategy:** Fixing errors in batches of ~10, prioritizing files with fewer errors first. Committing each batch.
+- **Batch 1 Fixes (10 errors committed in `fix-pyright-schemas-utils-sqlite-batch1`):**
+    - `bot/api/schemas/ability_schemas.py` (2 errors): Fixed Pydantic `Field` usage (explicit `default` keyword for default values, ensuring other metadata like `description`, `example` are passed as keyword arguments).
+    - `bot/api/schemas/location_schemas.py` (2 errors): Similar Pydantic `Field` usage fixes.
+    - `bot/api/schemas/player_schemas.py` (2 errors): Similar Pydantic `Field` usage fixes. Addressed a field override variance for `discord_id` in `PlayerRead` schema by explicitly defining it and adding a `# type: ignore[override]` comment.
+    - `bot/command_modules/utility_cmds.py` (2 errors): Added missing `await` keywords for asynchronous calls to `character_manager.get_character_by_discord_id` to resolve `CoroutineType` assignment errors.
+    - `bot/database/sqlite_adapter.py` (2 errors): Removed non-standard `is_closed()` method calls on `aiosqlite.Connection` objects, as this attribute/method is not standard and was causing errors. Connection state is now inferred differently.

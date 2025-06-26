@@ -4,7 +4,7 @@ from __future__ import annotations
 import discord
 import traceback
 import json
-from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union # Добавлен Union
+from typing import Optional, Dict, Any, List, Set, TYPE_CHECKING, Union, TypedDict # Добавлен Union and TypedDict
 from collections import Counter # Added Counter for inventory aggregation
 
 # Модели
@@ -17,6 +17,13 @@ from bot.game.models.character import Character
 # from bot.game.models.party import Party # Если get_party возвращает объект Party
 # from bot.game.models.status import StatusEffectInstance # Если get_status_effect_instance возвращает объект StatusEffectInstance
 # from bot.game.models.item import ItemTemplate # Если get_item_template возвращает объект ItemTemplate
+
+
+# Define TypedDict for more specific field data
+class EmbedFieldData(TypedDict):
+    name: str
+    value: str
+    inline: bool
 
 
 if TYPE_CHECKING:
@@ -325,7 +332,7 @@ class CharacterViewService:
     # Возвращает данные поля (name, value, inline) для вставки в другой Embed (например, в лист персонажа).
     # Возвращает dict {name, value, inline}.
     # (Не возвращает None, чтобы всегда было поле, пусть даже с сообщением "Инвентарь пуст")
-    async def _get_inventory_embed_field_data(self, character: Character, context: Dict[str, Any], **kwargs: Any) -> Dict[str, Union[str, bool]]:
+    async def _get_inventory_embed_field_data(self, character: Character, context: Dict[str, Any], **kwargs: Any) -> EmbedFieldData:
          """
          Вспомогательный метод для генерации данных для поля Embed с инвентарем.
          Возвращает dict с ключами 'name', 'value', 'inline'.
