@@ -69,29 +69,27 @@ class RuleEngine:
         self._time_manager: Optional["TimeManager"] = time_manager
         self._relationship_manager: Optional["RelationshipManager"] = relationship_manager
         self._economy_manager: Optional["EconomyManager"] = economy_manager
-        self._game_manager: Optional["GameManager"] = game_manager # Assign game_manager
+        self._game_manager: Optional["GameManager"] = game_manager
         
-        if rules_data is not None:
-            self._rules_data: Dict[str, Any] = rules_data
-        else:
-            self._rules_data: Dict[str, Any] = self._settings.get('game_rules', {})
+        self._rules_data: Dict[str, Any] = rules_data if rules_data is not None else self._settings.get('game_rules', {})
         
         logger.info("RuleEngine initialized.")
 
     async def load_rules_data(self) -> None:
         logger.info("RuleEngine: Loading rules data...")
-        self._rules_data = self._settings.get('game_rules', {})
-        logger.info(f"RuleEngine: Loaded {len(self._rules_data)} rules entries.") # Changed print to logger
+        # Ensure settings is not None before access
+        self._rules_data = self._settings.get('game_rules', {}) if self._settings else {}
+        logger.info(f"RuleEngine: Loaded {len(self._rules_data)} rules entries.")
 
-    async def load_state(self, **kwargs: Any) -> None:
+    async def load_state(self, **kwargs: Any) -> None: # type: ignore[no-untyped-def]
          await self.load_rules_data()
 
-    async def save_state(self, **kwargs: Any) -> None:
-         logger.info("RuleEngine: Save state method called. (Placeholder - does RuleEngine have state to save?)") # Changed print to logger
+    async def save_state(self, **kwargs: Any) -> None: # type: ignore[no-untyped-def]
+         logger.info("RuleEngine: Save state method called. (Placeholder - does RuleEngine have state to save?)")
          pass
 
-    def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None:
-        logger.info(f"RuleEngine: Rebuilding runtime caches for guild {guild_id}. (Placeholder)") # Changed print to logger
+    def rebuild_runtime_caches(self, guild_id: str, **kwargs: Any) -> None: # type: ignore[no-untyped-def]
+        logger.info(f"RuleEngine: Rebuilding runtime caches for guild {guild_id}. (Placeholder)")
         pass
 
     async def execute_triggers(self, triggers: List[Dict[str, Any]], context: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
@@ -124,30 +122,27 @@ class RuleEngine:
                 return base
             logger.warning(f"RuleEngine: Cannot calculate duration for move from {curr} to {target} (lm: {lm is not None}). Returning 0.0.")
             return 0.0
-        if action_type == 'combat_attack':
-            return float(self._rules_data.get('base_attack_duration', 1.0)) # type: ignore[arg-type]
-        if action_type == 'rest':
-            return float(action_context.get('duration', self._rules_data.get('default_rest_duration', 10.0))) # type: ignore[arg-type]
-        if action_type == 'search':
-            return float(self._rules_data.get('base_search_duration', 5.0)) # type: ignore[arg-type]
-        if action_type == 'craft':
-            return float(self._rules_data.get('base_craft_duration', 30.0)) # type: ignore[arg-type]
-        if action_type == 'use_item':
-            return float(self._rules_data.get('base_use_item_duration', 1.0)) # type: ignore[arg-type]
-        if action_type == 'ai_dialogue':
-            return float(self._rules_data.get('base_dialogue_step_duration', 0.1)) # type: ignore[arg-type]
-        if action_type == 'idle':
-            return float(self._rules_data.get('default_idle_duration', 60.0)) # type: ignore[arg-type]
+        # Fallback to default if not found in _rules_data
+        action_durations: Dict[str, float] = {
+            'combat_attack': float(self._rules_data.get('base_attack_duration', 1.0)), # type: ignore[arg-type]
+            'rest': float(action_context.get('duration', self._rules_data.get('default_rest_duration', 10.0))), # type: ignore[arg-type]
+            'search': float(self._rules_data.get('base_search_duration', 5.0)), # type: ignore[arg-type]
+            'craft': float(self._rules_data.get('base_craft_duration', 30.0)), # type: ignore[arg-type]
+            'use_item': float(self._rules_data.get('base_use_item_duration', 1.0)), # type: ignore[arg-type]
+            'ai_dialogue': float(self._rules_data.get('base_dialogue_step_duration', 0.1)), # type: ignore[arg-type]
+            'idle': float(self._rules_data.get('default_idle_duration', 60.0)), # type: ignore[arg-type]
+        }
+        duration = action_durations.get(action_type)
+        if duration is not None:
+            return duration
+
         logger.warning(f"RuleEngine: Unknown action type '{action_type}' for duration calculation. Returning 0.0.")
         return 0.0
 
-
-    async def check_conditions( # type: ignore[return] # Allow complex return paths for now
-        self,
-        conditions: List[Dict[str, Any]],
-        context: Dict[str, Any]
-    ) -> bool:
+    async def check_conditions(self, conditions: List[Dict[str, Any]], context: Dict[str, Any]) -> bool:
         if not conditions: return True
+
+        # Ensure managers are available and correctly typed
         cm: Optional[CharacterManager] = context.get('character_manager') or self._character_manager
         nm: Optional[NpcManager] = context.get('npc_manager') or self._npc_manager
         lm: Optional[LocationManager] = context.get('location_manager') or self._location_manager
@@ -157,149 +152,203 @@ class RuleEngine:
         combat_mgr: Optional[CombatManager] = context.get('combat_manager') or self._combat_manager
 
         for cond in conditions:
-            ctype = cond.get('type'); data = cond.get('data', {}); met = False
+            ctype = cond.get('type')
+            data = cond.get('data', {})
+            met = False
+
             entity = context.get('character') or context.get('npc') or context.get('party')
             entity_id_any = data.get('entity_id') or getattr(entity, 'id', None)
             entity_id: Optional[str] = str(entity_id_any) if entity_id_any is not None else None
             entity_type: Optional[str] = data.get('entity_type') or (type(entity).__name__ if entity else None)
 
             if ctype == 'has_item' and im:
-                item_template_id_condition = data.get('item_template_id'); item_id_condition = data.get('item_id')
-                quantity_condition = data.get('quantity', 1)
+                item_template_id_condition = data.get('item_template_id')
+                item_id_condition = data.get('item_id')
+                quantity_condition = float(data.get('quantity', 1.0)) # Ensure float for comparison
+
                 if entity_id and entity_type and (item_template_id_condition or item_id_condition):
-                    guild_id_from_context = context.get('guild_id')
-                    if guild_id_from_context and isinstance(guild_id_from_context, str):
-                        # Assuming get_items_by_owner returns List[Dict[str,Any]] based on usage
+                    guild_id_from_context = str(context.get('guild_id'))
+                    if guild_id_from_context:
                         owned_items_raw = await im.get_items_by_owner(guild_id_from_context, entity_id)
                         owned_items: List[Dict[str, Any]] = owned_items_raw if isinstance(owned_items_raw, list) else []
 
-                        found_item_count = 0.0 # Can be float due to item quantity
+                        found_item_count = 0.0
                         for item_instance_dict in owned_items:
                             if not isinstance(item_instance_dict, dict): continue
-                            matches_template = (item_template_id_condition and str(item_instance_dict.get('template_id')) == str(item_template_id_condition))
-                            matches_instance_id = (item_id_condition and str(item_instance_dict.get('id')) == str(item_id_condition))
+                            matches_template = (item_template_id_condition and
+                                                str(item_instance_dict.get('template_id')) == str(item_template_id_condition))
+                            matches_instance_id = (item_id_condition and
+                                                   str(item_instance_dict.get('id')) == str(item_id_condition))
+
                             item_qty = item_instance_dict.get('quantity', 0.0)
-                            current_item_qty = 0.0
-                            if isinstance(item_qty, (int, float)):
-                                current_item_qty = float(item_qty)
+                            current_item_qty = float(item_qty) if isinstance(item_qty, (int, float)) else 0.0
 
                             if item_id_condition:
-                                if matches_instance_id: found_item_count += current_item_qty; break
-                            elif matches_template: found_item_count += current_item_qty
-                        if found_item_count >= float(quantity_condition): met = True
+                                if matches_instance_id:
+                                    found_item_count += current_item_qty
+                                    break
+                            elif matches_template:
+                                found_item_count += current_item_qty
+
+                        if found_item_count >= quantity_condition:
+                            met = True
             elif ctype == 'in_location' and lm:
                 loc_id_in_cond = data.get('location_id')
                 if entity and loc_id_in_cond:
-                     entity_location_id = getattr(entity, 'current_location_id', getattr(entity, 'location_id', None)) # Try both
-                     if entity_location_id is not None and str(entity_location_id) == str(loc_id_in_cond): met = True
+                     entity_location_id = getattr(entity, 'current_location_id', getattr(entity, 'location_id', None))
+                     if entity_location_id is not None and str(entity_location_id) == str(loc_id_in_cond):
+                         met = True
             elif ctype == 'has_status' and sm:
                 status_type_cond = data.get('status_type')
                 if entity_id and entity_type and status_type_cond:
-                    guild_id_from_context = context.get('guild_id')
-                    if guild_id_from_context and isinstance(guild_id_from_context, str):
-                        # _status_effects is Dict[str, Dict[str, StatusEffect]]
+                    guild_id_from_context = str(context.get('guild_id'))
+                    if guild_id_from_context and hasattr(sm, '_status_effects'):
                         guild_statuses_cache: Dict[str, Any] = sm._status_effects.get(guild_id_from_context, {}) # type: ignore[attr-defined]
-                        for effect_instance in guild_statuses_cache.values(): # effect_instance is StatusEffect
+                        for effect_instance in guild_statuses_cache.values():
                             if (str(getattr(effect_instance, 'target_id', None)) == entity_id and
                                 str(getattr(effect_instance, 'target_type', None)) == entity_type and
                                 str(getattr(effect_instance, 'status_type', None)) == str(status_type_cond)):
-                                met = True; break
-            elif ctype == 'stat_check': met = await self.perform_stat_check(entity, data.get('stat'), data.get('threshold'), data.get('operator', '>='), **context)
+                                met = True
+                                break
+            elif ctype == 'stat_check':
+                met = await self.perform_stat_check(entity, str(data.get('stat')), data.get('threshold'), str(data.get('operator', '>=')))
             elif ctype == 'is_in_combat' and combat_mgr and entity_id:
-                 met = bool(await combat_mgr.get_combat_by_participant_id(entity_id, guild_id=str(context.get('guild_id')))) # Added guild_id
+                 guild_id = str(context.get('guild_id'))
+                 if guild_id:
+                    met = bool(await combat_mgr.get_combat_by_participant_id(entity_id, guild_id=guild_id))
             elif ctype == 'is_leader_of_party' and pm and entity_id and entity_type == 'Character':
-                 # get_party_by_member_id now takes guild_id as first arg
-                 party_instance = await pm.get_party_by_member_id(str(context.get('guild_id')), entity_id) # type: ignore[attr-defined]
-                 if party_instance and getattr(party_instance, 'leader_id', None) == entity_id: met = True
-            else: logger.warning(f"RuleEngine: Unknown or unhandled condition type '{ctype}'."); return False
-            if not met: return False
+                 guild_id_str = str(context.get('guild_id')) # Ensure guild_id is a string
+                 if guild_id_str and hasattr(pm, 'get_party_by_member_id'): # Check if method exists
+                     party_instance = await pm.get_party_by_member_id(guild_id_str, entity_id) # type: ignore[attr-defined]
+                     if party_instance and getattr(party_instance, 'leader_id', None) == entity_id:
+                         met = True
+            else:
+                logger.warning(f"RuleEngine: Unknown or unhandled condition type '{ctype}' or missing manager for guild {context.get('guild_id')}.")
+                return False # Explicitly fail if condition type is unknown or manager missing
+
+            if not met:
+                return False
         return True
 
-    async def perform_stat_check(self, entity: Any, stat_name: str, threshold: Any, operator: str = '>=', **context: Any) -> bool: # Added **context
+    async def perform_stat_check(self, entity: Any, stat_name: str, threshold: Any, operator: str = '>=' ) -> bool: # Removed **context
         entity_stats = getattr(entity, 'stats_json', {}) if isinstance(entity, Character) else getattr(entity, 'stats', {})
-        if not isinstance(entity_stats, dict): entity_stats = {}
-        stat_value = entity_stats.get(stat_name)
-        if stat_value is None: return False
+        if not isinstance(entity_stats, dict): entity_stats = {} # Ensure it's a dict
+        stat_value_any = entity_stats.get(stat_name) # Use stat_value_any
+        if stat_value_any is None: return False # Check stat_value_any
         try:
-            stat_value_numeric = float(stat_value); threshold_numeric = float(threshold)
+            stat_value_numeric = float(stat_value_any) # Use stat_value_any
+            threshold_numeric = float(threshold)
             if operator == '>=': return stat_value_numeric >= threshold_numeric
             elif operator == '>': return stat_value_numeric > threshold_numeric
             elif operator == '<=': return stat_value_numeric <= threshold_numeric
             elif operator == '<': return stat_value_numeric < threshold_numeric
             elif operator == '==': return stat_value_numeric == threshold_numeric
             elif operator == '!=': return stat_value_numeric != threshold_numeric
-            else: return False
-        except (ValueError, TypeError): return False
-        except Exception: return False
+            else: logger.warning(f"Unknown operator '{operator}' in perform_stat_check."); return False
+        except (ValueError, TypeError):
+            logger.warning(f"Could not convert stat '{stat_name}' value '{stat_value_any}' or threshold '{threshold}' to float.")
+            return False
+        except Exception as e:
+            logger.error(f"Error in perform_stat_check: {e}", exc_info=True)
+            return False
 
     def generate_initial_character_stats(self) -> Dict[str, Any]:
-        default_stats = self._rules_data.get("character_stats_rules", {}).get("default_initial_stats", {'strength': 10, 'dexterity': 10, 'constitution': 10, 'intelligence': 10, 'wisdom': 10, 'charisma': 10})
+        # Ensure _rules_data is not None and has the expected structure
+        char_stats_rules = self._rules_data.get("character_stats_rules", {}) if self._rules_data else {}
+        default_stats = char_stats_rules.get("default_initial_stats",
+                                             {'strength': 10, 'dexterity': 10, 'constitution': 10,
+                                              'intelligence': 10, 'wisdom': 10, 'charisma': 10})
         return default_stats.copy()
 
     def _calculate_attribute_modifier(self, attribute_value: int) -> int:
-        char_stats_rules = self._rules_data.get("character_stats_rules", {})
-        formula_str = char_stats_rules.get("attribute_modifier_formula", "(attribute_value - 10) // 2")
+        char_stats_rules = self._rules_data.get("character_stats_rules", {}) if self._rules_data else {}
+        formula_str: str = char_stats_rules.get("attribute_modifier_formula", "(attribute_value - 10) // 2") # type: ignore[assignment]
+
+        # Basic sanitization for eval - consider safer alternatives if complexity grows
         allowed_chars = "attribute_value()+-*/0123456789 "
-        if not all(char in allowed_chars for char in formula_str): formula_str = "(attribute_value - 10) // 2"
-        try: modifier = eval(formula_str, {"__builtins__": {}}, {"attribute_value": attribute_value}); return int(modifier)
-        except Exception: return (attribute_value - 10) // 2
+        if not all(char in allowed_chars for char in formula_str):
+            logger.warning(f"Potentially unsafe formula detected: {formula_str}. Using default.")
+            formula_str = "(attribute_value - 10) // 2"
+
+        try:
+            # Ensure attribute_value is an int for eval context
+            modifier = eval(formula_str, {"__builtins__": {}}, {"attribute_value": int(attribute_value)})
+            return int(modifier)
+        except Exception as e:
+            logger.error(f"Error evaluating attribute_modifier_formula '{formula_str}': {e}", exc_info=True)
+            return (int(attribute_value) - 10) // 2 # Fallback
 
     def get_base_dc(self, relevant_stat_value: int, difficulty_modifier: Optional[str] = None) -> int:
-        check_rules = self._rules_data.get("check_rules", {})
-        base_dc_config = check_rules.get("base_dc_calculation", {})
-        difficulty_modifiers_config = check_rules.get("difficulty_modifiers", {})
-        base_dc_value = base_dc_config.get("base_value", 10)
-        stat_contribution_formula = base_dc_config.get("stat_contribution_formula", "(relevant_stat_value - 10) // 2")
+        check_rules = self._rules_data.get("check_rules", {}) if self._rules_data else {}
+        base_dc_config = check_rules.get("base_dc_calculation", {}) if isinstance(check_rules, dict) else {}
+        difficulty_modifiers_config = check_rules.get("difficulty_modifiers", {}) if isinstance(check_rules, dict) else {}
+
+        base_dc_value = int(base_dc_config.get("base_value", 10)) # type: ignore[arg-type]
+        stat_contribution_formula: str = base_dc_config.get("stat_contribution_formula", "(relevant_stat_value - 10) // 2") # type: ignore[assignment]
+
         stat_contribution = 0
-        try: stat_contribution = eval(stat_contribution_formula, {"__builtins__": {}}, {"relevant_stat_value": relevant_stat_value})
-        except Exception: stat_contribution = (relevant_stat_value - 10) // 2
+        try:
+            stat_contribution = eval(stat_contribution_formula, {"__builtins__": {}}, {"relevant_stat_value": int(relevant_stat_value)})
+        except Exception as e:
+            logger.error(f"Error evaluating stat_contribution_formula '{stat_contribution_formula}': {e}", exc_info=True)
+            stat_contribution = (int(relevant_stat_value) - 10) // 2 # Fallback
+
         difficulty_mod_value = 0
-        if difficulty_modifier: difficulty_mod_value = difficulty_modifiers_config.get(difficulty_modifier.lower(), 0)
-        final_dc = base_dc_value + stat_contribution + difficulty_mod_value
+        if difficulty_modifier:
+            difficulty_mod_value = int(difficulty_modifiers_config.get(difficulty_modifier.lower(), 0)) # type: ignore[arg-type]
+
+        final_dc = base_dc_value + int(stat_contribution) + difficulty_mod_value
         return int(final_dc)
 
     # --- Skill Check Wrappers ---
     async def resolve_stealth_check(self, character_id: str, guild_id: str, location_id: str, **kwargs: Any) -> CheckResult:
+        if not self._character_manager: raise ValueError("CharacterManager not available for resolve_stealth_check")
         return await skill_check_resolver.resolve_stealth_check(
             character_manager=self._character_manager, rules_data=self._rules_data,
             resolve_dice_roll_func=self.resolve_dice_roll, character_id=character_id,
             guild_id=guild_id, location_id=location_id, **kwargs)
 
     async def resolve_pickpocket_attempt(self, character_id: str, guild_id: str, target_npc_id: str, **kwargs: Any) -> CheckResult:
+        if not self._character_manager: raise ValueError("CharacterManager not available for resolve_pickpocket_attempt")
+        if not self._npc_manager: raise ValueError("NpcManager not available for resolve_pickpocket_attempt")
         return await skill_check_resolver.resolve_pickpocket_attempt(
             character_manager=self._character_manager, npc_manager=self._npc_manager, rules_data=self._rules_data,
             resolve_dice_roll_func=self.resolve_dice_roll, character_id=character_id, guild_id=guild_id,
             target_npc_id=target_npc_id, **kwargs)
 
-    async def resolve_gathering_attempt(self, character_id: str, guild_id: str, poi_data: Dict[str, Any],
-                                      character_skills: Dict[str, int], character_inventory: List[Dict[str, Any]],
-                                      **kwargs: Any) -> CheckResult:
+    async def resolve_gathering_attempt(self, character_id: str, guild_id: str, poi_data: Dict[str, Any], **kwargs: Any) -> CheckResult:
+        if not self._character_manager: raise ValueError("CharacterManager not available for resolve_gathering_attempt")
+        # character_skills and character_inventory are removed as they should be fetched by the resolver or context
         return await skill_check_resolver.resolve_gathering_attempt(
             character_manager=self._character_manager, rules_data=self._rules_data,
             resolve_dice_roll_func=self.resolve_dice_roll, character_id=character_id, guild_id=guild_id,
             poi_data=poi_data, **kwargs)
 
     async def resolve_crafting_attempt(self, character_id: str, guild_id: str, recipe_data: Dict[str, Any],
-                                       character_skills: Dict[str, int], character_inventory: List[Dict[str, Any]],
                                        current_location_data: Dict[str, Any], **kwargs: Any) -> CheckResult:
+        if not self._character_manager: raise ValueError("CharacterManager not available for resolve_crafting_attempt")
+        # character_skills and character_inventory are removed
         return await skill_check_resolver.resolve_crafting_attempt(
             character_manager=self._character_manager, rules_data=self._rules_data,
             character_id=character_id, guild_id=guild_id, recipe_data=recipe_data,
             current_location_data=current_location_data, **kwargs)
 
     async def resolve_lockpick_attempt(self, character_id: str, guild_id: str, poi_data: Dict[str, Any], **kwargs: Any) -> CheckResult:
+        if not self._character_manager: raise ValueError("CharacterManager not available for resolve_lockpick_attempt")
         return await skill_check_resolver.resolve_lockpick_attempt(
             character_manager=self._character_manager, rules_data=self._rules_data,
             resolve_dice_roll_func=self.resolve_dice_roll, character_id=character_id, guild_id=guild_id,
             poi_data=poi_data, **kwargs)
 
     async def resolve_disarm_trap_attempt(self, character_id: str, guild_id: str, poi_data: Dict[str, Any], **kwargs: Any) -> CheckResult:
+        if not self._character_manager: raise ValueError("CharacterManager not available for resolve_disarm_trap_attempt")
         return await skill_check_resolver.resolve_disarm_trap_attempt(
             character_manager=self._character_manager, rules_data=self._rules_data,
             resolve_dice_roll_func=self.resolve_dice_roll, character_id=character_id, guild_id=guild_id,
             poi_data=poi_data, **kwargs)
 
-    async def resolve_skill_check_wrapper(self, character: "Character", skill_type: str, dc: int, context: Optional[Dict[str, Any]] = None) -> Tuple[bool, int, int, Optional[str]]:
+    async def resolve_skill_check_wrapper(self, character: "Character", skill_type: str, dc: int, context: Optional[Dict[str, Any]] = None) -> Tuple[bool, int, int, Optional[str]]: # type: ignore[return]
+        # Added type: ignore[return] as the original resolver might have more complex return paths
         return await skill_check_resolver.resolve_skill_check(
             character=character, skill_type=skill_type, dc=dc, rules_data=self._rules_data,
             resolve_dice_roll_func=self.resolve_dice_roll, context=context)
@@ -308,6 +357,7 @@ class RuleEngine:
     async def calculate_market_price(self, guild_id: str, location_id: str, item_template_id: str, quantity: float,
                                      is_selling_to_market: bool, actor_entity_id: str, actor_entity_type: str,
                                      **kwargs: Any) -> Optional[float]:
+        if not self._economy_manager: return None # Guard clause
         return await economic_resolver.calculate_market_price(
             rules_data=self._rules_data, guild_id=guild_id, location_id=location_id,
             item_template_id=item_template_id, quantity=quantity, is_selling_to_market=is_selling_to_market,
@@ -317,12 +367,14 @@ class RuleEngine:
             npc_manager=self._npc_manager, **kwargs)
 
     async def process_economy_tick(self, guild_id: str, game_time_delta: float, **kwargs: Any) -> None:
+        if not self._economy_manager: return # Guard clause
         await economic_resolver.process_economy_tick(
             rules_data=self._rules_data, guild_id=guild_id, game_time_delta=game_time_delta,
             economy_manager=self._economy_manager, **kwargs)
 
     # --- Dialogue Method Wrappers ---
-    async def process_dialogue_action(self, dialogue_data: Dict[str, Any], character_id: str, p_action_data: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    async def process_dialogue_action(self, dialogue_data: Dict[str, Any], character_id: str, p_action_data: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]: # type: ignore[return]
+        if not self._dialogue_manager: return {"error": "DialogueManager not available"}
         return await dialogue_resolver.process_dialogue_action(
             rules_data=self._rules_data, dialogue_manager=self._dialogue_manager,
             character_manager=self._character_manager, npc_manager=self._npc_manager,
@@ -339,7 +391,8 @@ class RuleEngine:
             stage_definition=stage_definition, context=context)
 
     # --- Combat AI / NPC Behavior Wrappers ---
-    async def choose_combat_action_for_npc(self, npc: "NPC", combat: "Combat", **context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def choose_combat_action_for_npc(self, npc: "NPC", combat: Any, **context: Dict[str, Any]) -> Optional[Dict[str, Any]]: # Changed Combat type to Any
+        # combat: "Combat" -> combat: Any, as Combat model is not imported/used directly here.
         return await combat_ai_resolver.choose_combat_action_for_npc(
             rules_data=self._rules_data, npc=npc, combat=combat,
             character_manager=self._character_manager, npc_manager=self._npc_manager,
@@ -358,14 +411,16 @@ class RuleEngine:
             npc=npc, combat_manager=self._combat_manager, context=context)
 
     # --- Methods to be kept in RuleEngine (or moved to a general_rules_resolver) ---
-    async def handle_stage(self, stage: Any, **context: Dict[str, Any]) -> None:
-        proc: Optional["EventStageProcessor"] = context.get('event_stage_processor')
-        event = context.get('event')
-        send_message_callback: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[Any]]] = context.get('send_message_callback')
+    async def handle_stage(self, stage: Any, **context: Dict[str, Any]) -> None: # type: ignore[no-untyped-def]
+        proc: Optional["EventStageProcessor"] = context.get('event_stage_processor') # type: ignore[assignment]
+        event: Any = context.get('event') # type: ignore[assignment]
+        send_message_callback: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[Any]]] = context.get('send_message_callback') # type: ignore[assignment]
+
         if proc and event and send_message_callback:
-            target_stage_id = getattr(stage, 'next_stage_id', None) or stage.get('next_stage_id')
+            target_stage_id_any = getattr(stage, 'next_stage_id', None) or stage.get('next_stage_id')
+            target_stage_id = str(target_stage_id_any) if target_stage_id_any is not None else None
             if target_stage_id:
-                 await proc.advance_stage(event=event, target_stage_id=str(target_stage_id), send_message_callback=send_message_callback, **context)
+                 await proc.advance_stage(event=event, target_stage_id=target_stage_id, send_message_callback=send_message_callback, **context)
 
     def _compare_values(self, value1: Any, value2: Any, operator: str) -> bool:
         try:
@@ -385,25 +440,7 @@ class RuleEngine:
             elif operator == '!=':
                 return num1 != num2
             else:
-                # Operator not recognized for numeric comparison
-                return False
-            num1 = float(value1)
-            num2 = float(value2)
-
-            if operator == '>=':
-                return num1 >= num2
-            elif operator == '>':
-                return num1 > num2
-            elif operator == '<=':
-                return num1 <= num2
-            elif operator == '<':
-                return num1 < num2
-            elif operator == '==':
-                return num1 == num2
-            elif operator == '!=':
-                return num1 != num2
-            else:
-                # Operator not recognized for numeric comparison
+                logger.warning(f"Unknown operator '{operator}' for numeric comparison in _compare_values.")
                 return False
         except (ValueError, TypeError):
             # Fallback to string comparison for '==' and '!=' if numeric conversion fails
@@ -411,32 +448,68 @@ class RuleEngine:
                 return str(value1) == str(value2)
             elif operator == '!=':
                 return str(value1) != str(value2)
+            logger.debug(f"Could not compare '{value1}' and '{value2}' numerically with operator '{operator}'. Falling back to string comparison or False.")
             return False
-        except Exception:
-            # Consider logging here: logger.error(f"Unexpected error in _compare_values", exc_info=True)
+        except Exception as e:
+            logger.error(f"Unexpected error in _compare_values with values '{value1}', '{value2}', operator '{operator}': {e}", exc_info=True)
             return False
 
     async def resolve_dice_roll(self, dice_string: str, pre_rolled_result: Optional[int] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        # This method is general and used by many resolvers, so it stays in RuleEngine for now.
-        # It will be passed as a function to resolvers that need it.
-        dice_string_cleaned = dice_string.lower().strip()
+        dice_string_cleaned = str(dice_string).lower().strip() # Ensure dice_string is a string
         match = re.fullmatch(r"(\d*)d(\d+)(\s*[+-]\s*\d+)?", dice_string_cleaned)
+
+        num_dice_str: Optional[str]
+        sides_str: Optional[str]
+        modifier_str: Optional[str]
+
         if not match:
             match_simple = re.fullmatch(r"d(\d+)(\s*[+-]\s*\d+)?", dice_string_cleaned)
-            if match_simple: num_dice_str, sides_str, modifier_str = "1", match_simple.group(1), match_simple.group(2)
-            else: raise ValueError(f"Invalid dice string format: {dice_string}")
-        else: num_dice_str, sides_str, modifier_str = match.group(1), match.group(2), match.group(3)
-        num_dice = int(num_dice_str) if num_dice_str else 1; sides = int(sides_str); modifier = int(modifier_str.replace(" ", "")) if modifier_str else 0
-        if sides <= 0: raise ValueError("Dice sides must be positive.")
-        if num_dice <= 0: raise ValueError("Number of dice must be positive.")
-        rolls = []; roll_total = 0
-        for i in range(num_dice):
-            if i == 0 and pre_rolled_result is not None:
-                if not (1 <= pre_rolled_result <= sides): raise ValueError(f"pre_rolled_result {pre_rolled_result} is not valid for a d{sides}.")
-                roll = pre_rolled_result
-            else: roll = random.randint(1, sides)
-            rolls.append(roll); roll_total += roll
-        total_with_modifier = roll_total + modifier
-        return {"dice_string": dice_string, "num_dice": num_dice, "sides": sides, "modifier": modifier, "rolls": rolls, "roll_total_raw": roll_total, "total": total_with_modifier, "pre_rolled_input": pre_rolled_result}
+            if match_simple:
+                num_dice_str, sides_str, modifier_str = "1", match_simple.group(1), match_simple.group(2)
+            else:
+                logger.error(f"Invalid dice string format: {dice_string}")
+                raise ValueError(f"Invalid dice string format: {dice_string}")
+        else:
+            num_dice_str, sides_str, modifier_str = match.group(1), match.group(2), match.group(3)
 
-logger.debug("RuleEngine: Module defined.") # Changed print to logger
+        num_dice = int(num_dice_str) if num_dice_str else 1
+        sides = int(sides_str) if sides_str else 0 # Default to 0 if sides_str is None, will be caught by validation
+        modifier_val = 0
+        if modifier_str:
+            try:
+                modifier_val = int(modifier_str.replace(" ", ""))
+            except ValueError:
+                logger.error(f"Invalid modifier format in dice string: {dice_string}")
+                raise ValueError(f"Invalid modifier format in dice string: {dice_string}")
+
+        if sides <= 0:
+            logger.error(f"Dice sides must be positive, got: {sides} from string '{dice_string}'")
+            raise ValueError("Dice sides must be positive.")
+        if num_dice <= 0:
+            logger.error(f"Number of dice must be positive, got: {num_dice} from string '{dice_string}'")
+            raise ValueError("Number of dice must be positive.")
+
+        rolls: List[int] = []
+        roll_total: int = 0
+
+        for i in range(num_dice):
+            roll: int
+            if i == 0 and pre_rolled_result is not None:
+                if not (1 <= pre_rolled_result <= sides):
+                    logger.error(f"pre_rolled_result {pre_rolled_result} is not valid for a d{sides}.")
+                    raise ValueError(f"pre_rolled_result {pre_rolled_result} is not valid for a d{sides}.")
+                roll = pre_rolled_result
+            else:
+                roll = random.randint(1, sides)
+            rolls.append(roll)
+            roll_total += roll
+
+        total_with_modifier: int = roll_total + modifier_val
+
+        return {
+            "dice_string": dice_string, "num_dice": num_dice, "sides": sides,
+            "modifier": modifier_val, "rolls": rolls, "roll_total_raw": roll_total,
+            "total": total_with_modifier, "pre_rolled_input": pre_rolled_result
+        }
+
+logger.debug("RuleEngine: Module defined.")
