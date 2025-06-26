@@ -353,3 +353,27 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - Refined language determination in each command to prioritize character's selected language, then interaction locale, then a default.
     - Ensured `item_manager.get_item_template` is called with `guild_id_str`.
     - Initialized `inventory_list_data` to an empty list if JSON parsing fails or if the attribute is missing/`None`.
+
+## Pyright Error Fixing Phase (Batch 17 - conflict_resolver.py & ai_generation_manager.py focus)
+
+- **Focus:** Addressing 88 errors in `bot/game/conflict_resolver.py` and 86 errors in `bot/ai/generation_manager.py`.
+- **Strategy:** Overwrote files with corrected content.
+- **Batch 17 Fixes - `bot/game/conflict_resolver.py` (88 errors):**
+    - Standardized `log_event` calls: ensured `details` is a dictionary, `player_id` is `str | None`, and `related_entities` contains string IDs. Added `None` checks for `game_log_manager`.
+    - Corrected attribute access for `action_conflicts_map` (via `rules_config.conflict_resolution_rules.action_conflicts_map`), using `.get()` and type checks. Added `# type: ignore[attr-defined]` for dynamic `rule_engine` properties.
+    - Added `await` for async calls (e.g., `rule_engine.get_rules_config`, `db_service.get_pending_conflict`).
+    - Ensured type safety in `get_pending_conflict_details_for_master`: handled `None` from DB/JSON, checked `rules` attribute existence, used `model_dump()` for Pydantic options.
+    - Removed unused `ActionStatus` enum and `ActionWrapper` class.
+    - Updated type hints (e.g. `Optional` for managers, `CoreGameRulesConfig`, `ActionConflictDefinition`, `ConflictResolutionRules`, `asynccontextmanager`). Corrected import paths for `NotificationService` and `RuleEngine`.
+    - Ensured all entity IDs passed to loggers or handlers are strings or `None`.
+- **Batch 17 Fixes - `bot/ai/generation_manager.py` (86 errors):**
+    - Corrected parameter names in calls to `prompt_context_collector.get_full_context` and `multilingual_prompt_generator.prepare_ai_prompt`.
+    - Ensured `target_languages` for `sorted()` is `List[str]`, parsing comma-separated strings and providing defaults.
+    - Added `None` checks or `getattr` for optional attributes (e.g., `game_manager.notification_service`, `guild_config` attributes).
+    - Resolved `Invalid conditional operand` for SQLAlchemy columns by comparing with `None` or using direct boolean values.
+    - Handled type assignments to SQLAlchemy model JSON attributes (e.g., `Location.name_i18n = ...`) with `# type: ignore[assignment]` where the ORM handles serialization.
+    - Updated `request_content_generation` to correctly manage `AsyncSession` (accept existing or create new via `GuildTransaction`).
+    - Ensured `AsyncSession` is imported.
+    - Used `flag_modified` for in-place updates of JSONB fields.
+    - Replaced `print` with `logging`.
+    - Added `asyncio.create_task` for `process_on_enter_location_events`.
