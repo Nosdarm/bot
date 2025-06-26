@@ -24,17 +24,18 @@ if TYPE_CHECKING:
     from bot.game.managers.relationship_manager import RelationshipManager
     from bot.game.event_processors.event_stage_processor import EventStageProcessor
     from bot.game.managers.economy_manager import EconomyManager
-    from bot.game.managers.game_manager import GameManager # Add this line
+    from bot.game.managers.game_manager import GameManager
 
 from bot.game.models.character import Character
-from bot.game.models.combat import Combat, CombatParticipant
+# from bot.game.models.combat import Combat, CombatParticipant # Combat model not directly used here
 from bot.game.managers.time_manager import TimeManager
+
 
 # Import the resolvers
 from .resolvers import skill_check_resolver, economic_resolver, dialogue_resolver, combat_ai_resolver
 
-logger = logging.getLogger(__name__) # Added
-logger.debug("RuleEngine: Module loaded.") # Changed print to logger
+logger = logging.getLogger(__name__)
+logger.debug("RuleEngine: Module loaded.")
 
 class RuleEngine:
     def __init__(self,
@@ -52,33 +53,33 @@ class RuleEngine:
                  game_log_manager: Optional["GameLogManager"] = None,
                  relationship_manager: Optional["RelationshipManager"] = None,
                  economy_manager: Optional["EconomyManager"] = None,
-                 game_manager: Optional["GameManager"] = None
+                 game_manager: Optional["GameManager"] = None # Added game_manager
                  ):
-        logger.info("Initializing RuleEngine...") # Changed print to logger
+        logger.info("Initializing RuleEngine...")
         self._settings = settings or {}
-        self._game_log_manager = game_log_manager
-        self._character_manager = character_manager
-        self._npc_manager = npc_manager
-        self._status_manager = status_manager
-        self._item_manager = item_manager
-        self._location_manager = location_manager
-        self._party_manager = party_manager
-        self._combat_manager = combat_manager
-        self._dialogue_manager = dialogue_manager
-        self._time_manager = time_manager
-        self._relationship_manager = relationship_manager
-        self._economy_manager = economy_manager
-        self._game_manager = game_manager
+        self._game_log_manager: Optional["GameLogManager"] = game_log_manager
+        self._character_manager: Optional["CharacterManager"] = character_manager
+        self._npc_manager: Optional["NpcManager"] = npc_manager
+        self._status_manager: Optional["StatusManager"] = status_manager
+        self._item_manager: Optional["ItemManager"] = item_manager
+        self._location_manager: Optional["LocationManager"] = location_manager
+        self._party_manager: Optional["PartyManager"] = party_manager
+        self._combat_manager: Optional["CombatManager"] = combat_manager
+        self._dialogue_manager: Optional["DialogueManager"] = dialogue_manager
+        self._time_manager: Optional["TimeManager"] = time_manager
+        self._relationship_manager: Optional["RelationshipManager"] = relationship_manager
+        self._economy_manager: Optional["EconomyManager"] = economy_manager
+        self._game_manager: Optional["GameManager"] = game_manager # Assign game_manager
         
         if rules_data is not None:
-            self._rules_data = rules_data
+            self._rules_data: Dict[str, Any] = rules_data
         else:
-            self._rules_data = self._settings.get('game_rules', {})
+            self._rules_data: Dict[str, Any] = self._settings.get('game_rules', {})
         
-        logger.info("RuleEngine initialized.") # Changed print to logger
+        logger.info("RuleEngine initialized.")
 
     async def load_rules_data(self) -> None:
-        logger.info("RuleEngine: Loading rules data...") # Changed print to logger
+        logger.info("RuleEngine: Loading rules data...")
         self._rules_data = self._settings.get('game_rules', {})
         logger.info(f"RuleEngine: Loaded {len(self._rules_data)} rules entries.") # Changed print to logger
 

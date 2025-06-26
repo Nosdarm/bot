@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.game.managers.game_manager import GameManager
     from bot.game.managers.character_manager import CharacterManager
-    # from bot.game.managers.party_manager import PartyManager # party_manager not used directly in this file
     from bot.game.managers.location_manager import LocationManager
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.item_manager import ItemManager
@@ -20,13 +19,12 @@ if TYPE_CHECKING:
     from bot.game.managers.quest_manager import QuestManager
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.rules.rule_engine import RuleEngine
-    from bot.api.schemas.rule_config_schemas import RuleConfigData # Keep for RuleConfigData().model_dump()
-    import datetime # Used for datetime.datetime.now(datetime.timezone.utc)
-    from sqlalchemy.ext.asyncio import AsyncSession # Used for type hinting sessions
-    # These are moved out of TYPE_CHECKING as they are used at runtime
-    # from bot.database.models.pending_generation import PendingGeneration, PendingStatus
-    # from bot.ai.ai_response_validator import parse_and_validate_ai_response
-    # from bot.ai.ai_data_models import GenerationType
+    from bot.api.schemas.rule_config_schemas import RuleConfigData
+    import datetime
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from bot.game.managers.combat_manager import CombatManager # Added
+    from bot.game.managers.relationship_manager import RelationshipManager # Added
+
 
 from bot.database.models.pending_generation import PendingGeneration, PendingStatus
 from bot.ai.ai_response_validator import parse_and_validate_ai_response

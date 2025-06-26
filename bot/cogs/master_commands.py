@@ -3,14 +3,17 @@ from discord.ext import commands
 from discord import app_commands
 import json
 import logging
-from typing import Optional, List, Dict, Any # Added List, Dict, Any
+from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING, cast # Added Union, TYPE_CHECKING, cast
 
-from bot.game.managers.game_manager import GameManager
-from bot.database.models.world_related import Location
-from sqlalchemy.orm.attributes import flag_modified
+if TYPE_CHECKING:
+    from bot.bot_core import RPGBot # For type hinting self.bot
+    from bot.game.managers.game_manager import GameManager
+    from bot.database.models.world_related import Location
+
+from sqlalchemy.orm.attributes import flag_modified # Keep this outside TYPE_CHECKING
 from bot.utils.discord_utils import (
     get_discord_user_id_from_interaction,
-    is_user_master_or_admin, # This function is not async in discord_utils
+    is_user_master_or_admin,
     send_error_message,
     send_success_message
 )
@@ -20,25 +23,33 @@ from bot.database.guild_transaction import GuildTransaction
 logger = logging.getLogger(__name__)
 
 class MasterCog(commands.Cog, name="Master Commands"):
-    def __init__(self, bot):
-        self.bot: commands.Bot = bot # More specific type hint for bot
-        self.game_manager: Optional[GameManager] = self.bot.get_cog("GameManagerCog").game_manager if self.bot.get_cog("GameManagerCog") else None # type: ignore
+    def __init__(self, bot: "RPGBot"): # Use RPGBot for type hint
+        self.bot = bot
+        # GameManager is typically accessed via self.bot.game_manager in cogs
+        # Direct assignment here might be for testing or specific setup
+        self.game_manager: Optional["GameManager"] = getattr(self.bot, 'game_manager', None)
         if not self.game_manager:
-            logger.error("MasterCog: GameManager not found on bot. This cog may not function correctly.")
+            # Attempt to get from cog if RPGBot structure is different
+            game_manager_cog = self.bot.get_cog("GameManagerCog")
+            if game_manager_cog and hasattr(game_manager_cog, 'game_manager'):
+                self.game_manager = game_manager_cog.game_manager # type: ignore
+
+            if not self.game_manager:
+                 logger.error("MasterCog: GameManager not found on bot. This cog may not function correctly.")
 
 
-    async def cog_check(self, ctx_or_interaction: Union[commands.Context, discord.Interaction]) -> bool: # type: ignore
+    async def cog_check(self, ctx_or_interaction: Union[commands.Context, discord.Interaction]) -> bool:
         """Checks if the user is a master or admin before executing any command in this cog."""
-        user_id = get_discord_user_id_from_interaction(ctx_or_interaction)
+        # user_id = get_discord_user_id_from_interaction(ctx_or_interaction) # user_id not used
         guild_id_str = str(ctx_or_interaction.guild.id) if ctx_or_interaction.guild else None
 
-        if not self.game_manager: # Check if game_manager was initialized
+        if not self.game_manager:
             msg = "GameManager is not available. Master commands cannot be checked."
             logger.error(msg)
             if isinstance(ctx_or_interaction, discord.Interaction):
                 if not ctx_or_interaction.response.is_done(): await ctx_or_interaction.response.send_message(msg, ephemeral=True)
                 else: await ctx_or_interaction.followup.send(msg, ephemeral=True)
-            else: # commands.Context
+            else:
                 await ctx_or_interaction.send(msg)
             return False
 
@@ -46,28 +57,30 @@ class MasterCog(commands.Cog, name="Master Commands"):
             if isinstance(ctx_or_interaction, discord.Interaction):
                 if not ctx_or_interaction.response.is_done(): await ctx_or_interaction.response.send_message("Master commands must be used within a server (guild).", ephemeral=True)
                 else: await ctx_or_interaction.followup.send("Master commands must be used within a server (guild).", ephemeral=True)
-            else: # commands.Context
+            else:
                 await ctx_or_interaction.send("Master commands must be used within a server (guild).")
             return False
 
-        # is_user_master_or_admin is synchronous
         is_master = is_user_master_or_admin(ctx_or_interaction, self.game_manager)
 
         if not is_master:
             lang = "en"
             if isinstance(ctx_or_interaction, discord.Interaction) and ctx_or_interaction.locale:
                 lang = str(ctx_or_interaction.locale)
-            elif guild_id_str and self.game_manager:
-                lang = await self.game_manager.get_rule(guild_id_str, "default_language", "en") or "en"
+            elif guild_id_str and self.game_manager and hasattr(self.game_manager, 'get_rule') and callable(getattr(self.game_manager, 'get_rule')):
+                # Ensure get_rule exists and is callable
+                get_rule_method = getattr(self.game_manager, 'get_rule')
+                lang_result = await get_rule_method(guild_id_str, "default_language", "en")
+                if lang_result: lang = lang_result
 
             error_key = "error_not_master_admin"
-            message_str = get_localized_string(lang, error_key, {"guild_name": ctx_or_interaction.guild.name if ctx_or_interaction.guild else "this server"})
+            message_str = get_localized_string(lang, error_key, guild_id=guild_id_str, params={"guild_name": ctx_or_interaction.guild.name if ctx_or_interaction.guild else "this server"})
 
 
             if isinstance(ctx_or_interaction, discord.Interaction):
                 if not ctx_or_interaction.response.is_done(): await ctx_or_interaction.response.send_message(message_str, ephemeral=True)
                 else: await ctx_or_interaction.followup.send(message_str, ephemeral=True)
-            else: # commands.Context
+            else:
                 await ctx_or_interaction.send(message_str)
             return False
         return True
