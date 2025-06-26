@@ -220,3 +220,32 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **Attribute Access:** Resolved `AttributeError` on `None` by ensuring manager instances (like `game_manager`, `db_service`) were correctly initialized and accessed on mocked bot instances.
     - **Imports:** Added missing imports (e.g., `discord.app_commands`).
     - **Type Compatibility:** Addressed type mismatches, such as when passing mock bot instances to Cog constructors.
+
+## Pyright Error Fixing Phase (Batch 12 - character_cmds.py & rule_engine.py focus)
+
+- **Focus:** Addressing all 48 errors in `bot/command_modules/character_cmds.py` and all 42 errors in `bot/game/rules/rule_engine.py`.
+- **Strategy:** Overwrote files with corrected content. Total of 90 errors addressed.
+- **Batch 12 Fixes - `bot/command_modules/character_cmds.py` (48 errors):**
+    - Changed `BotCore` type hint to `RPGBot`.
+    - Added `await` for async character fetch calls (`get_character_by_discord_id`, `get_character`).
+    - Refactored `log_event` calls to use a `details` dictionary for messages, metadata, and related entities.
+    - Ensured managers (`character_manager`, `game_log_manager`, `notification_service`, `rule_engine`) are checked for `None` before use and accessed correctly via `game_mngr`.
+    - Initialized potentially unbound variables (e.g., `effective_stats_data`).
+    - Corrected access to `RuleEngine._rules_data` or used `get_rules_data_for_guild`.
+    - Handled JSON parsing for `effective_stats_json` safely.
+    - Ensured `discord_user_id` passed to `send_notification` is a string.
+- **Batch 12 Fixes - `bot/game/rules/rule_engine.py` (42 errors):**
+    - Added `Optional` to manager type hints in `__init__`.
+    - Ensured managers passed to resolver functions are checked for `None`.
+    - Added `await` for async calls within `check_conditions` (e.g., `get_items_by_owner`, `get_party_by_member_id`) and `handle_stage`.
+    - Replaced `print` statements with `logging`.
+    - Removed unused `ActionStatus` enum and `ActionWrapper` class.
+    - Corrected `DBService` import path and added other necessary type hints (e.g., `GameManager`).
+    - Refined `_get_rules_config_from_engine` to handle potential `await` and parsing of dict to `CoreGameRulesConfig`.
+    - Ensured string conversion for IDs in `related_entities` in `log_event` calls within `ConflictResolver` methods (though these were primarily illustrative/test code that was removed).
+    - Corrected `_get_entity_name` calls in `SimpleReportFormatter` by adding `await` to manager calls.
+    - Ensured `player_id` passed to `log_event` is string or `None`.
+    - Added `await` to `self.db_service.get_pending_conflict` and `self.rule_engine.get_rules_config`.
+    - Used `isinstance(conflict_rules_map, dict)` before key access.
+    - Imported `asynccontextmanager` from `contextlib`.
+    - Removed mock classes and `main_test()` from `conflict_resolver.py`.
