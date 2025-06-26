@@ -976,7 +976,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 if record.status not in [PendingStatus.PENDING_MODERATION, PendingStatus.FAILED_VALIDATION]:
                     await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть одобрена сейчас.", ephemeral=True)
                     return
-
+                
                 updates = {
                     "status": PendingStatus.APPROVED,
                     "moderated_by_user_id": str(interaction.user.id),
@@ -992,7 +992,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 logging.info(f"AI Generation {pending_id} approved by {interaction.user.id}. Attempting to apply content.")
                 # apply_approved_generation might need its own session management or accept an active one
                 application_success = await game_mngr.apply_approved_generation(pending_gen_id=pending_id, guild_id=guild_id_str)
-
+                
                 current_status_after_apply = PendingStatus.UNKNOWN # Default
                 async with game_mngr.db_service.get_session() as session_after_apply: # type: ignore
                     updated_record_after_apply = await crud_utils.get_entity_by_id(
@@ -1084,7 +1084,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 if record.status not in [PendingStatus.PENDING_MODERATION, PendingStatus.FAILED_VALIDATION]:
                     await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть отредактирована.", ephemeral=True)
                     return
-
+                
                 new_parsed_data: Optional[Any] = None
                 try:
                     new_parsed_data = json.loads(json_data)
@@ -1115,7 +1115,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                     raw_ai_output_text=json_data, guild_id=guild_id_str,
                     request_type=record_request_type, game_manager=game_mngr # type: ignore
                 )
-
+                
                 updates: Dict[str, Any] = {
                     "parsed_data_json": validated_data_after_edit,
                     "validation_issues_json": validation_issues_after_edit,
@@ -1123,22 +1123,22 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                     "moderated_by_user_id": str(interaction.user.id),
                     "moderated_at": datetime.datetime.now(datetime.timezone.utc)
                 }
-
+                
                 current_notes_val = getattr(record, 'moderator_notes_i18n', None)
                 current_notes = current_notes_val if isinstance(current_notes_val, dict) else {}
                 edit_history = current_notes.get("edit_history", [])
                 if not isinstance(edit_history, list): edit_history = []
-
+                
                 edit_history.append({
-                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(), 
                     "editor_id": str(interaction.user.id),
-                    "action": "edited_data",
-                    "previous_status": record.status,
+                    "action": "edited_data", 
+                    "previous_status": record.status, 
                     "new_status": updates["status"]
                 })
                 current_notes["edit_history"] = edit_history
                 updates["moderator_notes_i18n"] = current_notes
-
+                
                 updated_record_instance = await crud_utils.update_entity(
                     db_session=session, entity_instance=record, data=updates, guild_id=guild_id_str
                 )

@@ -1,361 +1,6 @@
 
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\commands\test_gm_app_cmds.py] — 136 issue(s):
-  Line 55   [ERROR] "db_service" is not a known attribute of "None"
-  Line 55   [ERROR] "get_entities_by_conditions" is not a known attribute of "None"
-  Line 55   [ERROR] Cannot access attribute "get_entities_by_conditions" for class "DBService"
-┬а┬аAttribute "get_entities_by_conditions" is unknown
-  Line 57   [ERROR] Parameter "pending_id" is already assigned
-  Line 59   [ERROR] "db_service" is not a known attribute of "None"
-  Line 59   [ERROR] "get_entities_by_conditions" is not a known attribute of "None"
-  Line 59   [ERROR] Cannot access attribute "get_entities_by_conditions" for class "DBService"
-┬а┬аAttribute "get_entities_by_conditions" is unknown
-  Line 60   [ERROR] "db_service" is not a known attribute of "None"
-  Line 60   [ERROR] "get_entities_by_conditions" is not a known attribute of "None"
-  Line 60   [ERROR] Cannot access attribute "get_entities_by_conditions" for class "DBService"
-┬а┬аAttribute "get_entities_by_conditions" is unknown
-  Line 64   [ERROR] Cannot access attribute "assert_awaited_once" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once" is unknown
-  Line 65   [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 80   [ERROR] "db_service" is not a known attribute of "None"
-  Line 80   [ERROR] "get_entities_by_conditions" is not a known attribute of "None"
-  Line 80   [ERROR] Cannot access attribute "get_entities_by_conditions" for class "DBService"
-┬а┬аAttribute "get_entities_by_conditions" is unknown
-  Line 82   [ERROR] Parameter "pending_id" is already assigned
-  Line 84   [ERROR] Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once_with" is unknown
-  Line 106  [ERROR] "db_service" is not a known attribute of "None"
-  Line 106  [ERROR] "get_entity_by_pk" is not a known attribute of "None"
-  Line 106  [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 108  [ERROR] Parameter "pending_id" is already assigned
-  Line 110  [ERROR] "db_service" is not a known attribute of "None"
-  Line 110  [ERROR] "get_entity_by_pk" is not a known attribute of "None"
-  Line 110  [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 113  [ERROR] Cannot access attribute "assert_awaited_once" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once" is unknown
-  Line 114  [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 127  [ERROR] "db_service" is not a known attribute of "None"
-  Line 127  [ERROR] "get_entity_by_pk" is not a known attribute of "None"
-  Line 127  [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 129  [ERROR] Parameter "pending_id" is already assigned
-  Line 131  [ERROR] Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once_with" is unknown
-  Line 149  [ERROR] "db_service" is not a known attribute of "None"
-  Line 149  [ERROR] "get_entity_by_pk" is not a known attribute of "None"
-  Line 149  [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 150  [ERROR] "db_service" is not a known attribute of "None"
-  Line 150  [ERROR] "update_entity_by_pk" is not a known attribute of "None"
-  Line 150  [ERROR] Cannot assign to attribute "return_value" for class "FunctionType"
-┬а┬аAttribute "return_value" is unknown
-  Line 151  [ERROR] "apply_approved_generation" is not a known attribute of "None"
-  Line 153  [ERROR] Parameter "pending_id" is already assigned
-  Line 155  [ERROR] "db_service" is not a known attribute of "None"
-  Line 155  [ERROR] "update_entity_by_pk" is not a known attribute of "None"
-  Line 155  [ERROR] Cannot access attribute "assert_awaited_once" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once" is unknown
-  Line 156  [ERROR] "db_service" is not a known attribute of "None"
-  Line 156  [ERROR] "update_entity_by_pk" is not a known attribute of "None"
-  Line 156  [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 161  [ERROR] "apply_approved_generation" is not a known attribute of "None"
-  Line 163  [ERROR] Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once_with" is unknown
-  Line 177  [ERROR] "db_service" is not a known attribute of "None"
-  Line 177  [ERROR] "get_entity_by_pk" is not a known attribute of "None"
-  Line 177  [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 181  [ERROR] "db_service" is not a known attribute of "None"
-  Line 181  [ERROR] "update_entity_by_pk" is not a known attribute of "None"
-  Line 181  [ERROR] Cannot assign to attribute "return_value" for class "FunctionType"
-┬а┬аAttribute "return_value" is unknown
-  Line 182  [ERROR] "apply_approved_generation" is not a known attribute of "None"
-  Line 184  [ERROR] Parameter "pending_id" is already assigned
-  Line 186  [ERROR] Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once_with" is unknown
-  Line 204  [ERROR] "db_service" is not a known attribute of "None"
-  Line 204  [ERROR] "get_entity_by_pk" is not a known attribute of "None"
-  Line 204  [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 205  [ERROR] "db_service" is not a known attribute of "None"
-  Line 205  [ERROR] "update_entity_by_pk" is not a known attribute of "None"
-  Line 205  [ERROR] Cannot assign to attribute "return_value" for class "FunctionType"
-┬а┬аAttribute "return_value" is unknown
-  Line 206  [ERROR] "get_rule" is not a known attribute of "None"
-  Line 208  [ERROR] Parameter "pending_id" is already assigned
-  Line 210  [ERROR] "db_service" is not a known attribute of "None"
-  Line 210  [ERROR] "update_entity_by_pk" is not a known attribute of "None"
-  Line 210  [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 214  [ERROR] Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once_with" is unknown
-  Line 237  [ERROR] "db_service" is not a known attribute of "None"
-  Line 237  [ERROR] "get_entity_by_pk" is not a known attribute of "None"
-  Line 237  [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 239  [ERROR] "db_service" is not a known attribute of "None"
-  Line 239  [ERROR] "update_entity_by_pk" is not a known attribute of "None"
-  Line 239  [ERROR] Cannot assign to attribute "return_value" for class "FunctionType"
-┬а┬аAttribute "return_value" is unknown
-  Line 241  [ERROR] Parameter "pending_id" is already assigned
-  Line 247  [ERROR] "db_service" is not a known attribute of "None"
-  Line 247  [ERROR] "update_entity_by_pk" is not a known attribute of "None"
-  Line 247  [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 254  [ERROR] Cannot access attribute "assert_awaited_once" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once" is unknown
-  Line 255  [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 256  [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 268  [ERROR] Cannot access attribute "db_service" for class "RPGBot"
-┬а┬аAttribute "db_service" is unknown
-  Line 283  [ERROR] "get_raw_rules_config_dict_for_guild" is not a known attribute of "None"
-  Line 283  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 283  [ERROR] Cannot assign to attribute "get_raw_rules_config_dict_for_guild" for class "RuleEngine"
-┬а┬аAttribute "get_raw_rules_config_dict_for_guild" is unknown
-  Line 284  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 284  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
-  Line 284  [ERROR] Cannot assign to attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
-┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
-  Line 285  [ERROR] "load_rules_config_for_guild" is not a known attribute of "None"
-  Line 285  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 285  [ERROR] Cannot assign to attribute "load_rules_config_for_guild" for class "RuleEngine"
-┬а┬аAttribute "load_rules_config_for_guild" is unknown
-  Line 288  [ERROR] "game_log_manager" is not a known attribute of "None"
-  Line 288  [ERROR] "log_event" is not a known attribute of "None"
-  Line 290  [ERROR] Parameter "rule_key" is already assigned
-  Line 292  [ERROR] "get_raw_rules_config_dict_for_guild" is not a known attribute of "None"
-  Line 292  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 292  [ERROR] Cannot access attribute "get_raw_rules_config_dict_for_guild" for class "RuleEngine"
-┬а┬аAttribute "get_raw_rules_config_dict_for_guild" is unknown
-  Line 295  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 295  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
-  Line 295  [ERROR] Cannot access attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
-┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
-  Line 296  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 296  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
-  Line 296  [ERROR] Cannot access attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
-┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
-  Line 307  [ERROR] "load_rules_config_for_guild" is not a known attribute of "None"
-  Line 307  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 307  [ERROR] Cannot access attribute "load_rules_config_for_guild" for class "RuleEngine"
-┬а┬аAttribute "load_rules_config_for_guild" is unknown
-  Line 308  [ERROR] "game_log_manager" is not a known attribute of "None"
-  Line 308  [ERROR] "log_event" is not a known attribute of "None"
-  Line 310  [ERROR] Cannot access attribute "assert_awaited_once" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once" is unknown
-  Line 311  [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 327  [ERROR] "get_raw_rules_config_dict_for_guild" is not a known attribute of "None"
-  Line 327  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 327  [ERROR] Cannot assign to attribute "get_raw_rules_config_dict_for_guild" for class "RuleEngine"
-┬а┬аAttribute "get_raw_rules_config_dict_for_guild" is unknown
-  Line 328  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 328  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
-  Line 328  [ERROR] Cannot assign to attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
-┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
-  Line 329  [ERROR] "load_rules_config_for_guild" is not a known attribute of "None"
-  Line 329  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 329  [ERROR] Cannot assign to attribute "load_rules_config_for_guild" for class "RuleEngine"
-┬а┬аAttribute "load_rules_config_for_guild" is unknown
-  Line 330  [ERROR] "game_log_manager" is not a known attribute of "None"
-  Line 330  [ERROR] "log_event" is not a known attribute of "None"
-  Line 332  [ERROR] Parameter "rule_key" is already assigned
-  Line 334  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 334  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
-  Line 334  [ERROR] Cannot access attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
-┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
-  Line 336  [ERROR] Cannot access attribute "assert_awaited_once" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once" is unknown
-  Line 337  [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 347  [ERROR] "get_raw_rules_config_dict_for_guild" is not a known attribute of "None"
-  Line 347  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 347  [ERROR] Cannot assign to attribute "get_raw_rules_config_dict_for_guild" for class "RuleEngine"
-┬а┬аAttribute "get_raw_rules_config_dict_for_guild" is unknown
-  Line 349  [ERROR] Parameter "rule_key" is already assigned
-  Line 351  [ERROR] Cannot access attribute "assert_awaited_once" for class "FunctionType"
-┬а┬аAttribute "assert_awaited_once" is unknown
-  Line 352  [ERROR] Cannot access attribute "call_args" for class "FunctionType"
-┬а┬аAttribute "call_args" is unknown
-  Line 353  [ERROR] "rule_engine" is not a known attribute of "None"
-  Line 353  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
-  Line 353  [ERROR] Cannot access attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
-┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
-
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\integration\test_core_flows.py] — 128 issue(s):
-  Line 72   [ERROR] No parameter named "db_adapter"
-  Line 74   [ERROR] No parameter named "rule_engine"
-  Line 75   [ERROR] No parameter named "event_manager"
-  Line 76   [ERROR] No parameter named "character_manager"
-  Line 77   [ERROR] No parameter named "npc_manager"
-  Line 78   [ERROR] No parameter named "item_manager"
-  Line 79   [ERROR] No parameter named "combat_manager"
-  Line 80   [ERROR] No parameter named "status_manager"
-  Line 81   [ERROR] No parameter named "party_manager"
-  Line 82   [ERROR] No parameter named "time_manager"
-  Line 84   [ERROR] No parameter named "event_stage_processor"
-  Line 85   [ERROR] No parameter named "event_action_processor"
-  Line 86   [ERROR] No parameter named "on_enter_action_executor"
-  Line 87   [ERROR] No parameter named "stage_description_generator"
-  Line 103  [ERROR] No parameter named "db_adapter"
-  Line 113  [ERROR] No parameter named "db_adapter"
-  Line 145  [ERROR] Object of type "None" is not subscriptable
-  Line 150  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 176  [ERROR] Cannot access attribute "create_character" for class "CharacterManager"
-┬а┬аAttribute "create_character" is unknown
-  Line 196  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 225  [ERROR] Cannot assign to attribute "execute_triggers" for class "RuleEngine"
-┬а┬аAttribute "execute_triggers" is unknown
-  Line 229  [ERROR] No parameter named "db_adapter"
-  Line 229  [ERROR] No parameter named "rule_engine"
-  Line 230  [ERROR] No parameter named "character_manager"
-  Line 230  [ERROR] No parameter named "event_manager"
-  Line 230  [ERROR] No parameter named "npc_manager"
-  Line 231  [ERROR] No parameter named "combat_manager"
-  Line 231  [ERROR] No parameter named "item_manager"
-  Line 231  [ERROR] No parameter named "status_manager"
-  Line 232  [ERROR] No parameter named "party_manager"
-  Line 232  [ERROR] No parameter named "time_manager"
-  Line 233  [ERROR] No parameter named "event_action_processor"
-  Line 233  [ERROR] No parameter named "event_stage_processor"
-  Line 234  [ERROR] No parameter named "on_enter_action_executor"
-  Line 234  [ERROR] No parameter named "stage_description_generator"
-  Line 254  [ERROR] Object of type "None" is not subscriptable
-  Line 254  [ERROR] Object of type "None" is not subscriptable
-  Line 255  [ERROR] Object of type "None" is not subscriptable
-  Line 255  [ERROR] Object of type "None" is not subscriptable
-  Line 257  [ERROR] Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "value" of type "Dict[str, Any]" in function "__setitem__"
-┬а┬аType "Dict[str, Any] | None" is not assignable to type "Dict[str, Any]"
-┬а┬а┬а┬а"None" is not assignable to "Dict[str, Any]"
-  Line 257  [ERROR] Object of type "None" is not subscriptable
-  Line 258  [ERROR] Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "value" of type "Dict[str, Any]" in function "__setitem__"
-┬а┬аType "Dict[str, Any] | None" is not assignable to type "Dict[str, Any]"
-┬а┬а┬а┬а"None" is not assignable to "Dict[str, Any]"
-  Line 258  [ERROR] Object of type "None" is not subscriptable
-  Line 263  [ERROR] No parameter named "db_adapter"
-  Line 272  [ERROR] Cannot access attribute "create_character" for class "CharacterManager"
-┬а┬аAttribute "create_character" is unknown
-  Line 276  [ERROR] Object of type "None" is not subscriptable
-  Line 279  [ERROR] Object of type "None" is not subscriptable
-  Line 288  [ERROR] Object of type "None" is not subscriptable
-  Line 289  [ERROR] Object of type "None" is not subscriptable
-  Line 301  [ERROR] Object of type "None" is not subscriptable
-  Line 304  [ERROR] Cannot access attribute "execute_triggers" for class "RuleEngine"
-┬а┬аAttribute "execute_triggers" is unknown
-  Line 306  [ERROR] Cannot access attribute "execute_triggers" for class "RuleEngine"
-┬а┬аAttribute "execute_triggers" is unknown
-  Line 307  [ERROR] Cannot access attribute "execute_triggers" for class "RuleEngine"
-┬а┬аAttribute "execute_triggers" is unknown
-  Line 312  [ERROR] Object of type "None" is not subscriptable
-  Line 318  [ERROR] Object of type "None" is not subscriptable
-  Line 333  [ERROR] No parameter named "db_adapter"
-  Line 333  [ERROR] No parameter named "rule_engine"
-  Line 334  [ERROR] No parameter named "character_manager"
-  Line 334  [ERROR] No parameter named "event_manager"
-  Line 334  [ERROR] No parameter named "npc_manager"
-  Line 335  [ERROR] No parameter named "combat_manager"
-  Line 335  [ERROR] No parameter named "item_manager"
-  Line 335  [ERROR] No parameter named "status_manager"
-  Line 336  [ERROR] No parameter named "party_manager"
-  Line 336  [ERROR] No parameter named "time_manager"
-  Line 337  [ERROR] No parameter named "event_action_processor"
-  Line 337  [ERROR] No parameter named "event_stage_processor"
-  Line 338  [ERROR] No parameter named "on_enter_action_executor"
-  Line 338  [ERROR] No parameter named "stage_description_generator"
-  Line 352  [ERROR] No parameter named "db_adapter"
-  Line 360  [ERROR] No parameter named "db_adapter"
-  Line 365  [ERROR] Cannot access attribute "create_character" for class "CharacterManager"
-┬а┬аAttribute "create_character" is unknown
-  Line 367  [ERROR] Object of type "None" is not subscriptable
-  Line 376  [ERROR] Object of type "None" is not subscriptable
-  Line 380  [ERROR] Object of type "None" is not subscriptable
-  Line 381  [ERROR] Argument of type "CoroutineType[Any, Any, List[Item]]" cannot be assigned to parameter "container" of type "Iterable[Any] | Container[Any]" in function "assertIn"
-┬а┬аType "CoroutineType[Any, Any, List[Item]]" is not assignable to type "Iterable[Any] | Container[Any]"
-┬а┬а┬а┬а"CoroutineType[Any, Any, List[Item]]" is incompatible with protocol "Iterable[Any]"
-┬а┬а┬а┬а┬а┬а"__iter__" is not present
-┬а┬а┬а┬а"CoroutineType[Any, Any, List[Item]]" is incompatible with protocol "Container[Any]"
-┬а┬а┬а┬а┬а┬а"__contains__" is not present
-  Line 390  [ERROR] Argument missing for parameter "updates"
-  Line 392  [ERROR] "id" is not a known attribute of "None"
-  Line 403  [ERROR] Object of type "None" is not subscriptable
-  Line 404  [ERROR] "CoroutineType[Any, Any, List[Item]]" is not iterable
-┬а┬а"__iter__" method not defined
-  Line 404  [ERROR] "id" is not a known attribute of "None"
-  Line 409  [ERROR] "CoroutineType[Any, Any, List[Item]]" is not iterable
-┬а┬а"__iter__" method not defined
-  Line 409  [ERROR] "id" is not a known attribute of "None"
-  Line 413  [ERROR] "id" is not a known attribute of "None"
-  Line 413  [ERROR] Argument of type "Column[str]" cannot be assigned to parameter "item_id" of type "str" in function "get_item_instance"
-┬а┬а"Column[str]" is not assignable to "str"
-  Line 415  [ERROR] "owner_id" is not a known attribute of "None"
-  Line 416  [ERROR] "owner_type" is not a known attribute of "None"
-  Line 417  [ERROR] "location_id" is not a known attribute of "None"
-  Line 431  [ERROR] "CoroutineType[Any, Any, List[Item]]" is not iterable
-┬а┬а"__iter__" method not defined
-  Line 431  [ERROR] "id" is not a known attribute of "None"
-  Line 435  [ERROR] Argument missing for parameter "updates"
-  Line 437  [ERROR] "id" is not a known attribute of "None"
-  Line 449  [ERROR] "CoroutineType[Any, Any, List[Item]]" is not iterable
-┬а┬а"__iter__" method not defined
-  Line 449  [ERROR] "id" is not a known attribute of "None"
-  Line 453  [ERROR] "CoroutineType[Any, Any, List[Item]]" is not iterable
-┬а┬а"__iter__" method not defined
-  Line 453  [ERROR] "id" is not a known attribute of "None"
-  Line 456  [ERROR] "id" is not a known attribute of "None"
-  Line 456  [ERROR] Argument of type "Column[str]" cannot be assigned to parameter "item_id" of type "str" in function "get_item_instance"
-┬а┬а"Column[str]" is not assignable to "str"
-  Line 458  [ERROR] "owner_id" is not a known attribute of "None"
-  Line 459  [ERROR] "location_id" is not a known attribute of "None"
-  Line 473  [ERROR] No parameter named "db_adapter"
-  Line 473  [ERROR] No parameter named "rule_engine"
-  Line 474  [ERROR] No parameter named "character_manager"
-  Line 474  [ERROR] No parameter named "event_manager"
-  Line 474  [ERROR] No parameter named "npc_manager"
-  Line 475  [ERROR] No parameter named "combat_manager"
-  Line 475  [ERROR] No parameter named "item_manager"
-  Line 475  [ERROR] No parameter named "status_manager"
-  Line 476  [ERROR] No parameter named "party_manager"
-  Line 476  [ERROR] No parameter named "time_manager"
-  Line 477  [ERROR] No parameter named "event_action_processor"
-  Line 477  [ERROR] No parameter named "event_stage_processor"
-  Line 478  [ERROR] No parameter named "on_enter_action_executor"
-  Line 478  [ERROR] No parameter named "stage_description_generator"
-  Line 493  [ERROR] No parameter named "db_adapter"
-  Line 507  [ERROR] Cannot access attribute "create_character" for class "CharacterManager"
-┬а┬аAttribute "create_character" is unknown
-  Line 509  [ERROR] Object of type "None" is not subscriptable
-  Line 512  [ERROR] Cannot access attribute "create_character" for class "CharacterManager"
-┬а┬аAttribute "create_character" is unknown
-  Line 514  [ERROR] Object of type "None" is not subscriptable
-  Line 533  [ERROR] Argument missing for parameter "amount"
-  Line 543  [ERROR] Cannot access attribute "current_health" for class "Character"
-┬а┬аAttribute "current_health" is unknown
-  Line 549  [ERROR] Cannot access attribute "current_health" for class "Character"
-┬а┬аAttribute "current_health" is unknown
-  Line 556  [ERROR] Cannot assign to attribute "current_health" for class "Character"
-┬а┬аAttribute "current_health" is unknown
-  Line 561  [ERROR] Cannot access attribute "handle_character_death" for class "CharacterManager"
-┬а┬аAttribute "handle_character_death" is unknown
-  Line 561  [ERROR] Cannot assign to attribute "handle_character_death" for class "CharacterManager"
-┬а┬аAttribute "handle_character_death" is unknown
-  Line 564  [ERROR] Argument missing for parameter "amount"
-  Line 574  [ERROR] Cannot access attribute "current_health" for class "Character"
-┬а┬аAttribute "current_health" is unknown
-  Line 578  [ERROR] Cannot access attribute "handle_character_death" for class "CharacterManager"
-┬а┬аAttribute "handle_character_death" is unknown
-
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\gm_app_cmds.py] — 117 issue(s):
   Line 29   [ERROR] "parse_and_validate_ai_response" is unknown import symbol
-  Line 47   [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
   Line 74   [ERROR] Cannot access attribute "trigger_manual_simulation_tick" for class "GameManager"
 ┬а┬аAttribute "trigger_manual_simulation_tick" is unknown
   Line 110  [ERROR] Cannot access attribute "remove_character" for class "CharacterManager"
@@ -364,8 +9,6 @@
 ┬а┬аAttribute "get_default_bot_language" is unknown
   Line 216  [ERROR] Cannot access attribute "update_npc_field" for class "NpcManager"
 ┬а┬аAttribute "update_npc_field" is unknown
-  Line 257  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
   Line 262  [ERROR] Cannot access attribute "update_npc_field" for class "NpcManager"
 ┬а┬аAttribute "update_npc_field" is unknown
   Line 274  [ERROR] Cannot access attribute "trigger_stats_recalculation" for class "NpcManager"
@@ -415,8 +58,6 @@
 ┬а┬аAttribute "id" is unknown
   Line 440  [ERROR] "get_npc" is not a known attribute of "None"
   Line 443  [ERROR] "get_location_instance" is not a known attribute of "None"
-  Line 443  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
   Line 448  [ERROR] "create_item_instance" is not a known attribute of "None"
   Line 454  [ERROR] "log_event" is not a known attribute of "None"
   Line 499  [ERROR] Cannot access attribute "db_service" for class "RPGBot"
@@ -441,8 +82,6 @@
   Line 598  [ERROR] Argument of type "dict[Unknown, Unknown]" cannot be assigned to parameter "report_data" of type "List[Dict[str, Any]]" in function "format_action_consequence_report"
 ┬а┬а"dict[Unknown, Unknown]" is not assignable to "List[Dict[str, Any]]"
   Line 601  [ERROR] "log_event" is not a known attribute of "None"
-  Line 656  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
   Line 660  [ERROR] Type "List[bot.database.models.character_related.NPC]" is not assignable to declared type "List[bot.game.models.npc.NPC]"
 ┬а┬а"builtins.list" is not assignable to "builtins.list"
 ┬а┬а┬а┬аType parameter "_T@list" is invariant, but "bot.database.models.character_related.NPC" is not the same as "bot.game.models.npc.NPC"
@@ -451,8 +90,6 @@
 ┬а┬а"builtins.list" is not assignable to "builtins.list"
 ┬а┬а┬а┬аType parameter "_T@list" is invariant, but "bot.database.models.character_related.NPC" is not the same as "bot.game.models.npc.NPC"
 ┬а┬а┬а┬аConsider switching from "list" to "Sequence" which is covariant
-  Line 670  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
   Line 760  [ERROR] Cannot access attribute "id" for class "CoroutineType[Any, Any, Character | None]"
 ┬а┬аAttribute "id" is unknown
   Line 760  [ERROR] Cannot access attribute "id" for class "CoroutineType[Any, Any, Character | None]"
@@ -483,8 +120,6 @@
 ┬а┬аAttribute "character_class" is unknown
   Line 766  [ERROR] Cannot access attribute "selected_language" for class "CoroutineType[Any, Any, Character | None]"
 ┬а┬аAttribute "selected_language" is unknown
-  Line 769  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
   Line 774  [ERROR] Cannot access attribute "stats" for class "CoroutineType[Any, Any, Character | None]"
 ┬а┬аAttribute "stats" is unknown
   Line 774  [ERROR] Cannot access attribute "stats" for class "CoroutineType[Any, Any, Character | None]"
@@ -496,11 +131,7 @@
 ┬а┬аAttribute "get_all_location_instances" is unknown
   Line 799  [ERROR] "_location_instances" is not a known attribute of "None"
   Line 799  [ERROR] "get_location_instance" is not a known attribute of "None"
-  Line 799  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
   Line 828  [ERROR] "get_location_instance" is not a known attribute of "None"
-  Line 828  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
   Line 850  [ERROR] "get_npcs_in_location" is not a known attribute of "None"
   Line 852  [ERROR] "get_characters_in_location" is not a known attribute of "None"
   Line 855  [ERROR] "get_active_events_for_location" is not a known attribute of "None"
@@ -546,154 +177,29 @@
 ┬а┬аMethod __bool__ for type "Column[str]" returns type "NoReturn" rather than "bool"
   Line 940  [ERROR] Invalid conditional operand of type "Unknown | Column[datetime] | Literal[False]"
 ┬а┬аMethod __bool__ for type "Column[datetime]" returns type "NoReturn" rather than "bool"
-  Line 959  [ERROR] Type "GameManager | None" is not assignable to declared type "GameManager"
+  Line 962  [ERROR] Import "bot.database.models.pending_generation" could not be resolved
+  Line 971  [ERROR] Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "get_entity_by_id"
+┬а┬а"object" is not assignable to "AsyncSession"
+  Line 987  [ERROR] Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "update_entity"
+┬а┬а"object" is not assignable to "AsyncSession"
+  Line 999  [ERROR] Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "get_entity_by_id"
+┬а┬а"object" is not assignable to "AsyncSession"
+  Line 1020 [ERROR] Type "GameManager | None" is not assignable to declared type "GameManager"
 ┬а┬аType "GameManager | None" is not assignable to type "GameManager"
 ┬а┬а┬а┬а"None" is not assignable to "GameManager"
-  Line 965  [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
+  Line 1026 [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
 ┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 983  [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 1003 [ERROR] Type "GameManager | None" is not assignable to declared type "GameManager"
-┬а┬аType "GameManager | None" is not assignable to type "GameManager"
-┬а┬а┬а┬а"None" is not assignable to "GameManager"
-  Line 1009 [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-  Line 1047 [ERROR] Type "GameManager | None" is not assignable to declared type "GameManager"
-┬а┬аType "GameManager | None" is not assignable to type "GameManager"
-┬а┬а┬а┬а"None" is not assignable to "GameManager"
-  Line 1053 [ERROR] Cannot access attribute "get_entity_by_pk" for class "DBService"
-┬а┬аAttribute "get_entity_by_pk" is unknown
-
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\game\managers\test_location_manager.py] — 96 issue(s):
-  Line 158  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 239  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 247  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 253  [ERROR] "id" is not a known attribute of "None"
-  Line 254  [ERROR] "static_id" is not a known attribute of "None"
-  Line 254  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 255  [ERROR] "name" is not a known attribute of "None"
-  Line 261  [ERROR] "DBLocation" is not defined
-  Line 284  [ERROR] "AsyncSession" is not defined
-  Line 300  [ERROR] "id" is not a known attribute of "None"
-  Line 301  [ERROR] "static_id" is not a known attribute of "None"
-  Line 301  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 302  [ERROR] "name" is not a known attribute of "None"
-  Line 311  [ERROR] "AsyncSession" is not defined
-  Line 348  [ERROR] "GameManager" is not defined
-  Line 349  [ERROR] "DBService" is not defined
-  Line 350  [ERROR] "GameLogManager" is not defined
-  Line 351  [ERROR] "PartyManager" is not defined
-  Line 352  [ERROR] "RuleEngine" is not defined
-  Line 353  [ERROR] "LocationInteractionService" is not defined
-  Line 354  [ERROR] "CharacterManager" is not defined
-  Line 367  [ERROR] "DBCharacter" is not defined
-  Line 375  [ERROR] "DBParty" is not defined
-  Line 389  [ERROR] "AsyncSession" is not defined
-  Line 405  [ERROR] Cannot assign to attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 413  [ERROR] "DBCharacter" is not defined
-  Line 415  [ERROR] "DBCharacter" is not defined
-  Line 416  [ERROR] "DBCharacter" is not defined
-  Line 417  [ERROR] "DBParty" is not defined
-  Line 428  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 430  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 437  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 452  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 472  [ERROR] Cannot assign to attribute "neighbor_locations_json" for class "Location"
-┬а┬аAttribute "neighbor_locations_json" is unknown
-  Line 473  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 487  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 510  [ERROR] "discord" is not defined
-  Line 526  [ERROR] "pytest" is not defined
-  Line 527  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 561  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 580  [ERROR] Cannot access attribute "static_id" for class "Location"
-┬а┬аAttribute "static_id" is unknown
-  Line 658  [ERROR] Cannot assign to attribute "_ai_validator" for class "LocationManager"
-┬а┬аAttribute "_ai_validator" is unknown
-  Line 708  [ERROR] Object of type "None" is not subscriptable
-  Line 709  [ERROR] Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "container" of type "Iterable[Any] | Container[Any]" in function "assertIn"
-┬а┬аType "Dict[str, Any] | None" is not assignable to type "Iterable[Any] | Container[Any]"
-┬а┬а┬а┬аType "None" is not assignable to type "Iterable[Any] | Container[Any]"
-┬а┬а┬а┬а┬а┬а"None" is incompatible with protocol "Iterable[Any]"
-┬а┬а┬а┬а┬а┬а┬а┬а"__iter__" is not present
-┬а┬а┬а┬а┬а┬а"None" is incompatible with protocol "Container[Any]"
-┬а┬а┬а┬а┬а┬а┬а┬а"__contains__" is not present
-  Line 710  [ERROR] Object of type "None" is not subscriptable
-  Line 712  [ERROR] Object of type "None" is not subscriptable
-  Line 716  [ERROR] Object of type "None" is not subscriptable
-  Line 774  [ERROR] Object of type "None" is not subscriptable
-  Line 777  [ERROR] Object of type "None" is not subscriptable
-  Line 778  [ERROR] Object of type "None" is not subscriptable
-  Line 779  [ERROR] Object of type "None" is not subscriptable
-  Line 780  [ERROR] Object of type "None" is not subscriptable
-  Line 781  [ERROR] Object of type "None" is not subscriptable
-  Line 782  [ERROR] Object of type "None" is not subscriptable
-  Line 783  [ERROR] Object of type "None" is not subscriptable
-  Line 784  [ERROR] Object of type "None" is not subscriptable
-  Line 785  [ERROR] Object of type "None" is not subscriptable
-  Line 787  [ERROR] Object of type "None" is not subscriptable
-  Line 788  [ERROR] Object of type "None" is not subscriptable
-  Line 789  [ERROR] Object of type "None" is not subscriptable
-  Line 790  [ERROR] Object of type "None" is not subscriptable
-  Line 791  [ERROR] Object of type "None" is not subscriptable
-  Line 792  [ERROR] Object of type "None" is not subscriptable
-  Line 793  [ERROR] Object of type "None" is not subscriptable
-  Line 794  [ERROR] Object of type "None" is not subscriptable
-  Line 795  [ERROR] Object of type "None" is not subscriptable
-  Line 796  [ERROR] Object of type "None" is not subscriptable
-  Line 797  [ERROR] Object of type "None" is not subscriptable
-  Line 798  [ERROR] Object of type "None" is not subscriptable
-  Line 800  [ERROR] Object of type "None" is not subscriptable
-  Line 801  [ERROR] Object of type "None" is not subscriptable
-  Line 830  [ERROR] Object of type "None" is not subscriptable
-  Line 831  [ERROR] Object of type "None" is not subscriptable
-  Line 832  [ERROR] Object of type "None" is not subscriptable
-  Line 834  [ERROR] "get" is not a known attribute of "None"
-  Line 835  [ERROR] "get" is not a known attribute of "None"
-  Line 836  [ERROR] "get" is not a known attribute of "None"
-  Line 837  [ERROR] "get" is not a known attribute of "None"
-  Line 838  [ERROR] "get" is not a known attribute of "None"
-  Line 839  [ERROR] "get" is not a known attribute of "None"
-  Line 934  [ERROR] "mock" is not a known attribute of module "unittest"
-  Line 954  [ERROR] "mock" is not a known attribute of module "unittest"
-  Line 1069 [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 1075 [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 1089 [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 1094 [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 1128 [ERROR] Argument of type "dict[str, str]" cannot be assigned to parameter "instance_name" of type "str | None" in function "create_location_instance"
-┬а┬аType "dict[str, str]" is not assignable to type "str | None"
-┬а┬а┬а┬а"dict[str, str]" is not assignable to "str"
-┬а┬а┬а┬а"dict[str, str]" is not assignable to "None"
-  Line 1129 [ERROR] Argument of type "dict[str, str]" cannot be assigned to parameter "instance_description" of type "str | None" in function "create_location_instance"
-┬а┬аType "dict[str, str]" is not assignable to type "str | None"
-┬а┬а┬а┬а"dict[str, str]" is not assignable to "str"
-┬а┬а┬а┬а"dict[str, str]" is not assignable to "None"
-  Line 1135 [ERROR] Object of type "None" is not subscriptable
-  Line 1136 [ERROR] Object of type "None" is not subscriptable
-  Line 1137 [ERROR] Object of type "None" is not subscriptable
-  Line 1138 [ERROR] Object of type "None" is not subscriptable
-  Line 1139 [ERROR] Object of type "None" is not subscriptable
-  Line 1140 [ERROR] Object of type "None" is not subscriptable
-  Line 1142 [ERROR] Object of type "None" is not subscriptable
-  Line 1143 [ERROR] Object of type "None" is not subscriptable
+  Line 1067 [ERROR] Import "bot.database.models.pending_generation" could not be resolved
+  Line 1069 [ERROR] "parse_and_validate_ai_response" is unknown import symbol
+  Line 1079 [ERROR] Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "get_entity_by_id"
+┬а┬а"object" is not assignable to "AsyncSession"
+  Line 1102 [ERROR] "GenerationType" is not defined
+  Line 1102 [ERROR] "GenerationType" is not defined
+  Line 1103 [ERROR] "GenerationType" is not defined
+  Line 1103 [ERROR] "GenerationType" is not defined
+  Line 1104 [ERROR] "GenerationType" is not defined
+  Line 1143 [ERROR] Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "update_entity"
+┬а┬а"object" is not assignable to "AsyncSession"
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\inventory_cmds.py] — 88 issue(s):
   Line 36   [ERROR] Cannot access attribute "language" for class "Locale"
@@ -1630,6 +1136,120 @@
   Line 182  [ERROR] Cannot access attribute "assert_any_call" for class "FunctionType"
 ┬а┬аAttribute "assert_any_call" is unknown
 
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\integration\test_core_flows.py] — 67 issue(s):
+  Line 44   [ERROR] "DUMMY_LOCATION_TEMPLATES_INTEGRATION" is not defined
+  Line 125  [ERROR] No parameter named "game_manager"
+  Line 141  [ERROR] "Location" is not awaitable
+┬а┬а"Location" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 141  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 158  [ERROR] Arguments missing for parameters "user_id", "character_name", "language"
+  Line 160  [ERROR] No parameter named "discord_user_id"
+  Line 161  [ERROR] No parameter named "character_name_i18n"
+  Line 174  [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 175  [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 177  [ERROR] "Location" is not awaitable
+┬а┬а"Location" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 177  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 177  [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 217  [ERROR] Cannot assign to attribute "exits" for class "Location"
+┬а┬аExpression of type "dict[str, str]" cannot be assigned to attribute "exits" of class "Location"
+┬а┬а┬а┬а"dict[str, str]" is not assignable to "List[Dict[str, Any]]"
+  Line 218  [ERROR] Cannot assign to attribute "exits" for class "Location"
+┬а┬аExpression of type "dict[str, str]" cannot be assigned to attribute "exits" of class "Location"
+┬а┬а┬а┬а"dict[str, str]" is not assignable to "List[Dict[str, Any]]"
+  Line 219  [ERROR] Cannot access attribute "model_dump" for class "Location"
+┬а┬аAttribute "model_dump" is unknown
+  Line 220  [ERROR] Cannot access attribute "model_dump" for class "Location"
+┬а┬аAttribute "model_dump" is unknown
+  Line 230  [ERROR] Arguments missing for parameters "user_id", "character_name", "language"
+  Line 231  [ERROR] No parameter named "discord_user_id"
+  Line 232  [ERROR] No parameter named "character_name_i18n"
+  Line 233  [ERROR] No parameter named "initial_location_id"
+  Line 237  [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 251  [ERROR] Cannot access attribute "get_character_by_id" for class "CharacterManager"
+┬а┬аAttribute "get_character_by_id" is unknown
+  Line 256  [ERROR] Cannot access attribute "call_count" for class "FunctionType"
+┬а┬аAttribute "call_count" is unknown
+  Line 257  [ERROR] Cannot access attribute "call_args_list" for class "FunctionType"
+┬а┬аAttribute "call_args_list" is unknown
+  Line 258  [ERROR] Cannot access attribute "call_args_list" for class "FunctionType"
+┬а┬аAttribute "call_args_list" is unknown
+  Line 298  [ERROR] No parameter named "game_manager"
+  Line 310  [ERROR] Arguments missing for parameters "user_id", "character_name", "language"
+  Line 311  [ERROR] No parameter named "discord_user_id"
+  Line 312  [ERROR] No parameter named "character_name_i18n"
+  Line 313  [ERROR] No parameter named "initial_location_id"
+  Line 319  [ERROR] Cannot access attribute "create_item_instance_in_db" for class "ItemManager"
+┬а┬аAttribute "create_item_instance_in_db" is unknown
+  Line 333  [ERROR] Cannot access attribute "update_item_instance_in_db" for class "ItemManager"
+┬а┬аAttribute "update_item_instance_in_db" is unknown
+  Line 342  [ERROR] Expected 2 positional arguments
+  Line 345  [ERROR] Cannot access attribute "get_item_instance_from_db" for class "ItemManager"
+┬а┬аAttribute "get_item_instance_from_db" is unknown
+  Line 358  [ERROR] Cannot access attribute "create_item_instance_in_db" for class "ItemManager"
+┬а┬аAttribute "create_item_instance_in_db" is unknown
+  Line 363  [ERROR] Expected 2 positional arguments
+  Line 366  [ERROR] Cannot access attribute "update_item_instance_in_db" for class "ItemManager"
+┬а┬аAttribute "update_item_instance_in_db" is unknown
+  Line 368  [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 372  [ERROR] Expected 2 positional arguments
+  Line 375  [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 376  [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 379  [ERROR] Cannot access attribute "get_item_instance_from_db" for class "ItemManager"
+┬а┬аAttribute "get_item_instance_from_db" is unknown
+  Line 383  [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 423  [ERROR] Arguments missing for parameters "user_id", "character_name", "language"
+  Line 424  [ERROR] No parameter named "character_name_i18n"
+  Line 424  [ERROR] No parameter named "discord_user_id"
+  Line 425  [ERROR] No parameter named "initial_location_id"
+  Line 426  [ERROR] No parameter named "stats"
+  Line 428  [ERROR] Arguments missing for parameters "user_id", "character_name", "language"
+  Line 429  [ERROR] No parameter named "character_name_i18n"
+  Line 429  [ERROR] No parameter named "discord_user_id"
+  Line 430  [ERROR] No parameter named "initial_location_id"
+  Line 431  [ERROR] No parameter named "stats"
+  Line 434  [ERROR] Cannot assign to attribute "current_health" for class "Character"
+┬а┬аAttribute "current_health" is unknown
+  Line 435  [ERROR] Cannot assign to attribute "current_health" for class "Character"
+┬а┬аAttribute "current_health" is unknown
+  Line 442  [ERROR] Cannot access attribute "current_health" for class "Character"
+┬а┬аAttribute "current_health" is unknown
+  Line 444  [ERROR] Cannot access attribute "current_health" for class "Character"
+┬а┬аAttribute "current_health" is unknown
+  Line 447  [ERROR] Cannot access attribute "update_character_health" for class "CharacterManager"
+┬а┬аAttribute "update_character_health" is unknown
+  Line 452  [ERROR] Cannot access attribute "get_character_by_id" for class "CharacterManager"
+┬а┬аAttribute "get_character_by_id" is unknown
+  Line 459  [ERROR] Cannot access attribute "current_health" for class "Character"
+┬а┬аAttribute "current_health" is unknown
+  Line 460  [ERROR] Cannot access attribute "current_health" for class "Character"
+┬а┬аAttribute "current_health" is unknown
+  Line 467  [ERROR] Cannot assign to attribute "current_health" for class "Character"
+┬а┬аAttribute "current_health" is unknown
+  Line 473  [ERROR] Cannot assign to attribute "handle_character_death" for class "CharacterManager"
+┬а┬аAttribute "handle_character_death" is unknown
+  Line 475  [ERROR] Cannot access attribute "update_character_health" for class "CharacterManager"
+┬а┬аAttribute "update_character_health" is unknown
+  Line 480  [ERROR] Cannot access attribute "get_character_by_id" for class "CharacterManager"
+┬а┬аAttribute "get_character_by_id" is unknown
+  Line 486  [ERROR] "cast" is not defined
+  Line 486  [ERROR] Cannot access attribute "handle_character_death" for class "CharacterManager"
+┬а┬аAttribute "handle_character_death" is unknown
+
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\api\schemas\master_schemas.py] — 66 issue(s):
   Line 6    [ERROR] No overloads for "Field" match the provided arguments
 ┬а┬аArgument types: (EllipsisType, Literal['The chosen outcome type for resolving the conflictтАж'], Literal['player_wins_battle'])
@@ -1763,6 +1383,85 @@
 ┬а┬аArgument types: (EllipsisType, Literal['Base statistics of the character.'], dict[str, int])
   Line 151  [ERROR] No overloads for "Field" match the provided arguments
 ┬а┬аArgument types: (None, Literal['Effective statistics after considering equipment, тАж'], dict[str, int])
+
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\commands\test_gm_app_cmds.py] — 63 issue(s):
+  Line 65   [ERROR] Parameter "pending_id" is already assigned
+  Line 94   [ERROR] Parameter "pending_id" is already assigned
+  Line 124  [ERROR] Parameter "pending_id" is already assigned
+  Line 151  [ERROR] Parameter "pending_id" is already assigned
+  Line 179  [ERROR] "apply_approved_generation" is not a known attribute of "None"
+  Line 181  [ERROR] Parameter "pending_id" is already assigned
+  Line 196  [ERROR] "apply_approved_generation" is not a known attribute of "None"
+  Line 227  [ERROR] "apply_approved_generation" is not a known attribute of "None"
+  Line 229  [ERROR] Parameter "pending_id" is already assigned
+  Line 256  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 257  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 257  [ERROR] Cannot assign to attribute "get_rule" for class "RuleEngine"
+┬а┬аAttribute "get_rule" is unknown
+  Line 259  [ERROR] "get_rule" is not a known attribute of "None"
+  Line 261  [ERROR] Parameter "pending_id" is already assigned
+  Line 303  [ERROR] Parameter "pending_id" is already assigned
+  Line 342  [ERROR] "get_raw_rules_config_dict_for_guild" is not a known attribute of "None"
+  Line 342  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 342  [ERROR] Cannot assign to attribute "get_raw_rules_config_dict_for_guild" for class "RuleEngine"
+┬а┬аAttribute "get_raw_rules_config_dict_for_guild" is unknown
+  Line 343  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 343  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
+  Line 343  [ERROR] Cannot assign to attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
+┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
+  Line 344  [ERROR] "load_rules_config_for_guild" is not a known attribute of "None"
+  Line 344  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 344  [ERROR] Cannot assign to attribute "load_rules_config_for_guild" for class "RuleEngine"
+┬а┬аAttribute "load_rules_config_for_guild" is unknown
+  Line 345  [ERROR] "game_log_manager" is not a known attribute of "None"
+  Line 345  [ERROR] "log_event" is not a known attribute of "None"
+  Line 347  [ERROR] Parameter "rule_key" is already assigned
+  Line 349  [ERROR] "get_raw_rules_config_dict_for_guild" is not a known attribute of "None"
+  Line 349  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 349  [ERROR] Cannot access attribute "get_raw_rules_config_dict_for_guild" for class "RuleEngine"
+┬а┬аAttribute "get_raw_rules_config_dict_for_guild" is unknown
+  Line 350  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 350  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
+  Line 350  [ERROR] Cannot access attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
+┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
+  Line 351  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 351  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
+  Line 351  [ERROR] Cannot access attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
+┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
+  Line 361  [ERROR] "load_rules_config_for_guild" is not a known attribute of "None"
+  Line 361  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 361  [ERROR] Cannot access attribute "load_rules_config_for_guild" for class "RuleEngine"
+┬а┬аAttribute "load_rules_config_for_guild" is unknown
+  Line 362  [ERROR] "game_log_manager" is not a known attribute of "None"
+  Line 362  [ERROR] "log_event" is not a known attribute of "None"
+  Line 382  [ERROR] "get_raw_rules_config_dict_for_guild" is not a known attribute of "None"
+  Line 382  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 382  [ERROR] Cannot assign to attribute "get_raw_rules_config_dict_for_guild" for class "RuleEngine"
+┬а┬аAttribute "get_raw_rules_config_dict_for_guild" is unknown
+  Line 383  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 383  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
+  Line 383  [ERROR] Cannot assign to attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
+┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
+  Line 384  [ERROR] "load_rules_config_for_guild" is not a known attribute of "None"
+  Line 384  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 384  [ERROR] Cannot assign to attribute "load_rules_config_for_guild" for class "RuleEngine"
+┬а┬аAttribute "load_rules_config_for_guild" is unknown
+  Line 385  [ERROR] "game_log_manager" is not a known attribute of "None"
+  Line 385  [ERROR] "log_event" is not a known attribute of "None"
+  Line 387  [ERROR] Parameter "rule_key" is already assigned
+  Line 389  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 389  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
+  Line 389  [ERROR] Cannot access attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
+┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
+  Line 403  [ERROR] "get_raw_rules_config_dict_for_guild" is not a known attribute of "None"
+  Line 403  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 403  [ERROR] Cannot assign to attribute "get_raw_rules_config_dict_for_guild" for class "RuleEngine"
+┬а┬аAttribute "get_raw_rules_config_dict_for_guild" is unknown
+  Line 405  [ERROR] Parameter "rule_key" is already assigned
+  Line 410  [ERROR] "rule_engine" is not a known attribute of "None"
+  Line 410  [ERROR] "save_rules_config_for_guild_from_dict" is not a known attribute of "None"
+  Line 410  [ERROR] Cannot access attribute "save_rules_config_for_guild_from_dict" for class "RuleEngine"
+┬а┬аAttribute "save_rules_config_for_guild_from_dict" is unknown
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\core\test_bot_events_and_basic_commands.py] — 50 issue(s):
   Line 132  [ERROR] Cannot assign to attribute "user" for class "RPGBot"
@@ -1942,145 +1641,145 @@
   Line 206  [ERROR] "effective_stats_data" is possibly unbound
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\rules\rule_engine.py] — 42 issue(s):
-  Line 105  [ERROR] Type "Dict[str, Any] | LocationManager | None" is not assignable to declared type "LocationManager | None"
+  Line 116  [ERROR] Type "Dict[str, Any] | LocationManager | None" is not assignable to declared type "LocationManager | None"
 ┬а┬аType "Dict[str, Any] | LocationManager | None" is not assignable to type "LocationManager | None"
 ┬а┬а┬а┬аType "Dict[str, Any]" is not assignable to type "LocationManager | None"
 ┬а┬а┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "LocationManager"
 ┬а┬а┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 158  [ERROR] "CoroutineType[Any, Any, List[Item]]" is not iterable
+  Line 169  [ERROR] "CoroutineType[Any, Any, List[Item]]" is not iterable
 ┬а┬а"__iter__" method not defined
-  Line 180  [ERROR] Argument missing for parameter "entity_id"
-  Line 180  [ERROR] No parameter named "context"
-  Line 183  [ERROR] Cannot access attribute "get_party_by_member_id" for class "PartyManager"
+  Line 191  [ERROR] Argument missing for parameter "entity_id"
+  Line 191  [ERROR] No parameter named "context"
+  Line 194  [ERROR] Cannot access attribute "get_party_by_member_id" for class "PartyManager"
 ┬а┬аAttribute "get_party_by_member_id" is unknown
-  Line 235  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_stealth_check"
+  Line 246  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_stealth_check"
 ┬а┬аType "CharacterManager | None" is not assignable to type "CharacterManager"
 ┬а┬а┬а┬а"None" is not assignable to "CharacterManager"
-  Line 241  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_pickpocket_attempt"
+  Line 252  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_pickpocket_attempt"
 ┬а┬аType "CharacterManager | None" is not assignable to type "CharacterManager"
 ┬а┬а┬а┬а"None" is not assignable to "CharacterManager"
-  Line 241  [ERROR] Argument of type "NpcManager | None" cannot be assigned to parameter "npc_manager" of type "NpcManager" in function "resolve_pickpocket_attempt"
+  Line 252  [ERROR] Argument of type "NpcManager | None" cannot be assigned to parameter "npc_manager" of type "NpcManager" in function "resolve_pickpocket_attempt"
 ┬а┬аType "NpcManager | None" is not assignable to type "NpcManager"
 ┬а┬а┬а┬а"None" is not assignable to "NpcManager"
-  Line 249  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_gathering_attempt"
+  Line 260  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_gathering_attempt"
 ┬а┬аType "CharacterManager | None" is not assignable to type "CharacterManager"
 ┬а┬а┬а┬а"None" is not assignable to "CharacterManager"
-  Line 257  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_crafting_attempt"
+  Line 268  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_crafting_attempt"
 ┬а┬аType "CharacterManager | None" is not assignable to type "CharacterManager"
 ┬а┬а┬а┬а"None" is not assignable to "CharacterManager"
-  Line 263  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_lockpick_attempt"
+  Line 274  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_lockpick_attempt"
 ┬а┬аType "CharacterManager | None" is not assignable to type "CharacterManager"
 ┬а┬а┬а┬а"None" is not assignable to "CharacterManager"
-  Line 269  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_disarm_trap_attempt"
+  Line 280  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "resolve_disarm_trap_attempt"
 ┬а┬аType "CharacterManager | None" is not assignable to type "CharacterManager"
 ┬а┬а┬а┬а"None" is not assignable to "CharacterManager"
-  Line 298  [ERROR] Argument of type "DialogueManager | None" cannot be assigned to parameter "dialogue_manager" of type "DialogueManager" in function "process_dialogue_action"
+  Line 309  [ERROR] Argument of type "DialogueManager | None" cannot be assigned to parameter "dialogue_manager" of type "DialogueManager" in function "process_dialogue_action"
 ┬а┬аType "DialogueManager | None" is not assignable to type "DialogueManager"
 ┬а┬а┬а┬а"None" is not assignable to "DialogueManager"
-  Line 299  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "process_dialogue_action"
+  Line 310  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "process_dialogue_action"
 ┬а┬аType "CharacterManager | None" is not assignable to type "CharacterManager"
 ┬а┬а┬а┬а"None" is not assignable to "CharacterManager"
-  Line 299  [ERROR] Argument of type "NpcManager | None" cannot be assigned to parameter "npc_manager" of type "NpcManager" in function "process_dialogue_action"
+  Line 310  [ERROR] Argument of type "NpcManager | None" cannot be assigned to parameter "npc_manager" of type "NpcManager" in function "process_dialogue_action"
 ┬а┬аType "NpcManager | None" is not assignable to type "NpcManager"
 ┬а┬а┬а┬а"None" is not assignable to "NpcManager"
-  Line 300  [ERROR] Argument of type "RelationshipManager | None" cannot be assigned to parameter "relationship_manager" of type "RelationshipManager" in function "process_dialogue_action"
+  Line 311  [ERROR] Argument of type "RelationshipManager | None" cannot be assigned to parameter "relationship_manager" of type "RelationshipManager" in function "process_dialogue_action"
 ┬а┬аType "RelationshipManager | None" is not assignable to type "RelationshipManager"
 ┬а┬а┬а┬а"None" is not assignable to "RelationshipManager"
-  Line 307  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "get_filtered_dialogue_options"
+  Line 318  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "get_filtered_dialogue_options"
 ┬а┬аType "CharacterManager | None" is not assignable to type "CharacterManager"
 ┬а┬а┬а┬а"None" is not assignable to "CharacterManager"
-  Line 308  [ERROR] Argument of type "NpcManager | None" cannot be assigned to parameter "npc_manager" of type "NpcManager" in function "get_filtered_dialogue_options"
+  Line 319  [ERROR] Argument of type "NpcManager | None" cannot be assigned to parameter "npc_manager" of type "NpcManager" in function "get_filtered_dialogue_options"
 ┬а┬аType "NpcManager | None" is not assignable to type "NpcManager"
 ┬а┬а┬а┬а"None" is not assignable to "NpcManager"
-  Line 308  [ERROR] Argument of type "RelationshipManager | None" cannot be assigned to parameter "relationship_manager" of type "RelationshipManager" in function "get_filtered_dialogue_options"
+  Line 319  [ERROR] Argument of type "RelationshipManager | None" cannot be assigned to parameter "relationship_manager" of type "RelationshipManager" in function "get_filtered_dialogue_options"
 ┬а┬аType "RelationshipManager | None" is not assignable to type "RelationshipManager"
 ┬а┬а┬а┬а"None" is not assignable to "RelationshipManager"
-  Line 323  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "choose_peaceful_action_for_npc"
+  Line 334  [ERROR] Argument of type "CharacterManager | None" cannot be assigned to parameter "character_manager" of type "CharacterManager" in function "choose_peaceful_action_for_npc"
 ┬а┬аType "CharacterManager | None" is not assignable to type "CharacterManager"
 ┬а┬а┬а┬а"None" is not assignable to "CharacterManager"
-  Line 323  [ERROR] Argument of type "LocationManager | None" cannot be assigned to parameter "location_manager" of type "LocationManager" in function "choose_peaceful_action_for_npc"
+  Line 334  [ERROR] Argument of type "LocationManager | None" cannot be assigned to parameter "location_manager" of type "LocationManager" in function "choose_peaceful_action_for_npc"
 ┬а┬аType "LocationManager | None" is not assignable to type "LocationManager"
 ┬а┬а┬а┬а"None" is not assignable to "LocationManager"
-  Line 324  [ERROR] Argument of type "RelationshipManager | None" cannot be assigned to parameter "relationship_manager" of type "RelationshipManager" in function "choose_peaceful_action_for_npc"
+  Line 335  [ERROR] Argument of type "RelationshipManager | None" cannot be assigned to parameter "relationship_manager" of type "RelationshipManager" in function "choose_peaceful_action_for_npc"
 ┬а┬аType "RelationshipManager | None" is not assignable to type "RelationshipManager"
 ┬а┬а┬а┬а"None" is not assignable to "RelationshipManager"
-  Line 333  [ERROR] Type "Dict[str, Any] | None" is not assignable to declared type "EventStageProcessor | None"
+  Line 344  [ERROR] Type "Dict[str, Any] | None" is not assignable to declared type "EventStageProcessor | None"
 ┬а┬аType "Dict[str, Any] | None" is not assignable to type "EventStageProcessor | None"
 ┬а┬а┬а┬аType "Dict[str, Any]" is not assignable to type "EventStageProcessor | None"
 ┬а┬а┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "EventStageProcessor"
 ┬а┬а┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 335  [ERROR] Type "Dict[str, Any] | None" is not assignable to declared type "((str, Dict[str, Any] | None) -> Awaitable[Any]) | None"
+  Line 346  [ERROR] Type "Dict[str, Any] | None" is not assignable to declared type "((str, Dict[str, Any] | None) -> Awaitable[Any]) | None"
 ┬а┬аType "Dict[str, Any] | None" is not assignable to type "((str, Dict[str, Any] | None) -> Awaitable[Any]) | None"
 ┬а┬а┬а┬аType "Dict[str, Any]" is not assignable to type "((str, Dict[str, Any] | None) -> Awaitable[Any]) | None"
 ┬а┬а┬а┬а┬а┬аType "Dict[str, Any]" is not assignable to type "(str, Dict[str, Any] | None) -> Awaitable[Any]"
 ┬а┬а┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "(str, Dict[str, Any] | None) -> Awaitable[Any]" cannot be assigned to parameter "send_message_callback" of type "SendToChannelCallback" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "(str, Dict[str, Any] | None) -> Awaitable[Any]" cannot be assigned to parameter "send_message_callback" of type "SendToChannelCallback" in function "advance_stage"
 ┬а┬аType "(str, Dict[str, Any] | None) -> Awaitable[Any]" is not assignable to type "SendToChannelCallback"
 ┬а┬а┬а┬аPosition-only parameter mismatch; expected 2 but received 1
 ┬а┬а┬а┬аFunction accepts too few positional parameters; expected 2 but received 1
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "character_manager" of type "CharacterManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "character_manager" of type "CharacterManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "CharacterManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "CharacterManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "combat_manager" of type "CombatManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "combat_manager" of type "CombatManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "CombatManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "CombatManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "crafting_manager" of type "CraftingManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "crafting_manager" of type "CraftingManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "CraftingManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "CraftingManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "dialogue_manager" of type "DialogueManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "dialogue_manager" of type "DialogueManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "DialogueManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "DialogueManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "economy_manager" of type "EconomyManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "economy_manager" of type "EconomyManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "EconomyManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "EconomyManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "event" of type "Event" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "event" of type "Event" in function "advance_stage"
 ┬а┬а"Dict[str, Any]" is not assignable to "Event"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "event_action_processor" of type "EventActionProcessor | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "event_action_processor" of type "EventActionProcessor | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "EventActionProcessor | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "EventActionProcessor"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "event_manager" of type "EventManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "event_manager" of type "EventManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "EventManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "EventManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "item_manager" of type "ItemManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "item_manager" of type "ItemManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "ItemManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "ItemManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "loc_manager" of type "LocationManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "loc_manager" of type "LocationManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "LocationManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "LocationManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "npc_manager" of type "NpcManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "npc_manager" of type "NpcManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "NpcManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "NpcManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "on_enter_action_executor" of type "OnEnterActionExecutor | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "on_enter_action_executor" of type "OnEnterActionExecutor | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "OnEnterActionExecutor | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "OnEnterActionExecutor"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "party_manager" of type "PartyManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "party_manager" of type "PartyManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "PartyManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "PartyManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "rule_engine" of type "RuleEngine | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "rule_engine" of type "RuleEngine | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "RuleEngine | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "RuleEngine"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "stage_description_generator" of type "StageDescriptionGenerator | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "stage_description_generator" of type "StageDescriptionGenerator | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "StageDescriptionGenerator | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "StageDescriptionGenerator"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "status_manager" of type "StatusManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "status_manager" of type "StatusManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "StatusManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "StatusManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
-  Line 339  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "time_manager" of type "TimeManager | None" in function "advance_stage"
+  Line 350  [ERROR] Argument of type "Dict[str, Any]" cannot be assigned to parameter "time_manager" of type "TimeManager | None" in function "advance_stage"
 ┬а┬аType "Dict[str, Any]" is not assignable to type "TimeManager | None"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "TimeManager"
 ┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
@@ -2479,6 +2178,86 @@
   Line 1452 [ERROR] Cannot access attribute "rollback" for class "object"
 ┬а┬аAttribute "rollback" is unknown
 
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\party_cmds.py] — 34 issue(s):
+  Line 53   [ERROR] Type "DBService | None" is not assignable to declared type "DBService"
+┬а┬аType "DBService | None" is not assignable to type "DBService"
+┬а┬а┬а┬а"None" is not assignable to "DBService"
+  Line 96   [ERROR] "get" is not a known attribute of "None"
+  Line 96   [ERROR] "get" is not a known attribute of "None"
+  Line 105  [ERROR] "player_account" is possibly unbound
+  Line 123  [ERROR] Type "DBService | None" is not assignable to declared type "DBService"
+┬а┬аType "DBService | None" is not assignable to type "DBService"
+┬а┬а┬а┬а"None" is not assignable to "DBService"
+  Line 148  [ERROR] "Character" is not awaitable
+┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 148  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 176  [ERROR] "disbanding_character_id" is possibly unbound
+  Line 176  [ERROR] "party_id_to_disband" is possibly unbound
+  Line 179  [ERROR] "disbanding_character_id" is possibly unbound
+  Line 179  [ERROR] "party_id_to_disband" is possibly unbound
+  Line 182  [ERROR] "disbanding_character_id" is possibly unbound
+  Line 201  [ERROR] Type "DBService | None" is not assignable to declared type "DBService"
+┬а┬аType "DBService | None" is not assignable to type "DBService"
+┬а┬а┬а┬а"None" is not assignable to "DBService"
+  Line 202  [ERROR] Type "LocationManager | None" is not assignable to declared type "LocationManager"
+┬а┬аType "LocationManager | None" is not assignable to type "LocationManager"
+┬а┬а┬а┬а"None" is not assignable to "LocationManager"
+  Line 224  [ERROR] "Character" is not awaitable
+┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 224  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 267  [ERROR] "Location" is not awaitable
+┬а┬а"Location" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 267  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 270  [ERROR] "Location" is not awaitable
+┬а┬а"Location" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 270  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 270  [ERROR] Argument of type "Unknown | str | None" cannot be assigned to parameter "instance_id" of type "str" in function "get_location_instance"
+┬а┬аType "Unknown | str | None" is not assignable to type "str"
+┬а┬а┬а┬а"None" is not assignable to "str"
+  Line 284  [ERROR] "get" is not a known attribute of "None"
+  Line 311  [ERROR] Type "DBService | None" is not assignable to declared type "DBService"
+┬а┬аType "DBService | None" is not assignable to type "DBService"
+┬а┬а┬а┬а"None" is not assignable to "DBService"
+  Line 348  [ERROR] "character_id_leaving" is possibly unbound
+  Line 351  [ERROR] "character_id_leaving" is possibly unbound
+  Line 353  [ERROR] "character_id_leaving" is possibly unbound
+  Line 385  [ERROR] "Character" is not awaitable
+┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 385  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 404  [ERROR] "Character" is not awaitable
+┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 404  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 433  [ERROR] "Character" is not awaitable
+┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 433  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 439  [ERROR] "Location" is not awaitable
+┬а┬а"Location" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 439  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\commands\test_game_setup_cmds.py] — 34 issue(s):
   Line 50   [ERROR] "db_service" is not a known attribute of "None"
   Line 50   [ERROR] "get_session" is not a known attribute of "None"
@@ -2655,71 +2434,6 @@
   Line 214  [ERROR] Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
 ┬а┬аAttribute "assert_awaited_once_with" is unknown
 
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\party_cmds.py] — 30 issue(s):
-  Line 53   [ERROR] Type "DBService | None" is not assignable to declared type "DBService"
-┬а┬аType "DBService | None" is not assignable to type "DBService"
-┬а┬а┬а┬а"None" is not assignable to "DBService"
-  Line 96   [ERROR] "get" is not a known attribute of "None"
-  Line 96   [ERROR] "get" is not a known attribute of "None"
-  Line 105  [ERROR] "player_account" is possibly unbound
-  Line 123  [ERROR] Type "DBService | None" is not assignable to declared type "DBService"
-┬а┬аType "DBService | None" is not assignable to type "DBService"
-┬а┬а┬а┬а"None" is not assignable to "DBService"
-  Line 148  [ERROR] "Character" is not awaitable
-┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 148  [ERROR] "None" is not awaitable
-┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 176  [ERROR] "disbanding_character_id" is possibly unbound
-  Line 176  [ERROR] "party_id_to_disband" is possibly unbound
-  Line 179  [ERROR] "disbanding_character_id" is possibly unbound
-  Line 179  [ERROR] "party_id_to_disband" is possibly unbound
-  Line 182  [ERROR] "disbanding_character_id" is possibly unbound
-  Line 201  [ERROR] Type "DBService | None" is not assignable to declared type "DBService"
-┬а┬аType "DBService | None" is not assignable to type "DBService"
-┬а┬а┬а┬а"None" is not assignable to "DBService"
-  Line 202  [ERROR] Type "LocationManager | None" is not assignable to declared type "LocationManager"
-┬а┬аType "LocationManager | None" is not assignable to type "LocationManager"
-┬а┬а┬а┬а"None" is not assignable to "LocationManager"
-  Line 224  [ERROR] "Character" is not awaitable
-┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 224  [ERROR] "None" is not awaitable
-┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 267  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 270  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 284  [ERROR] "get" is not a known attribute of "None"
-  Line 311  [ERROR] Type "DBService | None" is not assignable to declared type "DBService"
-┬а┬аType "DBService | None" is not assignable to type "DBService"
-┬а┬а┬а┬а"None" is not assignable to "DBService"
-  Line 348  [ERROR] "character_id_leaving" is possibly unbound
-  Line 351  [ERROR] "character_id_leaving" is possibly unbound
-  Line 353  [ERROR] "character_id_leaving" is possibly unbound
-  Line 385  [ERROR] "Character" is not awaitable
-┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 385  [ERROR] "None" is not awaitable
-┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 404  [ERROR] "Character" is not awaitable
-┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 404  [ERROR] "None" is not awaitable
-┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 433  [ERROR] "Character" is not awaitable
-┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 433  [ERROR] "None" is not awaitable
-┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 439  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\character_processors\character_action_processor.py] — 30 issue(s):
   Line 133  [ERROR] Cannot access attribute "begin_transaction" for class "DBService"
 ┬а┬аAttribute "begin_transaction" is unknown
@@ -2773,12 +2487,10 @@
 ┬а┬а"bool" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
 ┬а┬а┬а┬а"__await__" is not present
 
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\managers\combat_manager.py] — 27 issue(s):
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\managers\combat_manager.py] — 26 issue(s):
   Line 180  [ERROR] "None" is not awaitable
 ┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
 ┬а┬а┬а┬а"__await__" is not present
-  Line 246  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
   Line 308  [ERROR] Cannot access attribute "check_combat_end_conditions" for class "Dict[str, Any]"
 ┬а┬аAttribute "check_combat_end_conditions" is unknown
   Line 308  [ERROR] Cannot access attribute "check_combat_end_conditions" for class "RuleEngine"
@@ -3257,6 +2969,37 @@
 ┬а┬аAttribute "add" is unknown
   Line 690  [ERROR] Argument missing for parameter "party_id"
 
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\game\managers\test_location_manager.py] — 20 issue(s):
+  Line 321  [ERROR] "loc_from_id" is not a known attribute of "None"
+  Line 321  [ERROR] "pydantic_loc_from" is not a known attribute of "None"
+  Line 322  [ERROR] "loc_to_id" is not a known attribute of "None"
+  Line 322  [ERROR] "pydantic_loc_to" is not a known attribute of "None"
+  Line 328  [ERROR] "pydantic_loc_to" is not a known attribute of "None"
+  Line 328  [ERROR] "pydantic_loc_to" is not a known attribute of "None"
+  Line 329  [ERROR] "pydantic_loc_from" is not a known attribute of "None"
+  Line 329  [ERROR] "pydantic_loc_from" is not a known attribute of "None"
+  Line 330  [ERROR] "pydantic_loc_to" is not a known attribute of "None"
+  Line 330  [ERROR] "pydantic_loc_to" is not a known attribute of "None"
+  Line 332  [ERROR] "pydantic_loc_to" is not a known attribute of "None"
+  Line 333  [ERROR] "pydantic_loc_from" is not a known attribute of "None"
+  Line 333  [ERROR] "pydantic_loc_from" is not a known attribute of "None"
+  Line 335  [ERROR] "pydantic_loc_from" is not a known attribute of "None"
+  Line 407  [ERROR] "ext" is not a known attribute of module "discord"
+  Line 552  [ERROR] "mock" is not a known attribute of module "unittest"
+  Line 564  [ERROR] "mock" is not a known attribute of module "unittest"
+  Line 674  [ERROR] Argument of type "dict[str, str]" cannot be assigned to parameter "instance_name" of type "str | None" in function "create_location_instance"
+┬а┬аType "dict[str, str]" is not assignable to type "str | None"
+┬а┬а┬а┬а"dict[str, str]" is not assignable to "str"
+┬а┬а┬а┬а"dict[str, str]" is not assignable to "None"
+  Line 675  [ERROR] Argument of type "dict[str, str]" cannot be assigned to parameter "instance_description" of type "str | None" in function "create_location_instance"
+┬а┬аType "dict[str, str]" is not assignable to type "str | None"
+┬а┬а┬а┬а"dict[str, str]" is not assignable to "str"
+┬а┬а┬а┬а"dict[str, str]" is not assignable to "None"
+  Line 676  [ERROR] Argument of type "list[dict[str, str]]" cannot be assigned to parameter "instance_exits" of type "Dict[str, str] | None" in function "create_location_instance"
+┬а┬аType "list[dict[str, str]]" is not assignable to type "Dict[str, str] | None"
+┬а┬а┬а┬а"list[dict[str, str]]" is not assignable to "Dict[str, str]"
+┬а┬а┬а┬а"list[dict[str, str]]" is not assignable to "None"
+
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\game_setup_cmds.py] — 19 issue(s):
   Line 29   [ERROR] Type "Client" is not assignable to declared type "RPGBot"
 ┬а┬а"Client" is not assignable to "RPGBot"
@@ -3431,41 +3174,6 @@
   Line 1118 [ERROR] Argument missing for parameter "entity_id"
   Line 1118 [ERROR] No parameter named "context"
 
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\services\location_interaction_service.py] — 18 issue(s):
-  Line 41   [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 56   [ERROR] Cannot access attribute "get" for class "object"
-┬а┬аAttribute "get" is unknown
-  Line 63   [ERROR] Cannot access attribute "get" for class "object"
-┬а┬аAttribute "get" is unknown
-  Line 65   [ERROR] Cannot access attribute "get" for class "object"
-┬а┬аAttribute "get" is unknown
-  Line 101  [ERROR] Expected 1 positional argument
-  Line 110  [ERROR] "Dict[str, Any]" is not awaitable
-┬а┬а"Dict[str, Any]" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 110  [ERROR] "None" is not awaitable
-┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 158  [ERROR] Cannot access attribute "get_rules_config" for class "RuleEngine"
-┬а┬аAttribute "get_rules_config" is unknown
-  Line 183  [ERROR] Invalid conditional operand of type "Column[Unknown]"
-┬а┬аMethod __bool__ for type "Column[Unknown]" returns type "NoReturn" rather than "bool"
-  Line 196  [ERROR] Invalid conditional operand of type "Column[Unknown] | bool"
-┬а┬аMethod __bool__ for type "Column[Unknown]" returns type "NoReturn" rather than "bool"
-  Line 203  [ERROR] Type "tuple[Literal[True], Unknown | ColumnElement[Any] | None]" is not assignable to return type "Tuple[bool, str]"
-┬а┬аType "Unknown | ColumnElement[Any] | None" is not assignable to type "str"
-┬а┬а┬а┬а"ColumnElement[Any]" is not assignable to "str"
-  Line 214  [ERROR] Cannot access attribute "character_has_item_template" for class "InventoryManager"
-┬а┬аAttribute "character_has_item_template" is unknown
-  Line 237  [ERROR] Cannot access attribute "send_character_feedback" for class "NotificationService"
-┬а┬аAttribute "send_character_feedback" is unknown
-  Line 268  [ERROR] Argument missing for parameter "consequences"
-  Line 270  [ERROR] No parameter named "consequences_list"
-  Line 271  [ERROR] No parameter named "context"
-  Line 272  [ERROR] No parameter named "actor_id"
-  Line 273  [ERROR] No parameter named "actor_type"
-
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\turn_processor.py] — 18 issue(s):
   Line 58   [ERROR] Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "get_entities"
 ┬а┬а"object" is not assignable to "AsyncSession"
@@ -3639,6 +3347,39 @@
   Line 132  [ERROR] Argument of type "str | Any | None" cannot be assigned to parameter "lang" of type "str" in function "_get_i18n_value"
 ┬а┬аType "str | Any | None" is not assignable to type "str"
 ┬а┬а┬а┬а"None" is not assignable to "str"
+
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\services\location_interaction_service.py] — 17 issue(s):
+  Line 56   [ERROR] Cannot access attribute "get" for class "object"
+┬а┬аAttribute "get" is unknown
+  Line 63   [ERROR] Cannot access attribute "get" for class "object"
+┬а┬аAttribute "get" is unknown
+  Line 65   [ERROR] Cannot access attribute "get" for class "object"
+┬а┬аAttribute "get" is unknown
+  Line 101  [ERROR] Expected 1 positional argument
+  Line 110  [ERROR] "Dict[str, Any]" is not awaitable
+┬а┬а"Dict[str, Any]" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 110  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 158  [ERROR] Cannot access attribute "get_rules_config" for class "RuleEngine"
+┬а┬аAttribute "get_rules_config" is unknown
+  Line 183  [ERROR] Invalid conditional operand of type "Column[Unknown]"
+┬а┬аMethod __bool__ for type "Column[Unknown]" returns type "NoReturn" rather than "bool"
+  Line 196  [ERROR] Invalid conditional operand of type "Column[Unknown] | bool"
+┬а┬аMethod __bool__ for type "Column[Unknown]" returns type "NoReturn" rather than "bool"
+  Line 203  [ERROR] Type "tuple[Literal[True], Unknown | ColumnElement[Any] | None]" is not assignable to return type "Tuple[bool, str]"
+┬а┬аType "Unknown | ColumnElement[Any] | None" is not assignable to type "str"
+┬а┬а┬а┬а"ColumnElement[Any]" is not assignable to "str"
+  Line 214  [ERROR] Cannot access attribute "character_has_item_template" for class "InventoryManager"
+┬а┬аAttribute "character_has_item_template" is unknown
+  Line 237  [ERROR] Cannot access attribute "send_character_feedback" for class "NotificationService"
+┬а┬аAttribute "send_character_feedback" is unknown
+  Line 268  [ERROR] Argument missing for parameter "consequences"
+  Line 270  [ERROR] No parameter named "consequences_list"
+  Line 271  [ERROR] No parameter named "context"
+  Line 272  [ERROR] No parameter named "actor_id"
+  Line 273  [ERROR] No parameter named "actor_type"
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\game\test_conflict_resolver.py] — 17 issue(s):
   Line 29   [ERROR] Arguments missing for parameters "auto_resolution_check_type", "manual_resolution_options"
@@ -3836,6 +3577,36 @@
 ┬а┬а┬а┬аType "Dict[str, Any]" is not assignable to type "float | None"
 ┬а┬а┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "float"
 ┬а┬а┬а┬а┬а┬а"Dict[str, Any]" is not assignable to "None"
+
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\exploration_cmds.py] — 15 issue(s):
+  Line 56   [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 98   [ERROR] "get_character" is not a known attribute of "None"
+  Line 112  [ERROR] "get_character" is not a known attribute of "None"
+  Line 113  [ERROR] Cannot access attribute "current_location_id" for class "Character"
+┬а┬аAttribute "current_location_id" is unknown
+  Line 114  [ERROR] "edit" is not a known attribute of "None"
+  Line 150  [ERROR] "edit" is not a known attribute of "None"
+  Line 153  [ERROR] "edit" is not a known attribute of "None"
+  Line 246  [ERROR] "Character" is not awaitable
+┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 246  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 253  [ERROR] "Location" is not awaitable
+┬а┬а"Location" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 253  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 300  [ERROR] Cannot access attribute "process_action" for class "CharacterActionProcessor"
+┬а┬аAttribute "process_action" is unknown
+  Line 301  [ERROR] Cannot access attribute "id" for class "CoroutineType[Any, Any, Character | None]"
+┬а┬аAttribute "id" is unknown
+  Line 335  [ERROR] Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "get_entity_by_attributes"
+┬а┬а"object" is not assignable to "AsyncSession"
+  Line 347  [ERROR] Argument missing for parameter "guild_id"
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\managers\equipment_manager.py] — 15 issue(s):
   Line 15   [ERROR] "ItemDefinition" is unknown import symbol
@@ -4106,32 +3877,6 @@
 ┬а┬аExpression of type "LiteralString" cannot be assigned to attribute "status" of class "Combat"
 ┬а┬а┬а┬а"str" is not assignable to "Column[str]"
 
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\exploration_cmds.py] — 14 issue(s):
-  Line 56   [ERROR] Cannot access attribute "current_location_id" for class "Character"
-┬а┬аAttribute "current_location_id" is unknown
-  Line 98   [ERROR] "get_character" is not a known attribute of "None"
-  Line 112  [ERROR] "get_character" is not a known attribute of "None"
-  Line 113  [ERROR] Cannot access attribute "current_location_id" for class "Character"
-┬а┬аAttribute "current_location_id" is unknown
-  Line 114  [ERROR] "edit" is not a known attribute of "None"
-  Line 150  [ERROR] "edit" is not a known attribute of "None"
-  Line 153  [ERROR] "edit" is not a known attribute of "None"
-  Line 246  [ERROR] "Character" is not awaitable
-┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 246  [ERROR] "None" is not awaitable
-┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 253  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 300  [ERROR] Cannot access attribute "process_action" for class "CharacterActionProcessor"
-┬а┬аAttribute "process_action" is unknown
-  Line 301  [ERROR] Cannot access attribute "id" for class "CoroutineType[Any, Any, Character | None]"
-┬а┬аAttribute "id" is unknown
-  Line 335  [ERROR] Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "get_entity_by_attributes"
-┬а┬а"object" is not assignable to "AsyncSession"
-  Line 347  [ERROR] Argument missing for parameter "guild_id"
-
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\world_state_cmds.py] — 14 issue(s):
   Line 63   [ERROR] Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "get_entity_by_attributes"
 ┬а┬а"object" is not assignable to "AsyncSession"
@@ -4324,40 +4069,6 @@
   Line 85   [ERROR] Cannot access attribute "db" for class "DBService"
 ┬а┬аAttribute "db" is unknown
 
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\ai\prompt_context_collector.py] — 12 issue(s):
-  Line 87   [ERROR] Cannot access attribute "get_default_bot_language" for class "GameManager"
-┬а┬аAttribute "get_default_bot_language" is unknown
-  Line 111  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 328  [ERROR] Cannot access attribute "get_entity_by_conditions" for class "DBService"
-┬а┬аAttribute "get_entity_by_conditions" is unknown
-  Line 338  [ERROR] Cannot access attribute "get_contextual_lore" for class "LoreManager"
-┬а┬аAttribute "get_contextual_lore" is unknown
-  Line 345  [ERROR] Cannot access attribute "get_default_bot_language" for class "GameManager"
-┬а┬аAttribute "get_default_bot_language" is unknown
-  Line 355  [ERROR] Argument of type "list[Any | str | None]" cannot be assigned to parameter "iterable" of type "Iterable[SupportsRichComparisonT@sorted]" in function "sorted"
-┬а┬а"list[Any | str | None]" is not assignable to "Iterable[SupportsRichComparisonT@sorted]"
-┬а┬а┬а┬аType parameter "_T_co@Iterable" is covariant, but "Any | str | None" is not a subtype of "SupportsRichComparisonT@sorted"
-┬а┬а┬а┬а┬а┬аType "Any | str | None" is not assignable to type "SupportsRichComparison"
-┬а┬а┬а┬а┬а┬а┬а┬аType "Any | str | None" is not assignable to type "SupportsRichComparison"
-┬а┬а┬а┬а┬а┬а┬а┬а┬а┬аType "None" is not assignable to type "SupportsRichComparison"
-  Line 364  [ERROR] Argument of type "List[Ability]" cannot be assigned to parameter "value" of type "bool" in function "__setitem__"
-┬а┬а"List[Ability]" is not assignable to "bool"
-  Line 369  [ERROR] Argument of type "List[Dict[str, Any]]" cannot be assigned to parameter "value" of type "bool" in function "__setitem__"
-┬а┬а"List[Dict[str, Any]]" is not assignable to "bool"
-  Line 397  [ERROR] "Character" is not awaitable
-┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 397  [ERROR] "None" is not awaitable
-┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 418  [ERROR] "Character" is not awaitable
-┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-  Line 418  [ERROR] "None" is not awaitable
-┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
-┬а┬а┬а┬а"__await__" is not present
-
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\guild_config_cmds.py] — 12 issue(s):
   Line 38   [ERROR] Cannot access attribute "get" for class "object"
 ┬а┬аAttribute "get" is unknown
@@ -4513,6 +4224,38 @@
   Line 269  [ERROR] Expected 1 positional argument
   Line 304  [ERROR] Parameter "target" is already assigned
   Line 327  [ERROR] Parameter "target" is already assigned
+
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\ai\prompt_context_collector.py] — 11 issue(s):
+  Line 87   [ERROR] Cannot access attribute "get_default_bot_language" for class "GameManager"
+┬а┬аAttribute "get_default_bot_language" is unknown
+  Line 328  [ERROR] Cannot access attribute "get_entity_by_conditions" for class "DBService"
+┬а┬аAttribute "get_entity_by_conditions" is unknown
+  Line 338  [ERROR] Cannot access attribute "get_contextual_lore" for class "LoreManager"
+┬а┬аAttribute "get_contextual_lore" is unknown
+  Line 345  [ERROR] Cannot access attribute "get_default_bot_language" for class "GameManager"
+┬а┬аAttribute "get_default_bot_language" is unknown
+  Line 355  [ERROR] Argument of type "list[Any | str | None]" cannot be assigned to parameter "iterable" of type "Iterable[SupportsRichComparisonT@sorted]" in function "sorted"
+┬а┬а"list[Any | str | None]" is not assignable to "Iterable[SupportsRichComparisonT@sorted]"
+┬а┬а┬а┬аType parameter "_T_co@Iterable" is covariant, but "Any | str | None" is not a subtype of "SupportsRichComparisonT@sorted"
+┬а┬а┬а┬а┬а┬аType "Any | str | None" is not assignable to type "SupportsRichComparison"
+┬а┬а┬а┬а┬а┬а┬а┬аType "Any | str | None" is not assignable to type "SupportsRichComparison"
+┬а┬а┬а┬а┬а┬а┬а┬а┬а┬аType "None" is not assignable to type "SupportsRichComparison"
+  Line 364  [ERROR] Argument of type "List[Ability]" cannot be assigned to parameter "value" of type "bool" in function "__setitem__"
+┬а┬а"List[Ability]" is not assignable to "bool"
+  Line 369  [ERROR] Argument of type "List[Dict[str, Any]]" cannot be assigned to parameter "value" of type "bool" in function "__setitem__"
+┬а┬а"List[Dict[str, Any]]" is not assignable to "bool"
+  Line 397  [ERROR] "Character" is not awaitable
+┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 397  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 418  [ERROR] "Character" is not awaitable
+┬а┬а"Character" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
+  Line 418  [ERROR] "None" is not awaitable
+┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+┬а┬а┬а┬а"__await__" is not present
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\database\postgres_adapter.py] — 11 issue(s):
   Line 108  [ERROR] No overloads for "__init__" match the provided arguments
@@ -4959,6 +4702,19 @@
   Line 332  [ERROR] Cannot access attribute "equipment_slots_json" for class "Character"
 ┬а┬аAttribute "equipment_slots_json" is unknown
 
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\game\managers\test_global_npc_manager.py] — 8 issue(s):
+  Line 64   [ERROR] "id" is not a known attribute of "None"
+  Line 65   [ERROR] "name_i18n" is not a known attribute of "None"
+  Line 78   [ERROR] "id" is not a known attribute of "None"
+  Line 79   [ERROR] "guild_id" is not a known attribute of "None"
+  Line 136  [ERROR] "name_i18n" is not a known attribute of "None"
+  Line 137  [ERROR] "current_location_id" is not a known attribute of "None"
+  Line 199  [ERROR] Object of type "None" is not subscriptable
+  Line 234  [ERROR] Argument of type "dict[str, dict[str, str]]" cannot be assigned to parameter "exits" of type "List[Dict[str, Any]] | None" in function "__init__"
+┬а┬аType "dict[str, dict[str, str]]" is not assignable to type "List[Dict[str, Any]] | None"
+┬а┬а┬а┬а"dict[str, dict[str, str]]" is not assignable to "List[Dict[str, Any]]"
+┬а┬а┬а┬а"dict[str, dict[str, str]]" is not assignable to "None"
+
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\command_handlers\party_handler.py] — 7 issue(s):
   Line 165  [ERROR] No parameter named "leader_id"
   Line 166  [ERROR] No parameter named "member_ids"
@@ -5010,15 +4766,6 @@
   Line 167  [ERROR] "None" is not awaitable
 ┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
 ┬а┬а┬а┬а"__await__" is not present
-
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\game\managers\test_global_npc_manager.py] — 7 issue(s):
-  Line 64   [ERROR] "id" is not a known attribute of "None"
-  Line 65   [ERROR] "name_i18n" is not a known attribute of "None"
-  Line 78   [ERROR] "id" is not a known attribute of "None"
-  Line 79   [ERROR] "guild_id" is not a known attribute of "None"
-  Line 136  [ERROR] "name_i18n" is not a known attribute of "None"
-  Line 137  [ERROR] "current_location_id" is not a known attribute of "None"
-  Line 199  [ERROR] Object of type "None" is not subscriptable
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\game\rules\test_rule_engine_relationship_influence.py] — 7 issue(s):
   Line 152  [ERROR] Argument of type "MockCharacterManager" cannot be assigned to parameter "character_manager" of type "CharacterManager | None" in function "__init__"
@@ -5097,18 +4844,6 @@
   Line 296  [ERROR] Class declaration "ShopRestockRule" is obscured by a declaration of the same name
   Line 301  [ERROR] Class declaration "ShopTypeDefaultSettings" is obscured by a declaration of the same name
   Line 311  [ERROR] Class declaration "CoreGameRulesConfig" is obscured by a declaration of the same name
-
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\managers\location_manager.py] — 6 issue(s):
-  Line 180  [ERROR] Argument of type "Column[str]" cannot be assigned to parameter "key" of type "str" in function "__setitem__"
-┬а┬а"Column[str]" is not assignable to "str"
-  Line 271  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager*"
-┬а┬аAttribute "get_location_instance" is unknown
-  Line 299  [ERROR] Cannot access attribute "get_rule" for class "RuleEngine"
-┬а┬аAttribute "get_rule" is unknown
-  Line 322  [ERROR] "player_ids_json" is not a known attribute of "None"
-  Line 363  [ERROR] Method declaration "move_entity" is obscured by a declaration of the same name
-  Line 463  [ERROR] Argument of type "Column[str]" cannot be assigned to parameter "key" of type "str" in function "__setitem__"
-┬а┬а"Column[str]" is not assignable to "str"
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\nlu\player_action_parser.py] — 6 issue(s):
   Line 40   [ERROR] "cli" is not a known attribute of module "spacy"
@@ -5192,6 +4927,16 @@
 ┬а┬а┬а┬а"tuple[str, str, str | None, str | None, str, str | None, str | None, str | None, str | None, str, str | None, str | None, str | None, str | None, str | None]" is not assignable to "Mapping[str, Any]"
 ┬а┬а┬а┬а"tuple[str, str, str | None, str | None, str, str | None, str | None, str | None, str | None, str, str | None, str | None, str | None, str | None, str | None]" is not assignable to "None"
   Line 234  [ERROR] No overloads for "execute" match the provided arguments
+
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\managers\location_manager.py] — 5 issue(s):
+  Line 180  [ERROR] Argument of type "Column[str]" cannot be assigned to parameter "key" of type "str" in function "__setitem__"
+┬а┬а"Column[str]" is not assignable to "str"
+  Line 299  [ERROR] Cannot access attribute "get_rule" for class "RuleEngine"
+┬а┬аAttribute "get_rule" is unknown
+  Line 322  [ERROR] "player_ids_json" is not a known attribute of "None"
+  Line 363  [ERROR] Method declaration "move_entity" is obscured by a declaration of the same name
+  Line 509  [ERROR] Argument of type "Column[str]" cannot be assigned to parameter "key" of type "str" in function "__setitem__"
+┬а┬а"Column[str]" is not assignable to "str"
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\managers\npc_manager.py] — 5 issue(s):
   Line 188  [ERROR] Argument of type "Column[Unknown] | list[_T@list]" cannot be assigned to parameter "iterable" of type "Iterable[_T@list]" in function "__init__"
@@ -5432,14 +5177,6 @@
   Line 280  [ERROR] Cannot access attribute "get" for class "EventStage"
 ┬а┬аAttribute "get" is unknown
 
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\event_processors\event_simulation_processor.py] — 3 issue(s):
-  Line 98   [ERROR] Cannot access attribute "passive_sim_checks" for class "EventStage"
-┬а┬аAttribute "passive_sim_checks" is unknown
-  Line 99   [ERROR] Cannot access attribute "passive_sim_checks" for class "EventStage"
-┬а┬аAttribute "passive_sim_checks" is unknown
-  Line 138  [ERROR] Cannot access attribute "get_location_instance" for class "LocationManager"
-┬а┬аAttribute "get_location_instance" is unknown
-
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\managers\dialogue_manager.py] — 3 issue(s):
   Line 179  [ERROR] "float" is not awaitable
 ┬а┬а"float" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
@@ -5483,6 +5220,14 @@
   Line 70   [ERROR] "None" is not awaitable
 ┬а┬а"None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
 ┬а┬а┬а┬а"__await__" is not present
+
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\game\models\test_location_model.py] — 3 issue(s):
+  Line 37   [ERROR] Cannot access attribute "state" for class "Location"
+┬а┬аAttribute "state" is unknown
+  Line 38   [ERROR] Cannot access attribute "custom_field" for class "Location"
+┬а┬аAttribute "custom_field" is unknown
+  Line 72   [ERROR] Cannot access attribute "state" for class "Location"
+┬а┬аAttribute "state" is unknown
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\nlu\test_player_action_parser.py] — 3 issue(s):
   Line 138  [ERROR] "nlp_en" is not defined
@@ -5543,35 +5288,11 @@
 ┬а┬аVariable is mutable so its type is invariant
 ┬а┬а┬а┬аOverride type "str" is not the same as base type "str | None"
 
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\command_modules\utility_cmds.py] — 2 issue(s):
-  Line 37   [ERROR] Type "CoroutineType[Any, Any, Character | None]" is not assignable to declared type "Character | None"
-┬а┬аType "CoroutineType[Any, Any, Character | None]" is not assignable to type "Character | None"
-┬а┬а┬а┬а"CoroutineType[Any, Any, Character | None]" is not assignable to "Character"
-┬а┬а┬а┬а"CoroutineType[Any, Any, Character | None]" is not assignable to "None"
-  Line 95   [ERROR] Type "CoroutineType[Any, Any, Character | None]" is not assignable to declared type "Character | None"
-┬а┬аType "CoroutineType[Any, Any, Character | None]" is not assignable to type "Character | None"
-┬а┬а┬а┬а"CoroutineType[Any, Any, Character | None]" is not assignable to "Character"
-┬а┬а┬а┬а"CoroutineType[Any, Any, Character | None]" is not assignable to "None"
-
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\database\sqlite_adapter.py] — 2 issue(s):
-  Line 28   [ERROR] Cannot access attribute "is_closed" for class "Connection"
-┬а┬аAttribute "is_closed" is unknown
-  Line 53   [ERROR] Cannot access attribute "is_closed" for class "Connection"
-┬а┬аAttribute "is_closed" is unknown
-
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\character_processors\character_view_service.py] — 2 issue(s):
-  Line 245  [ERROR] Argument of type "str | bool" cannot be assigned to parameter "inline" of type "bool" in function "add_field"
-┬а┬аType "str | bool" is not assignable to type "bool"
-┬а┬а┬а┬а"str" is not assignable to "bool"
-  Line 314  [ERROR] Argument of type "str | bool" cannot be assigned to parameter "inline" of type "bool" in function "add_field"
-┬а┬аType "str | bool" is not assignable to type "bool"
-┬а┬а┬а┬а"str" is not assignable to "bool"
-
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\event_processors\event_stage_processor.py] — 2 issue(s):
-  Line 186  [ERROR] Cannot access attribute "add" for class "Dict[str, Set[str]]"
-┬а┬аAttribute "add" is unknown
-  Line 209  [ERROR] Argument of type "str" cannot be assigned to parameter "current_stage" of type "EventStage" in function "generate_description"
-┬а┬а"str" is not assignable to "EventStage"
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\event_processors\event_simulation_processor.py] — 2 issue(s):
+  Line 98   [ERROR] Cannot access attribute "passive_sim_checks" for class "EventStage"
+┬а┬аAttribute "passive_sim_checks" is unknown
+  Line 99   [ERROR] Cannot access attribute "passive_sim_checks" for class "EventStage"
+┬а┬аAttribute "passive_sim_checks" is unknown
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\managers\event_manager.py] — 2 issue(s):
   Line 115  [ERROR] "get" is not a known attribute of "None"
@@ -5698,6 +5419,10 @@
   Line 39   [ERROR] Cannot access attribute "get" for class "EventOutcome"
 ┬а┬аAttribute "get" is unknown
 
+[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\event_processors\event_stage_processor.py] — 1 issue(s):
+  Line 213  [ERROR] Cannot access attribute "get_stage_by_id" for class "Event"
+┬а┬аAttribute "get_stage_by_id" is unknown
+
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\bot\game\event_processors\on_enter_action_executor.py] — 1 issue(s):
   Line 139  [ERROR] Cannot access attribute "add_status_effect_to_entity" for class "StatusManager"
 ┬а┬аAttribute "add_status_effect_to_entity" is unknown
@@ -5773,10 +5498,6 @@
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\game\managers\test_undo_manager.py] — 1 issue(s):
   Line 776  [ERROR] Argument of type "main" cannot be assigned to parameter "main" of type "Coroutine[Any, Any, _T@run]" in function "run"
 ┬а┬а"TestProgram" is not assignable to "Coroutine[Any, Any, _T@run]"
-
-[c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\game\models\test_location_model.py] — 1 issue(s):
-  Line 38   [ERROR] Cannot access attribute "custom_field" for class "Location"
-┬а┬аAttribute "custom_field" is unknown
 
 [c:\Users\╨а╤Г╤Б╨╗╨░╨╜ ╨Ъ╤Г╨╖╨╜╨╡╤Ж╨╛╨▓\kvelin_gm_bot\tests\services\test_db_service.py] — 1 issue(s):
   Line 285  [ERROR] Argument of type "Literal['error_table']" cannot be assigned to parameter "model_class" of type "type | None" in function "create_entity"
