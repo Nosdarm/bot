@@ -16,7 +16,7 @@ class Character:
     name_i18n: Dict[str, str] # e.g., {"en": "Name", "ru": "Имя"}
     guild_id: str
     selected_language: Optional[str] = "en" # Player's preferred language, default to 'en'
-    
+
     location_id: Optional[str] = None
     stats: Dict[str, Any] = field(default_factory=dict) # e.g., {"health": 100, "mana": 50, "strength": 10, "intelligence": 12}
     inventory: List[Dict[str, Any]] = field(default_factory=list) # List of item instance dicts or Item objects
@@ -24,12 +24,12 @@ class Character:
     action_queue: List[Dict[str, Any]] = field(default_factory=list)
     party_id: Optional[str] = None
     state_variables: Dict[str, Any] = field(default_factory=dict) # For quests, flags, etc.
-    
+
     # Attributes that might have been separate but often make sense within stats or derived
     hp: float = 100.0 # Current health, often also in stats for convenience
     max_health: float = 100.0 # Max health, often also in stats
     is_alive: bool = True
-    
+
     status_effects: List[Dict[str, Any]] = field(default_factory=list) # List of status effect instances (or their dicts)
     level: int = 1
     experience: int = 0  # This will be treated as 'xp'
@@ -79,7 +79,7 @@ class Character:
             self.stats['max_health'] = self.max_health
         else:
             self.max_health = float(self.stats['max_health'])
-        
+
         # Ensure mana and intelligence are present for spellcasting if not already
         if 'mana' not in self.stats:
             self.stats['mana'] = self.stats.get('max_mana', 50) # Default mana if not set
@@ -144,7 +144,7 @@ class Character:
             'experience': int(data.get('experience', 0)),
             'unspent_xp': int(data.get('unspent_xp', 0)),
             'active_quests': data.get('active_quests', []),
-            
+
             'known_spells': data.get('known_spells', []),
             'spell_cooldowns': data.get('spell_cooldowns', {}),
 
@@ -156,7 +156,7 @@ class Character:
             'flags': data.get('flags', {}), # Expecting dict from manager (was List[str] before)
             'gold': int(data.get('gold', 0)),
 
-            # Old fields that might be populated by manager for backward compatibility from DB
+            # Old fields that might still be populated by manager for backward compatibility from DB
             'skills': data.get('skills', {}),
             'known_abilities': data.get('known_abilities', []),
 
@@ -165,7 +165,7 @@ class Character:
             'collected_actions_json': data.get('collected_actions_json', data.get('собранные_действия_JSON')), # Handle old key
             'current_party_id': data.get('current_party_id'),
         }
-        
+
         # Ensure stats is a dictionary
         if isinstance(init_data['stats'], str):
             try:
@@ -191,7 +191,7 @@ class Character:
         if self.stats is None: self.stats = {}
         self.stats['hp'] = self.hp
         self.stats['max_health'] = self.max_health
-        
+
         # name_i18n is the source of truth. The 'name' property handles dynamic lookup.
         # When serializing, we primarily need name_i18n.
         # Including 'name' (the resolved one) can be useful for debugging or direct display if lang is fixed.
@@ -219,7 +219,7 @@ class Character:
             "active_quests": self.active_quests,
             "known_spells": self.known_spells,
             "spell_cooldowns": self.spell_cooldowns,
-            
+
             # Updated/New fields
             "skills_data": self.skills_data,
             "abilities_data": self.abilities_data,
