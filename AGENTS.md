@@ -166,3 +166,14 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **Test Logic Adjustments:** Made minor adjustments to test logic to align with corrected mock behaviors and async nature of some calls (e.g., awaiting `get_character` calls).
     - **Removed Unused Imports/Variables:** Cleaned up some unused imports like `sys` if it wasn't actively used.
     - **Synchronous Test Methods:** Some test methods that did not involve `await` and tested synchronous `PartyManager` methods were kept synchronous.
+
+## Pyright Error Fixing Phase (Batch 8 - test_turn_processing_service.py focus)
+
+- **Focus:** Addressing Pyright static analysis errors in `tests/game/test_turn_processing_service.py`.
+- **Strategy:** Overwrote the file with corrected content. Aimed to fix ~30 errors.
+- **Batch 8 Fixes (approx. 30+ errors in `tests/game/test_turn_processing_service.py`):**
+    - **Mock Setups & Assertions:** Ensured manager methods on mocks (e.g., `get_all_characters`) were themselves `AsyncMock` or `MagicMock` to allow setting `return_value`/`side_effect` and for correct assertion usage. Replaced `pytest.детей.ANY` with `unittest.mock.ANY`. Used `assert_awaited_...` for async calls.
+    - **Type Compatibility:** Used `# type: ignore[arg-type]` in the `TurnProcessingService` fixture where `AsyncMock` instances were passed to parameters expecting concrete manager types.
+    - **Attribute Access on Mocks:** Added `# type: ignore[attr-defined]` for attributes on `mock_game_mngr_for_tps` if they were correctly set up in the fixture but Pyright couldn't infer them.
+    - **Type Hinting:** Updated type hints for fixtures (e.g., `MagicMock` for `mock_game_mngr_for_tps`) and for `spec` arguments in mock creation (e.g., `GameCharacterModel`).
+    - **Async Correctness:** Ensured `side_effect` functions for `AsyncMock` objects were `async def` where appropriate.
