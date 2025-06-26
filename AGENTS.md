@@ -462,3 +462,25 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **Method Availability:** Added checks for method existence (e.g., `hasattr(game_mngr.character_manager, 'remove_character')`) before calling potentially optional methods.
     - **Miscellaneous:** Addressed various "possibly unbound" variable errors by ensuring initialization paths or proper conditional logic. Added explicit `None` checks for all optional manager attributes on `GameManager` before use.
     - **NameError Resolution (GameManager):** Moved `CoreGameRulesConfig` import out of `TYPE_CHECKING` in `bot/game/managers/game_manager.py` to resolve a `NameError` that was breaking test collection. This was a prerequisite for accurately fixing `gm_app_cmds.py`.
+
+## Pyright Error Fixing Phase (Batch 21 - inventory_cmds.py Re-fix)
+- **Focus:** Re-addressing all 88 errors in `bot/command_modules/inventory_cmds.py`. This is a re-fix attempt.
+- **Strategy:** Overwrote the file with corrected content.
+- **Batch 21 Fixes (88 errors in `bot/command_modules/inventory_cmds.py`):**
+    - **Language Handling:**
+        - Corrected `interaction.locale` usage to `str(interaction.locale)`.
+        - Standardized language determination: character's preference > interaction locale > default bot language. Ensured `guild_id` is passed if available for `get_i18n_text`.
+    - **i18n Calls:** Removed `default_text` parameter from `get_i18n_text` calls.
+    - **Async/Await:** Added `await` for all asynchronous calls (e.g., `character_manager.get_character_by_discord_id`, `item_manager.get_item_template`).
+    - **Manager and Service Handling:**
+        - Ensured `game_mngr` and its sub-managers (`character_manager`, `item_manager`, `location_manager`, `rule_engine`) are robustly checked for `None` using `hasattr` and `is not None` before use.
+        - Used `getattr(self.bot, "nlu_data_service", None)` for safer access.
+        - Added explicit `cast()` for managers after `None` checks.
+    - **Item and Inventory Logic:**
+        - Resolved item template data access (e.g., `item_template_data.get('name_i18n', {})`).
+        - Corrected parameter passing to `item_manager.use_item` (ensuring `character_user`, `target_entity_id`, `target_entity_type`).
+        - Ensured correct types (string IDs, float quantity) for `item_manager.transfer_item_world_to_character` and `item_manager.unequip_item`.
+        - Fixed `character.inventory` assignment: parsed JSON strings to `List[Dict[str, Any]]`, used `setattr` for direct list assignment, and called `character_manager.mark_dirty()` if available (with fallbacks).
+    - **NLU Integration:** Improved NLU entity extraction, with checks for entity existence and safe access to `id` and `name` from NLU results.
+    - **Type Safety & Data Handling:** Ensured IDs are strings, quantities are floats. Initialized `inventory_list_data` to `[]` on parse failure. Ensured `CoreGameRulesConfig` from `rule_engine.rules_config_data` (after checks) is passed.
+    - **Error Messages:** Used `.get()` with defaults for safer access to messages from command results.
