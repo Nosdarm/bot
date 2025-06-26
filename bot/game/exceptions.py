@@ -24,4 +24,8 @@ class CharacterNotInPartyError(GameError):
     """Raised when an action requires a character to be in a party, but they are not."""
     pass
 
+class CharacterAlreadyExistsError(GameError):
+    """Raised when attempting to create a character that already exists."""
+    pass
+
 # Add other custom game exceptions here as needed.

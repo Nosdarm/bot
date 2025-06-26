@@ -14,7 +14,7 @@ from bot.utils.discord_utils import (
     send_error_message,
     send_success_message
 )
-from bot.utils.i18n_utils import LocalizedString, translate_string # Assuming this path
+from bot.utils.i18n_utils import get_localized_string # Replaced LocalizedString, translate_string
 from bot.database.guild_transaction import GuildTransaction # For database operations
 
 logger = logging.getLogger(__name__)
@@ -39,10 +39,32 @@ class MasterCog(commands.Cog, name="Master Commands"):
 
         is_master = await self.game_manager.is_user_master(guild_id_str, user_id)
         if not is_master:
+            # Determine language - assuming interaction.locale for interactions,
+            # and guild main language for context commands as a fallback.
+            # This might need refinement based on how language management is fully implemented.
+            lang = "en" # Default
             if isinstance(ctx_or_interaction, discord.Interaction):
-                await send_error_message(ctx_or_interaction, LocalizedString("error_not_master_admin", guild_id_str))
-            else:
-                await ctx_or_interaction.send(translate_string(LocalizedString("error_not_master_admin", guild_id_str), guild_id_str, self.game_manager.language_manager))
+                lang = str(ctx_or_interaction.locale) if ctx_or_interaction.locale else "en"
+            elif guild_id_str: # For commands.Context
+                # Placeholder: In a real scenario, fetch guild's main language
+                # lang = await self.game_manager.get_guild_main_language(guild_id_str) or "en"
+                # For now, to avoid adding new async calls in cog_check if not designed for it:
+                lang = "en" # Or fetch from a synchronous cache if available
+
+            error_key = "error_not_master_admin" # Key for the translatable string
+            # The original LocalizedString seemed to take guild_id_str as an argument,
+            # implying it might be used in the string formatting.
+            # Let's assume the string is like "You are not a master on server {guild_id}."
+            # If so, guild_id would be passed as a kwarg to get_localized_string.
+            # For now, assuming the key "error_not_master_admin" doesn't need guild_id for formatting.
+            # If it does, it would be: get_localized_string(error_key, lang, guild_id=guild_id_str)
+
+            message_str = get_localized_string(error_key, lang)
+
+            if isinstance(ctx_or_interaction, discord.Interaction):
+                await send_error_message(ctx_or_interaction, message_str)
+            else: # commands.Context
+                await ctx_or_interaction.send(message_str)
             return False
         return True
 
@@ -132,14 +154,14 @@ class MasterCog(commands.Cog, name="Master Commands"):
             await send_error_message(interaction, f"An unexpected error occurred: {e}")
 
 
-    @app_commands.command(name="master_modify_location_connection", description="Modifies an existing one-way connection.")
+    @app_commands.command(name="master_mod_loc_connection", description="Modifies an existing one-way location connection.") # Renamed to fit 32 char limit
     @app_commands.guild_only()
     @app_commands.describe(
         source_location_id="ID of the source location",
         target_location_id="ID of the target location to modify connection to",
         new_connection_details_json="JSON string for new connection details (e.g., {\"direction_i18n\": {\"en\": \"North\"}, \"travel_time_hours\": 1})"
     )
-    async def master_modify_location_connection(self, interaction: discord.Interaction,
+    async def master_mod_loc_connection(self, interaction: discord.Interaction, # Renamed method to match command
                                                 source_location_id: str,
                                                 target_location_id: str,
                                                 new_connection_details_json: str):
@@ -195,17 +217,17 @@ class MasterCog(commands.Cog, name="Master Commands"):
                 await send_success_message(interaction, f"Successfully modified connection from '{source_location_id}' to '{target_location_id}'.")
 
         except Exception as e:
-            logger.error(f"Error in master_modify_location_connection for guild {guild_id}: {e}", exc_info=True)
+            logger.error(f"Error in master_mod_loc_connection for guild {guild_id}: {e}", exc_info=True) # Adjusted logging
             await send_error_message(interaction, f"An unexpected error occurred: {e}")
 
 
-    @app_commands.command(name="master_remove_location_connection", description="Removes a one-way connection between two locations.")
+    @app_commands.command(name="master_del_loc_connection", description="Removes a one-way location connection.") # Renamed to fit 32 char limit master_remove_location_connection -> master_del_loc_connection
     @app_commands.guild_only()
     @app_commands.describe(
         source_location_id="ID of the source location",
         target_location_id="ID of the target location whose connection will be removed"
     )
-    async def master_remove_location_connection(self, interaction: discord.Interaction,
+    async def master_del_loc_connection(self, interaction: discord.Interaction, # Renamed method to match command
                                                 source_location_id: str,
                                                 target_location_id: str):
         await interaction.response.defer(ephemeral=True)
@@ -236,7 +258,7 @@ class MasterCog(commands.Cog, name="Master Commands"):
                 await send_success_message(interaction, f"Successfully removed connection from '{source_location_id}' to '{target_location_id}'.")
 
         except Exception as e:
-            logger.error(f"Error in master_remove_location_connection for guild {guild_id}: {e}", exc_info=True)
+            logger.error(f"Error in master_del_loc_connection for guild {guild_id}: {e}", exc_info=True) # Adjusted logging
             await send_error_message(interaction, f"An unexpected error occurred: {e}")
 
 

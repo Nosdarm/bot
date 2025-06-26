@@ -9,7 +9,7 @@ from bot.game.managers.dialogue_manager import DialogueManager
 from bot.services.db_service import DBService
 from bot.game.managers.character_manager import CharacterManager
 from bot.game.managers.npc_manager import NpcManager
-from bot.game.managers.rule_engine import RuleEngine
+from bot.game.rules.rule_engine import RuleEngine # Corrected path
 from bot.game.managers.time_manager import TimeManager
 from bot.game.managers.game_log_manager import GameLogManager
 from bot.game.managers.quest_manager import QuestManager

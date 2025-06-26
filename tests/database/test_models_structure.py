@@ -7,8 +7,8 @@ from bot.database.models.character_related import Player, Character, Party, NPC,
 from bot.database.models.world_related import Location, GeneratedLocation, WorldState, GeneratedFaction, MobileGroup, LocationTemplate
 from bot.database.models.item_related import ItemTemplate, Item, Inventory, ItemProperty, NewItem, NewCharacterItem, Shop, Currency
 from bot.database.models.quest_related import QuestTable, GeneratedQuest, Questline, QuestStepTable
-from bot.database.models.game_mechanics import Ability, Skill, Status # Assuming these exist
-from bot.database.models.log_event_related import GameLog # Assuming this is the Log model from ТЗ
+from bot.database.models.game_mechanics import Ability, Skill, Status, CraftingRecipe, Relationship, Combat # Assuming these exist, Added CraftingRecipe, Relationship, Combat
+from bot.database.models.log_event_related import StoryLog # Corrected from GameLog
 
 # Helper to get column type, trying to resolve to underlying Python type for JsonVariant
 def get_column_python_type(column):
@@ -49,7 +49,7 @@ MODELS_TO_CHECK_GUILD_SCOPING = [
     Location, GeneratedLocation, WorldState, GeneratedFaction, MobileGroup, LocationTemplate,
     ItemTemplate, Item, Inventory, ItemProperty, NewItem, NewCharacterItem, Shop, Currency,
     QuestTable, GeneratedQuest, Questline, QuestStepTable,
-    Ability, Skill, Status, GameLog # Assuming GameLog is the model for "Log"
+    Ability, Skill, Status, StoryLog # Corrected from GameLog
 ]
 # Models that should have JsonVariant for _i18n fields (example names)
 # This is a subset of the above, plus the field names to check
@@ -77,7 +77,7 @@ I18N_FIELDS_TO_CHECK = {
     Ability: ['name_i18n', 'description_i18n'], # Assuming from ТЗ
     Skill: ['name_i18n', 'description_i18n'],   # Assuming from ТЗ
     Status: ['name_i18n', 'description_i18n'],  # Assuming from ТЗ
-    GameLog: [], # details_json is JsonVariant, but not _i18n named
+    StoryLog: [], # Corrected from GameLog; details_json is JsonVariant, but not _i18n named
 }
 
 @pytest.mark.parametrize("model_class", MODELS_TO_CHECK_GUILD_SCOPING)

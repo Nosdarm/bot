@@ -7,7 +7,7 @@ from bot.game.managers.status_manager import StatusManager, ApplyStatusResult
 from bot.database.models import Character as CharacterDbModel, Player as PlayerDbModel
 from bot.services.db_service import DBService
 from bot.game.managers.character_manager import CharacterManager
-from bot.game.managers.rule_engine import RuleEngine
+from bot.game.rules.rule_engine import RuleEngine # Corrected path
 from bot.game.managers.time_manager import TimeManager
 from bot.game.managers.game_log_manager import GameLogManager
 from bot.ai.rules_schema import CoreGameRulesConfig, StatusEffectDefinition # For status templates

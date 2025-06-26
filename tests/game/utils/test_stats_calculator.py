@@ -12,7 +12,7 @@ from bot.database.models import Player, Character as DBCharacter, NPC as DBNPC, 
 from bot.game.managers.game_manager import GameManager
 from bot.game.managers.equipment_manager import EquipmentManager
 from bot.game.managers.status_manager import StatusManager
-from bot.game.managers.rule_engine import RuleEngine # For get_rule
+from bot.game.rules.rule_engine import RuleEngine # For get_rule, Corrected path
 
 # --- Mock Data & Fixtures ---
 
