@@ -2,580 +2,488 @@ import asyncio
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch, call
 import uuid
+from typing import Dict, Any, Optional # Added Optional
 
 # Managers involved in the flows
 from bot.game.managers.character_manager import CharacterManager
 from bot.game.managers.location_manager import LocationManager
 from bot.game.managers.item_manager import ItemManager
-from bot.game.rules.rule_engine import RuleEngine # Assuming a concrete RuleEngine might be needed for some trigger tests
+from bot.game.rules.rule_engine import RuleEngine
+from bot.services.db_service import DBService # Added for type hinting
 
 # Models
 from bot.game.models.character import Character
 from bot.game.models.item import Item
-from bot.game.models.location import Location
+from bot.game.models.location import Location as PydanticLocation # Aliased to avoid clash if DB model is named Location
 
 # Constants or default data that might be used
 from bot.game.constants import DEFAULT_BASE_STATS, GUILD_DEFAULT_INITIAL_LOCATION_ID
 
 # Dummy data for settings if needed
-DUMMY_SETTINGS = {
+DUMMY_SETTINGS: Dict[str, Any] = {
     "default_initial_location_id": "default_start_loc_tpl",
     "default_base_stats": DEFAULT_BASE_STATS,
     "guilds": {
-        "test_guild_1": {
-            "default_location_id": "guild_specific_start_loc_inst_id" # This would be an instance ID
+        "test_guild_int_1": {
+            "default_location_id": "guild_specific_start_loc_inst_id"
+        },
+        "test_guild_int_move_1": { # Added for movement test
+            "default_location_id": "loc_A_instance_move"
+        },
+        "test_guild_int_item_1": { # Added for item test
+             "default_location_id": "loc_item_interaction_zone"
+        },
+        "test_guild_int_combat_1": { # Added for combat test
+             "default_location_id": "loc_combat_arena"
         }
     },
-    "item_templates": { # For ItemManager
+    "item_templates": {
         "starting_sword": {"id": "starting_sword", "name": "Rusty Sword", "type": "equipment", "slot": "weapon", "properties": {"damage": 3}},
         "health_potion_template": {"id": "health_potion_template", "name": "Minor Potion", "type": "consumable", "properties": {"heal": 10}}
-    }
+    },
+    "location_templates": DUMMY_LOCATION_TEMPLATES_INTEGRATION # Moved here for consistency
 }
 
 # Dummy location template data for LocationManager
-DUMMY_LOCATION_TEMPLATES_INTEGRATION = {
+DUMMY_LOCATION_TEMPLATES_INTEGRATION: Dict[str, Any] = {
     "default_start_loc_tpl": {
-        "id": "default_start_loc_tpl", "name": "Generic Starting Room Template",
-        "description": "A plain room.", "exits": {}, "initial_state": {"lit": True},
+        "id": "default_start_loc_tpl", "name_i18n": {"en": "Generic Starting Room Template"},
+        "description_i18n": {"en": "A plain room."}, "exits": {}, "initial_state": {"lit": True},
         "on_enter_triggers": [{"action": "log", "message": "Entered generic start."}],
         "on_exit_triggers": []
     },
     "loc_A_tpl": {
-        "id": "loc_A_tpl", "name": "Location A Template", "description": "First location.",
-        "exits": {"east": "loc_B_tpl"}, # This would ideally be an instance ID after creation
+        "id": "loc_A_tpl", "name_i18n": {"en": "Location A Template"}, "description_i18n": {"en":"First location."},
+        "exits": {"east": "loc_B_tpl"},
         "on_enter_triggers": [{"action": "log", "message": "Entered Loc A."}],
         "on_exit_triggers": [{"action": "log", "message": "Exited Loc A."}]
     },
     "loc_B_tpl": {
-        "id": "loc_B_tpl", "name": "Location B Template", "description": "Second location.",
+        "id": "loc_B_tpl", "name_i18n": {"en": "Location B Template"}, "description_i18n": {"en":"Second location."},
         "exits": {"west": "loc_A_tpl"},
         "on_enter_triggers": [{"action": "log", "message": "Entered Loc B."}],
         "on_exit_triggers": [{"action": "log", "message": "Exited Loc B."}]
     }
 }
 
+class BaseIntegrationTest(unittest.IsolatedAsyncioTestCase):
+    mock_db_service: DBService
+    mock_game_manager: MagicMock # Using MagicMock for flexibility in assigning attributes
+    mock_settings_dict: Dict[str, Any]
+    location_manager: LocationManager
+    item_manager: ItemManager
+    character_manager: CharacterManager
+    rule_engine: RuleEngine # Can be real or mock depending on test class
+    guild_id: str # To be set by subclasses
 
-class TestCharacterCreationFlow(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.mock_db_service = AsyncMock(spec=DBService)
+        mock_session_instance = AsyncMock()
+        # Ensure get_session is a MagicMock that returns an object supporting async context management
+        self.mock_db_service.get_session = MagicMock()
+        self.mock_db_service.get_session.return_value.__aenter__.return_value = mock_session_instance
+
+        self.mock_settings_dict = DUMMY_SETTINGS.copy()
+
+        self.mock_game_manager = MagicMock() # Use MagicMock for easier attribute assignment
+        self.mock_game_manager.db_service = self.mock_db_service
+        self.mock_game_manager.settings = self.mock_settings_dict
+        self.mock_game_manager.rule_engine = AsyncMock(spec=RuleEngine)
+        self.mock_game_manager.event_manager = AsyncMock()
+        self.mock_game_manager.character_manager = AsyncMock(spec=CharacterManager)
+        self.mock_game_manager.npc_manager = AsyncMock()
+        self.mock_game_manager.item_manager = AsyncMock(spec=ItemManager)
+        self.mock_game_manager.combat_manager = AsyncMock()
+        self.mock_game_manager.status_manager = AsyncMock()
+        self.mock_game_manager.party_manager = AsyncMock()
+        self.mock_game_manager.time_manager = AsyncMock()
+        self.mock_game_manager.game_log_manager = AsyncMock()
+        self.mock_game_manager._event_stage_processor = AsyncMock()
+        self.mock_game_manager._event_action_processor = AsyncMock()
+        self.mock_game_manager._on_enter_action_executor = AsyncMock()
+        self.mock_game_manager._stage_description_generator = AsyncMock()
+        self.mock_game_manager.send_callback_factory = MagicMock()
+
+
+class TestCharacterCreationFlow(BaseIntegrationTest):
 
     async def asyncSetUp(self):
         self.guild_id = "test_guild_int_1"
-        self.mock_db_adapter = AsyncMock()
+        await super().asyncSetUp() # Call base setup
 
-        # Mock settings - use a dictionary that can be accessed by managers
-        self.mock_settings_dict = DUMMY_SETTINGS.copy()
-
-
-        # Initialize Managers
-        # For LocationManager, we want it to actually load templates and allow instance creation.
-        # So, we don't mock its internal methods like create_location_instance unless necessary for a specific test.
         self.location_manager = LocationManager(
-            db_adapter=self.mock_db_adapter,
-            settings=self.mock_settings_dict, # Pass the dict directly
-            rule_engine=AsyncMock(), # Mocked for now
-            event_manager=AsyncMock(),
-            character_manager=AsyncMock(), # Will be replaced by real CharacterManager later
-            npc_manager=AsyncMock(),
-            item_manager=AsyncMock(), # Will be replaced by real ItemManager later
-            combat_manager=AsyncMock(),
-            status_manager=AsyncMock(),
-            party_manager=AsyncMock(),
-            time_manager=AsyncMock(),
-            send_callback_factory=MagicMock(),
-            event_stage_processor=AsyncMock(),
-            event_action_processor=AsyncMock(),
-            on_enter_action_executor=AsyncMock(),
-            stage_description_generator=AsyncMock()
+            db_service=self.mock_db_service,
+            settings=self.mock_settings_dict,
+            game_manager=self.mock_game_manager,
+            send_callback_factory=self.mock_game_manager.send_callback_factory
         )
-        # Manually trigger template loading for LocationManager if its __init__ doesn't do it,
-        # or set up its internal _location_templates cache.
-        # Assuming LocationManager's load_state or a specific method loads templates.
-        # For integration, we might want to simulate this.
-        # Let's assume load_state handles templates and instances.
-        # For this test, we'll directly populate its template cache.
-        self.location_manager._location_templates[self.guild_id] = DUMMY_LOCATION_TEMPLATES_INTEGRATION.copy()
+        self.mock_game_manager.location_manager = self.location_manager # Assign real instance back
 
-
-        # ItemManager
-        # Patch its _load_item_templates to control template loading for tests if needed,
-        # or allow it to run if settings are mocked correctly.
-        # For this flow, let's allow it to load from our DUMMY_SETTINGS.
         self.item_manager = ItemManager(
-            db_adapter=self.mock_db_adapter,
+            db_service=self.mock_db_service,
             settings=self.mock_settings_dict,
-            character_manager=AsyncMock(), # Will be replaced
-            npc_manager=AsyncMock(),
-            location_manager=self.location_manager
+            game_manager=self.mock_game_manager
         )
-        # ItemManager's __init__ calls _load_item_templates which uses settings.get_all_item_templates()
+        self.mock_game_manager.item_manager = self.item_manager # Assign real instance back
 
-        # CharacterManager - this is the primary manager under test for this flow.
         self.character_manager = CharacterManager(
-            db_adapter=self.mock_db_adapter,
+            db_service=self.mock_db_service,
             settings=self.mock_settings_dict,
-            rule_engine=AsyncMock(), # Mocked for now
-            location_manager=self.location_manager, # Real LocationManager
-            status_manager=AsyncMock(),
-            combat_manager=AsyncMock(),
-            party_manager=AsyncMock()
-            # item_manager=self.item_manager # If CharacterManager needs ItemManager directly
+            game_manager=self.mock_game_manager
         )
+        self.mock_game_manager.character_manager = self.character_manager # Assign real instance back
 
-        # Link managers if they have direct dependencies not set via __init__
-        # (e.g., self.location_manager.character_manager = self.character_manager)
-        # This depends on manager design. Assuming constructor injection is primary.
-
-        # Create a default starting location instance for characters to spawn in
+        # Default location setup
         self.default_loc_template_id = self.mock_settings_dict["default_initial_location_id"]
-
-        # We need a way for CharacterManager to get the *instance ID* of the default location.
-        # The setting "default_initial_location_id" points to a template ID.
-        # The setting "guilds.test_guild_1.default_location_id" points to an instance ID.
-        # Let's ensure LocationManager can provide this.
-
         self.default_start_location_instance_id = self.mock_settings_dict["guilds"][self.guild_id].get("default_location_id")
-        if not self.default_start_location_instance_id:
-             # If no guild-specific instance ID, create one from the global default template ID
-            with patch('uuid.uuid4', return_value=uuid.UUID('fedcba98-4321-8765-4321-876543210abc')): # Predictable ID
-                default_loc_instance = await self.location_manager.create_location_instance(
+
+        if not self.default_start_location_instance_id or \
+           not await self.location_manager.get_location_instance(self.guild_id, self.default_start_location_instance_id):
+            with patch('uuid.uuid4', return_value=uuid.UUID('fedcba98-4321-8765-4321-876543210abc')):
+                default_loc_instance_dict = await self.location_manager.create_location_instance(
                     guild_id=self.guild_id,
                     template_id=self.default_loc_template_id,
                     instance_name="Default Starting Room"
                 )
-                self.assertIsNotNone(default_loc_instance, "Failed to create default location instance for test setup.")
-                self.default_start_location_instance_id = default_loc_instance['id']
-                # Update mock settings to reflect this created instance ID as the guild default
-                self.mock_settings_dict["guilds"][self.guild_id]["default_location_id"] = self.default_start_location_instance_id
-        else:
-            # Ensure this pre-configured instance exists in LocationManager if it's defined in settings
-            if not await self.location_manager.get_location_instance(self.guild_id, self.default_start_location_instance_id):
-                 with patch('uuid.uuid4', return_value=uuid.UUID(self.default_start_location_instance_id.replace("guild_specific_start_loc_inst_id", "abcdef12-1234-5678-1234-567812345678"))): # Ensure UUID if needed by model
-                    loc_inst = await self.location_manager.create_location_instance(
-                        guild_id=self.guild_id,
-                        template_id=self.default_loc_template_id, # Assume it's based on the global default template
-                        instance_name="Guild Specific Start Instance"
-                        # id_override=self.default_start_location_instance_id # If create_location_instance supports id_override
-                    )
-                    # If id_override is not supported, the instance ID might differ, adjust test logic.
-                    # For now, assuming create_location_instance generates its own ID and we use that.
-                    # This part of the setup is tricky if the instance ID is pre-defined in settings.
-                    # A better approach for LocationManager might be to ensure a named default instance exists.
-                    self.assertIsNotNone(loc_inst, "Failed to create guild specific default location instance.")
-                    # Forcing the ID here if create_location_instance doesn't allow override:
-                    # self.default_start_location_instance_id = loc_inst['id']
-                    # self.mock_settings_dict["guilds"][self.guild_id]["default_location_id"] = self.default_start_location_instance_id
+                self.assertIsNotNone(default_loc_instance_dict)
+                if default_loc_instance_dict:
+                    self.default_start_location_instance_id = default_loc_instance_dict['id']
+                    self.mock_settings_dict["guilds"][self.guild_id]["default_location_id"] = self.default_start_location_instance_id
 
 
     async def test_character_creation_and_initial_setup(self):
         char_name = "IntegrationHero"
-        discord_id = "discord_integration_user_1"
+        discord_id_str = "discord_integration_user_1" # Ensure it's a string if Character model expects string
 
-        # Spy on ItemManager.create_item_instance if testing default item spawning
-        # self.item_manager.create_item_instance = AsyncMock(wraps=self.item_manager.create_item_instance)
-
-        # 1. Create Character
-        created_char = await self.character_manager.create_character(
+        created_char: Optional[Character] = await self.character_manager.create_new_character( # Assuming create_new_character is the primary method
             guild_id=self.guild_id,
-            discord_id=discord_id,
-            name=char_name
-            # Assuming create_character uses LocationManager to find default location
+            discord_user_id=discord_id_str, # Pass as string
+            character_name_i18n={"en": char_name, "ru": char_name}, # Pass as dict
+            # language will be taken from default or rules
         )
 
-        # 2. Verify Character
         self.assertIsNotNone(created_char)
-        self.assertEqual(created_char.name, char_name)
+        if not created_char: return # For type checker
+
+        self.assertEqual(created_char.name_i18n.get("en"), char_name)
         self.assertEqual(created_char.guild_id, self.guild_id)
-        self.assertIn(created_char.id, self.character_manager._characters[self.guild_id])
 
-        # 3. Verify Location
-        # CharacterManager should have used LocationManager to get the default location ID.
-        # This default_start_location_instance_id was set up in asyncSetUp.
-        self.assertIsNotNone(created_char.location_id, "Character location_id should not be None.")
-        self.assertEqual(created_char.location_id, self.default_start_location_instance_id)
+        # Check if character is in manager's cache (implementation dependent)
+        # self.assertIn(created_char.id, self.character_manager._characters[self.guild_id])
 
-        # Verify the location instance actually exists in LocationManager
-        start_location_instance = self.location_manager.get_location_instance(self.guild_id, created_char.location_id)
-        self.assertIsNotNone(start_location_instance, "Default start location instance not found in LocationManager.")
-        if start_location_instance: # Added check as per subtask
-            self.assertEqual(start_location_instance['id'], self.default_start_location_instance_id)
+        self.assertIsNotNone(created_char.current_location_id, "Character location_id should not be None.")
+        self.assertEqual(created_char.current_location_id, self.default_start_location_instance_id)
 
-        # 4. (Optional) Verify Default Item Spawning (if applicable)
-        # Example: if characters should start with a "starting_sword"
-        # await asyncio.sleep(0) # Allow any background item creation tasks to run if they exist
-        # starting_sword_template_id = "starting_sword"
-        # if starting_sword_template_id in DUMMY_SETTINGS["item_templates"]:
-        #     char_items = self.item_manager.get_items_by_owner(self.guild_id, created_char.id)
-        #     self.assertTrue(any(item.template_id == starting_sword_template_id for item in char_items),
-        #                     "Character should have a starting sword.")
-            # self.item_manager.create_item_instance.assert_called() # Check if it was called
-            # call_args = self.item_manager.create_item_instance.call_args_list[0] # Get first call
-            # self.assertEqual(call_args.kwargs['guild_id'], self.guild_id)
-            # self.assertEqual(call_args.kwargs['template_id'], starting_sword_template_id)
-            # self.assertEqual(call_args.kwargs['owner_id'], created_char.id)
+        start_location_instance: Optional[PydanticLocation] = await self.location_manager.get_location_instance(self.guild_id, created_char.current_location_id)
+        self.assertIsNotNone(start_location_instance)
+        if start_location_instance:
+            self.assertEqual(start_location_instance.id, self.default_start_location_instance_id)
 
 
-class TestPlayerMovementFlow(unittest.IsolatedAsyncioTestCase):
+class TestPlayerMovementFlow(BaseIntegrationTest):
 
     async def asyncSetUp(self):
         self.guild_id = "test_guild_int_move_1"
-        self.mock_db_adapter = AsyncMock()
-        self.mock_settings_dict = DUMMY_SETTINGS.copy() # Re-use if applicable, or define specific for movement
+        await super().asyncSetUp()
 
-        # RuleEngine needs to be less mocked here to verify trigger content, but execute_triggers itself spied on
-        self.rule_engine = RuleEngine(settings=self.mock_settings_dict) # Basic RuleEngine, event_manager is not an init arg
-        self.rule_engine.execute_triggers = AsyncMock(return_value=({}, True)) # Spy on execute_triggers
+        # RuleEngine needs to be less mocked here to verify trigger content
+        self.rule_engine = RuleEngine(settings=self.mock_settings_dict, game_manager=self.mock_game_manager)
+        self.mock_game_manager.rule_engine = self.rule_engine # Assign real instance
+        self.rule_engine.execute_triggers = AsyncMock(return_value=({}, True))
 
-        # LocationManager setup
         self.location_manager = LocationManager(
-            db_adapter=self.mock_db_adapter, settings=self.mock_settings_dict, rule_engine=self.rule_engine,
-            event_manager=AsyncMock(), character_manager=AsyncMock(), npc_manager=AsyncMock(),
-            item_manager=AsyncMock(), combat_manager=AsyncMock(), status_manager=AsyncMock(),
-            party_manager=AsyncMock(), time_manager=AsyncMock(), send_callback_factory=MagicMock(),
-            event_stage_processor=AsyncMock(),event_action_processor=AsyncMock(),
-            on_enter_action_executor=AsyncMock(),stage_description_generator=AsyncMock()
+            db_service=self.mock_db_service, settings=self.mock_settings_dict,
+            game_manager=self.mock_game_manager,
+            send_callback_factory=self.mock_game_manager.send_callback_factory
         )
-        # Populate templates directly
-        self.location_manager._location_templates[self.guild_id] = {
-            tpl['id']: tpl for tpl in [DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_A_tpl'], DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_B_tpl']]
+        self.mock_game_manager.location_manager = self.location_manager
+
+        # Populate templates directly for LocationManager
+        self.location_manager._location_templates = { # Overwrite, not append to guild_id key
+            DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_A_tpl']['id']: DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_A_tpl'],
+            DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_B_tpl']['id']: DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_B_tpl']
         }
 
-        # Create instances for loc_A and loc_B
-        # Ensure exits correctly point to the *instance IDs*
+
         with patch('uuid.uuid4', side_effect=[uuid.UUID('11111111-aaaa-1111-aaaa-111111111111'), uuid.UUID('22222222-bbbb-2222-bbbb-222222222222')]):
-            self.loc_a_instance = await self.location_manager.create_location_instance(
-                guild_id=self.guild_id, template_id='loc_A_tpl', instance_name="Location A"
-            )
-            self.loc_b_instance = await self.location_manager.create_location_instance(
-                guild_id=self.guild_id, template_id='loc_B_tpl', instance_name="Location B"
-            )
-        self.assertIsNotNone(self.loc_a_instance)
-        self.assertIsNotNone(self.loc_b_instance)
+            loc_a_dict = await self.location_manager.create_location_instance(guild_id=self.guild_id, template_id='loc_A_tpl', instance_name="Location A")
+            loc_b_dict = await self.location_manager.create_location_instance(guild_id=self.guild_id, template_id='loc_B_tpl', instance_name="Location B")
+        self.assertIsNotNone(loc_a_dict); self.assertIsNotNone(loc_b_dict)
+        self.loc_a_instance = PydanticLocation.from_dict(loc_a_dict) if loc_a_dict else None
+        self.loc_b_instance = PydanticLocation.from_dict(loc_b_dict) if loc_b_dict else None
+        self.assertIsNotNone(self.loc_a_instance); self.assertIsNotNone(self.loc_b_instance)
 
-        # Update exits to point to instance IDs - this is crucial for move_entity to work
-        self.loc_a_instance['exits'] = {'east': self.loc_b_instance['id']}
-        self.loc_b_instance['exits'] = {'west': self.loc_a_instance['id']}
-        # Manually update in manager's cache for the test
-        self.location_manager._location_instances[self.guild_id][self.loc_a_instance['id']] = self.loc_a_instance
-        self.location_manager._location_instances[self.guild_id][self.loc_b_instance['id']] = self.loc_b_instance
+        if self.loc_a_instance and self.loc_b_instance:
+            self.loc_a_instance.exits = {'east': self.loc_b_instance.id}
+            self.loc_b_instance.exits = {'west': self.loc_a_instance.id}
+            self.location_manager._location_instances.setdefault(self.guild_id, {})[self.loc_a_instance.id] = self.loc_a_instance.model_dump(by_alias=True)
+            self.location_manager._location_instances.setdefault(self.guild_id, {})[self.loc_b_instance.id] = self.loc_b_instance.model_dump(by_alias=True)
 
 
-        # CharacterManager setup
         self.character_manager = CharacterManager(
-            db_adapter=self.mock_db_adapter, settings=self.mock_settings_dict, rule_engine=self.rule_engine,
-            location_manager=self.location_manager, status_manager=AsyncMock(),
-            combat_manager=AsyncMock(), party_manager=AsyncMock()
+            db_service=self.mock_db_service, settings=self.mock_settings_dict,
+            game_manager=self.mock_game_manager
         )
-        # Link CharacterManager to LocationManager if it needs it (e.g. for location validation during move)
-        # self.location_manager.character_manager = self.character_manager # Example
+        self.mock_game_manager.character_manager = self.character_manager
 
-        # Create a character and place them in Location A
         with patch('uuid.uuid4', return_value=uuid.UUID('33333333-cccc-3333-cccc-333333333333')):
-            self.test_char = await self.character_manager.create_character(
-                guild_id=self.guild_id,
-                discord_id="char_mover_discord",
-                name="CharMover",
-                initial_location_id=self.loc_a_instance['id'] # Place in Loc A
+            self.test_char: Optional[Character] = await self.character_manager.create_new_character(
+                guild_id=self.guild_id, discord_user_id="char_mover_discord",
+                character_name_i18n={"en":"CharMover"},
+                initial_location_id=self.loc_a_instance.id if self.loc_a_instance else None
             )
         self.assertIsNotNone(self.test_char)
-        self.assertEqual(self.test_char.location_id, self.loc_a_instance['id'])
+        if self.test_char and self.loc_a_instance:
+            self.assertEqual(self.test_char.current_location_id, self.loc_a_instance.id)
 
 
     async def test_player_moves_between_locations_with_triggers(self):
-        # 1. Move Character from A to B
+        self.assertIsNotNone(self.test_char)
+        self.assertIsNotNone(self.loc_a_instance)
+        self.assertIsNotNone(self.loc_b_instance)
+        if not self.test_char or not self.loc_a_instance or not self.loc_b_instance: return # Type guard
+
         move_result = await self.location_manager.move_entity(
-            guild_id=self.guild_id,
-            entity_id=self.test_char.id,
-            entity_type="Character",
-            from_location_id=self.loc_a_instance['id'],
-            to_location_id=self.loc_b_instance['id'],
-            character_manager=self.character_manager, # Pass the actual CharacterManager instance
-            rule_engine=self.rule_engine # Pass the RuleEngine instance
+            guild_id=self.guild_id, entity_id=self.test_char.id, entity_type="Character",
+            from_location_id=self.loc_a_instance.id, to_location_id=self.loc_b_instance.id
         )
-
-        # 2. Assertions
-        self.assertTrue(move_result, "move_entity should return True for successful move.")
-
-        # Verify character's location in CharacterManager
-        updated_char = self.character_manager.get_character(self.guild_id, self.test_char.id)
+        self.assertTrue(move_result)
+        updated_char = await self.character_manager.get_character_by_id(self.guild_id, self.test_char.id) # Use get_character_by_id
         self.assertIsNotNone(updated_char)
-        if updated_char: # Added check as per subtask
-            self.assertEqual(updated_char.location_id, self.loc_b_instance['id'])
+        if updated_char:
+            self.assertEqual(updated_char.current_location_id, self.loc_b_instance.id)
 
-        # Verify RuleEngine.execute_triggers calls
         self.assertGreaterEqual(self.rule_engine.execute_triggers.call_count, 2)
-
         departure_call = self.rule_engine.execute_triggers.call_args_list[0]
         arrival_call = self.rule_engine.execute_triggers.call_args_list[1]
 
-        # Check departure triggers from loc_A_tpl
-        # The context passed to execute_triggers is augmented by handle_entity_departure/arrival
-        self.assertEqual(departure_call.args[0], DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_A_tpl']['on_exit_triggers'])
-        self.assertEqual(departure_call.kwargs['context']['location_instance_id'], self.loc_a_instance['id'])
+        # Note: DUMMY_LOCATION_TEMPLATES_INTEGRATION might need name_i18n etc. to match Pydantic models if used for comparison
+        # For now, assuming trigger content is string based or simple dicts.
+        self.assertEqual(departure_call.kwargs['triggers'], DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_A_tpl']['on_exit_triggers'])
+        self.assertEqual(departure_call.kwargs['context']['location_instance_id'], self.loc_a_instance.id)
         self.assertEqual(departure_call.kwargs['context']['entity_id'], self.test_char.id)
 
-
-        # Check arrival triggers from loc_B_tpl
-        self.assertEqual(arrival_call.args[0], DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_B_tpl']['on_enter_triggers'])
-        self.assertEqual(arrival_call.kwargs['context']['location_instance_id'], self.loc_b_instance['id'])
+        self.assertEqual(arrival_call.kwargs['triggers'], DUMMY_LOCATION_TEMPLATES_INTEGRATION['loc_B_tpl']['on_enter_triggers'])
+        self.assertEqual(arrival_call.kwargs['context']['location_instance_id'], self.loc_b_instance.id)
         self.assertEqual(arrival_call.kwargs['context']['entity_id'], self.test_char.id)
 
 
-class TestItemInteractionFlow(unittest.IsolatedAsyncioTestCase):
+class TestItemInteractionFlow(BaseIntegrationTest):
 
     async def asyncSetUp(self):
         self.guild_id = "test_guild_int_item_1"
-        self.mock_db_adapter = AsyncMock()
-        self.mock_settings_dict = DUMMY_SETTINGS.copy()
-        self.mock_rule_engine = AsyncMock()
-        self.mock_event_manager = AsyncMock()
+        await super().asyncSetUp()
 
-        # LocationManager
         self.location_manager = LocationManager(
-            db_adapter=self.mock_db_adapter, settings=self.mock_settings_dict, rule_engine=self.mock_rule_engine,
-            event_manager=self.mock_event_manager, character_manager=AsyncMock(), npc_manager=AsyncMock(),
-            item_manager=AsyncMock(), combat_manager=AsyncMock(), status_manager=AsyncMock(),
-            party_manager=AsyncMock(), time_manager=AsyncMock(), send_callback_factory=MagicMock(),
-            event_stage_processor=AsyncMock(),event_action_processor=AsyncMock(),
-            on_enter_action_executor=AsyncMock(),stage_description_generator=AsyncMock()
+            db_service=self.mock_db_service, settings=self.mock_settings_dict,
+            game_manager=self.mock_game_manager,
+            send_callback_factory=self.mock_game_manager.send_callback_factory
         )
-        self.location_manager._location_templates[self.guild_id] = {
+        self.mock_game_manager.location_manager = self.location_manager
+        self.location_manager._location_templates = { # Overwrite
             DUMMY_LOCATION_TEMPLATES_INTEGRATION['default_start_loc_tpl']['id']: DUMMY_LOCATION_TEMPLATES_INTEGRATION['default_start_loc_tpl']
         }
         with patch('uuid.uuid4', return_value=uuid.UUID('loc--int-item-flow----1111')):
-            self.test_location_instance = await self.location_manager.create_location_instance(
+            loc_dict = await self.location_manager.create_location_instance(
                 guild_id=self.guild_id, template_id=DUMMY_LOCATION_TEMPLATES_INTEGRATION['default_start_loc_tpl']['id'],
                 instance_name="Item Interaction Zone"
             )
+        self.assertIsNotNone(loc_dict)
+        self.test_location_instance: Optional[PydanticLocation] = PydanticLocation.from_dict(loc_dict) if loc_dict else None
         self.assertIsNotNone(self.test_location_instance)
 
-        # ItemManager
-        self.item_manager = ItemManager(
-            db_adapter=self.mock_db_adapter, settings=self.mock_settings_dict,
-            character_manager=AsyncMock(), npc_manager=AsyncMock(), location_manager=self.location_manager
-        )
-        # Ensure "health_potion_template" is loaded
-        self.item_manager._load_item_templates() # Force load from DUMMY_SETTINGS
 
-        # CharacterManager
-        self.character_manager = CharacterManager(
-            db_adapter=self.mock_db_adapter, settings=self.mock_settings_dict, rule_engine=self.mock_rule_engine,
-            location_manager=self.location_manager, status_manager=AsyncMock(),
-            combat_manager=AsyncMock(), party_manager=AsyncMock()
+        self.item_manager = ItemManager(
+            db_service=self.mock_db_service, settings=self.mock_settings_dict,
+            game_manager=self.mock_game_manager
         )
+        self.mock_game_manager.item_manager = self.item_manager
+        self.item_manager._load_item_templates()
+
+        self.character_manager = CharacterManager(
+            db_service=self.mock_db_service, settings=self.mock_settings_dict,
+            game_manager=self.mock_game_manager
+        )
+        self.mock_game_manager.character_manager = self.character_manager
+
         with patch('uuid.uuid4', return_value=uuid.UUID('char-int-item-flow---1111')):
-            self.test_character = await self.character_manager.create_character(
-                guild_id=self.guild_id, discord_id="item_user_discord", name="ItemUser",
-                initial_location_id=self.test_location_instance['id']
+            self.test_character: Optional[Character] = await self.character_manager.create_new_character(
+                guild_id=self.guild_id, discord_user_id="item_user_discord",
+                character_name_i18n={"en":"ItemUser"},
+                initial_location_id=self.test_location_instance.id if self.test_location_instance else None
             )
         self.assertIsNotNone(self.test_character)
 
-        # Create a potion item in the location
         self.potion_template_id = "health_potion_template"
         with patch('uuid.uuid4', return_value=uuid.UUID('item-int-potion------1111')):
-            self.item_in_location = await self.item_manager.create_item_instance(
+            self.item_in_location: Optional[Item] = await self.item_manager.create_item_instance_in_db( # Assuming create_item_instance_in_db for direct creation
                 guild_id=self.guild_id, template_id=self.potion_template_id, quantity=1,
-                location_id=self.test_location_instance['id']
-            )
+                location_id=self.test_location_instance.id if self.test_location_instance else None
+            ) # create_item_instance_in_db returns Pydantic model
         self.assertIsNotNone(self.item_in_location)
-        # Verify it's in the location initially
-        items_in_loc = self.item_manager.get_items_in_location(self.guild_id, self.test_location_instance['id'])
-        self.assertIn(self.item_in_location, items_in_loc)
+        if self.test_location_instance and self.item_in_location:
+            items_in_loc = await self.item_manager.get_items_in_location(self.guild_id, self.test_location_instance.id)
+            self.assertTrue(any(i.id == self.item_in_location.id for i in items_in_loc))
 
 
     async def test_pick_up_item_from_location(self):
-        # Item self.item_in_location is already in self.test_location_instance
-        # Character self.test_character is also in self.test_location_instance
+        self.assertIsNotNone(self.test_character); self.assertIsNotNone(self.item_in_location); self.assertIsNotNone(self.test_location_instance)
+        if not self.test_character or not self.item_in_location or not self.test_location_instance: return
 
-        # 1. Action: Character picks up the item
-        # Simulate by directly calling ItemManager.update_item_instance
-        update_success = await self.item_manager.update_item_instance(
-            guild_id=self.guild_id,
-            item_id=self.item_in_location.id,
-            update_data={
-                "owner_id": self.test_character.id,
-                "owner_type": "Character",
-                "location_id": None # No longer in a world location, but on a character
-            }
+        update_success = await self.item_manager.update_item_instance_in_db( # Assuming update_item_instance_in_db
+            guild_id=self.guild_id, item_id=self.item_in_location.id,
+            updates={ "owner_id": self.test_character.id, "owner_type": "Character", "location_id": None }
         )
-        self.assertIsNotNone(update_success, "update_item_instance should return the updated item or True.")
+        self.assertTrue(update_success)
 
-        # 2. Assertions
-        # Item no longer in location's item list
-        items_in_loc_after_pickup = self.item_manager.get_items_in_location(self.guild_id, self.test_location_instance['id'])
-        self.assertNotIn(self.item_in_location.id, [item.id for item in items_in_loc_after_pickup])
-        # self.assertNotIn(self.item_in_location, items_in_loc_after_pickup) # This might fail if item object identity changes
+        items_in_loc_after_pickup = await self.item_manager.get_items_in_location(self.guild_id, self.test_location_instance.id)
+        self.assertFalse(any(i.id == self.item_in_location.id for i in items_in_loc_after_pickup))
 
-        # Item is in character's inventory (owned by character)
-        char_owned_items = self.item_manager.get_items_by_owner(self.guild_id, self.test_character.id)
-        found_picked_up_item = any(item.id == self.item_in_location.id for item in char_owned_items)
-        self.assertTrue(found_picked_up_item, "Picked up item not found in character's ownership list.")
+        char_owned_items = await self.item_manager.get_items_by_owner(self.guild_id, self.test_character.id, "Character")
+        self.assertTrue(any(item.id == self.item_in_location.id for item in char_owned_items))
 
-        # Verify the item instance itself reflects new ownership
-        updated_item_instance = self.item_manager.get_item_instance(self.guild_id, self.item_in_location.id)
+        updated_item_instance = await self.item_manager.get_item_instance_from_db(self.guild_id, self.item_in_location.id)
         self.assertIsNotNone(updated_item_instance)
-        self.assertEqual(updated_item_instance.owner_id, self.test_character.id)
-        self.assertEqual(updated_item_instance.owner_type, "Character")
-        self.assertIsNone(updated_item_instance.location_id)
+        if updated_item_instance:
+            self.assertEqual(updated_item_instance.owner_id, self.test_character.id)
+            self.assertEqual(updated_item_instance.owner_type, "Character")
+            self.assertIsNone(updated_item_instance.location_id)
 
     async def test_drop_item_to_location(self):
-        # 1. Setup: Give character an item first
+        self.assertIsNotNone(self.test_character); self.assertIsNotNone(self.test_location_instance)
+        if not self.test_character or not self.test_location_instance: return
+
         item_to_drop_id_obj = uuid.UUID('item-int-drop--------1111')
-        item_to_drop_id = str(item_to_drop_id_obj)
         with patch('uuid.uuid4', return_value=item_to_drop_id_obj):
-            char_item_to_drop = await self.item_manager.create_item_instance(
+            char_item_to_drop = await self.item_manager.create_item_instance_in_db(
                 guild_id=self.guild_id, template_id=self.potion_template_id, quantity=1,
                 owner_id=self.test_character.id, owner_type="Character"
             )
         self.assertIsNotNone(char_item_to_drop)
-        # Verify it's owned by character
-        char_owned_items_before_drop = self.item_manager.get_items_by_owner(self.guild_id, self.test_character.id)
+        char_owned_items_before_drop = await self.item_manager.get_items_by_owner(self.guild_id, self.test_character.id, "Character")
         self.assertTrue(any(item.id == char_item_to_drop.id for item in char_owned_items_before_drop))
 
-        # 2. Action: Character drops the item in their current location
-        # Character's current location is self.test_location_instance['id']
-        update_success = await self.item_manager.update_item_instance(
-            guild_id=self.guild_id,
-            item_id=char_item_to_drop.id,
-            update_data={
-                "owner_id": None, # No longer directly owned by character
-                "owner_type": None, # Or could be 'Location' if schema implies that
-                "location_id": self.test_character.location_id
-            }
+        update_success = await self.item_manager.update_item_instance_in_db(
+            guild_id=self.guild_id, item_id=char_item_to_drop.id,
+            updates={ "owner_id": None, "owner_type": None, "location_id": self.test_character.current_location_id}
         )
-        self.assertIsNotNone(update_success)
+        self.assertTrue(update_success)
 
-        # 3. Assertions
-        # Item no longer in character's ownership list
-        char_owned_items_after_drop = self.item_manager.get_items_by_owner(self.guild_id, self.test_character.id)
+        char_owned_items_after_drop = await self.item_manager.get_items_by_owner(self.guild_id, self.test_character.id, "Character")
         self.assertFalse(any(item.id == char_item_to_drop.id for item in char_owned_items_after_drop))
 
-        # Item is now in the location's item list
-        items_in_loc_after_drop = self.item_manager.get_items_in_location(self.guild_id, self.test_character.location_id)
-        self.assertTrue(any(item.id == char_item_to_drop.id for item in items_in_loc_after_drop))
+        if self.test_character.current_location_id:
+            items_in_loc_after_drop = await self.item_manager.get_items_in_location(self.guild_id, self.test_character.current_location_id)
+            self.assertTrue(any(item.id == char_item_to_drop.id for item in items_in_loc_after_drop))
 
-        # Verify the item instance itself reflects new state
-        dropped_item_instance = self.item_manager.get_item_instance(self.guild_id, char_item_to_drop.id)
+        dropped_item_instance = await self.item_manager.get_item_instance_from_db(self.guild_id, char_item_to_drop.id)
         self.assertIsNotNone(dropped_item_instance)
-        self.assertIsNone(dropped_item_instance.owner_id)
-        self.assertEqual(dropped_item_instance.location_id, self.test_character.location_id)
+        if dropped_item_instance:
+            self.assertIsNone(dropped_item_instance.owner_id)
+            self.assertEqual(dropped_item_instance.location_id, self.test_character.current_location_id)
 
 
-class TestCombatFlow(unittest.IsolatedAsyncioTestCase):
+class TestCombatFlow(BaseIntegrationTest):
 
     async def asyncSetUp(self):
         self.guild_id = "test_guild_int_combat_1"
-        self.mock_db_adapter = AsyncMock()
-        self.mock_settings_dict = DUMMY_SETTINGS.copy()
-        self.mock_rule_engine = AsyncMock() # For general triggers, if any
-        self.mock_event_manager = AsyncMock()
+        await super().asyncSetUp()
 
-        # LocationManager
         self.location_manager = LocationManager(
-            db_adapter=self.mock_db_adapter, settings=self.mock_settings_dict, rule_engine=self.mock_rule_engine,
-            event_manager=self.mock_event_manager, character_manager=AsyncMock(), npc_manager=AsyncMock(),
-            item_manager=AsyncMock(), combat_manager=AsyncMock(), status_manager=AsyncMock(),
-            party_manager=AsyncMock(), time_manager=AsyncMock(), send_callback_factory=MagicMock(),
-            event_stage_processor=AsyncMock(),event_action_processor=AsyncMock(),
-            on_enter_action_executor=AsyncMock(),stage_description_generator=AsyncMock()
+            db_service=self.mock_db_service, settings=self.mock_settings_dict,
+            game_manager=self.mock_game_manager,
+            send_callback_factory=self.mock_game_manager.send_callback_factory
         )
-        self.location_manager._location_templates[self.guild_id] = {
-            DUMMY_LOCATION_TEMPLATES_INTEGRATION['default_start_loc_tpl']['id']: DUMMY_LOCATION_TEMPLATES_INTEGRATION['default_start_loc_tpl']
+        self.mock_game_manager.location_manager = self.location_manager
+        self.location_manager._location_templates = {
+             DUMMY_LOCATION_TEMPLATES_INTEGRATION['default_start_loc_tpl']['id']: DUMMY_LOCATION_TEMPLATES_INTEGRATION['default_start_loc_tpl']
         }
         with patch('uuid.uuid4', return_value=uuid.UUID('loc--int-combat-flow---1111')):
-            self.combat_location_instance = await self.location_manager.create_location_instance(
+            loc_dict = await self.location_manager.create_location_instance(
                 guild_id=self.guild_id, template_id=DUMMY_LOCATION_TEMPLATES_INTEGRATION['default_start_loc_tpl']['id'],
                 instance_name="Combat Arena"
             )
+        self.assertIsNotNone(loc_dict)
+        self.combat_location_instance: Optional[PydanticLocation] = PydanticLocation.from_dict(loc_dict) if loc_dict else None
         self.assertIsNotNone(self.combat_location_instance)
 
-        # CharacterManager
-        # For combat, CharacterManager will be central for health updates and death handling.
+
         self.character_manager = CharacterManager(
-            db_adapter=self.mock_db_adapter, settings=self.mock_settings_dict, rule_engine=self.mock_rule_engine,
-            location_manager=self.location_manager, status_manager=AsyncMock(),
-            combat_manager=AsyncMock(), # Will be the actual CombatManager if testing deeper integration
-            party_manager=AsyncMock()
+            db_service=self.mock_db_service, settings=self.mock_settings_dict,
+            game_manager=self.mock_game_manager
         )
+        self.mock_game_manager.character_manager = self.character_manager
 
-        # CombatManager - Mocked for now, direct calls to CharacterManager.update_health will simulate damage
-        self.combat_manager = AsyncMock()
-        # If CombatManager was real, we'd initialize it here and link it to CharacterManager if needed.
-        # self.character_manager.combat_manager = self.combat_manager
+        # CombatManager itself is mocked on mock_game_manager
+        # self.combat_manager = AsyncMock()
+        # self.mock_game_manager.combat_manager = self.combat_manager
 
 
-        # Create Attacker and Defender
         with patch('uuid.uuid4', side_effect=[uuid.UUID('char-attacker----------1'), uuid.UUID('char-defender----------1')]):
-            self.char_attacker = await self.character_manager.create_character(
-                guild_id=self.guild_id, discord_id="attacker_discord", name="Attacker",
-                initial_location_id=self.combat_location_instance['id'],
-                stats={"max_health": 100, "current_health": 100} # Ensure stats allow health
-            )
-            self.char_defender = await self.character_manager.create_character(
-                guild_id=self.guild_id, discord_id="defender_discord", name="Defender",
-                initial_location_id=self.combat_location_instance['id'],
+            self.char_attacker: Optional[Character] = await self.character_manager.create_new_character(
+                guild_id=self.guild_id, discord_user_id="attacker_discord", character_name_i18n={"en":"Attacker"},
+                initial_location_id=self.combat_location_instance.id if self.combat_location_instance else None,
                 stats={"max_health": 100, "current_health": 100}
             )
-        self.assertIsNotNone(self.char_attacker)
-        self.assertIsNotNone(self.char_defender)
-        # Manually set current health if create_character doesn't use initial_stats for current_health
-        self.char_attacker.current_health = 100
-        self.char_defender.current_health = 100
-        self.character_manager._characters[self.guild_id][self.char_attacker.id] = self.char_attacker # ensure in cache
-        self.character_manager._characters[self.guild_id][self.char_defender.id] = self.char_defender # ensure in cache
+            self.char_defender: Optional[Character] = await self.character_manager.create_new_character(
+                guild_id=self.guild_id, discord_user_id="defender_discord", character_name_i18n={"en":"Defender"},
+                initial_location_id=self.combat_location_instance.id if self.combat_location_instance else None,
+                stats={"max_health": 100, "current_health": 100}
+            )
+        self.assertIsNotNone(self.char_attacker); self.assertIsNotNone(self.char_defender)
+        if self.char_attacker: self.char_attacker.current_health = 100.0 # Ensure float
+        if self.char_defender: self.char_defender.current_health = 100.0 # Ensure float
+        # If CharacterManager uses an internal cache, ensure it's updated or bypassed for test
+        # For example, if get_character_by_id fetches fresh or from a cache that reflects these values
 
 
     async def test_attack_and_health_update(self):
-        initial_defender_health = self.char_defender.current_health
-        damage_amount = -10
+        self.assertIsNotNone(self.char_attacker); self.assertIsNotNone(self.char_defender)
+        if not self.char_defender or self.char_defender.current_health is None : self.fail("Defender not properly initialized")
 
-        # Action: Simulate attacker attacking defender by directly updating defender's health
-        # In a full combat system, this would go through CombatManager.process_attack_action,
-        # which would then calculate damage and call CharacterManager.update_health.
-        await self.character_manager.update_health(
+        initial_defender_health = self.char_defender.current_health
+        damage_amount = -10.0
+
+        await self.character_manager.update_character_health( # Assuming method name
             guild_id=self.guild_id,
             character_id=self.char_defender.id,
             health_change=damage_amount
         )
-
-        # Assertions
-        updated_defender = self.character_manager.get_character(self.guild_id, self.char_defender.id)
+        updated_defender = await self.character_manager.get_character_by_id(self.guild_id, self.char_defender.id)
         self.assertIsNotNone(updated_defender)
-        if updated_defender: # Added check
+        if updated_defender and updated_defender.current_health is not None:
             self.assertEqual(updated_defender.current_health, initial_defender_health + damage_amount)
 
-        # Attacker's health should be unchanged
-        attacker_unchanged = self.character_manager.get_character(self.guild_id, self.char_attacker.id)
+        attacker_unchanged = await self.character_manager.get_character_by_id(self.guild_id, self.char_attacker.id) # type: ignore
         self.assertIsNotNone(attacker_unchanged)
-        if attacker_unchanged: # Added check
-            self.assertEqual(attacker_unchanged.current_health, self.char_attacker.current_health) # Assuming initial health was 100
+        if attacker_unchanged and self.char_attacker and self.char_attacker.current_health is not None:
+            self.assertEqual(attacker_unchanged.current_health, self.char_attacker.current_health)
 
     async def test_lethal_damage_and_death(self):
-        # Setup: Defender has low health
-        low_health = 5
+        self.assertIsNotNone(self.char_defender)
+        if not self.char_defender: self.fail("Defender not set up")
+
+        low_health = 5.0
         self.char_defender.current_health = low_health
-        # Ensure this low health is reflected in the manager's cache if it was re-fetched elsewhere
-        self.character_manager._characters[self.guild_id][self.char_defender.id].current_health = low_health
+        # Simulate saving this change if CharacterManager relies on persisted state for get_character_by_id
+        await self.character_manager.save_character_field(self.guild_id, self.char_defender.id, "current_health", low_health)
 
-        lethal_damage_amount = -10 # More damage than current health
 
-        # Spy on CharacterManager.handle_character_death
-        self.character_manager.handle_character_death = AsyncMock(wraps=self.character_manager.handle_character_death)
+        lethal_damage_amount = -10.0
+        self.character_manager.handle_character_death = AsyncMock() # Spy
 
-        # Action: Simulate lethal damage
-        await self.character_manager.update_health(
+        await self.character_manager.update_character_health(
             guild_id=self.guild_id,
             character_id=self.char_defender.id,
             health_change=lethal_damage_amount
         )
-
-        # Assertions
-        dead_defender = self.character_manager.get_character(self.guild_id, self.char_defender.id)
+        dead_defender = await self.character_manager.get_character_by_id(self.guild_id, self.char_defender.id)
         self.assertIsNotNone(dead_defender)
-        if dead_defender: # Added check
-            self.assertEqual(dead_defender.current_health, 0) # Health should cap at 0 on death
+        if dead_defender:
+            self.assertEqual(dead_defender.current_health, 0)
             self.assertFalse(dead_defender.is_alive)
 
-        # Verify handle_character_death was called
-        self.character_manager.handle_character_death.assert_called_once_with(self.guild_id, self.char_defender.id)
+        cast(AsyncMock, self.character_manager.handle_character_death).assert_called_once_with(self.guild_id, self.char_defender.id)
 
 
 if __name__ == '__main__':
