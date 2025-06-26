@@ -1,3 +1,4 @@
+import uuid
 import pytest
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
