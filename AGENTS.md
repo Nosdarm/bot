@@ -193,3 +193,17 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **Manager Instantiation in Tests**: Ensured managers created in `asyncSetUp` received all required dependencies (often other mocks).
 - **Batch 9 Fixes - `bot/api/schemas/master_schemas.py` (66 errors):**
     - **Pydantic `Field` Usage**: Corrected all `Field` calls to use keyword arguments for metadata (e.g., `description="...", example="..."`) instead of positional arguments. Ensured `default` was used for default values or `...` for required fields as the first argument. Used `default_factory=list` for optional list fields like `npcs` in `LocationDetailsResponse`.
+
+## Pyright Error Fixing Phase (Batch 10 - test_gm_app_cmds.py & master_schemas.py commit)
+- **Focus:** Committing previous work: remaining ~29 errors in `tests/commands/test_gm_app_cmds.py` and all 66 errors in `bot/api/schemas/master_schemas.py`.
+- **Strategy:** Overwrote files with corrected content. Total of 129 errors addressed in the combined work leading to this batch's commit.
+- **Batch 10 Fixes - `tests/commands/test_gm_app_cmds.py` (~29 remaining errors from 63 total):**
+    - Renamed conflicting test function parameters (e.g., `pending_id`, `rule_key`).
+    - Ensured `game_mngr.rule_engine` and its methods were correctly mocked as `AsyncMock` instances.
+    - Corrected assignments to mock methods (e.g., using `return_value` or `side_effect` on the mock method itself).
+    - Patched specific `bot.database.crud_utils` functions with `new_callable=AsyncMock`.
+    - Used `cast(AsyncMock, ...)` for type hinting mocks in assertions.
+    - Ensured enum comparisons use `.value` where appropriate.
+    - Used `# type: ignore` for app command `.callback` access.
+- **Batch 10 (Commit Only) - `bot/api/schemas/master_schemas.py` (all 66 errors from Batch 9 work):**
+    - (Already fixed in Batch 9) Corrected all Pydantic `Field` calls to use keyword arguments for metadata.
