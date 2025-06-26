@@ -732,3 +732,29 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - Added `# type: ignore[return]` to `resolve_skill_check_wrapper` and `process_dialogue_action` due to complex resolver return paths.
     - Changed `combat: "Combat"` to `combat: Any` in `choose_combat_action_for_npc` as `Combat` model isn't directly used there.
     - Corrected `handle_stage` to safely get and cast `target_stage_id`.
+
+## Pyright Summary File Reorganization (YYYY-MM-DD HH:MM:SS UTC - Current Task)
+- **Task:** User requested to split the large `pyright_summary.txt` into multiple files based on criticality.
+- **Actions Taken (Initial Split):**
+    1.  Parsed the existing `pyright_summary.txt` file.
+    2.  Categorized all reported Pyright issues into "Errors", "Warnings", and "Information" based on the tags (e.g., `[ERROR]`).
+    3.  Created three new files to store these categorized issues:
+        *   `pyright_issues_errors.txt`: Contains all issues marked as `[ERROR]`.
+        *   `pyright_issues_warnings.txt`: Contains all issues marked as `[WARNING]`.
+        *   `pyright_issues_info.txt`: Contains any other informational messages (in this case, it was empty as only errors and one warning were found).
+    4.  Within each new file, the issues are grouped by their original source Python file, followed by the line number and the Pyright message.
+- **Purpose (Initial Split):** This reorganization aims to make the Pyright issues more manageable and allow for targeted fixing based on severity.
+
+- **Task Update (Further Splitting Errors):** User clarified that the `pyright_issues_errors.txt` file itself should be split into roughly 6 parts.
+- **Actions Taken (Further Splitting `pyright_issues_errors.txt`):**
+    1.  Analyzed `pyright_issues_errors.txt`: Identified 78 distinct Python files with a total of approximately 1031 error entries.
+    2.  Determined Splitting Strategy: Group errors by source file, then distribute these groups across 6 part files, aiming for about 13 source files per part.
+    3.  Created six new files:
+        *   `pyright_errors_part_1.txt`
+        *   `pyright_errors_part_2.txt`
+        *   `pyright_errors_part_3.txt`
+        *   `pyright_errors_part_4.txt`
+        *   `pyright_errors_part_5.txt`
+        *   `pyright_errors_part_6.txt`
+    4.  Distributed the content of `pyright_issues_errors.txt` into these part files. Each part file contains errors from a subset of the original source Python files. The original `pyright_issues_errors.txt` was retained.
+- **Purpose (Further Split):** To break down the large number of errors into smaller, more focused chunks for easier management and resolution.
