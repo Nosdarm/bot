@@ -956,35 +956,52 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
     async def cmd_master_approve_ai(self, interaction: Interaction, pending_id: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild_id_str = str(interaction.guild_id)
-        game_mngr: "GameManager" = self.bot.game_manager
+        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
         import datetime
+        from bot.database import crud_utils # Import crud_utils
+        from bot.database.models.pending_generation import PendingGeneration, PendingStatus # Ensure model is imported
+
         if not game_mngr or not game_mngr.db_service:
             await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
             return
         try:
-            record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
-                PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
-            )
-            if not record:
-                await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
-                return
-            if record.status not in ["pending_moderation", "failed_validation"]:
-                await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть одобрена сейчас.", ephemeral=True)
-                return
-            updates = {
-                "status": "approved",
-                "moderated_by_user_id": str(interaction.user.id),
-                "moderated_at": datetime.datetime.utcnow()
-            }
-            success = await game_mngr.db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
+            record: Optional[PendingGeneration]
+            async with game_mngr.db_service.get_session() as session: # type: ignore
+                record = await crud_utils.get_entity_by_id(
+                    db_session=session, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
+                )
+                if not record:
+                    await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
+                    return
+                if record.status not in [PendingStatus.PENDING_MODERATION, PendingStatus.FAILED_VALIDATION]:
+                    await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть одобрена сейчас.", ephemeral=True)
+                    return
+
+                updates = {
+                    "status": PendingStatus.APPROVED,
+                    "moderated_by_user_id": str(interaction.user.id),
+                    "moderated_at": datetime.datetime.now(datetime.timezone.utc) # Use timezone aware datetime
+                }
+                # update_entity expects the instance itself
+                updated_record_instance = await crud_utils.update_entity(
+                    db_session=session, entity_instance=record, data=updates, guild_id=guild_id_str
+                )
+                success = updated_record_instance is not None
+
             if success:
                 logging.info(f"AI Generation {pending_id} approved by {interaction.user.id}. Attempting to apply content.")
+                # apply_approved_generation might need its own session management or accept an active one
                 application_success = await game_mngr.apply_approved_generation(pending_gen_id=pending_id, guild_id=guild_id_str)
-                updated_record_after_apply: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
-                    PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
-                )
-                current_status_after_apply = updated_record_after_apply.status if updated_record_after_apply else record.status
-                if application_success:
+
+                current_status_after_apply = PendingStatus.UNKNOWN # Default
+                async with game_mngr.db_service.get_session() as session_after_apply: # type: ignore
+                    updated_record_after_apply = await crud_utils.get_entity_by_id(
+                        db_session=session_after_apply, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
+                    )
+                    if updated_record_after_apply:
+                         current_status_after_apply = updated_record_after_apply.status # type: ignore
+
+                if application_success: # This implies apply_approved_generation also updated status to APPLIED
                     await interaction.followup.send(f"✅ AI Content ID `{pending_id}` (Type: {record.request_type}) approved and successfully applied.", ephemeral=True)
                 else:
                     await interaction.followup.send(f"⚠️ AI Content ID `{pending_id}` (Type: {record.request_type}) was approved, but application failed or is pending further logic. Status: {current_status_after_apply}. Check logs or use `/master review_ai id:{pending_id}`.", ephemeral=True)
