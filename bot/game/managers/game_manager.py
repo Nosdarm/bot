@@ -72,7 +72,11 @@ if TYPE_CHECKING:
     from bot.game.managers.faction_manager import FactionManager
     from bot.game.services.location_interaction_service import LocationInteractionService
     from pydantic import ValidationError
-    from bot.ai.rules_schema import CoreGameRulesConfig # Moved from TYPE_CHECKING
+    # from bot.ai.rules_schema import CoreGameRulesConfig # Moved from TYPE_CHECKING # This was already moved, removing duplicate
+
+# Moved here from TYPE_CHECKING as it's used in method signatures visible at runtime
+from bot.ai.rules_schema import CoreGameRulesConfig
+
 
 logger = logging.getLogger(__name__)
 logger.debug("--- Начинается загрузка: game_manager.py")

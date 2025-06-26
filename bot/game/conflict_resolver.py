@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.services.db_service import DBService
     from bot.ai.rules_schema import CoreGameRulesConfig, ActionConflictDefinition, ConflictResolutionRules
-    from bot.services.notification_service import NotificationService # Corrected import path
-    from bot.game.rules.rule_engine import RuleEngine # Corrected import path
+    from bot.services.notification_service import NotificationService
+    from bot.game.rules.rule_engine import RuleEngine
 
 
 logger = logging.getLogger(__name__)
@@ -26,20 +26,19 @@ logger = logging.getLogger(__name__)
 class ConflictResolver:
     def __init__(self, rule_engine: 'Optional[RuleEngine]',
                  notification_service: 'Optional[NotificationService]',
-                 db_service: 'DBService',
+                 db_service: 'DBService', # Assuming DBService is always provided
                  game_log_manager: Optional['GameLogManager'] = None):
-        self.rule_engine = rule_engine
-        self.notification_service = notification_service
-        self.db_service = db_service
-        self.game_log_manager = game_log_manager
+        self.rule_engine: Optional['RuleEngine'] = rule_engine
+        self.notification_service: Optional['NotificationService'] = notification_service
+        self.db_service: 'DBService' = db_service # Ensure db_service is not None
+        self.game_log_manager: Optional['GameLogManager'] = game_log_manager
         self.pending_manual_resolutions: Dict[str, Dict[str, Any]] = {}
         logger.info(f"ConflictResolver initialized. GameLogManager {'present' if game_log_manager else 'NOT present'}.")
 
     async def _get_rules_config_from_engine(self, guild_id: str) -> Optional['CoreGameRulesConfig']:
         if self.rule_engine and hasattr(self.rule_engine, 'get_rules_config') and callable(getattr(self.rule_engine, 'get_rules_config')):
-            config_any = await self.rule_engine.get_rules_config(guild_id) # type: ignore[attr-defined]
+            config_any = await self.rule_engine.get_rules_config(guild_id)
 
-            # Ensure CoreGameRulesConfig is imported for runtime if not already
             from bot.ai.rules_schema import CoreGameRulesConfig as RuntimeCoreGameRulesConfig
 
             if isinstance(config_any, RuntimeCoreGameRulesConfig):
@@ -50,7 +49,7 @@ class ConflictResolver:
                 except Exception as e:
                     logger.error(f"Failed to parse dict rules_config into CoreGameRulesConfig for guild {guild_id}: {e}")
                     return None
-            elif hasattr(config_any, 'model_dump'): # Check if it's some other Pydantic model
+            elif hasattr(config_any, 'model_dump') and callable(getattr(config_any, 'model_dump')):
                 try:
                     return RuntimeCoreGameRulesConfig(**config_any.model_dump())
                 except Exception as e_parse:
@@ -63,14 +62,12 @@ class ConflictResolver:
                               details_for_master: Optional[Dict[str, Any]] = None,
                               escalation_message: Optional[str] = None) -> str:
         conflict_id = f"conflict_{uuid.uuid4().hex[:12]}"
-
-        timestamp_val = 'timestamp_unavailable' # Default
+        timestamp_val = 'timestamp_unavailable'
         if self.rule_engine and hasattr(self.rule_engine, 'get_game_time') and callable(getattr(self.rule_engine, 'get_game_time')):
-            timestamp_val_any = await self.rule_engine.get_game_time() # type: ignore[attr-defined]
+            timestamp_val_any = await self.rule_engine.get_game_time()
             timestamp_val = str(timestamp_val_any) if timestamp_val_any is not None else 'timestamp_unavailable'
 
-
-        conflict_record: Dict[str, Any] = { # Explicitly type conflict_record
+        conflict_record: Dict[str, Any] = {
             "id": conflict_id, "guild_id": guild_id, "type": conflict_type,
             "involved_entities_data": involved_entities_data,
             "details_for_master": details_for_master or {},
@@ -83,18 +80,17 @@ class ConflictResolver:
         self.pending_manual_resolutions[guild_id][conflict_id] = conflict_record
 
         logger.info(f"Created and stored pending conflict {conflict_id} for guild {guild_id}.")
-        if self.game_log_manager:
+        if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
             log_details_payload: Dict[str, Any] = {
                 "conflict_id": conflict_id, "conflict_type": conflict_type,
                 "message": escalation_message or f"Conflict '{conflict_type}' created."
             }
-            # Ensure all entity IDs are strings
             related_entities_list: List[Dict[str,str]] = [{"type": k.replace("_id",""), "id": str(v)} for k,v in involved_entities_data.items() if k.endswith("_id") and v is not None]
 
             await self.game_log_manager.log_event(
                 guild_id=guild_id, event_type="conflict_created_pending_manual",
                 details=log_details_payload,
-                related_entities=related_entities_list # type: ignore # related_entities expects List[Dict[str,str]]
+                related_entities=related_entities_list
             )
         return conflict_id
 
@@ -105,37 +101,34 @@ class ConflictResolver:
         str_player_id = str(player_id) if player_id is not None else None
         str_target_id = str(target_id) if target_id is not None else None
 
-        # Ensure related_entities IDs are strings for logging
         related_entities_for_log: List[Dict[str,str]] = []
         if str_player_id: related_entities_for_log.append({"type": "player", "id": str_player_id})
-        if str_target_id: related_entities_for_log.append({"type": "npc", "id": str_target_id}) # Assuming target is NPC for these examples
+        if str_target_id: related_entities_for_log.append({"type": "npc", "id": str_target_id})
 
         if conflict_type == "battle_player_vs_npc":
             resolution_details = {"winner": "player", "loser": "npc", "loot_awarded": "gold_coins_10"}
             message_str = f"Player {str_player_id or 'N/A'} won the battle against NPC {str_target_id or 'N/A'}."
-            if self.game_log_manager:
+            if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
                 await self.game_log_manager.log_event(
                     guild_id=guild_id, event_type="conflict_auto_resolved",
                     details={"message": message_str, "resolution_type": "auto_player_win_battle", "conflict_id": conflict_id},
                     player_id=str_player_id,
-                    related_entities=related_entities_for_log # type: ignore
+                    related_entities=related_entities_for_log
                 )
             return {"success": True, "message": message_str, "details": resolution_details}
 
         elif conflict_type == "dialogue_persuasion_check":
             resolution_details = {"outcome": "failure", "reason": "npc_unconvinced"}
             message_str = f"Player {str_player_id or 'N/A'} failed to persuade NPC {str_target_id or 'N/A'}."
-            if self.game_log_manager:
+            if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
                 await self.game_log_manager.log_event(
                     guild_id=guild_id, event_type="conflict_auto_resolved",
                     details={"message": message_str, "resolution_type": "auto_dialogue_fail", "conflict_id": conflict_id},
                     player_id=str_player_id,
-                    related_entities=related_entities_for_log # type: ignore
+                    related_entities=related_entities_for_log
                 )
             return {"success": True, "message": message_str, "details": resolution_details}
 
-        # Fallback to manual resolution if no auto-resolution rule matches
-        # Ensure IDs passed to context_data are strings
         context_for_escalation = {}
         if str_player_id: context_for_escalation["player_id"] = str_player_id
         if str_target_id: context_for_escalation["target_id"] = str_target_id
@@ -162,11 +155,11 @@ class ConflictResolver:
         if player_id: related_entities_for_log.append({"type": "player", "id": player_id})
         if npc_id: related_entities_for_log.append({"type": "npc", "id": npc_id})
 
-        if self.game_log_manager:
+        if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
             await self.game_log_manager.log_event(
                 guild_id=guild_id, event_type="battle_conflict_resolved_by_gm", details=log_event_details,
                 player_id=player_id,
-                related_entities=related_entities_for_log ) # type: ignore
+                related_entities=related_entities_for_log )
         return {"success": True, "message": message_str, "details": {"resolved_outcome": outcome}}
 
     async def _handle_dialogue_conflict(self, guild_id: str, conflict_id: str, conflict_data: Dict[str, Any], resolution_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -183,8 +176,8 @@ class ConflictResolver:
         if player_id: related_entities_for_log.append({"type": "player", "id": player_id})
         if npc_id: related_entities_for_log.append({"type": "npc", "id": npc_id})
 
-        if self.game_log_manager:
-            await self.game_log_manager.log_event(guild_id, "dialogue_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_for_log) # type: ignore
+        if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
+            await self.game_log_manager.log_event(guild_id, "dialogue_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_for_log)
         return {"success": True, "message": message_str, "details": {"resolved_outcome": outcome}}
 
     async def _handle_skill_check_conflict(self, guild_id: str, conflict_id: str, conflict_data: Dict[str, Any], resolution_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -198,8 +191,8 @@ class ConflictResolver:
         related_entities_for_log: List[Dict[str,str]] = []
         if player_id: related_entities_for_log.append({"type": "player", "id": player_id})
 
-        if self.game_log_manager:
-            await self.game_log_manager.log_event(guild_id, "skill_check_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_for_log) # type: ignore
+        if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
+            await self.game_log_manager.log_event(guild_id, "skill_check_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_for_log)
         return {"success": True, "message": message_str, "details": {"resolved_outcome": outcome}}
 
     async def _handle_item_interaction_conflict(self, guild_id: str, conflict_id: str, conflict_data: Dict[str, Any], resolution_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -215,8 +208,8 @@ class ConflictResolver:
         if player_id: related_entities_for_log.append({"type": "player", "id": player_id})
         if item_id: related_entities_for_log.append({"type": "item", "id": item_id})
 
-        if self.game_log_manager:
-            await self.game_log_manager.log_event(guild_id, "item_interaction_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_for_log) # type: ignore
+        if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
+            await self.game_log_manager.log_event(guild_id, "item_interaction_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_for_log)
         return {"success": True, "message": message_str, "details": {"resolved_outcome": outcome}}
 
     async def _handle_environmental_hazard_conflict(self, guild_id: str, conflict_id: str, conflict_data: Dict[str, Any], resolution_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -232,8 +225,8 @@ class ConflictResolver:
         if player_id: related_entities_for_log.append({"type": "player", "id": player_id})
         if location_id: related_entities_for_log.append({"type": "location", "id": location_id})
 
-        if self.game_log_manager:
-            await self.game_log_manager.log_event(guild_id, "environmental_hazard_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_for_log) # type: ignore
+        if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
+            await self.game_log_manager.log_event(guild_id, "environmental_hazard_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_for_log)
         return {"success": True, "message": message_str, "details": {"resolved_outcome": outcome}}
 
     async def _handle_faction_conflict(self, guild_id: str, conflict_id: str, conflict_data: Dict[str, Any], resolution_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -253,8 +246,8 @@ class ConflictResolver:
         if faction2_id: related_entities_list.append({"type": "faction", "id": faction2_id})
         if player_id: related_entities_list.append({"type": "player", "id": player_id})
 
-        if self.game_log_manager:
-            await self.game_log_manager.log_event(guild_id, "faction_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_list) # type: ignore
+        if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
+            await self.game_log_manager.log_event(guild_id, "faction_conflict_resolved_by_gm", details=log_event_details, player_id=player_id, related_entities=related_entities_list)
         return {"success": True, "message": message_str, "details": {"resolved_outcome": outcome}}
 
     async def _handle_generic_conflict(self, guild_id: str, conflict_id: str, conflict_data: Dict[str, Any], resolution_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -274,8 +267,8 @@ class ConflictResolver:
 
         player_id_for_log = actor_id if actor_id and actor_type == "player" else None
 
-        if self.game_log_manager:
-            await self.game_log_manager.log_event(guild_id, "generic_conflict_resolved_by_gm", details=log_event_details, player_id=player_id_for_log, related_entities=related_entities_list) # type: ignore
+        if self.game_log_manager and hasattr(self.game_log_manager, 'log_event') and callable(getattr(self.game_log_manager, 'log_event')):
+            await self.game_log_manager.log_event(guild_id, "generic_conflict_resolved_by_gm", details=log_event_details, player_id=player_id_for_log, related_entities=related_entities_list)
         return {"success": True, "message": message_str, "details": {"resolved_outcome": outcome}}
 
     async def get_pending_conflict_details_for_master(self, guild_id: str, conflict_id: str) -> Optional[Dict[str, Any]]:
@@ -286,23 +279,28 @@ class ConflictResolver:
             pending_conflict_data = pending_conflict_data_mem
 
         if not pending_conflict_data:
-            db_data = await self.db_service.get_pending_conflict(conflict_id) # type: ignore[attr-defined] # Assuming get_pending_conflict exists
-            if db_data:
-                raw_conflict_json = db_data.get("conflict_data")
+            db_data_any = None
+            if hasattr(self.db_service, 'get_pending_conflict') and callable(getattr(self.db_service, 'get_pending_conflict')):
+                db_data_any = await self.db_service.get_pending_conflict(conflict_id)
+            else:
+                logger.warning(f"DBService missing 'get_pending_conflict', cannot fetch conflict {conflict_id} from DB.")
+
+            if db_data_any and isinstance(db_data_any, dict):
+                raw_conflict_json = db_data_any.get("conflict_data")
                 if isinstance(raw_conflict_json, str):
                     try: pending_conflict_data = json.loads(raw_conflict_json)
                     except json.JSONDecodeError: logger.error(f"Failed to parse conflict_data from DB for {conflict_id}"); return None
                 elif isinstance(raw_conflict_json, dict):
                     pending_conflict_data = raw_conflict_json
 
-                if pending_conflict_data:
+                if pending_conflict_data and isinstance(pending_conflict_data, dict):
                     if guild_id not in self.pending_manual_resolutions: self.pending_manual_resolutions[guild_id] = {}
                     self.pending_manual_resolutions[guild_id][conflict_id] = pending_conflict_data
             else: return None
 
-        if not pending_conflict_data: return None
+        if not pending_conflict_data or not isinstance(pending_conflict_data, dict): return None
 
-        details_for_gm: Dict[str, Any] = { # Ensure details_for_gm is typed
+        details_for_gm: Dict[str, Any] = {
             "conflict_id": conflict_id, "conflict_type": pending_conflict_data.get("type"),
             "details_for_master": pending_conflict_data.get("details_for_master", {}),
             "escalation_message": pending_conflict_data.get("escalation_message"),
@@ -314,19 +312,19 @@ class ConflictResolver:
         rules_config: Optional['CoreGameRulesConfig'] = await self._get_rules_config_from_engine(guild_id)
 
         conflict_rules_map: Optional[Dict[str, 'ActionConflictDefinition']] = None
-        # Ensure ConflictResolutionRules is imported for runtime check
-        from bot.ai.rules_schema import ConflictResolutionRules as RuntimeConflictResolutionRules
-        if rules_config and rules_config.conflict_resolution_rules and isinstance(rules_config.conflict_resolution_rules, RuntimeConflictResolutionRules):
+        from bot.ai.rules_schema import ConflictResolutionRules as RuntimeConflictResolutionRules # Import for runtime
+        if rules_config and hasattr(rules_config, 'conflict_resolution_rules') and \
+           isinstance(rules_config.conflict_resolution_rules, RuntimeConflictResolutionRules) and \
+           hasattr(rules_config.conflict_resolution_rules, 'action_conflicts_map'):
              conflict_rules_map = rules_config.conflict_resolution_rules.action_conflicts_map
 
-        if conflict_rules_map and isinstance(conflict_rules_map, dict) and conflict_type in conflict_rules_map:
+        if conflict_rules_map and isinstance(conflict_rules_map, dict) and conflict_type and conflict_type in conflict_rules_map:
             type_specific_rules_any = conflict_rules_map.get(conflict_type)
-            # Ensure ActionConflictDefinition is imported for runtime check
-            from bot.ai.rules_schema import ActionConflictDefinition as RuntimeActionConflictDefinition
+            from bot.ai.rules_schema import ActionConflictDefinition as RuntimeActionConflictDefinition # Import for runtime
             if isinstance(type_specific_rules_any, RuntimeActionConflictDefinition):
                 type_specific_rules: RuntimeActionConflictDefinition = type_specific_rules_any
                 if type_specific_rules.manual_resolution_options:
-                    details_for_gm["suggested_resolution_options"] = [opt.model_dump() for opt in type_specific_rules.manual_resolution_options]
+                    details_for_gm["suggested_resolution_options"] = [opt.model_dump() for opt in type_specific_rules.manual_resolution_options if hasattr(opt, 'model_dump')]
             elif isinstance(type_specific_rules_any, dict) and "manual_resolution_options" in type_specific_rules_any:
                 options = type_specific_rules_any["manual_resolution_options"]
                 if isinstance(options, list): details_for_gm["suggested_resolution_options"] = options
@@ -340,7 +338,7 @@ class ConflictResolver:
 
     async def get_all_pending_conflicts_for_guild(self, guild_id: str) -> List[Dict[str, Any]]:
         guild_conflicts = self.pending_manual_resolutions.get(guild_id, {})
-        summaries = [{"conflict_id": cid, "type": data.get("type", "unknown"), "escalation_message_snippet": str(data.get("escalation_message", ""))[:100] + "...", "timestamp": data.get("timestamp")} for cid, data in guild_conflicts.items() if isinstance(data, dict)] # Added check for data being dict
+        summaries = [{"conflict_id": cid, "type": data.get("type", "unknown"), "escalation_message_snippet": str(data.get("escalation_message", ""))[:100] + "...", "timestamp": data.get("timestamp")} for cid, data in guild_conflicts.items() if isinstance(data, dict)]
         return sorted(summaries, key=lambda x: x.get("timestamp", "0") or "0", reverse=True)
 
     async def process_master_resolution(self, conflict_id: str, outcome_type: str, resolution_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -350,44 +348,48 @@ class ConflictResolver:
         for gid, conflicts_in_guild in self.pending_manual_resolutions.items():
             if conflict_id in conflicts_in_guild:
                 guild_id_for_conflict = gid
-                conflict_data = conflicts_in_guild.pop(conflict_id)
+                conflict_data_mem = conflicts_in_guild.pop(conflict_id)
+                if isinstance(conflict_data_mem, dict): conflict_data = conflict_data_mem
                 if not conflicts_in_guild:
                     del self.pending_manual_resolutions[gid]
                 break
 
         if not guild_id_for_conflict or not conflict_data:
+            db_data_any = None
             if hasattr(self.db_service, 'get_pending_conflict') and callable(getattr(self.db_service, 'get_pending_conflict')):
-                db_conflict_raw = await self.db_service.get_pending_conflict(conflict_id)
-                if db_conflict_raw:
-                    guild_id_for_conflict = db_conflict_raw.get("guild_id")
-                    conflict_data_json_str = db_conflict_raw.get("conflict_data")
-                    if isinstance(conflict_data_json_str, str):
-                        try: conflict_data = json.loads(conflict_data_json_str)
-                        except json.JSONDecodeError:
-                            logger.error(f"Failed to parse conflict_data from DB for {conflict_id} during master resolution.")
-                            return {"success": False, "message": f"Conflict {conflict_id} data in DB is corrupted."}
-                    elif isinstance(conflict_data_json_str, dict):
-                        conflict_data = conflict_data_json_str
+                db_data_any = await self.db_service.get_pending_conflict(conflict_id)
 
-                    if guild_id_for_conflict and conflict_data:
-                        if hasattr(self.db_service, 'delete_pending_conflict') and callable(getattr(self.db_service, 'delete_pending_conflict')):
-                            await self.db_service.delete_pending_conflict(conflict_id)
-                        else:
-                            logging.warning(f"DBService missing 'delete_pending_conflict', cannot remove {conflict_id} from DB.")
+            if db_data_any and isinstance(db_data_any, dict):
+                guild_id_for_conflict = str(db_data_any.get("guild_id")) if db_data_any.get("guild_id") else None
+                conflict_data_json_str = db_data_any.get("conflict_data")
+                if isinstance(conflict_data_json_str, str):
+                    try: conflict_data = json.loads(conflict_data_json_str)
+                    except json.JSONDecodeError:
+                        logger.error(f"Failed to parse conflict_data from DB for {conflict_id} during master resolution.")
+                        return {"success": False, "message": f"Conflict {conflict_id} data in DB is corrupted."}
+                elif isinstance(conflict_data_json_str, dict):
+                    conflict_data = conflict_data_json_str
+
+                if guild_id_for_conflict and conflict_data and isinstance(conflict_data, dict):
+                    if hasattr(self.db_service, 'delete_pending_conflict') and callable(getattr(self.db_service, 'delete_pending_conflict')):
+                        await self.db_service.delete_pending_conflict(conflict_id)
                     else:
-                        return {"success": False, "message": f"Conflict {conflict_id} not found or data unusable from DB."}
+                        logging.warning(f"DBService missing 'delete_pending_conflict', cannot remove {conflict_id} from DB.")
                 else:
-                    return {"success": False, "message": f"Conflict {conflict_id} not found."}
+                    return {"success": False, "message": f"Conflict {conflict_id} not found or data unusable from DB."}
             else:
                  return {"success": False, "message": f"Conflict {conflict_id} not found and DBService cannot fetch it."}
+
+        if not guild_id_for_conflict or not conflict_data or not isinstance(conflict_data, dict): # Final check
+            return {"success": False, "message": f"Conflict {conflict_id} not found or data invalid."}
 
 
         conflict_type = conflict_data.get("type", "unknown_type")
         involved_entities = conflict_data.get("involved_entities_data", {})
-        if not isinstance(involved_entities, dict): involved_entities = {} # Ensure it's a dict
+        if not isinstance(involved_entities, dict): involved_entities = {}
 
 
-        handler_map: Dict[str, Any] = { # Explicitly type handler_map
+        handler_map: Dict[str, Any] = {
             "battle_player_vs_npc": self._handle_battle_conflict,
             "dialogue_persuasion_check": self._handle_dialogue_conflict,
             "skill_check": self._handle_skill_check_conflict,
@@ -397,7 +399,7 @@ class ConflictResolver:
             "generic_conflict": self._handle_generic_conflict
         }
 
-        handler = handler_map.get(conflict_type, self._handle_generic_conflict)
+        handler = handler_map.get(str(conflict_type), self._handle_generic_conflict) # Ensure conflict_type is str
 
         handler_conflict_data = {k: str(v) if isinstance(v, (int, uuid.UUID)) else v for k,v in involved_entities.items()}
         handler_conflict_data.update(conflict_data)
@@ -412,13 +414,14 @@ class ConflictResolver:
         if guild_id not in self.pending_manual_resolutions: self.pending_manual_resolutions[guild_id] = {}
 
         current_record = self.pending_manual_resolutions[guild_id].get(conflict_id, {})
+        if not isinstance(current_record, dict): current_record = {} # Ensure it's a dict
+
         current_record.update({
             "id": conflict_id, "guild_id": guild_id, "type": conflict_type,
             "status": "pending_manual_resolution",
             "escalation_message": message,
             "details_for_master": context_data or current_record.get("details_for_master", {}),
-            # Preserve original timestamp if exists, otherwise create one if rule_engine is available
-            "timestamp": current_record.get("timestamp") or (await self.rule_engine.get_game_time() if self.rule_engine and hasattr(self.rule_engine, 'get_game_time') and callable(getattr(self.rule_engine, 'get_game_time')) else 'timestamp_unavailable') # type: ignore[attr-defined]
+            "timestamp": current_record.get("timestamp") or (await self.rule_engine.get_game_time() if self.rule_engine and hasattr(self.rule_engine, 'get_game_time') and callable(getattr(self.rule_engine, 'get_game_time')) else 'timestamp_unavailable')
         })
         if "involved_entities_data" not in current_record and context_data:
             current_record["involved_entities_data"] = {k:v for k,v in context_data.items() if k.endswith("_id")}

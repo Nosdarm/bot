@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from bot.api.schemas.rule_config_schemas import RuleConfigData
     import datetime
     from sqlalchemy.ext.asyncio import AsyncSession
-    # Moved these out of TYPE_CHECKING as they are used at runtime
     from bot.database.models.pending_generation import PendingGeneration, PendingStatus
     from bot.ai.ai_response_validator import parse_and_validate_ai_response
     from bot.ai.ai_data_models import GenerationType
