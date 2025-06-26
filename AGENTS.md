@@ -413,3 +413,27 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - Standardized language determination (character preference > interaction locale > default).
     - Ensured `character.id` is consistently passed as a string.
 - **Batch 18 Summary:** Addressed a total of 205 Pyright errors across `bot/command_modules/gm_app_cmds.py` (117 errors) and `bot/command_modules/inventory_cmds.py` (88 errors). Key fixes involved correcting imports, ensuring manager methods are awaited and checked for existence, proper handling of `AsyncSession` and Pydantic models, safe attribute access for potentially `None` objects, correct `i18n_utils` usage, and consistent type handling for character/item IDs and inventory data.
+
+## Pyright Error Fixing Phase (Batch 19 - conflict_resolver.py & ai_generation_manager.py focus)
+- **Batch 19 - `bot/game/conflict_resolver.py` (88 errors addressed):**
+    - Corrected type hints for manager attributes in `__init__`.
+    - Ensured manager methods (e.g., `rule_engine.get_rules_config`, `db_service.get_pending_conflict`, `db_service.save_pending_conflict`, `db_service.delete_pending_conflict`, `notification_service.notify_master_of_conflict`) are checked for existence and callability using `hasattr` and `callable(getattr(...))` before use.
+    - Standardized `log_event` calls: ensured `details` is `Dict[str, Any]`, `player_id` is `str | None`, and `related_entities` is `List[Dict[str, str]]` with string IDs. Added `None` checks for `game_log_manager`.
+    - Corrected attribute access for `action_conflicts_map` (via `rules_config.conflict_resolution_rules.action_conflicts_map`) after ensuring `rules_config` and its nested Pydantic models are valid.
+    - Added `await` for async calls (e.g., `rule_engine.get_rules_config`, `db_service.get_pending_conflict`, `game_log_manager.log_event`).
+    - Ensured type safety in `get_pending_conflict_details_for_master`: handled `None` from DB/JSON, checked `rules_config` and `conflict_resolution_rules` attribute existence, used `model_dump()` for Pydantic options.
+    - Updated type hints for various internal variables and parameters (e.g., `conflict_record`, `log_event_details`).
+    - Ensured all entity IDs passed to loggers or handlers are consistently strings or `None`.
+    - Imported `ConflictResolutionRules` and `ActionConflictDefinition` from `bot.ai.rules_schema` for runtime type checking where necessary.
+- **Batch 19 - `bot/ai/generation_manager.py` (86 errors addressed):**
+    - Corrected parameter names in calls to `prompt_context_collector.get_full_context` (e.g., `location_id`, `event_id`) and `multilingual_prompt_generator.prepare_ai_prompt` (e.g., `generation_type_str`, `context_data`, `target_character_id`). Used `**kwargs` appropriately for remaining parameters.
+    - Ensured `target_languages` passed to `multilingual_prompt_generator.prepare_ai_prompt` is always a sorted `List[str]`, handling various input types (list, comma-separated string, None) and converting elements to strings.
+    - Added comprehensive `None` checks and `hasattr`/`callable` checks for `self.game_manager`, `self.game_manager.notification_service`, `self.game_manager.db_service`, and their methods before use (e.g., `get_rule`, `send_notification`, `get_entity_by_pk`).
+    - Addressed potential `Invalid conditional operand` errors by ensuring direct boolean values or explicit `is not None` comparisons were used for SQLAlchemy column attributes where appropriate (though many direct assignments to ORM model attributes were kept, relying on SQLAlchemy/Pydantic handling).
+    - Ensured direct assignment of Python dicts/lists to SQLAlchemy JSON-mapped model attributes is standard and removed unnecessary `# type: ignore` comments. Used `flag_modified(instance, "attribute_name")` after in-place modifications of mutable JSON structures on ORM instances.
+    - Verified that `request_content_generation` and `process_approved_generation` correctly manage `AsyncSession` scope using `GuildTransaction` or passed sessions.
+    - Ensured `asyncio` is imported for `asyncio.create_task`.
+    - Added more specific `None` checks for critical data like `ai_location_data`, `persisted_location_id`, and intermediate ORM objects before attribute access or further operations.
+    - Ensured IDs are converted to `str` when necessary (e.g. `record.entity_id = str(loc_to_persist.id)`).
+    - Added type check `isinstance(parsed_data, dict)` before Pydantic model instantiation.
+- **Batch 19 Summary:** Addressed a total of 174 Pyright errors across `bot/game/conflict_resolver.py` (88 errors) and `bot/ai/generation_manager.py` (86 errors). Key fixes involved standardizing log_event calls, correcting attribute access for rule configurations, ensuring proper async/await usage, robust type checking and handling for Pydantic models and SQLAlchemy column types, correct parameter passing to methods, and safe handling of potentially None objects and manager methods.

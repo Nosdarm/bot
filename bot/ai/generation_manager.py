@@ -51,45 +51,56 @@ class AIGenerationManager:
     ) -> Optional[PendingGeneration]:
         logger.info(f"AIGenerationManager: Requesting '{request_type.value}' generation for guild {guild_id} by user {created_by_user_id}. Context: {context_params}, Prompt: {prompt_params}")
 
+        # Prepare context for prompt_context_collector.get_full_context
+        # Explicitly pass known params and use **other_context_params for the rest
+        known_context_keys = {"character_id", "target_entity_id", "target_entity_type", "location_id", "event_id"}
+        collector_context_params = {k: v for k, v in context_params.items() if k in known_context_keys}
+        other_context_params = {k: v for k, v in context_params.items() if k not in known_context_keys}
+
         generation_context = await self.prompt_context_collector.get_full_context(
             guild_id=guild_id,
-            character_id=context_params.get("character_id"),
-            target_entity_id=context_params.get("target_entity_id"),
-            target_entity_type=context_params.get("target_entity_type"),
-            location_id=context_params.get("location_id"), # Corrected: was location_id_param
-            event_id=context_params.get("event_id"), # Corrected: was event_id_param
-            **context_params
+            character_id=collector_context_params.get("character_id"),
+            target_entity_id=collector_context_params.get("target_entity_id"),
+            target_entity_type=collector_context_params.get("target_entity_type"),
+            location_id=collector_context_params.get("location_id"),
+            event_id=collector_context_params.get("event_id"),
+            **other_context_params # Pass remaining context_params here
         )
 
         target_languages_input = prompt_params.get("target_languages")
-        target_languages_list: Optional[List[str]] = None
+        target_languages_list: List[str] = [] # Initialize as empty list
         if isinstance(target_languages_input, list):
-            target_languages_list = target_languages_input
+            target_languages_list = [str(lang) for lang in target_languages_input if isinstance(lang, (str, int, float))] # Ensure elements are strings
         elif isinstance(target_languages_input, str):
-            target_languages_list = [lang.strip() for lang in target_languages_input.split(',')]
+            target_languages_list = [lang.strip() for lang in target_languages_input.split(',') if lang.strip()]
 
         if not target_languages_list:
             default_lang = "en"
-            if self.game_manager and hasattr(self.game_manager, 'get_rule'):
-                default_lang = await self.game_manager.get_rule(guild_id, "default_language", "en") or "en" # type: ignore[attr-defined]
+            if self.game_manager and hasattr(self.game_manager, 'get_rule') and callable(getattr(self.game_manager, 'get_rule')):
+                default_lang = await self.game_manager.get_rule(guild_id, "default_language", "en") or "en"
             target_languages_list = sorted(list(set([default_lang, "en"])))
 
-        # Ensure target_languages_list is not None before passing to prepare_ai_prompt
-        if target_languages_list is None: # Should be caught by above logic, but defensive
-            target_languages_list = ["en"]
+        # Ensure all elements in target_languages_list are strings and sort
+        target_languages_list = sorted([str(lang) for lang in target_languages_list if lang])
+
+
+        # Prepare params for multilingual_prompt_generator.prepare_ai_prompt
+        known_prompt_gen_keys = {"specific_task_instruction"} # Add other known direct params if any
+        prompt_gen_specific_params = {k: v for k, v in prompt_params.items() if k in known_prompt_gen_keys}
+        other_prompt_gen_params = {k: v for k, v in prompt_params.items() if k not in known_prompt_gen_keys}
 
 
         final_prompt_str = await self.multilingual_prompt_generator.prepare_ai_prompt(
-            generation_type_str=request_type.value,
-            context=generation_context, # Corrected: was context_data
-            character_id=context_params.get("character_id"),
-            target_languages=target_languages_list, # Corrected: was target_languages
-            specific_task_instruction=prompt_params.get("specific_task_instruction"),
-            **prompt_params
+            generation_type_str=request_type.value, # Renamed from generation_type
+            context_data=generation_context, # Renamed from context
+            target_character_id=context_params.get("character_id"), # Renamed from character_id
+            target_languages=target_languages_list,
+            specific_task_instruction=prompt_gen_specific_params.get("specific_task_instruction"),
+            **other_prompt_gen_params # Pass remaining prompt_params here
         )
 
         logger.info(f"AIGenerationManager: Using placeholder AI response for '{request_type.value}'.")
-        raw_ai_output = "" # Default to empty string
+        raw_ai_output = ""
         if request_type == GenerationType.LOCATION_DETAILS:
             raw_ai_output = json.dumps({
                 "template_id": "generic_forest_clearing_template",
@@ -138,20 +149,28 @@ class AIGenerationManager:
 
         if pending_generation_record and pending_generation_record.id :
             logger.info(f"AIGenerationManager: PendingGeneration record {pending_generation_record.id} created for '{request_type.value}' in guild {guild_id}.")
-            if current_status == PendingStatus.PENDING_MODERATION and self.game_manager.notification_service:
-                 guild_config_result = await self.game_manager.db_service.get_entity_by_pk(self.game_manager.db_service.models.GuildConfig, guild_id) # type: ignore[attr-defined]
-                 if guild_config_result: # Check if guild_config is not None
-                    guild_config = guild_config_result # type: ignore
+            if current_status == PendingStatus.PENDING_MODERATION and self.game_manager and self.game_manager.notification_service and hasattr(self.game_manager.notification_service, 'send_notification') and callable(getattr(self.game_manager.notification_service, 'send_notification')):
+                 guild_config_result = None
+                 if self.game_manager.db_service and hasattr(self.game_manager.db_service, 'models') and hasattr(self.game_manager.db_service.models, 'GuildConfig') and hasattr(self.game_manager.db_service, 'get_entity_by_pk') and callable(getattr(self.game_manager.db_service, 'get_entity_by_pk')):
+                    guild_config_result = await self.game_manager.db_service.get_entity_by_pk(self.game_manager.db_service.models.GuildConfig, guild_id)
+
+                 if guild_config_result:
+                    guild_config = guild_config_result
                     notification_channel_id_val = getattr(guild_config, "notification_channel_id", None) or \
                                                 getattr(guild_config, "master_channel_id", None) or \
                                                 getattr(guild_config, "system_channel_id", None)
                     if notification_channel_id_val:
                         msg = f"🔔 New AI Content (Type: '{request_type.value}', ID: `{pending_generation_record.id}`) is awaiting moderation."
                         try:
-                            await self.game_manager.notification_service.send_notification(int(notification_channel_id_val), msg) # type: ignore[attr-defined]
+                            await self.game_manager.notification_service.send_notification(int(notification_channel_id_val), msg)
                         except ValueError:
                             logger.error(f"Invalid notification_channel_id format: {notification_channel_id_val}")
-        else: # pending_generation_record might be None if creation failed
+                        except Exception as e_notify:
+                            logger.error(f"Failed to send notification for PG {pending_generation_record.id}: {e_notify}")
+            elif current_status == PendingStatus.PENDING_MODERATION:
+                 logger.warning(f"NotificationService or its send_notification method not available for PG {pending_generation_record.id}.")
+
+        else:
             logger.error(f"AIGenerationManager: PendingGeneration record creation returned None or no ID for '{request_type.value}' in guild {guild_id}.")
             return None
 
@@ -189,57 +208,95 @@ class AIGenerationManager:
 
                 if request_type == GenerationType.LOCATION_DETAILS:
                     ai_location_data: Optional[GeneratedLocationContent] = None
-                    try: ai_location_data = GeneratedLocationContent(**parsed_data) # type: ignore
-                    except Exception as e: logger.error(f"Failed to parse LOCATION_DETAILS for {record.id}: {e}", exc_info=True); await self.pending_generation_crud.update_pending_generation_status(session, record.id, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, f"Parse AI data error: {str(e)[:100]}"); return False # type: ignore[arg-type]
+                    if isinstance(parsed_data, dict):
+                        try:
+                            ai_location_data = GeneratedLocationContent(**parsed_data)
+                        except Exception as e:
+                            logger.error(f"Failed to parse LOCATION_DETAILS for {record.id}: {e}", exc_info=True)
+                            await self.pending_generation_crud.update_pending_generation_status(session, record.id, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, f"Parse AI data error: {str(e)[:100]}"); return False # type: ignore[arg-type]
+                    else:
+                        logger.error(f"parsed_data for LOCATION_DETAILS {record.id} is not a dict.")
+                        await self.pending_generation_crud.update_pending_generation_status(session, record.id, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, "Parsed data not a dict."); return False # type: ignore[arg-type]
 
-                    if ai_location_data:
+
+                    if ai_location_data: # ai_location_data is now confirmed to be GeneratedLocationContent or None
                         loc_to_persist: Optional[Location] = None; existing_loc: Optional[Location] = None
-                        if ai_location_data.static_id:
+                        if ai_location_data.static_id: # static_id is Optional[str]
                             stmt = select(Location).filter_by(guild_id=guild_id, static_id=ai_location_data.static_id)
                             existing_loc = (await session.execute(stmt)).scalars().first()
 
-                        if existing_loc: loc_to_persist = existing_loc; logger.info(f"Updating existing location {loc_to_persist.id} with static_id {ai_location_data.static_id}")
-                        else: loc_to_persist = Location(guild_id=guild_id, id=str(uuid.uuid4()), static_id=ai_location_data.static_id if ai_location_data.static_id else None); logger.info(f"Creating new location {loc_to_persist.id}") # type: ignore
+                        if existing_loc:
+                            loc_to_persist = existing_loc
+                            logger.info(f"Updating existing location {loc_to_persist.id} with static_id {ai_location_data.static_id}")
+                        else:
+                            loc_to_persist = Location(guild_id=guild_id, id=str(uuid.uuid4()), static_id=ai_location_data.static_id if ai_location_data.static_id else None)
+                            logger.info(f"Creating new location {loc_to_persist.id}")
 
-                        loc_to_persist.name_i18n = ai_location_data.name_i18n # type: ignore
-                        loc_to_persist.descriptions_i18n = ai_location_data.atmospheric_description_i18n # type: ignore
-                        loc_to_persist.template_id = ai_location_data.template_id # type: ignore
+                        loc_to_persist.name_i18n = ai_location_data.name_i18n
+                        loc_to_persist.descriptions_i18n = ai_location_data.atmospheric_description_i18n
+                        loc_to_persist.template_id = ai_location_data.template_id
 
-                        type_key = ai_location_data.location_type_key
+                        type_key = ai_location_data.location_type_key or "unknown" # Ensure type_key is not None
                         type_i18n_map = await self.game_manager.get_location_type_i18n_map(guild_id, type_key) if self.game_manager else {}
-                        loc_to_persist.type_i18n = type_i18n_map if type_i18n_map and isinstance(type_i18n_map, dict) else {"en": type_key.replace("_", " ").title()} # type: ignore
+                        loc_to_persist.type_i18n = type_i18n_map if type_i18n_map and isinstance(type_i18n_map, dict) else {"en": type_key.replace("_", " ").title()}
 
-                        loc_to_persist.coordinates = ai_location_data.coordinates_json # type: ignore
-                        loc_to_persist.details_i18n = ai_location_data.generated_details_json # type: ignore
-                        loc_to_persist.ai_metadata_json = ai_location_data.ai_metadata_json # type: ignore
-                        loc_to_persist.points_of_interest_json = [poi.model_dump() for poi in ai_location_data.points_of_interest] if ai_location_data.points_of_interest else [] # type: ignore
-                        loc_to_persist.neighbor_locations_json = [conn.model_dump() for conn in ai_location_data.connections] if ai_location_data.connections else [] # type: ignore
+                        loc_to_persist.coordinates = ai_location_data.coordinates_json
+                        loc_to_persist.details_i18n = ai_location_data.generated_details_json
+                        loc_to_persist.ai_metadata_json = ai_location_data.ai_metadata_json
+                        loc_to_persist.points_of_interest_json = [poi.model_dump() for poi in ai_location_data.points_of_interest] if ai_location_data.points_of_interest else []
+                        loc_to_persist.neighbor_locations_json = [conn.model_dump() for conn in ai_location_data.connections] if ai_location_data.connections else []
+
+                        # Mark fields that are JSON for SQLAlchemy to detect changes if assigned in-place
+                        if loc_to_persist.name_i18n is not None: flag_modified(loc_to_persist, "name_i18n")
+                        if loc_to_persist.descriptions_i18n is not None: flag_modified(loc_to_persist, "descriptions_i18n")
+                        if loc_to_persist.type_i18n is not None: flag_modified(loc_to_persist, "type_i18n")
+                        if loc_to_persist.coordinates is not None: flag_modified(loc_to_persist, "coordinates")
+                        if loc_to_persist.details_i18n is not None: flag_modified(loc_to_persist, "details_i18n")
+                        if loc_to_persist.ai_metadata_json is not None: flag_modified(loc_to_persist, "ai_metadata_json")
+                        if loc_to_persist.points_of_interest_json is not None: flag_modified(loc_to_persist, "points_of_interest_json")
+                        if loc_to_persist.neighbor_locations_json is not None: flag_modified(loc_to_persist, "neighbor_locations_json")
+
 
                         try:
-                            await session.merge(loc_to_persist); await session.flush(); record.entity_id = loc_to_persist.id; persisted_location_id = loc_to_persist.id; application_success = True
-                            logger.info(f"Merged location {persisted_location_id} for PG ID {record.id}.")
-                            # Simplified on_enter_location trigger
-                            if record.created_by_user_id and self.game_manager and self.game_manager.location_interaction_service and persisted_location_id:
-                                req_params = record.request_params_json if isinstance(record.request_params_json, dict) else {}
-                                trig_char_id = req_params.get("triggering_character_id")
-                                if trig_char_id: asyncio.create_task(self.game_manager.location_interaction_service.process_on_enter_location_events(guild_id, str(trig_char_id), "Character", str(persisted_location_id)))
-                        except Exception as e_merge: logger.error(f"Failed to merge location {loc_to_persist.id}: {e_merge}", exc_info=True); application_success = False; await self.pending_generation_crud.update_pending_generation_status(session, record.id, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, f"DB merge fail: {str(e_merge)[:100]}"); return False # type: ignore[arg-type]
+                            session.add(loc_to_persist) # Use add for both new and existing (merged by PK)
+                            await session.flush()
+                            if loc_to_persist.id is not None: # Check after flush
+                                record.entity_id = str(loc_to_persist.id)
+                                persisted_location_id = str(loc_to_persist.id)
+                                application_success = True
+                                logger.info(f"Merged location {persisted_location_id} for PG ID {record.id}.")
+                                # Simplified on_enter_location trigger
+                                if record.created_by_user_id and self.game_manager and self.game_manager.location_interaction_service and persisted_location_id:
+                                    req_params = record.request_params_json if isinstance(record.request_params_json, dict) else {}
+                                    trig_char_id = req_params.get("triggering_character_id")
+                                    if trig_char_id and isinstance(trig_char_id, str): # Ensure trig_char_id is str
+                                        import asyncio # Ensure asyncio is imported
+                                        asyncio.create_task(self.game_manager.location_interaction_service.process_on_enter_location_events(guild_id, trig_char_id, "Character", persisted_location_id))
+                            else: # Should not happen if flush was successful
+                                logger.error(f"Location ID is None after flush for PG ID {record.id}.")
+                                application_success = False
+
+                        except Exception as e_merge:
+                            logger.error(f"Failed to merge location {getattr(loc_to_persist, 'id', 'UNKNOWN_ID_ON_ERROR')}: {e_merge}", exc_info=True)
+                            application_success = False
+                            await self.pending_generation_crud.update_pending_generation_status(session, record.id, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, f"DB merge fail: {str(e_merge)[:100]}"); return False # type: ignore[arg-type]
 
                         if application_success and persisted_location_id and ai_location_data.connections: # Update Neighbors
-                            new_loc_name_i18n = loc_to_persist.name_i18n or {"en": "Newly discovered area"} # type: ignore
+                            new_loc_name_i18n = loc_to_persist.name_i18n or {"en": "Newly discovered area"}
                             for conn_data in ai_location_data.connections:
                                 if not isinstance(conn_data, ConnectionModel): continue
                                 neighbor_id = conn_data.to_location_id
                                 if not neighbor_id or neighbor_id == persisted_location_id: continue
                                 neighbor_loc = await session.get(Location, neighbor_id)
                                 if neighbor_loc and neighbor_loc.guild_id == guild_id:
-                                    if neighbor_loc.neighbor_locations_json is None: neighbor_loc.neighbor_locations_json = [] # type: ignore
-                                    if not any(c.get("to_location_id") == persisted_location_id for c in neighbor_loc.neighbor_locations_json): # type: ignore
+                                    current_neighbors = neighbor_loc.neighbor_locations_json if isinstance(neighbor_loc.neighbor_locations_json, list) else []
+                                    if not any(c.get("to_location_id") == persisted_location_id for c in current_neighbors):
                                         recip_dir_i18n = {lang: f"Towards {new_loc_name_i18n.get(lang, 'area')}" for lang in (conn_data.direction_i18n or {}).keys()} or {"en": f"Towards {new_loc_name_i18n.get('en','area')}"}
-                                        neighbor_loc.neighbor_locations_json.append({"to_location_id": persisted_location_id, "direction_i18n": recip_dir_i18n, "path_description_i18n": conn_data.description_i18n or {}}) # type: ignore
+                                        current_neighbors.append({"to_location_id": persisted_location_id, "direction_i18n": recip_dir_i18n, "path_description_i18n": conn_data.description_i18n or {}})
+                                        neighbor_loc.neighbor_locations_json = current_neighbors # Re-assign to trigger modification tracking
                                         flag_modified(neighbor_loc, "neighbor_locations_json"); logger.info(f"Added reciprocal link from {neighbor_id} to {persisted_location_id}.")
 
-                        if application_success and persisted_location_id and ai_location_data.initial_npcs_json and self.game_manager and self.game_manager.npc_manager : # Spawn NPCs
+                        if application_success and persisted_location_id and ai_location_data.initial_npcs_json and self.game_manager and self.game_manager.npc_manager and hasattr(self.game_manager.npc_manager, 'spawn_npc_in_location') and callable(getattr(self.game_manager.npc_manager, 'spawn_npc_in_location')): # Spawn NPCs
                             new_npc_ids = []
                             for npc_prof_data in ai_location_data.initial_npcs_json:
                                 if not isinstance(npc_prof_data, GeneratedNpcProfile): continue
@@ -247,35 +304,39 @@ class AIGenerationManager:
                                 if npc_prof_data.faction_affiliations: npc_state['faction_id'] = npc_prof_data.faction_affiliations[0].faction_id; npc_state['faction_details_list'] = [aff.model_dump() for aff in npc_prof_data.faction_affiliations]
                                 npc_state.pop('faction_affiliations', None)
                                 created_npc = await self.game_manager.npc_manager.spawn_npc_in_location(guild_id, persisted_location_id, npc_prof_data.template_id, False, npc_state, session)
-                                if created_npc: new_npc_ids.append(created_npc.id)
+                                if created_npc and created_npc.id: new_npc_ids.append(str(created_npc.id))
                                 else: application_success = False; logger.error(f"Failed to spawn NPC {npc_prof_data.template_id} for PG {record.id}."); await self.pending_generation_crud.update_pending_generation_status(session, record.id, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, "NPC spawn fail."); break # type: ignore[arg-type]
                             if application_success and new_npc_ids:
                                 loc_for_npc_update = await session.get(Location, persisted_location_id)
                                 if loc_for_npc_update:
-                                    if loc_for_npc_update.npc_ids is None: loc_for_npc_update.npc_ids = [] # type: ignore
+                                    current_npc_ids = loc_for_npc_update.npc_ids if isinstance(loc_for_npc_update.npc_ids, list) else []
                                     for nid in new_npc_ids:
-                                        if nid not in loc_for_npc_update.npc_ids: loc_for_npc_update.npc_ids.append(nid) # type: ignore
+                                        if nid not in current_npc_ids: current_npc_ids.append(nid)
+                                    loc_for_npc_update.npc_ids = current_npc_ids
                                     flag_modified(loc_for_npc_update, "npc_ids")
-                                elif not loc_for_npc_update : application_success = False; logger.critical(f"Location {persisted_location_id} vanished before NPC ID update for PG {record.id}.") # type: ignore[truthy-bool]
+                                elif not loc_for_npc_update : application_success = False; logger.critical(f"Location {persisted_location_id} vanished before NPC ID update for PG {record.id}.")
 
-                        if application_success and persisted_location_id and ai_location_data.initial_items_json and self.game_manager and self.game_manager.item_manager: # Add Items
+                        if application_success and persisted_location_id and ai_location_data.initial_items_json and self.game_manager and self.game_manager.item_manager and hasattr(self.game_manager.item_manager, 'create_item_instance') and callable(getattr(self.game_manager.item_manager, 'create_item_instance')): # Add Items
                             loc_for_item_updates = await session.get(Location, persisted_location_id)
                             if not loc_for_item_updates: application_success = False; logger.critical(f"Location {persisted_location_id} vanished for item add for PG {record.id}.")
                             else:
                                 items_changed_loc = False
                                 for item_entry in ai_location_data.initial_items_json:
-                                    item_tpl_id = item_entry.get("template_id"); item_qty = item_entry.get("quantity",1); poi_id = item_entry.get("target_poi_id")
+                                    item_tpl_id = item_entry.get("template_id"); item_qty = item_entry.get("quantity",1.0); poi_id = item_entry.get("target_poi_id")
                                     if not item_tpl_id: continue
                                     created_item = await self.game_manager.item_manager.create_item_instance(guild_id, item_tpl_id, item_qty, persisted_location_id, "location", persisted_location_id, {"is_in_poi_id": poi_id} if poi_id else None, session)
-                                    if created_item and created_item.id and poi_id and loc_for_item_updates.points_of_interest_json is not None:
-                                        for poi_dict in loc_for_item_updates.points_of_interest_json: # type: ignore
-                                            if poi_dict.get("poi_id") == poi_id: poi_dict.setdefault("contained_item_instance_ids", []).append(created_item.id); items_changed_loc = True; break
-                                    elif created_item: items_changed_loc = True # General location item created
+                                    if created_item and created_item.id and poi_id and isinstance(loc_for_item_updates.points_of_interest_json, list):
+                                        for poi_dict in loc_for_item_updates.points_of_interest_json:
+                                            if isinstance(poi_dict, dict) and poi_dict.get("poi_id") == poi_id:
+                                                poi_dict.setdefault("contained_item_instance_ids", []).append(str(created_item.id))
+                                                items_changed_loc = True; break
+                                    elif created_item: items_changed_loc = True
                                     else: application_success = False; logger.error(f"Failed item spawn {item_tpl_id} for PG {record.id}."); await self.pending_generation_crud.update_pending_generation_status(session, record.id, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id,"Item spawn fail."); break # type: ignore[arg-type]
-                                if items_changed_loc and loc_for_item_updates: flag_modified(loc_for_item_updates, "points_of_interest_json"); flag_modified(loc_for_item_updates, "inventory")
-                    else: application_success = False; logger.error(f"ai_location_data was None for PG {record.id}.")
+                                if items_changed_loc and loc_for_item_updates:
+                                    if loc_for_item_updates.points_of_interest_json is not None: flag_modified(loc_for_item_updates, "points_of_interest_json")
+                                    if loc_for_item_updates.inventory is not None: flag_modified(loc_for_item_updates, "inventory") # Assuming items might also go to general location inventory
+                    else: application_success = False; logger.error(f"ai_location_data was None for PG {record.id} after parsing.")
 
-                # ... (elif for NPC_PROFILE, QUEST_FULL, ITEM_PROFILE - simplified as placeholders) ...
                 elif request_type in [GenerationType.NPC_PROFILE, GenerationType.QUEST_FULL, GenerationType.ITEM_PROFILE]:
                     logger.info(f"AIGenerationManager: [SIMULATING PERSISTENCE] for {request_type.value} - PG ID {record.id}")
                     application_success = True # Placeholder
