@@ -783,4 +783,24 @@ class GameManager:
         process_approved_method = getattr(self.ai_generation_service, 'process_approved_generation')
         return await process_approved_method(pending_gen_id=pending_gen_id, guild_id=guild_id, moderator_user_id="SYSTEM_AUTO_APPROVE")
 
+    async def is_user_master(self, guild_id: str, user_id: int) -> bool:
+        """Checks if a user is a master for the given guild."""
+        # This is a placeholder implementation.
+        # In a real scenario, this would likely check against a list of master user IDs
+        # stored in GuildConfig or another configuration mechanism.
+        # For now, let's assume it checks a simple rule or a hardcoded list for testing.
+        # It might also involve checking roles if masters are defined by a Discord role.
+
+        # Example: Check against a rule in RulesConfig
+        master_user_ids_raw = await self.get_rule(guild_id, "master_user_ids", default=[])
+        master_user_ids = [str(uid) for uid in master_user_ids_raw] if isinstance(master_user_ids_raw, list) else []
+
+        if str(user_id) in master_user_ids:
+            return True
+
+        # Fallback or additional checks (e.g., admin roles) could go here.
+        # For simplicity, this example only checks the list.
+        return False
+
+
 # logger.debug("DEBUG: Finished loading game_manager.py from: %s", __file__) # Debug log can be noisy
