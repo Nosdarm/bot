@@ -1,0 +1,11 @@
+{
+  "pythonVersion": "3.9",
+  "pythonPlatform": "Linux",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "pythonPath": "/home/jules/.cache/pypoetry/virtualenvs/text-rpg-bot-backend-9TtSrW0h-py3.12/bin/python",
+      "extraPaths": []
+    }
+  ]
+}
