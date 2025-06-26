@@ -484,3 +484,45 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **NLU Integration:** Improved NLU entity extraction, with checks for entity existence and safe access to `id` and `name` from NLU results.
     - **Type Safety & Data Handling:** Ensured IDs are strings, quantities are floats. Initialized `inventory_list_data` to `[]` on parse failure. Ensured `CoreGameRulesConfig` from `rule_engine.rules_config_data` (after checks) is passed.
     - **Error Messages:** Used `.get()` with defaults for safer access to messages from command results.
+
+## Pyright Error Fixing Phase (Batch 22 - GameManager, PartyManager Tests, TurnProcessingService Tests)
+- **Focus:** Addressing a large batch of ~220 errors across `bot/game/managers/game_manager.py` (75 errors), `tests/game/managers/test_party_manager.py` (73 errors), and `tests/game/test_turn_processing_service.py` (70 errors).
+- **Strategy:** Overwrote files with corrected content due to persistent issues with applying targeted diffs for `game_manager.py`.
+- **General Fixes Applied Across Files:**
+    - **Strict `None` Checks & Safe Access:** Consistently used `getattr` or `hasattr` and `callable` checks before attribute/method access on potentially `None` objects or dynamic/mocked objects.
+    - **Async/Await:** Ensured all async calls are `await`ed.
+    - **Type Hinting & Casting:** Added/corrected `Optional` type hints. Used `cast()` after `None` checks to provide Pyright with precise types. Corrected type hints for fixtures and mock specs.
+    - **Mocking (Tests):** Used `AsyncMock` for async methods/returns. Corrected assertion methods (e.g., `assert_awaited_with`, `assert_not_awaited`). Replaced `pytest.детей.ANY` with `unittest.mock.ANY`. Ensured mock attributes that are callable are themselves `MagicMock` or `AsyncMock`.
+    - **Initialization & Dependencies (`GameManager`):** Improved manager initialization order, ensuring dependencies receive initialized instances. Raised `RuntimeError` for critical missing dependencies.
+    - **SQLAlchemy & Pydantic:** Compared SQLAlchemy column objects with `None` to avoid `Invalid conditional operand`. Ensured Pydantic V2 `model_dump()` usage.
+    - **Session Management (`GameManager`):** Ensured DB operations use `async with db_service.get_session()`.
+    - **Logging:** Replaced `print()` with `logging` and used `logging.exception()` for errors.
+    - **Import Management:** Moved imports out of `TYPE_CHECKING` if used at runtime.
+- **Specific File Notes:**
+    - **`bot/game/managers/game_manager.py` (75 errors):**
+        - Added comprehensive `None` checks for all manager attributes before they are passed to other constructors or used.
+        - Used `cast()` extensively after `None` checks to satisfy type checker for manager instance arguments.
+        - Ensured methods like `get_rule`, `get_player_by_discord_id`, `get_entities_by_conditions`, `get_entity_by_pk` on `DBService` or other managers are safely accessed via `getattr` or after `hasattr` checks.
+        - Corrected `get_player_by_discord_id` return type handling.
+        - Ensured `_get_discord_send_callback` correctly checks `isinstance(channel, discord.abc.Messageable)`.
+    - **`tests/game/managers/test_party_manager.py` (73 errors):**
+        - Corrected internal state attribute types (e.g., `_deleted_parties` to `Set[str]`).
+        - Used `AsyncMock` for `mark_party_dirty` and other async methods.
+        - Ensured `uuid.uuid4()` is used to generate actual UUIDs for party IDs in tests.
+        - Corrected parameter names in `create_party` and other method calls.
+        - Ensured character mocks used `GameCharacterModel` spec and had awaitable attributes if necessary.
+    - **`tests/game/test_turn_processing_service.py` (70 errors):**
+        - Corrected fixture `mock_game_mngr_for_tps` to properly mock `action_scheduler` and its methods.
+        - Ensured all managers passed to `TurnProcessingService` constructor in its fixture are cast to their expected non-optional types after being retrieved from the `MagicMock` game manager.
+        - Used `spec=GameCharacterModel` for character mocks.
+        - Ensured async methods on mocks like `get_all_characters`, `plan_action`, `process_action_from_request`, `process_action` were `AsyncMock`.
+        - Corrected assertions for `collected_actions_json` and `current_game_status` on character mocks after actions.
+
+## Pyright Error Fixing Phase (Batch 23 - Pyright Installation & Summary Generation)
+- **Focus:** Installing Pyright and generating an updated error summary.
+- **Actions:**
+    - Attempted to run `poetry run pyright --outputformat=json > pyright_summary_new.txt`. Command failed as `pyright` was not found.
+    - Installed `pyright` as a dev dependency using `poetry add -G dev pyright`. This installed `pyright` and its dependencies.
+    - Re-attempted `poetry run pyright --outputformat=json > pyright_summary_new.txt`. This failed due to an incorrect option `--outputformat=json`.
+    - Successfully generated `pyright_summary_new.txt` by running `poetry run pyright > pyright_summary_new.txt`.
+- **Next Step:** Analyze `pyright_summary_new.txt` and proceed with fixing the next batch of errors.

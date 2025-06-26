@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.game.managers.game_manager import GameManager
     from bot.game.managers.character_manager import CharacterManager
-    from bot.game.managers.party_manager import PartyManager
+    # from bot.game.managers.party_manager import PartyManager # party_manager not used directly in this file
     from bot.game.managers.location_manager import LocationManager
     from bot.game.managers.npc_manager import NpcManager
     from bot.game.managers.item_manager import ItemManager
@@ -20,14 +20,19 @@ if TYPE_CHECKING:
     from bot.game.managers.quest_manager import QuestManager
     from bot.game.managers.game_log_manager import GameLogManager
     from bot.game.rules.rule_engine import RuleEngine
-    from bot.api.schemas.rule_config_schemas import RuleConfigData
-    import datetime
-    from sqlalchemy.ext.asyncio import AsyncSession
-    from bot.database.models.pending_generation import PendingGeneration, PendingStatus
-    from bot.ai.ai_response_validator import parse_and_validate_ai_response
-    from bot.ai.ai_data_models import GenerationType
+    from bot.api.schemas.rule_config_schemas import RuleConfigData # Keep for RuleConfigData().model_dump()
+    import datetime # Used for datetime.datetime.now(datetime.timezone.utc)
+    from sqlalchemy.ext.asyncio import AsyncSession # Used for type hinting sessions
+    # These are moved out of TYPE_CHECKING as they are used at runtime
+    # from bot.database.models.pending_generation import PendingGeneration, PendingStatus
+    # from bot.ai.ai_response_validator import parse_and_validate_ai_response
+    # from bot.ai.ai_data_models import GenerationType
 
+from bot.database.models.pending_generation import PendingGeneration, PendingStatus
+from bot.ai.ai_response_validator import parse_and_validate_ai_response
+from bot.ai.ai_data_models import GenerationType
 from bot.utils.decorators import is_master_role
+
 
 class GMAppCog(commands.Cog, name="GM App Commands"):
     master_group = app_commands.Group(name="master", description="Команды для Мастера Игры.", guild_only=True)
@@ -69,13 +74,14 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             try:
                 # Ensure the method exists and is callable before trying to await it
                 if hasattr(game_mngr, 'trigger_manual_simulation_tick') and callable(getattr(game_mngr, 'trigger_manual_simulation_tick')):
-                    await game_mngr.trigger_manual_simulation_tick(server_id=str(interaction.guild_id)) # type: ignore [attr-defined]
+                    trigger_method = getattr(game_mngr, 'trigger_manual_simulation_tick')
+                    await trigger_method(server_id=str(interaction.guild_id))
                     await interaction.followup.send("**Мастер:** Шаг симуляции мира (ручной) завершен!")
                 else:
                     logging.warning("GameManager does not have a callable 'trigger_manual_simulation_tick' method.")
                     await interaction.followup.send("**Мастер:** Функция симуляции недоступна.", ephemeral=True)
             except Exception as e:
-                logging.error(f"Error in cmd_gm_simulate (Cog): {e}", exc_info=True)
+                logging.exception(f"Error in cmd_gm_simulate (Cog) for guild {interaction.guild_id}") # Use logging.exception
                 await interaction.followup.send(f"**Мастер:** Ошибка при симуляции: {e}", ephemeral=True)
         else:
             await interaction.followup.send("**Мастер:** GameManager недоступен.", ephemeral=True)
@@ -141,20 +147,24 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
         try:
             removed_char_id = None
             if hasattr(game_mngr.character_manager, 'remove_character') and callable(getattr(game_mngr.character_manager, 'remove_character')):
-                removed_char_id = await game_mngr.character_manager.remove_character(character_id, guild_id_str) # type: ignore [attr-defined]
+                remove_method = getattr(game_mngr.character_manager, 'remove_character')
+                removed_char_id = await remove_method(character_id, guild_id_str)
             else:
                 logging.warning(f"CharacterManager for guild {guild_id_str} does not have a callable 'remove_character' method.")
+                removed_char_id = None # Ensure removed_char_id is defined
 
-            if removed_char_id and game_mngr.game_log_manager and hasattr(game_mngr.game_log_manager, 'log_event') and callable(getattr(game_mngr.game_log_manager, 'log_event')):
-                log_d = {"char_id":character_id,"deleter_gm_id":str(interaction.user.id),"deleter_gm_name":interaction.user.name, "desc_msg":f"GM {interaction.user.name} initiated deletion for char ID {character_id}."}
-                await game_mngr.game_log_manager.log_event(guild_id_str,"gm_action_delete_character",details=log_d)
-                await interaction.followup.send(f"**Мастер:** Персонаж '{removed_char_id}' помечен для удаления.", ephemeral=True)
-            elif removed_char_id:
-                 await interaction.followup.send(f"**Мастер:** Персонаж '{removed_char_id}' помечен для удаления (ошибка логирования).", ephemeral=True)
+            if removed_char_id:
+                if game_mngr.game_log_manager and hasattr(game_mngr.game_log_manager, 'log_event') and callable(getattr(game_mngr.game_log_manager, 'log_event')):
+                    log_d = {"char_id":character_id,"deleter_gm_id":str(interaction.user.id),"deleter_gm_name":interaction.user.name, "desc_msg":f"GM {interaction.user.name} initiated deletion for char ID {character_id}."}
+                    await game_mngr.game_log_manager.log_event(guild_id_str,"gm_action_delete_character",details=log_d)
+                    await interaction.followup.send(f"**Мастер:** Персонаж '{removed_char_id}' помечен для удаления.", ephemeral=True)
+                else:
+                    logging.warning(f"GameLogManager unavailable or log_event missing for character deletion log in guild {guild_id_str}.")
+                    await interaction.followup.send(f"**Мастер:** Персонаж '{removed_char_id}' помечен для удаления (ошибка логирования).", ephemeral=True)
             else:
-                await interaction.followup.send(f"**Мастер:** Персонаж '{character_id}' не найден/не удален.", ephemeral=True)
+                await interaction.followup.send(f"**Мастер:** Персонаж '{character_id}' не найден/не удален, или метод удаления недоступен.", ephemeral=True)
         except Exception as e:
-            logging.error(f"Error in cmd_gm_delete_character: {e}", exc_info=True)
+            logging.exception(f"Error in cmd_gm_delete_character for character {character_id} in guild {guild_id_str}")
             await interaction.followup.send(f"**Мастер:** Ошибка: {e}", ephemeral=True)
 
     @app_commands.command(name="master_undo", description="ГМ: Отменить последнее событие для игрока или партии.")
@@ -283,7 +293,8 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             default_lang = "en"
 
             if hasattr(game_mngr, "get_default_bot_language") and callable(getattr(game_mngr, "get_default_bot_language")):
-                lang_result = await game_mngr.get_default_bot_language(guild_id) # type: ignore[attr-defined]
+                get_lang_method = getattr(game_mngr, "get_default_bot_language")
+                lang_result = await get_lang_method(guild_id)
                 if lang_result: default_lang = lang_result
 
             lang_for_log = str(interaction.locale or default_lang)
@@ -315,12 +326,14 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 processed_value = current_i18n_dict
 
                 if hasattr(game_mngr.npc_manager, 'update_npc_field') and callable(getattr(game_mngr.npc_manager, 'update_npc_field')):
-                    update_successful = await game_mngr.npc_manager.update_npc_field(guild_id, npc_id, field_name, processed_value) # type: ignore [attr-defined]
+                    update_field_method = getattr(game_mngr.npc_manager, 'update_npc_field')
+                    update_successful = await update_field_method(guild_id, npc_id, field_name, processed_value)
                 else:
                     logging.warning(f"NpcManager for guild {guild_id} does not have a callable 'update_npc_field' method. Falling back to setattr.")
                     setattr(npc, field_name, processed_value)
                     if hasattr(game_mngr.npc_manager, 'mark_npc_dirty') and callable(getattr(game_mngr.npc_manager, 'mark_npc_dirty')):
-                        await game_mngr.npc_manager.mark_npc_dirty(guild_id, npc_id) # type: ignore [attr-defined]
+                        mark_dirty_method = getattr(game_mngr.npc_manager, 'mark_npc_dirty')
+                        await mark_dirty_method(guild_id, npc_id)
                     update_successful = True
                 log_value = f"{value} (lang: {lang_code})"
 
@@ -346,13 +359,15 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                         except ValueError: processed_value = value
 
                 if hasattr(game_mngr.npc_manager, 'update_npc_stats') and callable(getattr(game_mngr.npc_manager, 'update_npc_stats')):
-                    update_successful = await game_mngr.npc_manager.update_npc_stats(guild_id, npc_id, {stat_key: processed_value}) # type: ignore [attr-defined]
+                    update_stats_method = getattr(game_mngr.npc_manager, 'update_npc_stats')
+                    update_successful = await update_stats_method(guild_id, npc_id, {stat_key: processed_value})
                 else:
                     logging.warning(f"NpcManager for guild {guild_id} does not have a callable 'update_npc_stats' method. Falling back to direct modification.")
                     current_stats[stat_key] = processed_value
                     setattr(npc, 'stats', current_stats)
                     if hasattr(game_mngr.npc_manager, 'mark_npc_dirty') and callable(getattr(game_mngr.npc_manager, 'mark_npc_dirty')):
-                        await game_mngr.npc_manager.mark_npc_dirty(guild_id, npc_id) # type: ignore [attr-defined]
+                        mark_dirty_method = getattr(game_mngr.npc_manager, 'mark_npc_dirty')
+                        await mark_dirty_method(guild_id, npc_id)
                     update_successful = True
                 log_value = str(processed_value)
 
@@ -372,12 +387,14 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                         return
 
                 if hasattr(game_mngr.npc_manager, 'update_npc_field') and callable(getattr(game_mngr.npc_manager, 'update_npc_field')):
-                    update_successful = await game_mngr.npc_manager.update_npc_field(guild_id, npc_id, attribute, processed_value) # type: ignore [attr-defined]
+                    update_field_method = getattr(game_mngr.npc_manager, 'update_npc_field')
+                    update_successful = await update_field_method(guild_id, npc_id, attribute, processed_value)
                 else:
                     logging.warning(f"NpcManager for guild {guild_id} does not have a callable 'update_npc_field' method. Falling back to setattr for attribute {attribute}.")
                     setattr(npc, attribute, processed_value)
                     if hasattr(game_mngr.npc_manager, 'mark_npc_dirty') and callable(getattr(game_mngr.npc_manager, 'mark_npc_dirty')):
-                        await game_mngr.npc_manager.mark_npc_dirty(guild_id, npc_id) # type: ignore [attr-defined]
+                        mark_dirty_method = getattr(game_mngr.npc_manager, 'mark_npc_dirty')
+                        await mark_dirty_method(guild_id, npc_id)
                     update_successful = True
                 log_value = str(processed_value)
             else:
@@ -386,7 +403,8 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
             if update_successful:
                 if attribute.startswith("stats.") and hasattr(game_mngr.npc_manager, 'trigger_stats_recalculation') and callable(getattr(game_mngr.npc_manager, 'trigger_stats_recalculation')):
-                    await game_mngr.npc_manager.trigger_stats_recalculation(guild_id, npc_id) # type: ignore [attr-defined]
+                    trigger_recalc_method = getattr(game_mngr.npc_manager, 'trigger_stats_recalculation')
+                    await trigger_recalc_method(guild_id, npc_id)
 
                 log_details = {
                     "npc_id": npc_id, "npc_name": npc_name_for_log,
@@ -443,11 +461,12 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 i18n_d[code]=value
                 if code != 'en' and 'en' not in i18n_d and value.strip(): i18n_d['en'] = value
                 if hasattr(gm.character_manager, 'save_character_field') and callable(getattr(gm.character_manager, 'save_character_field')):
-                    update_success = await gm.character_manager.save_character_field(gid, char_id_for_log, field, i18n_d) # type: ignore [attr-defined]
+                    save_field_method = getattr(gm.character_manager, 'save_character_field')
+                    update_success = await save_field_method(gid, char_id_for_log, field, i18n_d)
                 else:
                     logging.warning(f"CharacterManager for guild {gid} does not have a callable 'save_character_field' method. Falling back to setattr for {field}.")
                     setattr(char, field, i18n_d)
-                    update_success = True
+                    update_success = True # Assuming setattr is successful
                 processed_val = i18n_d
             elif attribute.startswith("stats.") or attribute in ["level","experience","unspent_xp","hp","max_health","is_alive","gold"]:
                 stat_key_for_update = attribute.split(".",1)[1] if attribute.startswith("stats.") else attribute
@@ -469,27 +488,35 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                     if processed_val == "INVALID_BOOL": await interaction.followup.send("**Мастер:** Неверное значение для 'is_alive'. True/False.",ephemeral=True); return
 
                 if hasattr(gm.character_manager, 'update_character_stats') and callable(getattr(gm.character_manager, 'update_character_stats')):
-                    update_success = await gm.character_manager.update_character_stats(gid, char_id_for_log, {stat_key_for_update:processed_val}) # type: ignore [attr-defined]
+                    update_stats_method = getattr(gm.character_manager, 'update_character_stats')
+                    update_success = await update_stats_method(gid, char_id_for_log, {stat_key_for_update:processed_val})
                 else:
-                    logging.warning(f"CharacterManager for guild {gid} does not have a callable 'update_character_stats' method. Falling back to setattr for {stat_key_for_update}.")
-                    setattr(char, stat_key_for_update, processed_val)
-                    update_success = True
+                    logging.warning(f"CharacterManager for guild {gid} does not have a callable 'update_character_stats' method. Falling back to direct modification.")
+                    if attribute.startswith("stats."):
+                        current_stats_dict[stat_key_for_update] = processed_val
+                        setattr(char, 'stats', current_stats_dict)
+                    else:
+                        setattr(char, stat_key_for_update, processed_val)
+                    update_success = True # Assuming direct modification is successful
             elif attribute == "character_class":
                 orig_val_str = str(getattr(char, "character_class", "N/A"))
                 processed_val = value
                 if hasattr(gm.character_manager, 'save_character_field') and callable(getattr(gm.character_manager, 'save_character_field')):
-                    update_success = await gm.character_manager.save_character_field(gid, char_id_for_log, "character_class", processed_val) # type: ignore [attr-defined]
+                    save_field_method = getattr(gm.character_manager, 'save_character_field')
+                    update_success = await save_field_method(gid, char_id_for_log, "character_class", processed_val)
                 else:
                     logging.warning(f"CharacterManager for guild {gid} does not have a callable 'save_character_field' method. Falling back to setattr for character_class.")
                     setattr(char, "character_class", processed_val)
                     update_success = True
                 if update_success and hasattr(gm.character_manager, "trigger_stats_recalculation") and callable(getattr(gm.character_manager, "trigger_stats_recalculation")):
-                    await gm.character_manager.trigger_stats_recalculation(gid, char_id_for_log) # type: ignore [attr-defined]
+                    trigger_recalc_method = getattr(gm.character_manager, "trigger_stats_recalculation")
+                    await trigger_recalc_method(gid, char_id_for_log)
             elif attribute == "selected_language":
                 orig_val_str = str(getattr(char, "selected_language", "N/A"))
                 processed_val = value
                 if hasattr(gm.character_manager, 'save_character_field') and callable(getattr(gm.character_manager, 'save_character_field')):
-                    update_success = await gm.character_manager.save_character_field(gid, char_id_for_log, "selected_language", processed_val) # type: ignore [attr-defined]
+                    save_field_method = getattr(gm.character_manager, 'save_character_field')
+                    update_success = await save_field_method(gid, char_id_for_log, "selected_language", processed_val)
                 else:
                     logging.warning(f"CharacterManager for guild {gid} does not have a callable 'save_character_field' method. Falling back to setattr for selected_language.")
                     setattr(char, "selected_language", processed_val)
@@ -498,7 +525,8 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 orig_val_str=str(getattr(char, 'location_id', "N/A"))
                 processed_val=value if value.lower() not in ["none", "null", ""] else None
                 if hasattr(gm.character_manager, 'update_character_location') and callable(getattr(gm.character_manager, 'update_character_location')):
-                    update_success = await gm.character_manager.update_character_location(char_id_for_log, processed_val, gid) # type: ignore [attr-defined]
+                    update_loc_method = getattr(gm.character_manager, 'update_character_location')
+                    update_success = await update_loc_method(char_id_for_log, processed_val, gid)
                 else:
                     logging.warning(f"CharacterManager for guild {gid} does not have a callable 'update_character_location' method. Falling back to setattr for location_id.")
                     setattr(char, "location_id", processed_val)
@@ -510,12 +538,13 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 char_discord_id = getattr(char, 'discord_user_id', None)
                 log_d={"char_id":char_id_for_log,"char_name":char_name_log,"discord_id":str(char_discord_id) if char_discord_id else None,"attr":attribute,"old":orig_val_str,"new":str(processed_val),"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
                 if gm.game_log_manager and hasattr(gm.game_log_manager, 'log_event') and callable(getattr(gm.game_log_manager, 'log_event')):
-                    await gm.game_log_manager.log_event(gid,"gm_edit_character",details=log_d)
+                    log_event_method = getattr(gm.game_log_manager, 'log_event')
+                    await log_event_method(gid,"gm_edit_character",details=log_d)
                 await interaction.followup.send(f"**Мастер:** Персонаж '{char_name_log}' (`{char_id_for_log}`) обновлен: '{attribute}': '{orig_val_str}' -> '{str(processed_val)}'.",ephemeral=True)
             else:
                 await interaction.followup.send(f"**Мастер:** Не удалось обновить '{attribute}' для '{char_name_log}'.", ephemeral=True)
         except Exception as e:
-            logging.error(f"Error editing character {character_id}: {e}", exc_info=True)
+            logging.exception(f"Error editing character {character_id} in guild {gid}")
             await interaction.followup.send(f"**Мастер:** Ошибка редактирования персонажа: {e}",ephemeral=True)
 
     @app_commands.command(name="master_edit_item", description="ГМ: Редактировать атрибут экземпляра предмета.")
@@ -729,28 +758,30 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
             if rule_engine_instance:
                 if hasattr(rule_engine_instance, 'get_raw_rules_config_dict_for_guild') and callable(getattr(rule_engine_instance, 'get_raw_rules_config_dict_for_guild')):
-                    cfg_dict = await rule_engine_instance.get_raw_rules_config_dict_for_guild(gid) # type: ignore [attr-defined]
+                    get_raw_method = getattr(rule_engine_instance, 'get_raw_rules_config_dict_for_guild')
+                    cfg_dict = await get_raw_method(gid)
 
                 if not cfg_dict:
                     if hasattr(rule_engine_instance, 'get_default_rules_config_data_model') and callable(getattr(rule_engine_instance, 'get_default_rules_config_data_model')):
-                         cfg_model_instance = rule_engine_instance.get_default_rules_config_data_model() # type: ignore [attr-defined]
+                         get_default_model_method = getattr(rule_engine_instance, 'get_default_rules_config_data_model')
+                         cfg_model_instance = get_default_model_method()
                          if hasattr(cfg_model_instance, 'model_dump') and callable(getattr(cfg_model_instance, 'model_dump')):
-                            cfg_dict = cfg_model_instance.model_dump()
+                            cfg_dict = cfg_model_instance.model_dump() # Pydantic V2, no args
                          new_cfg = True
                     else:
                         logging.warning(f"RuleEngine for guild {gid} missing 'get_default_rules_config_data_model'. Falling back to default RuleConfigData.")
-                        from bot.api.schemas.rule_config_schemas import RuleConfigData
-                        cfg_dict = RuleConfigData().model_dump()
+                        # from bot.api.schemas.rule_config_schemas import RuleConfigData # Already imported at top level if TYPE_CHECKING
+                        cfg_dict = RuleConfigData().model_dump() # Pydantic V2, no args
                         new_cfg = True
-            elif db_service.adapter:
+            elif db_service.adapter: # Fallback if rule_engine_instance is None or methods are missing
                 row = await db_service.adapter.fetchone("SELECT config_data FROM rules_config WHERE guild_id=$1",(gid,))
                 if row and row['config_data']:
                     cfg_dict=row['config_data'] if isinstance(row['config_data'],dict) else json.loads(str(row['config_data']))
                 else:
-                    from bot.api.schemas.rule_config_schemas import RuleConfigData
-                    new_cfg=True; cfg_dict=RuleConfigData().model_dump()
+                    # from bot.api.schemas.rule_config_schemas import RuleConfigData # Already imported
+                    new_cfg=True; cfg_dict=RuleConfigData().model_dump() # Pydantic V2, no args
 
-            if cfg_dict is None:
+            if cfg_dict is None: # Should not happen if logic above is correct, but defensive check
                 await interaction.followup.send("**Мастер:** Не удалось получить/создать конфигурацию правил.",ephemeral=True); return
 
             try: new_val_parsed=json.loads(value_json)
@@ -782,27 +813,31 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
             save_successful = False
             if rule_engine_instance and hasattr(rule_engine_instance, 'save_rules_config_for_guild_from_dict') and callable(getattr(rule_engine_instance, 'save_rules_config_for_guild_from_dict')):
-                save_successful = await rule_engine_instance.save_rules_config_for_guild_from_dict(gid, cfg_dict) # type: ignore [attr-defined]
+                save_config_method = getattr(rule_engine_instance, 'save_rules_config_for_guild_from_dict')
+                save_successful = await save_config_method(gid, cfg_dict)
             elif db_service.adapter:
                 logging.warning(f"RuleEngine for guild {gid} missing 'save_rules_config_for_guild_from_dict'. Falling back to direct DB write.")
                 if new_cfg: await db_service.adapter.execute("INSERT INTO rules_config (guild_id,config_data) VALUES ($1,$2)",(gid,json.dumps(cfg_dict)))
                 else: await db_service.adapter.execute("UPDATE rules_config SET config_data=$1 WHERE guild_id=$2",(json.dumps(cfg_dict),gid))
-                save_successful = True
+                save_successful = True # Assuming DB execute is successful
 
             if not save_successful:
                 await interaction.followup.send("**Мастер:** Не удалось сохранить конфигурацию правил.",ephemeral=True); return
 
 
             if rule_engine_instance and hasattr(rule_engine_instance,'load_rules_config_for_guild') and callable(getattr(rule_engine_instance, 'load_rules_config_for_guild')):
-                try: await rule_engine_instance.load_rules_config_for_guild(gid) # type: ignore [attr-defined]
-                except Exception as e_rl: logging.error(f"Error reloading RuleEngine for {gid}: {e_rl}", exc_info=True)
+                try:
+                    load_config_method = getattr(rule_engine_instance, 'load_rules_config_for_guild')
+                    await load_config_method(gid)
+                except Exception as e_rl: logging.exception(f"Error reloading RuleEngine for {gid} after setting rule {rule_key}")
 
             log_d={"gid":gid,"key":rule_key,"old":orig_val_str,"new_json":value_json,"new_val_processed":processed_val_for_dict,"gm_id":str(interaction.user.id),"gm_name":interaction.user.name}
             if hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
-                await game_log_manager.log_event(gid,"gm_set_rule",details=log_d)
+                log_event_method = getattr(game_log_manager, 'log_event')
+                await log_event_method(gid,"gm_set_rule",details=log_d)
             await interaction.followup.send(f"**Мастер:** Правило '{rule_key}' установлено на '{json.dumps(processed_val_for_dict)}'.",ephemeral=True)
         except Exception as e:
-            logging.error(f"Error setting rule {rule_key}: {e}", exc_info=True)
+            logging.exception(f"Error setting rule {rule_key} for guild {gid}")
             await interaction.followup.send(f"**Мастер:** Ошибка установки правила: {e}",ephemeral=True)
 
     @app_commands.command(name="run_simulation", description="ГМ: Запустить симуляцию (бой, квест, последствия).")
@@ -854,27 +889,31 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                     await interaction.followup.send("**Мастер:** QuestManager недоступен для симуляции квеста.",ephemeral=True); return
                 qdefs = {}
                 if hasattr(quest_manager, 'get_all_quest_definitions') and callable(getattr(quest_manager, 'get_all_quest_definitions')):
-                     qdefs = await quest_manager.get_all_quest_definitions(gid) # type: ignore [attr-defined]
+                     get_all_quests_method = getattr(quest_manager, 'get_all_quest_definitions')
+                     qdefs = await get_all_quests_method(gid)
                 if not qdefs and not params.get('quest_definitions_override'):
                     await interaction.followup.send("**Мастер:** Определения квестов не найдены.",ephemeral=True); return
                 sim=QuestSimulator(gid,character_manager,event_manager,rule_engine,params.get('quest_definitions_override',qdefs or {}))
                 report=await sim.simulate_full_quest(params.get('quest_id',''),params.get('character_ids',[]),params.get('rules_config_override_data'),params.get('max_stages',20))
-                if report: fmtd_report=fmt.format_quest_report(report,lang)
+                if report and isinstance(report, dict): fmtd_report=fmt.format_quest_report(report,lang)
             elif simulation_type.value=="action_consequence":
                 sim=ActionConsequenceModeler(gid,character_manager,npc_manager,rule_engine,relationship_manager,event_manager)
                 report_data_raw=await sim.analyze_action_consequences(params.get('action_description',{}),params.get('actor_id',''),params.get('actor_type',''),params.get('target_id'),params.get('target_type'),params.get('rules_config_override_data'))
-                report = report_data_raw # Store the raw report data
-                if report_data_raw: fmtd_report=fmt.format_action_consequence_report(report_data_raw if isinstance(report_data_raw, list) else [report_data_raw],lang) # type: ignore[arg-type]
+                report = report_data_raw # Store the raw report data. Can be Dict or List[Dict]
+                if report_data_raw:
+                    data_for_formatter = report_data_raw if isinstance(report_data_raw, list) else [report_data_raw]
+                    fmtd_report=fmt.format_action_consequence_report(data_for_formatter ,lang)
             else: await interaction.followup.send(f"**Мастер:** Неизвестный тип симуляции '{simulation_type.value}'.",ephemeral=True); return
 
-            if report:
+            if report is not None: # Check if report is not None, as it can be an empty list/dict which is valid
                 if hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
-                    await game_log_manager.log_event(gid,"gm_simulation_report",{"report_id":rep_id,"type":simulation_type.value,"params_json_snapshot":params_json,"report_data":report})
+                    log_event_method = getattr(game_log_manager, 'log_event')
+                    await log_event_method(gid,"gm_simulation_report",{"report_id":rep_id,"type":simulation_type.value,"params_json_snapshot":params_json,"report_data":report})
                 msg=f"Симуляция '{simulation_type.name}' завершена. ID Отчета: `{rep_id}`\n\n{fmtd_report}"
                 await interaction.followup.send(msg[:1950]+("..." if len(msg)>1950 else ""),ephemeral=True)
-            else: await interaction.followup.send(f"**Мастер:** Симуляция '{simulation_type.name}' не дала результатов.",ephemeral=True)
+            else: await interaction.followup.send(f"**Мастер:** Симуляция '{simulation_type.name}' не дала результатов или произошла ошибка формирования отчета.",ephemeral=True)
         except Exception as e:
-            logging.error(f"Error during simulation {simulation_type.name}: {e}", exc_info=True)
+            logging.exception(f"Error during simulation {simulation_type.name} for guild {gid}")
             await interaction.followup.send(f"**Мастер:** Ошибка симуляции '{simulation_type.name}': {e}",ephemeral=True)
 
     @app_commands.command(name="view_simulation_report",description="ГМ: Просмотреть отчет симуляции.")
@@ -1159,16 +1198,19 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
         if location_id is None:
             all_loc_data_any: List[Any] = []
             if hasattr(location_manager, 'get_all_location_instances') and callable(getattr(location_manager, 'get_all_location_instances')):
-                 all_loc_data_any = await location_manager.get_all_location_instances(gid) # type: ignore [attr-defined]
-            elif hasattr(location_manager, '_location_instances') and isinstance(getattr(location_manager, '_location_instances', None), dict) and hasattr(location_manager, 'get_location_instance') and callable(getattr(location_manager, 'get_location_instance')):
+                 get_all_method = getattr(location_manager, 'get_all_location_instances')
+                 all_loc_data_any = await get_all_method(gid)
+            elif hasattr(location_manager, '_location_instances') and isinstance(getattr(location_manager, '_location_instances', None), dict) and \
+                 hasattr(location_manager, 'get_location_instance') and callable(getattr(location_manager, 'get_location_instance')):
                  loc_instances_dict = getattr(location_manager, '_location_instances', {}).get(gid, {})
+                 get_instance_method = getattr(location_manager, 'get_location_instance')
                  if isinstance(loc_instances_dict, dict):
                      loc_ids_to_fetch = list(loc_instances_dict.keys())
                      for loc_id_fetch in loc_ids_to_fetch:
-                         loc_instance = await location_manager.get_location_instance(gid, loc_id_fetch) # type: ignore [attr-defined]
+                         loc_instance = await get_instance_method(gid, loc_id_fetch)
                          if loc_instance: all_loc_data_any.append(loc_instance)
             else:
-                logging.warning(f"LocationManager for guild {gid} missing 'get_all_location_instances' and viable fallback for map view.")
+                logging.warning(f"LocationManager for guild {gid} missing 'get_all_location_instances' and viable fallback methods for map view.")
 
 
             if not all_loc_data_any:
@@ -1243,10 +1285,12 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
             active_loc_evts_any: List[Any] = []
             if hasattr(event_manager, 'get_active_events_for_location') and callable(getattr(event_manager, 'get_active_events_for_location')):
-                active_loc_evts_any = await event_manager.get_active_events_for_location(gid, loc_id_val) # type: ignore [attr-defined]
+                get_events_method = getattr(event_manager, 'get_active_events_for_location')
+                active_loc_evts_any = await get_events_method(gid, loc_id_val)
             elif hasattr(event_manager, 'get_active_events') and callable(getattr(event_manager, 'get_active_events')):
                 logging.warning(f"EventManager for guild {gid} missing 'get_active_events_for_location'. Falling back to 'get_active_events'.")
-                active_evts_all_any: List[Any] = await event_manager.get_active_events(gid) # type: ignore [attr-defined]
+                get_active_events_method = getattr(event_manager, 'get_active_events')
+                active_evts_all_any: List[Any] = await get_active_events_method(gid)
                 active_loc_evts_any=[e for e in active_evts_all_any if (hasattr(e,'location_id') and e.location_id==loc_id_val) or (hasattr(e,'state_variables') and isinstance(e.state_variables,dict) and e.state_variables.get('linked_location_id')==loc_id_val)]
             else:
                 logging.warning(f"EventManager for guild {gid} missing event fetching methods for map view.")
@@ -1274,10 +1318,11 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             try:
                 pending_records: List["PendingGeneration"] = []
                 if hasattr(db_service, "get_entities_by_conditions") and callable(getattr(db_service, "get_entities_by_conditions")):
-                    pending_records = await db_service.get_entities_by_conditions( # type: ignore [attr-defined]
+                    get_entities_method = getattr(db_service, "get_entities_by_conditions")
+                    pending_records = await get_entities_method(
                         PendingGeneration,
                         conditions={ "guild_id": guild_id_str, "status": {"in_": [PendingStatus.PENDING_MODERATION.value, PendingStatus.FAILED_VALIDATION.value]}},
-                        order_by=[PendingGeneration.created_at.desc()],
+                        order_by=[PendingGeneration.created_at.desc()], # type: ignore [attr-defined] # ColumnElement is fine for order_by
                         limit=10
                     )
                 else:
@@ -1326,51 +1371,51 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             if not record:
                 await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True); return
 
-            record_id_val = getattr(record, 'id', 'N/A')
-            embed = discord.Embed(title=f"Детали AI Генерации: {record_id_val}", color=discord.Color.blue())
-            embed.add_field(name="Guild ID", value=f"`{getattr(record, 'guild_id', 'N/A')}`", inline=False)
-            embed.add_field(name="Тип Запроса", value=str(getattr(record, 'request_type', 'N/A')), inline=True)
-            embed.add_field(name="Статус", value=str(getattr(record, 'status', 'N/A')), inline=True)
-            created_by_uid = getattr(record, 'created_by_user_id', None)
+            record_id_val = getattr(record, 'id', 'N/A') # type: ignore[attr-defined] # record is PendingGeneration
+            embed = discord.Embed(title=f"Детали AI Генерации: {record_id_val}", color=discord.Color.blue()) # type: ignore[attr-defined]
+            embed.add_field(name="Guild ID", value=f"`{getattr(record, 'guild_id', 'N/A')}`", inline=False) # type: ignore[attr-defined]
+            embed.add_field(name="Тип Запроса", value=str(getattr(record, 'request_type', 'N/A')), inline=True) # type: ignore[attr-defined]
+            embed.add_field(name="Статус", value=str(getattr(record, 'status', 'N/A')), inline=True) # type: ignore[attr-defined]
+            created_by_uid = getattr(record, 'created_by_user_id', None) # type: ignore[attr-defined]
             embed.add_field(name="Автор Запроса", value=f"<@{created_by_uid}> (`{created_by_uid}`)" if created_by_uid else "N/A", inline=True)
 
-            created_at_val = getattr(record, 'created_at', None)
+            created_at_val = getattr(record, 'created_at', None) # type: ignore[attr-defined]
             created_at_str = created_at_val.strftime('%Y-%m-%d %H:%M:%S UTC') if created_at_val and hasattr(created_at_val, 'strftime') else "N/A"
             embed.add_field(name="Время Создания", value=created_at_str, inline=False)
 
-            request_params_json_val = getattr(record, 'request_params_json', None)
+            request_params_json_val = getattr(record, 'request_params_json', None) # type: ignore[attr-defined]
             if request_params_json_val:
                 try:
                     params_str = json.dumps(request_params_json_val, indent=2, ensure_ascii=False)
                     embed.add_field(name="Параметры Запроса", value=f"```json\n{params_str[:1000]}{'...' if len(params_str)>1000 else ''}\n```", inline=False)
                 except Exception: embed.add_field(name="Параметры Запроса", value="Ошибка форматирования.", inline=False)
 
-            raw_ai_output_text_val = getattr(record, 'raw_ai_output_text', None)
+            raw_ai_output_text_val = getattr(record, 'raw_ai_output_text', None) # type: ignore[attr-defined]
             if raw_ai_output_text_val:
                 embed.add_field(name="Raw AI Output (сниппет)", value=f"```\n{raw_ai_output_text_val[:1000]}{'...' if len(raw_ai_output_text_val)>1000 else ''}\n```", inline=False)
 
-            parsed_data_json_val = getattr(record, 'parsed_data_json', None)
+            parsed_data_json_val = getattr(record, 'parsed_data_json', None) # type: ignore[attr-defined]
             if parsed_data_json_val:
                 try:
                     parsed_str = json.dumps(parsed_data_json_val, indent=2, ensure_ascii=False)
                     embed.add_field(name="Обработанные Данные", value=f"```json\n{parsed_str[:1000]}{'...' if len(parsed_str)>1000 else ''}\n```", inline=False)
                 except Exception: embed.add_field(name="Обработанные Данные", value="Ошибка форматирования.", inline=False)
 
-            validation_issues_json_val = getattr(record, 'validation_issues_json', None)
+            validation_issues_json_val = getattr(record, 'validation_issues_json', None) # type: ignore[attr-defined]
             if validation_issues_json_val:
                 try:
                     issues_str = json.dumps(validation_issues_json_val, indent=2, ensure_ascii=False)
                     embed.add_field(name="Ошибки Валидации", value=f"```json\n{issues_str[:1000]}{'...' if len(issues_str)>1000 else ''}\n```", inline=False)
                 except Exception: embed.add_field(name="Ошибки Валидации", value="Ошибка форматирования.", inline=False)
 
-            moderated_by_user_id_val = getattr(record, 'moderated_by_user_id', None)
+            moderated_by_user_id_val = getattr(record, 'moderated_by_user_id', None) # type: ignore[attr-defined]
             if moderated_by_user_id_val:
                 embed.add_field(name="Модератор", value=f"<@{moderated_by_user_id_val}> (`{moderated_by_user_id_val}`)", inline=True)
-                moderated_at_val = getattr(record, 'moderated_at', None)
+                moderated_at_val = getattr(record, 'moderated_at', None) # type: ignore[attr-defined]
                 moderated_at_str = moderated_at_val.strftime('%Y-%m-%d %H:%M:%S UTC') if moderated_at_val and hasattr(moderated_at_val, 'strftime') else "N/A"
                 embed.add_field(name="Время Модерации", value=moderated_at_str, inline=True)
 
-            moderator_notes_i18n_val = getattr(record, 'moderator_notes_i18n', None)
+            moderator_notes_i18n_val = getattr(record, 'moderator_notes_i18n', None) # type: ignore[attr-defined]
             if moderator_notes_i18n_val:
                 try:
                     notes_str = json.dumps(moderator_notes_i18n_val, indent=2, ensure_ascii=False)
@@ -1379,7 +1424,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
 
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
-            logging.error(f"Error reviewing AI generation {pending_id}: {e}", exc_info=True)
+            logging.exception(f"Error reviewing AI generation {pending_id} in guild {guild_id_str}")
             await interaction.followup.send(f"Произошла ошибка при просмотре записи: {e}", ephemeral=True)
 
     @master_group.command(name="approve_ai", description="Одобрить AI генерацию для применения в игре.")
@@ -1401,11 +1446,15 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             session: Optional["AsyncSession"] = None # Define session here to use in finally
 
             try:
-                session = db_service.get_session() # type: ignore [attr-defined] # Assume get_session exists
-                async with session as s: # type: ignore [union-attr] # s is AsyncSession
-                    from bot.database import crud_utils
+                get_session_method = getattr(db_service, "get_session", None)
+                if not callable(get_session_method):
+                    logging.error(f"DBService for guild {guild_id_str} missing 'get_session' method.")
+                    await interaction.followup.send("Ошибка: Сервис базы данных неисправен (нет get_session).", ephemeral=True); return
+
+                async with get_session_method() as session: # type: ignore [attr-defined] # session is AsyncSession
+                    from bot.database import crud_utils # Import locally as it uses session
                     record_to_approve = await crud_utils.get_entity_by_id(
-                        db_session=s, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
+                        db_session=session, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
                     )
                     if not record_to_approve:
                         await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True); return
@@ -1420,38 +1469,33 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                         "moderated_at": datetime.datetime.now(datetime.timezone.utc)
                     }
                     updated_record_instance = await crud_utils.update_entity(
-                        db_session=s, entity_instance=record_to_approve, data=updates, guild_id=guild_id_str
+                        db_session=session, entity_instance=record_to_approve, data=updates, guild_id=guild_id_str
                     )
                     success_db_update = updated_record_instance is not None
-                    if success_db_update and updated_record_instance:
+                    if success_db_update and updated_record_instance: # Ensure record_to_approve is the updated one for later use
                         record_to_approve = updated_record_instance
-            finally:
-                if session:
-                    await session.close() # type: ignore [union-attr]
-
+            # Removed finally block for session closing, as 'async with' handles it.
 
             if success_db_update and record_to_approve:
                 logging.info(f"AI Gen {pending_id} approved by {interaction.user.id}. Applying.")
                 application_success = False
                 if hasattr(game_mngr, "apply_approved_generation") and callable(getattr(game_mngr, "apply_approved_generation")):
-                     application_success = await game_mngr.apply_approved_generation(pending_gen_id=pending_id, guild_id=guild_id_str) # type: ignore [attr-defined]
+                     apply_method = getattr(game_mngr, "apply_approved_generation")
+                     application_success = await apply_method(pending_gen_id=pending_id, guild_id=guild_id_str)
                 else:
                     logging.error(f"GameManager missing apply_approved_generation for {guild_id_str}")
 
                 current_status_after_apply = PendingStatus.UNKNOWN.value
-                session_after_apply: Optional["AsyncSession"] = None
-                try:
-                    session_after_apply = db_service.get_session() # type: ignore [attr-defined]
-                    async with session_after_apply as s_after: # type: ignore [union-attr]
-                        from bot.database import crud_utils
+                # Re-fetch the record to get the latest status after application attempt
+                if callable(get_session_method):
+                    async with get_session_method() as session_after_apply: # type: ignore [attr-defined]
+                        from bot.database import crud_utils # Re-import for this scope
                         updated_record_after_apply = await crud_utils.get_entity_by_id(
-                            db_session=s_after, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
+                            db_session=session_after_apply, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
                         )
                         if updated_record_after_apply:
                             current_status_after_apply = getattr(updated_record_after_apply, 'status', PendingStatus.UNKNOWN.value)
-                finally:
-                    if session_after_apply:
-                        await session_after_apply.close() # type: ignore [union-attr]
+            # Removed finally block for session_after_apply closing, as 'async with' handles it.
 
 
                 record_req_type = getattr(record_to_approve, 'request_type', 'N/A')
@@ -1478,8 +1522,9 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
         db_service = game_mngr.db_service
         record_to_reject: Optional["PendingGeneration"] = None
 
-        if hasattr(db_service, "get_entity_by_pk") and callable(getattr(db_service, "get_entity_by_pk")):
-            record_to_reject = await db_service.get_entity_by_pk( # type: ignore [attr-defined]
+            get_entity_method = getattr(db_service, "get_entity_by_pk", None)
+            if callable(get_entity_method):
+                record_to_reject = await get_entity_method(
                 PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
             )
         else:
@@ -1513,8 +1558,9 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 updates["moderator_notes_i18n"] = current_notes
 
             success_update = False
-            if hasattr(db_service, "update_entity_by_pk") and callable(getattr(db_service, "update_entity_by_pk")):
-                success_update = await db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str) # type: ignore [attr-defined]
+            update_entity_method = getattr(db_service, "update_entity_by_pk", None)
+            if callable(update_entity_method):
+                success_update = await update_entity_method(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
             else:
                  logging.warning(f"DBService for guild {guild_id_str} missing 'update_entity_by_pk'. Cannot update for rejection.")
                  await interaction.followup.send("Функция отклонения недоступна (нет update_entity_by_pk).", ephemeral=True); return
@@ -1550,16 +1596,18 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             record_to_edit: Optional["PendingGeneration"] = None
             session_initial: Optional["AsyncSession"] = None
 
+            get_session_method = getattr(db_service, "get_session", None)
+            if not callable(get_session_method):
+                logging.error(f"DBService for guild {guild_id_str} missing 'get_session' method for edit_ai.")
+                await interaction.followup.send("Ошибка: Сервис базы данных неисправен (нет get_session).", ephemeral=True); return
+
             try:
-                session_initial = db_service.get_session() # type: ignore [attr-defined]
-                async with session_initial as s_init: # type: ignore [union-attr]
-                    from bot.database import crud_utils
+                async with get_session_method() as session_initial: # type: ignore [attr-defined]
+                    from bot.database import crud_utils # Import locally
                     record_to_edit = await crud_utils.get_entity_by_id(
-                        db_session=s_init, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
+                        db_session=session_initial, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
                     )
-            finally:
-                if session_initial:
-                    await session_initial.close() # type: ignore [union-attr]
+            # 'async with' handles session closing
 
 
             if not record_to_edit:
@@ -1622,24 +1670,28 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             updates["moderator_notes_i18n"] = current_notes
 
             success_update_edit = False
-            session_for_update: Optional["AsyncSession"] = None
-            try:
-                session_for_update = db_service.get_session() # type: ignore [attr-defined]
-                async with session_for_update as s_update: # type: ignore [union-attr]
-                    from bot.database import crud_utils
-                    record_for_update_in_session = await crud_utils.get_entity_by_id(
-                         db_session=s_update, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
-                    )
-                    if record_for_update_in_session:
-                        updated_record_instance = await crud_utils.update_entity(
-                            db_session=s_update, entity_instance=record_for_update_in_session, data=updates, guild_id=guild_id_str
+            # get_session_method already defined and checked above
+            if callable(get_session_method):
+                try:
+                    async with get_session_method() as session_for_update: # type: ignore [attr-defined]
+                        from bot.database import crud_utils # Import locally
+                        record_for_update_in_session = await crud_utils.get_entity_by_id(
+                             db_session=session_for_update, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
                         )
-                        success_update_edit = updated_record_instance is not None
-                    else:
-                        logging.error(f"Record {pending_id} disappeared before update in edit_ai.")
-            finally:
-                if session_for_update:
-                    await session_for_update.close() # type: ignore [union-attr]
+                        if record_for_update_in_session:
+                            updated_record_instance = await crud_utils.update_entity(
+                                db_session=session_for_update, entity_instance=record_for_update_in_session, data=updates, guild_id=guild_id_str
+                            )
+                            success_update_edit = updated_record_instance is not None
+                        else:
+                            logging.error(f"Record {pending_id} disappeared before update in edit_ai for guild {guild_id_str}.")
+                # 'async with' handles session closing
+                except Exception as e_update: # Catch potential errors during the session
+                    logging.exception(f"Error during database update session for edit_ai {pending_id} in guild {guild_id_str}: {e_update}")
+                    success_update_edit = False # Explicitly set to false on error
+            else: # This case should ideally not be reached if initial check passes
+                logging.error(f"DBService.get_session method became unavailable before update for edit_ai {pending_id} in guild {guild_id_str}.")
+                await interaction.followup.send("Ошибка: Сервис базы данных стал недоступен перед обновлением.", ephemeral=True); return
 
 
 
