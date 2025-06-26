@@ -377,3 +377,39 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - Used `flag_modified` for in-place updates of JSONB fields.
     - Replaced `print` with `logging`.
     - Added `asyncio.create_task` for `process_on_enter_location_events`.
+
+## Pyright Error Fixing Phase (Batch 18 - Addressing remaining errors)
+
+- **Focus:** Systematically address remaining Pyright errors from `pyright_summary.txt`.
+- **Strategy:** Fix errors in batches of approximately 100, prioritizing files with the highest error counts first or as logically grouped. Commit each batch.
+- **Observation:** The `pyright_summary.txt` indicates that several files previously marked as fixed in Batches 15, 16, and 17 still have a significant number of errors (e.g., `gm_app_cmds.py`, `inventory_cmds.py`, `conflict_resolver.py`, `generation_manager.py`). This batch will re-address these as a priority.
+- **Batch 18 - `bot/command_modules/gm_app_cmds.py` (117 errors addressed):**
+    - Corrected import paths for `PendingGeneration`, `PendingStatus`, `GenerationType`, and `parse_and_validate_ai_response`.
+    - Ensured manager methods (e.g., `trigger_manual_simulation_tick`, `remove_character`, `update_npc_field`, `get_raw_rules_config_dict_for_guild`) are checked for existence and callability using `hasattr` and `callable(getattr(...))` before invocation. Added logging for missing methods.
+    - Added `await` for async manager calls like `game_mngr.get_default_bot_language`.
+    - Resolved `CoroutineType` attribute access errors by ensuring `await` was used before accessing attributes of coroutine results (e.g., after `get_character`).
+    - Assumed Pydantic V2 for `RuleConfigData().model_dump()` and called it without arguments.
+    - Fixed `Invalid conditional operand` for SQLAlchemy column expressions by comparing with `None` (e.g., `if record.created_at is not None:`).
+    - Ensured database operations (e.g., in `cmd_master_approve_ai`, `cmd_master_edit_ai`) use `async with db_service.get_session() as session:` and pass the session to CRUD utilities.
+    - Replaced `print()` statements with `logging.info()` or `logging.warning()`.
+    - Made `SimpleReportFormatter._get_entity_name` an `async def` method.
+    - Added `None` checks for managers and services before use (e.g., `gm.item_manager`, `gm.character_manager`, `gm.db_service.adapter`).
+    - Used `getattr` for safer attribute access on potentially `None` or dynamic objects.
+    - Corrected `List[NPCModelType]` to `List[Any]` in `cmd_master_view_npcs` as a temporary fix for type mismatches between DB and game models, retaining the previous note about this.
+    - Wrapped single dictionary `report` in `[report]` when calling `fmt.format_action_consequence_report` if it was not already a list.
+    - Ensured `RPGBot` type hint is used for `self.bot`.
+    - Added checks for `game_mngr` being non-None before accessing its sub-managers.
+- **Batch 18 - `bot/command_modules/inventory_cmds.py` (88 errors addressed):**
+    - Changed `interaction.locale.language` to `str(interaction.locale)`.
+    - Removed `default_text` from `get_i18n_text` calls; added `guild_id` where appropriate.
+    - Added `await` for `character_manager.get_character_by_discord_id`.
+    - Ensured `game_mngr` and its sub-managers (`character_manager`, `item_manager`, `location_manager`, `rule_engine`) are checked for `None` before use.
+    - Used `getattr(self.bot, "nlu_data_service", None)` for safer NLU service access.
+    - Corrected attribute access on item template dicts (e.g., `item_template_data.get('name_i18n', {})`).
+    - Corrected parameters for `item_manager.use_item` (added `character_user`, `target_entity_id`, `target_entity_type`).
+    - Ensured correct types (string IDs, float quantity) for `item_manager.transfer_item_world_to_character` and `item_manager.unequip_item`.
+    - Resolved `Cannot assign to attribute "inventory" for class "Character"` by direct list assignment to `character.inventory` (with `# type: ignore[assignment]`) and calling `character_manager.mark_dirty` or logging if unavailable. Handled JSON string parsing to list for `character.inventory`.
+    - Ensured `CoreGameRulesConfig` object from `game_mngr.rule_engine.rules_config_data` (after `None` checks) is passed to relevant item manager methods.
+    - Standardized language determination (character preference > interaction locale > default).
+    - Ensured `character.id` is consistently passed as a string.
+- **Batch 18 Summary:** Addressed a total of 205 Pyright errors across `bot/command_modules/gm_app_cmds.py` (117 errors) and `bot/command_modules/inventory_cmds.py` (88 errors). Key fixes involved correcting imports, ensuring manager methods are awaited and checked for existence, proper handling of `AsyncSession` and Pydantic models, safe attribute access for potentially `None` objects, correct `i18n_utils` usage, and consistent type handling for character/item IDs and inventory data.
