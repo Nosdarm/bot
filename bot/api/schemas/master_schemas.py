@@ -37,10 +37,10 @@ class RunSimulationRequest(BaseModel):
     """Request model for running a game simulation."""
     simulation_type: str = Field(..., description="Type of simulation to run.", example="battle")
     params: Dict[str, Any] = Field(..., description="Parameters specific to the chosen simulation type.", example={"participants_setup": [], "max_rounds": 30})
-    language: Optional[str] = Field('en', description="Language code for the formatted report output.", example="en")
+    language: Optional[str] = Field(default='en', description="Language code for the formatted report output.", example="en")
 
     @validator('simulation_type')
-    def simulation_type_must_be_valid(cls, value):
+    def simulation_type_must_be_valid(cls, value: str) -> str:
         """Validates that the simulation_type is one of the allowed values."""
         allowed_types = ["battle", "quest", "action_consequence"]
         if value not in allowed_types:
@@ -58,7 +58,7 @@ class CompareReportsRequest(BaseModel):
     """Request model for comparing two simulation reports."""
     report_id_1: str = Field(..., description="ID of the first simulation report for comparison.", example="sim_report_uuid_123")
     report_id_2: str = Field(..., description="ID of the second simulation report for comparison.", example="sim_report_uuid_456")
-    language: Optional[str] = Field('en', description="Language code for the formatted comparison report.", example="en")
+    language: Optional[str] = Field(default='en', description="Language code for the formatted comparison report.", example="en")
 
 class CompareReportsResponse(BaseModel):
     """Response model for the comparison of two simulation reports."""
@@ -111,10 +111,10 @@ class LocationDetailsResponse(BaseModel):
     id: str = Field(..., description="Unique ID of the location.", example="loc_forest_clearing")
     name: str = Field(..., description="Localized name of the location.", example="Forest Clearing")
     description: str = Field(..., description="Localized description of the location.", example="A sun-dappled clearing in the woods.")
-    exits: Dict[str, str] = Field(..., description="Available exits from this location, mapping direction to target location name and ID.", example={"north": "Dark Cave (`loc_cave_entrance`)", "east": "River Bend (`loc_river_bend`)"})
-    npcs: List[LocationNpcInfo] = Field(..., description="List of NPCs currently in this location.")
-    characters: List[LocationCharacterInfo] = Field(..., description="List of player characters currently in this location.")
-    events: List[LocationEventInfo] = Field(..., description="List of active game events in this location.")
+    exits: Dict[str, str] = Field(..., description="Available exits from this location, mapping direction to target location name and ID.", example={"north": "Dark Cave (`loc_cave_entrance`)", "east": "River Bend (`loc_river_bend`)"}) # Example needs to be a dict not list
+    npcs: List[LocationNpcInfo] = Field(default_factory=list, description="List of NPCs currently in this location.")
+    characters: List[LocationCharacterInfo] = Field(default_factory=list, description="List of player characters currently in this location.")
+    events: List[LocationEventInfo] = Field(default_factory=list, description="List of active game events in this location.")
 
 class AllLocationsResponse(BaseModel):
     """Response model for a list of all game locations."""
