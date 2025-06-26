@@ -8,11 +8,11 @@ from typing import Optional, List, Dict, Any
 #     name: str # Or name_i18n
 
 class LocationBase(BaseModel):
-    name_i18n: Dict[str, str] = Field(..., description="Multilingual name of the location", example={"en": "Crossroads", "ru": "Перекресток"})
-    descriptions_i18n: Dict[str, str] = Field(..., description="Multilingual primary description of the location")
-    type_i18n: Dict[str, str] = Field(..., description="Multilingual type of the location", example={"en": "Village", "ru": "Деревня"})
+    name_i18n: Dict[str, str] = Field(default=..., description="Multilingual name of the location", example={"en": "Crossroads", "ru": "Перекресток"})
+    descriptions_i18n: Dict[str, str] = Field(default=..., description="Multilingual primary description of the location")
+    type_i18n: Dict[str, str] = Field(default=..., description="Multilingual type of the location", example={"en": "Village", "ru": "Деревня"})
 
-    coordinates: Optional[Dict[str, Any]] = Field(None, description="Coordinates of the location, e.g., {'x': 10, 'y': 20, 'map_id': 'world'}")
+    coordinates: Optional[Dict[str, Any]] = Field(default=None, description="Coordinates of the location, e.g., {'x': 10, 'y': 20, 'map_id': 'world'}")
     exits: Optional[Dict[str, str]] = Field(default_factory=dict, description="Exits to other locations, e.g., {'north': 'location_id_2', 'south': 'location_id_3'}")
 
     npc_ids: Optional[List[str]] = Field(default_factory=list, description="List of NPC IDs present at this location")
@@ -63,8 +63,8 @@ class LocationUpdate(BaseModel): # For partial updates
 
 
 class LocationResponse(LocationBase):
-    id: str = Field(..., description="Unique ID of the location")
-    guild_id: str = Field(..., description="Guild ID this location belongs to")
+    id: str = Field(default=..., description="Unique ID of the location")
+    guild_id: str = Field(default=..., description="Guild ID this location belongs to")
     # Consider adding resolved NPC names or brief details if needed, instead of just IDs
     # For now, npc_ids: List[str] is inherited from LocationBase.
 
