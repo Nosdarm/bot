@@ -4,9 +4,32 @@ import json
 import sys
 import uuid
 from unittest.mock import MagicMock, AsyncMock, patch, call
+from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, Union # Added for type hints
+
+import pytest # Added
+import discord # Added (potentially for Interaction if used, or for general discord types)
 
 from bot.game.managers.location_manager import LocationManager
-from bot.game.models.location import Location
+from bot.game.models.location import Location # This is Pydantic Location
+from bot.database.models.world_related import Location as DBLocation # Added
+from bot.database.models.character_related import Character as DBCharacter, Party as DBParty # Added
+from sqlalchemy.ext.asyncio import AsyncSession # Added
+
+# For type hinting mocks if needed (though not strictly required for mocks to function)
+from bot.services.db_service import DBService
+from bot.game.managers.game_manager import GameManager
+from bot.game.rules.rule_engine import RuleEngine
+from bot.game.managers.event_manager import EventManager
+from bot.game.managers.character_manager import CharacterManager
+from bot.game.managers.npc_manager import NpcManager
+from bot.game.managers.item_manager import ItemManager
+from bot.game.managers.combat_manager import CombatManager
+from bot.game.managers.status_manager import StatusManager
+from bot.game.managers.party_manager import PartyManager
+from bot.game.managers.time_manager import TimeManager
+from bot.game.managers.game_log_manager import GameLogManager
+from bot.game.services.location_interaction_service import LocationInteractionService
+from bot.ai.rules_schema import CoreGameRulesConfig
 
 
 DUMMY_LOCATION_TEMPLATE_DATA = {
@@ -236,23 +259,25 @@ class TestLocationManagerGetters(unittest.IsolatedAsyncioTestCase):
         # Test the actual get_location_instance (placeholder replaced by actual method)
         # using the _location_instances cache directly.
         # Note: LocationManager.get_location_instance is not async.
-        pydantic_loc = self.location_manager.get_location_instance(self.guild_id, self.loc_id_1)
+        pydantic_loc: Optional[Location] = self.location_manager.get_location_instance(self.guild_id, self.loc_id_1)
         self.assertIsNotNone(pydantic_loc)
-        self.assertIsInstance(pydantic_loc, Location)
-        self.assertEqual(pydantic_loc.id, self.loc_id_1)
-        self.assertEqual(pydantic_loc.name_i18n["en"], "Test Location One")
-        self.assertEqual(pydantic_loc.name, "Test Location One") # Test Pydantic property
+        if pydantic_loc: # Guard for type checker
+            self.assertIsInstance(pydantic_loc, Location)
+            self.assertEqual(pydantic_loc.id, self.loc_id_1)
+            self.assertEqual(pydantic_loc.name_i18n["en"], "Test Location One")
+            self.assertEqual(pydantic_loc.name, "Test Location One") # Test Pydantic property
 
     def test_get_location_instance_not_in_cache(self):
         pydantic_loc = self.location_manager.get_location_instance(self.guild_id, "non_existent_loc")
         self.assertIsNone(pydantic_loc)
 
     async def test_get_location_by_static_id_from_cache(self):
-        pydantic_loc = await self.location_manager.get_location_by_static_id(self.guild_id, self.loc_static_id_1)
+        pydantic_loc: Optional[Location] = await self.location_manager.get_location_by_static_id(self.guild_id, self.loc_static_id_1)
         self.assertIsNotNone(pydantic_loc)
-        self.assertEqual(pydantic_loc.id, self.loc_id_1)
-        self.assertEqual(pydantic_loc.static_id, self.loc_static_id_1)
-        self.assertEqual(pydantic_loc.name, "Test Location One")
+        if pydantic_loc: # Guard
+            self.assertEqual(pydantic_loc.id, self.loc_id_1)
+            self.assertEqual(pydantic_loc.static_id, self.loc_static_id_1)
+            self.assertEqual(pydantic_loc.name, "Test Location One")
 
     async def test_get_location_by_static_id_from_db(self):
         # Setup: Location is not in cache, but will be returned by DB mock
@@ -297,13 +322,14 @@ class TestLocationManagerGetters(unittest.IsolatedAsyncioTestCase):
             pydantic_loc = await self.location_manager.get_location_by_static_id(self.guild_id, "static_from_db")
 
         self.assertIsNotNone(pydantic_loc)
-        self.assertEqual(pydantic_loc.id, "db_loc_id_2")
-        self.assertEqual(pydantic_loc.static_id, "static_from_db")
-        self.assertEqual(pydantic_loc.name, "DB Location")
-        # Check if it was added to cache
-        self.assertIn("db_loc_id_2", self.location_manager._location_instances[self.guild_id])
-        cached_data = self.location_manager._location_instances[self.guild_id]["db_loc_id_2"]
-        self.assertEqual(cached_data["name_i18n"]["en"], "DB Location")
+        if pydantic_loc: # Guard
+            self.assertEqual(pydantic_loc.id, "db_loc_id_2")
+            self.assertEqual(pydantic_loc.static_id, "static_from_db")
+            self.assertEqual(pydantic_loc.name, "DB Location")
+            # Check if it was added to cache
+            self.assertIn("db_loc_id_2", self.location_manager._location_instances[self.guild_id])
+            cached_data = self.location_manager._location_instances[self.guild_id]["db_loc_id_2"]
+            self.assertEqual(cached_data["name_i18n"]["en"], "DB Location")
 
     async def test_get_location_by_static_id_not_found_anywhere(self):
         self.location_manager._location_instances = {self.guild_id: {}} # Clear cache
