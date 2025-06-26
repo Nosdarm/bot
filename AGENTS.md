@@ -249,3 +249,59 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - Used `isinstance(conflict_rules_map, dict)` before key access.
     - Imported `asynccontextmanager` from `contextlib`.
     - Removed mock classes and `main_test()` from `conflict_resolver.py`.
+
+## Pyright Error Fixing Phase (Batch 13 - world_view_service.py & action_cmds.py focus)
+
+- **Focus:** Addressing all 41 errors in `bot/game/world_processors/world_view_service.py` and all 39 errors in `bot/command_modules/action_cmds.py`.
+- **Strategy:** Overwrote files with corrected content. Total of 80 errors addressed.
+- **Batch 13 Fixes - `bot/game/world_processors/world_view_service.py` (41 errors):**
+    - Corrected `get_i18n_text` calls by ensuring `guild_id` was passed and removing `default_text` if `default_lang` was sufficient.
+    - Added `guild_id` parameter to various manager calls (`get_location_instance`, `get_items_by_owner`, `get_quest_by_id`).
+    - Ensured `await` for async manager/method calls (e.g., `get_location_instance`, `get_character_by_id`, `get_npc_by_id`).
+    - Used `# type: ignore[attr-defined]` for some manager methods if Pyright couldn't resolve them but they are expected (e.g., `character_manager.get_character_name_i18n`).
+    - Fixed `Quest` model attribute access (e.g., `quest.name_i18n` directly instead of `quest.get("name_i18n")`).
+    - Initialized potentially unbound variables (e.g., `quest_status_text`).
+    - Added `None` checks for managers (`location_manager`, `character_manager`, `item_manager`, `quest_manager`) before use.
+    - Ensured `target_lang` or `locale` was passed to `get_i18n_text` and related functions.
+- **Batch 13 Fixes - `bot/command_modules/action_cmds.py` (39 errors):**
+    - Changed `BotCore` type hint to `RPGBot`.
+    - Added `await` for async calls (`get_character_by_discord_id`, `get_character`, `process_action_from_request`, `end_turn`).
+    - Corrected `interaction.locale.language` to `str(interaction.locale)`.
+    - Ensured managers (`character_manager`, `game_log_manager`, `location_manager`, `action_processor`, `turn_processing_service`) are checked for `None` before use and accessed correctly via `game_mngr`.
+    - Assumed `CharacterActionProcessor.process_action` should be `process_action_from_request` and refactored calls accordingly, ensuring correct parameters (like `guild_id`, `discord_user_id`, `action_type`, `details`) were passed.
+    - Corrected DB session usage in `/end_turn` by using `GuildTransaction` for database operations.
+    - Improved handling of results from `action_processor` and `turn_processing_service`, checking for `None` or specific error conditions.
+    - Ensured `log_event` calls used the `details` dictionary.
+
+## Pyright Error Fixing Phase (Batch 14 - test_config_utils.py, combat_rules.py, quest_manager.py focus)
+
+- **Focus:** Addressing 38 errors in `tests/utils/test_config_utils.py`, 36 in `bot/game/rules/combat_rules.py`, and 35 in `bot/game/managers/quest_manager.py`.
+- **Strategy:** Overwrote files with corrected content. Total of 109 errors addressed.
+- **Batch 14 Fixes - `tests/utils/test_config_utils.py` (38 errors):**
+    - Corrected mock setups for `GuildConfig`, `CoreGameRulesConfig`, `GameCharacterModel`, etc.
+    - Ensured `AsyncMock` was used for async functions being patched (e.g., `get_guild_config_value_for_active_season`).
+    - Fixed assertion methods for async mocks (e.g., `assert_awaited_once_with`).
+    - Adjusted test logic for `load_guild_config` and `save_guild_config` to reflect async nature and correct parameter passing.
+    - Updated type hints for mock objects and return values.
+    - Ensured enum comparisons used `.value` (e.g., `ConfigKeys.GUILD_LANGUAGE.value`).
+    - Handled `AttributeError` on `None` by ensuring mocks were properly initialized.
+- **Batch 14 Fixes - `bot/game/rules/combat_rules.py` (36 errors):**
+    - Added `Optional` to manager type hints (`RuleEngine`, `GameLogManager`, `NotificationService`) in `CombatResolver` and `CombatHelper` constructors.
+    - Ensured managers are checked for `None` before use.
+    - Added `await` for async calls (e.g., `get_character_by_id`, `get_npc_by_id`, `get_party_by_member_id`, `log_event`).
+    - Corrected `log_event` calls to use the `details` dictionary.
+    - Handled JSON parsing safely (e.g., for `effective_stats_json`).
+    - Fixed attribute access on `CharacterModel` and `NPCModel` (e.g., `character.current_hp`).
+    - Ensured `guild_id` and `player_id` (as string or `None`) were passed correctly to manager methods and `log_event`.
+    - Replaced `print` with logging or removed debugging prints.
+    - Updated type hints for parameters and return values.
+- **Batch 14 Fixes - `bot/game/managers/quest_manager.py` (35 errors):**
+    - Added `Optional` to manager type hints (`DBService`, `GameLogManager`, `NotificationService`, `CharacterManager`) in `__init__`.
+    - Ensured managers are checked for `None` before use.
+    - Added `await` for async calls (e.g., `db_service.get_active_quests_for_character`, `log_event`, `send_notification`).
+    - Corrected `log_event` calls to use the `details` dictionary.
+    - Handled potential `None` values from DB calls (e.g., when fetching quests or characters).
+    - Ensured `guild_id` and `player_id` (as string or `None`) were passed correctly.
+    - Fixed attribute access on `Quest` and `CharacterModel` objects.
+    - Updated type hints and imports (`AsyncSession`, `QuestStatus`).
+    - Refined logic for updating quest status and objectives, ensuring DB operations are handled correctly.
