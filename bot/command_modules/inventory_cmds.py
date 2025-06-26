@@ -14,27 +14,30 @@ if TYPE_CHECKING:
     from bot.bot_core import RPGBot
     from bot.game.managers.game_manager import GameManager
     from bot.game.managers.character_manager import CharacterManager
-    from bot.game.managers.item_manager import ItemManager, EquipResult # Added EquipResult
+    from bot.game.managers.item_manager import ItemManager, EquipResult
     from bot.game.managers.location_manager import LocationManager
-    from bot.game.models.character import Character as CharacterModel
+    from bot.game.models.character import Character as CharacterModel # Explicit alias
     from bot.game.rules.rule_engine import RuleEngine
 
-DEFAULT_BOT_LANGUAGE = "en" # Used as a fallback if guild/user specific lang not found
+DEFAULT_BOT_LANGUAGE = "en"
 
 class InventoryCog(commands.Cog, name="Inventory"):
     def __init__(self, bot: "RPGBot"):
         self.bot = bot
 
-    async def _get_language(self, interaction: Interaction, character: Optional["CharacterModel"] = None, guild_id: Optional[str]=None) -> str:
-        if character and hasattr(character, 'selected_language') and character.selected_language:
+    async def _get_language(self, interaction: Interaction, character: Optional[CharacterModel] = None, guild_id_str: Optional[str]=None) -> str: # Use CharacterModel
+        if character and hasattr(character, 'selected_language') and character.selected_language and isinstance(character.selected_language, str):
             return character.selected_language
-        if interaction.locale and isinstance(interaction.locale, Locale):
-            return str(interaction.locale)
+        # interaction.locale can be discord.Locale or None, or a string if manually set.
+        # For discord.Locale, its value is a string.
+        if interaction.locale:
+            return str(interaction.locale) # Covers both discord.Locale and string cases
+
         game_mngr: Optional["GameManager"] = getattr(self.bot, 'game_manager', None)
-        if game_mngr and guild_id and hasattr(game_mngr, 'get_rule') and callable(getattr(game_mngr, 'get_rule')):
-            # Assuming get_rule can fetch 'default_language'
-            guild_lang = await game_mngr.get_rule(guild_id, "default_language", DEFAULT_BOT_LANGUAGE)
-            if guild_lang and isinstance(guild_lang, str): return guild_lang
+        if game_mngr and guild_id_str and hasattr(game_mngr, 'get_rule') and callable(game_mngr.get_rule): # type: ignore[attr-defined]
+            guild_lang_result = await game_mngr.get_rule(guild_id_str, "default_language", DEFAULT_BOT_LANGUAGE) # type: ignore[attr-defined]
+            if guild_lang_result and isinstance(guild_lang_result, str):
+                return guild_lang_result
         return DEFAULT_BOT_LANGUAGE
 
     @app_commands.command(name="inventory", description="View your character's inventory.")

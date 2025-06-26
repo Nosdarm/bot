@@ -120,85 +120,102 @@ class RuleEngine:
 
         if action_type == 'move':
             if curr is not None and target is not None and lm:
-                base = float(self._rules_data.get('base_move_duration_per_location', 5.0))
+                base = float(self._rules_data.get('base_move_duration_per_location', 5.0)) # type: ignore[arg-type]
                 return base
-            logger.warning(f"RuleEngine: Cannot calculate duration for move from {curr} to {target} (lm: {lm is not None}). Returning 0.0.") # Changed print
+            logger.warning(f"RuleEngine: Cannot calculate duration for move from {curr} to {target} (lm: {lm is not None}). Returning 0.0.")
             return 0.0
         if action_type == 'combat_attack':
-            return float(self._rules_data.get('base_attack_duration', 1.0))
+            return float(self._rules_data.get('base_attack_duration', 1.0)) # type: ignore[arg-type]
         if action_type == 'rest':
-            return float(action_context.get('duration', self._rules_data.get('default_rest_duration', 10.0)))
+            return float(action_context.get('duration', self._rules_data.get('default_rest_duration', 10.0))) # type: ignore[arg-type]
         if action_type == 'search':
-            return float(self._rules_data.get('base_search_duration', 5.0))
+            return float(self._rules_data.get('base_search_duration', 5.0)) # type: ignore[arg-type]
         if action_type == 'craft':
-            return float(self._rules_data.get('base_craft_duration', 30.0))
+            return float(self._rules_data.get('base_craft_duration', 30.0)) # type: ignore[arg-type]
         if action_type == 'use_item':
-            return float(self._rules_data.get('base_use_item_duration', 1.0))
+            return float(self._rules_data.get('base_use_item_duration', 1.0)) # type: ignore[arg-type]
         if action_type == 'ai_dialogue':
-            return float(self._rules_data.get('base_dialogue_step_duration', 0.1))
+            return float(self._rules_data.get('base_dialogue_step_duration', 0.1)) # type: ignore[arg-type]
         if action_type == 'idle':
-            return float(self._rules_data.get('default_idle_duration', 60.0))
-        logger.warning(f"RuleEngine: Unknown action type '{action_type}' for duration calculation. Returning 0.0.") # Changed print
+            return float(self._rules_data.get('default_idle_duration', 60.0)) # type: ignore[arg-type]
+        logger.warning(f"RuleEngine: Unknown action type '{action_type}' for duration calculation. Returning 0.0.")
         return 0.0
 
 
-    async def check_conditions(
+    async def check_conditions( # type: ignore[return] # Allow complex return paths for now
         self,
         conditions: List[Dict[str, Any]],
         context: Dict[str, Any]
     ) -> bool:
         if not conditions: return True
-        cm = context.get('character_manager') or self._character_manager
-        nm = context.get('npc_manager') or self._npc_manager
-        lm = context.get('location_manager') or self._location_manager
-        im = context.get('item_manager') or self._item_manager
-        pm = context.get('party_manager') or self._party_manager
-        sm = context.get('status_manager') or self._status_manager
-        combat_mgr = context.get('combat_manager') or self._combat_manager
+        cm: Optional[CharacterManager] = context.get('character_manager') or self._character_manager
+        nm: Optional[NpcManager] = context.get('npc_manager') or self._npc_manager
+        lm: Optional[LocationManager] = context.get('location_manager') or self._location_manager
+        im: Optional[ItemManager] = context.get('item_manager') or self._item_manager
+        pm: Optional[PartyManager] = context.get('party_manager') or self._party_manager
+        sm: Optional[StatusManager] = context.get('status_manager') or self._status_manager
+        combat_mgr: Optional[CombatManager] = context.get('combat_manager') or self._combat_manager
+
         for cond in conditions:
             ctype = cond.get('type'); data = cond.get('data', {}); met = False
             entity = context.get('character') or context.get('npc') or context.get('party')
-            entity_id = data.get('entity_id') or getattr(entity, 'id', None)
-            entity_type = data.get('entity_type') or (type(entity).__name__ if entity else None)
+            entity_id_any = data.get('entity_id') or getattr(entity, 'id', None)
+            entity_id: Optional[str] = str(entity_id_any) if entity_id_any is not None else None
+            entity_type: Optional[str] = data.get('entity_type') or (type(entity).__name__ if entity else None)
+
             if ctype == 'has_item' and im:
-                item_template_id_condition = data.get('item_template_id'); item_id_condition = data.get('item_id'); quantity_condition = data.get('quantity', 1)
+                item_template_id_condition = data.get('item_template_id'); item_id_condition = data.get('item_id')
+                quantity_condition = data.get('quantity', 1)
                 if entity_id and entity_type and (item_template_id_condition or item_id_condition):
                     guild_id_from_context = context.get('guild_id')
-                    if guild_id_from_context:
-                        owned_items = im.get_items_by_owner(guild_id_from_context, entity_id)
-                        found_item_count = 0
+                    if guild_id_from_context and isinstance(guild_id_from_context, str):
+                        # Assuming get_items_by_owner returns List[Dict[str,Any]] based on usage
+                        owned_items_raw = await im.get_items_by_owner(guild_id_from_context, entity_id)
+                        owned_items: List[Dict[str, Any]] = owned_items_raw if isinstance(owned_items_raw, list) else []
+
+                        found_item_count = 0.0 # Can be float due to item quantity
                         for item_instance_dict in owned_items:
-                            matches_template = (item_template_id_condition and item_instance_dict.get('template_id') == item_template_id_condition)
-                            matches_instance_id = (item_id_condition and item_instance_dict.get('id') == item_id_condition)
+                            if not isinstance(item_instance_dict, dict): continue
+                            matches_template = (item_template_id_condition and str(item_instance_dict.get('template_id')) == str(item_template_id_condition))
+                            matches_instance_id = (item_id_condition and str(item_instance_dict.get('id')) == str(item_id_condition))
+                            item_qty = item_instance_dict.get('quantity', 0.0)
+                            current_item_qty = 0.0
+                            if isinstance(item_qty, (int, float)):
+                                current_item_qty = float(item_qty)
+
                             if item_id_condition:
-                                if matches_instance_id: found_item_count += item_instance_dict.get('quantity', 0); break
-                            elif matches_template: found_item_count += item_instance_dict.get('quantity', 0)
-                        if found_item_count >= quantity_condition: met = True
+                                if matches_instance_id: found_item_count += current_item_qty; break
+                            elif matches_template: found_item_count += current_item_qty
+                        if found_item_count >= float(quantity_condition): met = True
             elif ctype == 'in_location' and lm:
                 loc_id_in_cond = data.get('location_id')
                 if entity and loc_id_in_cond:
-                     entity_location_id = getattr(entity, 'location_id', None)
+                     entity_location_id = getattr(entity, 'current_location_id', getattr(entity, 'location_id', None)) # Try both
                      if entity_location_id is not None and str(entity_location_id) == str(loc_id_in_cond): met = True
             elif ctype == 'has_status' and sm:
                 status_type_cond = data.get('status_type')
                 if entity_id and entity_type and status_type_cond:
                     guild_id_from_context = context.get('guild_id')
-                    if guild_id_from_context:
-                        guild_statuses_cache = sm._status_effects.get(guild_id_from_context, {})
-                        for effect_instance in guild_statuses_cache.values():
-                            if (effect_instance.target_id == entity_id and effect_instance.target_type == entity_type and effect_instance.status_type == status_type_cond):
+                    if guild_id_from_context and isinstance(guild_id_from_context, str):
+                        # _status_effects is Dict[str, Dict[str, StatusEffect]]
+                        guild_statuses_cache: Dict[str, Any] = sm._status_effects.get(guild_id_from_context, {}) # type: ignore[attr-defined]
+                        for effect_instance in guild_statuses_cache.values(): # effect_instance is StatusEffect
+                            if (str(getattr(effect_instance, 'target_id', None)) == entity_id and
+                                str(getattr(effect_instance, 'target_type', None)) == entity_type and
+                                str(getattr(effect_instance, 'status_type', None)) == str(status_type_cond)):
                                 met = True; break
-            elif ctype == 'stat_check': met = await self.perform_stat_check(entity, data.get('stat'), data.get('threshold'), data.get('operator', '>='), context=context)
-            elif ctype == 'is_in_combat' and combat_mgr: met = bool(combat_mgr.get_combat_by_participant_id(entity_id, context=context))
-            elif ctype == 'is_leader_of_party' and pm:
-                if entity_id and entity_type == 'Character':
-                     party_instance = pm.get_party_by_member_id(entity_id, context=context)
-                     if party_instance and getattr(party_instance, 'leader_id', None) == entity_id: met = True
-            else: logger.warning(f"RuleEngine: Unknown or unhandled condition type '{ctype}'."); return False # Changed print
+            elif ctype == 'stat_check': met = await self.perform_stat_check(entity, data.get('stat'), data.get('threshold'), data.get('operator', '>='), **context)
+            elif ctype == 'is_in_combat' and combat_mgr and entity_id:
+                 met = bool(await combat_mgr.get_combat_by_participant_id(entity_id, guild_id=str(context.get('guild_id')))) # Added guild_id
+            elif ctype == 'is_leader_of_party' and pm and entity_id and entity_type == 'Character':
+                 # get_party_by_member_id now takes guild_id as first arg
+                 party_instance = await pm.get_party_by_member_id(str(context.get('guild_id')), entity_id) # type: ignore[attr-defined]
+                 if party_instance and getattr(party_instance, 'leader_id', None) == entity_id: met = True
+            else: logger.warning(f"RuleEngine: Unknown or unhandled condition type '{ctype}'."); return False
             if not met: return False
         return True
 
-    async def perform_stat_check(self, entity: Any, stat_name: str, threshold: Any, operator: str = '>=', **context: Any) -> bool:
+    async def perform_stat_check(self, entity: Any, stat_name: str, threshold: Any, operator: str = '>=', **context: Any) -> bool: # Added **context
         entity_stats = getattr(entity, 'stats_json', {}) if isinstance(entity, Character) else getattr(entity, 'stats', {})
         if not isinstance(entity_stats, dict): entity_stats = {}
         stat_value = entity_stats.get(stat_name)

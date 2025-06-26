@@ -258,7 +258,8 @@ async def test_lang_command_player_not_found(
     mock_interaction: discord.Interaction
 ):
     mock_rpg_bot_instance = cast(RPGBot, settings_cog.bot)
-    mock_rpg_bot_instance.game_manager.get_player_by_discord_id.return_value = None
+    if not mock_rpg_bot_instance.game_manager: mock_rpg_bot_instance.game_manager = AsyncMock() # Ensure game_manager exists
+    mock_rpg_bot_instance.game_manager.get_player_by_discord_id = AsyncMock(return_value=None) # type: ignore[attr-defined]
 
     lang_choice = app_commands.Choice(name="English", value="en")
     lang_command = settings_cog.lang_command
@@ -272,50 +273,53 @@ async def test_lang_command_player_not_found(
 # --- Tests for GuildConfigCmds Commands ---
 
 @pytest.fixture
-async def guild_config_cog(mock_rpg_bot: RPGBot) -> GuildConfigCmds: # Return type hint
-    mock_cog_db_service = AsyncMock()
-    # Make the cog's db_service.get_session behave like the bot's main db_service.get_session
-    mock_session_context_manager = AsyncMock()
-    mock_session_context_manager.__aenter__.return_value = mock_rpg_bot.game_manager.db_service.get_session.return_value.__aenter__.return_value
-    mock_session_context_manager.__aexit__.return_value = None
-    mock_cog_db_service.get_session.return_value = mock_session_context_manager
-
-    with patch('bot.command_modules.guild_config_cmds.DBService', return_value=mock_cog_db_service):
-        cog = GuildConfigCmds(mock_rpg_bot) # Pass RPGBot instance
-        # await mock_rpg_bot.add_cog(cog) # Not strictly needed if calling callback directly
-        return cog
+async def guild_config_cog(mock_rpg_bot: RPGBot) -> GuildConfigCmds:
+    # DBService is not a direct dependency of GuildConfigCmds constructor based on its definition
+    # It likely accesses db_service via self.bot.game_manager.db_service
+    cog = GuildConfigCmds(mock_rpg_bot)
+    return cog
 
 
 @pytest.mark.asyncio
-@patch('bot.utils.decorators.is_master_role')
+@patch('bot.utils.decorators.is_master_role') # This decorator is applied to the command itself
 async def test_set_bot_language_success(
-    mock_is_master: MagicMock,
+    mock_is_master: MagicMock, # Mock for the decorator
     guild_config_cog: GuildConfigCmds,
     mock_interaction: discord.Interaction,
-    mock_db_session: AsyncSession
+    mock_db_session: AsyncSession # Used by the mocked db_service via game_manager
 ):
-    mock_is_master.return_value = lambda func: func
+    mock_is_master.return_value = lambda func: func # Make decorator pass through
 
     mock_guild_config_db_instance = GuildConfig(guild_id=str(mock_interaction.guild_id), bot_language="fr")
+
+    # Mock the behavior of the session obtained via game_manager.db_service
+    mock_rpg_bot_instance = cast(RPGBot, guild_config_cog.bot)
+    if not mock_rpg_bot_instance.game_manager: mock_rpg_bot_instance.game_manager = AsyncMock()
+    if not mock_rpg_bot_instance.game_manager.db_service: mock_rpg_bot_instance.game_manager.db_service = AsyncMock()
+
+    # Configure the async context manager for get_session on the bot's game_manager.db_service
+    session_context_manager = mock_rpg_bot_instance.game_manager.db_service.get_session.return_value
+    session_instance_mock = session_context_manager.__aenter__.return_value
+
+    # Mock the database interactions happening *inside* the command
     mock_execute_result = AsyncMock()
     mock_execute_result.scalars.return_value.first.return_value = mock_guild_config_db_instance
-    mock_db_session.execute.return_value = mock_execute_result
-    mock_db_session.get = AsyncMock(return_value=mock_guild_config_db_instance)
+    session_instance_mock.execute.return_value = mock_execute_result
+    session_instance_mock.get = AsyncMock(return_value=mock_guild_config_db_instance) # If get is used
 
-    mock_rpg_bot_instance = cast(RPGBot, guild_config_cog.bot)
-    mock_rpg_bot_instance.game_manager.update_rule_config = AsyncMock()
+    mock_rpg_bot_instance.game_manager.update_rule_config = AsyncMock() # type: ignore[attr-defined]
 
     lang_choice = app_commands.Choice(name="English", value="en")
     set_bot_language_command = guild_config_cog.set_bot_language
     await set_bot_language_command.callback(guild_config_cog, mock_interaction, language=lang_choice)
 
-    mock_db_session.execute.assert_any_call(
-        select(GuildConfig).where(GuildConfig.guild_id == str(mock_interaction.guild_id)) # type: ignore
+    session_instance_mock.execute.assert_any_call(
+        select(GuildConfig).where(GuildConfig.guild_id == str(mock_interaction.guild_id))
     )
     assert mock_guild_config_db_instance.bot_language == "en"
-    mock_db_session.add.assert_called_with(mock_guild_config_db_instance)
-    mock_db_session.commit.assert_awaited_once()
-    mock_rpg_bot_instance.game_manager.update_rule_config.assert_awaited_once_with(
+    session_instance_mock.add.assert_called_with(mock_guild_config_db_instance)
+    session_instance_mock.commit.assert_awaited_once()
+    mock_rpg_bot_instance.game_manager.update_rule_config.assert_awaited_once_with( # type: ignore[attr-defined]
         str(mock_interaction.guild_id), "default_language", "en"
     )
     mock_interaction.response.send_message.assert_awaited_once_with(

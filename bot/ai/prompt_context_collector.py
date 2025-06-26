@@ -81,10 +81,10 @@ class PromptContextCollector:
         return {main_lang: "N/A"} # General fallback
 
     def get_main_language_code(self) -> str:
-        if self._game_manager:
-            active_guild_id = self._game_manager._active_guild_ids[0] if self._game_manager._active_guild_ids else None
+        if self._game_manager and hasattr(self._game_manager, '_active_guild_ids') and self._game_manager._active_guild_ids and hasattr(self._game_manager, 'get_default_bot_language'):
+            active_guild_id = self._game_manager._active_guild_ids[0] # type: ignore[attr-defined]
             if active_guild_id:
-                return self._game_manager.get_default_bot_language(active_guild_id)
+                return self._game_manager.get_default_bot_language(active_guild_id) # type: ignore[attr-defined]
         return self.settings.get('main_language_code', 'ru')
 
     def get_lore_context(self) -> List[Dict[str, Any]]:
@@ -99,16 +99,16 @@ class PromptContextCollector:
         world_state_context = {}
         active_events_data = []
         if self.event_manager:
-            active_events = self.event_manager.get_active_events(guild_id)
+            active_events = self.event_manager.get_active_events(guild_id) # type: ignore[attr-defined]
             for event in active_events:
                 active_events_data.append({"id": getattr(event, 'id', None), "name": getattr(event, 'name', "Unknown Event"), "current_stage_id": getattr(event, 'current_stage_id', None), "type": getattr(event, 'template_id', None), "is_active": getattr(event, 'is_active', True)})
         world_state_context["active_global_events"] = active_events_data
 
         key_location_states_data = []
         if self.location_manager:
-            all_guild_locations_cache = self.location_manager._location_instances.get(guild_id, {})
+            all_guild_locations_cache = self.location_manager._location_instances.get(guild_id, {}) # type: ignore[attr-defined]
             for loc_id, loc_data_dict in all_guild_locations_cache.items():
-                location_obj = self.location_manager.get_location_instance(guild_id, loc_id)
+                location_obj = self.location_manager.get_location_instance(guild_id, loc_id) # type: ignore[attr-defined]
                 if not location_obj: continue
                 state_variables = getattr(location_obj, 'state', {}); status_flags = []
                 if state_variables.get('is_destroyed', False): status_flags.append('destroyed')
@@ -120,7 +120,7 @@ class PromptContextCollector:
 
         significant_npc_states_data = []
         if self.npc_manager:
-            all_npcs = self.npc_manager.get_all_npcs(guild_id)
+            all_npcs = self.npc_manager.get_all_npcs(guild_id) # type: ignore[attr-defined]
             for npc in all_npcs:
                 is_significant = False; significance_reasons = []
                 npc_health = getattr(npc, 'health', 0.0); npc_max_health = getattr(npc, 'max_health', 1.0)
@@ -131,8 +131,8 @@ class PromptContextCollector:
         world_state_context["significant_npc_states"] = significant_npc_states_data
 
         game_time_string = "Time not available"
-        if self._game_manager and self._game_manager.time_manager:
-            game_time_float = self._game_manager.time_manager.get_current_game_time(guild_id)
+        if self._game_manager and hasattr(self._game_manager, 'time_manager') and self._game_manager.time_manager:
+            game_time_float = self._game_manager.time_manager.get_current_game_time(guild_id) # type: ignore[attr-defined]
             days = int(game_time_float // 86400); hours = int((game_time_float % 86400) // 3600); minutes = int((game_time_float % 3600) // 60); seconds = int(game_time_float % 60)
             game_time_string = f"Day {days + 1}, {hours:02d}:{minutes:02d}:{seconds:02d}"
         world_state_context["current_time"] = {"game_time_string": game_time_string}
@@ -158,7 +158,7 @@ class PromptContextCollector:
         relationship_data_list = []
         if not self.relationship_manager: logger.warning(f"RelationshipManager not available for guild {guild_id}."); return []
         try:
-            relationships = self.relationship_manager.get_relationships_for_entity(guild_id, entity_id)
+            relationships = self.relationship_manager.get_relationships_for_entity(guild_id, entity_id) # type: ignore[attr-defined]
             for rel_obj in relationships:
                 if rel_obj: rel_dict = rel_obj.to_dict(); relationship_data_list.append({"entity1_id": rel_dict.get("entity1_id"), "entity1_type": rel_dict.get("entity1_type"), "entity2_id": rel_dict.get("entity2_id"), "entity2_type": rel_dict.get("entity2_type"), "relationship_type": rel_dict.get("relationship_type"), "strength": rel_dict.get("strength"), "details": rel_dict.get("details_i18n")})
         except Exception as e: logger.error(f"Error fetching relationships for {entity_id} in guild {guild_id}: {e}", exc_info=True)
@@ -168,7 +168,7 @@ class PromptContextCollector:
         active_quests_list, completed_quests_summary_list = [], []
         if not self.quest_manager: logger.warning(f"QuestManager not available for guild {guild_id}."); return {"active_quests": [], "completed_quests_summary": []}
         try:
-            active_quest_dicts = self.quest_manager.list_quests_for_character(guild_id, character_id)
+            active_quest_dicts = self.quest_manager.list_quests_for_character(guild_id, character_id) # type: ignore[attr-defined]
             for q_dict in active_quest_dicts:
                 current_stage_id = q_dict.get("current_stage_id"); objectives_desc = "No specific objectives."
                 stages_data = q_dict.get("stages")
@@ -178,9 +178,9 @@ class PromptContextCollector:
                 active_quests_list.append({"id": q_dict.get("id"), "name_i18n": q_dict.get("name_i18n", {"en": "Quest", "ru": "Квест"}), "status": q_dict.get("status", "unknown"), "current_objectives_summary": objectives_desc})
         except Exception as e: logger.error(f"Error fetching active quests for {character_id}: {e}", exc_info=True)
         try:
-            completed_ids = self.quest_manager._completed_quests.get(guild_id, {}).get(character_id, [])
+            completed_ids = self.quest_manager._completed_quests.get(guild_id, {}).get(character_id, []) # type: ignore[attr-defined]
             for q_id in completed_ids:
-                q_details = self.quest_manager._all_quests.get(guild_id, {}).get(q_id)
+                q_details = self.quest_manager._all_quests.get(guild_id, {}).get(q_id) # type: ignore[attr-defined]
                 q_details_dict = q_details.to_dict() if q_details and hasattr(q_details, 'to_dict') else {}
                 completed_quests_summary_list.append({"id": q_id, "name_i18n": q_details_dict.get("name_i18n", {"en": f"Old Tale ({q_id[:4]})", "ru": f"Быль ({q_id[:4]})"}), "outcome": q_details_dict.get("status", "completed")})
         except Exception as e: logger.error(f"Error fetching completed quests for {character_id}: {e}", exc_info=True)
@@ -261,19 +261,19 @@ class PromptContextCollector:
         # If manager exists but fetch flag is false, it means get_full_context didn't fetch (no log here)
 
         if self.npc_manager and hasattr(self.npc_manager, '_npc_archetypes'):
-            for archetype_id, archetype_data in self.npc_manager._npc_archetypes.items():
+            for archetype_id, archetype_data in self.npc_manager._npc_archetypes.items(): # type: ignore[attr-defined]
                 if isinstance(archetype_data, dict): terms.append({"id": archetype_id, "name_i18n": self._ensure_i18n_dict(archetype_data.get("name_i18n", archetype_data.get("name")), main_lang, archetype_id), "term_type": "npc_archetype", "description_i18n": self._ensure_i18n_dict(archetype_data.get("description_i18n", archetype_data.get("backstory_i18n", archetype_data.get("backstory"))), main_lang, default_description_text)})
         if self.item_manager and hasattr(self.item_manager, '_item_templates'):
-            for template_id, item_data in self.item_manager._item_templates.items():
+            for template_id, item_data in self.item_manager._item_templates.items(): # type: ignore[attr-defined]
                 if isinstance(item_data, dict): terms.append({"id": template_id, "name_i18n": self._ensure_i18n_dict(item_data.get("name_i18n"), main_lang, template_id), "term_type": "item_template", "description_i18n": self._ensure_i18n_dict(item_data.get("description_i18n"), main_lang, default_description_text)})
         if self.location_manager and hasattr(self.location_manager, '_location_templates'):
-            for template_id, loc_data in self.location_manager._location_templates.items():
+            for template_id, loc_data in self.location_manager._location_templates.items(): # type: ignore[attr-defined]
                 if isinstance(loc_data, dict): terms.append({"id": template_id, "name_i18n": self._ensure_i18n_dict(loc_data.get("name_i18n"), main_lang, template_id), "term_type": "location_template", "description_i18n": self._ensure_i18n_dict(loc_data.get("description_i18n"), main_lang, default_description_text)})
         faction_summary_list = self.get_faction_data_context(guild_id, game_rules_data=game_rules_data)
         for faction_info in faction_summary_list:
             if isinstance(faction_info, dict): terms.append({"id": faction_info.get("id", "unknown_faction"), "name_i18n": self._ensure_i18n_dict(faction_info.get("name_i18n"), main_lang, faction_info.get("id", "Unknown Faction")), "term_type": "faction", "description_i18n": self._ensure_i18n_dict(faction_info.get("description_i18n"), main_lang, default_description_text)})
         if self.quest_manager and hasattr(self.quest_manager, '_quest_templates'):
-            for template_id, quest_data in self.quest_manager._quest_templates.get(guild_id, {}).items():
+            for template_id, quest_data in self.quest_manager._quest_templates.get(guild_id, {}).items(): # type: ignore[attr-defined]
                 if isinstance(quest_data, dict): terms.append({"id": template_id, "name_i18n": self._ensure_i18n_dict(quest_data.get("name_i18n"), main_lang, template_id), "term_type": "quest_template", "description_i18n": self._ensure_i18n_dict(quest_data.get("description_i18n"), main_lang, default_description_text)})
         return terms
 
@@ -361,12 +361,12 @@ class PromptContextCollector:
         terms_kwargs = {'_fetched_abilities': False, '_fetched_spells': False}
         if self.ability_manager and hasattr(self.ability_manager, 'get_all_ability_definitions_for_guild'):
             try:
-                terms_kwargs['_ability_definitions_for_terms'] = await self.ability_manager.get_all_ability_definitions_for_guild(guild_id, session=session)
+                terms_kwargs['_ability_definitions_for_terms'] = await self.ability_manager.get_all_ability_definitions_for_guild(guild_id, session=session) # type: ignore[attr-defined]
                 terms_kwargs['_fetched_abilities'] = True
             except Exception as e: logger.error(f"Error fetching ability definitions: {e}", exc_info=True)
         if self.spell_manager and hasattr(self.spell_manager, 'get_all_spell_definitions_for_guild'):
             try:
-                terms_kwargs['_spell_definitions_for_terms'] = await self.spell_manager.get_all_spell_definitions_for_guild(guild_id, session=session)
+                terms_kwargs['_spell_definitions_for_terms'] = await self.spell_manager.get_all_spell_definitions_for_guild(guild_id, session=session) # type: ignore[attr-defined]
                 terms_kwargs['_fetched_spells'] = True
             except Exception as e: logger.error(f"Error fetching spell definitions: {e}", exc_info=True)
 
@@ -383,25 +383,25 @@ class PromptContextCollector:
         loc_id_param = request_params.get("location_id")
         if loc_id_param and self.location_manager:
             # Ensure LocationModel is the correct type for loc_inst
-            loc_inst: Optional[LocationModel] = await self.location_manager.get_location_instance(guild_id, str(loc_id_param)) # type: ignore
+            loc_inst: Optional[LocationModel] = await self.location_manager.get_location_instance(guild_id, str(loc_id_param)) # type: ignore[attr-defined]
             if loc_inst: context_dict["primary_location_details"] = loc_inst.to_dict(); logger.debug(f"Added primary_location_details for {loc_id_param}")
             else: logger.warning(f"Could not fetch details for primary_location_id: {loc_id_param}")
         party_id_param = request_params.get("party_id")
         if party_id_param and self.party_manager and self.character_manager:
-            party_obj = self.party_manager.get_party(guild_id, str(party_id_param))
+            party_obj = self.party_manager.get_party(guild_id, str(party_id_param)) # type: ignore[attr-defined]
             if party_obj:
                 party_ctx_data = {"party_id": getattr(party_obj, 'id', str(party_id_param)), "name_i18n": getattr(party_obj, 'name_i18n', {}), "member_details": [], "average_level": None}
-                member_levels = []; member_ids_list = getattr(party_obj, 'player_ids', getattr(party_obj, 'player_ids_list', [])) # type: ignore
-                for member_id in member_ids_list: # type: ignore
+                member_levels = []; member_ids_list = getattr(party_obj, 'player_ids', getattr(party_obj, 'player_ids_list', []))
+                for member_id in member_ids_list:
                     if not member_id: continue
-                    char_obj = await self.character_manager.get_character(guild_id, str(member_id))
+                    char_obj = await self.character_manager.get_character(guild_id, str(member_id)) # type: ignore[attr-defined]
                     if char_obj: party_ctx_data["member_details"].append({"id": char_obj.id, "name_i18n": char_obj.name_i18n, "level": char_obj.level}); member_levels.append(char_obj.level)
                 if member_levels: party_ctx_data["average_level"] = round(sum(member_levels) / len(member_levels), 1)
                 context_dict["party_context"] = party_ctx_data; logger.debug(f"Added party_context for {party_id_param}")
             else: logger.warning(f"Could not fetch party details for party_id: {party_id_param}")
         if target_entity_id and target_entity_type == "character":
             # Ensure CharacterModel or similar from character_manager.py is used here if needed
-            char_details_ctx = await self.character_manager.get_character_details_context(guild_id, character_id=target_entity_id) # type: ignore
+            char_details_ctx = await self.character_manager.get_character_details_context(guild_id, character_id=target_entity_id) # type: ignore[attr-defined]
             context_dict["player_context"] = char_details_ctx
             quest_ctx = self.get_quest_context(guild_id, character_id=target_entity_id)
             if isinstance(quest_ctx, dict): context_dict["active_quests_summary"] = quest_ctx.get("active_quests", [])
@@ -415,7 +415,7 @@ class PromptContextCollector:
     async def get_character_details_context(self, guild_id: str, character_id: str) -> Optional[Dict[str, Any]]:
         # Placeholder for a more detailed character context method
         if not self.character_manager: return None
-        char_obj = await self.character_manager.get_character(guild_id, character_id)
+        char_obj = await self.character_manager.get_character(guild_id, character_id) # type: ignore[attr-defined]
         if char_obj:
             return {
                 "id": char_obj.id,

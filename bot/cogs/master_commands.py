@@ -23,28 +23,33 @@ from bot.database.guild_transaction import GuildTransaction
 logger = logging.getLogger(__name__)
 
 class MasterCog(commands.Cog, name="Master Commands"):
-    def __init__(self, bot: "RPGBot"): # Use RPGBot for type hint
+    def __init__(self, bot: "RPGBot"):
         self.bot = bot
-        # GameManager is typically accessed via self.bot.game_manager in cogs
-        # Direct assignment here might be for testing or specific setup
-        self.game_manager: Optional["GameManager"] = getattr(self.bot, 'game_manager', None)
+        # Access GameManager via self.bot.game_manager, which should be set up by RPGBot
+        # The Optional type hint for self.game_manager handles cases where it might not be immediately available
+        # or if there's a loading order issue, though ideally it should always be present after bot setup.
+        self.game_manager: Optional["GameManager"] = self.bot.game_manager # type: ignore[assignment]
+
         if not self.game_manager:
-            # Attempt to get from cog if RPGBot structure is different
-            game_manager_cog = self.bot.get_cog("GameManagerCog")
-            if game_manager_cog and hasattr(game_manager_cog, 'game_manager'):
-                self.game_manager = game_manager_cog.game_manager # type: ignore
-
-            if not self.game_manager:
-                 logger.error("MasterCog: GameManager not found on bot. This cog may not function correctly.")
-
+            logger.error("MasterCog: GameManager not found on bot. This cog may not function correctly.")
+            # Consider raising an exception or specific handling if GameManager is critical
+            # For now, logging an error allows the bot to load other cogs if possible.
 
     async def cog_check(self, ctx_or_interaction: Union[commands.Context, discord.Interaction]) -> bool:
         """Checks if the user is a master or admin before executing any command in this cog."""
-        # user_id = get_discord_user_id_from_interaction(ctx_or_interaction) # user_id not used
-        guild_id_str = str(ctx_or_interaction.guild.id) if ctx_or_interaction.guild else None
+        guild = ctx_or_interaction.guild
+        if not guild: # Should not happen with guild_only=True, but defensive
+            if isinstance(ctx_or_interaction, discord.Interaction):
+                if not ctx_or_interaction.response.is_done(): await ctx_or_interaction.response.send_message("Master commands must be used within a server.", ephemeral=True)
+                else: await ctx_or_interaction.followup.send("Master commands must be used within a server.", ephemeral=True)
+            else: # commands.Context
+                await ctx_or_interaction.send("Master commands must be used within a server.")
+            return False
 
-        if not self.game_manager:
-            msg = "GameManager is not available. Master commands cannot be checked."
+        guild_id_str = str(guild.id)
+
+        if not self.game_manager: # Check again, as it's crucial for is_user_master_or_admin
+            msg = "GameManager is not available. Master commands cannot be checked or executed."
             logger.error(msg)
             if isinstance(ctx_or_interaction, discord.Interaction):
                 if not ctx_or_interaction.response.is_done(): await ctx_or_interaction.response.send_message(msg, ephemeral=True)
@@ -53,28 +58,28 @@ class MasterCog(commands.Cog, name="Master Commands"):
                 await ctx_or_interaction.send(msg)
             return False
 
-        if not guild_id_str:
-            if isinstance(ctx_or_interaction, discord.Interaction):
-                if not ctx_or_interaction.response.is_done(): await ctx_or_interaction.response.send_message("Master commands must be used within a server (guild).", ephemeral=True)
-                else: await ctx_or_interaction.followup.send("Master commands must be used within a server (guild).", ephemeral=True)
-            else:
-                await ctx_or_interaction.send("Master commands must be used within a server (guild).")
-            return False
-
-        is_master = is_user_master_or_admin(ctx_or_interaction, self.game_manager)
+        # Pass self.game_manager directly
+        is_master = await is_user_master_or_admin(ctx_or_interaction, self.game_manager) # is_user_master_or_admin is async
 
         if not is_master:
-            lang = "en"
+            lang = "en" # Default language
+            # Determine language for the response
             if isinstance(ctx_or_interaction, discord.Interaction) and ctx_or_interaction.locale:
                 lang = str(ctx_or_interaction.locale)
-            elif guild_id_str and self.game_manager and hasattr(self.game_manager, 'get_rule') and callable(getattr(self.game_manager, 'get_rule')):
-                # Ensure get_rule exists and is callable
-                get_rule_method = getattr(self.game_manager, 'get_rule')
-                lang_result = await get_rule_method(guild_id_str, "default_language", "en")
-                if lang_result: lang = lang_result
+            elif self.game_manager and hasattr(self.game_manager, 'get_rule') and callable(self.game_manager.get_rule):
+                lang_result = await self.game_manager.get_rule(guild_id_str, "default_language", "en")
+                if lang_result and isinstance(lang_result, str): lang = lang_result
 
             error_key = "error_not_master_admin"
-            message_str = get_localized_string(lang, error_key, guild_id=guild_id_str, params={"guild_name": ctx_or_interaction.guild.name if ctx_or_interaction.guild else "this server"})
+            # Ensure guild.name is accessed correctly
+            guild_name = guild.name if guild else "this server"
+            message_str = get_localized_string(
+                language=lang,
+                string_key=error_key,
+                guild_id=guild_id_str, # Pass guild_id as string
+                # Ensure params are correctly structured if get_localized_string expects a dict
+                params={"guild_name": guild_name} if isinstance(guild_name, str) else {}
+            )
 
 
             if isinstance(ctx_or_interaction, discord.Interaction):
@@ -112,22 +117,30 @@ class MasterCog(commands.Cog, name="Master Commands"):
             await send_error_message(interaction, "Invalid JSON format for connection_details_json."); return
 
         try:
+            if not self.game_manager.db_service: # Should be caught by earlier check, but defensive
+                 await send_error_message(interaction, "DBService is not available."); return
             session_factory = self.game_manager.db_service.get_session_factory()
-            async with GuildTransaction(session_factory, guild_id) as session: # type: ignore
-                source_location = await session.get(Location, source_location_id)
+            if not session_factory:
+                await send_error_message(interaction, "Session factory not available."); return
+
+            async with GuildTransaction(session_factory, guild_id) as session: # type: ignore[arg-type]
+                from bot.database.models.world_related import Location # Import here to avoid circularity if Location is defined elsewhere
+                source_location: Optional[Location] = await session.get(Location, source_location_id)
                 if not source_location or str(source_location.guild_id) != guild_id:
                     await send_error_message(interaction, f"Source location '{source_location_id}' not found."); return
 
-                target_location = await session.get(Location, target_location_id)
+                target_location: Optional[Location] = await session.get(Location, target_location_id)
                 if not target_location or str(target_location.guild_id) != guild_id:
                     await send_error_message(interaction, f"Target location '{target_location_id}' not found."); return
 
-                current_neighbors: List[Dict[str, Any]] = source_location.neighbor_locations_json if isinstance(source_location.neighbor_locations_json, list) else []
+                current_neighbors_any = source_location.neighbor_locations_json
+                current_neighbors: List[Dict[str, Any]] = current_neighbors_any if isinstance(current_neighbors_any, list) else []
 
-                if any(conn.get("to_location_id") == target_location_id for conn in current_neighbors):
+
+                if any(isinstance(conn, dict) and conn.get("to_location_id") == target_location_id for conn in current_neighbors):
                     await send_error_message(interaction, f"Connection from '{source_location_id}' to '{target_location_id}' already exists."); return
 
-                new_connection_entry = {
+                new_connection_entry: Dict[str, Any] = { # Explicitly type new_connection_entry
                     "to_location_id": target_location_id,
                     "direction_i18n": connection_details.get("direction_i18n"),
                     "path_description_i18n": connection_details.get("path_description_i18n"),
@@ -136,7 +149,7 @@ class MasterCog(commands.Cog, name="Master Commands"):
                     "visibility_conditions_json": connection_details.get("visibility_conditions_json", {})
                 }
                 current_neighbors.append(new_connection_entry)
-                source_location.neighbor_locations_json = current_neighbors # Assign back the modified list
+                source_location.neighbor_locations_json = current_neighbors
                 flag_modified(source_location, "neighbor_locations_json")
                 await session.commit()
                 await send_success_message(interaction, f"Successfully added connection from '{source_location_id}' to '{target_location_id}'.")
@@ -171,13 +184,21 @@ class MasterCog(commands.Cog, name="Master Commands"):
             await send_error_message(interaction, "Invalid JSON format for new_connection_details_json."); return
 
         try:
+            if not self.game_manager.db_service: # Defensive check
+                 await send_error_message(interaction, "DBService is not available."); return
             session_factory = self.game_manager.db_service.get_session_factory()
-            async with GuildTransaction(session_factory, guild_id) as session: # type: ignore
-                source_location = await session.get(Location, source_location_id)
+            if not session_factory:
+                await send_error_message(interaction, "Session factory not available."); return
+
+            async with GuildTransaction(session_factory, guild_id) as session: # type: ignore[arg-type]
+                from bot.database.models.world_related import Location # Import here
+                source_location: Optional[Location] = await session.get(Location, source_location_id)
                 if not source_location or str(source_location.guild_id) != guild_id:
                     await send_error_message(interaction, f"Source location '{source_location_id}' not found."); return
 
-                current_neighbors: List[Dict[str, Any]] = source_location.neighbor_locations_json if isinstance(source_location.neighbor_locations_json, list) else []
+                current_neighbors_any = source_location.neighbor_locations_json
+                current_neighbors: List[Dict[str, Any]] = current_neighbors_any if isinstance(current_neighbors_any, list) else []
+
                 existing_connection_index = -1
                 for i, conn in enumerate(current_neighbors):
                     if isinstance(conn, dict) and conn.get("to_location_id") == target_location_id:
@@ -185,10 +206,15 @@ class MasterCog(commands.Cog, name="Master Commands"):
                 if existing_connection_index == -1:
                     await send_error_message(interaction, f"No connection found from '{source_location_id}' to '{target_location_id}' to modify."); return
 
-                current_neighbors[existing_connection_index] = {
+                # Create a new dictionary for the modified connection to ensure proper typing if needed
+                modified_connection: Dict[str, Any] = {
                     "to_location_id": target_location_id,
-                    **new_connection_details # Spread the new details, overwriting existing ones
+                    # Preserve other potential fields from existing_connection if any, then overwrite/add new ones
+                    **(current_neighbors[existing_connection_index] if isinstance(current_neighbors[existing_connection_index], dict) else {}),
+                    **new_connection_details
                 }
+                current_neighbors[existing_connection_index] = modified_connection
+
                 source_location.neighbor_locations_json = current_neighbors
                 flag_modified(source_location, "neighbor_locations_json")
                 await session.commit()
@@ -209,13 +235,20 @@ class MasterCog(commands.Cog, name="Master Commands"):
             await send_error_message(interaction, "GameManager or DBService not available."); return
 
         try:
+            if not self.game_manager.db_service: # Defensive check
+                 await send_error_message(interaction, "DBService is not available."); return
             session_factory = self.game_manager.db_service.get_session_factory()
-            async with GuildTransaction(session_factory, guild_id) as session: # type: ignore
-                source_location = await session.get(Location, source_location_id)
+            if not session_factory:
+                await send_error_message(interaction, "Session factory not available."); return
+
+            async with GuildTransaction(session_factory, guild_id) as session: # type: ignore[arg-type]
+                from bot.database.models.world_related import Location # Import here
+                source_location: Optional[Location] = await session.get(Location, source_location_id)
                 if not source_location or str(source_location.guild_id) != guild_id:
                     await send_error_message(interaction, f"Source location '{source_location_id}' not found."); return
 
-                current_neighbors: List[Dict[str, Any]] = source_location.neighbor_locations_json if isinstance(source_location.neighbor_locations_json, list) else []
+                current_neighbors_any = source_location.neighbor_locations_json
+                current_neighbors: List[Dict[str, Any]] = current_neighbors_any if isinstance(current_neighbors_any, list) else []
                 original_len = len(current_neighbors)
                 new_neighbors = [conn for conn in current_neighbors if not (isinstance(conn, dict) and conn.get("to_location_id") == target_location_id)]
 
@@ -230,12 +263,12 @@ class MasterCog(commands.Cog, name="Master Commands"):
             logger.error(f"Error in master_del_loc_connection for guild {guild_id}: {e}", exc_info=True)
             await send_error_message(interaction, f"An unexpected error occurred: {e}")
 
-async def setup(bot: commands.Bot): # Added type hint for bot
-    # Ensure GameManagerCog is added before this one if it's a dependency for GameManager
-    game_manager_cog = bot.get_cog("GameManagerCog")
-    if not game_manager_cog or not hasattr(game_manager_cog, 'game_manager'):
-        logger.error("MasterCog setup: GameManagerCog or game_manager attribute not found. MasterCog may not function correctly.")
-        # Optionally, raise an error or prevent cog loading
-        # raise commands.ExtensionFailed("MasterCog requires GameManagerCog to be loaded first.")
+async def setup(bot: "RPGBot"): # Changed type hint to RPGBot
+    # The check for GameManagerCog might be an architectural pattern.
+    # If GameManager is always expected on RPGBot instance directly, this check might be simplified or removed.
+    # For now, keeping the logic but ensuring self.bot.game_manager is the primary source.
+    if not bot.game_manager:
+         logger.error("MasterCog setup: bot.game_manager not found. MasterCog may not function correctly.")
+         # Depending on strictness, could raise commands.ExtensionFailed here
     await bot.add_cog(MasterCog(bot))
     logger.info("MasterCog added to bot.")
