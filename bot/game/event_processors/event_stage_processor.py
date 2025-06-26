@@ -180,17 +180,22 @@ class EventStageProcessor:
         # Обновляем стадию
         event.current_stage_id = target_stage_id
         # Помечаем событие как "грязное" для сохранения
-        if event_manager and hasattr(event_manager, '_dirty_events'): # Используем переданный event_manager, если есть, иначе инжектированный (self._event_manager)
-             event_manager_inst_for_dirty = event_manager or getattr(self, '_event_manager', None)
-             if event_manager_inst_for_dirty and hasattr(event_manager_inst_for_dirty, '_dirty_events'):
-                event_manager_inst_for_dirty._dirty_events.add(event.id)
-             else:
-                print(f"Warning: Could not mark event {event.id} dirty. EventManager not available.")
+        event_manager_to_use = event_manager # Prioritize passed-in manager
+        if not event_manager_to_use and hasattr(self, '_game_manager') and self._game_manager: # Fallback to game_manager's event_manager
+            event_manager_to_use = self._game_manager.event_manager
+
+        if event_manager_to_use and hasattr(event_manager_to_use, '_dirty_events'):
+            if isinstance(event_manager_to_use._dirty_events, set):
+                event_manager_to_use._dirty_events.add(event.id)
+            else:
+                print(f"Warning: _dirty_events on EventManager is not a set for event {event.id}. Type: {type(event_manager_to_use._dirty_events)}")
+        else:
+            print(f"Warning: Could not mark event {event.id} dirty. EventManager or _dirty_events attribute not available.")
 
 
         # 2. OnEnter для новой стадии
-        new_data = event.stages_data.get(target_stage_id, {})
-        on_enter = new_data.get('on_enter_actions', []) or []
+        new_stage_data_dict = event.stages_data.get(target_stage_id, {})
+        on_enter = new_stage_data_dict.get('on_enter_actions', []) or []
         # Проверка на наличие исполнителя OnEnter/OnExit
         if on_enter_action_executor_inst and on_enter and rule_engine_inst:
             print(f"Executing {len(on_enter)} OnEnter actions for stage '{target_stage_id}'")
@@ -205,10 +210,14 @@ class EventStageProcessor:
         # 3. Генерация описания стадии (если это не конец события)
         if stage_description_generator_inst and target_stage_id != 'event_end':
             try:
-                # Передаем расширенный контекст
-                desc = await stage_description_generator_inst.generate_description(event, target_stage_id, context=managers_context) # Pass context
-                if desc:
-                    await send_message_callback(desc)
+                current_stage_obj = event.get_stage_by_id(target_stage_id)
+                if current_stage_obj:
+                    # Передаем расширенный контекст и объект стадии
+                    desc = await stage_description_generator_inst.generate_description(event, current_stage_obj, context=managers_context) # Pass context
+                    if desc:
+                        await send_message_callback(desc)
+                else:
+                    print(f"Error: Could not find stage object for target_stage_id '{target_stage_id}' in event {event.id}")
             except Exception as e:
                 print(f"Error generating stage description for event {event.id}, stage '{target_stage_id}': {e}")
                 print(traceback.format_exc())
