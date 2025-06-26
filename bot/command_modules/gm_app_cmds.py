@@ -1061,57 +1061,91 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
     async def cmd_master_edit_ai(self, interaction: Interaction, pending_id: str, json_data: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild_id_str = str(interaction.guild_id)
-        game_mngr: "GameManager" = self.bot.game_manager
+        game_mngr: "GameManager" = self.bot.game_manager # type: ignore
         import datetime
+        from bot.database import crud_utils # Import crud_utils
+        from bot.database.models.pending_generation import PendingGeneration, PendingStatus # Ensure model is imported
+        # Ensure parse_and_validate_ai_response is correctly imported if not already at module level
+        from bot.ai.ai_response_validator import parse_and_validate_ai_response
+
+
         if not game_mngr or not game_mngr.db_service:
             await interaction.followup.send("Ошибка: Сервис базы данных недоступен.", ephemeral=True)
             return
         try:
-            record: Optional[PendingGeneration] = await game_mngr.db_service.get_entity_by_pk(
-                PendingGeneration, pk_value=pending_id, guild_id=guild_id_str
-            )
-            if not record:
-                await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
-                return
-            if record.status not in ["pending_moderation", "failed_validation"]:
-                await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть отредактирована.", ephemeral=True)
-                return
-            new_parsed_data: Optional[Any] = None
-            try:
-                new_parsed_data = json.loads(json_data)
-            except json.JSONDecodeError as e:
-                await interaction.followup.send(f"Предоставленные JSON данные некорректны: {e}", ephemeral=True)
-                return
-            is_list_type = record.request_type in ["list_of_quests", "list_of_npcs", "list_of_items", "list_of_locations", "list_of_events"]
-            if is_list_type and not isinstance(new_parsed_data, list):
-                 await interaction.followup.send(f"Для типа запроса '{record.request_type}' ожидается JSON массив (list). Получен: {type(new_parsed_data).__name__}", ephemeral=True)
-                 return
-            elif not is_list_type and not isinstance(new_parsed_data, dict):
-                 await interaction.followup.send(f"Для типа запроса '{record.request_type}' ожидается JSON объект (dict). Получен: {type(new_parsed_data).__name__}", ephemeral=True)
-                 return
-            validated_data_after_edit, validation_issues_after_edit = await parse_and_validate_ai_response(
-                raw_ai_output_text=json_data, guild_id=guild_id_str,
-                request_type=record.request_type, game_manager=game_mngr
-            )
-            updates: Dict[str, Any] = {
-                "parsed_data_json": validated_data_after_edit,
-                "validation_issues_json": validation_issues_after_edit,
-                "status": "pending_moderation" if not validation_issues_after_edit else "failed_validation",
-                "moderated_by_user_id": str(interaction.user.id),
-                "moderated_at": datetime.datetime.utcnow()
-            }
-            current_notes = record.moderator_notes_i18n if isinstance(record.moderator_notes_i18n, dict) else {}
-            edit_history = current_notes.get("edit_history", [])
-            if not isinstance(edit_history, list): edit_history = []
-            edit_history.append({
-                "timestamp": datetime.datetime.utcnow().isoformat(), "editor_id": str(interaction.user.id),
-                "action": "edited_data", "previous_status": record.status, "new_status": updates["status"]
-            })
-            current_notes["edit_history"] = edit_history
-            updates["moderator_notes_i18n"] = current_notes
-            success = await game_mngr.db_service.update_entity_by_pk(PendingGeneration, pending_id, updates, guild_id=guild_id_str)
+            record: Optional[PendingGeneration]
+            async with game_mngr.db_service.get_session() as session: # type: ignore
+                record = await crud_utils.get_entity_by_id(
+                    db_session=session, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
+                )
+                if not record:
+                    await interaction.followup.send(f"Запись с ID `{pending_id}` не найдена.", ephemeral=True)
+                    return
+                if record.status not in [PendingStatus.PENDING_MODERATION, PendingStatus.FAILED_VALIDATION]:
+                    await interaction.followup.send(f"Запись `{pending_id}` находится в статусе '{record.status}' и не может быть отредактирована.", ephemeral=True)
+                    return
+
+                new_parsed_data: Optional[Any] = None
+                try:
+                    new_parsed_data = json.loads(json_data)
+                except json.JSONDecodeError as e:
+                    await interaction.followup.send(f"Предоставленные JSON данные некорректны: {e}", ephemeral=True)
+                    return
+
+                # Ensure record.request_type is valid before using it.
+                record_request_type = getattr(record, 'request_type', None)
+                if not record_request_type:
+                    await interaction.followup.send(f"У записи `{pending_id}` отсутствует тип запроса (request_type). Редактирование невозможно.", ephemeral=True)
+                    return
+
+                is_list_type = record_request_type in [
+                    GenerationType.LIST_OF_QUESTS, GenerationType.LIST_OF_NPCS,
+                    GenerationType.LIST_OF_ITEMS, GenerationType.LIST_OF_LOCATIONS,
+                    GenerationType.LIST_OF_EVENTS
+                ]
+
+                if is_list_type and not isinstance(new_parsed_data, list):
+                     await interaction.followup.send(f"Для типа запроса '{record_request_type}' ожидается JSON массив (list). Получен: {type(new_parsed_data).__name__}", ephemeral=True)
+                     return
+                elif not is_list_type and not isinstance(new_parsed_data, dict):
+                     await interaction.followup.send(f"Для типа запроса '{record_request_type}' ожидается JSON объект (dict). Получен: {type(new_parsed_data).__name__}", ephemeral=True)
+                     return
+
+                validated_data_after_edit, validation_issues_after_edit = await parse_and_validate_ai_response(
+                    raw_ai_output_text=json_data, guild_id=guild_id_str,
+                    request_type=record_request_type, game_manager=game_mngr # type: ignore
+                )
+
+                updates: Dict[str, Any] = {
+                    "parsed_data_json": validated_data_after_edit,
+                    "validation_issues_json": validation_issues_after_edit,
+                    "status": PendingStatus.PENDING_MODERATION if not validation_issues_after_edit else PendingStatus.FAILED_VALIDATION,
+                    "moderated_by_user_id": str(interaction.user.id),
+                    "moderated_at": datetime.datetime.now(datetime.timezone.utc)
+                }
+
+                current_notes_val = getattr(record, 'moderator_notes_i18n', None)
+                current_notes = current_notes_val if isinstance(current_notes_val, dict) else {}
+                edit_history = current_notes.get("edit_history", [])
+                if not isinstance(edit_history, list): edit_history = []
+
+                edit_history.append({
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "editor_id": str(interaction.user.id),
+                    "action": "edited_data",
+                    "previous_status": record.status,
+                    "new_status": updates["status"]
+                })
+                current_notes["edit_history"] = edit_history
+                updates["moderator_notes_i18n"] = current_notes
+
+                updated_record_instance = await crud_utils.update_entity(
+                    db_session=session, entity_instance=record, data=updates, guild_id=guild_id_str
+                )
+                success = updated_record_instance is not None
+
             if success:
-                msg = f"⚙️ AI Content ID `{pending_id}` (Type: {record.request_type}) data updated. New validation status: {updates['status']}."
+                msg = f"⚙️ AI Content ID `{pending_id}` (Type: {record_request_type}) data updated. New validation status: {updates['status']}."
                 if validation_issues_after_edit:
                     issues_summary = "; ".join([f"{str(issue.get('loc', 'N/A'))}: {issue.get('msg', 'Unknown issue')}" for issue in validation_issues_after_edit[:3]])
                     msg += f"\nValidation Issues (first 3): {issues_summary}"
