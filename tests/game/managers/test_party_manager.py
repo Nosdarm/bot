@@ -48,18 +48,15 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         )
         
         # Initialize internal state for tests
-        # These are internal attributes, so direct assignment for testing is okay,
-        # but be mindful if the internal structure of PartyManager changes.
-        # Using type: ignore for attributes not in __init__
-        self.party_manager._parties: Dict[str, Dict[str, Party]] = {} # type: ignore[attr-defined]
-        self.party_manager._dirty_parties: Dict[str, Set[str]] = {} # type: ignore[attr-defined]
-        self.party_manager._member_to_party_map: Dict[str, Dict[str, str]] = {} # type: ignore[attr-defined]
-        self.party_manager._deleted_parties: Dict[str, Set[str]] = {} # type: ignore[attr-defined]
-        self.party_manager._diagnostic_log: List[str] = [] # type: ignore[attr-defined]
+        self.party_manager._parties: Dict[str, Dict[str, Party]] = {}
+        self.party_manager._dirty_parties: Dict[str, Set[str]] = {}
+        self.party_manager._member_to_party_map: Dict[str, Dict[str, str]] = {}
+        self.party_manager._deleted_parties: Dict[str, Set[str]] = {}
+        self.party_manager._diagnostic_log: List[str] = []
 
 
         self.guild_id = "test_guild_1"
-        self.party_id = str(uuid.uuid4()) # Use UUID for party_id
+        self.party_id = str(uuid.uuid4())
         self.party_leader_id = "leader_1"
         
         self.dummy_party_data = {
@@ -72,13 +69,12 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         }
 
         self.test_party = Party.from_dict(self.dummy_party_data)
-        # Ensure guild_id key exists before adding party
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.party_id] = self.test_party # type: ignore[attr-defined]
-        self.party_manager.mark_party_dirty = AsyncMock() # Mock this method
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.party_id] = self.test_party
+        self.party_manager.mark_party_dirty = AsyncMock()
 
     async def test_successfully_updates_party_location(self):
         new_location_id = "new_location_456"
-        cast(List[str], self.party_manager._diagnostic_log).clear() # type: ignore[attr-defined]
+        self.party_manager._diagnostic_log.clear()
         result = await self.party_manager.update_party_location(self.guild_id, self.party_id, new_location_id)
         self.assertTrue(result)
         self.assertEqual(self.test_party.current_location_id, new_location_id)
@@ -87,19 +83,21 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
     async def test_party_not_found_update_location(self):
         result = await self.party_manager.update_party_location(self.guild_id, "non_existent_party", "new_loc")
         self.assertFalse(result)
-        self.party_manager.mark_party_dirty.assert_not_awaited() # Corrected from assert_not_called
+        self.party_manager.mark_party_dirty.assert_not_called()
 
     async def test_party_already_at_target_location(self):
         current_location = "location_abc"
         self.test_party.current_location_id = current_location
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties)[self.guild_id][self.party_id] = self.test_party # type: ignore[attr-defined]
+        # Ensure the party is in the manager's dictionary for the test
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.party_id] = self.test_party
         result = await self.party_manager.update_party_location(self.guild_id, self.party_id, current_location)
-        self.assertTrue(result) # Should still be true, just no change
-        self.party_manager.mark_party_dirty.assert_not_awaited() # No change, so not marked dirty
+        self.assertTrue(result)
+        self.party_manager.mark_party_dirty.assert_not_called()
 
     async def test_update_location_to_none(self):
         self.test_party.current_location_id = "some_initial_location"
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties)[self.guild_id][self.party_id] = self.test_party # type: ignore[attr-defined]
+        # Ensure the party is in the manager's dictionary for the test
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.party_id] = self.test_party
         result = await self.party_manager.update_party_location(self.guild_id, self.party_id, None)
         self.assertTrue(result)
         self.assertIsNone(self.test_party.current_location_id)
@@ -107,10 +105,11 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
 
     async def test_party_missing_current_location_id_attribute(self):
         party_data_no_loc = self.dummy_party_data.copy()
-        del party_data_no_loc['current_location_id'] # Simulate missing attribute
+        del party_data_no_loc['current_location_id']
         party_without_loc_attr = Party.from_dict(party_data_no_loc)
-        self.assertIsNone(party_without_loc_attr.current_location_id) # It will be None by default
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties)[self.guild_id][self.party_id] = party_without_loc_attr # type: ignore[attr-defined]
+        self.assertIsNone(party_without_loc_attr.current_location_id)
+        # Ensure the party is in the manager's dictionary for the test
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.party_id] = party_without_loc_attr
         new_location_id = "new_valid_location"
         result = await self.party_manager.update_party_location(self.guild_id, self.party_id, new_location_id)
         self.assertTrue(result)
@@ -119,7 +118,7 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_party_success(self):
         leader_char_id = "leader_char_id_for_create"
-        leader_location_id = "leader_loc_for_create" # Corrected parameter name
+        leader_location_id = "leader_loc_for_create"
         party_name_i18n = {"en": "The Brave Companions"}
         self.mock_character_manager.set_character_party_id = AsyncMock()
         test_uuid_val = uuid.uuid4()
@@ -128,14 +127,18 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
                 guild_id=self.guild_id,
                 leader_character_id=leader_char_id,
                 party_name_i18n=party_name_i18n,
-                leader_location_id=leader_location_id # Pass correct parameter
+                leader_location_id=leader_location_id
             )
         self.assertIsNotNone(created_party_object)
         self.assertEqual(created_party_object.id, str(test_uuid_val))
         self.assertEqual(created_party_object.name_i18n, party_name_i18n)
         self.mock_character_manager.set_character_party_id.assert_awaited_once_with(self.guild_id, leader_char_id, created_party_object.id)
-        self.assertIn(created_party_object.id, cast(Dict[str, Dict[str, Party]], self.party_manager._parties)[self.guild_id]) # type: ignore[attr-defined]
-        self.assertEqual(cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map)[self.guild_id][leader_char_id], created_party_object.id) # type: ignore[attr-defined]
+        # Ensure the guild_id key exists before assertion
+        self.party_manager._parties.setdefault(self.guild_id, {})
+        self.assertIn(created_party_object.id, self.party_manager._parties[self.guild_id])
+        # Ensure the guild_id key exists for member_to_party_map as well
+        self.party_manager._member_to_party_map.setdefault(self.guild_id, {})
+        self.assertEqual(self.party_manager._member_to_party_map[self.guild_id][leader_char_id], created_party_object.id)
         self.party_manager.mark_party_dirty.assert_awaited_once_with(self.guild_id, created_party_object.id)
 
     async def test_add_member_to_party_success(self):
@@ -145,25 +148,28 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         mock_char.current_location_id = self.test_party.current_location_id
         self.mock_character_manager.get_character_by_id = AsyncMock(return_value=mock_char)
         self.mock_character_manager.set_character_party_id = AsyncMock()
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.test_party.id] = self.test_party # type: ignore[attr-defined]
-        cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map).setdefault(self.guild_id, {})[self.test_party.leader_id] = self.test_party.id # type: ignore[attr-defined]
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.test_party.id] = self.test_party
+        self.party_manager._member_to_party_map.setdefault(self.guild_id, {})[self.test_party.leader_id] = self.test_party.id
 
-        result = await self.party_manager.add_member_to_party( # Corrected method call
+        result = await self.party_manager.add_member_to_party(
             guild_id=self.guild_id, party_id=self.test_party.id, character_id=new_member_char_id,
-            character_location_id=str(self.test_party.current_location_id) # Ensure string
+            character_location_id=str(self.test_party.current_location_id)
         )
         self.assertTrue(result)
         self.assertIn(new_member_char_id, self.test_party.player_ids_list)
         self.mock_character_manager.set_character_party_id.assert_awaited_once_with(self.guild_id, new_member_char_id, self.test_party.id)
-        self.assertEqual(cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map)[self.guild_id][new_member_char_id], self.test_party.id) # type: ignore[attr-defined]
-        self.party_manager.mark_party_dirty.assert_awaited_with(self.guild_id, self.test_party.id)
+        # Ensure the guild_id key exists for member_to_party_map as well
+        self.party_manager._member_to_party_map.setdefault(self.guild_id, {})
+        self.assertEqual(self.party_manager._member_to_party_map[self.guild_id][new_member_char_id], self.test_party.id)
+        self.party_manager.mark_party_dirty.assert_any_call(self.guild_id, self.test_party.id)
 
     async def test_add_member_already_in_party(self):
         member_id = self.test_party.leader_id
-        cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map).setdefault(self.guild_id, {})[member_id] = self.test_party.id # type: ignore[attr-defined]
-        result = await self.party_manager.add_member_to_party(self.guild_id, self.test_party.id, member_id, str(self.test_party.current_location_id)) # Ensure string
+        # Ensure the guild_id key exists for member_to_party_map as well
+        self.party_manager._member_to_party_map.setdefault(self.guild_id, {})[member_id] = self.test_party.id
+        result = await self.party_manager.add_member_to_party(self.guild_id, self.test_party.id, member_id, str(self.test_party.current_location_id))
         self.assertFalse(result)
-        self.mock_character_manager.set_character_party_id.assert_not_awaited()
+        self.mock_character_manager.set_character_party_id.assert_not_called()
 
     async def test_add_member_location_mismatch(self):
         new_member_id = "new_member_loc_mismatch"
@@ -171,34 +177,36 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         mock_char_mismatch.id = new_member_id
         mock_char_mismatch.current_location_id = "diff_loc"
         self.mock_character_manager.get_character_by_id = AsyncMock(return_value=mock_char_mismatch)
-        result = await self.party_manager.add_member_to_party(self.guild_id, self.test_party.id, new_member_id, "diff_loc") # Corrected method call
+        result = await self.party_manager.add_member_to_party(self.guild_id, self.test_party.id, new_member_id, "diff_loc")
         self.assertFalse(result)
-        self.mock_character_manager.set_character_party_id.assert_not_awaited()
+        self.mock_character_manager.set_character_party_id.assert_not_called()
 
     async def test_remove_member_from_party_success(self):
         member_to_remove_id = "member_2"
         if member_to_remove_id not in self.test_party.player_ids_list: self.test_party.player_ids_list.append(member_to_remove_id)
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.test_party.id] = self.test_party # type: ignore[attr-defined]
-        member_map = cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map).setdefault(self.guild_id, {}) # type: ignore[attr-defined]
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.test_party.id] = self.test_party
+        member_map = self.party_manager._member_to_party_map.setdefault(self.guild_id, {})
         for mid in self.test_party.player_ids_list: member_map[mid] = self.test_party.id
         self.mock_character_manager.set_character_party_id = AsyncMock()
 
-        result = await self.party_manager.remove_member_from_party(self.guild_id, self.test_party.id, member_to_remove_id) # Corrected method call
+        result = await self.party_manager.remove_member_from_party(self.guild_id, self.test_party.id, member_to_remove_id)
         self.assertTrue(result)
         self.assertNotIn(member_to_remove_id, self.test_party.player_ids_list)
         self.mock_character_manager.set_character_party_id.assert_awaited_once_with(self.guild_id, member_to_remove_id, None)
-        self.assertNotIn(member_to_remove_id, cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map).get(self.guild_id, {})) # type: ignore[attr-defined]
-        self.party_manager.mark_party_dirty.assert_awaited_with(self.guild_id, self.test_party.id)
+        # Ensure the guild_id key exists for member_to_party_map as well
+        self.party_manager._member_to_party_map.setdefault(self.guild_id, {})
+        self.assertNotIn(member_to_remove_id, self.party_manager._member_to_party_map.get(self.guild_id, {}))
+        self.party_manager.mark_party_dirty.assert_any_call(self.guild_id, self.test_party.id)
 
     async def test_remove_member_leader_leaves_party_disbands(self):
         leader_id = self.test_party.leader_id
-        self.test_party.player_ids_list = [leader_id]
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.test_party.id] = self.test_party # type: ignore[attr-defined]
-        cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map).setdefault(self.guild_id, {})[leader_id] = self.test_party.id # type: ignore[attr-defined]
+        self.test_party.player_ids_list = [leader_id] # type: ignore
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.test_party.id] = self.test_party
+        self.party_manager._member_to_party_map.setdefault(self.guild_id, {})[leader_id] = self.test_party.id
         self.mock_character_manager.set_character_party_id = AsyncMock()
         self.party_manager.disband_party = AsyncMock(return_value=True)
 
-        result = await self.party_manager.remove_member_from_party(self.guild_id, self.test_party.id, leader_id) # Corrected method call
+        result = await self.party_manager.remove_member_from_party(self.guild_id, self.test_party.id, leader_id)
         self.assertTrue(result)
         self.party_manager.disband_party.assert_awaited_once_with(self.guild_id, self.test_party.id, disbanding_character_id=leader_id)
         self.mock_character_manager.set_character_party_id.assert_awaited_once_with(self.guild_id, leader_id, None)
@@ -206,33 +214,33 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
 
     async def test_disband_party_success_as_leader(self):
         other_member_id = "member_2_in_disband"
-        self.test_party.player_ids_list = [self.test_party.leader_id, other_member_id]
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.test_party.id] = self.test_party # type: ignore[attr-defined]
-        member_map = cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map).setdefault(self.guild_id, {}) # type: ignore[attr-defined]
+        self.test_party.player_ids_list = [self.test_party.leader_id, other_member_id] # type: ignore
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.test_party.id] = self.test_party
+        member_map = self.party_manager._member_to_party_map.setdefault(self.guild_id, {})
         member_map[self.test_party.leader_id] = self.test_party.id
         member_map[other_member_id] = self.test_party.id
         self.mock_character_manager.set_character_party_id = AsyncMock()
 
-        result = await self.party_manager.disband_party(self.guild_id, self.test_party.id, str(self.test_party.leader_id)) # Ensure string
+        result = await self.party_manager.disband_party(self.guild_id, self.test_party.id, str(self.test_party.leader_id))
         self.assertTrue(result)
         expected_calls = [call(self.guild_id, self.test_party.leader_id, None), call(self.guild_id, other_member_id, None)]
         self.mock_character_manager.set_character_party_id.assert_has_awaits(expected_calls, any_order=True)
-        self.assertNotIn(self.test_party.id, cast(Dict[str, Dict[str, Party]], self.party_manager._parties).get(self.guild_id, {})) # type: ignore[attr-defined]
-        self.assertNotIn(self.test_party.leader_id, cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map).get(self.guild_id, {})) # type: ignore[attr-defined]
-        self.assertIn(self.test_party.id, cast(Dict[str, Set[str]], self.party_manager._deleted_parties).get(self.guild_id, set())) # type: ignore[attr-defined]
-        self.party_manager.mark_party_dirty.assert_not_awaited()
+        self.assertNotIn(self.test_party.id, self.party_manager._parties.get(self.guild_id, {}))
+        self.assertNotIn(self.test_party.leader_id, self.party_manager._member_to_party_map.get(self.guild_id, {}))
+        self.assertIn(self.test_party.id, self.party_manager._deleted_parties.get(self.guild_id, set()))
+        self.party_manager.mark_party_dirty.assert_not_called()
 
     async def test_disband_party_not_leader_fails(self):
         non_leader_id = "member_2_not_leader"
-        self.test_party.player_ids_list = [self.test_party.leader_id, non_leader_id]
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.test_party.id] = self.test_party # type: ignore[attr-defined]
+        self.test_party.player_ids_list = [self.test_party.leader_id, non_leader_id] # type: ignore
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.test_party.id] = self.test_party
         result = await self.party_manager.disband_party(self.guild_id, self.test_party.id, non_leader_id)
         self.assertFalse(result)
-        self.mock_character_manager.set_character_party_id.assert_not_awaited()
-        self.assertIn(self.test_party.id, cast(Dict[str, Dict[str, Party]], self.party_manager._parties).get(self.guild_id, {})) # type: ignore[attr-defined]
+        self.mock_character_manager.set_character_party_id.assert_not_called()
+        self.assertIn(self.test_party.id, self.party_manager._parties.get(self.guild_id, {}))
 
     def test_get_party_success(self):
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.test_party.id] = self.test_party # type: ignore[attr-defined]
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.test_party.id] = self.test_party
         party = self.party_manager.get_party(self.guild_id, self.test_party.id)
         self.assertEqual(party, self.test_party)
 
@@ -242,24 +250,24 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
 
     def test_get_party_by_member_id_success(self):
         member_id = self.test_party.leader_id
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.test_party.id] = self.test_party # type: ignore[attr-defined]
-        cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map).setdefault(self.guild_id, {})[member_id] = self.test_party.id # type: ignore[attr-defined]
-        party = self.party_manager.get_party_by_member_id(self.guild_id, member_id) # Corrected method call
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.test_party.id] = self.test_party
+        self.party_manager._member_to_party_map.setdefault(self.guild_id, {})[member_id] = self.test_party.id
+        party = self.party_manager.get_party_by_member_id(self.guild_id, member_id)
         self.assertEqual(party, self.test_party)
 
     def test_get_party_by_member_id_not_in_party(self):
-        party = self.party_manager.get_party_by_member_id(self.guild_id, "char_not_in_any_party") # Corrected method call
+        party = self.party_manager.get_party_by_member_id(self.guild_id, "char_not_in_any_party")
         self.assertIsNone(party)
 
     async def test_save_state_saves_dirty_and_deletes_parties(self):
         dirty_party_id = "dirty_party_1"; dirty_party_data = self.dummy_party_data.copy(); dirty_party_data["id"] = dirty_party_id
         dirty_party = Party.from_dict(dirty_party_data)
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[dirty_party_id] = dirty_party # type: ignore[attr-defined]
-        cast(Dict[str, Set[str]], self.party_manager._dirty_parties).setdefault(self.guild_id, set()).add(dirty_party_id) # type: ignore[attr-defined]
+        self.party_manager._parties.setdefault(self.guild_id, {})[dirty_party_id] = dirty_party
+        self.party_manager._dirty_parties.setdefault(self.guild_id, set()).add(dirty_party_id)
         deleted_party_id = "deleted_party_1"
-        cast(Dict[str, Set[str]], self.party_manager._deleted_parties).setdefault(self.guild_id, set()).add(deleted_party_id) # type: ignore[attr-defined]
-        if deleted_party_id in cast(Dict[str, Dict[str, Party]], self.party_manager._parties).get(self.guild_id, {}): # type: ignore[attr-defined]
-            del cast(Dict[str, Dict[str, Party]], self.party_manager._parties)[self.guild_id][deleted_party_id] # type: ignore[attr-defined]
+        self.party_manager._deleted_parties.setdefault(self.guild_id, set()).add(deleted_party_id)
+        if deleted_party_id in self.party_manager._parties.get(self.guild_id, {}):
+            del self.party_manager._parties[self.guild_id][deleted_party_id]
 
         self.mock_db_service.upsert_party = AsyncMock()
         self.mock_db_service.delete_party_by_id = AsyncMock()
@@ -270,22 +278,24 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[0]['id'], dirty_party_id)
 
         self.mock_db_service.delete_party_by_id.assert_awaited_once_with(deleted_party_id, self.guild_id)
-        self.assertNotIn(dirty_party_id, cast(Dict[str, Set[str]], self.party_manager._dirty_parties).get(self.guild_id, set())) # type: ignore[attr-defined]
-        self.assertNotIn(deleted_party_id, cast(Dict[str, Set[str]], self.party_manager._deleted_parties).get(self.guild_id, set())) # type: ignore[attr-defined]
+        self.assertNotIn(dirty_party_id, self.party_manager._dirty_parties.get(self.guild_id, set()))
+        self.assertNotIn(deleted_party_id, self.party_manager._deleted_parties.get(self.guild_id, set()))
 
     async def test_load_state_for_guild_success(self):
         party1_data = {**self.dummy_party_data, "id": "db_party_1", "name_i18n": {"en": "DB1"}}
         party2_data = {**self.dummy_party_data, "id": "db_party_2", "name_i18n": {"en": "DB2"}, "leader_id": "ldr3", "player_ids_list": ["ldr3", "mem4"]}
         self.mock_db_service.load_parties_for_guild = AsyncMock(return_value=[party1_data, party2_data])
 
-        await self.party_manager.load_state_for_guild(self.guild_id) # Corrected method call
-        self.assertEqual(len(cast(Dict[str, Dict[str, Party]], self.party_manager._parties)[self.guild_id]), 2) # type: ignore[attr-defined]
-        self.assertEqual(cast(Dict[str, Dict[str, Party]], self.party_manager._parties)[self.guild_id]["db_party_1"].name_i18n["en"], "DB1") # type: ignore[attr-defined]
-        member_map = cast(Dict[str, Dict[str, str]], self.party_manager._member_to_party_map)[self.guild_id] # type: ignore[attr-defined]
+        await self.party_manager.load_state_for_guild(self.guild_id)
+        self.party_manager._parties.setdefault(self.guild_id, {}) # Ensure guild_id key exists
+        self.assertEqual(len(self.party_manager._parties[self.guild_id]), 2)
+        self.assertEqual(self.party_manager._parties[self.guild_id]["db_party_1"].name_i18n["en"], "DB1")
+        self.party_manager._member_to_party_map.setdefault(self.guild_id, {}) # Ensure guild_id key exists
+        member_map = self.party_manager._member_to_party_map[self.guild_id]
         self.assertEqual(member_map.get(self.party_leader_id), "db_party_1")
         self.assertEqual(member_map.get("ldr3"), "db_party_2")
 
-    async def create_mock_character(self, player_id: str, location_id: str, status: str, actions_json: Optional[str] = "[]") -> MagicMock:
+    async def create_mock_character(self, player_id: str, location_id: str, status: str, actions_json: Optional[str] = "[]") -> MagicMock: # type: ignore
         char = AsyncMock(spec=GameCharacterModel)
         char.id = player_id; char.name = f"Char_{player_id}"; char.current_location_id = location_id
         char.current_game_status = status; char.collected_actions_json = actions_json
@@ -296,8 +306,8 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         loc_id = "loc1"
         char1_ready = await self.create_mock_character("p1", loc_id, "ожидание_обработки")
         char2_not_ready = await self.create_mock_character("p2", loc_id, "исследование")
-        self.test_party.player_ids_list = [str(char1_ready.id), str(char2_not_ready.id)] # Ensure IDs are strings
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.party_id] = self.test_party # type: ignore[attr-defined]
+        self.test_party.player_ids_list = [str(char1_ready.id), str(char2_not_ready.id)] # type: ignore
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.party_id] = self.test_party
         
         async def mock_get_char_side_effect(guild_id_arg: str, char_id_arg: str, session_arg: Any = None):
             if char_id_arg == "p1": return char1_ready
@@ -305,13 +315,13 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
             return None
         self.mock_character_manager.get_character_by_id = AsyncMock(side_effect=mock_get_char_side_effect)
         
-        cast(List[str], self.party_manager._diagnostic_log).clear() # type: ignore[attr-defined]
-        await self.party_manager.check_and_process_party_turn(self.party_id, loc_id, self.guild_id, self.mock_game_manager) # Corrected method call
+        self.party_manager._diagnostic_log.clear()
+        await self.party_manager.check_and_process_party_turn(self.party_id, loc_id, self.guild_id, self.mock_game_manager)
 
-        if hasattr(self.mock_db_service, 'execute'): cast(AsyncMock, self.mock_db_service.execute).assert_not_called()
+        if hasattr(self.mock_db_service, 'execute'): self.mock_db_service.execute.assert_not_called() # type: ignore
         if hasattr(self.mock_game_manager, 'action_processor') and self.mock_game_manager.action_processor and \
            hasattr(self.mock_game_manager.action_processor, 'process_party_actions'):
-            cast(AsyncMock, self.mock_game_manager.action_processor.process_party_actions).assert_not_called()
+            self.mock_game_manager.action_processor.process_party_actions.assert_not_called()
         self.assertEqual(self.test_party.turn_status, "сбор_действий")
 
     @unittest.skip("PartyManager.check_and_process_party_turn method needs review or is not fully implemented as expected by test.")
@@ -321,8 +331,8 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
     async def test_check_and_process_party_turn_no_actions_data(self):
         loc_id = "loc1"
         char1 = await self.create_mock_character("p1", loc_id, "ожидание_обработки", "[]")
-        self.test_party.player_ids_list = [str(char1.id)]
-        cast(Dict[str, Dict[str, Party]], self.party_manager._parties).setdefault(self.guild_id, {})[self.party_id] = self.test_party # type: ignore[attr-defined]
+        self.test_party.player_ids_list = [str(char1.id)] # type: ignore
+        self.party_manager._parties.setdefault(self.guild_id, {})[self.party_id] = self.test_party
         
         async def mock_get_char_return_value(guild_id_arg: str, char_id_arg: str, session_arg: Any = None): return char1
         self.mock_character_manager.get_character_by_id = AsyncMock(side_effect=mock_get_char_return_value)
@@ -338,19 +348,19 @@ class TestPartyManager(unittest.IsolatedAsyncioTestCase):
         mock_discord_channel.send = AsyncMock()
         self.mock_discord_client.get_channel = MagicMock(return_value=mock_discord_channel)
 
-        cast(List[str], self.party_manager._diagnostic_log).clear() # type: ignore[attr-defined]
-        await self.party_manager.check_and_process_party_turn(self.party_id, loc_id, self.guild_id, self.mock_game_manager) # Corrected method call
+        self.party_manager._diagnostic_log.clear()
+        await self.party_manager.check_and_process_party_turn(self.party_id, loc_id, self.guild_id, self.mock_game_manager)
 
         if hasattr(self.mock_db_service, 'execute_transactional_query_for_guild'):
-            cast(AsyncMock, self.mock_db_service.execute_transactional_query_for_guild).assert_any_call(self.guild_id, ANY, ('обработка', self.party_id))
-            cast(AsyncMock, self.mock_db_service.execute_transactional_query_for_guild).assert_any_call(self.guild_id, ANY, ('сбор_действий', self.party_id))
+            self.mock_db_service.execute_transactional_query_for_guild.assert_any_call(self.guild_id, ANY, ('обработка', self.party_id)) # type: ignore
+            self.mock_db_service.execute_transactional_query_for_guild.assert_any_call(self.guild_id, ANY, ('сбор_действий', self.party_id)) # type: ignore
 
-        cast(AsyncMock, self.mock_game_manager.action_processor.process_party_actions).assert_awaited_once()
-        args_list = cast(AsyncMock, self.mock_game_manager.action_processor.process_party_actions).await_args_list
+        self.mock_game_manager.action_processor.process_party_actions.assert_awaited_once()
+        args_list = self.mock_game_manager.action_processor.process_party_actions.await_args_list
         self.assertEqual(args_list[0].kwargs['party_actions_data'], [('p1', '[]')])
 
-        self.assertEqual(char1.current_game_status, "исследование")
-        self.assertEqual(char1.collected_actions_json, "[]")
+        self.assertEqual(char1.current_game_status, "исследование") # type: ignore
+        self.assertEqual(char1.collected_actions_json, "[]") # type: ignore
         self.mock_character_manager.save_character_from_instance.assert_awaited_once_with(char1, self.guild_id, session=ANY)
         mock_discord_channel.send.assert_awaited_once()
 

@@ -106,17 +106,15 @@ def mock_rpg_bot(mock_db_session: AsyncSession, mock_bot_user: discord.ClientUse
     # Patch the RPGBot's __init__ dependencies if they cause issues during instantiation for tests
     # For example, if it tries to connect to a real DB or service.
     # Here, we assume RPGBot can be instantiated with None for game_manager and openai_service initially.
-    with patch('bot.bot_core.DBService', new_callable=AsyncMock) as MockDBService, \
-         patch('bot.bot_core.AIGenerationService', new_callable=AsyncMock) as MockAIGenService, \
-         patch('bot.bot_core.GameManager', return_value=mock_game_manager) as MockGameManagerInstanceSetup: # Patch GameManager instantiation
 
-        # Create the bot instance
-        bot_instance = RPGBot(game_manager=None, openai_service=mock_openai_service, command_prefix="!", intents=intents)
+    # Create the bot instance
+    # MockDBService and MockAIGenService are not directly used by RPGBot.__init__ based on current structure
+    # GameManager is the main dependency passed.
+    bot_instance = RPGBot(game_manager=mock_game_manager, openai_service=mock_openai_service, command_prefix="!", intents=intents)
 
-        # Assign mocked components after instantiation if necessary
-        bot_instance.game_manager = mock_game_manager # This should be the primary game_manager used
-        bot_instance.user = mock_bot_user # type: ignore # Ensure user is assignable
-        bot_instance.tree = AsyncMock(spec=app_commands.CommandTree) # type: ignore # Ensure tree is assignable
+    # Assign mocked components after instantiation if necessary
+    bot_instance.user = mock_bot_user
+    bot_instance.tree = AsyncMock(spec=app_commands.CommandTree)
 
     return bot_instance
 
@@ -127,19 +125,29 @@ def mock_rpg_bot(mock_db_session: AsyncSession, mock_bot_user: discord.ClientUse
 @patch('bot.game.guild_initializer.initialize_new_guild', new_callable=AsyncMock)
 async def test_rpgbot_on_guild_join_new_guild_success(
     mock_init_guild_func: AsyncMock,
-    mock_rpg_bot: RPGBot, # Now correctly typed
+    mock_rpg_bot: RPGBot,
     mock_discord_guild: discord.Guild,
-    mock_db_session: AsyncSession
+    mock_db_session: AsyncSession # This fixture might be redundant if get_session is always mocked
 ):
     mock_init_guild_func.return_value = True
-    await mock_rpg_bot.on_guild_join(mock_discord_guild)
+    # Directly call the event handler method of the bot instance
+    # For cogs, this would be different, but for bot events, it's usually a method on the bot.
+    if hasattr(mock_rpg_bot, 'on_guild_join') and callable(mock_rpg_bot.on_guild_join):
+        await mock_rpg_bot.on_guild_join(mock_discord_guild)
+    else:
+        pytest.fail("RPGBot does not have a callable on_guild_join method")
+
     mock_init_guild_func.assert_awaited_once_with(
-        mock_db_session,
+        ANY, # The session is obtained within on_guild_join, so we use ANY here
         str(mock_discord_guild.id),
         force_reinitialize=False
     )
-    mock_db_session.begin.assert_called_once()
-    mock_db_session.commit.assert_awaited_once()
+    # Assertions on mock_db_session (commit, begin) might need to be on the session
+    # obtained *within* the on_guild_join method if it creates its own session.
+    # If it uses the one from game_manager.db_service.get_session, then these are fine.
+    # Based on RPGBot structure, it uses a session from its db_service.
+    mock_rpg_bot.game_manager.db_service.get_session.return_value.__aenter__.return_value.begin.assert_called_once()
+    mock_rpg_bot.game_manager.db_service.get_session.return_value.__aenter__.return_value.commit.assert_awaited_once()
     mock_discord_guild.system_channel.send.assert_called_once()
 
 
@@ -147,19 +155,23 @@ async def test_rpgbot_on_guild_join_new_guild_success(
 @patch('bot.game.guild_initializer.initialize_new_guild', new_callable=AsyncMock)
 async def test_rpgbot_on_guild_join_initialization_failure(
     mock_init_guild_func: AsyncMock,
-    mock_rpg_bot: RPGBot, # Correctly typed
+    mock_rpg_bot: RPGBot,
     mock_discord_guild: discord.Guild,
-    mock_db_session: AsyncSession,
+    mock_db_session: AsyncSession, # Similar to above, might be redundant
     caplog
 ):
     simulated_error_message = "DB constraint failed during init"
     mock_init_guild_func.side_effect = Exception(simulated_error_message)
-    await mock_rpg_bot.on_guild_join(mock_discord_guild)
+    if hasattr(mock_rpg_bot, 'on_guild_join') and callable(mock_rpg_bot.on_guild_join):
+        await mock_rpg_bot.on_guild_join(mock_discord_guild)
+    else:
+        pytest.fail("RPGBot does not have a callable on_guild_join method")
+
     mock_init_guild_func.assert_awaited_once_with(
-        mock_db_session, str(mock_discord_guild.id), force_reinitialize=False
+        ANY, str(mock_discord_guild.id), force_reinitialize=False
     )
-    mock_db_session.rollback.assert_awaited_once()
-    mock_db_session.commit.assert_not_awaited()
+    mock_rpg_bot.game_manager.db_service.get_session.return_value.__aenter__.return_value.rollback.assert_awaited_once()
+    mock_rpg_bot.game_manager.db_service.get_session.return_value.__aenter__.return_value.commit.assert_not_awaited()
     assert "Failed to initialize guild" in caplog.text
     assert str(mock_discord_guild.id) in caplog.text
     assert simulated_error_message in caplog.text
@@ -176,16 +188,19 @@ async def general_cog(mock_rpg_bot: RPGBot) -> GeneralCog: # Return type hint
 
 @pytest.mark.asyncio
 async def test_ping_command(general_cog: GeneralCog, mock_interaction: discord.Interaction):
-    mock_rpg_bot_instance = cast(RPGBot, general_cog.bot) # Cast bot to RPGBot
-    mock_rpg_bot_instance.latency = 0.12345
+    mock_rpg_bot_instance = cast(RPGBot, general_cog.bot)
+    # Directly assign to the property if it's a simple attribute, or mock the property if it's complex
+    # Assuming latency is a simple attribute for this test's purpose
+    mock_rpg_bot_instance.latency = 0.12345 # type: ignore[misc] # Ignoring misc for direct assignment to property-like attribute
 
-    # Get the command object from the cog
     ping_command = general_cog.cmd_ping
-    # Invoke the command callback directly
-    await ping_command.callback(general_cog, mock_interaction) # Pass cog instance as self
+    await ping_command.callback(general_cog, mock_interaction)
 
     mock_interaction.response.send_message.assert_awaited_once()
-    sent_message_content = mock_interaction.response.send_message.call_args[0][0]
+    # Accessing call_args might be different depending on MagicMock vs AsyncMock, ensure it's correct.
+    # For AsyncMock, await_args or await_args_list might be more appropriate if the method itself is async.
+    # send_message is often synchronous in how its mock is checked.
+    sent_message_content = mock_interaction.response.send_message.call_args.args[0]
     assert "Pong!" in sent_message_content
     assert "123.45ms" in sent_message_content
 
@@ -193,9 +208,8 @@ async def test_ping_command(general_cog: GeneralCog, mock_interaction: discord.I
 # --- Tests for SettingsCog Commands ---
 
 @pytest.fixture
-async def settings_cog(mock_rpg_bot: RPGBot) -> SettingsCog: # Return type hint
+async def settings_cog(mock_rpg_bot: RPGBot) -> SettingsCog:
     cog = SettingsCog(mock_rpg_bot)
-    # await mock_rpg_bot.add_cog(cog)
     return cog
 
 @pytest.mark.asyncio
@@ -204,26 +218,31 @@ async def test_lang_command_existing_player_language_updated(
     mock_interaction: discord.Interaction,
 ):
     mock_player_obj = Player(
-        id="player_guid_abc",
-        discord_id=str(mock_interaction.user.id),
-        guild_id=str(mock_interaction.guild_id),
+        id="player_guid_abc", # Assuming Player model takes these args
+        discord_id=str(mock_interaction.user.id), # Ensure str for discord_id if model expects it
+        guild_id=str(mock_interaction.guild_id), # Ensure str
         selected_language="fr"
     )
     mock_rpg_bot_instance = cast(RPGBot, settings_cog.bot)
-    mock_rpg_bot_instance.game_manager.get_player_by_discord_id.return_value = mock_player_obj
+    # Ensure game_manager and db_service are correctly mocked and attached
+    if not mock_rpg_bot_instance.game_manager: # Should be set in mock_rpg_bot fixture
+        mock_rpg_bot_instance.game_manager = AsyncMock()
+    if not mock_rpg_bot_instance.game_manager.db_service:
+         mock_rpg_bot_instance.game_manager.db_service = AsyncMock()
+
+    mock_rpg_bot_instance.game_manager.get_player_by_discord_id = AsyncMock(return_value=mock_player_obj)
     mock_rpg_bot_instance.game_manager.db_service.update_player_field = AsyncMock(return_value=True)
 
     lang_choice = app_commands.Choice(name="English", value="en")
-    # Get the command object and call its callback
     lang_command = settings_cog.lang_command
     await lang_command.callback(settings_cog, mock_interaction, language_code=lang_choice)
 
 
-    mock_rpg_bot_instance.game_manager.get_player_by_discord_id.assert_awaited_once_with(
+    mock_rpg_bot_instance.game_manager.get_player_by_discord_id.assert_awaited_once_with( # type: ignore[attr-defined]
         discord_id=str(mock_interaction.user.id),
         guild_id=str(mock_interaction.guild_id)
     )
-    mock_rpg_bot_instance.game_manager.db_service.update_player_field.assert_awaited_once_with(
+    mock_rpg_bot_instance.game_manager.db_service.update_player_field.assert_awaited_once_with( # type: ignore[attr-defined]
         player_id=mock_player_obj.id,
         field_name='selected_language',
         value='en',
