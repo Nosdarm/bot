@@ -207,3 +207,16 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - Used `# type: ignore` for app command `.callback` access.
 - **Batch 10 (Commit Only) - `bot/api/schemas/master_schemas.py` (all 66 errors from Batch 9 work):**
     - (Already fixed in Batch 9) Corrected all Pydantic `Field` calls to use keyword arguments for metadata.
+
+## Pyright Error Fixing Phase (Batch 11 - test_bot_events_and_basic_commands.py focus)
+
+- **Focus:** Addressing all 50 errors in `tests/core/test_bot_events_and_basic_commands.py`.
+- **Strategy:** Overwrote the file with corrected content.
+- **Batch 11 Fixes (50 errors in `tests/core/test_bot_events_and_basic_commands.py`):**
+    - **Mock Setups:** Corrected mock initializations for `RPGBot`, `discord.Guild`, `discord.Interaction`, `discord.User`, and `discord.Member` in fixtures. Ensured `bot.user` and `bot.tree` were appropriately mocked.
+    - **Event Testing:** Refined `on_guild_join` tests by properly mocking `initialize_new_guild` and asserting database session commit/rollback logic.
+    - **App Command Testing:** Adjusted tests for app commands in cogs to use `await command.callback(cog_instance, ...)` for invocation.
+    - **Mock Assertions:** Standardized usage of `AsyncMock` and `MagicMock`, ensuring correct assertion methods (e.g., `assert_awaited_once_with` for async calls) and that targets of assertions were actual mock objects.
+    - **Attribute Access:** Resolved `AttributeError` on `None` by ensuring manager instances (like `game_manager`, `db_service`) were correctly initialized and accessed on mocked bot instances.
+    - **Imports:** Added missing imports (e.g., `discord.app_commands`).
+    - **Type Compatibility:** Addressed type mismatches, such as when passing mock bot instances to Cog constructors.
