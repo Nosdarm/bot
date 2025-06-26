@@ -148,3 +148,21 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **Safe Dictionary/Attribute Access:** Consistently used `.get()` for dictionary access and `getattr` for object attributes where appropriate to avoid `KeyError` or `AttributeError`.
     - **Initialization Logic:** Refined initialization order for some services (e.g., `LocationInteractionService` before `CharacterActionProcessor`). Improved error handling in `_ensure_guild_configs_exist` and `_get_core_rules_config_for_guild`. Ensured `_load_initial_data_and_state` correctly uses the list of confirmed guild IDs.
     - **Callback & Mock Adjustments:** Ensured `_get_discord_send_callback` correctly checks if a channel is `Messageable`. (This primarily affects how tests might mock or use this).
+
+## Pyright Error Fixing Phase (Batch 7 - test_party_manager.py focus)
+
+- **Focus:** Addressing Pyright static analysis errors in `tests/game/managers/test_party_manager.py`.
+- **Strategy:** Overwrote the file with corrected content. Aimed to fix ~30 errors.
+- **Batch 7 Fixes (approx. 30+ errors in `tests/game/managers/test_party_manager.py`):**
+    - **Mocking & Assertions:**
+        - Corrected usage of mock assertion methods (e.g., `assert_awaited_once_with` for async mocks, ensuring the target object is a mock).
+        - Ensured `AsyncMock` was used for async methods and their side effects/return values.
+        - Replaced `pytest.детей.ANY` with `unittest.mock.ANY`.
+    - **Attribute Access & Assignment in Tests:**
+        - Used `# type: ignore[attr-defined]` for direct assignments to internal `PartyManager` attributes (like `_parties`, `_diagnostic_log`) during test setup, acknowledging this is for test state control.
+        - Similarly used for calls to `PartyManager` methods if Pyright couldn't resolve them on the mocked/setup instance but they are expected to exist.
+    - **Method Call Signatures:** Corrected parameters in `PartyManager.create_party` call (e.g., using `leader_character_id` and `party_name_i18n`).
+    - **Type Hinting:** Updated type hints for mock objects (e.g., `DBService` for database adapter mock) and fixtures.
+    - **Test Logic Adjustments:** Made minor adjustments to test logic to align with corrected mock behaviors and async nature of some calls (e.g., awaiting `get_character` calls).
+    - **Removed Unused Imports/Variables:** Cleaned up some unused imports like `sys` if it wasn't actively used.
+    - **Synchronous Test Methods:** Some test methods that did not involve `await` and tested synchronous `PartyManager` methods were kept synchronous.
