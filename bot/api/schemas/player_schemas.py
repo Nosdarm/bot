@@ -19,10 +19,10 @@ class CharacterBasicResponse(BaseModel): # A basic representation for lists
 
 
 class PlayerBase(BaseModel):
-    discord_id: Optional[str] = Field(None, description="Player's Discord User ID")
-    name_i18n: Dict[str, str] = Field(..., description="Player's name (nickname/pseudonym), i18n JSON object", example={"en": "PlayerOne", "ru": "ИгрокОдин"})
-    selected_language: Optional[str] = Field(None, description="Player's preferred language code (e.g., 'en', 'ru')")
-    is_active: Optional[bool] = Field(True, description="Whether the player account is active")
+    discord_id: Optional[str] = Field(default=None, description="Player's Discord User ID")
+    name_i18n: Dict[str, str] = Field(default=..., description="Player's name (nickname/pseudonym), i18n JSON object", example={"en": "PlayerOne", "ru": "ИгрокОдин"})
+    selected_language: Optional[str] = Field(default=None, description="Player's preferred language code (e.g., 'en', 'ru')")
+    is_active: Optional[bool] = Field(default=True, description="Whether the player account is active")
     # Guild_id will be required in PlayerCreate schema as per requirements.
 
     # Game-specific fields that might be updatable or part of creation
@@ -34,23 +34,24 @@ class PlayerBase(BaseModel):
 
 
 class PlayerCreate(PlayerBase):
-    discord_id: str = Field(..., description="Player's Discord User ID")
+    discord_id: str = Field(default=..., description="Player's Discord User ID")
     # guild_id: str = Field(..., description="Guild ID this player record belongs to") # Removed, will be taken from path
     # name_i18n is inherited from PlayerBase
 
 
 class PlayerUpdate(BaseModel): # Using BaseModel directly for more control on optional fields
-    name_i18n: Optional[Dict[str, str]] = Field(None, description="Player's name (nickname/pseudonym), i18n JSON object")
-    selected_language: Optional[str] = Field(None, description="Player's preferred language code")
-    is_active: Optional[bool] = Field(None, description="Set player account active status")
+    name_i18n: Optional[Dict[str, str]] = Field(default=None, description="Player's name (nickname/pseudonym), i18n JSON object")
+    selected_language: Optional[str] = Field(default=None, description="Player's preferred language code")
+    is_active: Optional[bool] = Field(default=None, description="Set player account active status")
     # Other fields as needed for update
 
 
 class PlayerRead(PlayerBase):
-    id: str = Field(..., description="Player's unique ID")
-    guild_id: str = Field(..., description="Guild ID this player record belongs to")
-    xp: Optional[int] = Field(0, description="Player's experience points")
-    level: Optional[int] = Field(1, description="Player's level")
+    id: str = Field(default=..., description="Player's unique ID")
+    discord_id: str # type: ignore[override] # Inherited as Optional[str], but mandatory for read model
+    guild_id: str = Field(default=..., description="Guild ID this player record belongs to")
+    xp: Optional[int] = Field(default=0, description="Player's experience points")
+    level: Optional[int] = Field(default=1, description="Player's level")
     unspent_xp: Optional[int] = Field(0, description="Player's unspent XP")
     gold: Optional[int] = Field(0, description="Player's gold")
     # current_game_status: Optional[str] = Field(None, description="Player's current game status") # Example

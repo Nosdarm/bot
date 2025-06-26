@@ -34,7 +34,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         guild_id_str = str(interaction.guild_id)
         discord_user_id_int = interaction.user.id
         try:
-            character: Optional["Character"] = character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
+            character: Optional["Character"] = await character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
             if not character:
                 await interaction.followup.send("Create a character first with `/start_new_character`.", ephemeral=True); return
 
@@ -92,7 +92,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         discord_user_id_int = interaction.user.id
 
         try:
-            character: Optional["Character"] = character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
+            character: Optional["Character"] = await character_manager.get_character_by_discord_id(guild_id_str, discord_user_id_int)
             if not character:
                 await interaction.followup.send("You need to have an active character to undo game events. Use `/start_new_character`.", ephemeral=True)
                 return

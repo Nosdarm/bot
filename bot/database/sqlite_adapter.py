@@ -25,8 +25,12 @@ class SQLiteAdapter(BaseDbAdapter):
         logger.info(f"SQLiteAdapter initialized for database path: {self._db_path}")
 
     async def connect(self) -> None:
-        if self._conn and not self._conn.is_closed():
-            logger.info("SQLiteAdapter: Already connected.")
+        if self._conn: # If _conn exists, assume it's open or will be handled by operations.
+            # The is_closed() method is not standard/reliable on aiosqlite.Connection.
+            # We can try a ping or rely on subsequent operations to fail if closed.
+            # For simplicity here, if _conn is not None, we'll log and return.
+            # A more robust check might involve `await self._conn.execute("SELECT 1")`
+            logger.info("SQLiteAdapter: Connection object exists. Assuming connected or will be handled by operations.")
             return
         try:
             self._conn = await aiosqlite.connect(self._db_path)
@@ -50,8 +54,9 @@ class SQLiteAdapter(BaseDbAdapter):
             logger.info("SQLiteAdapter: No active connection to close.")
 
     async def _get_connection(self) -> aiosqlite.Connection:
-        if not self._conn or self._conn.is_closed():
-            # logger.debug("SQLiteAdapter: Connection is closed or not initialized, attempting to connect.")
+        # If _conn is None, it means it was never connected or explicitly closed and set to None.
+        if not self._conn:
+            # logger.debug("SQLiteAdapter: Connection is None or presumed closed, attempting to connect.")
             await self.connect()
         if not self._conn: # Should be established by self.connect()
             raise ConnectionError("SQLiteAdapter: Failed to establish a database connection.")
