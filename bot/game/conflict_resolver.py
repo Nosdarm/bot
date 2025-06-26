@@ -17,8 +17,8 @@ if TYPE_CHECKING:
     from .managers.game_log_manager import GameLogManager
     from bot.services.db_service import DBService
     from bot.ai.rules_schema import CoreGameRulesConfig, ActionConflictDefinition
-    from ..services.notification_service import NotificationService
-    from ..core.rule_engine import RuleEngine
+    from bot.services.notification_service import NotificationService
+    from bot.game.rules.rule_engine import RuleEngine
 
 
 logger = logging.getLogger(__name__)
