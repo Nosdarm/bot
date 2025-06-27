@@ -1,22 +1,31 @@
 import logging
-import random # Added for _on_enter_location logic
-from typing import Optional, List, Dict, Any, Tuple, TYPE_CHECKING, Callable, Awaitable
+import random
+from typing import Optional, List, Dict, Any, Tuple, TYPE_CHECKING, Callable, Awaitable, cast
 
-from sqlalchemy.ext.asyncio import AsyncSession # Removed unused import
+from sqlalchemy.ext.asyncio import AsyncSession
 
-# Assuming models are accessible via bot.database.models after refactoring
-from bot.database.models import Player, Location, Character, Party # Added Character, Party
-from bot.database.crud_utils import get_entity_by_id
+from bot.database.models import Player, Location, Character as CharacterDBModel, Party as PartyDBModel # Use specific DB model names
+from bot.game.models.character import Character as CharacterPydanticModel # Pydantic model
+from bot.game.models.location import Location as LocationPydanticModel # Pydantic model for location_obj
 
 if TYPE_CHECKING:
     from bot.game.managers.game_manager import GameManager
-    # Import other managers if needed for type hints within the new method
-    # from bot.game.managers.item_manager import ItemManager
-    # from bot.game.managers.npc_manager import NpcManager
-    # from bot.game.managers.status_manager import StatusManager
+    from bot.game.managers.location_manager import LocationManager
+    from bot.game.managers.character_manager import CharacterManager
+    from bot.game.managers.item_manager import ItemManager
+    from bot.game.managers.inventory_manager import InventoryManager
+    from bot.game.managers.npc_manager import NpcManager
+    from bot.game.managers.status_manager import StatusManager
+    from bot.game.managers.party_manager import PartyManager
+    from bot.game.rules.rule_engine import RuleEngine
+    from bot.services.db_service import DBService
+    from bot.services.notification_service import NotificationService
+    from bot.game.check_framework.check_resolver import CheckResolver # For type hint
+    from bot.game.services.consequence_processor import ConsequenceProcessor # For type hint
+    from bot.ai.rules_schema import CoreGameRulesConfig, LocationInteractionRule # For type hint
 
 logger = logging.getLogger(__name__)
-SendToChannelCallback = Callable[..., Awaitable[Any]] # For _get_discord_send_callback type
+SendToChannelCallback = Callable[[str], Awaitable[Any]] # Simplified: assumes callback takes only message string
 
 class LocationInteractionService:
     def __init__(self, game_manager: "GameManager"):
@@ -26,264 +35,204 @@ class LocationInteractionService:
         logger.info("LocationInteractionService initialized.")
 
     async def process_on_enter_location_events(self, guild_id: str, entity_id: str, entity_type: str, location_id: str) -> None:
-        """
-        Handles logic to execute when an entity enters a location, processing defined on_enter_events.
-        Moved from GameManager._on_enter_location.
-        """
-        logger.info(f"LIS: Entity {entity_id} (Type: {entity_type}) entered location {location_id} in guild {guild_id}.")
+        logger.info(f"LIS: Entity {entity_id} (Type: {entity_type}) entered loc {location_id} in guild {guild_id}.")
 
-        if not self.game_manager.location_manager or \
-           not self.game_manager.character_manager or \
-           not self.game_manager.db_service:
-            logger.error(f"LIS: Essential managers not available for guild {guild_id}. Aborting on_enter for loc {location_id}.")
+        loc_mgr: Optional["LocationManager"] = getattr(self.game_manager, 'location_manager', None)
+        char_mgr: Optional["CharacterManager"] = getattr(self.game_manager, 'character_manager', None)
+        db_svc: Optional["DBService"] = getattr(self.game_manager, 'db_service', None)
+        party_mgr: Optional["PartyManager"] = getattr(self.game_manager, 'party_manager', None)
+        item_mgr: Optional["ItemManager"] = getattr(self.game_manager, 'item_manager', None)
+        npc_mgr: Optional["NpcManager"] = getattr(self.game_manager, 'npc_manager', None)
+        status_mgr: Optional["StatusManager"] = getattr(self.game_manager, 'status_manager', None)
+
+
+        if not loc_mgr or not char_mgr or not db_svc:
+            logger.error(f"LIS: Essential managers NA for guild {guild_id}. Aborting on_enter for loc {location_id}.")
             return
 
-        location_obj = self.game_manager.location_manager.get_location_instance(guild_id, location_id)
-
-        if not location_obj:
-            logger.warning(f"LIS: Location {location_id} not found for guild {guild_id}.")
+        location_obj_pydantic: Optional[LocationPydanticModel] = loc_mgr.get_location_instance(guild_id, location_id)
+        if not location_obj_pydantic:
+            logger.warning(f"LIS: Location {location_id} (Pydantic) not found for guild {guild_id}.")
             return
 
-        if not location_obj.on_enter_events_json or \
-           not isinstance(location_obj.on_enter_events_json, list) or \
-           not location_obj.on_enter_events_json:
+        on_enter_events = getattr(location_obj_pydantic, 'on_enter_events_json', [])
+        if not isinstance(on_enter_events, list) or not on_enter_events:
             logger.debug(f"LIS: No on_enter_events for location {location_id} in guild {guild_id}.")
             return
 
-        acting_character: Optional[Character] = None
-        if entity_type == "Character":
-            async with self.game_manager.db_service.get_session() as session: # type: ignore
-                acting_character = await session.get(Character, entity_id)
-                if not (acting_character and str(acting_character.guild_id) == guild_id):
-                    logger.error(f"LIS: Character {entity_id} not found in guild {guild_id}.")
-                    acting_character = None
-        elif entity_type == "Party":
-            if self.game_manager.party_manager:
-                async with self.game_manager.db_service.get_session() as session: # type: ignore
-                    party_obj_model = await session.get(Party, entity_id)
-                    if party_obj_model and str(party_obj_model.guild_id) == guild_id and party_obj_model.leader_id:
-                        acting_character = await session.get(Character, party_obj_model.leader_id)
-                        if not (acting_character and str(acting_character.guild_id) == guild_id):
-                            acting_character = None
-                    # ... (logging for party not found or no leader)
-            else: logger.warning("LIS: PartyManager not available for Party entry.")
+        acting_char_db: Optional[CharacterDBModel] = None
+        player_language = "en" # Default
 
-        player_language = "en"
-        if acting_character and acting_character.player_id:
-            player_account = await self.game_manager.get_player_model_by_id(guild_id, acting_character.player_id)
-            if player_account and player_account.selected_language:
-                player_language = player_account.selected_language
+        async with db_svc.get_session() as session_context:
+            session = cast(AsyncSession, session_context)
+            if entity_type == "Character":
+                acting_char_db = await session.get(CharacterDBModel, entity_id)
+                if not (acting_char_db and str(acting_char_db.guild_id) == guild_id):
+                    logger.error(f"LIS: Character {entity_id} DB model not found in guild {guild_id}.")
+                    acting_char_db = None
+            elif entity_type == "Party" and party_mgr:
+                party_obj_db = await session.get(PartyDBModel, entity_id)
+                if party_obj_db and str(party_obj_db.guild_id) == guild_id and party_obj_db.leader_id:
+                    acting_char_db = await session.get(CharacterDBModel, str(party_obj_db.leader_id))
+                    if not (acting_char_db and str(acting_char_db.guild_id) == guild_id): acting_char_db = None
 
-        send_callback: SendToChannelCallback
-        if location_obj.channel_id:
-            try: send_callback = self.game_manager._get_discord_send_callback(int(location_obj.channel_id))
-            except ValueError: logger.error(f"LIS: Invalid channel_id format '{location_obj.channel_id}'."); send_callback = lambda m, **k: logger.info(f"[LOG_SEND_ERROR_CHANNEL] Loc {location_id}: {m}") # type: ignore
-        else: send_callback = lambda m, **k: logger.info(f"[LOG_SEND_NO_CHANNEL] Loc {location_id}: {m}") # type: ignore
+            if acting_char_db and getattr(acting_char_db, 'player_id', None):
+                player_account_db = await session.get(Player, str(acting_char_db.player_id))
+                if player_account_db and getattr(player_account_db, 'selected_language', None):
+                    player_language = str(player_account_db.selected_language)
 
-        for event_config in location_obj.on_enter_events_json:
+        send_callback: SendToChannelCallback = lambda m: logger.info(f"[LOG_SEND_NO_CB_DEF] Loc {location_id}: {m}")
+        if hasattr(location_obj_pydantic, 'channel_id') and location_obj_pydantic.channel_id and \
+           hasattr(self.game_manager, '_get_discord_send_callback') and callable(getattr(self.game_manager, '_get_discord_send_callback')):
+            try:
+                send_callback_method = getattr(self.game_manager, '_get_discord_send_callback')
+                send_callback = send_callback_method(int(location_obj_pydantic.channel_id)) # type: ignore
+            except ValueError: logger.error(f"LIS: Invalid channel_id format '{location_obj_pydantic.channel_id}'.")
+
+        for event_config in on_enter_events:
             if not isinstance(event_config, dict): continue
-            if random.random() > event_config.get("chance", 1.0): continue
+            if random.random() > float(event_config.get("chance", 1.0)): continue
 
             event_type = event_config.get("event_type")
-            message_i18n = event_config.get("message_i18n", {})
+            message_i18n: Dict[str, str] = event_config.get("message_i18n", {})
             localized_message = message_i18n.get(player_language, message_i18n.get("en", "An event occurs."))
 
             if event_type == "AMBIENT_MESSAGE":
                 await send_callback(localized_message)
             elif event_type == "ITEM_DISCOVERY":
-                if not acting_character or not self.game_manager.item_manager or not self.game_manager.inventory_manager: continue
+                if not acting_char_db or not item_mgr or not hasattr(self.game_manager, 'inventory_manager'): continue # inventory_manager is on game_manager
+                inv_mgr = cast("InventoryManager", getattr(self.game_manager, 'inventory_manager'))
+                if not inv_mgr or not hasattr(inv_mgr, 'give_item_to_character_by_template_id'): continue
+
                 items_to_grant = event_config.get("items", []); discovered_item_names = []
                 for item_info in items_to_grant:
-                    template_id = item_info.get("item_template_id"); quantity = item_info.get("quantity", 1)
-                    if template_id:
-                        logger.info(f"LIS: ITEM_DISCOVERY: Char {acting_character.id} granted {quantity}x {template_id}."); grant_success = True # Placeholder
+                    template_id = item_info.get("item_template_id"); quantity = int(item_info.get("quantity", 1))
+                    if template_id and hasattr(acting_char_db, 'id'):
+                        grant_success = await inv_mgr.give_item_to_character_by_template_id(guild_id, str(acting_char_db.id), template_id, quantity)
                         if grant_success:
-                            item_template_obj = await self.game_manager.item_manager.get_item_template(guild_id, template_id)
-                            item_name = item_template_obj.name_i18n.get(player_language, template_id) if item_template_obj else template_id
+                            item_template_obj = item_mgr.get_item_template(template_id) # Assuming sync
+                            item_name = getattr(item_template_obj, 'name_i18n', {}).get(player_language, template_id) if item_template_obj else template_id
                             discovered_item_names.append(f"{quantity}x {item_name}")
                 if discovered_item_names: await send_callback(localized_message.replace("[item_name]", ", ".join(discovered_item_names)).replace("[items_list]", ", ".join(discovered_item_names)))
             elif event_type == "NPC_APPEARANCE":
-                if not self.game_manager.npc_manager: continue
-                npc_template_id = event_config.get("npc_template_id"); spawn_count = event_config.get("spawn_count", 1)
-                if npc_template_id:
-                    logger.info(f"LIS: NPC_APPEARANCE: NPC template {npc_template_id} (x{spawn_count}) would spawn.") # Placeholder
-                    npc_template_for_name = await self.game_manager.npc_manager.get_npc_template(guild_id, npc_template_id)
-                    npc_name = npc_template_for_name.name_i18n.get(player_language, npc_template_id) if npc_template_for_name else npc_template_id
+                if not npc_mgr or not hasattr(npc_mgr, 'spawn_npc_from_template'): continue
+                npc_tpl_id = event_config.get("npc_template_id"); spawn_count = int(event_config.get("spawn_count", 1))
+                if npc_tpl_id:
+                    # Actual spawning logic: await npc_mgr.spawn_npc_from_template(guild_id, npc_tpl_id, location_id, count=spawn_count)
+                    logger.info(f"LIS: NPC_APPEARANCE: NPC template {npc_tpl_id} (x{spawn_count}) would spawn in {location_id}.")
+                    npc_tpl_obj = npc_mgr.get_npc_template(guild_id, npc_tpl_id) # Assuming sync
+                    npc_name = getattr(npc_tpl_obj, 'name_i18n', {}).get(player_language, npc_tpl_id) if npc_tpl_obj else npc_tpl_id
                     await send_callback(localized_message.replace("[npc_name]", npc_name).replace("[npc_count]", str(spawn_count)))
             elif event_type == "SIMPLE_HAZARD":
-                if not acting_character: continue
+                if not acting_char_db: continue
                 effect_type = event_config.get("effect_type")
                 if effect_type == "damage":
-                    if not self.game_manager.character_manager: continue
-                    amount = event_config.get("damage_amount", 0); damage_type = event_config.get("damage_type", "generic")
-                    logger.info(f"LIS: SIMPLE_HAZARD: Char {acting_character.id} takes {amount} {damage_type} damage.") # Placeholder
+                    if not char_mgr or not hasattr(char_mgr, 'update_health'): continue
+                    amount = float(event_config.get("damage_amount", 0)); damage_type = str(event_config.get("damage_type", "generic"))
+                    await char_mgr.update_health(guild_id, str(acting_char_db.id), -amount) # Negative for damage
                     await send_callback(localized_message.replace("[damage_amount]", str(amount)).replace("[damage_type]", damage_type))
                 elif effect_type == "status_effect":
-                    if not self.game_manager.status_manager: continue
+                    if not status_mgr or not hasattr(status_mgr, 'apply_status_effect'): continue
                     status_id = event_config.get("status_effect_id")
-                    if status_id:
-                        logger.info(f"LIS: SIMPLE_HAZARD: Char {acting_character.id} gets status {status_id}.") # Placeholder
+                    if status_id and hasattr(acting_char_db, 'id'):
+                        await status_mgr.apply_status_effect(guild_id, str(acting_char_db.id), "Character", status_id)
                         await send_callback(localized_message.replace("[status_effect_name]", status_id))
                 else: await send_callback(localized_message)
             else: logger.warning(f"LIS: Unknown event_type '{event_type}' in location {location_id}.")
 
-
     async def handle_intra_location_action(
-        self,
-        guild_id: str,
-        player_id: str,
-        action_data: Dict[str, Any]
+        self, guild_id: str, character_id: str, action_data: Dict[str, Any]
     ) -> Tuple[bool, str]:
-        log_prefix = f"IntraLocationAction (Guild: {guild_id}, Player: {player_id})"
+        log_prefix = f"IntraLocAction (Guild: {guild_id}, Char: {character_id})"
         logger.info(f"{log_prefix}: Received action. Data: {action_data}")
 
-        if not self.game_manager or not self.game_manager.db_service:
-            logger.error(f"{log_prefix}: GameManager or DBService not available.")
-            return False, "Core services are unavailable. Please try again later."
+        if not self.game_manager: return False, "GameManager NA."
+        db_svc: Optional["DBService"] = getattr(self.game_manager, 'db_service', None)
+        rule_eng: Optional["RuleEngine"] = getattr(self.game_manager, 'rule_engine', None)
+        inv_mgr: Optional["InventoryManager"] = getattr(self.game_manager, 'inventory_manager', None)
+        check_res: Optional["CheckResolver"] = getattr(self.game_manager, 'check_resolver', None)
+        cons_proc: Optional["ConsequenceProcessor"] = getattr(self.game_manager, 'consequence_processor', None)
+        notif_svc: Optional["NotificationService"] = getattr(self.game_manager, 'notification_service', None)
 
-        db_service = self.game_manager.db_service
 
-        # Method now expects an active session to be passed
-        session: Optional[AsyncSession] = action_data.get("session") # Expect session in action_data
-        if not session:
-            logger.error(f"{log_prefix}: DB session not provided in action_data.")
-            return False, "Internal error: Database session missing."
+        if not db_svc or not hasattr(db_svc, 'get_session') or not callable(db_svc.get_session):
+            return False, "DBService NA."
+
+        session_from_action = action_data.get("session")
+        if not isinstance(session_from_action, AsyncSession) : # Check if it's a valid AsyncSession
+            logger.error(f"{log_prefix}: DB session not provided or invalid in action_data.")
+            return False, "Internal error: DB session missing/invalid."
+
+        session = cast(AsyncSession, session_from_action)
 
         try:
-            # Load RuleConfig for the guild
-            if not self.game_manager.rule_engine:
-                logger.error(f"{log_prefix}: RuleEngine not available.")
-                return False, "Game rules are currently unavailable."
+            if not rule_eng or not hasattr(rule_eng, 'get_rules_config') or not callable(getattr(rule_eng, 'get_rules_config')):
+                return False, "RuleEngine NA."
+            rules_config: Optional["CoreGameRulesConfig"] = await rule_eng.get_rules_config(guild_id)
+            if not rules_config: return False, "Game rules config missing."
 
-            rules_config = await self.game_manager.rule_engine.get_rules_config(guild_id)
-            if not rules_config:
-                logger.error(f"{log_prefix}: Could not load RuleConfig for guild {guild_id}.")
-                return False, "Game rules configuration is missing for this area."
+            char_db_model = await session.get(CharacterDBModel, character_id)
+            if not char_db_model or str(char_db_model.guild_id) != guild_id: return False, "Character data error."
 
-            # Get active character (not Player DB model directly)
-            character_model = await session.get(Character, player_id) # player_id is character_id
-            if not character_model or str(character_model.guild_id) != guild_id:
-                logger.warning(f"{log_prefix}: Character {player_id} not found or guild mismatch."); return False, "Character data error."
+            current_loc_id = getattr(char_db_model, 'current_location_id', None)
+            if not current_loc_id: return False, "Your location is unknown."
 
-            if not character_model.current_location_id:
-                logger.warning(f"{log_prefix}: Character {player_id} has no current_location_id."); return False, "Your location is unknown."
+            loc_db_model = await session.get(Location, str(current_loc_id))
+            if not loc_db_model or str(loc_db_model.guild_id) != guild_id: return False, "Location data error."
 
-            location = await session.get(Location, character_model.current_location_id)
-            if not location or str(location.guild_id) != guild_id:
-                logger.warning(f"{log_prefix}: Current location {character_model.current_location_id} not found or guild mismatch."); return False, "Location data error."
+            intent = action_data.get("intent"); target_id = action_data.get("target_id"); sub_target_id = action_data.get("sub_target_id")
+            if not intent: return False, "Action intent unclear."
 
-            intent = action_data.get("intent") # e.g., "INTENT_EXAMINE_OBJECT", "INTENT_TAKE_ITEM_POI"
-            # target_id might be POI_id, item_id within POI, etc.
-            target_id = action_data.get("target_id") # This should be the ID of the POI or specific feature.
-            # sub_target_id could be item_id if intent is to take item from a POI.
-            sub_target_id = action_data.get("sub_target_id")
+            logger.info(f"{log_prefix}: Char {char_db_model.id} attempts '{intent}' (target: {target_id}) in loc {loc_db_model.id}.")
 
-            if not intent: return False, "Your action's intent is unclear."
+            player_lang = str(getattr(char_db_model, 'selected_language', DEFAULT_BOT_LANGUAGE))
+            interaction_def_key = str(target_id) if target_id else ""
 
-            location_name_for_log = location.name_i18n.get('en', location.id) if location.name_i18n else location.id
-            logger.info(f"{log_prefix}: Character {character_model.id} attempts '{intent}' (target: {target_id}, sub_target: {sub_target_id}) in loc {location.id} ('{location_name_for_log}').")
+            loc_interactions_rules: Optional[Dict[str, LocationInteractionRule]] = getattr(rules_config, 'location_interactions', None)
+            interaction_rule: Optional[LocationInteractionRule] = loc_interactions_rules.get(interaction_def_key) if loc_interactions_rules else None
 
-            interaction_definition_key = target_id # POI_id or feature_id
-            interaction_rule = rules_config.location_interactions.get(interaction_definition_key)
 
-            if not interaction_rule and intent == "INTENT_EXAMINE_OBJECT": # Fallback for simple examine if no specific rule
-                # This is the old logic, can be kept as a fallback or removed if all examines must be rule-based
-                target_object_name = target_id # Assume target_id is the name for examine if no rule
-                if not target_object_name: return False, "What exactly do you want to examine?"
-                normalized_target_key = target_object_name.lower().strip().replace(" ", "_")
-                player_lang = character_model.selected_language or await self.game_manager.get_rule(guild_id, 'default_language', 'en')
-                description_to_send = None; description_found = False
-                if location.details_i18n and isinstance(location.details_i18n, dict):
-                    lang_specific_details = location.details_i18n.get(player_lang)
-                    if isinstance(lang_specific_details, dict) and lang_specific_details.get(normalized_target_key):
-                        description_to_send = lang_specific_details[normalized_target_key]; description_found = True
-                    elif player_lang != 'en' and isinstance(location.details_i18n.get('en'), dict) and location.details_i18n['en'].get(normalized_target_key):
-                        description_to_send = location.details_i18n['en'][normalized_target_key]; description_found = True
-                if not description_found: return False, f"You look at the {target_object_name}, but find nothing special."
-                return True, description_to_send
+            if not interaction_rule and intent == "INTENT_EXAMINE_OBJECT":
+                target_obj_name = str(target_id) if target_id else ""
+                if not target_obj_name: return False, "What to examine?"
 
-            if not interaction_rule:
-                logger.warning(f"{log_prefix}: No interaction rule found for target '{interaction_definition_key}' in location '{location.id}'.")
-                return False, f"You can't seem to interact with '{target_id}' in that way."
+                loc_details_i18n: Optional[Dict[str, Any]] = getattr(loc_db_model, 'details_i18n', None)
+                desc_to_send: Optional[str] = None
+                if isinstance(loc_details_i18n, dict): # Check if it's a dict after loading
+                    norm_key = target_obj_name.lower().strip().replace(" ", "_")
+                    lang_details = loc_details_i18n.get(player_lang)
+                    if isinstance(lang_details, dict): desc_to_send = lang_details.get(norm_key)
+                    if not desc_to_send and player_lang != 'en':
+                        en_details = loc_details_i18n.get('en')
+                        if isinstance(en_details, dict): desc_to_send = en_details.get(norm_key)
+                return (True, desc_to_send) if desc_to_send else (False, f"Nothing special about {target_obj_name}.")
 
-            # Check required items
-            if interaction_rule.required_items:
-                if not self.game_manager.inventory_manager:
-                    logger.error(f"{log_prefix}: InventoryManager not available for checking required items."); return False, "Internal error: Inventory system unavailable."
-                for req_item_template_id in interaction_rule.required_items:
-                    if not await self.game_manager.inventory_manager.character_has_item_template(guild_id, character_model.id, req_item_template_id, session=session):
-                        # TODO: Get localized item name for feedback
-                        return False, f"You need a specific item ({req_item_template_id}) to do that."
+            if not interaction_rule: return False, f"Cannot interact with '{target_id}' that way."
 
-            outcome_to_process: Optional[Dict[str, Any]] = None # This will be Pydantic LocationInteractionOutcome.model_dump()
-            check_passed = True # Assume success if no check is required
+            if interaction_rule.required_items and inv_mgr and hasattr(inv_mgr, 'character_has_item_template'):
+                for req_item_id in interaction_rule.required_items:
+                    if not await inv_mgr.character_has_item_template(guild_id, character_id, req_item_id, session=session):
+                        return False, f"You need {req_item_id} to do that." # TODO: Localize item name
 
-            if interaction_rule.check_type:
-                if not self.game_manager.check_resolver:
-                    logger.error(f"{log_prefix}: CheckResolver not available for interaction check."); return False, "Internal error: Check system unavailable."
+            outcome_def: Optional[Dict[str, Any]] = None; check_passed = True
+            if interaction_rule.check_type and check_res and hasattr(check_res, 'resolve_check'):
+                check_result_obj = await check_res.resolve_check(guild_id, interaction_rule.check_type, character_id, "Character", dc=interaction_rule.success_dc) # Use success_dc
+                check_passed = check_result_obj.succeeded
+                if notif_svc and hasattr(notif_svc, 'send_character_feedback'):
+                    await notif_svc.send_character_feedback(guild_id, character_id, check_result_obj.description, "check_result")
 
-                # difficulty_dc might come from the interaction_rule itself, or be dynamic
-                # For now, assume it's part of the rule or a default is used by CheckResolver
-                check_result = await self.game_manager.check_resolver.resolve_check(
-                    guild_id=guild_id,
-                    check_type=interaction_rule.check_type,
-                    performing_entity_id=character_model.id,
-                    performing_entity_type="Character", # Assuming player character for now
-                    difficulty_dc=interaction_rule.success_outcome.get("dc") # Example: DC might be on the outcome
-                )
-                check_passed = check_result.succeeded
-                # TODO: Send feedback about the check result to the player
-                if self.game_manager.notification_service:
-                    await self.game_manager.notification_service.send_character_feedback(
-                        guild_id, character_model.id, check_result.description, "check_result"
-                    )
+            final_outcome_rule = interaction_rule.success_outcome if check_passed else interaction_rule.failure_outcome
+            if final_outcome_rule: outcome_def = final_outcome_rule.model_dump()
 
-            outcome_definition = interaction_rule.success_outcome if check_passed else interaction_rule.failure_outcome
-            if outcome_definition:
-                outcome_to_process = outcome_definition.model_dump()
+            if outcome_def and cons_proc and hasattr(cons_proc, 'process_consequences'):
+                consequence_ctx = {"character_db": char_db_model, "location_db": loc_db_model, "interaction_target_id": target_id, "interaction_rule": interaction_rule.model_dump(), "session": session}
+                await cons_proc.process_consequences(guild_id, [outcome_def], source_entity_id=character_id, target_entity_id=target_id, event_context=consequence_ctx)
 
-            if outcome_to_process:
-                # Process consequences using ConsequenceProcessor
-                if not self.game_manager.consequence_processor:
-                    logger.error(f"{log_prefix}: ConsequenceProcessor not available."); return False, "Internal error: Consequence system unavailable."
+                final_msg_i18n: Optional[Dict[str,str]] = outcome_def.get("message_i18n")
+                final_msg = final_msg_i18n.get(player_lang, final_msg_i18n.get("en")) if final_msg_i18n else f"You interact with {target_id}."
+                return True, final_msg
 
-                # Context for consequence processor
-                consequence_context = {
-                    "character": character_model, # Pass the SQLAlchemy model
-                    "location": location,       # Pass the SQLAlchemy model
-                    "interaction_target_id": target_id,
-                    "interaction_rule": interaction_rule.model_dump(), # Pass rule data
-                    "session": session # Pass the active session
-                }
-
-                # The outcome_to_process itself is the list of consequence instructions
-                # The ConsequenceProcessor needs to be adapted to take this structure or iterate through it.
-                # For now, let's assume a single outcome type is processed.
-                # This needs to be a list of consequence dicts.
-                # For a single outcome, wrap it in a list.
-                consequences_to_apply = [outcome_to_process] # Wrap the single outcome
-
-                # The ConsequenceProcessor.process_consequences expects a JSON string or a list of dicts.
-                # We pass the list of dicts directly.
-                await self.game_manager.consequence_processor.process_consequences(
-                    guild_id=guild_id,
-                    consequences_list=consequences_to_apply, # Pass the list of outcome dicts
-                    context=consequence_context,
-                    actor_id=character_model.id,
-                    actor_type="Character"
-                )
-
-                # Message is now handled by ConsequenceProcessor if it's a 'display_message' type
-                # If there's a specific message from the outcome, it should have been processed.
-                # We can return a generic success/failure or a specific message if the outcome was just info.
-                final_message = outcome_to_process.get("message_i18n", {}).get(character_model.selected_language or "en")
-                if final_message:
-                    return True, final_message
-                return True, f"You interact with {target_id}. (Outcome processed)"
-
-            return False, f"You interact with {target_id}, but nothing seems to happen."
-
+            return False, f"Interacting with {target_id} yields no result."
         except Exception as e:
             logger.error(f"{log_prefix}: Error: {e}", exc_info=True)
-            # Important: Do not rollback here if session was passed in. Caller handles it.
-            return False, "An unexpected error occurred during interaction."
+            return False, "Unexpected error during interaction."

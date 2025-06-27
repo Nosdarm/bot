@@ -1159,3 +1159,58 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
         - Corrected `get_rule_side_effect` mock to use `hasattr` and `getattr` for accessing attributes on `self.mock_core_game_rules` and its nested Pydantic models (e.g., `general_settings`).
         - Ensured `issues` list in test assertions is handled safely by initializing `issues_list = issues if issues is not None else []` before iteration/subscription.
         - Added/corrected type hints for test data.
+
+## Pyright Error Fixing Phase (Batch 54 - pyright_errors_part_2.txt - Second ~103 errors)
+- **Focus:** Addressing the second batch of ~103 errors from `pyright_errors_part_2.txt`.
+- **Strategy:** Applied fixes by overwriting files, focusing on type hinting, safe attribute/method access (including `hasattr` and `callable` checks), correct async/await usage, proper session/JSON handling, and correcting method call signatures.
+- **Files Addressed & Key Fixes (Total 135 errors resolved in this actual run):**
+    - **`bot/game/managers/character_manager.py` (18 errors):**
+        - Added `NPCManager` to `TYPE_CHECKING` imports.
+        - Added `effective_stats_json: Optional[str] = None` field to Pydantic `Character` model (in `bot/game/models/character.py`).
+        - Implemented `from_db_model` and `to_db_dict` methods in Pydantic `Character` model for SQLAlchemy model conversion.
+        - Ensured `AsyncSession` is correctly typed/cast when used.
+        - Added `None` checks and `hasattr`/`callable` for optional managers (`_rule_engine`, `_location_manager`, `_game_manager`) before method calls.
+    - **`bot/game/npc_processors/npc_action_processor.py` (18 errors):**
+        - Corrected calls to `_notify_gm` to include `guild_id`.
+        - Ensured consistent passing of `guild_id` and `npc_id` to internal methods.
+        - Propagated `**kwargs` (containing context/managers) correctly to internal and external method calls.
+        - Removed incorrect `context=` keyword arguments from calls to external manager/engine methods; necessary data now passed via `**kwargs` or specific parameters.
+        - Verified calls to `ItemManager` and `NpcManager.is_busy` use correct signatures.
+    - **`bot/command_modules/quest_cmds.py` (17 errors):**
+        - Added `None` checks for `self.bot.game_manager` before accessing `db_service` or `get_rule`.
+        - Cast `session` from `db_service.get_session()` to `AsyncSession`.
+        - Ensured `player_lang` (player's language) defaults to a string.
+        - Adjusted `_get_i18n_value` helper to correctly process i18n dictionary structures from SQLAlchemy model attributes (e.g., `main_quest_db.title_i18n`).
+        - Corrected conditional checks on SQLAlchemy column attributes (e.g., `if main_quest_giver_i18n is not None:`).
+    - **`bot/game/services/location_interaction_service.py` (17 errors):**
+        - Added comprehensive `None` checks and `hasattr`/`callable` for all managers before use.
+        - Simplified `SendToChannelCallback` type hint and updated calls.
+        - Removed `await` from synchronous `item_mgr.get_item_template`.
+        - Ensured `RuleEngine.get_rules_config` is awaited and manager checked.
+        - Corrected handling of SQLAlchemy JSON column attributes (e.g., `loc_db_model.details_i18n`) by checking `isinstance(..., dict)` before dict operations.
+        - Ensured `handle_intra_location_action` returns `str` for message part of tuple.
+        - Corrected parameter names in call to `ConsequenceProcessor.process_consequences`.
+        - Ensured `session` passed in `action_data` is validated as `AsyncSession`.
+    - **`tests/cogs/test_master_commands.py` (17 errors):**
+        - Improved mocking for `GameManager`, `DBService`, and `AsyncSession` factory/context manager behavior in fixtures.
+        - Ensured mock ORM instances (`DBLocation`) store JSON fields as strings and are parsed for assertions.
+        - Correctly invoked app command callbacks using `command.callback(cog, interaction, **kwargs)`.
+        - Ensured `mock_db_session.commit` and `mock_interaction.followup.send` are `AsyncMock`.
+        - Added type casts and specific specs for mocks.
+    - **`bot/game/command_handlers/action_commands.py` (16 errors):**
+        - Added comprehensive `None` checks for all managers retrieved from `context`.
+        - Ensured methods on managers are checked for existence (`hasattr`) and callability (`callable`) before invocation.
+        - Verified `await` usage for async manager methods.
+        - Implemented safer attribute access for model instances (e.g., `player_char.id`, `target_npc.location_id`).
+    - **`bot/game/managers/game_manager.py` (16 errors):**
+        - Corrected import path for `GenerationType` to `PendingGenerationTypeEnum`.
+        - Used `setattr(manager_instance, "attribute_name", value)` with `# type: ignore[attr-defined]` for dynamic attribute assignments to other managers during initialization.
+        - Handled optional constructor parameters carefully (e.g., for `MultilingualPromptGenerator`'s `openai_service`).
+        - Added `None` checks and `hasattr`/`callable` for `self.ai_generation_service.request_content_generation`.
+        - Added missing `get_default_bot_language` method.
+    - **`bot/game/rules/action_processor.py` (16 errors):**
+        - Added comprehensive `None` checks for all essential managers (`_character_manager`, `_location_manager`, etc.) at the start of `process`.
+        - Implemented `hasattr`/`callable` checks for all manager method calls.
+        - Ensured `await` for async methods.
+        - Improved safe attribute access on model instances and dictionary data.
+        - Standardized return dictionary structure.
