@@ -9,7 +9,7 @@ from bot.database.models import PendingGeneration, PendingStatus, GenerationType
 from bot.ai.ai_data_models import ValidationIssue
 from bot.database.models import GuildConfig # Corrected import path
 from bot.database.models import NPC # Corrected import path
-from bot.database.models.location import Location
+from bot.database.models import Location # Corrected import path
 from bot.database.models.quest_related import QuestTable, QuestStepTable # Assuming this is the correct location
 from bot.database.guild_transaction import GuildTransaction
 from sqlalchemy.ext.asyncio import AsyncSession

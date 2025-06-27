@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from bot.database.models import PendingGeneration, GenerationType, PendingStatus # Corrected import
 from bot.database.pending_generation_crud import PendingGenerationCRUD
-from bot.database.models.guild_config import GuildConfig
+from bot.database.models import GuildConfig # Corrected import
 from bot.services.db_service import DBService # For spec in MagicMock
 
 @pytest.fixture
