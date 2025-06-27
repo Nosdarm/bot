@@ -771,4 +771,3 @@ class CharacterActionProcessor:
         return {"success": True, "message": message, "state_changed": True}
 
 # Конец класса CharacterActionProcessor
->>>>>>> REPLACE

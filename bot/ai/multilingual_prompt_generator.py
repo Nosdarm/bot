@@ -324,6 +324,4 @@ CRITICAL INSTRUCTIONS:
             return str(template_value) if template_value is not None else None # Ensure string return
         return None
 
-    def generate_narrative_prompt(
-        self,
->>>>>>> REPLACE
+
