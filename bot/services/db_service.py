@@ -976,24 +976,19 @@ class DBService:
                     # If crud_utils expects a SQLAlchemy session, this might need more specific handling for SQLite.
                     # However, crud_utils primarily uses session.add, session.flush, session.refresh which are SQLAlchemy specific.
                     # This path will likely only work well with PostgresAdapter.
+                    # The original code had duplicated lines here. Correcting it to a single call.
                     created_model_instance = await crud_utils.create_entity(
-                        session=internal_session,
+                        session=internal_session, # Pass the SQLAlchemy session
                         model_class=model_class,
                         data=actual_data
-                    # This path will likely only work well with PostgresAdapter or similar SQLAlchemy-based adapters.
-                    # For SQLiteAdapter, crud_utils might not work as expected if it relies heavily on SQLAlchemy session features
-                    # not fully mirrored by a raw aiosqlite connection.
-                    created_model_instance = await crud_utils.create_entity(
-                        session=internal_session_ctx, # Pass the yielded session/connection
-                        model_class=model_class,
-                        data=actual_data
-                        # guild_id might need to be explicitly passed to crud_utils if not in actual_data
+                        # guild_id might need to be explicitly passed to crud_utils if not in actual_data or session.info
                     )
-                    # Assuming crud_utils handles commit if it manages its own transaction within the passed session
-                    logger.info(f"DBService: Created entity via crud_utils (internal session) for model {model_class.__name__}, ID: {getattr(created_model_instance, 'id', 'N/A')}")
+                    # Assuming crud_utils handles commit if it manages its own transaction within the passed session,
+                    # or that the session from self.get_session() is auto-committed on exit if no error.
+                    logger.info(f"DBService: Created entity via crud_utils (internal session) for model {model_class_name_for_log}, ID: {getattr(created_model_instance, 'id', 'N/A')}")
                     return created_model_instance
             except Exception as e:
-                logger.error(f"DBService: Error using crud_utils.create_entity (internal session) for {model_class.__name__}: {e}", exc_info=True)
+                logger.error(f"DBService: Error using crud_utils.create_entity (internal session) for {model_class_name_for_log}: {e}", exc_info=True)
                 return None
         elif table_name and actual_data: # Changed data to actual_data for consistency
             # Legacy path: low-level table-based creation

@@ -8,7 +8,8 @@ from bot.database.models.world_related import Location
 from bot.ai.ai_data_models import GeneratedLocationContent, POIModel, ConnectionModel, GeneratedNpcProfile, ValidationIssue
 from sqlalchemy.orm.attributes import flag_modified
 
-from bot.database.models.pending_generation import PendingGeneration, GenerationType, PendingStatus # Corrected path
+# Corrected import path for pending_generation models
+from bot.models.pending_generation import PendingGeneration, GenerationType, PendingStatus
 from bot.database.pending_generation_crud import PendingGenerationCRUD # Corrected path
 from bot.database.guild_transaction import GuildTransaction
 from sqlalchemy.future import select
@@ -221,5 +222,4 @@ class AIGenerationManager:
         except Exception as e: # ... (Outer exception handling) ...
             logger.exception(f"Unexpected error processing approved PG {pending_generation_id}")
             return False
-
-[end of bot/ai/generation_manager.py]
+# Removed the duplicated end-of-file marker

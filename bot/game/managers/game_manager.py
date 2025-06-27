@@ -70,7 +70,8 @@ if TYPE_CHECKING:
     from bot.game.managers.faction_manager import FactionManager
     from bot.game.services.location_interaction_service import LocationInteractionService
     from pydantic import ValidationError # For CoreGameRulesConfig validation
-    from bot.ai.rules_schema import CoreGameRulesConfig # Direct import for instantiation
+    # from bot.ai.rules_schema import CoreGameRulesConfig # Moved out of TYPE_CHECKING
+from bot.ai.rules_schema import CoreGameRulesConfig # Ensure it's available at runtime
 
 logger = logging.getLogger(__name__)
 

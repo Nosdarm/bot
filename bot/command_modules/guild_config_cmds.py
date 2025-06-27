@@ -77,10 +77,17 @@ class GuildConfigCmds(commands.Cog):
 
             except Exception as e:
                 logger.error(f"Error updating {channel_type} for guild {guild_id_str}: {e}", exc_info=True)
-                await interaction.response.send_message(
-                    f"An error occurred while setting the {channel_type.replace('_', ' ')}.",
-                    ephemeral=True
-                )
+                # Check if response has been sent, otherwise use followup
+                if interaction.response.is_done():
+                    await interaction.followup.send(
+                        f"An error occurred while setting the {channel_type.replace('_', ' ')}.",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message(
+                        f"An error occurred while setting the {channel_type.replace('_', ' ')}.",
+                        ephemeral=True
+                    )
 
     @app_commands.command(name="set_game_channel", description="Sets the primary game channel for bot activities.")
     @app_commands.describe(channel="The text channel to be used as the game channel.")
