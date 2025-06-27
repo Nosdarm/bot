@@ -977,3 +977,48 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **Model Attribute Access & Data Handling:** Used `model_dump()` for Pydantic `Location` instances, fallback to `to_dict()` or direct dict usage. Ensured `active_quest_data_list` initialized to `[]`. Handled `target_location_static_data_res` being `None` before conversion.
     - **Helper Function Signature:** Removed `guild_id_for_i18n` from `_format_basic_entity_details_placeholder`.
     - **Safe List Access:** Added checks for `all_characters_result`, `all_npcs_result`, `items_in_loc_result`, `all_parties_result` being non-None before iteration.
+
+## Pyright Error Fixing Phase (Batch 49 - Grouping fixes for `ai_generation_service`, `test_quest_manager`, `test_conflict_resolver`, `test_combat_manager`)
+- **Focus:** Addressing errors in the first set of files from the revised plan based on `pyright_errors_part_1.txt` after filtering previously addressed files. Total of 100 errors targeted.
+- **Strategy:** Applied fixes by overwriting files due to the nature and distribution of errors.
+- **Batch 49 Fixes:**
+    - **`bot/services/ai_generation_service.py` (26 errors):**
+        - Added robust `hasattr` and `callable` checks for all manager methods accessed via `self.game_manager`.
+        - Ensured `PendingGeneration` record instances are `await`ed before attribute access (e.g., `record.id`, `record.status`).
+        - Corrected serialization for `ValidationIssue` lists to use `model_dump()` for database storage.
+        - Ensured `PendingStatus` and `GenerationType` enums are used correctly (members for logic, `.value` for storage/comparison with strings).
+        - Improved `AsyncSession` handling: ensured `db_service.async_session_factory` (or `get_session_factory`) is callable and returns a factory for `GuildTransaction`. Ensured `db_service.get_session` yields an `AsyncSession` for direct use.
+        - Added type casts and checks for potentially `None` objects before use.
+        - Ensured IDs are consistently strings and numeric types (like channel IDs) are correctly cast to `int`.
+    - **`tests/game/managers/test_quest_manager.py` (25 errors):**
+        - Corrected import paths for `Player`, `DBGeneratedQuest`, `DBQuestStepTable`, `Quest`, `QuestStep`, and `AsyncSession`.
+        - Ensured `GameManager` is properly mocked and passed to `QuestManager` constructor. Attached mocked sub-services (like `db_service`, `character_manager`) to the `mock_game_manager`.
+        - Used `spec=ModelClass` for `MagicMock` instances of data models for better type checking.
+        - Ensured methods expected to be async (like `get_character`) are `AsyncMock`.
+        - Used `model_dump()` for Pydantic V2 `Quest` model serialization.
+        - Added explicit type hints for dictionaries (e.g., `Dict[str, Any]`).
+        - Refined assertions for safer dictionary access using `.get()` and ensured correct checking of items in collections.
+        - Replaced direct `QuestStep.from_dict` with `QuestStep(**step_data)` for clarity if `from_dict` is not a standard Pydantic feature or causes issues.
+    - **`tests/game/test_conflict_resolver.py` (25 errors):**
+        - Defined a `MockActionStatus` enum-like class locally as `ActionStatus` was not importable/defined.
+        - Defined a `MockActionWrapper` class locally for type hinting and `spec` for `MagicMock`, as `ActionWrapper` was not importable.
+        - Corrected `ActionConflictDefinition` instantiation: removed `name` and `priority` fields (not present in schema), used `type` for identification. Ensured `manual_resolution_options` is `List[str]`.
+        - Ensured `XPRule` mock for `CoreGameRulesConfig` is properly instantiated or mocked with a spec.
+        - Corrected type hints for `player_actions_map` to use `List[MockActionWrapper]`.
+        - Ensured `_create_action_wrapper` returns `MockActionWrapper` and uses `MockActionStatus`.
+    - **`tests/test_conflict_resolver.py` (0 errors addressed from this file in this batch):**
+        - Noted that this file appears to be demonstrative rather than a standard test suite file and was not listed in `pyright_errors_part_1.txt`. No direct fixes applied to this file in this batch.
+    - **`tests/game/managers/test_combat_manager.py` (24 errors):**
+        - Corrected `XPRule` initialization to match its Pydantic model definition (using `level_difference_modifier`, `base_xp_per_challenge`).
+        - Ensured `stats_json` and `health` (for NPC) are passed as JSON strings when creating `Character` and `NpcModel` instances.
+        - Renamed `Combat.combat_log` to `Combat.combat_log_json`.
+        - Updated calls from `get_npc`/`get_character` to `get_npc_by_id`/`get_character_by_id`.
+        - Added missing `guild_id` keyword argument to `log_warning` calls.
+        - Ensured `NpcCombatAI` mock and its methods (like `get_npc_combat_action`) are `AsyncMock` if async. Passed necessary context (`kwargs_for_tick` or specifically `**self.combat_manager._get_manager_kwargs()`) to AI and rule engine calls.
+        - Added missing manager dependencies (`game_log_manager`, `inventory_manager`, etc.) to `CombatManager` constructor call in `asyncSetUp`.
+        - Ensured `discord_user_id` is a string for `Character` model.
+        - Added `relation_rules` and `relationship_influence_rules` to `CoreGameRulesConfig` instantiation.
+        - Used `unittest.mock.ANY` correctly.
+        - Added more specific `spec` for mocked managers.
+        - Corrected initiative calculation/assertion in `test_start_combat_success` based on mock dice rolls.
+        - Ensured `resolve_loot_drop` returns a list of dicts as expected by subsequent logic.
