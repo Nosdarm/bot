@@ -1022,3 +1022,42 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
         - Added more specific `spec` for mocked managers.
         - Corrected initiative calculation/assertion in `test_start_combat_success` based on mock dice rolls.
         - Ensured `resolve_loot_drop` returns a list of dicts as expected by subsequent logic.
+
+## Pyright Error Fixing Phase (Batch 50 - Grouping fixes for `test_ai_data_models`, `test_pending_generation_crud`, `spell_manager`, `world_simulation_processor`)
+- **Focus:** Addressing errors in the second set of files from the revised plan. Total of 90 errors targeted.
+- **Strategy:** Applied fixes by overwriting files.
+- **Batch 50 Fixes:**
+    - **`tests/ai/test_ai_data_models.py` (23 errors):**
+        - Added `Optional` to type hints where appropriate.
+        - Ensured required fields are provided during Pydantic model instantiation (e.g., `POIModel`, `ConnectionModel`).
+        - Added explicit `None` checks before operations like `len()` or subscripting on collections that could be `None` (e.g., `loc_content.initial_npcs_json`).
+        - Added type hints to fixture return values (e.g., `validation_context_en_ru: Dict[str, List[str]]`) and some local variables for clarity.
+        - Corrected default value assumptions for optional fields in models (e.g. `POIModel.contained_item_instance_ids` defaults to `None`, not `[]`).
+    - **`tests/persistence/test_pending_generation_crud.py` (23 errors):**
+        - Corrected import paths for `PendingGeneration`, `PendingStatus`, `GenerationType`, `PendingGenerationCRUD`, and `GuildConfig`.
+        - Imported `MagicMock` from `unittest.mock` and `json` for operations.
+        - Used Enum members directly (e.g., `GenerationType.NPC_PROFILE`) instead of strings where appropriate for `request_type` and `status`.
+        - Ensured `request_params_json` is stored as a JSON string, and `parsed_data_json` / `validation_issues_json` are stored as Python dicts/lists (SQLAlchemy handles JSON conversion for `JSON` type columns). Added assertions to check this.
+        - Explicitly cast record IDs to `str` (e.g., `str(created_record.id)`) when passing to CRUD methods.
+        - Added `assert record.id is not None` after record creation to ensure DB commit assigns an ID.
+        - Renamed conflicting loop variable `record` to `record_item`.
+        - Ensured `GuildConfig` is initialized with necessary arguments in fixtures.
+        - Used `spec=DBService` for the `MagicMock` of `db_service` in the `crud` fixture for better type safety if CRUD methods were to call `db_service` methods directly (though in this case, they mainly use the passed session).
+    - **`bot/game/managers/spell_manager.py` (22 errors):**
+        - Used `getattr` for safer access to attributes on `Spell` model instances (e.g., `name_i18n`, `effect_i18n`, `mana_cost`), especially where these might be optional or come from less structured data.
+        - Ensured `RuleEngine` methods (`check_spell_learning_requirements`, `process_spell_effects`) are checked for callability using `hasattr` and `callable` before invocation.
+        - Implemented robust handling for `known_spells` and `spell_cooldowns` attributes on `Character` model: check for existence, initialize as empty list/dict if missing, log errors if type is incorrect.
+        - Changed `Spell.from_dict` to `Spell.model_validate` for Pydantic V2 compatibility when loading spell templates.
+        - Improved type checking and error handling for `spell_defs_raw` (from `guild_spell_definitions` rule) in `get_all_spell_definitions_for_guild`.
+        - Added type safety for mana and cooldown values, ensuring they are numeric and handling potential `None` or incorrect types.
+        - Corrected `PostgresAdapter` type hint for `db_adapter`.
+    - **`bot/game/world_processors/world_simulation_processor.py` (22 errors):**
+        - Added `hasattr` and `callable` checks for methods on optional managers (e.g., `_npc_manager.remove_npc`, `_combat_manager.process_tick_for_guild`, `_persistence_manager.save_game_state`).
+        - Ensured `await` for async calls like `_location_manager.get_location_instance_by_id` and `_character_manager.get_character_by_discord_id`.
+        - Corrected parameter names and types for `_event_manager.create_event_from_template` (ensuring `template_id` is passed) and AI prompt generation methods (`_multilingual_prompt_generator.context_collector.get_full_context` and `_build_full_prompt_for_openai`).
+        - Used `getattr` for safer access to `Event` model attributes (e.g., `name`, `is_active`, `channel_id`, `state_variables`).
+        - Ensured `channel_id` is cast to `int` where required.
+        - Renamed conflicting loop variables (e.g., `event` to `event_item`).
+        - Used `EventStage.model_validate` instead of `from_dict`.
+        - Handled potentially duplicated `party_manager` argument in `__init__` by renaming the optional one to `_party_manager_optional`.
+        - Added `PromptContextCollector` to type hints.
