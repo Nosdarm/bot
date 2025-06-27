@@ -352,4 +352,3 @@ class WorldSimulationProcessor:
         return { name[1:]: manager for name, manager in self.__dict__.items() if name.startswith('_') and manager is not None and not name.endswith('optional')}
 
 
-[end of bot/game/world_processors/world_simulation_processor.py]

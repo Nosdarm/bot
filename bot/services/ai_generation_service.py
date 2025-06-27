@@ -343,4 +343,3 @@ class AIGenerationService:
 
         return application_successful
 
-[end of bot/services/ai_generation_service.py]

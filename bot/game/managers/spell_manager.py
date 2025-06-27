@@ -252,4 +252,3 @@ class SpellManager:
         logger.info("SpellManager: Rebuilding runtime caches for guild %s.", str(guild_id))
         await self.load_state(guild_id, **kwargs)
 
-[end of bot/game/managers/spell_manager.py]
