@@ -72,8 +72,8 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
         if game_mngr:
             try:
                 # Ensure the method exists and is callable before trying to await it
-            if hasattr(game_mngr, 'trigger_manual_simulation_tick') and callable(getattr(game_mngr, 'trigger_manual_simulation_tick')):
-                await game_mngr.trigger_manual_simulation_tick(server_id=str(interaction.guild_id))
+                if hasattr(game_mngr, 'trigger_manual_simulation_tick') and callable(getattr(game_mngr, 'trigger_manual_simulation_tick')):
+                    await game_mngr.trigger_manual_simulation_tick(server_id=str(interaction.guild_id))
                     await interaction.followup.send("**Мастер:** Шаг симуляции мира (ручной) завершен!")
                 else:
                     logging.warning("GameManager does not have a callable 'trigger_manual_simulation_tick' method.")

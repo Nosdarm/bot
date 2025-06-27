@@ -359,3 +359,28 @@ class ValidatedEntity(BaseModel):
     @property
     def is_strictly_valid(self) -> bool:
         return self.validation_status == "success" and not self.issues
+
+from enum import Enum # Added for GenerationType
+
+# --- Added Models for GameTerm and ScalingParameter ---
+class GameTerm(BaseModel):
+    id: str
+    name_i18n: Dict[str, str]
+    term_type: str
+    description_i18n: Optional[Dict[str, str]] = None
+    # Example: validate name_i18n using the shared validator
+    _validate_name_i18n = field_validator('name_i18n', mode='before')(validate_i18n_field)
+    @field_validator('description_i18n', mode='before')
+    def validate_optional_desc_i18n(cls, v, info: FieldValidationInfo):
+        if v is None: return None
+        return validate_i18n_field(cls, v, info)
+
+class ScalingParameter(BaseModel):
+    parameter_name: str
+    value: Union[float, int, str, bool, List[Any], Dict[str, Any]] # Allow list/dict for complex params
+    description_i18n: Optional[Dict[str, str]] = None
+    # Example: validate description_i18n if it's present
+    @field_validator('description_i18n', mode='before')
+    def validate_optional_desc_i18n(cls, v, info: FieldValidationInfo):
+        if v is None: return None
+        return validate_i18n_field(cls, v, info)

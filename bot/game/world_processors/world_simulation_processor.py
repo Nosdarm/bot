@@ -67,7 +67,7 @@ class WorldSimulationProcessor:
                  status_manager: Optional["StatusManager"] = None,
                  crafting_manager: Optional["CraftingManager"] = None,
                  economy_manager: Optional["EconomyManager"] = None,
-                 party_manager: Optional["PartyManager"] = None, # Note: party_manager is also a required arg earlier
+                 party_manager: Optional["PartyManager"] = None,
                  dialogue_manager: Optional["DialogueManager"] = None,
                  quest_manager: Optional["QuestManager"] = None,
                  relationship_manager: Optional["RelationshipManager"] = None,
@@ -97,7 +97,7 @@ class WorldSimulationProcessor:
         self._status_manager = status_manager
         self._crafting_manager = crafting_manager
         self._economy_manager = economy_manager
-        self._party_manager_optional = party_manager # Use a different name for the optional one
+        self._party_manager_optional = party_manager
         self._dialogue_manager = dialogue_manager
         self._quest_manager = quest_manager
         self._relationship_manager = relationship_manager
@@ -126,7 +126,7 @@ class WorldSimulationProcessor:
             'rule_engine': self._rule_engine, 'openai_service': self._openai_service,
             'npc_manager': self._npc_manager, 'combat_manager': self._combat_manager,
             'item_manager': self._item_manager, 'time_manager': self._time_manager,
-            'status_manager': self._status_manager, 'party_manager': self._party_manager_optional, # Use optional one
+            'status_manager': self._status_manager, 'party_manager': self._party_manager_optional,
             'event_manager': self._event_manager, 'persistence_manager': self._persistence_manager,
             'character_action_processor': self._character_action_processor,
             'party_action_processor': self._party_action_processor,
@@ -159,36 +159,35 @@ class WorldSimulationProcessor:
 
         new_event: Optional["Event"] = None
         try:
-            # Ensure create_event_from_template is callable on event_manager
             create_event_method = getattr(self._event_manager, 'create_event_from_template', None)
             if not callable(create_event_method):
                 print(f"WSP: Error: EventManager.create_event_from_template is not callable."); await status_callback("❌ Ошибка конфигурации EventManager."); return None
 
             new_event = await create_event_method(
-                template_id=event_template_id, # template_id is required
+                template_id=event_template_id,
                 location_id=location_id, guild_id=guild_id,
                 initial_player_ids=player_char_ids, channel_id=event_channel_id_final,
                 **context_for_managers
             )
-            if new_event is None:
+            if new_event is None or not hasattr(new_event, 'id'):
                  print(f"WSP: Error: EventManager failed to create event '{event_template_id}'."); await status_callback(f"❌ Ошибка при создании '{event_template_id}'."); return None
             event_name = getattr(new_event, 'name_i18n', {}).get('en', 'Unknown Event')
             print(f"WSP: Event {new_event.id} ('{event_name}') created. Initial stage: {new_event.current_stage_id}")
         except Exception as e:
              print(f"WSP: Exception creating event '{event_template_id}': {e}"); traceback.print_exc(); await status_callback(f"❌ Критическая ошибка: {e}."); return None
 
-        setattr(new_event, 'is_active', True) # Use setattr for safety if is_active might not exist
+        setattr(new_event, 'is_active', True)
         add_active_event_method = getattr(self._event_manager, 'add_active_event', None)
         if callable(add_active_event_method): add_active_event_method(guild_id, new_event)
         else: print("WSP: Error: EventManager.add_active_event is not callable.")
 
         print(f"WSP: Processing initial stage '{new_event.current_stage_id}' for event {new_event.id}.")
         try:
-            if new_event.channel_id is None:
+            if not hasattr(new_event, 'channel_id') or new_event.channel_id is None:
                  print(f"WSP: Error: Event {new_event.id} has no channel_id."); await status_callback("❌ Ошибка: Событие без канала.");
-                 if hasattr(self, 'end_event'): await self.end_event(guild_id, new_event.id); return None
+                 if hasattr(self, 'end_event') and callable(getattr(self, 'end_event')): await self.end_event(guild_id, new_event.id); return None
 
-            event_channel_callback = self._send_callback_factory(new_event.channel_id)
+            event_channel_callback = self._send_callback_factory(cast(int, new_event.channel_id))
             await self._event_stage_processor.advance_stage(
                 event=new_event, target_stage_id=new_event.current_stage_id,
                 send_message_callback=event_channel_callback, **context_for_managers,
@@ -202,46 +201,42 @@ class WorldSimulationProcessor:
         except Exception as e:
             event_name_err = getattr(new_event, 'name_i18n', {}).get('en', event_template_id)
             print(f"WSP: ❌ CRITICAL ERROR processing initial stage of event {new_event.id} ('{event_name_err}'): {e}"); traceback.print_exc()
-            if hasattr(self, 'end_event'): await self.end_event(guild_id, new_event.id)
+            if hasattr(self, 'end_event') and callable(getattr(self, 'end_event')): await self.end_event(guild_id, new_event.id)
             await status_callback(f"❌ КРИТИЧЕСКАЯ ОШИБКА '{event_name_err}': {e}."); return None
 
     async def end_event(self, guild_id: str, event_id: str) -> None:
-        # ... (rest of end_event, ensure managers and methods are checked with hasattr/callable) ...
         event: Optional["Event"] = self._event_manager.get_event(guild_id, event_id)
         if not event: print(f"WSP: Warn: End called for non-existent event {event_id}."); return
         if not getattr(event, 'is_active', False) and getattr(event, 'current_stage_id', None) == 'event_end': print(f"WSP: Event {event_id} already ended."); return
 
         setattr(event, 'current_stage_id', 'event_end')
-        if hasattr(self._event_manager, 'mark_event_dirty'): self._event_manager.mark_event_dirty(guild_id, event.id)
+        if hasattr(self._event_manager, 'mark_event_dirty') and callable(getattr(self._event_manager, 'mark_event_dirty')) : self._event_manager.mark_event_dirty(guild_id, event.id)
 
         if self._npc_manager and hasattr(self._npc_manager, 'remove_npc') and callable(getattr(self._npc_manager, 'remove_npc')):
             temp_npc_ids: List[str] = getattr(event, 'state_variables', {}).get('temp_npcs', [])
-            for npc_id in list(temp_npc_ids):
+            for npc_id_to_remove in list(temp_npc_ids):
                 try:
-                    await self._npc_manager.remove_npc(npc_id, guild_id) # Removed **cleanup_context, assume remove_npc takes specific args
-                    if 'temp_npcs' in getattr(event, 'state_variables', {}) and npc_id in event.state_variables['temp_npcs']:
-                        event.state_variables['temp_npcs'].remove(npc_id)
-                except Exception as e: print(f"WSP: Error removing temp NPC {npc_id}: {e}")
+                    await self._npc_manager.remove_npc(guild_id, npc_id_to_remove)
+                    if 'temp_npcs' in getattr(event, 'state_variables', {}) and npc_id_to_remove in event.state_variables['temp_npcs']:
+                        event.state_variables['temp_npcs'].remove(npc_id_to_remove)
+                except Exception as e: print(f"WSP: Error removing temp NPC {npc_id_to_remove}: {e}")
             if 'temp_npcs' in getattr(event, 'state_variables', {}) and not event.state_variables['temp_npcs']:
                 event.state_variables.pop('temp_npcs', None)
-                if hasattr(self._event_manager, 'mark_event_dirty'): self._event_manager.mark_event_dirty(guild_id, event.id)
+                if hasattr(self._event_manager, 'mark_event_dirty') and callable(getattr(self._event_manager, 'mark_event_dirty')): self._event_manager.mark_event_dirty(guild_id, event.id)
 
-        # ... (rest of end_event logic, similar safety checks)
         setattr(event, 'is_active', False)
-        if hasattr(self._event_manager, 'remove_active_event'): self._event_manager.remove_active_event(guild_id, event.id)
+        if hasattr(self._event_manager, 'remove_active_event') and callable(getattr(self._event_manager, 'remove_active_event')): self._event_manager.remove_active_event(guild_id, event.id)
 
 
     async def process_world_tick(self, game_time_delta: float, **kwargs: Any) -> None:
-        # ... (ensure all manager.process_tick calls are guarded with hasattr/callable) ...
         active_guild_ids: List[str] = []
-        persistence_manager = kwargs.get('persistence_manager')
+        persistence_manager = kwargs.get('persistence_manager', self._persistence_manager)
         if persistence_manager and hasattr(persistence_manager, 'get_loaded_guild_ids') and callable(getattr(persistence_manager, 'get_loaded_guild_ids')):
             active_guild_ids = persistence_manager.get_loaded_guild_ids()
         if not active_guild_ids: return
 
         for guild_id in active_guild_ids:
             guild_tick_context: Dict[str, Any] = {'guild_id': guild_id, **kwargs}
-
             managers_to_tick = [
                 self._time_manager, self._status_manager, self._crafting_manager,
                 self._combat_manager, self._character_action_processor,
@@ -252,48 +247,46 @@ class WorldSimulationProcessor:
             for manager_instance in managers_to_tick:
                 if manager_instance:
                     process_tick_method = None
-                    # Specific handling for processors that tick entities
-                    if manager_instance is self._character_action_processor and self._character_manager and hasattr(self._character_manager, 'get_entities_with_active_action'):
+                    if manager_instance is self._character_action_processor and self._character_manager and hasattr(self._character_manager, 'get_entities_with_active_action') and callable(getattr(self._character_manager, 'get_entities_with_active_action')):
                         entities = self._character_manager.get_entities_with_active_action(guild_id)
-                        if entities and hasattr(manager_instance, 'process_tick'):
+                        if entities and hasattr(manager_instance, 'process_tick') and callable(getattr(manager_instance, 'process_tick')):
                             for entity_id in list(entities): await getattr(manager_instance, 'process_tick')(entity_id=entity_id, guild_id=guild_id, game_time_delta=game_time_delta, **guild_tick_context)
-                        continue # Skip generic tick
-                    elif manager_instance is self._npc_action_processor and self._npc_manager and hasattr(self._npc_manager, 'get_entities_with_active_action'):
+                        continue
+                    elif manager_instance is self._npc_action_processor and self._npc_manager and hasattr(self._npc_manager, 'get_entities_with_active_action') and callable(getattr(self._npc_manager, 'get_entities_with_active_action')):
                         entities = self._npc_manager.get_entities_with_active_action(guild_id)
-                        if entities and hasattr(manager_instance, 'process_tick'):
-                             for entity_id in list(entities): await getattr(manager_instance, 'process_tick')(entity_id=entity_id, guild_id=guild_id, game_time_delta=game_time_delta, **guild_tick_context)
+                        if entities and hasattr(manager_instance, 'process_tick') and callable(getattr(manager_instance, 'process_tick')):
+                             for entity_id in list(entities): await getattr(manager_instance, 'process_tick')(npc_id=entity_id, guild_id=guild_id, game_time_delta=game_time_delta, **guild_tick_context)
                         continue
-                    elif manager_instance is self._party_action_processor and self._party_manager_optional and hasattr(self._party_manager_optional, 'get_parties_with_active_action'):
+                    elif manager_instance is self._party_action_processor and self._party_manager_optional and hasattr(self._party_manager_optional, 'get_parties_with_active_action') and callable(getattr(self._party_manager_optional, 'get_parties_with_active_action')):
                         entities = self._party_manager_optional.get_parties_with_active_action(guild_id)
-                        if entities and hasattr(manager_instance, 'process_tick'):
-                             for entity_id in list(entities): await getattr(manager_instance, 'process_tick')(party_id=entity_id, guild_id=guild_id, game_time_delta=game_time_delta, **guild_tick_context) # party_id
+                        if entities and hasattr(manager_instance, 'process_tick') and callable(getattr(manager_instance, 'process_tick')):
+                             for entity_id in list(entities): await getattr(manager_instance, 'process_tick')(party_id=entity_id, guild_id=guild_id, game_time_delta=game_time_delta, **guild_tick_context)
                         continue
-                    elif manager_instance is self._combat_manager and hasattr(manager_instance, 'process_tick_for_guild'): # CombatManager specific
+                    elif manager_instance is self._combat_manager and hasattr(manager_instance, 'process_tick_for_guild') and callable(getattr(manager_instance, 'process_tick_for_guild')):
                         process_tick_method = getattr(manager_instance, 'process_tick_for_guild', None)
-                    else: # Generic manager tick
-                        process_tick_method = getattr(manager_instance, 'process_tick', None)
+                    else: process_tick_method = getattr(manager_instance, 'process_tick', None)
 
                     if callable(process_tick_method):
                         try: await process_tick_method(guild_id=guild_id, game_time_delta=game_time_delta, **guild_tick_context)
                         except Exception as e: print(f"WSP: Error during {type(manager_instance).__name__} tick for guild {guild_id}: {e}"); traceback.print_exc()
 
-            # Event auto-transition logic
             if self._event_manager and self._event_stage_processor and \
                hasattr(self._event_manager, 'get_active_events_by_guild') and callable(getattr(self._event_manager, 'get_active_events_by_guild')) and \
                hasattr(self._event_stage_processor, 'advance_stage') and callable(getattr(self._event_stage_processor, 'advance_stage')):
-                active_events: List["Event"] = self._event_manager.get_active_events_by_guild(guild_id)
-                for event_item in list(active_events):
+                active_events_list: List["Event"] = self._event_manager.get_active_events_by_guild(guild_id) or []
+                for event_item in list(active_events_list):
                     if not getattr(event_item, 'is_active', False) or getattr(event_item, 'current_stage_id', None) == 'event_end': continue
                     next_stage_id_auto = self._check_event_for_auto_transition(event_item)
-                    if next_stage_id_auto and event_item.channel_id is not None:
+                    if next_stage_id_auto and hasattr(event_item, 'channel_id') and event_item.channel_id is not None:
                         try:
-                            event_channel_callback = self._send_callback_factory(event_item.channel_id)
+                            event_channel_callback = self._send_callback_factory(cast(int, event_item.channel_id))
                             await self._event_stage_processor.advance_stage(event=event_item, target_stage_id=next_stage_id_auto, send_message_callback=event_channel_callback, **guild_tick_context, transition_context={"trigger": "auto_advance"})
-                        except Exception as e: print(f"WSP: Error auto-advancing event {event_item.id}: {e}")
+                        except Exception as e: print(f"WSP: Error auto-advancing event {getattr(event_item,'id','UNKNOWN_ID')}: {e}")
 
-                events_ending = [ev.id for ev in list(self._event_manager.get_active_events_by_guild(guild_id)) if getattr(ev, 'current_stage_id', None) == 'event_end']
-                for event_id_to_end in events_ending: await self.end_event(guild_id, event_id_to_end)
-            # ... (Persistence logic remains)
+                events_ending_ids = [getattr(ev, 'id', None) for ev in list(self._event_manager.get_active_events_by_guild(guild_id) or []) if getattr(ev, 'current_stage_id', None) == 'event_end' and hasattr(ev, 'id')]
+                for event_id_to_end in events_ending_ids:
+                    if event_id_to_end and hasattr(self, 'end_event') and callable(getattr(self, 'end_event')): await self.end_event(guild_id, str(event_id_to_end))
+
 
     async def generate_dynamic_event_narrative(self, guild_id: str, event_concept: str, related_entities: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         if not self._multilingual_prompt_generator or not self._openai_service or not self._settings:
@@ -305,21 +298,21 @@ class WorldSimulationProcessor:
            not callable(getattr(context_collector_val, 'get_full_context')):
             print("WSP ERROR: MultilingualPromptGenerator.context_collector.get_full_context not available."); return None
 
-        context_data = await context_collector_val.get_full_context(guild_id=guild_id) # No other params needed if default
+        context_data = await context_collector_val.get_full_context(guild_id=guild_id, request_type="dynamic_narrative", request_params={})
 
-        specific_task_prompt = f"Generate narrative for: {event_concept}. Related: {related_entities or 'General'}" # Simplified
+        specific_task_prompt = f"Generate narrative for: {event_concept}. Related: {related_entities or 'General'}"
 
         build_prompt_method = getattr(self._multilingual_prompt_generator, '_build_full_prompt_for_openai', None)
         if not callable(build_prompt_method):
             print("WSP ERROR: _build_full_prompt_for_openai not callable."); return None
 
         prompt_messages = build_prompt_method(
-            generation_type_str="dynamic_narrative", # Added generation_type_str
+            generation_type_str="dynamic_narrative",
             context_data=context_data,
             target_languages=["en", "ru"],
             specific_task_instruction=specific_task_prompt
         )
-        # ... (rest of generation logic)
+
         generated_data = await self._openai_service.generate_structured_multilingual_content(
             system_prompt=prompt_messages["system"], user_prompt=prompt_messages["user"],
             max_tokens=self._settings.get("world_event_ai_settings", {}).get("max_tokens", 1500),
@@ -330,26 +323,26 @@ class WorldSimulationProcessor:
 
 
     def _check_event_for_auto_transition(self, event: "Event") -> Optional[str]:
-        # ... (ensure getattr is used for EventStage attributes like auto_transitions)
-        current_stage_data = getattr(event, 'stages_data', {}).get(event.current_stage_id)
-        if not current_stage_data: return None
-        current_stage_obj: Union["EventStage", Dict[str, Any]]
+        current_stage_id_val = getattr(event, 'current_stage_id', None)
+        if not current_stage_id_val: return None
+
+        stages_data_val = getattr(event, 'stages_data', {})
+        if not isinstance(stages_data_val, dict): return None
+
+        current_stage_data = stages_data_val.get(str(current_stage_id_val))
+        if not isinstance(current_stage_data, dict): return None
+
+        current_stage_obj: EventStage
         try: current_stage_obj = EventStage.model_validate(current_stage_data)
-        except Exception: current_stage_obj = current_stage_data # Fallback
+        except Exception: return None
 
-        auto_transitions_rules: List[Dict[str, Any]] = []
-        if isinstance(current_stage_obj, EventStage): auto_transitions_rules = getattr(current_stage_obj, 'auto_transitions', []) or []
-        elif isinstance(current_stage_obj, dict): auto_transitions_rules = current_stage_obj.get('auto_transitions', []) or []
+        auto_transitions_rules: List[Dict[str, Any]] = getattr(current_stage_obj, 'auto_transitions', []) or []
 
-        # ... (rest of logic, ensure safe access to rule dict keys)
         for rule in auto_transitions_rules:
             if not isinstance(rule, dict): continue
-            # ...
+            if rule.get('conditions_met', True) and rule.get('target_stage_id'):
+                return str(rule['target_stage_id'])
         return None
 
     def _get_managers_for_rule_engine_context(self) -> Dict[str, Any]:
-        # ... (This method seems fine, just ensure all managers are correctly assigned in __init__)
         return { name[1:]: manager for name, manager in self.__dict__.items() if name.startswith('_') and manager is not None and not name.endswith('optional')}
-
-
-[end of bot/game/world_processors/world_simulation_processor.py]

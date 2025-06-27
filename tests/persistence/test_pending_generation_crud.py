@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select # Keep for potential direct session use if needed
 from unittest.mock import MagicMock
 
-from bot.database.models.pending_generation import PendingGeneration, GenerationType, PendingStatus
+from bot.database.models import PendingGeneration, GenerationType, PendingStatus # Corrected import
 from bot.database.pending_generation_crud import PendingGenerationCRUD
 from bot.database.models.guild_config import GuildConfig
 from bot.services.db_service import DBService # For spec in MagicMock
