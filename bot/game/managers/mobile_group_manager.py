@@ -49,21 +49,21 @@ class MobileGroupManager:
         if db_group is None:
             db_group = DBMobileGroup(id=pydantic_group.id) # Ensure ID is set
 
-        db_group.guild_id = pydantic_group.guild_id
-        db_group.name_i18n = pydantic_group.name_i18n
-        db_group.description_i18n = pydantic_group.description_i18n
-        db_group.current_location_id = pydantic_group.current_location_id
-        db_group.member_ids = pydantic_group.member_ids
-        db_group.destination_location_id = pydantic_group.destination_location_id
-        db_group.state_variables = pydantic_group.state_variables
-        db_group.is_active = pydantic_group.is_active
+        db_group.guild_id = pydantic_group.guild_id  # type: ignore[assignment]
+        db_group.name_i18n = pydantic_group.name_i18n # type: ignore[assignment]
+        db_group.description_i18n = pydantic_group.description_i18n # type: ignore[assignment]
+        db_group.current_location_id = pydantic_group.current_location_id # type: ignore[assignment]
+        db_group.member_ids = pydantic_group.member_ids # type: ignore[assignment]
+        db_group.destination_location_id = pydantic_group.destination_location_id # type: ignore[assignment]
+        db_group.state_variables = pydantic_group.state_variables # type: ignore[assignment]
+        db_group.is_active = pydantic_group.is_active # type: ignore[assignment]
         return db_group
 
     def get_mobile_group(self, guild_id: str, group_id: str) -> Optional[MobileGroup]:
         with self._get_db_session() as session:
             try:
                 db_group = session.get(DBMobileGroup, group_id)
-                if db_group and db_group.guild_id == guild_id and db_group.is_active:
+                if db_group and db_group.guild_id == guild_id and db_group.is_active is True: # Corrected conditional
                     return self._map_db_to_pydantic(db_group)
             except SQLAlchemyError as e:
                 logger.error(f"Error fetching MobileGroup {group_id} for guild {guild_id}: {e}")
@@ -73,7 +73,8 @@ class MobileGroupManager:
         groups = []
         with self._get_db_session() as session:
             try:
-                stmt = select(DBMobileGroup).where(DBMobileGroup.guild_id == guild_id, DBMobileGroup.is_active == True)
+                # Corrected conditional in where clause
+                stmt = select(DBMobileGroup).where(DBMobileGroup.guild_id == guild_id, DBMobileGroup.is_active.is_(True))
                 result = session.execute(stmt)
                 db_groups = result.scalars().all()
                 groups = [self._map_db_to_pydantic(db_group) for db_group in db_groups]
@@ -99,6 +100,15 @@ class MobileGroupManager:
         # Similar assumptions about db_service and session as in GlobalNpcManager
         with self._get_db_session() as session: # This might need to change if db_service is fully async
             try:
+                if group_data.id is None: # Check if group_data.id is None
+                    logger.error(f"Cannot update MobileGroup with None ID for potential guild {group_data.guild_id}.")
+                    return None
+
+                # group_id parameter is str, group_data.id can be str | None. This check handles it.
+                # If group_id is passed and different from group_data.id, it's an inconsistency.
+                # For now, assume group_id parameter is the source of truth if group_data.id is None,
+                # or they must match. The function signature implies group_id is always a valid string.
+
                 db_group = session.get(DBMobileGroup, group_id) # This might be await session.get(...)
                 if db_group and db_group.guild_id == group_data.guild_id: # Check guild_id consistency
                     self._map_pydantic_to_db(group_data, db_group)
@@ -121,7 +131,7 @@ class MobileGroupManager:
             try:
                 db_group = session.get(DBMobileGroup, group_id)
                 if db_group and db_group.guild_id == guild_id:
-                    db_group.is_active = False # Soft delete
+                    db_group.is_active = False # type: ignore[assignment] # Soft delete
                     session.commit()
                     logger.info(f"MobileGroup {group_id} deactivated for guild {guild_id}.")
                     return True

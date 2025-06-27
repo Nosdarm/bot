@@ -3,7 +3,9 @@ import json
 import discord
 from discord import Interaction, app_commands
 from discord.ext import commands
-from typing import Optional, TYPE_CHECKING, Any
+from typing import Optional, TYPE_CHECKING, Any, cast
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from bot.database.models import WorldState
 from bot.database.crud_utils import get_entity_by_attributes # update_entity might not be needed if session.add() is used
@@ -58,7 +60,8 @@ class WorldStateCmdsCog(commands.Cog, name="Master WorldState"):
                 except ValueError:
                     parsed_value = flag_value # Store as string if not bool or number
 
-        async with db_service.get_session() as session:
+        async with db_service.get_session() as session_obj:
+            session = cast(AsyncSession, session_obj)
             try:
                 world_state = await get_entity_by_attributes(session, WorldState, {}, guild_id)
 
@@ -102,7 +105,8 @@ class WorldStateCmdsCog(commands.Cog, name="Master WorldState"):
 
         db_service = self.bot.game_manager.db_service
 
-        async with db_service.get_session() as session:
+        async with db_service.get_session() as session_obj:
+            session = cast(AsyncSession, session_obj)
             try:
                 world_state = await get_entity_by_attributes(session, WorldState, {}, guild_id)
 
@@ -139,11 +143,12 @@ class WorldStateCmdsCog(commands.Cog, name="Master WorldState"):
 
         db_service = self.bot.game_manager.db_service
 
-        async with db_service.get_session() as session:
+        async with db_service.get_session() as session_obj:
+            session = cast(AsyncSession, session_obj)
             try:
                 world_state = await get_entity_by_attributes(session, WorldState, {}, guild_id)
 
-                if not world_state or not world_state.custom_flags:
+                if not world_state or world_state.custom_flags is None or not world_state.custom_flags:
                     logger.info(f"{log_prefix}: No custom world flags are set for this guild.")
                     await interaction.followup.send("No custom world flags are currently set.", ephemeral=True)
                     return

@@ -63,6 +63,7 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
         self.mock_character_manager.get_character_by_discord_id.return_value = mock_char
         self.mock_undo_manager.undo_last_player_event.return_value = True
 
+        # Corrected: Added self.utility_cog as the first argument
         await self.utility_cog.cmd_undo_last_event.callback(self.utility_cog, self.mock_interaction)
 
         self.mock_character_manager.get_character_by_discord_id.assert_called_once_with(str(self.guild_id), self.user_id)
@@ -75,6 +76,7 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
     async def test_player_undo_failure_no_char(self):
         self.mock_character_manager.get_character_by_discord_id.return_value = None
 
+        # Corrected: Added self.utility_cog as the first argument
         await self.utility_cog.cmd_undo_last_event.callback(self.utility_cog, self.mock_interaction)
 
         self.mock_character_manager.get_character_by_discord_id.assert_called_once_with(str(self.guild_id), self.user_id)
@@ -90,6 +92,7 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
         self.mock_character_manager.get_character_by_discord_id.return_value = mock_char
         self.mock_undo_manager.undo_last_player_event.return_value = False
 
+        # Corrected: Added self.utility_cog as the first argument
         await self.utility_cog.cmd_undo_last_event.callback(self.utility_cog, self.mock_interaction)
 
         self.mock_undo_manager.undo_last_player_event.assert_called_once_with(str(self.guild_id), self.char_id, num_steps=1)
@@ -100,9 +103,9 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
 
     # --- Tests for GM /master undo command (cmd_master_undo in GMAppCog) ---
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_undo_player_success(self, mock_is_gm):
+    async def test_gm_undo_player_success(self, mock_is_gm): # Renamed num_steps to num_steps_arg
         mock_is_gm.return_value = True
-        num_steps_to_undo = 2
+        num_steps_arg = 2 # Renamed local variable
 
         mock_player_char = MagicMock(spec=Character)
         mock_player_char.id = self.char_id
@@ -112,26 +115,27 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
 
         self.mock_undo_manager.undo_last_player_event.return_value = True
 
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_undo.callback(
-            self.gm_app_cog, self.mock_interaction, num_steps=num_steps_to_undo, entity_id=self.char_id
+            self.gm_app_cog, self.mock_interaction, num_steps=num_steps_arg, entity_id=self.char_id
         )
 
         mock_is_gm.assert_called_once_with(self.mock_interaction)
         self.mock_character_manager.get_character.assert_called_once_with(str(self.guild_id), self.char_id)
         self.mock_undo_manager.undo_last_player_event.assert_called_once_with(
-            str(self.guild_id), self.char_id, num_steps_to_undo
+            str(self.guild_id), self.char_id, num_steps=num_steps_arg # Used renamed variable
         )
         self.mock_party_manager.get_party.assert_not_called() # Should not be called if char found
         self.mock_undo_manager.undo_last_party_event.assert_not_called()
         self.mock_interaction.followup.send.assert_called_once_with(
-            f"**Мастер:** Последние {num_steps_to_undo} событий для player '{self.char_id}' были успешно отменены.",
+            f"**Мастер:** Последние {num_steps_arg} событий для player '{self.char_id}' были успешно отменены.", # Used renamed variable
             ephemeral=True
         )
 
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_undo_party_success(self, mock_is_gm):
+    async def test_gm_undo_party_success(self, mock_is_gm): # Renamed num_steps to num_steps_arg
         mock_is_gm.return_value = True
-        num_steps_to_undo = 1
+        num_steps_arg = 1 # Renamed local variable
 
         # Simulate character not found, then party found
         self.mock_character_manager.get_character.return_value = None
@@ -141,32 +145,35 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
 
         self.mock_undo_manager.undo_last_party_event.return_value = True
 
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_undo.callback(
-            self.gm_app_cog, self.mock_interaction, num_steps=num_steps_to_undo, entity_id=self.party_id
+            self.gm_app_cog, self.mock_interaction, num_steps=num_steps_arg, entity_id=self.party_id
         )
 
         mock_is_gm.assert_called_once_with(self.mock_interaction)
         self.mock_character_manager.get_character.assert_called_once_with(str(self.guild_id), self.party_id)
         self.mock_party_manager.get_party.assert_called_once_with(str(self.guild_id), self.party_id)
         self.mock_undo_manager.undo_last_party_event.assert_called_once_with(
-            str(self.guild_id), self.party_id, num_steps_to_undo
+            str(self.guild_id), self.party_id, num_steps=num_steps_arg # Used renamed variable
         )
         self.mock_undo_manager.undo_last_player_event.assert_not_called()
         self.mock_interaction.followup.send.assert_called_once_with(
-            f"**Мастер:** Последние {num_steps_to_undo} событий для party '{self.party_id}' были успешно отменены.",
+            f"**Мастер:** Последние {num_steps_arg} событий для party '{self.party_id}' были успешно отменены.", # Used renamed variable
             ephemeral=True
         )
 
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_undo_entity_not_found(self, mock_is_gm):
+    async def test_gm_undo_entity_not_found(self, mock_is_gm): # Renamed num_steps to num_steps_arg
         mock_is_gm.return_value = True
         unknown_entity_id = "unknown_id"
+        num_steps_arg = 1 # Renamed local variable (though not used in assertions here, good practice)
 
         self.mock_character_manager.get_character.return_value = None
         self.mock_party_manager.get_party.return_value = None
 
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_undo.callback(
-            self.gm_app_cog, self.mock_interaction, num_steps=1, entity_id=unknown_entity_id
+            self.gm_app_cog, self.mock_interaction, num_steps=num_steps_arg, entity_id=unknown_entity_id
         )
 
         mock_is_gm.assert_called_once_with(self.mock_interaction)
@@ -180,11 +187,13 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_undo_no_entity_id_provided(self, mock_is_gm):
+    async def test_gm_undo_no_entity_id_provided(self, mock_is_gm): # Renamed num_steps to num_steps_arg
         mock_is_gm.return_value = True
+        num_steps_arg = 1 # Renamed local variable
 
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_undo.callback(
-            self.gm_app_cog, self.mock_interaction, num_steps=1, entity_id=None
+            self.gm_app_cog, self.mock_interaction, num_steps=num_steps_arg, entity_id=None
         )
 
         mock_is_gm.assert_called_once_with(self.mock_interaction)
@@ -197,76 +206,84 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
 
     # --- Tests for GM /master goto_log command (cmd_master_goto_log in GMAppCog) ---
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_goto_log_player_success(self, mock_is_gm):
+    async def test_gm_goto_log_player_success(self, mock_is_gm): # Renamed log_id_target to log_id_target_arg
         mock_is_gm.return_value = True
+        log_id_target_arg = self.log_id_target # Use the one from setup
 
         self.mock_character_manager.get_character.return_value = MagicMock(spec=Character) # Found as player
         self.mock_party_manager.get_party.return_value = None
         self.mock_undo_manager.undo_to_log_entry.return_value = True
 
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_goto_log.callback(
-            self.gm_app_cog, self.mock_interaction, log_id_target=self.log_id_target, entity_id=self.char_id
+            self.gm_app_cog, self.mock_interaction, log_id_target=log_id_target_arg, entity_id=self.char_id
         )
 
         mock_is_gm.assert_called_once_with(self.mock_interaction)
         self.mock_character_manager.get_character.assert_called_once_with(str(self.guild_id), self.char_id)
         self.mock_party_manager.get_party.assert_not_called()
         self.mock_undo_manager.undo_to_log_entry.assert_called_once_with(
-            str(self.guild_id), self.log_id_target, player_or_party_id=self.char_id, entity_type="player"
+            str(self.guild_id), log_id_target_arg, player_or_party_id=self.char_id, entity_type="player" # Used renamed variable
         )
         self.mock_interaction.followup.send.assert_called_once_with(
-            f"**Мастер:** События успешно отменены до записи лога '{self.log_id_target}'. Для сущности (player) '{self.char_id}'.",
+            f"**Мастер:** События успешно отменены до записи лога '{log_id_target_arg}'. Для сущности (player) '{self.char_id}'.", # Used renamed variable
             ephemeral=True
         )
 
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_goto_log_party_success(self, mock_is_gm):
+    async def test_gm_goto_log_party_success(self, mock_is_gm): # Renamed log_id_target to log_id_target_arg
         mock_is_gm.return_value = True
+        log_id_target_arg = self.log_id_target # Use the one from setup
 
         self.mock_character_manager.get_character.return_value = None # Not a player
         self.mock_party_manager.get_party.return_value = MagicMock(spec=Party) # Found as party
         self.mock_undo_manager.undo_to_log_entry.return_value = True
 
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_goto_log.callback(
-            self.gm_app_cog, self.mock_interaction, log_id_target=self.log_id_target, entity_id=self.party_id
+            self.gm_app_cog, self.mock_interaction, log_id_target=log_id_target_arg, entity_id=self.party_id
         )
         mock_is_gm.assert_called_once_with(self.mock_interaction)
         self.mock_character_manager.get_character.assert_called_once_with(str(self.guild_id), self.party_id)
         self.mock_party_manager.get_party.assert_called_once_with(str(self.guild_id), self.party_id)
         self.mock_undo_manager.undo_to_log_entry.assert_called_once_with(
-            str(self.guild_id), self.log_id_target, player_or_party_id=self.party_id, entity_type="party"
+            str(self.guild_id), log_id_target_arg, player_or_party_id=self.party_id, entity_type="party" # Used renamed variable
         )
         self.mock_interaction.followup.send.assert_called_once_with(
-            f"**Мастер:** События успешно отменены до записи лога '{self.log_id_target}'. Для сущности (party) '{self.party_id}'.",
+            f"**Мастер:** События успешно отменены до записи лога '{log_id_target_arg}'. Для сущности (party) '{self.party_id}'.", # Used renamed variable
             ephemeral=True
         )
 
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_goto_log_guild_wide_success(self, mock_is_gm):
+    async def test_gm_goto_log_guild_wide_success(self, mock_is_gm): # Renamed log_id_target to log_id_target_arg
         mock_is_gm.return_value = True
+        log_id_target_arg = self.log_id_target # Use the one from setup
         self.mock_undo_manager.undo_to_log_entry.return_value = True
 
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_goto_log.callback(
-            self.gm_app_cog, self.mock_interaction, log_id_target=self.log_id_target, entity_id=None
+            self.gm_app_cog, self.mock_interaction, log_id_target=log_id_target_arg, entity_id=None
         )
         mock_is_gm.assert_called_once_with(self.mock_interaction)
         self.mock_undo_manager.undo_to_log_entry.assert_called_once_with(
-            str(self.guild_id), self.log_id_target, player_or_party_id=None, entity_type=None
+            str(self.guild_id), log_id_target_arg, player_or_party_id=None, entity_type=None # Used renamed variable
         )
         self.mock_interaction.followup.send.assert_called_once_with(
-            f"**Мастер:** События успешно отменены до записи лога '{self.log_id_target}'. Для всей гильдии.",
+            f"**Мастер:** События успешно отменены до записи лога '{log_id_target_arg}'. Для всей гильдии.", # Used renamed variable
             ephemeral=True
         )
 
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_goto_log_entity_id_not_found(self, mock_is_gm):
+    async def test_gm_goto_log_entity_id_not_found(self, mock_is_gm): # Renamed log_id_target to log_id_target_arg
         mock_is_gm.return_value = True
         unknown_entity_id = "id_does_not_exist"
+        log_id_target_arg = self.log_id_target # Use the one from setup
         self.mock_character_manager.get_character.return_value = None
         self.mock_party_manager.get_party.return_value = None
 
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_goto_log.callback(
-            self.gm_app_cog, self.mock_interaction, log_id_target=self.log_id_target, entity_id=unknown_entity_id
+            self.gm_app_cog, self.mock_interaction, log_id_target=log_id_target_arg, entity_id=unknown_entity_id
         )
         mock_is_gm.assert_called_once_with(self.mock_interaction)
         self.mock_character_manager.get_character.assert_called_once_with(str(self.guild_id), unknown_entity_id)
@@ -278,27 +295,31 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_goto_log_manager_returns_false(self, mock_is_gm):
+    async def test_gm_goto_log_manager_returns_false(self, mock_is_gm): # Renamed log_id_target to log_id_target_arg
         mock_is_gm.return_value = True
+        log_id_target_arg = self.log_id_target # Use the one from setup
         self.mock_undo_manager.undo_to_log_entry.return_value = False # Simulate failure in UndoManager
 
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_goto_log.callback(
-            self.gm_app_cog, self.mock_interaction, log_id_target=self.log_id_target, entity_id=None # Guild-wide for simplicity
+            self.gm_app_cog, self.mock_interaction, log_id_target=log_id_target_arg, entity_id=None # Guild-wide for simplicity
         )
         mock_is_gm.assert_called_once_with(self.mock_interaction)
         self.mock_undo_manager.undo_to_log_entry.assert_called_once()
         self.mock_interaction.followup.send.assert_called_once_with(
-            f"**Мастер:** Не удалось отменить события до записи лога '{self.log_id_target}'. Проверьте логи.",
+            f"**Мастер:** Не удалось отменить события до записи лога '{log_id_target_arg}'. Проверьте логи.", # Used renamed variable
             ephemeral=True
         )
 
     @patch('bot.command_modules.gm_app_cmds.is_master_or_admin_check', new_callable=AsyncMock)
-    async def test_gm_command_not_gm(self, mock_is_gm):
+    async def test_gm_command_not_gm(self, mock_is_gm): # Renamed num_steps to num_steps_arg
         mock_is_gm.return_value = False # Simulate user is NOT a GM or admin
+        num_steps_arg = 1 # Renamed local variable
 
         # Test with cmd_master_undo, but logic should be similar for cmd_master_goto_log
+        # Corrected: Added self.gm_app_cog as the first argument
         await self.gm_app_cog.cmd_master_undo.callback(
-            self.gm_app_cog, self.mock_interaction, num_steps=1, entity_id=self.char_id
+            self.gm_app_cog, self.mock_interaction, num_steps=num_steps_arg, entity_id=self.char_id
         )
 
         mock_is_gm.assert_called_once_with(self.mock_interaction)
@@ -310,5 +331,6 @@ class TestUndoCommands(unittest.IsolatedAsyncioTestCase):
         self.mock_undo_manager.undo_last_player_event.assert_not_called()
 
 
-if __name__ == '__main__':
-    asyncio.run(unittest.main())
+# Removed: asyncio.run(unittest.main()) - Test execution should be handled by the test runner
+# if __name__ == '__main__':
+# asyncio.run(unittest.main())

@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 import json
 import uuid
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, cast
 
 
 from bot.game.command_router import CommandRouter
@@ -154,7 +154,7 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
             "content_type": "npc", "data": json.dumps({"name": "AI Robot"}), "status": "pending"
         })
 
-        await self.command_router.route(message)
+        await self.command_router.route(message) # type: ignore[arg-type]
 
         self.mock_npc_manager.create_npc.assert_called_once()
         self.mock_status_manager.add_status_effect_to_entity.assert_called_once_with(
@@ -188,7 +188,7 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
             "content_type": "quest", "data": json.dumps({"name_i18n": {"en": "My Epic Adventure"}}), "status": "pending"
         })
 
-        await self.command_router.route(message)
+        await self.command_router.route(message) # type: ignore[arg-type]
 
         self.mock_quest_manager.start_quest.assert_called_once()
         # Check that user_id was passed in kwargs of the call to start_quest
@@ -210,7 +210,7 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
         """Test /approve requires GM access."""
         message = MockMessage("/approve req123", "non_gm_user", "channel", "guild")
         context = self._get_mock_context(message)
-        await self.command_router.route(message)
+        await self.command_router.route(message) # type: ignore[arg-type]
         context['send_to_command_channel'].assert_called_once_with("Access Denied: This command is for Masters only.")
 
     async def test_handle_approve_content_success(self):
@@ -229,12 +229,13 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
         self.mock_db_adapter.update_pending_moderation_request.return_value = True # DB update successful
 
         # Mock _activate_approved_content to test its call
-        self.command_router._activate_approved_content = AsyncMock(return_value=True)
+        self.command_router._activate_approved_content = AsyncMock(return_value=True) # type: ignore[assignment, attr-defined]
 
-        await self.command_router.route(message)
+        await self.command_router.route(message) # type: ignore[arg-type]
 
         self.mock_db_adapter.update_pending_moderation_request.assert_called_once_with(request_id, 'approved', author_id)
-        self.command_router._activate_approved_content.assert_called_once_with(request_id, context)
+        # Ignoring protected access for testing private method
+        self.command_router._activate_approved_content.assert_called_once_with(request_id, context) # type: ignore[protected-access]
         context['send_to_command_channel'].assert_any_call(f"🚀 Content from request `{request_id}` successfully activated and request removed.")
 
     async def test_handle_reject_content_success(self):
@@ -257,7 +258,7 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
         self.mock_character_manager.get_character_by_discord_id.return_value = mock_player_char
         self.mock_status_manager.remove_status_effects_by_type = AsyncMock(return_value=1)
 
-        await self.command_router.route(message)
+        await self.command_router.route(message) # type: ignore[arg-type]
 
         self.mock_db_adapter.delete_pending_moderation_request.assert_called_once_with(request_id)
         self.mock_status_manager.remove_status_effects_by_type.assert_called_once_with(
@@ -283,15 +284,15 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
         })
         self.mock_ai_validator.validate_ai_response = AsyncMock(return_value={"overall_status": "success", "entities": [{"validated_data": json.loads(edited_data_json)}]})
         self.mock_db_adapter.update_pending_moderation_request.return_value = True
-        self.command_router._activate_approved_content = AsyncMock(return_value=True)
+        self.command_router._activate_approved_content = AsyncMock(return_value=True) # type: ignore[assignment, attr-defined]
 
-        await self.command_router.route(message)
+        await self.command_router.route(message) # type: ignore[arg-type]
 
         self.mock_ai_validator.validate_ai_response.assert_called_once()
         self.mock_db_adapter.update_pending_moderation_request.assert_called_once_with(
             request_id, 'approved_edited', author_id_str=author_id, data_json=edited_data_json
         )
-        self.command_router._activate_approved_content.assert_called_once_with(request_id, context)
+        self.command_router._activate_approved_content.assert_called_once_with(request_id, context) # type: ignore[protected-access]
         context['send_to_command_channel'].assert_any_call(f"🚀 Content from request `{request_id}` (edited) successfully activated and request removed.")
 
     # --- Part 3: Test _activate_approved_content ---
@@ -315,7 +316,7 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
         self.mock_status_manager.remove_status_effects_by_type = AsyncMock(return_value=1)
         self.mock_db_adapter.delete_pending_moderation_request = AsyncMock(return_value=True)
 
-        success = await self.command_router._activate_approved_content(request_id, context)
+        success = await self.command_router._activate_approved_content(request_id, context) # type: ignore[protected-access]
         self.assertTrue(success)
         self.mock_npc_manager.create_npc_from_moderated_data.assert_called_once_with(guild_id, npc_data, context)
         self.mock_status_manager.remove_status_effects_by_type.assert_called_once_with(
@@ -346,7 +347,7 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
         self.mock_location_manager.move_entity = AsyncMock(return_value=True)
         self.mock_db_adapter.delete_pending_moderation_request = AsyncMock(return_value=True)
 
-        success = await self.command_router._activate_approved_content(request_id, context)
+        success = await self.command_router._activate_approved_content(request_id, context) # type: ignore[protected-access]
         self.assertTrue(success)
         self.mock_location_manager.create_location_instance_from_moderated_data.assert_called_once_with(
             guild_id, location_data, original_user_id, context
@@ -374,7 +375,7 @@ class TestCommandRouterModeration(unittest.IsolatedAsyncioTestCase):
         })
         self.mock_character_manager.get_character_by_discord_id.return_value = None # Character not found
 
-        success = await self.command_router._activate_approved_content(request_id, context)
+        success = await self.command_router._activate_approved_content(request_id, context) # type: ignore[protected-access]
         self.assertFalse(success)
         self.mock_quest_manager.start_quest_from_moderated_data.assert_not_called()
         self.mock_db_adapter.delete_pending_moderation_request.assert_not_called()
