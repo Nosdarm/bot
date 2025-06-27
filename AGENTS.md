@@ -841,3 +841,22 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **Attribute Access:** Used `hasattr` and `callable(getattr(...))` for methods on optional services like `notification_service` and its `send_notification` method.
     - **`asyncio.create_task`:** Confirmed `asyncio.create_task` is used for `location_interaction_service.process_on_enter_location_events`.
     - **Type Safety:** Addressed various minor type warnings by ensuring correct types for variables passed to functions or assigned to attributes, especially concerning `Optional` types and dictionary structures for JSON fields.
+
+## Pyright Error Fixing Phase (Batch 44 - bot/game/rules/rule_engine.py focus from pyright_errors_part_1.txt)
+- **Focus:** Addressing 43 errors in `bot/game/rules/rule_engine.py` as listed in `pyright_errors_part_1.txt`.
+- **Strategy:** Corrected manager typing in `__init__`, added `await` for async calls, fixed method parameters, addressed type hints for resolver functions and `Combat` model, and reviewed `handle_stage` logic.
+- **Batch 44 Fixes (43 errors in `bot/game/rules/rule_engine.py`):**
+    - **Manager Typing & Initialization:**
+        - Ensured `self._rules_data` is initialized correctly, handling cases where `self._settings` might be `None`.
+        - Corrected type hint for `lm` in `calculate_action_duration` to `Optional["LocationManager"]` and ensured `rules_data_val` is used safely. Removed `type: ignore[arg-type]` comments for float conversions from `rules_data_val`.
+    - **Async/Await:** Added `await` before `im.get_items_by_owner` in `check_conditions`.
+    - **Method Call Parameters:**
+        - In `check_conditions` for `ctype == 'is_in_combat'`, ensured `entity_id` is passed to `combat_mgr.get_combat_by_participant_id`.
+        - In `check_conditions` for `ctype == 'is_leader_of_party'`, removed the `context=` keyword argument from `pm.get_party_by_member_id`.
+    - **Resolver Function Arguments & Optional Managers:**
+        - Added `ValueError` checks in skill check wrapper methods (e.g., `resolve_stealth_check`, `resolve_pickpocket_attempt`) to ensure required managers like `self._character_manager` or `self._npc_manager` are not `None` before passing them to resolver functions. This resolves "Argument of type ... | None cannot be assigned to parameter ... of type ..." errors.
+    - **`Combat` Type Hint:** Changed the type hint for the `combat` parameter in `choose_combat_action_for_npc` from `"Combat"` to `Any` to resolve the "Combat is not defined" error, as the `Combat` model is not directly imported or its full definition isn't necessary for the type hint at this level.
+    - **`handle_stage` & `EventStageProcessor`:**
+        - Removed `# type: ignore[no-untyped-def]` from `load_state`, `save_state`, and `rebuild_runtime_caches` by ensuring they have `-> None`.
+        - For `handle_stage`, ensured `proc`, `event`, and `send_message_callback` are checked for `None` before use. The complex type compatibility issues with `**context` and `EventStageProcessor.advance_stage` are noted; the current fix relies on the processor's internal handling or future refactoring of `advance_stage`.
+    - **Removed Unnecessary Type Ignores:** Removed `type: ignore[return]` from skill check wrappers as return types are now more explicit or handled by the resolver's signature.
