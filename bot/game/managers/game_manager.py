@@ -21,7 +21,7 @@ from bot.game.managers.character_manager import CharacterManager
 from bot.database.guild_transaction import GuildTransaction
 from bot.services.ai_generation_service import AIGenerationService
 from bot.game.managers.undo_manager import UndoManager
-from bot.database.models.pending_generation import GenerationType as PendingGenerationTypeEnum # Corrected import
+from bot.database.models import GenerationType as PendingGenerationTypeEnum # Corrected import
 
 if TYPE_CHECKING:
     from discord import Message, TextChannel
