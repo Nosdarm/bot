@@ -1,0 +1,220 @@
+[tests\api\routers\test_item_router.py] - 16 issue(s)
+  Line 45: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 46: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 47: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 48: Cannot access attribute "assert_called_once_with" for class "FunctionType"
+  Line 54: Argument of type "None" cannot be assigned to parameter "orig" of type "BaseException" in function "__init__"
+  Line 76: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 77: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 78: Cannot access attribute "assert_called_once_with" for class "FunctionType"
+  Line 89: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 90: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 91: Cannot access attribute "assert_called_once_with" for class "FunctionType"
+  Line 123: Cannot access attribute "assert_called_with" for class "FunctionType"
+  Line 141: Argument of type "None" cannot be assigned to parameter "orig" of type "BaseException" in function "__init__"
+  Line 158: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 159: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 160: Cannot access attribute "assert_called_once_with" for class "FunctionType"
+
+[bot\api\routers\master.py] - 15 issue(s)
+  Line 13: No parameter named "id"
+  Line 13: No parameter named "roles"
+  Line 962: Argument of type "str | None" cannot be assigned to parameter "lang" of type "str" in function "format_battle_report"
+  Line 978: Argument of type "str | None" cannot be assigned to parameter "lang" of type "str" in function "format_quest_report"
+  Line 989: Type "dict[Unknown, Unknown]" is not assignable to declared type "List[Dict[str, Any]] | None"
+  Line 998: Argument of type "str | None" cannot be assigned to parameter "lang" of type "str" in function "format_action_consequence_report"
+  Line 1109: Argument of type "str | None" cannot be assigned to parameter "lang" of type "str" in function "format_battle_report"
+  Line 1113: Argument of type "str | None" cannot be assigned to parameter "lang" of type "str" in function "format_quest_report"
+  Line 1117: Argument of type "str | None" cannot be assigned to parameter "lang" of type "str" in function "format_action_consequence_report"
+  Line 1119: Argument of type "str | None" cannot be assigned to parameter "lang" of type "str" in function "format_action_consequence_report"
+  Line 1123: Argument of type "str | None" cannot be assigned to parameter "lang" of type "str" in function "format_generic_report"
+  Line 1136: Argument of type "dict[str, list[Unknown]] | dict[Unknown, Unknown] | list[Unknown] | Unknown" cannot be assigned to parameter "raw_report" of type "Dict[str, Any]" in function "__init__"
+  Line 1457: Argument of type "object | str | Unknown" cannot be assigned to parameter "description" of type "str" in function "__init__"
+  Line 1801: Argument of type "Any | Literal['battle', 'quest', 'action_consequence'] | None" cannot be assigned to parameter "sim_type" of type "str" in function "format_comparison_report"
+  Line 1801: Argument of type "str | None" cannot be assigned to parameter "lang" of type "str" in function "format_comparison_report"
+
+[bot\api\routers\rule_config.py] - 15 issue(s)
+  Line 32: Arguments missing for parameters "experience_rate", "loot_drop_chance", "combat_difficulty_modifier", "default_language"
+  Line 67: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "combat_difficulty_modifier" of type "float | None" in function "__init__"
+  Line 67: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "command_prefixes" of type "List[str] | None" in function "__init__"
+  Line 67: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "default_language" of type "str | None" in function "__init__"
+  Line 67: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "experience_rate" of type "float | None" in function "__init__"
+  Line 67: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "loot_drop_chance" of type "float | None" in function "__init__"
+  Line 67: Type "RuleConfigData" is not assignable to return type "RulesConfig"
+  Line 74: Arguments missing for parameters "experience_rate", "loot_drop_chance", "combat_difficulty_modifier", "default_language"
+  Line 74: Type "RuleConfigData" is not assignable to return type "RulesConfig"
+  Line 82: Function declaration "get_guild_rules_config_endpoint" is obscured by a declaration of the same name
+  Line 169: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "combat_difficulty_modifier" of type "float | None" in function "__init__"
+  Line 169: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "command_prefixes" of type "List[str] | None" in function "__init__"
+  Line 169: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "default_language" of type "str | None" in function "__init__"
+  Line 169: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "experience_rate" of type "float | None" in function "__init__"
+  Line 169: Argument of type "Dict[str, Any] | None" cannot be assigned to parameter "loot_drop_chance" of type "float | None" in function "__init__"
+
+[bot\command_modules\exploration_cmds.py] - 15 issue(s)
+  Line 56: Cannot access attribute "current_location_id" for class "Character"
+  Line 98: "get_character" is not a known attribute of "None"
+  Line 112: "get_character" is not a known attribute of "None"
+  Line 113: Cannot access attribute "current_location_id" for class "Character"
+  Line 114: "edit" is not a known attribute of "None"
+  Line 150: "edit" is not a known attribute of "None"
+  Line 153: "edit" is not a known attribute of "None"
+  Line 246: "Character" is not awaitable
+  Line 246: "None" is not awaitable
+  Line 253: "Location" is not awaitable
+  Line 253: "None" is not awaitable
+  Line 300: Cannot access attribute "process_action" for class "CharacterActionProcessor"
+  Line 301: Cannot access attribute "id" for class "CoroutineType[Any, Any, Character | None]"
+  Line 335: Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "get_entity_by_attributes"
+  Line 347: Argument missing for parameter "guild_id"
+
+[bot\game\managers\equipment_manager.py] - 15 issue(s)
+  Line 15: "ItemDefinition" is unknown import symbol
+  Line 56: "Character" is not awaitable
+  Line 56: "None" is not awaitable
+  Line 61: Cannot access attribute "get_item_instance_by_id" for class "InventoryManager"
+  Line 74: Cannot access attribute "item_definitions" for class "CoreGameRulesConfig"
+  Line 131: Argument missing for parameter "item_template_id"
+  Line 132: No parameter named "item_instance_id"
+  Line 132: No parameter named "quantity_to_remove"
+  Line 155: "Character" is not awaitable
+  Line 155: "None" is not awaitable
+  Line 188: Type "object" is not assignable to declared type "Dict[str, Any] | None"
+  Line 218: Argument missing for parameter "item_template_id"
+  Line 254: "Character" is not awaitable
+  Line 254: "None" is not awaitable
+  Line 264: "None" is not awaitable
+
+[bot\game\managers\party_manager.py] - 15 issue(s)
+  Line 89: Argument of type "List[str]" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+  Line 103: Argument of type "List[str]" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+  Line 192: "Character" is not awaitable
+  Line 192: "None" is not awaitable
+  Line 272: Argument of type "List[str]" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+  Line 274: "Character" is not awaitable
+  Line 274: "None" is not awaitable
+  Line 313: Cannot access attribute "get_character_for_update" for class "CharacterManager"
+  Line 325: Argument of type "List[str] | Literal['[]']" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+  Line 327: Operator ">=" not supported for types "int" and "Any | None"
+  Line 331: Cannot assign to attribute "player_ids_json" for class "Party"
+  Line 355: Cannot access attribute "get_character_for_update" for class "CharacterManager"
+  Line 370: Argument of type "List[str] | Literal['[]']" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+  Line 373: Cannot assign to attribute "player_ids_json" for class "Party"
+  Line 414: Argument of type "List[str] | Literal['[]']" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+
+[bot\game\rules\resolvers\skill_check_resolver.py] - 15 issue(s)
+  Line 33: Cannot access attribute "skills_data_json" for class "Character"
+  Line 42: Expected 2 more positional arguments
+  Line 77: "Character" is not awaitable
+  Line 77: "None" is not awaitable
+  Line 113: "Character" is not awaitable
+  Line 113: "None" is not awaitable
+  Line 118: "None" is not awaitable
+  Line 160: "Character" is not awaitable
+  Line 160: "None" is not awaitable
+  Line 228: "Character" is not awaitable
+  Line 228: "None" is not awaitable
+  Line 293: "Character" is not awaitable
+  Line 293: "None" is not awaitable
+  Line 318: "Character" is not awaitable
+  Line 318: "None" is not awaitable
+
+[bot\services\db_service.py] - 15 issue(s)
+  Line 61: "sqlite_path" is possibly unbound
+  Line 81: Cannot access attribute "_SessionLocal" for class "BaseDbAdapter"
+  Line 83: Cannot access attribute "get_session_factory" for class "BaseDbAdapter"
+  Line 117: Cannot access attribute "get_session_factory" for class "BaseDbAdapter"
+  Line 119: Cannot access attribute "_SessionLocal" for class "BaseDbAdapter"
+  Line 130: Cannot access attribute "close" for class "object"
+  Line 907: Argument missing for parameter "db_session"
+  Line 908: No parameter named "session"
+  Line 929: Argument missing for parameter "db_session"
+  Line 930: No parameter named "session"
+  Line 1078: Arguments missing for parameters "db_session", "entity_instance", "guild_id"
+  Line 1079: No parameter named "session"
+  Line 1080: No parameter named "model_class"
+  Line 1081: No parameter named "entity_id"
+  Line 1083: No parameter named "guild_id_for_verification"
+
+[tests\commands\test_action_cmds.py] - 15 issue(s)
+  Line 45: "db_service" is not a known attribute of "None"
+  Line 45: "get_session" is not a known attribute of "None"
+  Line 45: Cannot access attribute "return_value" for class "FunctionType"
+  Line 54: Expected 1 positional argument
+  Line 64: Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
+  Line 78: "db_service" is not a known attribute of "None"
+  Line 78: "get_session" is not a known attribute of "None"
+  Line 78: Cannot access attribute "return_value" for class "FunctionType"
+  Line 82: Expected 1 positional argument
+  Line 85: Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
+  Line 102: "db_service" is not a known attribute of "None"
+  Line 102: "get_session" is not a known attribute of "None"
+  Line 102: Cannot access attribute "return_value" for class "FunctionType"
+  Line 111: Expected 1 positional argument
+  Line 126: Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
+
+[tests\game\ai\test_faction_generator.py] - 15 issue(s)
+  Line 149: "Any" cannot be instantiated
+  Line 150: No parameter named "id"
+  Line 160: Cannot access attribute "create_faction_from_ai" for class "FactionManager"
+  Line 192: "Any" cannot be instantiated
+  Line 192: No parameter named "id"
+  Line 197: Cannot access attribute "create_faction_from_ai" for class "FactionManager"
+  Line 275: "Any" cannot be instantiated
+  Line 277: Cannot assign to attribute "return_value" for class "FunctionType"
+  Line 278: Cannot assign to attribute "return_value" for class "FunctionType"
+  Line 287: Object of type "None" is not subscriptable
+  Line 289: Cannot access attribute "assert_called_once" for class "FunctionType"
+  Line 290: Cannot access attribute "call_args" for class "FunctionType"
+  Line 297: Cannot access attribute "assert_called_once_with" for class "FunctionType"
+  Line 301: Cannot assign to attribute "return_value" for class "FunctionType"
+  Line 308: Cannot assign to attribute "return_value" for class "FunctionType"
+
+[tests\game\managers\test_ability_manager.py] - 15 issue(s)
+  Line 79: No parameter named "effect_i18n"
+  Line 80: No parameter named "cost"
+  Line 88: Argument missing for parameter "discord_user_id"
+  Line 90: No parameter named "player_id"
+  Line 95: No parameter named "ability_cooldowns"
+  Line 121: "get_session" is not a known attribute of "None"
+  Line 121: Cannot access attribute "assert_not_called" for class "FunctionType"
+  Line 192: Cannot access attribute "cost" for class "Ability"
+  Line 199: Cannot access attribute "ability_cooldowns" for class "Character"
+  Line 200: Cannot access attribute "ability_cooldowns" for class "Character"
+  Line 219: Cannot assign to attribute "ability_cooldowns" for class "Character"
+  Line 227: "process_ability_effects" is not a known attribute of "None"
+  Line 227: Cannot access attribute "process_ability_effects" for class "RuleEngine"
+  Line 248: "process_ability_effects" is not a known attribute of "None"
+  Line 248: Cannot access attribute "process_ability_effects" for class "RuleEngine"
+
+[tests\game\test_turn_processing_integration.py] - 15 issue(s)
+  Line 168: No parameter named "template_id"
+  Line 213: "status" is not a known attribute of "None"
+  Line 214: "result" is not a known attribute of "None"
+  Line 214: Object of type "None" is not subscriptable
+  Line 215: "result" is not a known attribute of "None"
+  Line 215: Object of type "None" is not subscriptable
+  Line 222: No parameter named "available_actions"
+  Line 265: Object of type "None" is not subscriptable
+  Line 266: Object of type "None" is not subscriptable
+  Line 280: No parameter named "template_id"
+  Line 322: "dependencies" is not a known attribute of "None"
+  Line 324: "execute_at" is not a known attribute of "None"
+  Line 335: "status" is not a known attribute of "None"
+  Line 338: "status" is not a known attribute of "None"
+  Line 357: "status" is not a known attribute of "None"
+
+[bot\api\routers\combat.py] - 14 issue(s)
+  Line 39: Argument of type "(p: CombatParticipantData) -> (int | None)" cannot be assigned to parameter "key" of type "(_T@sorted) -> SupportsRichComparison" in function "sorted"
+  Line 39: No overloads for "sorted" match the provided arguments
+  Line 63: Argument of type "Column[int]" cannot be assigned to parameter "round" of type "int" in function "__init__"
+  Line 93: Cannot assign to attribute "turn_log_structured" for class "Combat"
+  Line 95: "flag_modified" is possibly unbound
+  Line 97: Invalid conditional operand of type "Column[Unknown]"
+  Line 98: Argument of type "Column[Unknown]" cannot be assigned to parameter "obj" of type "Sized" in function "len"
+  Line 98: Cannot assign to attribute "current_turn_index" for class "Combat"
+  Line 99: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 100: Cannot assign to attribute "current_round" for class "Combat"
+  Line 111: Argument of type "None" cannot be assigned to parameter "updated_combat_state" of type "CombatEncounterResponse" in function "__init__"
+  Line 174: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 214: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 217: Cannot assign to attribute "status" for class "Combat"

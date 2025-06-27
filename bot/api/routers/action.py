@@ -140,6 +140,11 @@ async def activate_ability_endpoint(
     simulated_effects = []
     consequences_for_log = {}
 
+    # Check for cooldown - this was line 143 in the pyright summary regarding conditional operand
+    if db_ability.cooldown_turns is not None and db_ability.cooldown_turns > 0:
+        # Placeholder for cooldown logic: check if on cooldown, apply cooldown, etc.
+        logger.info(f"Ability {db_ability.id} has a cooldown of {db_ability.cooldown_turns} turns.")
+
     if db_ability.cost:
         cost_str = ", ".join([f"{v} {k}" for k, v in db_ability.cost.items()])
         simulated_effects.append(AbilityActivationEffect(description=f"Cost deducted: {cost_str}"))

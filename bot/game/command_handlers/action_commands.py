@@ -1,314 +1,225 @@
 from bot.utils.validation_utils import is_uuid_format
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING, cast
 from discord import Message
-# Assuming is_uuid_format might be needed if any of these commands take UUIDs for targets.
-# For now, it's not directly used by the moved logic but kept for potential future use.
+
+if TYPE_CHECKING:
+    from bot.game.managers.character_manager import CharacterManager
+    from bot.game.managers.npc_manager import NpcManager
+    from bot.game.managers.location_manager import LocationManager
+    from bot.game.managers.combat_manager import CombatManager
+    from bot.game.character_processors.character_action_processor import CharacterActionProcessor
+    # from bot.game.rules.rule_engine import RuleEngine # Not directly used in this file's logic after review
 
 async def handle_move_command(message: Message, args: List[str], context: Dict[str, Any]) -> None:
-    """Перемещает персонажа. Usage: {prefix}move <location_id>"""
-    send_callback = context['send_to_command_channel']
-    char_action_processor = context.get('character_action_processor')
-    char_manager = context.get('character_manager')
-    guild_id = context.get('guild_id')
-    author_id_str = context.get('author_id')
-    command_prefix = context.get('command_prefix', '/')
+    send_callback = context.get('send_to_command_channel')
+    if not send_callback or not callable(send_callback): return # Basic check
 
-    if not char_action_processor or not char_manager or not guild_id or not author_id_str:
-        await send_callback("Error: Required systems for movement are unavailable.")
-        print("ActionCommands: Missing managers/processors for handle_move_command.")
+    char_action_proc: Optional["CharacterActionProcessor"] = cast(Optional["CharacterActionProcessor"], context.get('character_action_processor'))
+    char_mgr: Optional["CharacterManager"] = cast(Optional["CharacterManager"], context.get('character_manager'))
+    guild_id: Optional[str] = cast(Optional[str], context.get('guild_id'))
+    author_id_str: Optional[str] = cast(Optional[str], context.get('author_id'))
+    cmd_prefix: str = cast(str, context.get('command_prefix', '/'))
+
+    if not char_action_proc or not char_mgr or not guild_id or not author_id_str:
+        await send_callback("Error: Movement systems unavailable.")
+        print("ActionCommands: Missing context for handle_move_command.")
         return
 
-    if not args:
-        await send_callback(f"Usage: {command_prefix}move <destination>")
-        return
-
+    if not args: await send_callback(f"Usage: {cmd_prefix}move <destination>"); return
     destination_input = args[0]
 
     try:
-        # get_character_by_discord_id is sync in CharacterManager
-        player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
-        if not player_char:
-            await send_callback(f"You do not have an active character. Use `{command_prefix}character create <name>`.")
-            return
+        author_id_int = int(author_id_str)
+        player_char = await char_mgr.get_character_by_discord_id(guild_id, author_id_int) # Assume async
+        if not player_char or not hasattr(player_char, 'id'):
+            await send_callback(f"No active character. Use `{cmd_prefix}character create <name>`."); return
 
         action_data = {"destination": destination_input}
-        # process_action in CharacterActionProcessor is async
-        result = await char_action_processor.process_action(
-            character_id=player_char.id,
-            action_type="move",
-            action_data=action_data,
-            context=context
-        )
-        # CharacterActionProcessor is expected to send messages.
-        if not result or not result.get("success"):
-            print(f"ActionCommands: handle_move_command result: {result}")
-
-    except ValueError:
-        await send_callback("Invalid user ID format.")
-    except Exception as e:
-        print(f"ActionCommands: Error in handle_move_command for destination '{destination_input}': {e}")
-        # import traceback; traceback.print_exc() # For debugging
-        await send_callback(f"An error occurred while trying to move: {e}")
+        if hasattr(char_action_proc, 'process_action') and callable(getattr(char_action_proc, 'process_action')):
+            result = await char_action_proc.process_action(str(player_char.id), "move", action_data, context)
+            if not result or not result.get("success"): print(f"ActionCommands: handle_move_command result: {result}")
+        else: await send_callback("Error: Action processing unavailable."); print("ActionCommands: char_action_proc.process_action missing.")
+    except ValueError: await send_callback("Invalid user ID.")
+    except Exception as e: print(f"ActionCommands: Error in move '{destination_input}': {e}"); await send_callback(f"Error moving: {e}")
 
 async def handle_fight_command(message: Message, args: List[str], context: Dict[str, Any]) -> None:
-    """Initiates combat with a target NPC. Usage: {prefix}fight <target_npc_id_or_name>"""
     send_callback = context.get('send_to_command_channel')
-    guild_id = context.get('guild_id')
-    author_id_str = context.get('author_id')
+    if not send_callback or not callable(send_callback): return
+
+    guild_id: Optional[str] = cast(Optional[str], context.get('guild_id'))
+    author_id_str: Optional[str] = cast(Optional[str], context.get('author_id'))
     channel_id = message.channel.id
-    command_prefix = context.get('command_prefix', '/')
+    cmd_prefix: str = cast(str, context.get('command_prefix', '/'))
 
-    if not send_callback: return
-    if not guild_id:
-        await send_callback("The /fight command can only be used on a server.")
-        return
-    if not author_id_str:
-        await send_callback("Could not identify your user ID.")
-        return
-    if not args:
-        await send_callback(f"Usage: {command_prefix}fight <target_npc_id_or_name>")
-        return
-
+    if not guild_id: await send_callback("Use /fight on a server."); return
+    if not author_id_str: await send_callback("Could not ID user."); return
+    if not args: await send_callback(f"Usage: {cmd_prefix}fight <target>"); return
     target_identifier = args[0]
-    char_manager = context.get('character_manager')
-    npc_manager = context.get('npc_manager')
-    loc_manager = context.get('location_manager')
-    combat_manager = context.get('combat_manager')
-    rule_engine = context.get('rule_engine')
 
-    if not all([char_manager, npc_manager, loc_manager, combat_manager, rule_engine]):
-        await send_callback("Error: Required game systems for combat are unavailable.")
-        print("ActionCommands: Missing one or more managers for handle_fight_command.")
-        return
+    char_mgr: Optional["CharacterManager"] = cast(Optional["CharacterManager"], context.get('character_manager'))
+    npc_mgr: Optional["NpcManager"] = cast(Optional["NpcManager"], context.get('npc_manager'))
+    loc_mgr: Optional["LocationManager"] = cast(Optional["LocationManager"], context.get('location_manager'))
+    combat_mgr: Optional["CombatManager"] = cast(Optional["CombatManager"], context.get('combat_manager'))
+    # rule_eng: Optional["RuleEngine"] = context.get('rule_engine') # Not directly used here
+
+    if not all([char_mgr, npc_mgr, loc_mgr, combat_mgr]):
+        await send_callback("Error: Combat systems unavailable."); print("ActionCommands: Missing managers for handle_fight_command."); return
 
     try:
-        player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
-        if not player_char:
-            await send_callback(f"You do not have an active character. Use `{command_prefix}character create <name>`.")
-            return
+        author_id_int = int(author_id_str)
+        player_char = await char_mgr.get_character_by_discord_id(guild_id, author_id_int) # Assume async
+        if not player_char or not hasattr(player_char, 'id'): await send_callback(f"No active character."); return
 
-        character_id = player_char.id
-        current_location_id = getattr(player_char, 'current_location_id', None)
-        if not current_location_id:
-            await send_callback("Your character isn't in a location where combat can occur.")
-            return
+        char_id = str(player_char.id)
+        current_loc_id = str(getattr(player_char, 'location_id', None)) # Was current_location_id
+        if not current_loc_id: await send_callback("Character not in a location."); return
 
-        target_npc = npc_manager.get_npc(guild_id, target_identifier)
-        if not target_npc:
-            if hasattr(npc_manager, 'get_npc_by_name'):
-                target_npc = npc_manager.get_npc_by_name(guild_id, target_identifier)
-            if not target_npc:
-                await send_callback(f"NPC '{target_identifier}' not found.")
-                return
+        target_npc = None
+        if hasattr(npc_mgr, 'get_npc') and callable(getattr(npc_mgr, 'get_npc')):
+            target_npc = await npc_mgr.get_npc(guild_id, target_identifier) # Assume async
+        if not target_npc and hasattr(npc_mgr, 'get_npc_by_name') and callable(getattr(npc_mgr, 'get_npc_by_name')):
+            target_npc = await npc_mgr.get_npc_by_name(guild_id, target_identifier) # Assume async
+        if not target_npc or not hasattr(target_npc, 'id'): await send_callback(f"NPC '{target_identifier}' not found."); return
 
-        target_npc_id = target_npc.id
-        target_npc_name = getattr(target_npc, 'name', target_identifier)
-        npc_location_id = getattr(target_npc, 'location_id', None)
+        target_npc_id = str(target_npc.id)
+        target_npc_name = str(getattr(target_npc, 'name', target_identifier))
+        npc_loc_id = str(getattr(target_npc, 'location_id', None))
 
-        if npc_location_id != current_location_id:
-            player_loc_name = loc_manager.get_location_name(guild_id, current_location_id) if current_location_id else "an unknown place"
-            npc_loc_name = loc_manager.get_location_name(guild_id, npc_location_id) if npc_location_id else "an unknown place"
-            await send_callback(f"{target_npc_name} is not here. You are in {player_loc_name}, and they are in {npc_loc_name}.")
-            return
+        if npc_loc_id != current_loc_id:
+            player_loc_name = "unknown"
+            npc_loc_name = "unknown"
+            if hasattr(loc_mgr, 'get_location_name') and callable(getattr(loc_mgr, 'get_location_name')):
+                 player_loc_name = await loc_mgr.get_location_name(guild_id, current_loc_id) or player_loc_name # Assume async
+                 npc_loc_name = await loc_mgr.get_location_name(guild_id, npc_loc_id) or npc_loc_name # Assume async
+            await send_callback(f"{target_npc_name} not here. You: {player_loc_name}, Them: {npc_loc_name}."); return
 
-        if combat_manager.get_combat_by_participant_id(guild_id, character_id):
-            await send_callback("You are already in combat!")
-            return
-        if combat_manager.get_combat_by_participant_id(guild_id, target_npc_id):
-            await send_callback(f"{target_npc_name} is already in combat with someone else.")
-            return
+        if hasattr(combat_mgr, 'get_combat_by_participant_id') and callable(getattr(combat_mgr, 'get_combat_by_participant_id')):
+            if await combat_mgr.get_combat_by_participant_id(guild_id, char_id): # Assume async
+                await send_callback("You are already in combat!"); return
+            if await combat_mgr.get_combat_by_participant_id(guild_id, target_npc_id): # Assume async
+                await send_callback(f"{target_npc_name} is already in combat."); return
+        else: await send_callback("Combat check unavailable."); return
 
-        participant_ids = [(character_id, "Character"), (target_npc_id, "NPC")]
-        new_combat_instance = await combat_manager.start_combat(
-            guild_id=guild_id,
-            location_id=current_location_id,
-            participant_ids=participant_ids,
-            channel_id=channel_id,
-            **context
-        )
-        if not new_combat_instance:
-            await send_callback(f"Could not start combat with {target_npc_name}. They might be too powerful, or something went wrong.")
-        # CombatManager.start_combat is expected to send the initial combat message.
-    except ValueError:
-        await send_callback("Invalid user ID format.")
-    except Exception as e:
-        print(f"ActionCommands: Error in handle_fight_command against '{target_identifier}': {e}")
-        await send_callback(f"An error occurred while trying to initiate combat: {e}")
+
+        participant_ids = [(char_id, "Character"), (target_npc_id, "NPC")]
+        if hasattr(combat_mgr, 'start_combat') and callable(getattr(combat_mgr, 'start_combat')):
+            new_combat = await combat_mgr.start_combat(guild_id, current_loc_id, participant_ids, channel_id, **context)
+            if not new_combat: await send_callback(f"Could not start combat with {target_npc_name}.")
+        else: await send_callback("Combat starting system unavailable."); return
+    except ValueError: await send_callback("Invalid user ID.")
+    except Exception as e: print(f"ActionCommands: Error in fight '{target_identifier}': {e}"); await send_callback(f"Error starting combat: {e}")
+
 
 async def handle_hide_command(message: Message, args: List[str], context: Dict[str, Any]) -> None:
-    """Allows the player to attempt to hide in their current location. Usage: {prefix}hide"""
     send_callback = context.get('send_to_command_channel')
-    guild_id = context.get('guild_id')
-    author_id_str = context.get('author_id')
-    command_prefix = context.get('command_prefix', '/')
+    if not send_callback or not callable(send_callback): return
+    guild_id: Optional[str] = cast(Optional[str], context.get('guild_id'))
+    author_id_str: Optional[str] = cast(Optional[str], context.get('author_id'))
+    cmd_prefix: str = cast(str, context.get('command_prefix', '/'))
 
-    if not send_callback: return
-    if not guild_id:
-        await send_callback("The /hide command can only be used on a server.")
-        return
-    if not author_id_str:
-        await send_callback("Could not identify your user ID.")
-        return
+    if not guild_id: await send_callback("Use /hide on a server."); return
+    if not author_id_str: await send_callback("Could not ID user."); return
 
-    char_manager = context.get('character_manager')
-    char_action_processor = context.get('character_action_processor')
+    char_mgr: Optional["CharacterManager"] = cast(Optional["CharacterManager"], context.get('character_manager'))
+    char_action_proc: Optional["CharacterActionProcessor"] = cast(Optional["CharacterActionProcessor"], context.get('character_action_processor'))
 
-    if not char_manager or not char_action_processor:
-        await send_callback("Error: Required game systems are unavailable.")
-        print("ActionCommands: Missing managers/processors for handle_hide_command.")
-        return
+    if not char_mgr or not char_action_proc or \
+       not hasattr(char_action_proc, 'process_hide_action') or not callable(getattr(char_action_proc, 'process_hide_action')):
+        await send_callback("Error: Hiding systems unavailable."); print("ActionCommands: Missing context for handle_hide_command."); return
 
     try:
-        player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
-        if not player_char:
-            await send_callback(f"You do not have an active character. Use `{command_prefix}character create <name>`.")
-            return
+        author_id_int = int(author_id_str)
+        player_char = await char_mgr.get_character_by_discord_id(guild_id, author_id_int) # Assume async
+        if not player_char or not hasattr(player_char, 'id'): await send_callback(f"No active character."); return
 
-        # process_hide_action is async
-        success = await char_action_processor.process_hide_action(
-            character_id=player_char.id,
-            context=context
-        )
-        if not success:
-             print(f"ActionCommands: process_hide_action returned False for char {player_char.id}")
-    except ValueError:
-        await send_callback("Invalid user ID format.")
-    except Exception as e:
-        print(f"ActionCommands: Error in handle_hide_command: {e}")
-        await send_callback(f"An error occurred while trying to hide: {e}")
+        success = await char_action_proc.process_hide_action(str(player_char.id), context)
+        if not success: print(f"ActionCommands: process_hide_action False for char {player_char.id}")
+    except ValueError: await send_callback("Invalid user ID.")
+    except Exception as e: print(f"ActionCommands: Error in hide: {e}"); await send_callback(f"Error hiding: {e}")
 
 async def handle_steal_command(message: Message, args: List[str], context: Dict[str, Any]) -> None:
-    """Allows the player to attempt to steal from a target NPC. Usage: {prefix}steal <target_npc_id_or_name>"""
     send_callback = context.get('send_to_command_channel')
-    guild_id = context.get('guild_id')
-    author_id_str = context.get('author_id')
-    command_prefix = context.get('command_prefix', '/')
+    if not send_callback or not callable(send_callback): return
+    guild_id: Optional[str] = cast(Optional[str], context.get('guild_id'))
+    author_id_str: Optional[str] = cast(Optional[str], context.get('author_id'))
+    cmd_prefix: str = cast(str, context.get('command_prefix', '/'))
 
-    if not send_callback: return
-    if not guild_id:
-        await send_callback("The /steal command can only be used on a server.")
-        return
-    if not author_id_str:
-        await send_callback("Could not identify your user ID.")
-        return
-    if not args:
-        await send_callback(f"Usage: {command_prefix}steal <target_npc_id_or_name>")
-        return
-
+    if not guild_id: await send_callback("Use /steal on a server."); return
+    if not author_id_str: await send_callback("Could not ID user."); return
+    if not args: await send_callback(f"Usage: {cmd_prefix}steal <target>"); return
     target_identifier = args[0]
-    char_manager = context.get('character_manager')
-    npc_manager = context.get('npc_manager')
-    char_action_processor = context.get('character_action_processor')
-    loc_manager = context.get('location_manager')
 
-    if not all([char_manager, npc_manager, char_action_processor, loc_manager]):
-        await send_callback("Error: Required game systems are unavailable.")
-        print("ActionCommands: Missing managers/processors for handle_steal_command.")
-        return
+    char_mgr: Optional["CharacterManager"] = cast(Optional["CharacterManager"], context.get('character_manager'))
+    npc_mgr: Optional["NpcManager"] = cast(Optional["NpcManager"], context.get('npc_manager'))
+    char_action_proc: Optional["CharacterActionProcessor"] = cast(Optional["CharacterActionProcessor"], context.get('character_action_processor'))
+
+    if not all([char_mgr, npc_mgr, char_action_proc]) or \
+       not hasattr(char_action_proc, 'process_steal_action') or not callable(getattr(char_action_proc, 'process_steal_action')):
+        await send_callback("Error: Stealing systems unavailable."); print("ActionCommands: Missing context for handle_steal_command."); return
 
     try:
-        player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
-        if not player_char:
-            await send_callback(f"You do not have an active character. Use `{command_prefix}character create <name>`.")
-            return
+        author_id_int = int(author_id_str)
+        player_char = await char_mgr.get_character_by_discord_id(guild_id, author_id_int) # Assume async
+        if not player_char or not hasattr(player_char, 'id'): await send_callback(f"No active character."); return
 
-        target_npc = npc_manager.get_npc(guild_id, target_identifier)
-        if not target_npc:
-            if hasattr(npc_manager, 'get_npc_by_name'):
-                target_npc = npc_manager.get_npc_by_name(guild_id, target_identifier)
-            if not target_npc:
-                await send_callback(f"NPC '{target_identifier}' not found.")
-                return
+        target_npc = None
+        if hasattr(npc_mgr, 'get_npc') and callable(getattr(npc_mgr, 'get_npc')):
+            target_npc = await npc_mgr.get_npc(guild_id, target_identifier) # Assume async
+        if not target_npc and hasattr(npc_mgr, 'get_npc_by_name') and callable(getattr(npc_mgr, 'get_npc_by_name')):
+            target_npc = await npc_mgr.get_npc_by_name(guild_id, target_identifier) # Assume async
+        if not target_npc or not hasattr(target_npc, 'id'): await send_callback(f"NPC '{target_identifier}' not found."); return
 
-        target_npc_name = getattr(target_npc, 'name', target_identifier)
-        player_loc_id = getattr(player_char, 'current_location_id', None)
-        target_loc_id = getattr(target_npc, 'location_id', None)
+        target_npc_name = str(getattr(target_npc, 'name', target_identifier))
+        player_loc_id = str(getattr(player_char, 'location_id', None))
+        target_loc_id = str(getattr(target_npc, 'location_id', None))
 
-        if not player_loc_id:
-            await send_callback("You don't seem to be in any location.")
-            return
-        if player_loc_id != target_loc_id:
-            await send_callback(f"{target_npc_name} is not in your current location.")
-            return
+        if not player_loc_id: await send_callback("You are not in a location."); return
+        if player_loc_id != target_loc_id: await send_callback(f"{target_npc_name} is not here."); return
 
-        # process_steal_action is async
-        success = await char_action_processor.process_steal_action(
-            character_id=player_char.id,
-            target_id=target_npc.id,
-            target_type="NPC",
-            context=context
-        )
-        if not success:
-            print(f"ActionCommands: process_steal_action returned False for char {player_char.id} target {target_npc.id}")
-
-    except ValueError:
-        await send_callback("Invalid user ID format.")
-    except Exception as e:
-        print(f"ActionCommands: Error in handle_steal_command for target '{target_identifier}': {e}")
-        await send_callback(f"An error occurred while trying to steal: {e}")
+        success = await char_action_proc.process_steal_action(str(player_char.id), str(target_npc.id), "NPC", context)
+        if not success: print(f"ActionCommands: process_steal_action False for char {player_char.id} target {target_npc.id}")
+    except ValueError: await send_callback("Invalid user ID.")
+    except Exception as e: print(f"ActionCommands: Error in steal '{target_identifier}': {e}"); await send_callback(f"Error stealing: {e}")
 
 async def handle_use_command(message: Message, args: List[str], context: Dict[str, Any]) -> None:
-    """Allows the player to use an item from their inventory, optionally on a target. Usage: {prefix}use <item_instance_id> [target_id]"""
     send_callback = context.get('send_to_command_channel')
-    guild_id = context.get('guild_id')
-    author_id_str = context.get('author_id')
-    command_prefix = context.get('command_prefix', '/')
+    if not send_callback or not callable(send_callback): return
+    guild_id: Optional[str] = cast(Optional[str], context.get('guild_id'))
+    author_id_str: Optional[str] = cast(Optional[str], context.get('author_id'))
+    cmd_prefix: str = cast(str, context.get('command_prefix', '/'))
 
-    if not send_callback: return
-    if not guild_id:
-        await send_callback("The /use command can only be used on a server.")
-        return
-    if not author_id_str:
-        await send_callback("Could not identify your user ID.")
-        return
-    if not args:
-        await send_callback(f"Usage: {command_prefix}use <item_instance_id> [target_id]")
-        return
-
+    if not guild_id: await send_callback("Use /use on a server."); return
+    if not author_id_str: await send_callback("Could not ID user."); return
+    if not args: await send_callback(f"Usage: {cmd_prefix}use <item_id> [target_id]"); return
     item_instance_id = args[0]
-    target_id: Optional[str] = args[1] if len(args) > 1 else None
-    target_type: Optional[str] = None
+    target_id_param: Optional[str] = args[1] if len(args) > 1 else None
 
-    char_manager = context.get('character_manager')
-    char_action_processor = context.get('character_action_processor')
-    npc_manager = context.get('npc_manager')
+    char_mgr: Optional["CharacterManager"] = cast(Optional["CharacterManager"], context.get('character_manager'))
+    char_action_proc: Optional["CharacterActionProcessor"] = cast(Optional["CharacterActionProcessor"], context.get('character_action_processor'))
+    npc_mgr: Optional["NpcManager"] = cast(Optional["NpcManager"], context.get('npc_manager'))
 
-    if not all([char_manager, char_action_processor, npc_manager]):
-        await send_callback("Error: Required game systems are unavailable.")
-        print("ActionCommands: Missing managers/processors for handle_use_command.")
-        return
+    if not all([char_mgr, char_action_proc, npc_mgr]) or \
+       not hasattr(char_action_proc, 'process_use_item_action') or not callable(getattr(char_action_proc, 'process_use_item_action')):
+        await send_callback("Error: Item use systems unavailable."); print("ActionCommands: Missing context for handle_use_command."); return
 
     try:
-        player_char = char_manager.get_character_by_discord_id(guild_id, int(author_id_str))
-        if not player_char:
-            await send_callback(f"You do not have an active character. Use `{command_prefix}character create <name>`.")
-            return
-        character_id = player_char.id
+        author_id_int = int(author_id_str)
+        player_char = await char_mgr.get_character_by_discord_id(guild_id, author_id_int) # Assume async
+        if not player_char or not hasattr(player_char, 'id'): await send_callback(f"No active character."); return
+        char_id = str(player_char.id)
 
-        if target_id:
-            if target_id.lower() == "self" or target_id == character_id:
-                target_id = character_id
-                target_type = "Character"
-            elif npc_manager.get_npc(guild_id, target_id):
-                target_type = "NPC"
-            elif char_manager.get_character(guild_id, target_id):
-                target_type = "Character"
-            else:
-                print(f"ActionCommands: Target '{target_id}' for /use not identified as self, NPC, or Character.")
+        final_target_id: Optional[str] = None
+        final_target_type: Optional[str] = None
+        if target_id_param:
+            if target_id_param.lower() == "self" or target_id_param == char_id:
+                final_target_id = char_id; final_target_type = "Character"
+            elif hasattr(npc_mgr, 'get_npc') and callable(getattr(npc_mgr, 'get_npc')) and await npc_mgr.get_npc(guild_id, target_id_param): # Assume async
+                final_target_id = target_id_param; final_target_type = "NPC"
+            elif hasattr(char_mgr, 'get_character') and callable(getattr(char_mgr, 'get_character')) and await char_mgr.get_character(guild_id, target_id_param): # Assume async
+                final_target_id = target_id_param; final_target_type = "Character"
+            else: print(f"ActionCommands: Target '{target_id_param}' for /use not identified.")
 
-        # process_use_item_action is async
-        success = await char_action_processor.process_use_item_action(
-            character_id=character_id,
-            item_instance_id=item_instance_id,
-            target_id=target_id,
-            target_type=target_type,
-            context=context
-        )
-        if not success:
-            print(f"ActionCommands: process_use_item_action returned False for char {character_id} item {item_instance_id}")
-
-    except ValueError:
-        await send_callback("Invalid user ID format.")
-    except Exception as e:
-        print(f"ActionCommands: Error in handle_use_command for item '{item_instance_id}': {e}")
-        await send_callback(f"An error occurred while trying to use the item: {e}")
+        success = await char_action_proc.process_use_item_action(char_id, item_instance_id, final_target_id, final_target_type, context)
+        if not success: print(f"ActionCommands: process_use_item_action False for char {char_id} item {item_instance_id}")
+    except ValueError: await send_callback("Invalid user ID.")
+    except Exception as e: print(f"ActionCommands: Error in use '{item_instance_id}': {e}"); await send_callback(f"Error using item: {e}")

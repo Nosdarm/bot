@@ -14,8 +14,7 @@ from ..base import Base, JsonVariant # Import Base and JsonVariant
 if TYPE_CHECKING:
     from .config_related import UserSettings, GuildConfig # For type hinting
     from .world_related import Location
-    # Forward declare Party for relationship hints because Party is defined later in this file
-    class Party: pass
+    # Party is defined later in this file, string reference "Party" should work.
     # class Character: pass # Character is defined in this file, direct use is fine for self-refs if needed, or later refs
 
 

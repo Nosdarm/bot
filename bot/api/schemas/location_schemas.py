@@ -8,9 +8,9 @@ from typing import Optional, List, Dict, Any
 #     name: str # Or name_i18n
 
 class LocationBase(BaseModel):
-    name_i18n: Dict[str, str] = Field(default=..., description="Multilingual name of the location", example={"en": "Crossroads", "ru": "Перекресток"})
-    descriptions_i18n: Dict[str, str] = Field(default=..., description="Multilingual primary description of the location")
-    type_i18n: Dict[str, str] = Field(default=..., description="Multilingual type of the location", example={"en": "Village", "ru": "Деревня"})
+    name_i18n: Dict[str, str] = Field(..., description="Multilingual name of the location", example={"en": "Crossroads", "ru": "Перекресток"})
+    descriptions_i18n: Dict[str, str] = Field(..., description="Multilingual primary description of the location")
+    type_i18n: Dict[str, str] = Field(..., description="Multilingual type of the location", example={"en": "Village", "ru": "Деревня"})
 
     coordinates: Optional[Dict[str, Any]] = Field(default=None, description="Coordinates of the location, e.g., {'x': 10, 'y': 20, 'map_id': 'world'}")
     exits: Optional[Dict[str, str]] = Field(default_factory=dict, description="Exits to other locations, e.g., {'north': 'location_id_2', 'south': 'location_id_3'}")
@@ -20,19 +20,19 @@ class LocationBase(BaseModel):
 
     inventory: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="List of items at the location, e.g., [{'item_id': 'uuid', 'quantity': 1}] or full item details")
     state_variables: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Dynamic state variables for the location")
-    is_active: Optional[bool] = Field(True, description="Is the location currently active/accessible?")
+    is_active: Optional[bool] = Field(default=True, description="Is the location currently active/accessible?")
 
     # Optional detailed i18n fields
-    details_i18n: Optional[Dict[str, str]] = Field(None, description="Additional multilingual details about the location")
-    tags_i18n: Optional[Dict[str, List[str]]] = Field(None, description="Multilingual tags for the location, e.g., {'en': ['safe', 'market']}") # Tags as list of strings
-    atmosphere_i18n: Optional[Dict[str, str]] = Field(None, description="Multilingual description of the location's atmosphere")
-    features_i18n: Optional[Dict[str, List[str]]] = Field(None, description="Multilingual list of notable features at the location") # Features as list of strings
+    details_i18n: Optional[Dict[str, str]] = Field(default=None, description="Additional multilingual details about the location")
+    tags_i18n: Optional[Dict[str, List[str]]] = Field(default=None, description="Multilingual tags for the location, e.g., {'en': ['safe', 'market']}")
+    atmosphere_i18n: Optional[Dict[str, str]] = Field(default=None, description="Multilingual description of the location's atmosphere")
+    features_i18n: Optional[Dict[str, List[str]]] = Field(default=None, description="Multilingual list of notable features at the location")
 
     # Other fields from model
-    static_name: Optional[str] = Field(None, description="Internal static name or key for the location")
-    template_id: Optional[str] = Field(None, description="ID of a template this location is based on, if any")
-    channel_id: Optional[str] = Field(None, description="Associated Discord channel ID, if any")
-    image_url: Optional[str] = Field(None, description="URL for an image representing the location")
+    static_name: Optional[str] = Field(default=None, description="Internal static name or key for the location")
+    template_id: Optional[str] = Field(default=None, description="ID of a template this location is based on, if any")
+    channel_id: Optional[str] = Field(default=None, description="Associated Discord channel ID, if any")
+    image_url: Optional[str] = Field(default=None, description="URL for an image representing the location")
 
 
 class LocationCreate(LocationBase):

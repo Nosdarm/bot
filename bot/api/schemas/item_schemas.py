@@ -1,4 +1,4 @@
-from pydantic import BaseModel, UUID4 as PydanticUUID  # Use UUID4 for Pydantic
+from pydantic import BaseModel, UUID4 as PydanticUUID, ConfigDict  # Use UUID4 for Pydantic, import ConfigDict
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -8,11 +8,10 @@ class NewItemBase(BaseModel):
     item_type: str # e.g., "weapon", "armor", "consumable"
     item_metadata: Optional[Dict[str, Any]] = None
 
-    class Config:
-        # Ensure Pydantic can map item_metadata to a field named 'metadata' if SQLAlchemy model uses name="metadata"
-        # For ORM mode, this is handled by SQLAlchemy attribute name, but for validation against dicts:
-        populate_by_name = True
+    model_config = ConfigDict(
+        populate_by_name=True
         # alias_generator = lambda field_name: 'metadata' if field_name == 'item_metadata' else field_name
+    )
 
 
 class NewItemCreate(NewItemBase):
@@ -29,5 +28,6 @@ class NewItemRead(NewItemBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )

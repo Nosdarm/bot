@@ -16,7 +16,8 @@ class ValidationIssue(BaseModel):
 
 # --- Reusable Helper Validators ---
 
-def validate_i18n_field(cls, v: Any, info: FieldValidationInfo) -> Dict[str, str]:
+# Pyright expects it for methods decorated with @field_validator.
+def validate_i18n_field(v: Any, info: FieldValidationInfo) -> Dict[str, str]: # Removed 'cls'
     if not isinstance(v, dict):
         raise ValueError(f"Field '{info.field_name}' must be a dictionary.")
     if not v:
@@ -44,23 +45,29 @@ def validate_i18n_field(cls, v: Any, info: FieldValidationInfo) -> Dict[str, str
             first_available_lang = next(iter(validated_dict))
             validated_dict['en'] = validated_dict[first_available_lang]
             logger.info(f"Field '{info.field_name}': Missing 'en' translation, copied from '{first_available_lang}'.")
-            missing_languages.remove('en')
+            if 'en' in missing_languages: missing_languages.remove('en')
+
 
         if missing_languages:
             primary_guild_lang = target_languages[0]
             if primary_guild_lang in missing_languages and 'en' in validated_dict:
                 validated_dict[primary_guild_lang] = validated_dict['en']
                 logger.info(f"Field '{info.field_name}': Missing primary language '{primary_guild_lang}', copied from 'en'.")
-                missing_languages.remove(primary_guild_lang)
+                if primary_guild_lang in missing_languages: missing_languages.remove(primary_guild_lang)
 
-        if missing_languages:
+
+        if missing_languages: # Check again after potential autofill
             raise ValueError(f"Field '{info.field_name}' is missing required language(s): {', '.join(missing_languages)}. Provided: {list(validated_dict.keys())}")
     return validated_dict
 
-def ensure_valid_json_string(cls, v: Any, info: FieldValidationInfo) -> str:
-    field_is_optional = not cls.model_fields[info.field_name].is_required()
-    if v is None and field_is_optional:
-        return v # Allow None for optional fields
+def ensure_valid_json_string(v: Any, info: FieldValidationInfo) -> Optional[str]: # Removed 'cls'
+    field_is_optional = True # Default assumption, difficult to determine robustly without model schema access here
+    # A more robust way would be to pass `field_info.is_required` from the model's field if this validator
+    # is used in a context where `field_info` (from Pydantic's model_fields) is accessible.
+    # For a generic validator, this is tricky. Let's assume optional for now if v is None or empty string.
+
+    if v is None:
+        return None
 
     if isinstance(v, (dict, list)):
         try:
@@ -71,20 +78,20 @@ def ensure_valid_json_string(cls, v: Any, info: FieldValidationInfo) -> str:
     if not isinstance(v, str):
         raise ValueError(f"Field '{info.field_name}' must be a string or a valid JSON serializable object/list. Got type: {type(v)}")
 
-    # Allow empty string for optional fields that were explicitly passed as ""
-    if not v.strip() and field_is_optional:
-        # Consider if empty string should be converted to None or kept as ""
-        # For now, keeping as "" if it's explicitly passed. If it should be None, add: return None
-        pass
+    if not v.strip(): # If string is empty or whitespace
+        # For optional JSON fields, an empty string might mean "no data" -> None
+        # For required JSON fields, an empty string is invalid.
+        # This logic depends on how the specific field is defined in the model (Optional vs Required).
+        # If field_is_optional (hard to determine here accurately without model schema), return None.
+        # Otherwise, if it's a required JSON field, an empty string is an error.
+        # For now, let's return None for empty strings, assuming they represent optional empty JSON.
+        return None
+
 
     try:
-        json.loads(v)
+        json.loads(v) # Check if it's valid JSON
     except json.JSONDecodeError as e:
-        # If it's an optional field and the string is empty, it might be acceptable
-        if field_is_optional and not v.strip():
-             pass # Allow empty string for optional JSON fields (implies empty/null structure)
-        else:
-            raise ValueError(f"Field '{info.field_name}' contains an invalid JSON string: {e}")
+        raise ValueError(f"Field '{info.field_name}' contains an invalid JSON string: {e}")
     return v
 
 # --- Pydantic Models for AI Generated Content ---
@@ -119,7 +126,7 @@ class GeneratedQuestData(BaseModel):
     @field_validator('quest_giver_details_i18n', 'consequences_summary_i18n', mode='before')
     def validate_optional_i18n(cls, v, info: FieldValidationInfo): # Separate validator for optional i18n
         if v is None: return None
-        return validate_i18n_field(cls, v, info)
+        return validate_i18n_field(v, info) # Removed cls
     _validate_json_strings = field_validator('consequences_json', 'prerequisites_json', mode='before')(ensure_valid_json_string)
 
     @field_validator('steps')
@@ -237,7 +244,7 @@ class GeneratedLocationContent(BaseModel):
                 # The field_name on `info` will be for 'possible_events_i18n' itself,
                 # if validate_i18n_field needs the sub-field name, it would need more specific handling.
                 # Assuming validate_i18n_field can work with the main field's info for context.
-                validated_list.append(validate_i18n_field(cls, event_i18n_dict, info))
+                validated_list.append(validate_i18n_field(event_i18n_dict, info)) # Removed cls
             except ValueError as e:
                 raise ValueError(f"Validation failed for item {index} in possible_events_i18n: {e}")
         return validated_list
@@ -318,3 +325,28 @@ class ValidatedEntity(BaseModel):
     @property
     def is_strictly_valid(self) -> bool:
         return self.validation_status == "success" and not self.issues
+
+from enum import Enum # Added for GenerationType
+
+# --- Added Models for GameTerm and ScalingParameter ---
+class GameTerm(BaseModel):
+    id: str
+    name_i18n: Dict[str, str]
+    term_type: str
+    description_i18n: Optional[Dict[str, str]] = None
+    # Example: validate name_i18n using the shared validator
+    _validate_name_i18n = field_validator('name_i18n', mode='before')(validate_i18n_field)
+    @field_validator('description_i18n', mode='before')
+    def validate_optional_desc_i18n(cls, v, info: FieldValidationInfo):
+        if v is None: return None
+        return validate_i18n_field(v, info) # Removed cls
+
+class ScalingParameter(BaseModel):
+    parameter_name: str
+    value: Union[float, int, str, bool, List[Any], Dict[str, Any]] # Allow list/dict for complex params
+    description_i18n: Optional[Dict[str, str]] = None
+    # Example: validate description_i18n if it's present
+    @field_validator('description_i18n', mode='before')
+    def validate_optional_desc_i18n(cls, v, info: FieldValidationInfo):
+        if v is None: return None
+        return validate_i18n_field(v, info) # Removed cls

@@ -64,66 +64,49 @@ async def get_or_create_rules_config(db: AsyncSession, guild_id: str) -> RulesCo
         # Ensure that all fields expected by RuleConfigData are present in rules_data_dict,
         # or that RuleConfigData handles missing fields with defaults.
         # If a key is in RuleConfigData but not in DB, Pydantic will use its default.
-        return RuleConfigData(**rules_data_dict)
+        # Filter out keys not present in RuleConfigData model fields to prevent unexpected argument error
+        valid_fields = RuleConfigData.model_fields.keys()
+        filtered_rules_data = {k: v for k, v in rules_data_dict.items() if k in valid_fields}
+
+        return RuleConfigData(**filtered_rules_data)
     except Exception as e_pydantic:
         logger.error(f"Error creating RuleConfigData Pydantic model for guild {guild_id} from DB data: {e_pydantic}", exc_info=True)
-        # Fallback to default if Pydantic model creation fails from DB data (e.g. schema mismatch)
-        # This might mask underlying issues, but provides a fallback.
-        # A stricter approach would be to raise an HTTPException here.
         logger.warning(f"Falling back to default RuleConfigData for guild {guild_id} due to Pydantic model creation error.")
-        return RuleConfigData()
+        return RuleConfigData() # Return a default instance on error
 
 
 @router.get(
-    "/",  # Path relative to the router's prefix (e.g., /api/v1/guilds/{guild_id}/config/)
-    response_model=RuleConfigResponse,
+    "/",
+    response_model=RuleConfigResponse, # This should be RuleConfigResponse which contains RuleConfigData
     summary="Get current game rule configuration for the guild"
 )
-async def get_guild_rules_config_endpoint( # Renamed to avoid conflict with model name
+async def get_guild_rules_config( # Renamed to be unique
     guild_id: str = Path(..., description="Guild ID from path prefix"),
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Fetching RulesConfig for guild {guild_id}")
     try:
-        rules_pydantic_data = await get_or_create_rules_config(db, guild_id)
+        # get_or_create_rules_config returns a RuleConfigData instance
+        rules_data_pydantic = await get_or_create_rules_config(db, guild_id)
     except HTTPException:
-        raise # Re-raise if get_or_create_rules_config failed and raised HTTPException
-    except Exception as e:
-        logger.error(f"Unexpected error fetching or creating RulesConfig for guild {guild_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error accessing guild configuration.")
-
-    return RuleConfigResponse(guild_id=guild_id, config_data=rules_pydantic_data)
-
-@router.get(
-    "/",  # Path relative to the router's prefix (e.g., /api/v1/guilds/{guild_id}/config/)
-    response_model=RuleConfigResponse, 
-    summary="Get current game rule configuration for the guild"
-)
-async def get_guild_rules_config_endpoint( # Renamed to avoid conflict with model name
-    guild_id: str = Path(..., description="Guild ID from path prefix"),
-    db: AsyncSession = Depends(get_db_session)
-):
-    logger.info(f"Fetching RulesConfig for guild {guild_id}")
-    try:
-        db_config = await get_or_create_rules_config(db, guild_id)
-    except HTTPException:
-        raise # Re-raise if get_or_create_rules_config failed and raised HTTPException
+        raise
     except Exception as e:
         logger.error(f"Unexpected error fetching or creating RulesConfig for guild {guild_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error accessing guild configuration.")
         
-    return db_config
+    # Wrap the RuleConfigData in RuleConfigResponse
+    return RuleConfigResponse(guild_id=guild_id, config_data=rules_data_pydantic)
 
 
 @router.put(
-    "/", # Path relative to the router's prefix
-    response_model=RuleConfigResponse, 
+    "/",
+    response_model=RuleConfigResponse, # This should be RuleConfigResponse
     summary="Update game rule configuration for the guild"
 )
-async def update_guild_rules_config_endpoint( # Renamed to avoid conflict
-    config_update_payload: RuleConfigUpdate, # Body parameter
-    guild_id: str = Path(..., description="Guild ID from path prefix"), # Path parameter
-    db: AsyncSession = Depends(get_db_session) # Parameter with default
+async def update_guild_rules_config( # Renamed to be unique
+    config_update_payload: RuleConfigUpdate,
+    guild_id: str = Path(..., description="Guild ID from path prefix"),
+    db: AsyncSession = Depends(get_db_session)
 ):
     logger.info(f"Updating RulesConfig for guild {guild_id}")
 
@@ -166,10 +149,16 @@ async def update_guild_rules_config_endpoint( # Renamed to avoid conflict
         # For simplicity and to reflect the committed state, create RuleConfigData from current_rules_map values
         # (after they've been added to session and potentially refreshed by commit)
         final_rules_values = {key: row.value for key, row in current_rules_map.items()}
-        updated_pydantic_data = RuleConfigData(**final_rules_values)
+
+    # Filter out keys not present in RuleConfigData model fields before creating Pydantic model
+    valid_fields = RuleConfigData.model_fields.keys()
+    filtered_final_rules_values = {k: v for k, v in final_rules_values.items() if k in valid_fields}
+
+    updated_pydantic_data = RuleConfigData(**filtered_final_rules_values)
 
     except Exception as e_update:
-        await db.rollback()
+        # Rollback is handled by get_db_session context manager on exception
+        # await db.rollback()
         logger.error(f"Error updating RulesConfig rows for guild {guild_id}: {e_update}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update RulesConfig.")
 

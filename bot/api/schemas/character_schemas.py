@@ -14,15 +14,15 @@ class CharacterStatsSchema(BaseModel):
 
 class CharacterBase(BaseModel):
     name_i18n: Dict[str, str] = Field(..., description="Character's name, i18n JSON object", example={"en": "Valerius", "ru": "Валериус"})
-    class_i18n: Optional[Dict[str, str]] = Field(None, description="Character's class, i18n JSON object", example={"en": "Warrior", "ru": "Воин"})
-    description_i18n: Optional[Dict[str, str]] = Field(None, description="Character's description, i18n JSON object")
+    class_i18n: Optional[Dict[str, str]] = Field(default=None, description="Character's class, i18n JSON object", example={"en": "Warrior", "ru": "Воин"})
+    description_i18n: Optional[Dict[str, str]] = Field(default=None, description="Character's description, i18n JSON object")
 
-    level: int = Field(1, description="Character's level", ge=1)
-    experience: int = Field(0, alias='xp', description="Character's experience points", ge=0) # Renamed from xp, added alias
+    level: int = Field(default=1, description="Character's level", ge=1)
+    experience: int = Field(default=0, alias='xp', description="Character's experience points", ge=0)
 
-    stats: Optional[CharacterStatsSchema] = Field(default_factory=CharacterStatsSchema, description="Character's base attributes")
-    current_hp: Optional[float] = Field(None, description="Character's current HP")
-    max_hp: Optional[float] = Field(None, description="Character's maximum HP")
+    stats: Optional[CharacterStatsSchema] = Field(default_factory=CharacterStatsSchema, description="Character's base attributes") # default_factory is correct
+    current_hp: Optional[float] = Field(default=None, description="Character's current HP")
+    max_hp: Optional[float] = Field(default=None, description="Character's maximum HP")
 
     abilities: Optional[List[Any]] = Field(None, description="List of character's abilities (IDs or embedded data)") # Or List[str] for IDs
     inventory: Optional[List[Any]] = Field(None, description="List of character's inventory items (IDs or embedded data)") # Or List[str] for IDs

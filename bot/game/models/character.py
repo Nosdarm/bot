@@ -1,6 +1,7 @@
 # В bot/game/models/character.py
 from __future__ import annotations
 import json
+import uuid # Added import for uuid
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field # Import dataclass and field
 from bot.utils.i18n_utils import get_i18n_text # Import the new utility
@@ -16,7 +17,7 @@ class Character:
     name_i18n: Dict[str, str] # e.g., {"en": "Name", "ru": "Имя"}
     guild_id: str
     selected_language: Optional[str] = "en" # Player's preferred language, default to 'en'
-    
+
     location_id: Optional[str] = None
     stats: Dict[str, Any] = field(default_factory=dict) # e.g., {"health": 100, "mana": 50, "strength": 10, "intelligence": 12}
     inventory: List[Dict[str, Any]] = field(default_factory=list) # List of item instance dicts or Item objects
@@ -24,12 +25,12 @@ class Character:
     action_queue: List[Dict[str, Any]] = field(default_factory=list)
     party_id: Optional[str] = None
     state_variables: Dict[str, Any] = field(default_factory=dict) # For quests, flags, etc.
-    
+
     # Attributes that might have been separate but often make sense within stats or derived
     hp: float = 100.0 # Current health, often also in stats for convenience
     max_health: float = 100.0 # Max health, often also in stats
     is_alive: bool = True
-    
+
     status_effects: List[Dict[str, Any]] = field(default_factory=list) # List of status effect instances (or their dicts)
     level: int = 1
     experience: int = 0  # This will be treated as 'xp'
@@ -65,28 +66,35 @@ class Character:
     # For now, we'll assume all relevant fields are explicitly defined.
     # extra_fields: Dict[str, Any] = field(default_factory=dict)
 
+    effective_stats_json: Optional[str] = None # For storing calculated effective stats as JSON
+
 
     def __post_init__(self):
-        print(f"Character.__post_init__: Character {self.id} initialized. self.location_id: {self.location_id}, type: {type(self.location_id)}")
+        # print(f"Character.__post_init__: Character {self.id} initialized. self.location_id: {self.location_id}, type: {type(self.location_id)}")
         # Ensure basic stats are present if not provided, especially health/max_health
         # This also helps bridge the gap if health/max_health were not in stats from older data.
+        if not isinstance(self.stats, dict): # Ensure stats is a dict
+            self.stats = {}
+
         if 'hp' not in self.stats:
             self.stats['hp'] = self.hp
         else:
-            self.hp = float(self.stats['hp'])
+            try: self.hp = float(self.stats['hp'])
+            except (ValueError, TypeError): self.hp = 100.0 # Default if conversion fails
 
         if 'max_health' not in self.stats:
             self.stats['max_health'] = self.max_health
         else:
-            self.max_health = float(self.stats['max_health'])
-        
+            try: self.max_health = float(self.stats['max_health'])
+            except (ValueError, TypeError): self.max_health = 100.0 # Default
+
         # Ensure mana and intelligence are present for spellcasting if not already
         if 'mana' not in self.stats:
-            self.stats['mana'] = self.stats.get('max_mana', 50) # Default mana if not set
-        if 'max_mana' not in self.stats: # Assuming max_mana is a stat
+            self.stats['mana'] = self.stats.get('max_mana', 50)
+        if 'max_mana' not in self.stats:
             self.stats['max_mana'] = self.stats.get('mana', 50)
         if 'intelligence' not in self.stats:
-            self.stats['intelligence'] = 10 # Default intelligence
+            self.stats['intelligence'] = 10
 
     @property
     def name(self) -> str:
@@ -103,149 +111,230 @@ class Character:
         """Helper to provide a dictionary structure for get_i18n_text for the name property."""
         return {"name_i18n": self.name_i18n, "id": self.id}
 
-
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> Character:
-        """Creates a Character instance from a dictionary."""
-        if 'guild_id' not in data:
-            raise ValueError("Missing 'guild_id' key in data for Character.from_dict")
-        if 'id' not in data or 'discord_user_id' not in data:
-            raise ValueError("Missing core fields (id, discord_user_id) for Character.from_dict")
+    def from_db_model(cls, db_model: Any) -> Character: # db_model is CharacterDBModel from .database.models
+        """Creates a Pydantic Character instance from a CharacterDBModel (SQLAlchemy) instance."""
+        if not db_model:
+            raise ValueError("db_model cannot be None for Character.from_db_model")
 
-        if 'name_i18n' not in data:
-            if 'name' in data: # Backwards compatibility if only 'name' (string) is provided
-                print(f"Warning: Character '{data.get('id')}' is missing 'name_i18n', creating from 'name'. Consider updating data source.")
-                data['name_i18n'] = {'en': data['name']} # Default to English
-            else: # If neither name_i18n nor name is present
-                print(f"Warning: Character '{data.get('id')}' is missing 'name_i18n' and 'name'. Using ID as fallback name.")
-                data['name_i18n'] = {'en': data['id']}
+        data = {field_name: getattr(db_model, field_name, None) for field_name in cls.__annotations__}
+
+        # Handle JSON string fields that need parsing
+        json_fields = ["stats", "inventory", "status_effects", "spell_cooldowns",
+                       "skills_data", "abilities_data", "spells_data", "flags",
+                       "state_variables", "name_i18n", "current_action", "action_queue", "effective_stats_json"]
+
+        for field_name in json_fields:
+            json_str_val = getattr(db_model, field_name, None)
+            if isinstance(json_str_val, str):
+                try:
+                    data[field_name] = json.loads(json_str_val)
+                except json.JSONDecodeError:
+                    # Default to empty dict/list based on expected type if parsing fails
+                    if field_name in ["inventory", "status_effects", "skills_data", "abilities_data", "spells_data"]:
+                        data[field_name] = []
+                    else:
+                        data[field_name] = {}
+                    # print(f"Warning: Character '{db_model.id}' has malformed JSON in '{field_name}'. Using default.")
+            elif json_str_val is None: # If None in DB, ensure correct default for Pydantic model
+                 if field_name in ["inventory", "status_effects", "skills_data", "abilities_data", "spells_data"]: data[field_name] = []
+                 elif field_name == "effective_stats_json": data[field_name] = None # This specific field is Optional[str]
+                 else: data[field_name] = {}
 
 
-        # Populate known fields, providing defaults for new/optional ones if missing in data
-        init_data = {
-            'id': data.get('id'),
-            'discord_user_id': data.get('discord_user_id'),
-            # 'name' is now a property, not passed to __init__
-            'name_i18n': data.get('name_i18n'),
-            'guild_id': data.get('guild_id'),
-            'selected_language': data.get('selected_language', "en"), # Default to "en"
-            'location_id': data.get('current_location_id', data.get('location_id')),
-            'stats': data.get('stats', {}), # Will be processed below
-            'inventory': data.get('inventory', []),
-            'current_action': data.get('current_action'),
-            'action_queue': data.get('action_queue', []),
-            'party_id': data.get('party_id'),
-            'state_variables': data.get('state_variables', {}),
-            'hp': float(data.get('hp', 100.0)),
-            'max_health': float(data.get('max_health', 100.0)),
-            'is_alive': bool(data.get('is_alive', True)),
-            'status_effects': data.get('status_effects', []),
-            'level': int(data.get('level', 1)),
-            'experience': int(data.get('experience', 0)),
-            'unspent_xp': int(data.get('unspent_xp', 0)),
-            'active_quests': data.get('active_quests', []),
-            
-            'known_spells': data.get('known_spells', []),
-            'spell_cooldowns': data.get('spell_cooldowns', {}),
+        # Ensure required fields that might not be direct DB columns are set and correctly typed
+        data['id'] = str(db_model.id) if db_model.id is not None else str(uuid.uuid4())
+        data['discord_user_id'] = int(db_model.discord_user_id) if db_model.discord_user_id is not None else 0
+        data['guild_id'] = str(db_model.guild_id) if db_model.guild_id is not None else "default_guild"
+        data['selected_language'] = str(db_model.selected_language or "en")
+        data['location_id'] = str(db_model.location_id) if db_model.location_id is not None else None
 
-            # Updated/New fields
-            'skills_data': data.get('skills_data', []), # Expecting list from manager
-            'abilities_data': data.get('abilities_data', []), # Expecting list from manager
-            'spells_data': data.get('spells_data', []), # Expecting list from manager
-            'character_class': data.get('character_class'),
-            'flags': data.get('flags', {}), # Expecting dict from manager (was List[str] before)
-            'gold': int(data.get('gold', 0)),
+        try: data['hp'] = float(db_model.hp) if db_model.hp is not None else 100.0
+        except (ValueError, TypeError): data['hp'] = 100.0
+        try: data['max_health'] = float(db_model.max_health) if db_model.max_health is not None else 100.0
+        except (ValueError, TypeError): data['max_health'] = 100.0
+        try: data['level'] = int(db_model.level) if db_model.level is not None else 1
+        except (ValueError, TypeError): data['level'] = 1
+        try: data['experience'] = int(db_model.xp) if db_model.xp is not None else 0 # map xp from DB to experience
+        except (ValueError, TypeError): data['experience'] = 0
+        try: data['unspent_xp'] = int(db_model.unspent_xp) if db_model.unspent_xp is not None else 0
+        except (ValueError, TypeError): data['unspent_xp'] = 0
+        try: data['gold'] = int(db_model.gold) if db_model.gold is not None else 0
+        except (ValueError, TypeError): data['gold'] = 0
 
-            # Old fields that might be populated by manager for backward compatibility from DB
-            'skills': data.get('skills', {}),
-            'known_abilities': data.get('known_abilities', []),
+        data['is_alive'] = bool(db_model.is_alive) if db_model.is_alive is not None else True
 
-            # 'selected_language' moved up
-            'current_game_status': data.get('current_game_status'),
-            'collected_actions_json': data.get('collected_actions_json', data.get('собранные_действия_JSON')), # Handle old key
-            'current_party_id': data.get('current_party_id'),
-        }
-        
-        # Ensure stats is a dictionary
-        if isinstance(init_data['stats'], str):
-            try:
-                init_data['stats'] = json.loads(init_data['stats'])
-            except json.JSONDecodeError:
-                print(f"Warning: Character '{init_data.get('id')}' has malformed JSON in 'stats'. Using empty dict.")
-                init_data['stats'] = {}
-        elif not isinstance(init_data['stats'], dict):
-            print(f"Warning: Character '{init_data.get('id')}' has 'stats' that is not a dict or string. Using empty dict.")
-            init_data['stats'] = {}
+        # Ensure name_i18n is a dict; if not, provide a default
+        name_i18n_val = data.get('name_i18n')
+        if not isinstance(name_i18n_val, dict) or not name_i18n_val:
+            # Fallback if name_i18n is missing or not a dict. Use db_model.name if it exists, else id.
+            default_name = getattr(db_model, 'name', None) or str(data['id'])
+            data['name_i18n'] = {'en': str(default_name)}
 
-        # If stats from data doesn't have health/max_health, use the top-level ones
-        if 'hp' not in init_data['stats'] and 'hp' in init_data :
-             init_data['stats']['hp'] = init_data['hp']
-        if 'max_health' not in init_data['stats'] and 'max_health' in init_data:
-             init_data['stats']['max_health'] = init_data['max_health']
-        print(f"Character.from_dict: Initializing Character {init_data.get('id')}. location_id in init_data: {init_data.get('location_id')}, type: {type(init_data.get('location_id'))}")
+
+        # Ensure other dict/list fields default to empty if None, before passing to dataclass __init__
+        # This is critical for non-Optional dataclass fields expecting dict/list.
+        list_fields_non_optional = ['inventory', 'status_effects', 'active_quests', 'known_spells', 'skills_data', 'abilities_data', 'spells_data', 'action_queue', 'known_abilities']
+        dict_fields_non_optional = ['stats', 'spell_cooldowns', 'flags', 'state_variables']
+
+        for lf in list_fields_non_optional:
+            if data.get(lf) is None: data[lf] = []
+        for df in dict_fields_non_optional:
+            if data.get(df) is None: data[df] = {}
+
+        # collected_actions_json is Optional[str], so None is fine.
+        data['collected_actions_json'] = getattr(db_model, 'collected_actions_json', None)
+
+
+        model_fields = cls.__annotations__.keys()
+        init_data = {k: v for k, v in data.items() if k in model_fields}
+
+        # Final check for any non-optional fields in dataclass that are still None in init_data
+        # This is a safeguard; ideally, the logic above should handle all cases.
+        for f_name, f_type in cls.__annotations__.items():
+            if not (str(f_type).startswith("typing.Optional") or str(f_type).startswith("Optional")):
+                if init_data.get(f_name) is None:
+                    # Provide a sensible default based on type hint if possible
+                    if f_type == str: init_data[f_name] = ""
+                    elif f_type == int: init_data[f_name] = 0
+                    elif f_type == float: init_data[f_name] = 0.0
+                    elif f_type == bool: init_data[f_name] = False
+                    elif f_type == list or str(f_type).startswith("List") or str(f_type).startswith("typing.List"): init_data[f_name] = []
+                    elif f_type == dict or str(f_type).startswith("Dict") or str(f_type).startswith("typing.Dict"): init_data[f_name] = {}
+                    # else: raise ValueError(f"Non-optional field {f_name}: {f_type} is None and no default provided in from_db_model")
+
+
         return cls(**init_data)
 
+    def to_db_dict(self) -> Dict[str, Any]:
+        """Converts the Pydantic Character instance to a dictionary suitable for CharacterDBModel."""
+        # Use __dict__ from dataclass instance for direct field values
+        db_dict = self.__dict__.copy()
+
+        # Fields that need to be JSON strings for the database
+        json_string_fields = [
+            "stats", "inventory", "status_effects", "spell_cooldowns",
+            "skills_data", "abilities_data", "spells_data", "flags",
+            "state_variables", "name_i18n", "current_action", "action_queue", "effective_stats_json"
+        ]
+        for field_name in json_string_fields:
+            if field_name in db_dict and db_dict[field_name] is not None:
+                db_dict[field_name] = json.dumps(db_dict[field_name])
+            elif field_name == "effective_stats_json": # This one can be None
+                 db_dict[field_name] = None
+            else: # For other fields that might be None but DB expects string (e.g. "[]" or "{}")
+                # Default to empty JSON string if None, unless it's truly nullable in DB
+                # For simplicity, let's assume most are "{}", "[]" if not None
+                if field_name in ["inventory", "status_effects", "skills_data", "abilities_data", "spells_data"]:
+                    db_dict[field_name] = json.dumps(db_dict.get(field_name) or [])
+                else:
+                    db_dict[field_name] = json.dumps(db_dict.get(field_name) or {})
+
+
+        # Map Pydantic field names to DB column names if they differ
+        # Example: Pydantic 'experience' maps to DB 'xp'
+        if 'experience' in db_dict:
+            db_dict['xp'] = db_dict.pop('experience')
+
+        # Remove fields from db_dict that are not direct columns in CharacterDBModel
+        # (e.g., 'name' property if it's not a column)
+        db_model_columns = [
+            "id", "discord_user_id", "name_i18n", "guild_id", "selected_language",
+            "location_id", "stats", "inventory", "current_action", "action_queue",
+            "party_id", "state_variables", "hp", "max_health", "is_alive",
+            "status_effects", "level", "xp", "unspent_xp", "active_quests",
+            "known_spells", "spell_cooldowns", "skills_data", "abilities_data",
+            "spells_data", "character_class", "flags", "gold", "skills", "known_abilities",
+            "current_game_status", "collected_actions_json", "current_party_id",
+            "player_id", "effective_stats_json" # player_id is a DB column
+        ]
+        final_db_dict = {k: v for k, v in db_dict.items() if k in db_model_columns}
+
+        return final_db_dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Character: # Kept for compatibility if used elsewhere
+        """Creates a Character instance from a dictionary. (Legacy or for non-DB sources)"""
+        # This from_dict is more for generic dicts, not specifically DB models
+        # The new from_db_model is preferred for SQLAlchemy instances.
+
+        # Simplified: assumes data keys match dataclass fields mostly.
+        # More robust parsing/validation might be needed if structure varies wildly.
+
+        # Ensure essential IDs are present and correctly typed
+        data['id'] = str(data.get('id', uuid.uuid4()))
+        data['discord_user_id'] = int(data.get('discord_user_id', 0))
+        data['guild_id'] = str(data.get('guild_id', 'unknown_guild'))
+
+        # Handle name_i18n carefully
+        if 'name_i18n' not in data or not isinstance(data['name_i18n'], dict):
+            name_val = data.get('name', data['id']) # Fallback to name, then id
+            data['name_i18n'] = {'en': str(name_val)}
+
+        # Default selected_language
+        data['selected_language'] = data.get('selected_language', 'en')
+
+        # Ensure numeric types
+        for key in ['hp', 'max_health']:
+            data[key] = float(data.get(key, 100.0))
+        for key in ['level', 'experience', 'unspent_xp', 'gold']:
+            data[key] = int(data.get(key, 0 if key != 'level' else 1))
+        data['is_alive'] = bool(data.get('is_alive', True))
+
+        # Ensure list/dict types for JSON-like fields
+        list_fields = ['inventory', 'status_effects', 'active_quests', 'known_spells',
+                       'skills_data', 'abilities_data', 'spells_data', 'known_abilities', 'action_queue']
+        dict_fields = ['stats', 'spell_cooldowns', 'flags', 'state_variables', 'current_action']
+
+        for lf in list_fields:
+            val = data.get(lf)
+            if isinstance(val, str): data[lf] = json.loads(val) if val else []
+            elif not isinstance(val, list): data[lf] = []
+
+        for df in dict_fields:
+            val = data.get(df)
+            if isinstance(val, str): data[df] = json.loads(val) if val else {}
+            elif not isinstance(val, dict): data[df] = {}
+
+        # Ensure location_id is string or None
+        loc_id = data.get('location_id', data.get('current_location_id'))
+        data['location_id'] = str(loc_id) if loc_id is not None else None
+
+        # Filter to only include fields defined in the dataclass
+        model_fields = cls.__annotations__.keys()
+        init_data = {k: v for k, v in data.items() if k in model_fields}
+
+        # print(f"Character.from_dict (generic): Initializing Character {init_data.get('id')}. location_id: {init_data.get('location_id')}")
+        return cls(**init_data)
+
+
     def to_dict(self) -> Dict[str, Any]:
-        """Converts the Character instance to a dictionary for serialization."""
-        # Ensure stats reflects current health/max_health before saving
-        if self.stats is None: self.stats = {}
+        """Converts the Character instance to a dictionary for general serialization."""
+        if self.stats is None: self.stats = {} # Ensure stats is not None
         self.stats['hp'] = self.hp
         self.stats['max_health'] = self.max_health
-        
-        # name_i18n is the source of truth. The 'name' property handles dynamic lookup.
-        # When serializing, we primarily need name_i18n.
-        # Including 'name' (the resolved one) can be useful for debugging or direct display if lang is fixed.
+
         return {
-            "id": self.id,
-            "discord_user_id": self.discord_user_id,
-            "name": self.name, # Include the resolved name for convenience
-            "name_i18n": self.name_i18n,
-            "guild_id": self.guild_id,
-            "selected_language": self.selected_language,
-            "location_id": self.location_id,
-            "stats": self.stats,
-            "inventory": self.inventory, # Assuming items are dicts or simple serializable objects
-            "current_action": self.current_action,
-            "action_queue": self.action_queue,
-            "party_id": self.party_id,
-            "state_variables": self.state_variables,
-            "hp": self.hp, # Redundant if always in stats, but good for direct access
-            "max_health": self.max_health, # Redundant if always in stats
-            "is_alive": self.is_alive,
-            "status_effects": self.status_effects,
-            "level": self.level,
-            "experience": self.experience,
-            "unspent_xp": self.unspent_xp,
-            "active_quests": self.active_quests,
-            "known_spells": self.known_spells,
-            "spell_cooldowns": self.spell_cooldowns,
-            
-            # Updated/New fields
-            "skills_data": self.skills_data,
-            "abilities_data": self.abilities_data,
-            "spells_data": self.spells_data,
-            "character_class": self.character_class, # Was char_class before, standardizing to character_class
-            "flags": self.flags, # Now Dict[str, bool]
-            "gold": self.gold,
-
-            # Old fields that might still be part of the model for some reason (review if needed)
-            "skills": self.skills, # Potentially redundant
-            "known_abilities": self.known_abilities, # Potentially redundant
-
-            "selected_language": self.selected_language,
+            "id": self.id, "discord_user_id": self.discord_user_id,
+            "name": self.name, "name_i18n": self.name_i18n, "guild_id": self.guild_id,
+            "selected_language": self.selected_language, "location_id": self.location_id,
+            "stats": self.stats, "inventory": self.inventory,
+            "current_action": self.current_action, "action_queue": self.action_queue,
+            "party_id": self.party_id, "state_variables": self.state_variables,
+            "hp": self.hp, "max_health": self.max_health, "is_alive": self.is_alive,
+            "status_effects": self.status_effects, "level": self.level,
+            "experience": self.experience, "unspent_xp": self.unspent_xp,
+            "active_quests": self.active_quests, "known_spells": self.known_spells,
+            "spell_cooldowns": self.spell_cooldowns, "skills_data": self.skills_data,
+            "abilities_data": self.abilities_data, "spells_data": self.spells_data,
+            "character_class": self.character_class, "flags": self.flags, "gold": self.gold,
+            "skills": self.skills, "known_abilities": self.known_abilities,
             "current_game_status": self.current_game_status,
-            "collected_actions_json": self.collected_actions_json, # Using standardized key
+            "collected_actions_json": self.collected_actions_json,
             "current_party_id": self.current_party_id,
+            "effective_stats_json": self.effective_stats_json
         }
 
     def clear_collected_actions(self) -> None:
         """Clears the collected_actions_json attribute."""
         self.collected_actions_json = None
-
-    # TODO: Other methods for character logic, e.g.,
-    # def take_damage(self, amount: float): ...
-    # def heal(self, amount: float): ...
-    # def add_item_to_inventory(self, item_data: Dict[str, Any]): ...
-    # def learn_new_spell(self, spell_id: str): ...
-    # def set_cooldown(self, spell_id: str, cooldown_end_time: float): ...
-    # def get_skill_level(self, skill_name: str) -> int: ...

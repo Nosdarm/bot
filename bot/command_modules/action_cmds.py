@@ -9,6 +9,8 @@ from bot.utils.i18n_utils import get_i18n_text
 from bot.game.models.action_request import ActionRequest
 from bot.database.models import Player
 from bot.database.crud_utils import get_entity_by_attributes, update_entity
+# RPGBot will be imported conditionally for TYPE_CHECKING to avoid circular dependencies at runtime for setup
+# from bot.bot_core import RPGBot
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
@@ -232,6 +234,6 @@ class ActionModuleCog(commands.Cog, name="Action Commands Module"):
                 msg_content = str(result_dict.get("message")) # Ensure message is str
             await interaction.followup.send(msg_content, ephemeral=True)
 
-async def setup(bot: RPGBot): # Changed BotCore to RPGBot
+async def setup(bot: 'RPGBot'): # Changed BotCore to RPGBot, and quoted RPGBot
     await bot.add_cog(ActionModuleCog(bot))
     print("ActionModuleCog loaded.")

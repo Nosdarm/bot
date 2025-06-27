@@ -3,6 +3,8 @@ import asyncio
 # import time # Unused
 import json
 from unittest.mock import AsyncMock, MagicMock, patch, call, ANY
+from typing import cast
+
 
 from bot.game.turn_processing_service import TurnProcessingService
 from bot.game.action_scheduler import GuildActionScheduler

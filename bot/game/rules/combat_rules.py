@@ -209,7 +209,7 @@ async def process_attack(
         "log_messages": [], "crit": False, "actor_id": actor_id, "target_id": target_id
     }
     log_messages = outcome_summary["log_messages"]
-    guild_id = rules_config.get("guild_id", "default_guild")
+    guild_id = str(rules_config.get("guild_id", "default_guild")) # Ensure guild_id is string
 
     actor_entity: Optional[Any] = None
     if actor_type == "Character": actor_entity = await character_manager.get_character(guild_id, actor_id)
@@ -264,7 +264,13 @@ async def process_attack(
     log_messages.append(attack_check_result.description)
     if attack_check_result.details_log.get('is_critical') and attack_check_result.details_log.get('crit_status'):
         outcome_summary["crit"] = True
-    await game_log_manager.add_log_entry(f"Combat: {attack_check_result.description}", "combat_details")
+
+    # Ensure game_log_manager is not None before calling methods
+    if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+        await game_log_manager.log_event(guild_id, "combat_details", details={"message": f"Combat: {attack_check_result.description}"})
+    elif game_log_manager: # Fallback for older add_log_entry if log_event is not found
+        await game_log_manager.add_log_entry(f"Combat: {attack_check_result.description}", "combat_details")
+
 
     if not attack_check_result.succeeded:
         outcome_summary["hit"] = False
@@ -319,7 +325,10 @@ async def process_attack(
             outcome_summary["target_hp_after"] = new_hp
 
     log_messages.append(f"{target_name} {hp_stat_name}: {target_current_hp:.2f} -> {new_hp:.2f}.")
-    await game_log_manager.add_log_entry(f"Combat: {target_name} takes {total_damage:.2f} damage. {hp_stat_name}: {target_current_hp:.2f} -> {new_hp:.2f}", "combat_results")
+    if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+        await game_log_manager.log_event(guild_id, "combat_results", details={"message": f"Combat: {target_name} takes {total_damage:.2f} damage. {hp_stat_name}: {target_current_hp:.2f} -> {new_hp:.2f}"})
+    elif game_log_manager:
+        await game_log_manager.add_log_entry(f"Combat: {target_name} takes {total_damage:.2f} damage. {hp_stat_name}: {target_current_hp:.2f} -> {new_hp:.2f}", "combat_results")
     return outcome_summary
 
 async def process_saving_throw(
@@ -328,14 +337,17 @@ async def process_saving_throw(
     npc_manager: 'NpcManager', game_log_manager: 'GameLogManager',
     effect_description: Optional[str] = "an effect"
 ) -> CheckResult:
-    guild_id = rules_config.get("guild_id", "default_guild")
+    guild_id = str(rules_config.get("guild_id", "default_guild")) # Ensure guild_id is string
     entity_object: Optional[Any] = None
     if entity_type == "Character": entity_object = await character_manager.get_character(guild_id, entity_id)
     elif entity_type == "NPC": entity_object = await npc_manager.get_npc(guild_id, entity_id)
 
     if not entity_object:
         error_description = f"Entity {entity_id} ({entity_type}) not found for saving throw against {effect_description} (DC {dc})."
-        await game_log_manager.add_log_entry(error_description, "error_combat")
+        if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+            await game_log_manager.log_event(guild_id, "error_combat", details={"message": error_description})
+        elif game_log_manager:
+            await game_log_manager.add_log_entry(error_description, "error_combat")
         return CheckResult(
             succeeded=False,
             roll_value=0,
@@ -376,7 +388,10 @@ async def process_saving_throw(
         f"{entity_name} attempts a {save_type} saving throw against {effect_description}. "
         f"{saving_throw_result.description}"
     )
-    await game_log_manager.add_log_entry(saving_throw_result.description, "combat_save")
+    if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+        await game_log_manager.log_event(guild_id, "combat_save", details={"message": saving_throw_result.description})
+    elif game_log_manager:
+        await game_log_manager.add_log_entry(saving_throw_result.description, "combat_save")
     return saving_throw_result
 
 async def apply_status_effect(
@@ -394,9 +409,13 @@ async def apply_status_effect(
     requires_save_info: Optional[Dict[str, Any]] = None,
     current_game_time: float = 0.0
 ) -> bool:
-    guild_id = rules_config.get("guild_id", "default_guild")
+    guild_id = str(rules_config.get("guild_id", "default_guild")) # Ensure guild_id is string
     log_prefix = f"ApplyStatus ({status_template_id}) on {target_type} {target_id}:"
-    await game_log_manager.add_log_entry(f"{log_prefix} Initiating application.", "status_debug")
+    if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+        await game_log_manager.log_event(guild_id, "status_debug", details={"message": f"{log_prefix} Initiating application."})
+    elif game_log_manager:
+        await game_log_manager.add_log_entry(f"{log_prefix} Initiating application.", "status_debug")
+
 
     actual_duration_rounds: Optional[int] = duration_override_rounds
     status_effect_rules = rules_config.get("combat_rules", {}).get("status_effects", {})
@@ -411,7 +430,10 @@ async def apply_status_effect(
         effect_on_save = requires_save_info.get("effect_on_save", "negate")
 
         if not save_type or not isinstance(save_dc, int):
-            await game_log_manager.add_log_entry(f"{log_prefix} Invalid requires_save_info: {requires_save_info}", "error_combat")
+            if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+                await game_log_manager.log_event(guild_id, "error_combat", details={"message": f"{log_prefix} Invalid requires_save_info: {requires_save_info}"})
+            elif game_log_manager:
+                await game_log_manager.add_log_entry(f"{log_prefix} Invalid requires_save_info: {requires_save_info}", "error_combat")
             return False
 
         save_effect_desc = f"resisting {status_template_id}"
@@ -421,27 +443,42 @@ async def apply_status_effect(
             npc_manager=npc_manager, game_log_manager=game_log_manager,
             effect_description=save_effect_desc
         )
+        if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+            await game_log_manager.log_event(guild_id, "status_debug", details={"message":f"{log_prefix} Save attempt result: {save_result.description}"})
+        elif game_log_manager:
+            await game_log_manager.add_log_entry(f"{log_prefix} Save attempt result: {save_result.description}", "status_debug")
 
-        await game_log_manager.add_log_entry(f"{log_prefix} Save attempt result: {save_result.description}", "status_debug")
 
-        if save_result.succeeded: # Changed from is_success to succeeded
+        if save_result.succeeded:
             if effect_on_save == "negate":
-                await game_log_manager.add_log_entry(f"{log_prefix} Successfully saved and negated.", "status_info")
+                if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+                    await game_log_manager.log_event(guild_id, "status_info", details={"message":f"{log_prefix} Successfully saved and negated."})
+                elif game_log_manager:
+                    await game_log_manager.add_log_entry(f"{log_prefix} Successfully saved and negated.", "status_info")
                 return True
             elif effect_on_save == "half_duration":
                 if actual_duration_rounds is not None:
                     actual_duration_rounds = max(1, actual_duration_rounds // 2)
-                await game_log_manager.add_log_entry(f"{log_prefix} Saved for half duration. New duration: {actual_duration_rounds} rounds.", "status_info")
+                if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+                    await game_log_manager.log_event(guild_id, "status_info", details={"message":f"{log_prefix} Saved for half duration. New duration: {actual_duration_rounds} rounds."})
+                elif game_log_manager:
+                     await game_log_manager.add_log_entry(f"{log_prefix} Saved for half duration. New duration: {actual_duration_rounds} rounds.", "status_info")
 
-    if actual_duration_rounds is None:
+
+    if actual_duration_rounds is None: # Should not be None if logic above is correct, but as a fallback
         actual_duration_rounds = default_duration_rounds_config
-        await game_log_manager.add_log_entry(f"{log_prefix} Duration override was None, and save didn't set it. Defaulting to {actual_duration_rounds} rounds.", "warning_combat")
+        if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+            await game_log_manager.log_event(guild_id, "warning_combat", details={"message":f"{log_prefix} Duration override was None, and save didn't set it. Defaulting to {actual_duration_rounds} rounds."})
+        elif game_log_manager:
+            await game_log_manager.add_log_entry(f"{log_prefix} Duration override was None, and save didn't set it. Defaulting to {actual_duration_rounds} rounds.", "warning_combat")
+
 
     combat_settings = rules_config.get("combat_settings", {})
     round_duration_seconds = float(combat_settings.get("round_duration_seconds", 6.0))
     final_duration_seconds = actual_duration_rounds * round_duration_seconds
 
-    applied_successfully = await status_manager.add_status_effect(
+    # Changed from add_status_effect to apply_status
+    applied_successfully = await status_manager.apply_status(
         guild_id=guild_id,
         target_id=target_id,
         target_type=target_type,
@@ -453,10 +490,16 @@ async def apply_status_effect(
     )
 
     if applied_successfully:
-        await game_log_manager.add_log_entry(f"{log_prefix} Applied via StatusManager with duration {final_duration_seconds:.2f}s ({actual_duration_rounds} rounds).", "status_info")
+        if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+            await game_log_manager.log_event(guild_id, "status_info", details={"message":f"{log_prefix} Applied via StatusManager with duration {final_duration_seconds:.2f}s ({actual_duration_rounds} rounds)."})
+        elif game_log_manager:
+            await game_log_manager.add_log_entry(f"{log_prefix} Applied via StatusManager with duration {final_duration_seconds:.2f}s ({actual_duration_rounds} rounds).", "status_info")
         return True
     else:
-        await game_log_manager.add_log_entry(f"{log_prefix} Failed to apply via StatusManager.", "error_combat")
+        if game_log_manager and hasattr(game_log_manager, 'log_event') and callable(getattr(game_log_manager, 'log_event')):
+            await game_log_manager.log_event(guild_id, "error_combat", details={"message":f"{log_prefix} Failed to apply via StatusManager."})
+        elif game_log_manager:
+            await game_log_manager.add_log_entry(f"{log_prefix} Failed to apply via StatusManager.", "error_combat")
         return False
 
 async def process_direct_damage(

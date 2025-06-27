@@ -3,8 +3,9 @@ from typing import Optional, Dict, Any, List
 
 # Placeholder for actual user model and retrieval - for testing purposes
 class User:
-    id: str
-    roles: List[str]
+    def __init__(self, id: str, roles: List[str]): # Added __init__
+        self.id = id
+        self.roles = roles
 
 async def get_current_active_user_placeholder() -> User:
     # In a real app, this would decode a token or get session user
@@ -959,7 +960,7 @@ async def run_simulation(
                 max_rounds=sim_params.get('max_rounds', 50)
             )
             if raw_report_data:
-                formatted_report_str = formatter.format_battle_report(raw_report_data, payload.language)
+                formatted_report_str = formatter.format_battle_report(raw_report_data, payload.language or "en")
 
         elif payload.simulation_type == "quest":
             quest_definitions = getattr(game_mngr.quest_manager, 'get_all_quest_definitions', lambda gid: {})(guild_id)
@@ -975,14 +976,13 @@ async def run_simulation(
                 max_stages=sim_params.get('max_stages', 20)
             )
             if raw_report_data:
-                formatted_report_str = formatter.format_quest_report(raw_report_data, payload.language)
+                formatted_report_str = formatter.format_quest_report(raw_report_data, payload.language or "en")
 
         elif payload.simulation_type == "action_consequence":
             simulator = ActionConsequenceModeler(guild_id, game_mngr.character_manager, game_mngr.npc_manager,
                                                  game_mngr.rule_engine, game_mngr.relationship_manager, game_mngr.event_manager)
-            # Ensure action_description is a dict, not a string, if the modeler expects a dict.
             action_desc = sim_params.get('action_description', {})
-            if isinstance(action_desc, str): # Basic check, might need more robust parsing if stringified JSON is possible
+            if isinstance(action_desc, str):
                 try: action_desc = json.loads(action_desc)
                 except json.JSONDecodeError: raise HTTPException(status_code=400, detail="action_description must be a valid JSON object if provided as string.")
 
@@ -994,42 +994,40 @@ async def run_simulation(
                 target_type=sim_params.get('target_type'),
                 rules_config_override_data=sim_params.get('rules_config_override_data')
             )
-            if raw_report_data_list: # This simulator returns a List[Dict]
-                formatted_report_str = formatter.format_action_consequence_report(raw_report_data_list, payload.language)
-                # For logging, we'll store the list as the 'report' value.
-                # For the response, SimulationReportResponse expects raw_report: Dict.
-                # We'll wrap the list in a dict for consistency or adjust the response model.
-                # For now, wrapping:
+            if raw_report_data_list:
+                formatted_report_str = formatter.format_action_consequence_report(raw_report_data_list, payload.language or "en")
+                # Ensure raw_report_data for logging and response is a Dict
                 raw_report_data = {"consequences": raw_report_data_list}
+            else: # Ensure raw_report_data is not None if list is empty or None
+                raw_report_data = {"consequences": []}
 
 
         else:
             raise HTTPException(status_code=400, detail=f"Unknown simulation type: {payload.simulation_type}")
 
-        if raw_report_data is None and raw_report_data_list is None: # if simulation didn't produce data
-             raise HTTPException(status_code=500, detail="Simulation did not produce any data.")
+        # Ensure raw_report_data is always a dict for logging and response consistency
+        if raw_report_data is None: # Handles cases where battle/quest might return None
+            raw_report_data = {}
+        elif not isinstance(raw_report_data, dict): # Safety net if something unexpected happens
+             logger.warning(f"Simulation type {payload.simulation_type} produced non-dict raw_report_data: {type(raw_report_data)}. Wrapping/defaulting.")
+             raw_report_data = {"data": raw_report_data}
 
 
         log_details = {
             "report_id": report_id,
             "simulation_type": payload.simulation_type,
             "params": payload.params,
-            "report_data": raw_report_data if raw_report_data is not None else raw_report_data_list, # Log the actual raw data structure
+            "report_data": raw_report_data,
             "run_by_api": True,
             "admin_id": getattr(request.state, "current_user_id", "unknown_api_user")
         }
         await game_mngr.game_log_manager.log_event(guild_id, "master_api_simulation_run", log_details)
 
-        # Ensure raw_report for the response is a Dict[str, Any]
-        final_raw_report_for_response = raw_report_data if raw_report_data is not None else \
-                                       ({"consequences": raw_report_data_list} if raw_report_data_list is not None else {})
-
-
         return SimulationReportResponse(
             report_id=report_id,
             simulation_type=payload.simulation_type,
             formatted_report=formatted_report_str,
-            raw_report=final_raw_report_for_response
+            raw_report=raw_report_data # Now consistently a Dict
         )
 
     except HTTPException:
@@ -1114,26 +1112,19 @@ async def get_simulation_report(
         elif simulation_type == "action_consequence":
              # Action consequence report_data might be a list of outcomes (wrapped in a dict for storage)
             if isinstance(raw_report_data, dict) and "consequences" in raw_report_data and isinstance(raw_report_data["consequences"], list):
-                formatted_report_str = formatter.format_action_consequence_report(raw_report_data["consequences"], language)
-            elif isinstance(raw_report_data, list): # If stored directly as list (older logs?)
-                formatted_report_str = formatter.format_action_consequence_report(raw_report_data, language)
+                formatted_report_str = formatter.format_action_consequence_report(raw_report_data["consequences"], language or "en")
+            # No direct list handling here, as raw_report_data should now always be a dict from the run_simulation logic
             else:
-                 raise HTTPException(status_code=500, detail=f"Invalid raw report format for action_consequence simulation '{report_id}'. Expected list or dict with 'consequences' list.")
+                 raise HTTPException(status_code=500, detail=f"Invalid raw report format for action_consequence simulation '{report_id}'. Expected dict with 'consequences' list.")
         else:
-            formatted_report_str = formatter.format_generic_report(raw_report_data, language)
-
-        # Ensure raw_report for the response is Dict[str, Any]
-        # If raw_report_data was a list (e.g. for action_consequence from older logs), wrap it.
-        final_raw_report_for_response = raw_report_data
-        if isinstance(raw_report_data, list):
-            final_raw_report_for_response = {"consequences": raw_report_data}
+            formatted_report_str = formatter.format_generic_report(raw_report_data, language or "en")
 
 
         return SimulationReportResponse(
             report_id=report_id,
             simulation_type=simulation_type,
             formatted_report=formatted_report_str,
-            raw_report=final_raw_report_for_response
+            raw_report=raw_report_data # raw_report_data is already guaranteed to be a dict
         )
 
     except HTTPException:
@@ -1762,31 +1753,46 @@ async def compare_simulation_reports(
             "total_rounds": raw_report2.get("total_rounds"),
             "participants_summary": raw_report2.get("participants_summary", [])
         }
+        # Ensure metrics are dicts before access
+        m1_data = raw_report1 if isinstance(raw_report1, dict) else {}
+        m2_data = raw_report2 if isinstance(raw_report2, dict) else {}
+
+        m1 = comparison_details_dict["report_1_metrics"] = {
+            "winning_team": m1_data.get("winning_team"),
+            "total_rounds": m1_data.get("total_rounds"),
+            "participants_summary": m1_data.get("participants_summary", [])
+        }
+        m2 = comparison_details_dict["report_2_metrics"] = {
+            "winning_team": m2_data.get("winning_team"),
+            "total_rounds": m2_data.get("total_rounds"),
+            "participants_summary": m2_data.get("participants_summary", [])
+        }
         if m1["winning_team"] != m2["winning_team"]:
             comparison_details_dict["diff"]["winning_team"] = {"report_1": m1["winning_team"], "report_2": m2["winning_team"]}
         if m1["total_rounds"] != m2["total_rounds"]:
             comparison_details_dict["diff"]["total_rounds"] = {"report_1": m1["total_rounds"], "report_2": m2["total_rounds"]}
-        # Further diff for participants could be added here (e.g. survivor count diff)
 
     elif sim_type1 == "quest":
+        m1_data = raw_report1 if isinstance(raw_report1, dict) else {}
+        m2_data = raw_report2 if isinstance(raw_report2, dict) else {}
         m1 = comparison_details_dict["report_1_metrics"] = {
-            "final_status": raw_report1.get("final_status"),
-            "stages_simulated_count": raw_report1.get("stages_simulated_count"),
-            "final_stage_reached": raw_report1.get("final_stage_reached")
+            "final_status": m1_data.get("final_status"),
+            "stages_simulated_count": m1_data.get("stages_simulated_count"),
+            "final_stage_reached": m1_data.get("final_stage_reached")
         }
         m2 = comparison_details_dict["report_2_metrics"] = {
-            "final_status": raw_report2.get("final_status"),
-            "stages_simulated_count": raw_report2.get("stages_simulated_count"),
-            "final_stage_reached": raw_report2.get("final_stage_reached")
+            "final_status": m2_data.get("final_status"),
+            "stages_simulated_count": m2_data.get("stages_simulated_count"),
+            "final_stage_reached": m2_data.get("final_stage_reached")
         }
-        for key in m1:
-            if m1[key] != m2.get(key):
-                comparison_details_dict["diff"][key] = {"report_1": m1[key], "report_2": m2.get(key)}
+        for key_metric in m1:
+            if m1[key_metric] != m2.get(key_metric):
+                comparison_details_dict["diff"][key_metric] = {"report_1": m1[key_metric], "report_2": m2.get(key_metric)}
 
     elif sim_type1 == "action_consequence":
         # raw_report for action_consequence is {"consequences": List[Dict]}
-        outcomes1 = raw_report1.get("consequences", []) if isinstance(raw_report1, dict) else (raw_report1 if isinstance(raw_report1, list) else [])
-        outcomes2 = raw_report2.get("consequences", []) if isinstance(raw_report2, dict) else (raw_report2 if isinstance(raw_report2, list) else [])
+        outcomes1 = raw_report1.get("consequences", []) if isinstance(raw_report1, dict) else []
+        outcomes2 = raw_report2.get("consequences", []) if isinstance(raw_report2, dict) else []
 
         comparison_details_dict["report_1_metrics"]["outcomes"] = outcomes1
         comparison_details_dict["report_2_metrics"]["outcomes"] = outcomes2
@@ -1798,7 +1804,8 @@ async def compare_simulation_reports(
         comparison_details_dict["error"] = f"Comparison for simulation type '{sim_type1}' is not implemented."
 
     formatter = SimpleReportFormatter(game_mngr, guild_id)
-    formatted_comparison_str = formatter.format_comparison_report(comparison_details_dict, sim_type1, payload.language)
+    formatted_comparison_str = formatter.format_comparison_report(comparison_details_dict, str(sim_type1), payload.language or "en")
+
 
     # Log the comparison action
     log_details_compare = {

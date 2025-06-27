@@ -393,64 +393,10 @@ class CoreGameRulesConfig(BaseModel):
     shop_type_defaults: Dict[str, 'ShopTypeDefaultSettings'] = Field(default_factory=dict, description="Default settings for different types of shops.")
     location_type_definitions: Optional[Dict[str, Dict[str, str]]] = Field(default_factory=dict, description="Definitions for location types, e.g., {'deep_forest': {'en': 'Deep Forest', 'ru': 'Глубокий Лес'}}")
 
-# The following definitions are duplicates and will be removed.
-# class ItemRarityDefinition(BaseModel):
-#     id: str
-#     name_i18n: Dict[str, str]
-#     color_code: Optional[str] = None
-#     price_modifier: float = Field(default=1.0, description="Multiplier for base item value based on this rarity.")
-#     drop_chance_modifier: Optional[float] = Field(default=None, description="Modifier for drop chances, if applicable.")
-
-# class ItemTypeDefinition(BaseModel):
-#     id: str
-#     name_i18n: Dict[str, str]
-#     base_value: Optional[int] = Field(default=None, description="Default base value for items of this type, before rarity or other modifiers.")
-#     compatible_slots: Optional[List[str]] = Field(default_factory=list, description="List of equipment slot IDs if items of this type are equippable.")
-#     properties_on_create: Optional[List[str]] = Field(default_factory=list, description="List of ItemProperty IDs to typically associate with new items of this type.")
-
-# class ShopInventoryItemRule(BaseModel):
-#     item_template_id: Optional[str] = None
-#     item_type_id: Optional[str] = None # Link to ItemTypeDefinition.id
-#     item_rarity_id_max: Optional[str] = None # Max rarity to stock for this type
-#     quantity_dice: str = Field(default="1") # e.g., "1", "1d4", "2d6"
-#     chance_to_stock: float = Field(default=1.0, ge=0, le=1.0)
-
-# class ShopRestockRule(BaseModel):
-#     restock_interval_hours: Optional[int] = Field(default=24)
-#     reset_inventory_to_defaults: bool = Field(default=False, description="If true, completely resets inventory based on rules. If false, only adds missing items.")
-#     individual_item_restock_chance: float = Field(default=0.75, ge=0, le=1.0, description="Chance for each defined item slot to restock if not resetting all.")
-
-# class ShopTypeDefaultSettings(BaseModel):
-#     shop_type_id: str # e.g., "general_store", "blacksmith", "alchemist"
-#     name_i18n: Dict[str, str]
-#     inventory_rules: List[ShopInventoryItemRule] = Field(default_factory=list)
-#     buy_markup: float = Field(default=1.2, description="Default markup when shop sells to player (e.g., 1.2 means 20% markup from item's calculated value).")
-#     sell_markdown: float = Field(default=0.8, description="Default markdown when shop buys from player (e.g., player gets 80% of item's calculated value).")
-#     restock_rules: Optional[ShopRestockRule] = None
-
-# # --- End Economic Parameters Schemas ---
-
-# class CoreGameRulesConfig(BaseModel):
-#     """
-#     Defines the structure for core game mechanics rules, stored in the RulesConfig DB model.
-#     This is distinct from GameRules which is for AI validation.
-#     """
-#     checks: Dict[str, CheckDefinition] = Field(default_factory=dict)
-#     damage_types: Dict[str, DamageTypeDefinition] = Field(default_factory=dict)
-#     xp_rules: Optional[XPRule] = None
-#     loot_tables: Dict[str, LootTableDefinition] = Field(default_factory=dict)
-#     action_conflicts: List[ActionConflictDefinition] = Field(default_factory=list)
-#     location_interactions: Dict[str, LocationInteractionDefinition] = Field(default_factory=dict)
-
-#     # New sections for effects and base stats
-#     base_stats: Dict[str, BaseStatDefinition] = Field(default_factory=dict, description="Definitions for base character stats like STR, DEX etc.")
-#     equipment_slots: Dict[str, EquipmentSlotDefinition] = Field(default_factory=dict, description="Defines available equipment slots on a character.")
-#     item_effects: Dict[str, ItemEffectDefinition] = Field(default_factory=dict, description="Reusable item effects, keyed by an effect ID or item template ID.")
-#     status_effects: Dict[str, StatusEffectDefinition] = Field(default_factory=dict, description="Definitions for status effects, keyed by status ID.")
-#     relation_rules: List[RelationChangeRule] = Field(default_factory=list, description="Rules defining how relationships change based on game events.")
-#     relationship_influence_rules: List[RelationshipInfluenceRule] = Field(default_factory=list, description="Rules defining how relationship strengths influence game mechanics.")
-
-#     # Economic Parameters
-#     item_rarities: Dict[str, 'ItemRarityDefinition'] = Field(default_factory=dict, description="Definitions for item rarities.")
-#     item_types: Dict[str, 'ItemTypeDefinition'] = Field(default_factory=dict, description="Definitions for base item types.")
-#     shop_type_defaults: Dict[str, 'ShopTypeDefaultSettings'] = Field(default_factory=dict, description="Default settings for different types of shops.")
+# Ensure forward references are updated if Pydantic v2 style is used throughout
+# For Pydantic V2, model_rebuild can be used if forward refs are complex,
+# but string annotations usually work.
+CoreGameRulesConfig.model_rebuild()
+ItemRarityDefinition.model_rebuild()
+ItemTypeDefinition.model_rebuild()
+ShopTypeDefaultSettings.model_rebuild()

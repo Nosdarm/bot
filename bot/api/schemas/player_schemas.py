@@ -20,7 +20,7 @@ class CharacterBasicResponse(BaseModel): # A basic representation for lists
 
 class PlayerBase(BaseModel):
     discord_id: Optional[str] = Field(default=None, description="Player's Discord User ID")
-    name_i18n: Dict[str, str] = Field(default=..., description="Player's name (nickname/pseudonym), i18n JSON object", example={"en": "PlayerOne", "ru": "ИгрокОдин"})
+    name_i18n: Dict[str, str] = Field(..., description="Player's name (nickname/pseudonym), i18n JSON object", example={"en": "PlayerOne", "ru": "ИгрокОдин"})
     selected_language: Optional[str] = Field(default=None, description="Player's preferred language code (e.g., 'en', 'ru')")
     is_active: Optional[bool] = Field(default=True, description="Whether the player account is active")
     # Guild_id will be required in PlayerCreate schema as per requirements.
@@ -34,7 +34,7 @@ class PlayerBase(BaseModel):
 
 
 class PlayerCreate(PlayerBase):
-    discord_id: str = Field(default=..., description="Player's Discord User ID")
+    discord_id: str = Field(..., description="Player's Discord User ID") # Mark as required
     # guild_id: str = Field(..., description="Guild ID this player record belongs to") # Removed, will be taken from path
     # name_i18n is inherited from PlayerBase
 

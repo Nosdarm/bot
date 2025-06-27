@@ -190,45 +190,56 @@ async def calculate_effective_stats(
     # ... (conceptual placeholder as in prompt)
 
     # 4. Derived Stats Calculation
-    con_val = effective_stats.get("constitution", 10)
-    dex_val = effective_stats.get("dexterity", 10)
-    str_val = effective_stats.get("strength", 10)
-    int_val = effective_stats.get("intelligence", 10)
+    # Ensure all values used in calculations are numbers, defaulting if necessary
+    con_val = int(effective_stats.get("constitution", 10))
+    dex_val = int(effective_stats.get("dexterity", 10))
+    str_val = int(effective_stats.get("strength", 10))
+    int_val = int(effective_stats.get("intelligence", 10))
 
     con_mod = (con_val - 10) // 2
     dex_mod = (dex_val - 10) // 2
     str_mod = (str_val - 10) // 2
     int_mod = (int_val - 10) // 2
 
-    base_hp_rule = await game_manager.get_rule(guild_id, "rules.combat.base_hp", 10)
-    hp_per_con_point_rule = await game_manager.get_rule(guild_id, "rules.combat.hp_per_con_point", 2)
-    effective_stats["max_hp"] = int(base_hp_rule) + (con_val * int(hp_per_con_point_rule)) + effective_stats.get("bonus_max_hp", 0)
+    base_hp_rule_val = await game_manager.get_rule(guild_id, "rules.combat.base_hp", 10)
+    hp_per_con_point_rule_val = await game_manager.get_rule(guild_id, "rules.combat.hp_per_con_point", 2)
+    bonus_max_hp_val = int(effective_stats.get("bonus_max_hp", 0))
+    effective_stats["max_hp"] = int(base_hp_rule_val) + (con_val * int(hp_per_con_point_rule_val)) + bonus_max_hp_val
 
-    base_ac_rule = await game_manager.get_rule(guild_id, "rules.combat.base_ac", 10)
-    effective_stats["armor_class"] = int(base_ac_rule) + dex_mod + bonuses.get("armor_class_bonus", 0)
+    base_ac_rule_val = await game_manager.get_rule(guild_id, "rules.combat.base_ac", 10)
+    armor_class_bonus_val = int(bonuses.get("armor_class_bonus", 0))
+    effective_stats["armor_class"] = int(base_ac_rule_val) + dex_mod + armor_class_bonus_val
 
-    level = int(effective_stats.get("level", getattr(entity, 'level', 1))) # Get level from stats or entity default 1
-    if not isinstance(level, int) or level < 1: level = 1 # Ensure level is at least 1 for calculations
-
-    proficiency_bonus_per_level_rule = await game_manager.get_rule(guild_id, "rules.character.proficiency_bonus_per_level", 0.25)
-    base_proficiency_bonus = await game_manager.get_rule(guild_id, "rules.character.base_proficiency_bonus", 2)
-    proficiency_bonus = int(base_proficiency_bonus) + int((level -1) * float(proficiency_bonus_per_level_rule))
-
-
-    effective_stats["attack_bonus_melee"] = str_mod + proficiency_bonus + bonuses.get("attack_bonus_melee", 0)
-    effective_stats["attack_bonus_ranged"] = dex_mod + proficiency_bonus + bonuses.get("attack_bonus_ranged", 0)
-    effective_stats["damage_bonus_melee"] = str_mod + bonuses.get("damage_bonus_melee", 0) # Typically Str/Dex mod for damage, no PB
-    effective_stats["damage_bonus_ranged"] = dex_mod + bonuses.get("damage_bonus_ranged", 0)
+    level_val = 1
+    try:
+        level_val = int(effective_stats.get("level", getattr(entity, 'level', 1)))
+        if level_val < 1: level_val = 1
+    except (ValueError, TypeError):
+        logger.warning(f"StatsCalculator: Could not parse level for entity {entity.id}. Defaulting to 1.")
+        level_val = 1
 
 
-    spell_dc_base_rule = await game_manager.get_rule(guild_id, "rules.magic.spell_dc_base", 8)
-    effective_stats["spell_save_dc"] = int(spell_dc_base_rule) + proficiency_bonus + int_mod
-    # Example for spell attack bonus
+    proficiency_bonus_per_level_rule_val = await game_manager.get_rule(guild_id, "rules.character.proficiency_bonus_per_level", 0.25)
+    base_proficiency_bonus_val = await game_manager.get_rule(guild_id, "rules.character.base_proficiency_bonus", 2)
+    proficiency_bonus = int(base_proficiency_bonus_val) + int((level_val -1) * float(proficiency_bonus_per_level_rule_val))
+
+    attack_bonus_melee_val = int(bonuses.get("attack_bonus_melee", 0))
+    effective_stats["attack_bonus_melee"] = str_mod + proficiency_bonus + attack_bonus_melee_val
+
+    attack_bonus_ranged_val = int(bonuses.get("attack_bonus_ranged", 0))
+    effective_stats["attack_bonus_ranged"] = dex_mod + proficiency_bonus + attack_bonus_ranged_val
+
+    damage_bonus_melee_val = int(bonuses.get("damage_bonus_melee", 0))
+    effective_stats["damage_bonus_melee"] = str_mod + damage_bonus_melee_val
+
+    damage_bonus_ranged_val = int(bonuses.get("damage_bonus_ranged", 0))
+    effective_stats["damage_bonus_ranged"] = dex_mod + damage_bonus_ranged_val
+
+    spell_dc_base_rule_val = await game_manager.get_rule(guild_id, "rules.magic.spell_dc_base", 8)
+    effective_stats["spell_save_dc"] = int(spell_dc_base_rule_val) + proficiency_bonus + int_mod
     effective_stats["spell_attack_bonus"] = proficiency_bonus + int_mod
 
-
-    # Add proficiency bonus itself to stats if needed by other systems
     effective_stats["proficiency_bonus"] = proficiency_bonus
 
-    logger.debug(f"StatsCalculator: Calculated effective stats for entity {entity.id}: {effective_stats}")
+    logger.debug(f"StatsCalculator: Calculated effective stats for entity {getattr(entity, 'id', 'Unknown')}: {effective_stats}")
     return effective_stats

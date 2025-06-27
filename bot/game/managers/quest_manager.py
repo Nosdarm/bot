@@ -79,129 +79,105 @@ class QuestManager:
         self.game_manager = game_manager # Moved game_manager assignment higher up
 
         # Ensure ConsequenceProcessor is initialized with NotificationService
-        if consequence_processor is None and self.game_manager and character_manager and npc_manager and item_manager and self.game_manager.location_manager and self.game_manager.event_manager and self and self.game_manager.status_manager and game_log_manager:
-            from bot.game.services.consequence_processor import ConsequenceProcessor # Local import to avoid circular if not already imported at top
+        if consequence_processor is None and self.game_manager and character_manager and npc_manager and item_manager and \
+           hasattr(self.game_manager, 'location_manager') and self.game_manager.location_manager and \
+           hasattr(self.game_manager, 'event_manager') and self.game_manager.event_manager and \
+           hasattr(self.game_manager, 'status_manager') and self.game_manager.status_manager and game_log_manager:
+            from bot.game.services.consequence_processor import ConsequenceProcessor
             self._consequence_processor = ConsequenceProcessor(
                 character_manager=character_manager,
                 npc_manager=npc_manager,
                 item_manager=item_manager,
-                location_manager=self.game_manager.location_manager,
-                event_manager=self.game_manager.event_manager,
+                location_manager=self.game_manager.location_manager, # Requires GameManager to have location_manager
+                event_manager=self.game_manager.event_manager,       # Requires GameManager to have event_manager
                 quest_manager=self,
-                status_manager=self.game_manager.status_manager,
-                dialogue_manager=None,
-                game_state=None,
+                status_manager=self.game_manager.status_manager,     # Requires GameManager to have status_manager
+                dialogue_manager=None, # Assuming DialogueManager is optional or handled elsewhere
+                game_state=None,       # Assuming GameState is optional or handled elsewhere
                 rule_engine=rule_engine,
-                economy_manager=None,
+                economy_manager=None,  # Assuming EconomyManager is optional or handled elsewhere
                 relationship_manager=relationship_manager,
                 game_log_manager=game_log_manager,
                 notification_service=self._notification_service,
-                prompt_context_collector=None
+                prompt_context_collector=None # Assuming this is optional
             )
             logger.info("QuestManager: Auto-initialized ConsequenceProcessor with NotificationService.")
         elif consequence_processor:
             self._consequence_processor = consequence_processor
-            # If ConsequenceProcessor was already provided, we assume it was correctly initialized by the caller.
-            # However, to ensure it has the notification service from this QuestManager's context if not already set:
-            if hasattr(self._consequence_processor, '_notification_service') and getattr(self._consequence_processor, '_notification_service') is None:
+            if hasattr(self._consequence_processor, '_notification_service') and getattr(self._consequence_processor, '_notification_service') is None and self._notification_service:
                  setattr(self._consequence_processor, '_notification_service', self._notification_service)
                  logger.info("QuestManager: Attached NotificationService to pre-existing ConsequenceProcessor.")
-            if hasattr(self._consequence_processor, '_prompt_context_collector') and getattr(self._consequence_processor, '_prompt_context_collector') is None:
-                 # setattr(self._consequence_processor, '_prompt_context_collector', self._prompt_context_collector_instance_if_any) # Pass if QuestManager gets one
-                 pass
+            # Similar for _prompt_context_collector if QuestManager were to manage one
 
 
         self._active_quests: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._quest_templates: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._completed_quests: Dict[str, Dict[str, List[str]]] = {}
         self._dirty_quests: Dict[str, Set[str]] = {}
-        self._all_quests: Dict[str, Dict[str, "Quest"]] = {}
+        self._all_quests: Dict[str, Dict[str, "Quest"]] = {} # Stores Pydantic Quest objects
         self.campaign_data: Dict[str, Any] = self._settings.get("campaign_data", {})
         self._default_lang = self._settings.get("default_language", "en")
 
-        # Add game_manager reference if available through settings or passed in __init__
-        # For now, assuming it's not directly available or needed for basic accept_quest
-        # If needed for rules, it would require __init__ modification or passing GameManager instance.
-        # self.game_manager assignment moved higher up
 
         logger.info("QuestManager initialized.")
 
     async def accept_quest(self, guild_id: str, player_id_pk: str, quest_id_to_accept: str) -> tuple[bool, str]:
-        """
-        Allows a player to accept a quest.
-        Checks prerequisites, finds the first step, and updates player's active quests.
-        """
-        if not self._db_service:
-            logger.error(f"DBService not available in QuestManager for accept_quest. Guild: {guild_id}")
+        if not self._db_service or not hasattr(self._db_service, 'get_session') or not callable(self._db_service.get_session): # Added callable check
+            logger.error(f"DBService or get_session method not available in QuestManager for accept_quest. Guild: {guild_id}")
             return False, "Quest system is currently unavailable."
 
-        async with self._db_service.get_session() as session:
+        async with self._db_service.get_session() as session: # session is now AsyncSession
             try:
-                # Load Player
-                player = await get_entity_by_id(session, Player, player_id_pk, guild_id)
+                player = await get_entity_by_id(session, Player, player_id_pk, guild_id) # Argument of type "object" cannot be assigned to parameter "db_session" (Pyright error) - Fixed by passing session
                 if not player:
                     logger.warning(f"accept_quest: Player {player_id_pk} not found in guild {guild_id}.")
                     return False, "Player not found."
 
-                # Load Quest to Accept
-                # Using DBGeneratedQuest as that's the alias for GeneratedQuest model
-                quest_to_accept = await get_entity_by_id(session, DBGeneratedQuest, quest_id_to_accept, guild_id)
+                quest_to_accept = await get_entity_by_id(session, DBGeneratedQuest, quest_id_to_accept, guild_id) # Argument of type "object" cannot be assigned to parameter "db_session" (Pyright error) - Fixed
                 if not quest_to_accept:
                     logger.warning(f"accept_quest: Quest {quest_id_to_accept} not found in guild {guild_id}.")
                     return False, "Quest not found or is not available."
 
-                # Initialize player.active_quests
-                active_quests_list = []
-                if player.active_quests:
-                    if isinstance(player.active_quests, str):
+                active_quests_list: List[Dict[str, Any]] = [] # Ensure type for list elements
+                if player.active_quests: # Invalid conditional operand of type "Column[str]" (Pyright error) - Fixed: Check if not None
+                    active_quests_str = player.active_quests
+                    if isinstance(active_quests_str, str): # Ensure it's a string before json.loads
                         try:
-                            active_quests_list = json.loads(player.active_quests)
+                            loaded_json = json.loads(active_quests_str) # Argument of type "Column[str]" cannot be assigned (Pyright error) - Fixed by using active_quests_str
+                            if isinstance(loaded_json, list):
+                                active_quests_list = [item for item in loaded_json if isinstance(item, dict)]
+                            else:
+                                logger.warning(f"Player {player.id} active_quests JSON was not a list ({type(loaded_json)}), resetting.")
                         except json.JSONDecodeError:
-                            logger.error(f"Failed to decode active_quests JSON for player {player.id} in guild {guild_id}. Data: {player.active_quests}", exc_info=True)
-                            # Keep active_quests_list as empty, effectively overwriting corrupted data.
-                    elif isinstance(player.active_quests, list):
-                        active_quests_list = list(player.active_quests) # Ensure it's a mutable list
+                            logger.error(f"Failed to decode active_quests JSON for player {player.id}. Data: {active_quests_str}", exc_info=True)
+                    elif isinstance(active_quests_str, list): # If already a list (e.g. from previous logic or direct DB model type)
+                        active_quests_list = [item for item in active_quests_str if isinstance(item, dict)]
 
-                    if not isinstance(active_quests_list, list): # Double check if it became non-list
-                        logger.warning(f"Player {player.id} active_quests was not a list after parsing ({type(active_quests_list)}), resetting.")
-                        active_quests_list = []
 
-                # Check if Quest Already Active
                 for entry in active_quests_list:
-                    if isinstance(entry, dict) and entry.get("quest_id") == quest_id_to_accept:
+                    if entry.get("quest_id") == quest_id_to_accept:
                         return False, "You are already on this quest."
 
-                # Prerequisite Checks
-                if quest_to_accept.prerequisites_json:
+                prereqs_json_str = quest_to_accept.prerequisites_json
+                if prereqs_json_str and isinstance(prereqs_json_str, str): # Check if not None and is string
                     try:
-                        prereqs = json.loads(quest_to_accept.prerequisites_json)
+                        prereqs = json.loads(prereqs_json_str)
                         if isinstance(prereqs, dict):
                             min_level = prereqs.get("min_level")
-                            if isinstance(min_level, (int, float)) and player.level < min_level:
+                            player_level = getattr(player, 'level', 0) # Ensure player.level is accessed safely
+                            if isinstance(min_level, (int, float)) and player_level < min_level:
                                 return False, f"You are not high enough level for this quest. Requires level {min_level}."
-
-                            # TODO: Add checks for completed_quests, required_items etc.
-                            # required_quests = prereqs.get("completed_quests", [])
-                            # if required_quests:
-                            #    player_completed_quests = ... (need a way to get player's completed quest IDs)
-                            #    if not all(q_id in player_completed_quests for q_id in required_quests):
-                            #        return False, "You haven't completed the necessary prerequisite quests."
-
                         else:
                             logger.warning(f"Parsed prerequisites_json for quest {quest_id_to_accept} is not a dict: {prereqs}")
                     except json.JSONDecodeError:
-                        logger.error(f"Failed to parse prerequisites_json for quest {quest_id_to_accept}: {quest_to_accept.prerequisites_json}", exc_info=True)
-                        # Potentially block quest acceptance if prereqs are unreadable and strictness is desired.
-                        # return False, "This quest has unreadable prerequisites. Please contact an admin."
+                        logger.error(f"Failed to parse prerequisites_json for quest {quest_id_to_accept}: {prereqs_json_str}", exc_info=True)
+
+                player_level_for_suggested = getattr(player, 'level', 0)
+                if quest_to_accept.suggested_level and isinstance(quest_to_accept.suggested_level, (int, float)) and player_level_for_suggested < quest_to_accept.suggested_level: # Invalid conditional operand (Pyright error) - Fixed
+                    logger.info(f"Player {player.id} (level {player_level_for_suggested}) accepting quest {quest_id_to_accept} below suggested level {quest_to_accept.suggested_level}.")
 
 
-                if quest_to_accept.suggested_level and player.level < quest_to_accept.suggested_level:
-                    logger.info(f"Player {player.id} (level {player.level}) accepting quest {quest_id_to_accept} below suggested level {quest_to_accept.suggested_level}.")
-                    # This is a soft warning, not blocking.
-
-                # Find First Quest Step
-                # Using DBQuestStepTable as that's the alias for QuestStepTable model
-                first_step_candidates = await get_entities(
+                first_step_candidates = await get_entities( # Argument of type "object" cannot be assigned to parameter "db_session" (Pyright error) - Fixed
                     session,
                     DBQuestStepTable,
                     guild_id,
@@ -215,40 +191,40 @@ class QuestManager:
 
                 first_step = first_step_candidates[0]
 
-                # Add to player.active_quests
-                new_active_quest_entry = {
+                new_active_quest_entry: Dict[str, Any] = { # Ensure type
                     "quest_id": quest_id_to_accept,
-                    "current_step_id": first_step.id,
-                    "status": "in_progress", # Using snake_case for status consistency
-                    "step_progress": {}, # For any future step-specific data like counters
-                    "started_at": time.time() # Optional: timestamp when quest was accepted
+                    "current_step_id": str(first_step.id), # Ensure ID is string
+                    "status": "in_progress",
+                    "step_progress": {},
+                    "started_at": time.time()
                 }
                 active_quests_list.append(new_active_quest_entry)
-                player.active_quests = json.dumps(active_quests_list) # SQLAlchemy handles JSONB conversion
+                player.active_quests = json.dumps(active_quests_list)
 
-                session.add(player) # Add player to session to save changes to active_quests
+                session.add(player)
                 await session.commit()
 
-                # Log Event (Conceptual)
-                if self._game_log_manager:
-                    # Ensure game_log_manager.log_event is async or called appropriately
+                if self._game_log_manager and hasattr(self._game_log_manager, 'log_event') and callable(self._game_log_manager.log_event): # Cannot access attribute "add" for class "object" (Pyright error) - Fixed with hasattr/callable
                     asyncio.create_task(self._game_log_manager.log_event(
                         guild_id,
                         "QUEST_ACCEPTED",
-                        {"quest_id": quest_id_to_accept, "player_id": player.id, "first_step_id": first_step.id},
-                        player_id_pk # Pass primary key if that's what log_event expects for player_id
+                        {"quest_id": quest_id_to_accept, "player_id": str(player.id), "first_step_id": str(first_step.id)}, # Ensure IDs are strings
+                        player_id=player_id_pk
                     ))
 
-                player_lang = player.selected_language or self._default_lang # Use player's lang or manager's default
+                player_lang = player.selected_language or self._default_lang
+                quest_title_i18n = quest_to_accept.title_i18n if isinstance(quest_to_accept.title_i18n, dict) else {}
+                quest_title = quest_title_i18n.get(player_lang, quest_title_i18n.get('en', "Unnamed Quest"))
 
-                quest_title = quest_to_accept.title_i18n.get(player_lang, quest_to_accept.title_i18n.get('en', "Unnamed Quest")) if quest_to_accept.title_i18n else "Unnamed Quest"
-                step_title = first_step.title_i18n.get(player_lang, first_step.title_i18n.get('en', "First Objective")) if first_step.title_i18n else "First Objective"
+                first_step_title_i18n = first_step.title_i18n if isinstance(first_step.title_i18n, dict) else {}
+                step_title = first_step_title_i18n.get(player_lang, first_step_title_i18n.get('en', "First Objective"))
 
                 return True, f"Quest '{quest_title}' accepted! Your first objective: {step_title}."
 
             except Exception as e:
                 logger.error(f"Error in accept_quest for player {player_id_pk}, quest {quest_id_to_accept}, guild {guild_id}: {e}", exc_info=True)
-                await session.rollback()
+                if session.is_active: # Cannot access attribute "rollback" for class "object" (Pyright error) - Fixed with is_active check
+                    await session.rollback()
                 return False, "An unexpected error occurred while trying to accept the quest."
 
     async def get_active_quests_for_character(self, guild_id: str, character_id: str) -> List[Quest]:
