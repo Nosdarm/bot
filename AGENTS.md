@@ -874,3 +874,95 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **`StatusManager` Method Call:** Changed `status_manager.add_status_effect(...)` to `await status_manager.apply_status(...)`.
     - **`CheckResult` Property:** Changed `save_result.succeeded` (which was already correct from a previous hypothetical fix) to ensure it's used instead of any legacy `save_result.is_success`.
     - **Type Safety:** Ensured `guild_id` derived from `rules_config` is explicitly cast to `str` where needed. Ensured numerical operations are performed on values that are confirmed or safely converted to numbers.
+
+## Pyright Error Fixing Phase (Batch 46 - bot/game/managers/quest_manager.py focus from pyright_errors_part_1.txt)
+- **Focus:** Addressing 35 errors in `bot/game/managers/quest_manager.py` as listed in `pyright_errors_part_1.txt`.
+- **Strategy:** Corrected `AsyncSession` usage, SQLAlchemy column operations, async/await calls, method signatures, attribute access, and ensured services are properly initialized/accessed.
+- **Batch 46 Fixes (35 errors in `bot/game/managers/quest_manager.py`):**
+    - **`__init__`:**
+        - Ensured `ConsequenceProcessor` initialization checks for existence of dependent managers on `self.game_manager` (e.g., `location_manager`, `event_manager`, `status_manager`) using `hasattr` before access.
+        - If `consequence_processor` is passed in, ensured `_notification_service` is attached if missing.
+    - **`accept_quest`:**
+        - Added `callable` check for `self._db_service.get_session`.
+        - Ensured `session` from `async with self._db_service.get_session() as session:` is used for `get_entity_by_id` and `get_entities`.
+        - Safely handled `player.active_quests` (which might be a SQLAlchemy `Column[str]`) by assigning its value to a local string variable before `json.loads`. Ensured the loaded JSON is a list and items are dicts.
+        - Similarly handled `quest_to_accept.prerequisites_json`.
+        - Safely accessed `player.level` using `getattr`.
+        - Ensured IDs (e.g., `first_step.id`, `player.id`) are cast to `str` when used in dictionary values for logging or JSON serialization.
+        - Added `hasattr` and `callable` checks for `self._game_log_manager.log_event`.
+        - Ensured `quest_to_accept.title_i18n` and `first_step.title_i18n` are treated as dictionaries before `.get()`.
+        - Checked `session.is_active` before `session.rollback()`.
+    - **`get_active_quests_for_character` & `get_completed_quests_for_character`:**
+        - Ensured that when reconstructing `Quest` or `QuestStep` from cached dictionaries using `from_dict`, necessary fields like `guild_id` and `quest_id` are provided if potentially missing from the cached dict.
+    - **`_load_all_quests_from_db` & `save_generated_quest`:**
+        - Ensured `guild_id` is added to log messages.
+        - Handled JSON string fields being parsed to dicts if necessary before passing to `Quest.from_dict`.
+        - Ensured `quest.id` and `quest.guild_id` are set on `step_obj` before saving steps.
+    - **`start_quest_from_moderated_data`:** Added `await` for `self._consequence_processor.process_consequences`.
+    - **`_evaluate_abstract_goal`:** Corrected call to `self._rule_engine.evaluate_conditions` (it's synchronous, removed `await`) and passed `eval_context` as `context`.
+    - **`handle_player_event_for_quest`:**
+        - Merged previously obscured methods into a single `async` method.
+        - Added `await` for `self._evaluate_abstract_goal` and `self.complete_quest`.
+    - **`complete_quest` (async):** Added `await` for DB execute and `log_event`.
+    - **`fail_quest`:** Noted that the DB update call inside this synchronous method is problematic as it uses `asyncio.create_task`. This addresses the immediate Pyright error but is a design concern for proper error handling and execution flow.
+    - **`generate_and_save_quest`:** Added `await` before `prompt_generator.prepare_quest_generation_prompt`, `openai_service.get_completion`, and `validator.parse_and_validate_quest_generation_response`. Ensured correct session handling for DB operations.
+
+## Pyright Error Fixing Phase (Batch 47 - Group 1 of ~200 errors from pyright_errors_part_1.txt)
+- **Focus:** Addressing 217 errors across 7 files:
+    - `bot/command_modules/party_cmds.py` (34 errors)
+    - `tests/commands/test_game_setup_cmds.py` (34 errors)
+    - `bot/ai/multilingual_prompt_generator.py` (32 errors)
+    - `tests/commands/test_settings_cmds.py` (32 errors)
+    - `bot/game/character_processors/character_action_processor.py` (30 errors)
+    - `tests/core/test_bot_events_and_basic_commands.py` (29 errors)
+    - `bot/game/managers/combat_manager.py` (26 errors)
+- **Strategy:** Iteratively fix errors in each file, focusing on common patterns like imports, async/await, attribute access on optional/mocked objects, and correct parameter passing.
+- **Batch 47 Fixes:**
+    - **`bot/command_modules/party_cmds.py` (34 errors):**
+        - Corrected model import paths (e.g., `Player` from `bot.database.models.player`).
+        - Ensured safe access to `game_mngr` and its sub-managers (`db_service`, `character_manager`, `party_manager`, `location_manager`) using `getattr` and `None` checks, casting after checks.
+        - Initialized potentially unbound local variables (e.g., `player_account`, `disbanding_character_id`).
+        - Added `await` for all async manager calls.
+        - Ensured entity IDs are consistently passed as strings.
+    - **`tests/commands/test_game_setup_cmds.py` (34 errors):**
+        - Updated `mock_rpg_bot_with_game_manager_for_setup` fixture: `game_mngr.db_service` uses `spec=crud_utils.DBService`, `get_session` correctly mocked as async context manager. `character_manager` and `get_rule` on `game_mngr` are `AsyncMock`.
+        - Used `cast(AsyncMock, ...)` for `game_mngr` and `mock_interaction.followup.send`.
+        - Corrected patch target for `create_entity` to `bot.command_modules.game_setup_cmds.create_entity`.
+        - Patched `execute` on the mocked session instance: `game_mngr.db_service.get_session.return_value.__aenter__.return_value`.
+        - Updated `create_new_character` assertion to include `player_id` and `initial_location_id`.
+        - Ignored type for app command `callback` calls.
+    - **`bot/ai/multilingual_prompt_generator.py` (32 errors):**
+        - Changed `prompt_templates_config` type hint to `Dict[str, Dict[str, Any]]`.
+        - Made `generation_context` serialization in `_build_full_prompt_for_openai` more robust.
+        - Refined `target_languages` population in `prepare_ai_prompt`.
+        - Corrected parameter passing to `self.multilingual_prompt_generator.prepare_ai_prompt` in `prepare_ai_prompt` by using `**prepare_prompt_args`.
+        - Added `isinstance` check in `get_prompt_template`.
+        - Added `await` for `game_manager.get_rule` and DB calls (`get_entity_by_id`, `get_entity_by_attributes`, `get_entities`).
+        - Added `None` checks and safe attribute access for fetched entities and i18n fields.
+    - **`tests/commands/test_settings_cmds.py` (32 errors):**
+        - `MockRPGBot` now inherits `commands.Bot`, `game_manager` is optional and defaults to `AsyncMock`. `db_service.get_session` setup improved. `bot.get_db_session` now points to `game_manager.db_service.get_session`.
+        - Fixtures renamed (e.g., `mock_game_manager_fixture`). `mock_bot_instance_fixture` initializes `MockRPGBot` correctly.
+        - App command callbacks for grouped commands are now correctly retrieved using `next(cmd for cmd in settings_cog.settings_set_group.walk_commands() if cmd.name == "...")`.
+        - Used `cast(AsyncMock, ...)` for mock interaction responses.
+        - Patched `user_settings_crud` functions at `bot.command_modules.settings_cmds.user_settings_crud`.
+    - **`bot/game/character_processors/character_action_processor.py` (30 errors):**
+        - Added `await` to DB transaction methods (`begin_transaction`, etc.) and other async manager calls.
+        - Ensured `None` checks and `hasattr/callable` for optional managers and their methods.
+        - Standardized `GameLogManager` usage to `await log_event`, passing `details` dict.
+        - Corrected parameter types/values for `_item_manager.use_item` and `_location_interaction_service.process_interaction`.
+        - Made `is_busy` async and awaited its internal calls.
+        - Ensured string IDs and correct `guild_id` passing.
+    - **`tests/core/test_bot_events_and_basic_commands.py` (29 errors):**
+        - `MockRPGBot` improved: `game_manager.db_service.get_session` correctly mocked as async context manager.
+        - Patched `initialize_new_guild` at `bot.game.guild_initializer.initialize_new_guild`.
+        - Used `ANY` for session assertion in `on_guild_join` test.
+        - Correctly invoked app command callbacks for grouped commands (e.g., `settings_cog.set_language.callback`).
+        - Cast `mock_interaction.response.send_message` for assertions.
+    - **`bot/game/managers/combat_manager.py` (26 errors):**
+        - Replaced `print` with `logger` calls, adding `guild_id` context.
+        - Added `await` for async manager calls (e.g., `npc_manager.get_npc`, `rule_engine.check_combat_end_conditions`).
+        - Corrected `GameLogManager` usage to prefer `log_event` with `details` dict, falling back to `add_log_entry` if needed.
+        - Ensured safe dictionary access for stats (e.g., `actor_stats.get("strength", 10)`).
+        - Corrected `status_manager.add_status_effect` to `await status_manager.apply_status`.
+        - Ensured `guild_id` is consistently string.
+        - Fixed JSON loading/dumping for DB persistence of combat state.
