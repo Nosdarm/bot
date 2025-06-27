@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional # Added Optional
 
 from bot.ai.ai_data_models import (
     GeneratedLocationContent,
@@ -10,7 +10,7 @@ from bot.ai.ai_data_models import (
     GeneratedNpcInventoryItem,
     GeneratedNpcFactionAffiliation,
     GeneratedNpcRelationship,
-    validate_i18n_field # For testing context
+    validate_i18n_field
 )
 
 # --- Helper Functions for Test Data ---
@@ -59,9 +59,9 @@ def get_valid_generated_npc_profile_data(template_id: str = "npc_guard_template"
         "skills": {"one_handed_sword": 3, "block": 2},
         "abilities": ["power_attack"],
         "spells": [],
-        "inventory": [get_valid_npc_inventory_item_data()],
-        "faction_affiliations": [get_valid_npc_faction_affiliation_data()],
-        "relationships": [get_valid_npc_relationship_data()],
+        "inventory": [GeneratedNpcInventoryItem(**get_valid_npc_inventory_item_data())], # Instantiate nested model
+        "faction_affiliations": [GeneratedNpcFactionAffiliation(**get_valid_npc_faction_affiliation_data())], # Instantiate
+        "relationships": [GeneratedNpcRelationship(**get_valid_npc_relationship_data())], # Instantiate
         "is_trader": False,
         "currency_gold": 50
     }
@@ -75,7 +75,6 @@ def get_valid_generated_location_content_data(location_name: str = "Test Locatio
         "connections": [ConnectionModel(**get_valid_connection_model_data("neighbor_loc_1"))],
         "possible_events_i18n": [get_valid_i18n_dict("A merchant passes by")],
         "required_access_items_ids": ["key_to_city"],
-        # New fields
         "static_id": f"static_{location_name.lower().replace(' ', '_')}",
         "location_type_key": "city_district",
         "coordinates_json": {"x": 100, "y": 200, "plane": "material"},
@@ -91,35 +90,34 @@ def get_valid_generated_location_content_data(location_name: str = "Test Locatio
 # --- Test Cases for GeneratedLocationContent ---
 
 @pytest.fixture
-def validation_context_en_only():
+def validation_context_en_only() -> Dict[str, List[str]]: # Added return type
     return {"target_languages": ["en"]}
 
 @pytest.fixture
-def validation_context_en_ru():
+def validation_context_en_ru() -> Dict[str, List[str]]: # Added return type
     return {"target_languages": ["en", "ru"]}
 
-def test_generated_location_content_successful_validation(validation_context_en_ru):
+def test_generated_location_content_successful_validation(validation_context_en_ru: Dict[str, List[str]]): # Added type hint
     data = get_valid_generated_location_content_data()
-    # Pydantic models for nested lists are already part of the data construction
     loc_content = GeneratedLocationContent.model_validate(data, context=validation_context_en_ru)
 
     assert loc_content.template_id == data["template_id"]
     assert loc_content.name_i18n["en"] == data["name_i18n"]["en"]
     assert loc_content.static_id == data["static_id"]
     assert loc_content.location_type_key == data["location_type_key"]
-    assert loc_content.coordinates_json["x"] == 100
-    assert len(loc_content.initial_npcs_json) == 1
-    assert loc_content.initial_npcs_json[0].template_id == "npc_guard_01"
-    assert len(loc_content.initial_items_json) == 2
-    assert loc_content.initial_items_json[0]["template_id"] == "healing_potion"
-    assert loc_content.generated_details_json["en"]["flora"] == "Mostly hardy shrubs"
-    assert loc_content.ai_metadata_json["model_used"] == "gpt-4-turbo"
-    assert len(loc_content.points_of_interest) == 1
-    assert loc_content.points_of_interest[0].poi_id == "poi_main"
-    assert len(loc_content.connections) == 1
-    assert loc_content.connections[0].to_location_id == "neighbor_loc_1"
+    assert loc_content.coordinates_json is not None and loc_content.coordinates_json["x"] == 100
+    assert loc_content.initial_npcs_json is not None and len(loc_content.initial_npcs_json) == 1
+    assert loc_content.initial_npcs_json is not None and loc_content.initial_npcs_json[0].template_id == "npc_guard_01"
+    assert loc_content.initial_items_json is not None and len(loc_content.initial_items_json) == 2
+    assert loc_content.initial_items_json is not None and loc_content.initial_items_json[0]["template_id"] == "healing_potion"
+    assert loc_content.generated_details_json is not None and loc_content.generated_details_json["en"]["flora"] == "Mostly hardy shrubs"
+    assert loc_content.ai_metadata_json is not None and loc_content.ai_metadata_json["model_used"] == "gpt-4-turbo"
+    assert loc_content.points_of_interest is not None and len(loc_content.points_of_interest) == 1
+    assert loc_content.points_of_interest is not None and loc_content.points_of_interest[0].poi_id == "poi_main"
+    assert loc_content.connections is not None and len(loc_content.connections) == 1
+    assert loc_content.connections is not None and loc_content.connections[0].to_location_id == "neighbor_loc_1"
 
-def test_generated_location_content_missing_required_fields(validation_context_en_ru):
+def test_generated_location_content_missing_required_fields(validation_context_en_ru: Dict[str, List[str]]): # Added type hint
     required_fields = ["name_i18n", "atmospheric_description_i18n", "location_type_key"]
     for field in required_fields:
         data = get_valid_generated_location_content_data()
@@ -127,11 +125,10 @@ def test_generated_location_content_missing_required_fields(validation_context_e
         with pytest.raises(ValidationError) as exc_info:
              GeneratedLocationContent.model_validate(data, context=validation_context_en_ru)
         error_str = str(exc_info.value)
-        assert field in error_str # Check if the field name is mentioned
-        assert "Field required" in error_str # Pydantic v2 style
-        assert "type=missing" in error_str   # Pydantic v2 style
+        assert field in error_str
+        assert "Field required" in error_str
+        assert "type=missing" in error_str
 
-    # template_id is also required by the model definition, but not in the prompt's list
     data = get_valid_generated_location_content_data()
     del data["template_id"]
     with pytest.raises(ValidationError) as exc_info:
@@ -142,48 +139,40 @@ def test_generated_location_content_missing_required_fields(validation_context_e
     assert "type=missing" in error_str
 
 
-def test_generated_location_content_i18n_validation(validation_context_en_ru):
+def test_generated_location_content_i18n_validation(validation_context_en_ru: Dict[str, List[str]]): # Added type hint
     data = get_valid_generated_location_content_data()
-    data["name_i18n"] = {"fr": "French Name Only"} # Missing 'en' and 'ru'
+    data["name_i18n"] = {"fr": "French Name Only"}
 
     with pytest.raises(ValidationError) as exc_info:
         GeneratedLocationContent.model_validate(data, context=validation_context_en_ru)
 
-    # Check the specific error message from our custom validator
-    # Pydantic V2 wraps custom ValueErrors. We need to inspect the errors() list.
     errors = exc_info.value.errors()
     assert len(errors) == 1
-    custom_error_msg = errors[0]['msg'] # The message from our ValueError
+    custom_error_msg = errors[0]['msg']
     assert "name_i18n" in custom_error_msg
-    # The validator attempts to fill 'en' from other available languages.
-    # Since 'fr' was provided, 'en' gets copied from 'fr'.
-    # So, only 'ru' should be reported as missing in the final error message.
     assert "missing required language(s): ru" in custom_error_msg.lower()
     assert "provided: ['fr', 'en']" in custom_error_msg.lower()
 
 
-def test_generated_location_content_i18n_validation_en_only_context_copies_to_en(validation_context_en_only):
+def test_generated_location_content_i18n_validation_en_only_context_copies_to_en(validation_context_en_only: Dict[str, List[str]]): # Added type hint
     data = get_valid_generated_location_content_data()
-    data["name_i18n"] = {"ru": "Russian Name Only"} # Missing 'en'
+    data["name_i18n"] = {"ru": "Russian Name Only"}
 
-    # validate_i18n_field should copy from 'ru' to 'en' if 'en' is missing and context is 'en'
     loc_content = GeneratedLocationContent.model_validate(data, context=validation_context_en_only)
     assert loc_content.name_i18n["en"] == "Russian Name Only"
     assert loc_content.name_i18n["ru"] == "Russian Name Only"
 
 
-def test_generated_location_content_new_fields_accepted(validation_context_en_ru):
-    data = {
+def test_generated_location_content_new_fields_accepted(validation_context_en_ru: Dict[str, List[str]]): # Added type hint
+    data: Dict[str, Any] = { # Added type hint for data
         "template_id": "minimal_template",
         "name_i18n": get_valid_i18n_dict("Minimal"),
         "atmospheric_description_i18n": get_valid_i18n_dict("Minimal Atmosphere"),
-        # Required new field
         "location_type_key": "ruin_exterior",
-        # Optional new fields
         "static_id": "minimal_static_001",
         "coordinates_json": {"x": 0, "y": 0},
-        "initial_npcs_json": [], # Empty list is valid
-        "initial_items_json": [{"template_id": "rock", "quantity": 1}], # Valid item
+        "initial_npcs_json": [],
+        "initial_items_json": [{"template_id": "rock", "quantity": 1}],
         "generated_details_json": {"en": {"weather": "always raining"}},
         "ai_metadata_json": {"source": "test_case"}
     }
@@ -192,24 +181,23 @@ def test_generated_location_content_new_fields_accepted(validation_context_en_ru
     assert loc_content.location_type_key == "ruin_exterior"
     assert loc_content.coordinates_json == {"x": 0, "y": 0}
     assert loc_content.initial_npcs_json == []
-    assert len(loc_content.initial_items_json) == 1
-    assert loc_content.initial_items_json[0]["template_id"] == "rock"
-    assert loc_content.generated_details_json["en"]["weather"] == "always raining"
-    assert loc_content.ai_metadata_json["source"] == "test_case"
+    assert loc_content.initial_items_json is not None and len(loc_content.initial_items_json) == 1
+    assert loc_content.initial_items_json is not None and loc_content.initial_items_json[0]["template_id"] == "rock"
+    assert loc_content.generated_details_json is not None and loc_content.generated_details_json["en"]["weather"] == "always raining"
+    assert loc_content.ai_metadata_json is not None and loc_content.ai_metadata_json["source"] == "test_case"
 
 def test_poi_model_validation():
     valid_data = get_valid_poi_model_data()
     poi = POIModel(**valid_data)
     assert poi.poi_id == valid_data["poi_id"]
-    assert poi.contained_item_ids == ["item_template_1"] # Existing field
-    assert poi.contained_item_instance_ids is None # New field defaults to None
+    assert poi.contained_item_ids == ["item_template_1"]
+    assert poi.contained_item_instance_ids is None
 
-    # Test with new field
-    valid_data_with_instance_ids = {
+    valid_data_with_instance_ids: Dict[str, Any] = { # Added type hint
         "poi_id": "poi_2",
         "name_i18n": get_valid_i18n_dict("POI 2 Name"),
         "description_i18n": get_valid_i18n_dict("POI 2 Description"),
-        "contained_item_ids": ["item_template_2"], # Still accepted
+        "contained_item_ids": ["item_template_2"],
         "contained_item_instance_ids": ["item_instance_uuid_001", "item_instance_uuid_002"],
         "npc_ids": []
     }
@@ -218,53 +206,49 @@ def test_poi_model_validation():
     assert poi_with_instances.contained_item_ids == ["item_template_2"]
     assert poi_with_instances.contained_item_instance_ids == ["item_instance_uuid_001", "item_instance_uuid_002"]
 
-    # Test validation error if new field is not a list of strings (if provided)
     invalid_data_instance_ids = valid_data_with_instance_ids.copy()
-    invalid_data_instance_ids["contained_item_instance_ids"] = "not_a_list"
+    invalid_data_instance_ids["contained_item_instance_ids"] = "not_a_list" # type: ignore
     with pytest.raises(ValidationError) as excinfo_instance:
         POIModel(**invalid_data_instance_ids)
     error_str_1 = str(excinfo_instance.value).lower()
-    assert "input should be a valid list" in error_str_1 # Pydantic v2
-    assert "type=list_type" in error_str_1               # Pydantic v2
+    assert "input should be a valid list" in error_str_1
+    assert "type=list_type" in error_str_1
 
     invalid_data_instance_ids_list_type = valid_data_with_instance_ids.copy()
-    invalid_data_instance_ids_list_type["contained_item_instance_ids"] = [123, "abc"] # Contains non-string
+    invalid_data_instance_ids_list_type["contained_item_instance_ids"] = [123, "abc"] # type: ignore
     with pytest.raises(ValidationError) as excinfo_instance_list_type:
         POIModel(**invalid_data_instance_ids_list_type)
     error_str_2 = str(excinfo_instance_list_type.value).lower()
-    assert "input should be a valid string" in error_str_2 # Pydantic v2
-    assert "type=string_type" in error_str_2              # Pydantic v2
-    assert "input_value=123" in error_str_2               # Identifies the wrong item
+    assert "input should be a valid string" in error_str_2
+    assert "type=string_type" in error_str_2
+    assert "input_value=123" in error_str_2
 
 
-    with pytest.raises(ValidationError):
-        POIModel(**{"name_i18n": {}, "description_i18n": {}}) # Missing poi_id
+    with pytest.raises(ValidationError): # Missing poi_id
+        POIModel(**{"name_i18n": get_valid_i18n_dict(), "description_i18n": get_valid_i18n_dict()})
 
 def test_connection_model_validation():
     valid_data = get_valid_connection_model_data()
     conn = ConnectionModel(**valid_data)
     assert conn.to_location_id == valid_data["to_location_id"]
 
-    with pytest.raises(ValidationError):
-        ConnectionModel(**{"path_description_i18n": {}}) # Missing to_location_id
+    with pytest.raises(ValidationError): # Missing to_location_id
+        ConnectionModel(**{"path_description_i18n": get_valid_i18n_dict()})
 
 def test_generated_npc_profile_validation():
-    # Basic check, more detailed tests would be in a dedicated NPC model test suite
     valid_data = get_valid_generated_npc_profile_data()
     npc_profile = GeneratedNpcProfile(**valid_data)
     assert npc_profile.template_id == valid_data["template_id"]
-    assert npc_profile.stats["strength"] == 12
-    assert len(npc_profile.inventory) == 1
-    assert npc_profile.inventory[0].item_template_id == "sword_common"
+    assert npc_profile.stats is not None and npc_profile.stats["strength"] == 12
+    assert npc_profile.inventory is not None and len(npc_profile.inventory) == 1
+    assert npc_profile.inventory is not None and npc_profile.inventory[0].item_template_id == "sword_common"
 
-# Example test for optional fields being None
-def test_generated_location_content_optional_fields_as_none(validation_context_en_ru):
-    data = {
+def test_generated_location_content_optional_fields_as_none(validation_context_en_ru: Dict[str, List[str]]): # Added type hint
+    data: Dict[str, Any] = { # Added type hint
         "template_id": "optional_test",
         "name_i18n": get_valid_i18n_dict("Optional Fields Test"),
         "atmospheric_description_i18n": get_valid_i18n_dict("Atmosphere for Optional"),
         "location_type_key": "test_type",
-        # All other fields are optional or have defaults in Pydantic model if not required by logic
         "static_id": None,
         "points_of_interest": None,
         "connections": None,
@@ -278,8 +262,7 @@ def test_generated_location_content_optional_fields_as_none(validation_context_e
     }
     loc_content = GeneratedLocationContent.model_validate(data, context=validation_context_en_ru)
     assert loc_content.static_id is None
-    assert loc_content.points_of_interest is None # Will be None as per Pydantic
+    assert loc_content.points_of_interest is None
     assert loc_content.initial_npcs_json is None
     assert loc_content.generated_details_json is None
-    # etc. for all optional fields
 
