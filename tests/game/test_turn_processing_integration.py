@@ -164,8 +164,8 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_player_submits_action_it_gets_scheduled_and_processed(self):
         player_id = "player1_integration"
-        player_char = _CharacterModel( # type: ignore
-            id=player_id, name_i18n={"en": "Test Player"}, guild_id=self.guild_id, template_id="p_template",
+        player_char = _CharacterModel(
+            id=player_id, name_i18n={"en": "Test Player"}, guild_id=self.guild_id, template_id="p_template", # Ensure template_id is provided
             collected_actions_json=json.dumps([
                 {"intent_type": "LOOK", "action_id": "look1"}
             ])
@@ -173,7 +173,7 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
         self.mock_char_mgr.get_all_characters.return_value = [player_char]
         self.mock_char_mgr.get_character.return_value = player_char
 
-        async def mock_player_action_processing(action_request, character, context):
+        async def mock_player_action_processing(action_request: ActionRequest, character: _CharacterModel, context: Dict[str, Any]): # Added type hints
             if action_request.action_type == "PLAYER_LOOK":
                 return {"success": True, "message": "You look around.", "state_changed": False, "action_id": action_request.action_id, "actor_id": character.id}
             return {"success": False, "message": "Unknown player action.", "state_changed": False, "action_id": action_request.action_id, "actor_id": character.id}
@@ -181,8 +181,12 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
         self.player_action_processor.process_action_from_request = AsyncMock(side_effect=mock_player_action_processing)
 
         submission_result = await self.turn_service.process_player_turns(self.guild_id)
-        self.assertEqual(submission_result['status'], "player_actions_submitted")
-        self.assertEqual(submission_result['count'], 1)
+
+        # Ensure submission_result is a dict before accessing keys
+        self.assertIsInstance(submission_result, dict, "submission_result should be a dictionary")
+        self.assertEqual(submission_result.get('status'), "player_actions_submitted")
+        self.assertEqual(submission_result.get('count'), 1)
+
 
         queued_actions = self.action_scheduler.get_all_actions_for_guild(self.guild_id)
         self.assertEqual(len(queued_actions), 1)
@@ -192,16 +196,13 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
 
         self.mock_npc_mgr.get_all_npcs.return_value = []
 
-        guild_turn_context = {'rules_config': {}, 'guild_id': self.guild_id, 'managers': {}}
+        guild_turn_context = {'rules_config': {}, 'guild_id': self.guild_id, 'managers': {}} # Ensure managers is a dict
         processing_result = await self.turn_service.process_guild_turn(self.guild_id, guild_turn_context)
 
-        # The structure of processing_result in TPS was:
-        # {"player_actions_processed": count, "npc_actions_planned": count, ...}
-        # It does not directly return a "status" or "processed_actions" list like the example test.
-        # Adjusting assertions based on actual TPS.process_guild_turn structure.
-        self.assertEqual(processing_result['player_actions_processed'], 1)
-        self.assertEqual(processing_result['npc_actions_planned'], 0) # No NPCs
-        self.assertEqual(processing_result['npc_actions_processed'], 0)
+        self.assertIsInstance(processing_result, dict, "processing_result should be a dictionary")
+        self.assertEqual(processing_result.get('player_actions_processed'), 1)
+        self.assertEqual(processing_result.get('npc_actions_planned'), 0)
+        self.assertEqual(processing_result.get('npc_actions_processed'), 0)
 
         self.player_action_processor.process_action_from_request.assert_called_once()
         call_args = self.player_action_processor.process_action_from_request.call_args[0]
@@ -210,15 +211,17 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
 
         final_action_status = self.action_scheduler.get_action(self.guild_id, "look1")
         self.assertIsNotNone(final_action_status)
-        self.assertEqual(final_action_status.status, "completed")
-        self.assertTrue(final_action_status.result['success'])
-        self.assertIn("You look around.", final_action_status.result['message'])
+        self.assertEqual(getattr(final_action_status, 'status', None), "completed") # Safe access
+        final_action_result = getattr(final_action_status, 'result', None)
+        self.assertIsInstance(final_action_result, dict, "final_action_status.result should be a dictionary")
+        self.assertTrue(final_action_result.get('success'))
+        self.assertIn("You look around.", final_action_result.get('message', ""))
 
 
     async def test_npc_plans_and_executes_action(self):
         npc_id = "npc1_integration"
-        npc_actor = _NPCModel( # type: ignore
-            id=npc_id, name_i18n={"en":"Test NPC"}, guild_id=self.guild_id, template_id="n_template",
+        npc_actor = _NPCModel(
+            id=npc_id, name_i18n={"en":"Test NPC"}, guild_id=self.guild_id, template_id="n_template", # Ensure template_id
             available_actions=[{"action_type": "patrol", "name": "Patrol Duty"}]
         )
         self.mock_npc_mgr.get_all_npcs.return_value = [npc_actor]
@@ -228,27 +231,30 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
         await self.turn_service.process_player_turns(self.guild_id)
 
 
-        async def mock_npc_plan_action(npc, guild_id, context):
+        async def mock_npc_plan_action(npc: _NPCModel, guild_id_param: str, context_param: Dict[str, Any]): # Added type hints
             if npc.id == npc_id:
                 return ActionRequest(
-                    guild_id=guild_id, actor_id=npc.id, action_type="NPC_PATROL",
+                    guild_id=guild_id_param, actor_id=npc.id, action_type="NPC_PATROL",
                     action_data={"destination": "point_alpha"}, priority=50, execute_at=time.time()
                 )
             return None
         self.npc_action_planner.plan_action = AsyncMock(side_effect=mock_npc_plan_action)
 
-        async def mock_npc_action_processing(action_request, npc):
+        async def mock_npc_action_processing(action_request: ActionRequest, npc: _NPCModel): # Added type hints
+            dest = action_request.action_data.get("destination") if isinstance(action_request.action_data, dict) else "unknown_dest"
+            npc_name = getattr(npc, 'name', 'Unknown NPC') # Safe access for name
             if action_request.action_type == "NPC_PATROL":
-                dest = action_request.action_data.get("destination")
-                return {"success": True, "message": f"{npc.name} patrols to {dest}.", "state_changed": True, "action_id": action_request.action_id, "actor_id": npc.id}
+                return {"success": True, "message": f"{npc_name} patrols to {dest}.", "state_changed": True, "action_id": action_request.action_id, "actor_id": npc.id}
             return {"success": False, "message": "Unknown NPC action.", "state_changed": False, "action_id": action_request.action_id, "actor_id": npc.id}
         self.npc_action_processor.process_action = AsyncMock(side_effect=mock_npc_action_processing)
 
-        guild_turn_context = {'rules_config': {}, 'guild_id': self.guild_id, 'managers': {}}
+        guild_turn_context = {'rules_config': {}, 'guild_id': self.guild_id, 'managers': {}} # Ensure managers is a dict
         processing_result = await self.turn_service.process_guild_turn(self.guild_id, guild_turn_context)
 
-        self.assertEqual(processing_result['npc_actions_planned'], 1)
-        self.assertEqual(processing_result['npc_actions_processed'], 1)
+        self.assertIsInstance(processing_result, dict, "processing_result should be a dictionary")
+        self.assertEqual(processing_result.get('npc_actions_planned'), 1)
+        self.assertEqual(processing_result.get('npc_actions_processed'), 1)
+
 
         self.npc_action_planner.plan_action.assert_called_once_with(npc_actor, self.guild_id, ANY)
         self.npc_action_processor.process_action.assert_called_once()
@@ -260,101 +266,96 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(all_guild_actions),1)
         npc_action_from_scheduler = all_guild_actions[0]
 
-        self.assertEqual(npc_action_from_scheduler.status, "completed")
-        self.assertEqual(npc_action_from_scheduler.action_type, "NPC_PATROL")
-        self.assertTrue(npc_action_from_scheduler.result['success'])
-        self.assertIn("patrols to point_alpha", npc_action_from_scheduler.result['message'])
+        self.assertEqual(getattr(npc_action_from_scheduler, 'status', None), "completed") # Safe access
+        self.assertEqual(getattr(npc_action_from_scheduler, 'action_type', None), "NPC_PATROL") # Safe access
+
+        npc_action_result = getattr(npc_action_from_scheduler, 'result', None)
+        self.assertIsInstance(npc_action_result, dict, "npc_action_from_scheduler.result should be a dictionary")
+        self.assertTrue(npc_action_result.get('success'))
+        self.assertIn("patrols to point_alpha", npc_action_result.get('message', ""))
 
 
     async def test_action_dependency_player_waits_for_npc(self):
         player_id = "player_dep_test"
         npc_id = "npc_dep_test"
-
         player_action_id = "player_action_dep"
-        # NPC action ID will be generated by its planner, but we need a fixed one for dependency.
-        # So, we'll make the mock planner return this fixed ID.
         npc_action_id_fixed = "fixed_npc_action_for_dependency"
 
-
-        player_char = _CharacterModel( # type: ignore
-            id=player_id, name_i18n={"en":"Dependent Player"}, guild_id=self.guild_id, template_id="p_temp",
-            collected_actions_json=json.dumps([ # Player submits an action that *conceptually* depends on NPC
+        player_char = _CharacterModel(
+            id=player_id, name_i18n={"en":"Dependent Player"}, guild_id=self.guild_id, template_id="p_temp", # Ensure template_id
+            collected_actions_json=json.dumps([
                 {"intent_type": "FOLLOW_NPC", "action_id": player_action_id,
                  "target_npc_id": npc_id,
-                 # This custom field indicates the conceptual dependency for test setup
                  "custom_dependency_on_npc_action_id_for_test": npc_action_id_fixed
                 }
             ])
         )
-        npc_actor = _NPCModel(id=npc_id, name_i18n={"en":"Leading NPC"}, guild_id=self.guild_id, template_id="n_temp") # type: ignore
+        npc_actor = _NPCModel(id=npc_id, name_i18n={"en":"Leading NPC"}, guild_id=self.guild_id, template_id="n_temp") # Ensure template_id
 
         self.mock_char_mgr.get_all_characters.return_value = [player_char]
         self.mock_char_mgr.get_character.return_value = player_char
         self.mock_npc_mgr.get_all_npcs.return_value = [npc_actor]
         self.mock_npc_mgr.get_npc.return_value = npc_actor
 
-        async def mock_player_follow_processing(action_request, character, context):
-            return {"success": True, "message": f"{character.name} follows.", "state_changed": True, "action_id": action_request.action_id, "actor_id": character.id}
+        async def mock_player_follow_processing(action_request: ActionRequest, character: _CharacterModel, context: Dict[str, Any]): # Type hints
+            char_name = getattr(character, 'name', 'Unknown Player') # Safe access
+            return {"success": True, "message": f"{char_name} follows.", "state_changed": True, "action_id": action_request.action_id, "actor_id": character.id}
         self.player_action_processor.process_action_from_request = AsyncMock(side_effect=mock_player_follow_processing)
 
-        async def mock_npc_reach_dest_plan(npc, guild_id, context):
+        async def mock_npc_reach_dest_plan(npc: _NPCModel, guild_id_param: str, context_param: Dict[str, Any]): # Type hints
             return ActionRequest(
-                action_id=npc_action_id_fixed, # Use the fixed ID
-                guild_id=guild_id, actor_id=npc.id, action_type="NPC_REACH_DESTINATION",
+                action_id=npc_action_id_fixed,
+                guild_id=guild_id_param, actor_id=npc.id, action_type="NPC_REACH_DESTINATION",
                 action_data={"destination": "final_spot"}, execute_at=time.time()
             )
         self.npc_action_planner.plan_action = AsyncMock(side_effect=mock_npc_reach_dest_plan)
 
-        async def mock_npc_reach_dest_process(action_request, npc):
-            return {"success": True, "message": f"{npc.name} reached destination.", "state_changed": True, "action_id": action_request.action_id, "actor_id": npc.id}
+        async def mock_npc_reach_dest_process(action_request: ActionRequest, npc: _NPCModel): # Type hints
+            npc_name = getattr(npc, 'name', 'Unknown NPC') # Safe access
+            return {"success": True, "message": f"{npc_name} reached destination.", "state_changed": True, "action_id": action_request.action_id, "actor_id": npc.id}
         self.npc_action_processor.process_action = AsyncMock(side_effect=mock_npc_reach_dest_process)
 
-        # Player submits their action - it will be converted to ActionRequest by TPS
-        # The crucial part is that its dependencies list must include npc_action_id_fixed.
-        # We will modify the ActionRequest after it's created by process_player_turns
-        # or, more simply, clear the scheduler and manually add actions in the desired state.
+        await self.turn_service.process_player_turns(self.guild_id)
 
-        await self.turn_service.process_player_turns(self.guild_id) # Player action gets into scheduler
-
-        # Now, find the player's action and modify its dependencies for the test
         player_ar_from_scheduler = self.action_scheduler.get_action(self.guild_id, player_action_id)
         self.assertIsNotNone(player_ar_from_scheduler)
-        player_ar_from_scheduler.dependencies = [npc_action_id_fixed] # Set the dependency
-        # Also adjust its execute_at if needed to ensure it's after NPC's action if time matters strictly.
-        player_ar_from_scheduler.execute_at = time.time() + 0.1
+        if player_ar_from_scheduler: # Type guard for safety
+            player_ar_from_scheduler.dependencies = [npc_action_id_fixed]
+            player_ar_from_scheduler.execute_at = time.time() + 0.1
 
-
-        guild_turn_context = {'rules_config': {}, 'guild_id': self.guild_id, 'managers': {}}
+        guild_turn_context = {'rules_config': {}, 'guild_id': self.guild_id, 'managers': {}} # Ensure managers is dict
         result_turn1 = await self.turn_service.process_guild_turn(self.guild_id, guild_turn_context)
 
-        self.assertEqual(result_turn1['npc_actions_planned'], 1)
-        self.assertEqual(result_turn1['npc_actions_processed'], 1)
-        self.assertEqual(result_turn1['player_actions_processed'], 0) # Player action should wait
+        self.assertIsInstance(result_turn1, dict, "result_turn1 should be a dictionary")
+        self.assertEqual(result_turn1.get('npc_actions_planned'), 1)
+        self.assertEqual(result_turn1.get('npc_actions_processed'), 1)
+        self.assertEqual(result_turn1.get('player_actions_processed'), 0)
 
         npc_action_in_scheduler = self.action_scheduler.get_action(self.guild_id, npc_action_id_fixed)
-        self.assertEqual(npc_action_in_scheduler.status, "completed")
+        self.assertEqual(getattr(npc_action_in_scheduler, 'status', None), "completed") # Safe access
 
         player_action_in_scheduler = self.action_scheduler.get_action(self.guild_id, player_action_id)
-        self.assertEqual(player_action_in_scheduler.status, "pending")
+        self.assertEqual(getattr(player_action_in_scheduler, 'status', None), "pending") # Safe access
 
         self.npc_action_planner.plan_action.reset_mock()
-        async def mock_npc_idle_plan(npc, guild_id, context): return ActionRequest(guild_id=guild_id, actor_id=npc.id, action_type="NPC_IDLE", execute_at=time.time())
+        async def mock_npc_idle_plan(npc: _NPCModel, guild_id_param: str, context_param: Dict[str, Any]):  # Type hints
+            return ActionRequest(guild_id=guild_id_param, actor_id=npc.id, action_type="NPC_IDLE", execute_at=time.time())
         self.npc_action_planner.plan_action = AsyncMock(side_effect=mock_npc_idle_plan)
-        # Reset NPC processor mock as well for the idle action
-        async def mock_npc_idle_process(action_request, npc): return {"success": True, "message":"NPC idles.", "state_changed":False, "action_id":action_request.action_id, "actor_id":npc.id}
+
+        async def mock_npc_idle_process(action_request: ActionRequest, npc: _NPCModel): # Type hints
+            return {"success": True, "message":"NPC idles.", "state_changed":False, "action_id":action_request.action_id, "actor_id":npc.id}
         self.npc_action_processor.process_action = AsyncMock(side_effect=mock_npc_idle_process)
 
         result_turn2 = await self.turn_service.process_guild_turn(self.guild_id, guild_turn_context)
+        self.assertIsInstance(result_turn2, dict, "result_turn2 should be a dictionary")
 
         self.npc_action_planner.plan_action.assert_called_once()
 
-        self.assertEqual(result_turn2['player_actions_processed'], 1)
-        # Check if NPC's idle action was also processed
-        self.assertEqual(result_turn2['npc_actions_processed'], 1)
-
+        self.assertEqual(result_turn2.get('player_actions_processed'), 1)
+        self.assertEqual(result_turn2.get('npc_actions_processed'), 1)
 
         player_action_in_scheduler_after_turn2 = self.action_scheduler.get_action(self.guild_id, player_action_id)
-        self.assertEqual(player_action_in_scheduler_after_turn2.status, "completed")
+        self.assertEqual(getattr(player_action_in_scheduler_after_turn2, 'status', None), "completed") # Safe access
 
 if __name__ == '__main__':
     unittest.main(argv=['first-arg-is-ignored'], exit=False)

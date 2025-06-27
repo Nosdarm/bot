@@ -28,16 +28,28 @@ async def calculate_initiative(participants: List[CombatParticipantData]) -> Lis
     # Returns ordered list of entity_ids
     # For this placeholder, just use the order they came in or shuffle
     # In a real system: roll dice (e.g., d20 + dexterity_modifier)
-    # For now, we'll just sort by a placeholder initiative if provided, or keep order.
 
-    # If initiative is not set, assign a random one for sorting example
-    for p in participants:
-        if p.initiative is None:
-            p.initiative = random.randint(1, 20)
+    # Ensure participants have an initiative value for sorting.
+    # Pydantic's CombatParticipantData has initiative: Optional[int] = None.
+    # We need to handle None if it's not set by the client.
 
-    # Sort by initiative, highest first. Break ties by original order or another stat.
-    sorted_participants = sorted(participants, key=lambda p: p.initiative, reverse=True)
-    return [p.entity_id for p in sorted_participants]
+    # Create a list of tuples (initiative_value, original_index, participant_data)
+    # to ensure stable sort and handle None initiatives.
+    indexed_participants: List[Tuple[int, int, CombatParticipantData]] = []
+    for i, p_data in enumerate(participants):
+        # Default initiative to 0 if None, or use a random roll if preferred for None.
+        # For deterministic sorting in tests if no initiative is passed, 0 is fine.
+        # In a real game, you might want to roll for None or use a default stat.
+        initiative_val = p_data.initiative if p_data.initiative is not None else random.randint(1, 20)
+        indexed_participants.append((initiative_val, i, p_data))
+
+    # Sort by initiative (highest first), then by original index to maintain stability for ties.
+    # Pydantic model instances are not directly comparable unless __lt__ etc. are defined.
+    # Sorting based on a key that extracts the initiative value is correct.
+    # The lambda p_tuple: p_tuple[0] correctly extracts the initiative value.
+    sorted_indexed_participants = sorted(indexed_participants, key=lambda p_tuple: p_tuple[0], reverse=True)
+
+    return [p_tuple[2].entity_id for p_tuple in sorted_indexed_participants]
 
 async def process_combat_action(
     db: AsyncSession,
@@ -90,29 +102,42 @@ async def process_combat_action(
                     flag_modified(combat, "participants")
                     break
 
-    if combat.turn_log_structured is None: combat.turn_log_structured = []
-    combat.turn_log_structured.append(log_entry_data.dict()) # Store as dict
+    # Ensure turn_log_structured is a list before appending
+    current_log = combat.turn_log_structured
+    if not isinstance(current_log, list):
+        current_log = [] # Initialize if None or not a list
+    current_log.append(log_entry_data.model_dump()) # Use model_dump() for Pydantic V2
+    combat.turn_log_structured = current_log # Assign back if it was re-initialized
+
+    from sqlalchemy.orm.attributes import flag_modified # Ensure import
     flag_modified(combat, "turn_log_structured")
 
-    if combat.turn_order:
-        combat.current_turn_index = (combat.current_turn_index + 1) % len(combat.turn_order)
-        if combat.current_turn_index == 0:
-            combat.current_round += 1
+    turn_order_list = combat.turn_order
+    if isinstance(turn_order_list, list) and turn_order_list: # Ensure turn_order is a non-empty list
+        current_turn_idx = combat.current_turn_index if isinstance(combat.current_turn_index, int) else 0
+        new_turn_idx = (current_turn_idx + 1) % len(turn_order_list)
+        combat.current_turn_index = new_turn_idx
+
+        current_round_val = combat.current_round if isinstance(combat.current_round, int) else 0
+        if new_turn_idx == 0:
+            combat.current_round = current_round_val + 1
+    else: # Handle empty or invalid turn_order
+        logger.warning(f"Combat {combat.id}: Turn order is empty or invalid. Cannot advance turn.")
+        # Optionally set combat status to error or handle as per game rules
 
     # The calling function will add 'combat' to session and commit.
-    # We need to construct the CombatEncounterResponse from the potentially modified 'combat' model.
     # This will be done after commit and refresh in the main endpoint.
     # For now, return parts needed for CombatActionResponse, updated_combat_state will be filled by caller.
+
+    # Ensure updated_combat_state is None as it will be filled by the caller
     return CombatActionResponse(
         success=True,
         message_i18n={"en": "Action processed."},
-        action_log_entry=log_entry_data, # Pass the Pydantic model
+        action_log_entry=log_entry_data,
         effects=effects,
-        updated_combat_state=None # Placeholder, will be filled by caller
+        updated_combat_state=None
     )
 
-# Note: apply_post_combat_updates_stub is now replaced by the imported function.
-# The stub function definition has been removed.
 
 # --- API Endpoints ---
 @router.post("/start", response_model=CombatEncounterResponse, status_code=status.HTTP_201_CREATED, summary="Start a new combat encounter")
@@ -123,26 +148,39 @@ async def start_combat(
 ):
     logger.info(f"Starting new combat in guild {guild_id} at location {combat_create_data.location_id}")
 
-    rules_stmt = select(RulesConfig).where(RulesConfig.guild_id == guild_id)
+    rules_stmt = select(RulesConfig).where(RulesConfig.guild_id == guild_id) # Assuming RulesConfig model has guild_id
     rules_result = await db.execute(rules_stmt)
-    db_rules_config = rules_result.scalars().first()
+    db_rules_config_row = rules_result.scalars().first() # This is a RulesConfig DB model instance
+
+    # Extract config_data (JSON) from the RulesConfig DB model instance
+    rules_config_data_dict: Optional[Dict[str, Any]] = None
+    if db_rules_config_row and hasattr(db_rules_config_row, 'config_data'):
+        config_data_val = getattr(db_rules_config_row, 'config_data')
+        if isinstance(config_data_val, dict):
+            rules_config_data_dict = config_data_val
+        elif isinstance(config_data_val, str):
+            try:
+                rules_config_data_dict = json.loads(config_data_val)
+            except json.JSONDecodeError:
+                logger.error(f"Could not parse RulesConfig.config_data JSON for guild {guild_id}")
+                rules_config_data_dict = {} # Default if parsing fails
+        else:
+            rules_config_data_dict = {} # Default if not dict or str
 
     turn_order_ids = await calculate_initiative(combat_create_data.participants_data)
-
-    # Ensure participants_data is a list of dicts for the JSON field
-    participants_as_dicts = [p.dict() for p in combat_create_data.participants_data]
+    participants_as_dicts = [p.model_dump() for p in combat_create_data.participants_data] # Use model_dump()
 
     db_combat = Combat(
         guild_id=guild_id,
         location_id=combat_create_data.location_id,
-        participants=participants_as_dicts,
-        initial_positions=combat_create_data.initial_positions,
-        combat_rules_snapshot=combat_create_data.combat_rules_snapshot or (db_rules_config.config_data if db_rules_config else {}),
+        participants=participants_as_dicts, # Should be List[Dict]
+        initial_positions=combat_create_data.initial_positions, # Optional[Dict[str, Any]]
+        combat_rules_snapshot=combat_create_data.combat_rules_snapshot or rules_config_data_dict or {}, # Ensure it's a dict
         status="active",
-        current_round=1,
-        turn_order=turn_order_ids,
-        current_turn_index=0,
-        turn_log_structured=[]
+        current_round=1, # Ensure this is int
+        turn_order=turn_order_ids, # Should be List[str]
+        current_turn_index=0, # Ensure this is int
+        turn_log_structured=[] # Should be List[Dict]
     )
     db.add(db_combat)
     try:
@@ -171,20 +209,18 @@ async def submit_combat_action(
 
     if not db_combat:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Combat encounter not found.")
-    if db_combat.status != "active":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Combat is not active (status: {db_combat.status}).")
 
-    # TODO: Validate actor_entity_id is the current turn entity
-    # if db_combat.turn_order and db_combat.turn_order[db_combat.current_turn_index] != action_request.actor_entity_id:
-    #     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not the actor's turn.")
+    combat_status = getattr(db_combat, 'status', None) # Safe access
+    if combat_status != "active":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Combat is not active (status: {combat_status}).")
 
     rules_stmt = select(RulesConfig).where(RulesConfig.guild_id == guild_id)
     rules_result = await db.execute(rules_stmt)
-    db_rules_config = rules_result.scalars().first()
+    db_rules_config_model = rules_result.scalars().first() # This is the SQLAlchemy model instance
 
-    action_response_parts = await process_combat_action(db, guild_id, db_combat, action_request, db_rules_config)
+    action_response_parts = await process_combat_action(db, guild_id, db_combat, action_request, db_rules_config_model) # Pass model
 
-    db.add(db_combat)
+    db.add(db_combat) # db_combat was modified in process_combat_action
     try:
         await db.commit()
         await db.refresh(db_combat)
@@ -211,13 +247,15 @@ async def end_combat(
 
     if not db_combat:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Combat encounter not found.")
-    if db_combat.status != "active":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Combat is not currently active (status: {db_combat.status}). Cannot end.")
 
-    db_combat.status = f"completed_{resolution_data.outcome}"
+    combat_status = getattr(db_combat, 'status', None) # Safe access
+    if combat_status != "active":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Combat is not currently active (status: {combat_status}). Cannot end.")
+
+    db_combat.status = f"completed_{resolution_data.outcome}" # Ensure status is string
     db.add(db_combat)
 
-    await apply_post_combat_updates(db, guild_id, db_combat) # Use the new function
+    await apply_post_combat_updates(db, guild_id, db_combat)
 
     try:
         await db.commit()

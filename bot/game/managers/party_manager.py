@@ -85,26 +85,41 @@ class PartyManager:
             del guild_member_map[char_id]
 
         if party.player_ids_json:
+            player_ids_val = party.player_ids_json
+            if not isinstance(player_ids_val, str): # Ensure it's a string before json.loads
+                logger.error(f"PartyManager: player_ids_json for party {party.id} in guild {guild_id} is not a string: {type(player_ids_val)}. Attempting str conversion.")
+                player_ids_val = str(player_ids_val)
+
             try:
-                member_ids = json.loads(party.player_ids_json)
-                for member_id in member_ids:
-                    if member_id in guild_member_map and guild_member_map[member_id] != party.id:
-                         logger.warning(f"PartyManager: Character {member_id} in guild {guild_id} was in party {guild_member_map[member_id]}, now being mapped to party {party.id}.")
-                    guild_member_map[str(member_id)] = party.id
+                member_ids = json.loads(player_ids_val)
+                if isinstance(member_ids, list): # Ensure it's a list after loading
+                    for member_id in member_ids:
+                        if member_id in guild_member_map and guild_member_map[member_id] != party.id:
+                             logger.warning(f"PartyManager: Character {member_id} in guild {guild_id} was in party {guild_member_map[member_id]}, now being mapped to party {party.id}.")
+                        guild_member_map[str(member_id)] = party.id
+                else:
+                    logger.error(f"PartyManager: Decoded player_ids_json for party {party.id} in guild {guild_id} is not a list: {type(member_ids)}")
             except json.JSONDecodeError:
-                logger.error(f"PartyManager: Invalid JSON in player_ids_json for party {party.id} in guild {guild_id}: {party.player_ids_json}")
+                logger.error(f"PartyManager: Invalid JSON in player_ids_json for party {party.id} in guild {guild_id}: {player_ids_val}")
 
 
     def _remove_from_cache(self, guild_id: str, party_id: str) -> Optional[Party]:
         """Removes a party from the cache and updates member map."""
         party = self._parties_cache.get(guild_id, {}).pop(party_id, None)
         if party and party.player_ids_json:
+            player_ids_val = party.player_ids_json
+            if not isinstance(player_ids_val, str):
+                logger.error(f"PartyManager: player_ids_json for party {party.id} (cache removal) in guild {guild_id} is not a string: {type(player_ids_val)}. Attempting str conversion.")
+                player_ids_val = str(player_ids_val)
             try:
-                member_ids = json.loads(party.player_ids_json)
-                guild_member_map = self._member_to_party_map.get(guild_id, {})
-                for member_id in member_ids:
-                    if guild_member_map.get(str(member_id)) == party.id:
-                        del guild_member_map[str(member_id)]
+                member_ids = json.loads(player_ids_val)
+                if isinstance(member_ids, list):
+                    guild_member_map = self._member_to_party_map.get(guild_id, {})
+                    for member_id in member_ids:
+                        if guild_member_map.get(str(member_id)) == party.id:
+                            del guild_member_map[str(member_id)]
+                else:
+                    logger.error(f"PartyManager: Decoded player_ids_json for party {party.id} (cache removal) in guild {guild_id} is not a list: {type(member_ids)}")
             except json.JSONDecodeError:
                 logger.error(f"PartyManager: Invalid JSON in player_ids_json for party {party.id} during cache removal in guild {guild_id}.")
         return party
@@ -187,15 +202,21 @@ class PartyManager:
     async def create_party(self, guild_id: str, leader_character_id: str, party_name_i18n: Dict[str, str]) -> Optional[Party]:
         logger.info(f"PartyManager: Attempting to create party in guild {guild_id} by leader {leader_character_id}.")
 
-        # No direct session fetching for leader_char here; CharacterManager methods are responsible for their own data access.
-        # CharacterManager.get_character is cache-first.
-        leader_char = await self._character_manager.get_character(guild_id, leader_character_id)
-        if not leader_char:
-            logger.warning(f"PartyManager: Leader character {leader_character_id} not found in guild {guild_id}.")
+        leader_char_pydantic = await self._character_manager.get_character(guild_id, leader_character_id)
+        if not leader_char_pydantic:
+            logger.warning(f"PartyManager: Leader character Pydantic model {leader_character_id} not found in guild {guild_id}.")
             return None
-        if leader_char.current_party_id:
-            logger.warning(f"PartyManager: Leader character {leader_character_id} is already in party {leader_char.current_party_id}.")
-            raise CharacterAlreadyInPartyError(f"Character {leader_character_id} (name: {leader_char.name_i18n.get('en', 'Unknown')}) is already in a party.")
+
+        leader_char_name_i18n = getattr(leader_char_pydantic, 'name_i18n', {"en": "Unknown"})
+        leader_char_current_party_id = getattr(leader_char_pydantic, 'current_party_id', None)
+        leader_char_current_location_id = getattr(leader_char_pydantic, 'current_location_id', None)
+
+
+        if leader_char_current_party_id:
+            logger.warning(f"PartyManager: Leader character {leader_character_id} is already in party {leader_char_current_party_id}.")
+            # Ensure leader_char_name_i18n is a dict before .get()
+            char_name_for_error = leader_char_name_i18n.get('en', 'Unknown') if isinstance(leader_char_name_i18n, dict) else "Unknown"
+            raise CharacterAlreadyInPartyError(f"Character {leader_character_id} (name: {char_name_for_error}) is already in a party.")
 
         party_id = str(uuid.uuid4())
         party_data = {
@@ -203,34 +224,31 @@ class PartyManager:
             "guild_id": guild_id,
             "name_i18n": party_name_i18n,
             "leader_id": leader_character_id,
-            "player_ids_json": json.dumps([leader_character_id]),
-            "current_location_id": leader_char.current_location_id,
-            "turn_status": "active",
-            "state_variables": {}
+            "player_ids_json": json.dumps([leader_character_id]), # Ensure this is a JSON string
+            "current_location_id": leader_char_current_location_id,
+            "turn_status": "active", # Default or fetch from rules
+            "state_variables": {} # Default or fetch from rules
         }
 
         try:
             async with GuildTransaction(self._get_session_factory(), guild_id) as session:
                 created_party = await create_entity(session, Party, party_data, guild_id=guild_id)
-                if not created_party:
+                if not created_party: # Should not happen if create_entity raises on failure
                     raise Exception("Party creation returned None from create_entity.")
 
-                # Update leader's current_party_id.
-                # This uses CharacterManager's method which marks character dirty.
-                # The actual save of the character will happen in CharacterManager's save_state.
-                # No need to pass session here if save_character_field only updates cache.
-                update_success = await self._character_manager.save_character_field(guild_id, leader_character_id, "current_party_id", created_party.id)
+                update_success = False
+                if hasattr(self._character_manager, 'save_character_field') and callable(self._character_manager.save_character_field):
+                    update_success = await self._character_manager.save_character_field(
+                        guild_id, leader_character_id, "current_party_id", created_party.id, session=session
+                    )
+
                 if not update_success:
-                    # This implies character wasn't found in cache by save_character_field, which is unlikely if we just got it.
-                    # Or save_character_field itself had an issue not related to DB.
                     logger.error(f"PartyManager: Failed to set current_party_id for leader {leader_character_id} after party creation.")
+                    # Consider rollback or specific error handling if this fails within transaction
                     raise Exception(f"Failed to update leader's party ID for party {created_party.id}")
 
                 self._add_to_cache(guild_id, created_party)
-                # No explicit mark_party_dirty here as create_entity + GuildTransaction should handle persistence.
-                # The object in cache is the one from create_entity, which should be session-managed.
-
-                logger.info(f"PartyManager: Party '{party_id}' created successfully for leader {leader_character_id} in guild {guild_id}.")
+                logger.info(f"PartyManager: Party '{created_party.id}' created successfully for leader {leader_character_id} in guild {guild_id}.")
                 return created_party
         except CharacterAlreadyInPartyError: # Re-raise if it came from CharacterManager during set_party_id, though unlikely for leader
             raise
@@ -313,33 +331,47 @@ class PartyManager:
                 character_to_join = await self._character_manager.get_character_for_update(session, guild_id, character_id) # Needs a method that gets char for update
                 party_to_join = await get_entity_by_id(session, Party, party_id, guild_id=guild_id)
 
-                if not character_to_join:
-                    raise ValueError(f"Character {character_id} not found.")
+                character_to_join_pydantic = await self._character_manager.get_character(guild_id, character_id) # Changed to get_character
+                if not character_to_join_pydantic: # Check Pydantic model
+                    raise ValueError(f"Character Pydantic model {character_id} not found.")
+
+                party_to_join = await get_entity_by_id(session, Party, party_id, guild_id=guild_id)
                 if not party_to_join:
                     raise PartyNotFoundError(f"Party {party_id} not found.")
 
-                if character_to_join.current_party_id:
-                    raise CharacterAlreadyInPartyError(f"Character {character_id} is already in party {character_to_join.current_party_id}.")
+                char_current_party_id = getattr(character_to_join_pydantic, 'current_party_id', None)
+                if char_current_party_id:
+                    raise CharacterAlreadyInPartyError(f"Character {character_id} is already in party {char_current_party_id}.")
 
-                max_size = await self._game_manager.get_rule(guild_id, "max_party_size", default=4) # Default to 4 if rule not set
-                member_ids = json.loads(party_to_join.player_ids_json or "[]")
+                max_size = await self._game_manager.get_rule(guild_id, "max_party_size", default=4)
 
-                if len(member_ids) >= max_size:
+                player_ids_json_str = party_to_join.player_ids_json
+                if not isinstance(player_ids_json_str, str): player_ids_json_str = "[]"
+                member_ids = json.loads(player_ids_json_str)
+
+                if not isinstance(member_ids, list): # Ensure it's a list
+                    logger.error(f"PartyManager: Decoded player_ids_json for party {party_id} is not a list: {type(member_ids)}. Defaulting to empty list.")
+                    member_ids = []
+
+
+                if len(member_ids) >= int(max_size): # Ensure max_size is int for comparison
                     raise PartyFullError(f"Party {party_id} is full (max size: {max_size}).")
 
                 member_ids.append(character_id)
-                party_to_join.player_ids_json = json.dumps(member_ids)
+                party_to_join.player_ids_json = json.dumps(member_ids) # Save back as JSON string
 
-                # Update Character's party ID using CharacterManager's save_character_field method
-                # which should use the provided session if available, or mark dirty for CharacterManager's save_state
-                await self._character_manager.save_character_field(guild_id, character_id, "current_party_id", party_id, session=session)
+                if hasattr(self._character_manager, 'save_character_field') and callable(self._character_manager.save_character_field):
+                    await self._character_manager.save_character_field(guild_id, character_id, "current_party_id", party_id, session=session)
+                else:
+                    # Fallback or error if method not found
+                    logger.error(f"PartyManager: save_character_field not found on CharacterManager. Cannot update character's party ID for {character_id}.")
+                    raise Exception("CharacterManager is missing save_character_field method.")
 
-                # The party instance is already part of the session and modified.
-                # GuildTransaction will handle commit.
-                self._add_to_cache(guild_id, party_to_join) # Update cache
-                self.mark_party_dirty(guild_id, party_to_join.id) # Mark dirty for save_state cycle if session isn't committed by GuildTransaction immediately
 
-                logger.info(f"PartyManager: Character {character_id} successfully joined party {party_id}.")
+                self._add_to_cache(guild_id, party_to_join)
+                self.mark_party_dirty(guild_id, party_to_join.id)
+
+                logger.info(f"PartyManager: Character {character_id} successfully joined party {party_id} in guild {guild_id}.")
                 return True
         except (PartyNotFoundError, CharacterAlreadyInPartyError, PartyFullError, ValueError) as e:
             logger.warning(f"PartyManager: Failed to join party - {e}")
@@ -352,45 +384,54 @@ class PartyManager:
         logger.info(f"PartyManager: Character {character_id} attempting to leave party in guild {guild_id}.")
         try:
             async with GuildTransaction(self._get_session_factory(), guild_id) as session:
-                character_leaving = await self._character_manager.get_character_for_update(session, guild_id, character_id)
-                if not character_leaving:
-                    raise ValueError(f"Character {character_id} not found.")
+                # Get Pydantic model first to check current_party_id from cache/consistent source
+                character_leaving_pydantic = await self._character_manager.get_character(guild_id, character_id)
+                if not character_leaving_pydantic:
+                    raise ValueError(f"Character Pydantic model {character_id} not found.")
 
-                party_id_to_leave = character_leaving.current_party_id
+                party_id_to_leave = getattr(character_leaving_pydantic, 'current_party_id', None)
                 if not party_id_to_leave:
                     raise CharacterNotInPartyError(f"Character {character_id} is not in a party.")
 
                 party = await get_entity_by_id(session, Party, party_id_to_leave, guild_id=guild_id)
                 if not party:
-                    # This case implies data inconsistency (character thinks it's in a party that doesn't exist)
-                    logger.error(f"PartyManager: Character {character_id} is in party {party_id_to_leave}, but party not found in DB. Clearing character's party_id.")
-                    await self._character_manager.save_character_field(guild_id, character_id, "current_party_id", None, session=session)
-                    return True # Effectively left a non-existent party
+                    logger.error(f"PartyManager: Character {character_id} in party {party_id_to_leave}, but party not found in DB. Clearing char's party_id.")
+                    if hasattr(self._character_manager, 'save_character_field') and callable(self._character_manager.save_character_field):
+                        await self._character_manager.save_character_field(guild_id, character_id, "current_party_id", None, session=session)
+                    self._member_to_party_map.get(guild_id, {}).pop(character_id, None)
+                    return True
 
-                member_ids = json.loads(party.player_ids_json or "[]")
+                player_ids_json_str = party.player_ids_json
+                if not isinstance(player_ids_json_str, str): player_ids_json_str = "[]"
+                member_ids = json.loads(player_ids_json_str)
+                if not isinstance(member_ids, list): member_ids = []
+
+
                 if character_id in member_ids:
                     member_ids.remove(character_id)
-                    party.player_ids_json = json.dumps(member_ids)
+                    party.player_ids_json = json.dumps(member_ids) # Save back as JSON
 
-                await self._character_manager.save_character_field(guild_id, character_id, "current_party_id", None, session=session)
+                if hasattr(self._character_manager, 'save_character_field') and callable(self._character_manager.save_character_field):
+                    await self._character_manager.save_character_field(guild_id, character_id, "current_party_id", None, session=session)
+                else:
+                    logger.error(f"PartyManager: save_character_field not found on CharacterManager. Cannot clear character's party ID for {character_id}.")
+                    # Continue with party logic, but character might remain inconsistent if this fails.
 
-                if not member_ids: # Party is now empty
+                if not member_ids:
                     logger.info(f"PartyManager: Party {party.id} is now empty after {character_id} left. Disbanding.")
                     await delete_entity(session, party, guild_id=guild_id)
-                    self._remove_from_cache(guild_id, party.id) # Remove from cache
-                    # No need to mark dirty if deleted. Add to _deleted_party_ids if save_state handles deletions separately.
-                    # For now, direct delete_entity is used.
-                elif party.leader_id == character_id: # Leader left
-                    party.leader_id = member_ids[0] # MVP: Assign new leader to the first remaining member
+                    self._remove_from_cache(guild_id, party.id)
+                elif party.leader_id == character_id:
+                    party.leader_id = member_ids[0]
                     logger.info(f"PartyManager: Leader {character_id} left party {party.id}. New leader is {party.leader_id}.")
-                    self._add_to_cache(guild_id, party) # Update cache
+                    self._add_to_cache(guild_id, party)
                     self.mark_party_dirty(guild_id, party.id)
-                else: # Member left, party still has members and leader
-                    self._add_to_cache(guild_id, party) # Update cache
+                else:
+                    self._add_to_cache(guild_id, party)
                     self.mark_party_dirty(guild_id, party.id)
 
-                self._member_to_party_map.get(guild_id, {}).pop(character_id, None) # Update member map
-                logger.info(f"PartyManager: Character {character_id} successfully left party {party_id_to_leave}.")
+                self._member_to_party_map.get(guild_id, {}).pop(character_id, None)
+                logger.info(f"PartyManager: Character {character_id} successfully left party {party_id_to_leave} in guild {guild_id}.")
                 return True
         except (CharacterNotInPartyError, ValueError) as e:
             logger.warning(f"PartyManager: Failed to leave party - {e}")

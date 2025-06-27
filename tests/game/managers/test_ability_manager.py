@@ -71,16 +71,21 @@ def ability_manager(
 
 @pytest.fixture
 def sample_ability_pydantic() -> AbilityPydanticModel:
+    # Ensure all fields expected by AbilityPydanticModel are provided,
+    # or that they have defaults in the model definition.
+    # Based on bot/game/models/ability.py, 'effects' and 'resource_cost' default to empty.
     return AbilityPydanticModel(
         id="ab_fireball",
         static_id="fireball_spell",
         name_i18n={"en": "Fireball", "ru": "Огненный Шар"},
         description_i18n={"en": "Hurls a fiery orb.", "ru": "Мечет огненный шар."},
-        effect_i18n={"en": "Deals fire damage.", "ru": "Наносит урон огнем."},
-        cost={"stamina": 10},
+        # effect_i18n is not a field in AbilityPydanticModel, it uses 'effects' list
+        # cost is not a field, it's 'resource_cost'
+        resource_cost={"stamina": 10}, # Changed from cost to resource_cost
         requirements={},
-        type="activated_spell_damage", # Example activatable type
-        cooldown=5.0 # 5 second cooldown
+        type="activated_spell_damage",
+        effects=[{"type": "deal_damage", "damage_type": "fire", "amount": "2d6"}], # Example effect
+        cooldown=5.0
     )
 
 @pytest.fixture
@@ -159,13 +164,16 @@ async def test_learn_ability_success(
     char_id = sample_character_pydantic.id
     ability_id = sample_ability_pydantic.id
 
-    sample_character_pydantic.known_abilities = [] # Ensure char doesn't know it yet
+    sample_character_pydantic.known_abilities = []
     mock_character_manager.get_character.return_value = sample_character_pydantic
-    # get_ability will be called; ensure it returns the sample ability
-    ability_manager.get_ability = AsyncMock(return_value=sample_ability_pydantic)
+    ability_manager.get_ability = AsyncMock(return_value=sample_ability_pydantic) # type: ignore[method-assign]
+
+    # Ensure check_ability_learning_requirements is an AsyncMock if it's awaitable
+    # For now, assuming it's synchronous or its mock setup handles async if needed.
     mock_rule_engine.check_ability_learning_requirements.return_value = (True, "Can learn")
 
-    success = await ability_manager.learn_ability(guild_id, char_id, ability_id)
+
+    success = await ability_manager.learn_ability(guild_id, char_id, ability_id, discord_user_id=sample_character_pydantic.player_id) # Added discord_user_id
 
     assert success is True
     assert ability_id in sample_character_pydantic.known_abilities
@@ -185,25 +193,47 @@ async def test_activate_ability_success(
     ability_id = sample_ability_pydantic.id
 
     mock_character_manager.get_character.return_value = sample_character_pydantic
-    ability_manager.get_ability = AsyncMock(return_value=sample_ability_pydantic)
-    mock_rule_engine.process_ability_effects.return_value = {"damage_done": 10}
+    ability_manager.get_ability = AsyncMock(return_value=sample_ability_pydantic) # type: ignore[method-assign]
+
+    # Ensure process_ability_effects is an AsyncMock if it's awaitable
+    mock_rule_engine.process_ability_effects = AsyncMock(return_value={"damage_done": 10})
+
 
     initial_stamina = sample_character_pydantic.stats["stamina"]
-    cost_stamina = sample_ability_pydantic.cost["stamina"]
+    cost_stamina = sample_ability_pydantic.resource_cost["stamina"] # Corrected from .cost
 
     result = await ability_manager.activate_ability(guild_id, char_id, ability_id)
 
     assert result["success"] is True
     assert result["outcomes"] == {"damage_done": 10}
-    assert sample_character_pydantic.stats["stamina"] == initial_stamina - cost_stamina
-    assert ability_id in sample_character_pydantic.ability_cooldowns
-    assert sample_character_pydantic.ability_cooldowns[ability_id] > time.time() # Cooldown is set
 
-    mock_character_manager.mark_character_dirty.assert_any_call(guild_id, char_id) # Called for resource and cooldown
+    # Ensure stats is a dict before modification attempt
+    char_stats = getattr(sample_character_pydantic, 'stats', None)
+    assert isinstance(char_stats, dict), "Character stats should be a dictionary."
+    if isinstance(char_stats, dict): # Redundant due to assert but good for type checker
+        self.assertEqual(char_stats["stamina"], initial_stamina - cost_stamina)
+
+    char_cooldowns = getattr(sample_character_pydantic, 'ability_cooldowns', None)
+    assert isinstance(char_cooldowns, dict), "Character ability_cooldowns should be a dictionary."
+    if isinstance(char_cooldowns, dict): # Redundant but good for type checker
+        self.assertIn(ability_id, char_cooldowns)
+        self.assertGreater(char_cooldowns[ability_id], time.time()) # Cooldown is set
+
+
+    mock_character_manager.mark_character_dirty.assert_any_call(guild_id, char_id)
+
+    # Ensure process_ability_effects is an AsyncMock before asserting await
+    assert isinstance(mock_rule_engine.process_ability_effects, AsyncMock)
     mock_rule_engine.process_ability_effects.assert_awaited_once_with(
-        caster=sample_character_pydantic, ability=sample_ability_pydantic, target_entity=None, guild_id=guild_id
+        caster=sample_character_pydantic, ability=sample_ability_pydantic, target_entity=None, guild_id=guild_id, context=ANY
     )
-    mock_character_manager._game_log_manager.log_event.assert_awaited_once() # Check logging
+
+    # Ensure _game_log_manager and its log_event are AsyncMocks
+    game_log_mock = getattr(mock_character_manager, '_game_log_manager', None)
+    assert isinstance(game_log_mock, AsyncMock)
+    log_event_mock = getattr(game_log_mock, 'log_event', None)
+    assert isinstance(log_event_mock, AsyncMock)
+    log_event_mock.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_activate_ability_on_cooldown(
@@ -216,15 +246,21 @@ async def test_activate_ability_on_cooldown(
     char_id = sample_character_pydantic.id
     ability_id = sample_ability_pydantic.id
 
-    sample_character_pydantic.ability_cooldowns = {ability_id: time.time() + 30} # On cooldown
+    # Ensure ability_cooldowns is a dict before assignment
+    setattr(sample_character_pydantic, 'ability_cooldowns', {ability_id: time.time() + 30})
+
     mock_character_manager.get_character.return_value = sample_character_pydantic
-    ability_manager.get_ability = AsyncMock(return_value=sample_ability_pydantic)
+    ability_manager.get_ability = AsyncMock(return_value=sample_ability_pydantic) # type: ignore[method-assign]
 
     result = await ability_manager.activate_ability(guild_id, char_id, ability_id)
 
     assert result["success"] is False
     assert "on cooldown" in result["message"]
+
+    # Ensure process_ability_effects is an AsyncMock before asserting not_awaited
+    assert isinstance(ability_manager._rule_engine.process_ability_effects, AsyncMock)
     ability_manager._rule_engine.process_ability_effects.assert_not_awaited()
+
 
 @pytest.mark.asyncio
 async def test_activate_ability_insufficient_resources(
@@ -237,14 +273,21 @@ async def test_activate_ability_insufficient_resources(
     char_id = sample_character_pydantic.id
     ability_id = sample_ability_pydantic.id
 
-    sample_character_pydantic.stats["stamina"] = 5 # Less than cost of 10
+    # Ensure stats is a dict before modification
+    char_stats = getattr(sample_character_pydantic, 'stats', {})
+    if not isinstance(char_stats, dict): char_stats = {} # Should not happen with Pydantic model
+    char_stats["stamina"] = 5
+    setattr(sample_character_pydantic, 'stats', char_stats)
+
     mock_character_manager.get_character.return_value = sample_character_pydantic
-    ability_manager.get_ability = AsyncMock(return_value=sample_ability_pydantic)
+    ability_manager.get_ability = AsyncMock(return_value=sample_ability_pydantic) # type: ignore[method-assign]
 
     result = await ability_manager.activate_ability(guild_id, char_id, ability_id)
 
     assert result["success"] is False
     assert "Not enough stamina" in result["message"]
+
+    assert isinstance(ability_manager._rule_engine.process_ability_effects, AsyncMock)
     ability_manager._rule_engine.process_ability_effects.assert_not_awaited()
 
 print("DEBUG: tests/game/managers/test_ability_manager.py created.")

@@ -7,11 +7,10 @@ import traceback # Will be removed where logger.error(exc_info=True) is used
 import uuid # Moved uuid import to top
 from typing import Optional, List, Dict, Any
 
-from bot.database.base_adapter import BaseDbAdapter # Changed
-# from bot.database.postgres_adapter import PostgresAdapter # Moved into __init__
-# from bot.database.sqlite_adapter import SQLiteAdapter # Moved into __init__
+from bot.database.base_adapter import BaseDbAdapter
+# Imports for PostgresAdapter and SQLiteAdapter are now within __init__
 
-logger = logging.getLogger(__name__) # Added
+logger = logging.getLogger(__name__)
 
 class DBService:
     """
@@ -77,88 +76,139 @@ class DBService:
 
     def get_session_factory(self): # ADDED METHOD
         """Returns the session factory from the underlying adapter if available."""
-        if hasattr(self.adapter, '_SessionLocal'): # Specific to PostgresAdapter's SQLAlchemy setup
+        # Prioritize a generic get_session_factory method if adapter defines it
+        if hasattr(self.adapter, 'get_session_factory') and callable(self.adapter.get_session_factory):
+             factory = self.adapter.get_session_factory()
+             if callable(factory): # Ensure the returned factory is also callable
+                 return factory
+        # Fallback for PostgresAdapter's specific _SessionLocal attribute
+        elif hasattr(self.adapter, '_SessionLocal') and callable(self.adapter._SessionLocal):
             return self.adapter._SessionLocal
-        elif hasattr(self.adapter, 'get_session_factory'): # If an adapter had its own getter
-             return self.adapter.get_session_factory()
 
-        logger.error("DBService: Adapter does not have a recognizable session factory (e.g., _SessionLocal or get_session_factory method).")
-        raise NotImplementedError("DBService's underlying adapter does not provide a session factory.")
+        logger.error("DBService: Adapter does not provide a valid and callable session factory.")
+        raise NotImplementedError("DBService's underlying adapter does not provide a valid session factory.")
 
     async def connect(self) -> None:
         """Connects to the database."""
-        await self.adapter.connect()
-        logger.info("Database connection established.") # Added
+        if hasattr(self.adapter, 'connect') and callable(self.adapter.connect):
+            await self.adapter.connect()
+            logger.info("Database connection established.")
+        else:
+            logger.warning("DBService: Adapter has no callable 'connect' method.")
+
 
     async def close(self) -> None:
         """Closes the database connection."""
-        await self.adapter.close()
-        logger.info("Database connection closed.") # Added
+        if hasattr(self.adapter, 'close') and callable(self.adapter.close):
+            await self.adapter.close()
+            logger.info("Database connection closed.")
+        else:
+            logger.warning("DBService: Adapter has no callable 'close' method.")
+
 
     async def initialize_database(self) -> None:
-        """Initializes the database schema by running migrations."""
-        logger.info("Initializing database schema...") # Added
-        await self.adapter.initialize_database()
-        logger.info("Database schema initialization complete.") # Added
+        """Initializes the database schema by running migrations (if adapter supports it)."""
+        logger.info("Initializing database schema...")
+        if hasattr(self.adapter, 'initialize_database') and callable(self.adapter.initialize_database):
+            await self.adapter.initialize_database()
+            logger.info("Database schema initialization complete.")
+        else:
+            logger.warning("DBService: Adapter has no callable 'initialize_database' method. Schema initialization skipped by DBService.")
+
 
     @asynccontextmanager
-    async def get_session(self):
+    async def get_session(self): # -> AsyncIterator[AsyncSession] for SQLAlchemy, or relevant connection type
         """
-        Provides a new database session from the adapter's session factory.
-        The caller is responsible for beginning and managing transactions on this session.
+        Provides a database session/connection from the adapter.
+        For SQLAlchemy adapters (like PostgresAdapter), this yields an AsyncSession.
+        For direct driver adapters (like SQLiteAdapter), this might yield the connection itself.
+        The context manager ensures the session/connection is closed.
+        Transaction management within the yielded session/connection is up to the caller or specific adapter methods.
         """
-        if not hasattr(self.adapter, 'get_session_factory') and not hasattr(self.adapter, '_SessionLocal'):
-            logger.error("DBService.get_session: Adapter does not have a get_session_factory method or _SessionLocal attribute.")
-            raise NotImplementedError("Adapter does not provide a session factory mechanism.")
-
-        # Prefer get_session_factory if it exists (more generic)
-        session_factory = None
-        if hasattr(self.adapter, 'get_session_factory'):
-            session_factory = self.adapter.get_session_factory()
-        elif hasattr(self.adapter, '_SessionLocal'): # Fallback for current PostgresAdapter
-            session_factory = self.adapter._SessionLocal
-
-        if not session_factory or not callable(session_factory):
-            logger.error("DBService.get_session: Could not obtain a valid session factory from the adapter.")
-            raise ConnectionError("DBService: Session factory is invalid or not available.")
-
-        session = session_factory() # Create a new session
+        session_or_conn = None
         try:
-            yield session # Yield the bare session; transaction management is up to the caller
+            # Try to get a session factory first (SQLAlchemy style)
+            if hasattr(self.adapter, 'get_session_factory') and callable(self.adapter.get_session_factory):
+                factory = self.adapter.get_session_factory()
+                if callable(factory):
+                    session_or_conn = factory()
+                    logger.debug("DBService.get_session: Acquired session from factory.")
+                else:
+                    logger.error("DBService.get_session: Session factory obtained from adapter is not callable.")
+                    raise ConnectionError("Invalid session factory.")
+            elif hasattr(self.adapter, '_SessionLocal') and callable(self.adapter._SessionLocal): # Specific to current PostgresAdapter
+                session_or_conn = self.adapter._SessionLocal()
+                logger.debug("DBService.get_session: Acquired session from _SessionLocal.")
+            # Fallback for adapters that might provide a raw connection directly (like current SQLiteAdapter)
+            elif hasattr(self.adapter, '_get_connection') and callable(self.adapter._get_connection):
+                 # This path is more for direct driver usage like aiosqlite
+                session_or_conn = await self.adapter._get_connection() # type: ignore
+                logger.debug("DBService.get_session: Acquired raw connection from adapter._get_connection.")
+            else:
+                logger.error("DBService.get_session: Adapter does not provide a recognized session/connection mechanism.")
+                raise NotImplementedError("Adapter does not provide a session/connection mechanism.")
+
+            if session_or_conn is None: # Should be caught by above checks, but as a safeguard
+                raise ConnectionError("Failed to acquire a database session or connection.")
+
+            yield session_or_conn
         finally:
-            if hasattr(session, 'close'): # SQLAlchemy AsyncSession has close
-                await session.close()
-            # For raw asyncpg connections (if SQLiteAdapter was different), other cleanup might be needed.
+            if session_or_conn:
+                if hasattr(session_or_conn, 'close') and callable(session_or_conn.close):
+                    await session_or_conn.close()
+                    logger.debug("DBService.get_session: Session/connection closed.")
+                # For raw asyncpg connections from a pool, release might be needed instead of close
+                elif hasattr(self.adapter, '_conn_pool') and self.adapter._conn_pool and \
+                     hasattr(self.adapter._conn_pool, 'release') and callable(self.adapter._conn_pool.release) and \
+                     not hasattr(session_or_conn, 'close'): # If it's a raw conn without close
+                    await self.adapter._conn_pool.release(session_or_conn)
+                    logger.debug("DBService.get_session: Raw connection released back to pool.")
+
 
     async def get_global_state_value(self, key: str) -> Optional[str]:
         """Fetches a single value from the global_state table."""
+        # `sqlite_path` is unbound error related to SQLiteAdapter's __init__ if path isn't properly passed or defaulted.
+        # This method itself is fine if self.adapter is initialized.
         if not self.adapter:
-            logger.warning("DBService: Adapter not available for get_global_state_value.") # Changed
+            logger.warning("DBService: Adapter not available for get_global_state_value.")
             return None
-        sql = "SELECT value FROM global_state WHERE key = $1"
+        sql = "SELECT value FROM global_state WHERE key = $1" # $1 is for Postgres, SQLite uses ?
         try:
+            # Adapter's fetchone should handle placeholder replacement if necessary
             row = await self.adapter.fetchone(sql, (key,))
             if row and row.get('value') is not None:
                 return str(row['value'])
         except Exception as e:
-            logger.error("DBService: Error fetching global state for key '%s': %s", key, e, exc_info=True) # Changed
+            logger.error("DBService: Error fetching global state for key '%s': %s", key, e, exc_info=True)
         return None
 
     async def get_player_by_discord_id(self, discord_user_id: int, guild_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves a player by their Discord User ID and Guild ID."""
-        sql = "SELECT * FROM players WHERE discord_user_id = $1 AND guild_id = $2"
-        try: # Added try-except
+        if not self.adapter: # Added check
+            logger.warning("DBService: Adapter not available for get_player_by_discord_id.")
+            return None
+        sql = "SELECT * FROM players WHERE discord_user_id = $1 AND guild_id = $2" # $ syntax for Postgres
+        try:
             player = await self.adapter.fetchone(sql, (discord_user_id, guild_id))
             if player:
-                if player.get('stats') and isinstance(player['stats'], str):
-                    player['stats'] = json.loads(player['stats'])
+                # Ensure stats are parsed if stored as JSON string
+                stats_val = player.get('stats')
+                if stats_val and isinstance(stats_val, str):
+                    try:
+                        player['stats'] = json.loads(stats_val)
+                    except json.JSONDecodeError:
+                        logger.error(f"DBService: Failed to parse stats JSON for player {player.get('id')}: {stats_val}")
+                        player['stats'] = {} # Default to empty dict on error
             return player
-        except Exception as e: # Added
+        except Exception as e:
             logger.error("Error fetching player by discord_id %s for guild %s: %s", discord_user_id, guild_id, e, exc_info=True)
             return None
 
 
     async def update_player_field(self, player_id: str, field_name: str, value: Any, guild_id: str) -> bool:
+        if not self.adapter: # Added check
+            logger.warning("DBService: Adapter not available for update_player_field.")
+            return False
         """
         Updates a specific field for a player in the 'players' table.
         Ensures the player belongs to the correct guild.
@@ -930,47 +980,67 @@ class DBService:
                         session=internal_session,
                         model_class=model_class,
                         data=actual_data
+                    # This path will likely only work well with PostgresAdapter or similar SQLAlchemy-based adapters.
+                    # For SQLiteAdapter, crud_utils might not work as expected if it relies heavily on SQLAlchemy session features
+                    # not fully mirrored by a raw aiosqlite connection.
+                    created_model_instance = await crud_utils.create_entity(
+                        session=internal_session_ctx, # Pass the yielded session/connection
+                        model_class=model_class,
+                        data=actual_data
+                        # guild_id might need to be explicitly passed to crud_utils if not in actual_data
                     )
+                    # Assuming crud_utils handles commit if it manages its own transaction within the passed session
                     logger.info(f"DBService: Created entity via crud_utils (internal session) for model {model_class.__name__}, ID: {getattr(created_model_instance, 'id', 'N/A')}")
                     return created_model_instance
             except Exception as e:
                 logger.error(f"DBService: Error using crud_utils.create_entity (internal session) for {model_class.__name__}: {e}", exc_info=True)
                 return None
-        elif table_name and data:
-            # Legacy path: low-level table-based creation (session not supported here directly)
-            logger.warning("DBService.create_entity: Using legacy table-based creation. Session parameter is ignored.")
-            original_guild_id = data.get('guild_id', 'N/A')
+        elif table_name and actual_data: # Changed data to actual_data for consistency
+            # Legacy path: low-level table-based creation
+            logger.warning("DBService.create_entity: Using legacy table-based creation. Session parameter is ignored for this path.")
+            original_guild_id = actual_data.get('guild_id', 'N/A')
 
-            if id_field == 'id' and 'id' not in data:
-                data['id'] = str(uuid.uuid4())
+            if id_field == 'id' and 'id' not in actual_data:
+                actual_data['id'] = str(uuid.uuid4())
 
-            entity_id_val = data.get(id_field)
+            entity_id_val = actual_data.get(id_field)
             if not entity_id_val:
-                logger.error("DBService: Entity ID missing in legacy create_entity for table %s.", table_name)
+                logger.error(f"DBService: Entity ID ('{id_field}') missing in legacy create_entity for table {table_name}.")
                 return None
 
-            processed_data = {k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in data.items()}
+            processed_data = {k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in actual_data.items()}
 
             columns = ', '.join(processed_data.keys())
+            # Placeholders depend on adapter type ($N for Postgres, ? for SQLite)
+            # This logic should ideally be in the adapter itself or use a common placeholder type
+            # For now, assuming adapter's execute/execute_insert handles placeholder conversion.
+            # Using $N as a generic representation here, adapter must translate.
             placeholders = ', '.join([f'${i+1}' for i in range(len(processed_data))])
             sql_base = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
             sql_to_execute = sql_base
-            use_returning_clause = self.adapter.supports_returning_id_on_insert
 
-            if use_returning_clause and id_field in processed_data:
+            # Check if adapter supports RETURNING id_field
+            # This is a property of the adapter, not a direct check on processed_data
+            use_returning_clause = False
+            if hasattr(self.adapter, 'supports_returning_id_on_insert'):
+                use_returning_clause = self.adapter.supports_returning_id_on_insert
+
+            if use_returning_clause: # No need to check if id_field is in processed_data, RETURNING fetches from DB
                 sql_to_execute += f" RETURNING {id_field}"
 
             try:
                 if use_returning_clause:
                     returned_val = await self.adapter.execute_insert(sql_to_execute, tuple(processed_data.values()))
-                    logger.info("DBService: Created entity (legacy) in table '%s' with ID '%s' (RETURNING, Guild: %s).", table_name, returned_val or entity_id_val, original_guild_id)
-                    return returned_val or entity_id_val # Return what adapter gave, or original if None
-                else:
+                    logger.info(f"DBService: Created entity (legacy) in table '{table_name}' with ID '{returned_val or entity_id_val}' (RETURNING, Guild: {original_guild_id}).")
+                    return returned_val or entity_id_val
+                else: # Adapter does not support RETURNING or it's not applicable
                     await self.adapter.execute_insert(sql_to_execute, tuple(processed_data.values()))
-                    logger.info("DBService: Created entity (legacy) in table '%s' with ID '%s' (no RETURNING, Guild: %s).", table_name, entity_id_val, original_guild_id)
+                    # For adapters like SQLite that don't easily return non-integer PKs,
+                    # we rely on the ID being part of `actual_data` (pre-generated).
+                    logger.info(f"DBService: Created entity (legacy) in table '{table_name}' with pre-generated ID '{entity_id_val}' (no RETURNING, Guild: {original_guild_id}).")
                     return entity_id_val
             except Exception as e:
-                logger.error("DBService: Error in legacy create_entity for table '%s' (ID: %s, Guild: %s): %s", table_name, entity_id_val, original_guild_id, e, exc_info=True)
+                logger.error(f"DBService: Error in legacy create_entity for table '{table_name}' (ID: {entity_id_val}, Guild: {original_guild_id}): {e}", exc_info=True)
                 return None
         else:
             logger.error("DBService.create_entity: Invalid parameters. Must provide (model_class and entity_data) or (table_name and data).")
@@ -1058,83 +1128,78 @@ class DBService:
         """
         Updates an entity identified by its primary key using SQLAlchemy session and crud_utils.
         """
-        from bot.database import crud_utils # Local import
+        from bot.database import crud_utils
 
         if not updates:
             logger.warning(f"DBService.update_entity_by_pk: No updates provided for {model_class.__name__} with PK {pk_value}.")
             return False
 
-        db_session_managed_locally = False
-        if session is None:
-            session = self.get_session() # type: ignore
-            db_session_managed_locally = True
+        # Use a local session if one is not provided
+        async def _update_with_session(s):
+            # crud_utils.update_entity is expected to handle begin/commit/rollback if it's managing the transaction scope.
+            # If it expects the caller to manage it, then `async with s.begin():` would be needed here.
+            # Assuming crud_utils handles its transaction boundaries for now.
+            updated_model = await crud_utils.update_entity(
+                session=s,
+                model_class=model_class,
+                entity_id=pk_value,
+                data=updates,
+                guild_id_for_verification=guild_id
+            )
+            if updated_model:
+                logger.info(f"DBService: Successfully updated {model_class.__name__} with PK {pk_value} via crud_utils.")
+                return True
+            else:
+                logger.warning(f"DBService: crud_utils.update_entity returned None for {model_class.__name__} PK {pk_value}. Update may have failed or entity not found.")
+                return False
 
-        if not session:
-            logger.error(f"DBService.update_entity_by_pk: Could not obtain a database session for {model_class.__name__} PK {pk_value}.")
-            return False
-
-        try:
-            async with session.begin_nested() if not db_session_managed_locally else session.begin(): # type: ignore
-                updated_model = await crud_utils.update_entity(
-                    session=session,
-                    model_class=model_class,
-                    entity_id=pk_value, # crud_utils.update_entity expects entity_id (PK value)
-                    data=updates,
-                    guild_id_for_verification=guild_id # Pass guild_id for verification
-                )
-                if updated_model:
-                    logger.info(f"DBService: Successfully updated {model_class.__name__} with PK {pk_value} via crud_utils.")
-                    if db_session_managed_locally:
-                        await session.commit() # type: ignore
-                    return True
-                else:
-                    logger.warning(f"DBService: crud_utils.update_entity returned None for {model_class.__name__} PK {pk_value}. Update may have failed or entity not found.")
-                    if db_session_managed_locally:
-                        await session.rollback() # type: ignore
-                    return False
-        except Exception as e:
-            logger.error(f"DBService: Error using crud_utils.update_entity for {model_class.__name__} PK {pk_value}: {e}", exc_info=True)
-            if db_session_managed_locally and session.is_active: # type: ignore
-                await session.rollback() # type: ignore
-            return False
-        finally:
-            if db_session_managed_locally and session: # type: ignore
-                await session.close() # type: ignore
+        if session: # Use provided session
+            return await _update_with_session(session)
+        else: # Manage session locally
+            try:
+                async with self.get_session() as local_session:
+                    return await _update_with_session(local_session)
+            except Exception as e:
+                logger.error(f"DBService: Error managing local session for update_entity_by_pk ({model_class.__name__} PK {pk_value}): {e}", exc_info=True)
+                return False
 
 
     async def delete_entity(self, table_name: str, entity_id: str, guild_id: Optional[str] = None, id_field: str = 'id') -> bool:
-        sql = f"DELETE FROM {table_name} WHERE {id_field} = $1"
+        # This is a low-level method. For model-based deletes with session, use crud_utils.delete_entity
+        sql = f"DELETE FROM {table_name} WHERE {id_field} = $1" # $ syntax for Postgres
         params_list = [entity_id]
-        param_idx = 2
+        param_idx = 2 # For potential guild_id
         log_guild_id = guild_id if guild_id else "N/A (or not applicable)"
 
         if guild_id:
-            sql += f" AND guild_id = ${param_idx}"
+            sql += f" AND guild_id = ${param_idx}" # $ syntax for Postgres
             params_list.append(guild_id)
-            # param_idx +=1 # Not needed
+            # param_idx +=1 # Not needed for this structure
 
         try:
             result_status = await self.adapter.execute(sql, tuple(params_list))
+            # Adapter's execute should handle placeholder conversion for SQLite
             if isinstance(result_status, str) and "DELETE" in result_status.upper():
                 parts = result_status.upper().split()
                 if len(parts) > 1 and parts[0] == "DELETE":
                     try:
                         affected_rows = int(parts[1])
                         if affected_rows > 0:
-                            logger.info("DBService: Successfully deleted entity '%s' from table '%s' (Guild: %s). %s rows affected.", entity_id, table_name, log_guild_id, affected_rows) # Added
+                            logger.info(f"DBService: Successfully deleted entity '{entity_id}' from table '{table_name}' (Guild: {log_guild_id}). {affected_rows} rows affected.")
                             return True
                         else:
-                            logger.info("DBService: Delete for entity '%s' from table '%s' (Guild: %s) affected 0 rows (ID not found).", entity_id, table_name, log_guild_id) # Added
-                            return True # Or False if strict "something deleted" is needed
+                            logger.info(f"DBService: Delete for entity '{entity_id}' from table '{table_name}' (Guild: {log_guild_id}) affected 0 rows (ID not found or no match).")
+                            return False # Changed to False if 0 rows affected, as nothing was deleted
                     except ValueError:
-                        logger.info("DBService: Delete for entity '%s' from table '%s' (Guild: %s) completed with status: %s.", entity_id, table_name, log_guild_id, result_status) # Added
-                        return True
-                logger.info("DBService: Delete for entity '%s' from table '%s' (Guild: %s) completed with status: %s.", entity_id, table_name, log_guild_id, result_status) # Added
+                        logger.info(f"DBService: Delete for entity '{entity_id}' from table '{table_name}' (Guild: {log_guild_id}) completed with status: {result_status} (could not parse row count). Assuming success if no error.")
+                        return True # Or False depending on desired strictness
+                # If status is just "DELETE" without row count, assume success if no error
+                logger.info(f"DBService: Delete for entity '{entity_id}' from table '{table_name}' (Guild: {log_guild_id}) completed with status: {result_status}. Assuming success if no error.")
                 return True
-            logger.warning("DBService: Delete for entity '%s' from table '%s' (Guild: %s) resulted in unexpected status: %s.", entity_id, table_name, log_guild_id, result_status) # Added
-            return True
+            logger.warning(f"DBService: Delete for entity '{entity_id}' from table '{table_name}' (Guild: {log_guild_id}) resulted in unexpected status: {result_status}.")
+            return False # Changed to False for unexpected status
         except Exception as e:
-            logger.error("DBService: Error deleting entity '%s' from table '%s' (Guild: %s): %s", entity_id, table_name, log_guild_id, e, exc_info=True) # Changed
+            logger.error(f"DBService: Error deleting entity '{entity_id}' from table '{table_name}' (Guild: {log_guild_id}): {e}", exc_info=True)
             return False
 
     async def set_guild_setting(self, guild_id: str, setting_key: str, setting_value: Any) -> bool:

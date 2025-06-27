@@ -1214,3 +1214,31 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
         - Ensured `await` for async methods.
         - Improved safe attribute access on model instances and dictionary data.
         - Standardized return dictionary structure.
+
+## Pyright Error Fixing Phase (Batch 55 - pyright_errors_part_3.txt)
+- **Focus:** Addressing all errors listed in `pyright_errors_part_3.txt`.
+- **Strategy:** Iteratively fix errors in each file, applying robust fixes for type errors, attribute access, async/await usage, and mock configurations.
+- **Summary of Fixes for `pyright_errors_part_3.txt` (approx. 200 errors across 13 files):**
+    - **General Themes:**
+        - **Safe Attribute/Method Access:** Extensively used `getattr` and `hasattr`/`callable` checks before accessing attributes or calling methods on potentially `None` objects (especially managers and Pydantic/SQLAlchemy model instances).
+        - **Async/Await:** Ensured all asynchronous calls are properly `await`ed, resolving `CoroutineType` errors and issues where `None` was incorrectly treated as awaitable.
+        - **JSON Handling:** Made JSON parsing (from string fields like `skills_data_json`) and serialization (to string fields) more robust, including type checks and default empty structures (dict/list) on error.
+        - **Mocking in Tests:** Corrected mock setups in test files, ensuring `AsyncMock` is used for async methods, `spec` is provided for better type safety, and assertion methods are called on actual mock objects. Addressed issues with mocking async context managers (`db_service.get_session`).
+        - **Type Hinting & Imports:** Corrected type hints (e.g., for Pydantic models, SQLAlchemy models, manager instances, function parameters/returns). Fixed import paths and moved imports from `TYPE_CHECKING` blocks if used at runtime.
+        - **SQLAlchemy Column Operations:** Resolved `Invalid conditional operand` errors by ensuring SQLAlchemy column objects are not used directly in boolean contexts; instead, their values are compared (e.g., `if column_attr is not None:`).
+        - **Pydantic Model Usage:** Corrected Pydantic `Field` usage in schemas (using `default=...` as keyword argument). Ensured Pydantic models are instantiated with all required fields or that defaults are handled. Used `model_dump()` for Pydantic V2.
+        - **Parameter Passing:** Fixed numerous errors related to incorrect parameter names, types, or missing arguments in function/method calls across various modules.
+    - **Specific File Highlights:**
+        - **`tests/api/routers/test_item_router.py`:** Corrected mock assertions, `IntegrityError` mocking, added `guild_id` to tests.
+        - **`bot/api/routers/master.py`:** Added `__init__` to placeholder `User`, ensured default language for formatters, standardized `raw_report_data` for simulations.
+        - **`bot/api/routers/rule_config.py`:** Renamed duplicated endpoint functions, filtered keys for Pydantic model instantiation.
+        - **`bot/command_modules/exploration_cmds.py`:** Implemented safer attribute access, `None`/`callable` checks for managers, corrected `get_entity_by_attributes` call.
+        - **`bot/game/managers/equipment_manager.py`:** Corrected type hints for models, robust `None`/`hasattr`/`callable` checks for managers, safer Pydantic/SQLAlchemy attribute access.
+        - **`bot/game/managers/party_manager.py`:** Made `player_ids_json` handling robust, safe attribute access for Pydantic character models.
+        - **`bot/game/rules/resolvers/skill_check_resolver.py`:** Safer parsing of JSON fields from character models, `callable` checks for `resolve_dice_roll_func`.
+        - **`bot/services/db_service.py`:** Refined `get_session_factory` and `get_session`, added `hasattr`/`callable` for adapter methods, improved error handling and legacy `create_entity` logic.
+        - **`tests/commands/test_action_cmds.py`:** Corrected nested mock setups, added `# type: ignore` for app command callbacks.
+        - **`tests/game/ai/test_faction_generator.py`:** Standardized mock models, added `spec` to mocks, corrected logic for faction/leader creation tests.
+        - **`tests/game/managers/test_ability_manager.py`:** Corrected `AbilityPydanticModel` instantiation in fixture, added missing `discord_user_id` to `learn_ability`.
+        - **`tests/game/test_turn_processing_integration.py`:** Ensured `template_id` for models, safer attribute/dictionary access, type hints for mock callbacks.
+        - **`bot/api/routers/combat.py`:** Made `calculate_initiative` robust, ensured `turn_log_structured` is list, corrected `Combat` model instantiation and attribute assignments.

@@ -19,55 +19,44 @@ except ImportError:
 
 
 # Dependencies to be mocked
-# from bot.services.openai_service import OpenAIService
-# from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
-# from bot.services.db_service import DBService
+from bot.services.openai_service import OpenAIService # Import for spec
+from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator # Import for spec
 
 
 # --- Mock Models (Simplified) ---
-_FactionModel = Faction
-_NPCModel = NPC
+# Using Pydantic BaseModel for simplified test models
+from pydantic import BaseModel, Field as PydanticField # Renamed Field to PydanticField
+from typing import Dict as PydanticDict, List as PydanticList, Optional as PydanticOptional, Any as PydanticAny
 
-# Check if the imported models are placeholders (Any) or if they are actual classes
-# that might be too complex for easy instantiation in tests.
-if not hasattr(Faction, 'model_fields') and not hasattr(Faction, '__fields__'): # Pydantic v2 and v1 check
-    # print("Using fallback MinimalFaction for testing.")
-    from pydantic import BaseModel, Field
-    from typing import Dict as PydanticDict, List as PydanticList, Optional as PydanticOptional, Any as PydanticAny
+class MinimalFaction(BaseModel):
+    id: str = PydanticField(default_factory=lambda: str(uuid.uuid4()))
+    guild_id: str
+    name_i18n: PydanticDict[str, str]
+    description_i18n: PydanticDict[str, str] = PydanticField(default_factory=dict)
+    leader_id: PydanticOptional[str] = None
+    alignment: PydanticOptional[str] = None
+    member_ids: PydanticList[str] = PydanticField(default_factory=list)
+    state_variables: PydanticDict[str, PydanticAny] = PydanticField(default_factory=dict)
 
-    class MinimalFaction(BaseModel):
-        id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-        guild_id: str
-        name_i18n: PydanticDict[str, str]
-        description_i18n: PydanticDict[str, str] = Field(default_factory=dict)
-        leader_id: PydanticOptional[str] = None
-        alignment: PydanticOptional[str] = None
-        member_ids: PydanticList[str] = Field(default_factory=list)
-        state_variables: PydanticDict[str, PydanticAny] = Field(default_factory=dict)
+    @property
+    def name(self): return self.name_i18n.get("en", list(self.name_i18n.values())[0] if self.name_i18n else self.id)
 
-        @property
-        def name(self): return self.name_i18n.get("en", list(self.name_i18n.values())[0] if self.name_i18n else self.id)
-    _FactionModel = MinimalFaction # type: ignore
+class MinimalNPC(BaseModel):
+    id: str = PydanticField(default_factory=lambda: str(uuid.uuid4()))
+    name_i18n: PydanticDict[str, str] = PydanticField(default_factory=dict)
+    guild_id: str
+    template_id: str
+    @property
+    def name(self): return self.name_i18n.get("en", self.id)
 
-if not hasattr(NPC, 'model_fields') and not hasattr(NPC, '__fields__'):
-    # print("Using fallback MinimalNPC for testing.")
-    from pydantic import BaseModel, Field
-    from typing import Dict as PydanticDict, List as PydanticList, Optional as PydanticOptional, Any as PydanticAny
-    class MinimalNPC(BaseModel):
-        id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-        name_i18n: PydanticDict[str, str] = Field(default_factory=dict)
-        guild_id: str
-        template_id: str
-        # Add other fields FactionManager/NpcManager might interact with
-        @property
-        def name(self): return self.name_i18n.get("en", self.id)
-    _NPCModel = MinimalNPC # type: ignore
+_FactionModel = MinimalFaction
+_NPCModel = MinimalNPC
 
 
 class TestAIFactionGenerator(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.mock_openai_service = AsyncMock()
-        self.mock_prompt_generator = MagicMock()
+        self.mock_openai_service = AsyncMock(spec=OpenAIService)
+        self.mock_prompt_generator = MagicMock(spec=MultilingualPromptGenerator)
         self.faction_generator = AIFactionGenerator(
             openai_service=self.mock_openai_service,
             prompt_generator=self.mock_prompt_generator
@@ -86,7 +75,10 @@ class TestAIFactionGenerator(unittest.IsolatedAsyncioTestCase):
         }]
         llm_response_str = f"Here are the factions:\n```json\n{json.dumps(expected_faction_data)}\n```\nHope this helps!"
 
+        assert isinstance(self.mock_prompt_generator.generate_faction_creation_prompt, MagicMock)
         self.mock_prompt_generator.generate_faction_creation_prompt.return_value = ("sys_prompt", "user_prompt")
+
+        assert isinstance(self.mock_openai_service.generate_master_response, AsyncMock)
         self.mock_openai_service.generate_master_response.return_value = llm_response_str
 
         factions = await self.faction_generator.generate_factions_from_concept(
@@ -104,7 +96,9 @@ class TestAIFactionGenerator(unittest.IsolatedAsyncioTestCase):
     async def test_generate_factions_parsing_direct_json_list(self):
         expected_faction_data = [{"name_i18n": {"en": "Direct JSON Faction"}, "description_i18n": {}}]
         llm_response_str = json.dumps(expected_faction_data)
+        assert isinstance(self.mock_prompt_generator.generate_faction_creation_prompt, MagicMock)
         self.mock_prompt_generator.generate_faction_creation_prompt.return_value = ("sys", "user")
+        assert isinstance(self.mock_openai_service.generate_master_response, AsyncMock)
         self.mock_openai_service.generate_master_response.return_value = llm_response_str
 
         factions = await self.faction_generator.generate_factions_from_concept("s", None, None, "en", 1)
@@ -112,7 +106,10 @@ class TestAIFactionGenerator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(factions[0]["name_i18n"]["en"], "Direct JSON Faction")
 
     async def test_generate_factions_empty_or_invalid_response(self):
+        assert isinstance(self.mock_prompt_generator.generate_faction_creation_prompt, MagicMock)
         self.mock_prompt_generator.generate_faction_creation_prompt.return_value = ("sys", "user")
+
+        assert isinstance(self.mock_openai_service.generate_master_response, AsyncMock)
         self.mock_openai_service.generate_master_response.return_value = ""
         factions_empty = await self.faction_generator.generate_factions_from_concept("s", None, None, "en", 1)
         self.assertEqual(factions_empty, [])
@@ -128,10 +125,9 @@ class TestAIFactionGenerator(unittest.IsolatedAsyncioTestCase):
 
 class TestFactionManagerAI(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.mock_db_service = AsyncMock() # Keep for NpcManager if it needs it
+        # self.mock_db_service = AsyncMock() # Not directly used by FactionManager if game_manager provides all
         self.mock_npc_manager = AsyncMock(spec=NpcManager)
-        self.mock_game_manager = MagicMock() # Mock GameManager
-        # FactionManager init expects game_manager
+        self.mock_game_manager = MagicMock(spec=FactionManager.get_game_manager_dependency_type()) # Use type hint from FactionManager
         self.faction_manager = FactionManager(game_manager=self.mock_game_manager)
 
     async def test_create_faction_from_ai_success_no_leader(self):
@@ -144,8 +140,11 @@ class TestFactionManagerAI(unittest.IsolatedAsyncioTestCase):
             "alignment_suggestion": "True Neutral"
         }
 
+        # Ensure mock_npc_manager.create_npc_from_ai_concept is an AsyncMock
+        self.mock_npc_manager.create_npc_from_ai_concept = AsyncMock(return_value=None)
+
+
         created_faction_id = str(uuid.uuid4())
-        # Use the potentially minimal _FactionModel for instantiation
         expected_faction = _FactionModel(
             id=created_faction_id, guild_id=guild_id,
             name_i18n=faction_concept["name_i18n"],
@@ -157,24 +156,23 @@ class TestFactionManagerAI(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.faction_manager, 'create_faction', new_callable=AsyncMock) as mock_internal_create:
             mock_internal_create.return_value = expected_faction
 
-            faction = await self.faction_manager.create_faction_from_ai(
+            faction_result = await self.faction_manager.create_faction_from_ai( # Renamed variable
                 guild_id, faction_concept, lang, self.mock_npc_manager
             )
 
-            self.assertIsNotNone(faction)
-            if faction: # type guard
-                self.assertEqual(faction.name_i18n["en"], "The Wanderers")
-                self.assertIsNone(faction.leader_id)
-                self.assertIn("Explore", faction.state_variables.get("goals", []))
+            self.assertIsNotNone(faction_result)
+            if faction_result:
+                self.assertEqual(faction_result.name_i18n["en"], "The Wanderers")
+                self.assertIsNone(faction_result.leader_id)
+                self.assertIn("Explore", faction_result.state_variables.get("goals", []))
 
             mock_internal_create.assert_called_once()
-            call_args = mock_internal_create.call_args[1]
-            self.assertEqual(call_args['name_i18n']['en'], "The Wanderers")
-            self.assertIsNone(call_args['leader_id'])
+            # Check call_args on the mock object itself if it's not a simple function
+            call_args_dict = mock_internal_create.call_args[1] if mock_internal_create.call_args else {}
+            self.assertEqual(call_args_dict.get('name_i18n', {}).get('en'), "The Wanderers")
+            self.assertIsNone(call_args_dict.get('leader_id'))
 
-        # This assertion depends on NpcManager not being called due to placeholder
-        if hasattr(self.mock_npc_manager, 'create_npc_from_ai_concept'):
-            self.mock_npc_manager.create_npc_from_ai_concept.assert_not_called()
+        self.mock_npc_manager.create_npc_from_ai_concept.assert_not_called()
 
 
     async def test_create_faction_from_ai_with_leader_concept_npc_creation_placeholder(self):
@@ -183,37 +181,48 @@ class TestFactionManagerAI(unittest.IsolatedAsyncioTestCase):
         faction_concept = {
             "name_i18n": {"ru": "Клан Стали", "en": "Steel Clan"},
             "description_i18n": {"ru": "Кузнецы и воины.", "en": "Smiths and warriors."},
-            "leader_concept": {"name": "Вождь Гром", "persona": "Суровый, но мудрый лидер."},
+            "leader_concept": {"name_i18n": {"ru":"Вождь Гром"}, "persona_i18n": {"ru":"Суровый, но мудрый лидер."}}, # Ensure i18n structure
             "goals": ["Создать лучшее оружие"],
             "alignment_suggestion": "Lawful Neutral"
         }
 
+        # Ensure mock_npc_manager.create_npc_from_ai_concept is an AsyncMock and returns a mock NPC
+        mock_leader_npc = _NPCModel(id=str(uuid.uuid4()), guild_id=guild_id, template_id="leader_template", name_i18n={"ru":"Вождь Гром"})
+        self.mock_npc_manager.create_npc_from_ai_concept = AsyncMock(return_value=mock_leader_npc)
+
+
         created_faction_id = str(uuid.uuid4())
-        expected_faction = _FactionModel(id=created_faction_id, guild_id=guild_id, name_i18n=faction_concept["name_i18n"])
+        # Instantiate with all required fields for MinimalFaction
+        expected_faction = _FactionModel(id=created_faction_id, guild_id=guild_id, name_i18n=faction_concept["name_i18n"], leader_id=mock_leader_npc.id)
+
 
         with patch.object(self.faction_manager, 'create_faction', new_callable=AsyncMock) as mock_internal_create:
             mock_internal_create.return_value = expected_faction
 
-            faction = await self.faction_manager.create_faction_from_ai(
+            faction_result = await self.faction_manager.create_faction_from_ai( # Renamed variable
                 guild_id, faction_concept, lang, self.mock_npc_manager
             )
-            self.assertIsNotNone(faction)
-            if faction: # type guard
-                 self.assertEqual(faction.name_i18n["ru"], "Клан Стали")
-                 self.assertIsNone(faction.leader_id)
+            self.assertIsNotNone(faction_result)
+            if faction_result:
+                 self.assertEqual(faction_result.name_i18n["ru"], "Клан Стали")
+                 self.assertEqual(faction_result.leader_id, mock_leader_npc.id) # Should now have leader_id
 
             mock_internal_create.assert_called_once()
-            call_args_faction = mock_internal_create.call_args[1]
-            self.assertIsNone(call_args_faction['leader_id'])
+            call_args_faction_dict = mock_internal_create.call_args[1] if mock_internal_create.call_args else {}
+            self.assertEqual(call_args_faction_dict.get('leader_id'), mock_leader_npc.id)
 
-        if hasattr(self.mock_npc_manager, 'create_npc_from_ai_concept'):
-            self.mock_npc_manager.create_npc_from_ai_concept.assert_not_called()
+        self.mock_npc_manager.create_npc_from_ai_concept.assert_called_once_with(
+            guild_id=guild_id,
+            npc_concept=faction_concept["leader_concept"],
+            lang=lang,
+            faction_id=created_faction_id, # Faction ID should be passed to NPC creation
+            location_id=None # Assuming no location specified for leader in this concept
+        )
 
 
 class TestNpcManagerAI(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.mock_db_service = AsyncMock()
-        # For NpcManager's __init__, provide mocks for all dependencies
         self.mock_item_mgr = AsyncMock()
         self.mock_status_mgr = AsyncMock()
         self.mock_party_mgr = AsyncMock()
@@ -223,12 +232,12 @@ class TestNpcManagerAI(unittest.IsolatedAsyncioTestCase):
         self.mock_dialogue_mgr = AsyncMock()
         self.mock_loc_mgr = AsyncMock()
         self.mock_game_log_mgr = AsyncMock()
-        self.mock_mp_prompt_gen = MagicMock() # Often not async
-        self.mock_openai_svc = AsyncMock()
-        self.mock_ai_validator = MagicMock() # Often not async
-        self.mock_campaign_loader = MagicMock() # Often not async
+        self.mock_mp_prompt_gen = MagicMock(spec=MultilingualPromptGenerator)
+        self.mock_openai_svc = AsyncMock(spec=OpenAIService)
+        self.mock_ai_validator = MagicMock()
+        self.mock_campaign_loader = MagicMock()
         self.mock_notification_svc = AsyncMock()
-        self.mock_game_manager_for_npc = AsyncMock()
+        self.mock_game_manager_for_npc = AsyncMock(spec=FactionManager.get_game_manager_dependency_type()) # Use a relevant spec
 
 
         self.npc_manager = NpcManager(
@@ -251,13 +260,9 @@ class TestNpcManagerAI(unittest.IsolatedAsyncioTestCase):
             game_manager=self.mock_game_manager_for_npc
         )
 
-        # Mock the internal create_npc that create_npc_from_ai_concept calls
-        # This method IS on NpcManager itself, so we mock it on the instance.
-        # If create_npc_from_ai_concept is the one being tested, we might not want to mock create_npc
-        # unless create_npc has complex side effects we want to isolate from.
-        # The test seems to verify that create_npc_from_ai_concept calls create_npc correctly.
+        # Mock the create_npc method which is called by create_npc_from_ai_concept
+        # We are testing create_npc_from_ai_concept's logic, so we mock its dependency.
         self.npc_manager.create_npc = AsyncMock()
-        # Mock get_npc which is called after create_npc
         self.npc_manager.get_npc = AsyncMock()
 
 
@@ -272,42 +277,51 @@ class TestNpcManagerAI(unittest.IsolatedAsyncioTestCase):
         }
 
         expected_npc_id = "npc_ai_123"
+        # Ensure MinimalNPC is used here for consistency
         created_npc_obj = _NPCModel(id=expected_npc_id, guild_id=guild_id, template_id="generic_humanoid_ai", name_i18n={"en":"Guard Captain"})
 
+        assert isinstance(self.npc_manager.create_npc, AsyncMock)
         self.npc_manager.create_npc.return_value = expected_npc_id
+
+        assert isinstance(self.npc_manager.get_npc, AsyncMock)
         self.npc_manager.get_npc.return_value = created_npc_obj
 
-        npc = await self.npc_manager.create_npc_from_ai_concept(
+        npc_result = await self.npc_manager.create_npc_from_ai_concept( # Renamed variable
             guild_id, npc_concept, lang, location_id="loc1"
         )
 
-        self.assertIsNotNone(npc)
-        if npc: # type guard
-            self.assertEqual(npc.id, expected_npc_id)
-            self.assertEqual(npc.name_i18n["en"], "Guard Captain")
+        self.assertIsNotNone(npc_result)
+        if npc_result:
+            self.assertEqual(npc_result.id, expected_npc_id)
+            # Ensure name_i18n is a dict before accessing
+            name_i18n_val = getattr(npc_result, 'name_i18n', {})
+            self.assertEqual(name_i18n_val.get("en"), "Guard Captain")
+
 
         self.npc_manager.create_npc.assert_called_once()
-        call_args = self.npc_manager.create_npc.call_args[1]
-        self.assertEqual(call_args['guild_id'], guild_id)
-        self.assertEqual(call_args['npc_template_id'], "generic_humanoid_ai")
-        self.assertEqual(call_args['location_id'], "loc1")
-        self.assertEqual(call_args['name_i18n_override']['en'], "Guard Captain")
-        self.assertEqual(call_args['role_override'], "Captain")
+        call_args_dict = self.npc_manager.create_npc.call_args[1] if self.npc_manager.create_npc.call_args else {}
+        self.assertEqual(call_args_dict.get('guild_id'), guild_id)
+        self.assertEqual(call_args_dict.get('npc_template_id'), "generic_humanoid_ai")
+        self.assertEqual(call_args_dict.get('location_id'), "loc1")
+        self.assertEqual(call_args_dict.get('name_i18n_override',{}).get('en'), "Guard Captain")
+        self.assertEqual(call_args_dict.get('role_override'), "Captain")
 
         self.npc_manager.get_npc.assert_called_once_with(guild_id, expected_npc_id)
 
     async def test_create_npc_from_ai_concept_create_npc_fails_returns_none(self):
         guild_id = "g1"; lang = "en"; npc_concept = {"name_i18n": {"en":"Fail NPC"}}
+        assert isinstance(self.npc_manager.create_npc, AsyncMock)
         self.npc_manager.create_npc.return_value = None
 
-        npc = await self.npc_manager.create_npc_from_ai_concept(guild_id, npc_concept, lang)
-        self.assertIsNone(npc)
+        npc_result = await self.npc_manager.create_npc_from_ai_concept(guild_id, npc_concept, lang) # Renamed
+        self.assertIsNone(npc_result)
 
     async def test_create_npc_from_ai_concept_create_npc_returns_moderation_dict(self):
         guild_id = "g1"; lang = "en"; npc_concept = {"name_i18n": {"en":"Mod NPC"}}
+        assert isinstance(self.npc_manager.create_npc, AsyncMock)
         self.npc_manager.create_npc.return_value = {"moderation_needed": True}
 
-        npc = await self.npc_manager.create_npc_from_ai_concept(guild_id, npc_concept, lang)
+        npc_result = await self.npc_manager.create_npc_from_ai_concept(guild_id, npc_concept, lang) # Renamed
         self.assertIsNone(npc)
 
 
