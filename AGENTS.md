@@ -1061,3 +1061,37 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
         - Used `EventStage.model_validate` instead of `from_dict`.
         - Handled potentially duplicated `party_manager` argument in `__init__` by renaming the optional one to `_party_manager_optional`.
         - Added `PromptContextCollector` to type hints.
+
+## Pyright Error Fixing Phase (Batch 51 - Grouping fixes for `test_status_manager`, `party_action_processor`, `test_location_manager`)
+- **Focus:** Addressing errors in the third set of files from the revised plan. Total of 61 errors targeted.
+- **Strategy:** Applied fixes by overwriting files.
+- **Batch 51 Fixes:**
+    - **`tests/game/managers/test_status_manager.py` (21 errors):**
+        - Added/corrected imports (`AsyncSession`, `List`, `Optional`, `MagicMock`, `ANY` from `unittest.mock`, model classes, `XPRule`, `StatModifierRule`).
+        - Added type hints to fixtures, parameters, and return values.
+        - Ensured `CoreGameRulesConfig` and nested models (`StatusEffectDefinition`, `XPRule`) are initialized correctly with all required fields and valid mock/default data.
+        - Correctly mocked `AsyncSession` context manager behavior in `mock_db_service_for_status` fixture, ensuring `get_session()` returns a mock that behaves like an async context manager yielding a session mock. Ensured `begin` and `begin_nested` on the session mock also return context manager mocks.
+        - Used `cast(AsyncMock, ...)` for asserting calls on mocked async methods of managers.
+        - Ensured `status_effects_json` on `CharacterDbModel` mock is initialized as a JSON string (`json.dumps([])`) and parsed for assertions.
+        - Ensured entity IDs (`guild_id`, `char_id`) are passed as strings.
+    - **`bot/game/party_processors/party_action_processor.py` (20 errors):**
+        - Added `guild_id` parameter to internal calls to `PartyManager` methods like `is_party_busy`, `mark_party_dirty`, `get_party`.
+        - Ensured `ItemManager` and `StatusManager` are added to `__init__` parameters (as optional) and stored as instance attributes if they are intended to be used directly (though often accessed via `game_manager`).
+        - Replaced direct manipulation of `PartyManager._parties_with_active_action` with `hasattr` checks and `callable(getattr(...))` for potential public methods like `add_party_to_active_set` / `remove_party_from_active_set`, logging warnings if direct access is still needed (indicating a need for PartyManager refactor).
+        - Replaced `print` statements with `logger` calls.
+        - Added `None` checks and `hasattr`/`callable` checks for optional managers (e.g., `_rule_engine`, `_location_manager`, `_time_manager`) and their methods before use.
+        - Added type hints for context arguments, local variables, and ensured `guild_id` is passed consistently.
+        - Ensured `GuildGameStateManager` and `GuildGameState` are properly type-hinted and accessed safely.
+    - **`tests/game/managers/test_location_manager.py` (20 errors):**
+        - Added explicit type hints for test data dictionaries (e.g., `DUMMY_LOCATION_TEMPLATE_DATA: Dict[str, Any]`).
+        - Ensured `exits` in test location data are lists of dictionaries, with each dictionary containing all required fields from `PydanticLocation.ExitDefinition` or a suitable default structure (`DEFAULT_EXIT_DATA` helper introduced).
+        - Used `PydanticLocation.model_validate(data_dict)` consistently for creating Pydantic model instances from test data dictionaries.
+        - Used `cast` and `# type: ignore[attr-defined]` for accessing internal manager attributes like `_location_instances` in tests, while ensuring data stored within is of the correct Pydantic type.
+        - Ensured `mock_game_manager` and its sub-manager attributes (e.g., `rule_engine`, `event_manager`) are `AsyncMock` and have `spec` set where appropriate for better type checking of interactions. Ensured `RuleEngine` mock has a valid `CoreGameRulesConfig` with valid `XPRule`.
+        - Changed `MagicMock` for `mock_db_service` to `MagicMock(spec=DBService)`.
+        - Added `None` checks for Pydantic model attributes (e.g., `pydantic_loc_from.name_i18n`) before access in static mock helper methods to prevent `AttributeError` on `None`.
+        - Corrected `discord.ext.commands.Cog` type check in mock side effect to avoid dependency on `discord.py[commands]`.
+        - Ensured DB model mocks (`DBLocation`) have all fields required by `PydanticLocation.from_orm_dict` (or `model_validate` if that's used for ORM conversion) or that fields are correctly JSON dumped if they are JSON string fields in the DB model.
+        - Renamed `instance_name`/`instance_description` to `instance_name_i18n`/`instance_description_i18n` in `create_location_instance` call.
+        - Ensured `mock_session_instance.info` is a dictionary.
+        - Corrected patching paths for static mock helpers if they were targeting the wrong module.
