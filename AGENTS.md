@@ -1123,3 +1123,39 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
         - Ensured `None` values are filtered out from the language list before passing to `sorted()` for `target_languages`.
         - Made `get_main_language_code` async and pass `guild_id` to it for potentially guild-specific language settings.
         - Commented out a direct call to `db_service.get_entity_by_conditions` in `_get_db_world_state_details` as its direct necessity was unclear and causing an error; `WorldState` is typically fetched by `guild_id`.
+
+## Pyright Error Fixing Phase (Batch 53 - pyright_errors_part_2.txt - First ~95 errors)
+- **Focus:** Addressing the first ~95 errors from `pyright_errors_part_2.txt`.
+- **Strategy:** Applied fixes by overwriting files, focusing on type hinting, safe attribute/method access, correct async/await usage, and proper session/JSON handling.
+- **Files Addressed & Key Fixes:**
+    - **`bot/command_modules/game_setup_cmds.py` (19 errors):**
+        - Corrected type hints for `interaction.client` and `self.bot` to `RPGBot` (using `cast`).
+        - Implemented safe access for `GameManager` methods (`get_master_role_id`, `get_gm_channel_id`) using `getattr` and callability checks.
+        - Ensured `AsyncSession` from `db_service.get_session()` is correctly typed and used; resolved "session possibly unbound" errors in `except` blocks.
+        - Ensured `result.scalars().first()` is used appropriately after `session.execute()`.
+        - Validated and cast language codes to `str` before use as dictionary keys or parameters.
+        - Ensured dictionary keys are strings.
+        - Changed `setup()` function to use `RPGBot` type hint and `logging.info`.
+    - **`bot/command_modules/inventory_cmds.py` (19 errors):**
+        - Corrected calls to `get_localized_string` by removing the `guild_id_str` argument.
+        - Fixed argument passing to `parse_player_action` (specifically `nlu_data_service`).
+        - Ensured `rule_engine.get_core_rules_config_for_guild` is awaited and `rule_engine` is checked for `None` and methods are verified with `hasattr`/`callable`.
+        - Defined `item_template_id_to_unequip` before use in `cmd_unequip`.
+        - Added general type safety, `None` checks for managers, and `getattr` for safer attribute access on models.
+        - Corrected handling of `ItemInstance` lists from `item_mgr.get_items_in_location_async`.
+        - Improved argument passing to `ItemManager` methods in `cmd_drop` and `cmd_use_item`.
+    - **`bot/game/services/consequence_processor.py` (19 errors):**
+        - Changed manager type hints in `__init__` to `Optional[ManagerType] = None`.
+        - Added `hasattr` and `callable` checks before all manager method calls (e.g., `_npc_manager.modify_npc_stats`, `_notification_service.notify_player`).
+        - Ensured `await` is used for all async manager methods, including getter methods like `_character_manager.get_character`.
+        - Used `cast` for `_rule_engine` in `AWARD_XP` block after checks.
+    - **`bot/game/turn_processor.py` (19 errors):**
+        - Cast `session_context` from `db_service.get_session()` to `AsyncSession` and used it consistently.
+        - Added check for `character.collected_actions_json` being a string before `json.loads()`; if already list/dict, used directly. Assigned `"[]"` back (assuming Text column).
+        - Implemented `hasattr` and `callable` checks for methods on `ConflictResolver`, `CharacterManager`, `CharacterActionProcessor`, `NotificationService`.
+        - Ensured manager instances are checked for `None` using `getattr`.
+        - Removed unexpected `session=` keyword argument from calls to `handle_move_action` and `handle_explore_action`.
+    - **`tests/ai/test_ai_response_validator.py` (19 errors):**
+        - Corrected `get_rule_side_effect` mock to use `hasattr` and `getattr` for accessing attributes on `self.mock_core_game_rules` and its nested Pydantic models (e.g., `general_settings`).
+        - Ensured `issues` list in test assertions is handled safely by initializing `issues_list = issues if issues is not None else []` before iteration/subscription.
+        - Added/corrected type hints for test data.
