@@ -82,22 +82,22 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
 
         # This is the Pydantic model representation, used for setting up cache or comparing
         # Create a mock DBModel instance first
-        mock_db_model_for_setup = CharacterDBModel(**self.base_char_db_dict)
+        mock_db_model_for_setup = CharacterDBModel(**self.base_char_db_dict) # type: ignore[arg-type]
+        # Assuming Character.from_db_model is a class method or static method
         self.base_char_pydantic_data = Character.from_db_model(mock_db_model_for_setup)
 
 
     async def test_save_character_with_collected_actions(self):
-        assert self.base_char_pydantic_data is not None # Ensure it's initialized
+        self.assertIsNotNone(self.base_char_pydantic_data, "base_char_pydantic_data should be initialized")
         char_pydantic = self.base_char_pydantic_data.model_copy(deep=True)
         sample_actions = [{"action": "move", "target": "north"}, {"action": "search"}]
-        char_pydantic.collected_actions_json = json.dumps(sample_actions) # Pydantic model stores it as string
+        char_pydantic.collected_actions_json = json.dumps(sample_actions)
 
         self.character_manager._characters[self.guild_id] = {char_pydantic.id: char_pydantic}
         self.character_manager.mark_character_dirty(self.guild_id, char_pydantic.id)
 
-        # Mock the session and merge behavior for save_state
         mock_session = AsyncMock(spec=AsyncSession)
-        async def mock_merge(obj): return obj # Simulate merge returning the object
+        async def mock_merge(obj): return obj
         mock_session.merge = AsyncMock(side_effect=mock_merge)
 
         mock_guild_transaction_context = AsyncMock()
@@ -119,11 +119,11 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
         db_row_data = self.base_char_db_dict.copy()
         db_row_data["collected_actions_json"] = sample_actions_json_str
 
-        mock_player_db = MagicMock(spec=Player) # from bot.database.models
+        mock_player_db = MagicMock(spec=Player)
         mock_player_db.id = self.base_char_db_dict["player_id"]
-        mock_player_db.discord_id = str(self.discord_user_id)
+        mock_player_db.discord_user_id = str(self.discord_user_id)
 
-        mock_char_db = CharacterDBModel(**db_row_data)
+        mock_char_db = CharacterDBModel(**db_row_data) # type: ignore[arg-type]
 
         async def mock_get_entities_load(session, model_class, *, guild_id):
             if model_class == Player and guild_id == self.guild_id: return [mock_player_db]
@@ -135,14 +135,16 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
 
         loaded_char = self.character_manager.get_character(self.guild_id, self.character_id)
         self.assertIsNotNone(loaded_char)
-        # Pydantic Character.collected_actions_json is Optional[str]
-        # from_db_model should directly assign the string if it's not None
-        self.assertEqual(loaded_char.collected_actions_json, sample_actions_json_str)
-        # If you want to compare the parsed list:
-        if loaded_char.collected_actions_json is not None:
-            self.assertEqual(json.loads(loaded_char.collected_actions_json), sample_actions_list)
-        else:
-            self.fail("loaded_char.collected_actions_json was None, expected a JSON string.")
+
+        if loaded_char is not None: # Pyright check
+            self.assertEqual(loaded_char.collected_actions_json, sample_actions_json_str)
+            if loaded_char.collected_actions_json is not None:
+                loaded_actions_list = json.loads(loaded_char.collected_actions_json)
+                self.assertEqual(loaded_actions_list, sample_actions_list)
+            else:
+                self.fail("loaded_char.collected_actions_json was None, expected a JSON string.")
+        else: # Should not happen due to assertIsNotNone
+            self.fail("loaded_char was None after loading state.")
 
 
     async def test_load_character_with_null_collected_actions(self):
@@ -152,7 +154,7 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
         mock_player_db = MagicMock(spec=Player)
         mock_player_db.id = self.base_char_db_dict["player_id"]
         mock_player_db.discord_id = str(self.discord_user_id)
-        mock_char_db = CharacterDBModel(**db_row_data_null_actions)
+        mock_char_db = CharacterDBModel(**db_row_data_null_actions) # type: ignore[arg-type]
 
         async def mock_get_entities_load_null(session, model_class, *, guild_id):
             if model_class == Player and guild_id == self.guild_id: return [mock_player_db]
@@ -164,12 +166,12 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
 
         loaded_char = self.character_manager.get_character(self.guild_id, self.character_id)
         self.assertIsNotNone(loaded_char)
-        if loaded_char is not None: # Added for Pyright
+        if loaded_char is not None:
             self.assertIsNone(loaded_char.collected_actions_json)
 
 
     async def test_save_character_with_empty_collected_actions(self):
-        assert self.base_char_pydantic_data is not None # Ensure it's initialized
+        self.assertIsNotNone(self.base_char_pydantic_data, "base_char_pydantic_data should be initialized")
         char_pydantic = self.base_char_pydantic_data.model_copy(deep=True)
         empty_actions_json_str = json.dumps([])
         char_pydantic.collected_actions_json = empty_actions_json_str
@@ -191,7 +193,7 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_save_character_with_null_collected_actions(self):
-        assert self.base_char_pydantic_data is not None # Ensure it's initialized
+        self.assertIsNotNone(self.base_char_pydantic_data, "base_char_pydantic_data should be initialized")
         char_pydantic = self.base_char_pydantic_data.model_copy(deep=True)
         char_pydantic.collected_actions_json = None
 
@@ -212,13 +214,13 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_save_character_all_complex_fields(self):
-        assert self.base_char_pydantic_data is not None # Ensure it's initialized
+        self.assertIsNotNone(self.base_char_pydantic_data, "base_char_pydantic_data should be initialized")
         char_pydantic = self.base_char_pydantic_data.model_copy(deep=True)
         char_pydantic.name_i18n = {"en": "Complex Hero", "ru": "Сложный Герой"}
         char_pydantic.skills_data = [{"skill_id": "alchemy", "level": 15}]
         char_pydantic.abilities_data = [{"ability_id": "double_strike", "rank": 2}]
         char_pydantic.spells_data = [{"spell_id": "invisibility", "duration": 60}]
-        char_pydantic.character_class = "Rogue"
+        char_pydantic.character_class = "Rogue" # Pydantic model field
         char_pydantic.flags = {"is_hidden": True, "can_fly": False}
         char_pydantic.collected_actions_json = json.dumps([{"action": "hide"}])
 
@@ -236,22 +238,29 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
         mock_session.merge.assert_called_once()
         merged_orm_instance = mock_session.merge.call_args[0][0]
 
-        self.assertEqual(merged_orm_instance.name_i18n, char_pydantic.name_i18n)
+        self.assertEqual(merged_orm_instance.name_i18n, char_pydantic.name_i18n) # Assuming name_i18n is also a dict on DBModel
         self.assertEqual(merged_orm_instance.skills_data_json, json.dumps(char_pydantic.skills_data))
         self.assertEqual(merged_orm_instance.abilities_data_json, json.dumps(char_pydantic.abilities_data))
         self.assertEqual(merged_orm_instance.spells_data_json, json.dumps(char_pydantic.spells_data))
-        # self.assertEqual(merged_orm_instance.character_class, char_pydantic.character_class) # character_class is not on CharacterDBModel
+        # For character_class, CharacterDBModel has character_class_i18n.
+        # Assuming to_db_model handles converting Pydantic's character_class (str) to character_class_i18n (JSON str)
+        # For this test, let's assume a simple mapping or that the DB model also has a plain character_class field.
+        # If CharacterDBModel.character_class_i18n is the target:
+        # self.assertEqual(json.loads(merged_orm_instance.character_class_i18n), {"en": char_pydantic.character_class})
+        # For now, we'll skip direct assertion on character_class if DB model structure is different.
         self.assertEqual(merged_orm_instance.flags_json, json.dumps(char_pydantic.flags))
         self.assertEqual(merged_orm_instance.collected_actions_json, char_pydantic.collected_actions_json)
 
 
     async def test_load_character_all_complex_fields(self):
         name_i18n_obj = {"en": "Loaded Hero", "ru": "Загруженный Герой"}
-        skills_data_obj = [{"skill_id": "herbalism", "level": 5}] # Changed from skill to skill_id for Pydantic
+        skills_data_obj = [{"skill_id": "herbalism", "level": 5}]
         abilities_data_obj = [{"ability_id": "quick_shot", "rank": 1}]
         spells_data_obj = [{"spell_id": "heal_light", "cost": 10}]
         flags_obj = {"is_leader": True, "is_merchant": False}
         coll_actions_list = [{"action": "trade", "item": "potion"}]
+        char_class_i18n_obj = {"en": "Archer", "ru": "Лучник"}
+
 
         db_row_data = self.base_char_db_dict.copy()
         db_row_data.update({
@@ -259,15 +268,15 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
             "skills_data_json": json.dumps(skills_data_obj),
             "abilities_data_json": json.dumps(abilities_data_obj),
             "spells_data_json": json.dumps(spells_data_obj),
-            "character_class_i18n": json.dumps({"en":"Archer"}), # Stored as i18n
+            "character_class_i18n": json.dumps(char_class_i18n_obj),
             "flags_json": json.dumps(flags_obj),
             "collected_actions_json": json.dumps(coll_actions_list),
         })
 
         mock_player_db = MagicMock(spec=Player)
         mock_player_db.id = self.base_char_db_dict["player_id"]
-        mock_player_db.discord_id = str(self.discord_user_id)
-        mock_char_db = CharacterDBModel(**db_row_data)
+        mock_player_db.discord_user_id = str(self.discord_user_id)
+        mock_char_db = CharacterDBModel(**db_row_data) # type: ignore[arg-type]
 
         async def mock_get_entities_load_complex(session, model_class, *, guild_id):
             if model_class == Player and guild_id == self.guild_id: return [mock_player_db]
@@ -280,30 +289,26 @@ class TestCharacterManagerActionPersistence(unittest.IsolatedAsyncioTestCase):
         loaded_char = self.character_manager.get_character(self.guild_id, self.character_id)
         self.assertIsNotNone(loaded_char)
 
-        if loaded_char is not None: # Added for Pyright
+        if loaded_char is not None:
             self.assertEqual(loaded_char.name_i18n, name_i18n_obj)
             self.assertEqual(loaded_char.skills_data, skills_data_obj)
             self.assertEqual(loaded_char.abilities_data, abilities_data_obj)
             self.assertEqual(loaded_char.spells_data, spells_data_obj)
-            # Assuming from_db_model maps character_class_i18n (from DB dict) to character_class (Optional[str])
-            # The Pydantic model has `character_class: Optional[str]`.
-            # The DB mock data `character_class_i18n` is `json.dumps({"en":"Archer"})`.
-            # The Character.from_db_model needs to correctly parse this into `character_class`.
-            # For now, let's assume it's mapped to `character_class` as the primary display string.
-            # If `from_db_model` puts the dict into a field named `character_class_i18n` on Pydantic model,
-            # then the Pydantic model needs that field. Current Pydantic model does not have it.
-            # Let's assume `from_db_model` extracts the 'en' value into `character_class`.
-            if loaded_char.character_class is not None: # Check if character_class is populated
-                 self.assertEqual(loaded_char.character_class, "Archer") # Check against the expected string
-            else:
-                 # If character_class_i18n was meant to be a dict on the pydantic model, this would be:
-                 # self.assertEqual(loaded_char.character_class_i18n, {"en":"Archer"})
-                 # For now, asserting that if it's not "Archer", it might be None due to mapping issues.
-                 self.assertIsNone(loaded_char.character_class, "character_class was not Archer, and also not None. Mapping issue?")
+
+            # Assuming Character.from_db_model correctly populates Pydantic's character_class
+            # from the 'en' field of DB's character_class_i18n, or directly if Pydantic has character_class_i18n
+            # If Pydantic model Character has `character_class: Optional[str]` and `character_class_i18n: Optional[Dict[str, str]]`
+            # And from_db_model populates both:
+            self.assertEqual(loaded_char.character_class, char_class_i18n_obj.get("en")) # Assuming it extracts 'en'
+            # Or if Pydantic model has character_class_i18n field:
+            # self.assertEqual(loaded_char.character_class_i18n, char_class_i18n_obj)
 
 
             self.assertEqual(loaded_char.flags, flags_obj)
-            self.assertEqual(loaded_char.collected_actions_json, json.dumps(coll_actions_list))
+            if loaded_char.collected_actions_json is not None:
+                self.assertEqual(json.loads(loaded_char.collected_actions_json), coll_actions_list)
+            else:
+                self.fail("loaded_char.collected_actions_json was None, expected JSON string.")
 
 
 if __name__ == '__main__':
