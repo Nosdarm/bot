@@ -50,161 +50,178 @@ class ActionProcessor:
         # --- Initial Checks (Same) ---
         if not char_manager:
             return {"success": False, "message": "**Мастер:** Менеджер персонажей недоступен.", "target_channel_id": ctx_channel_id, "state_changed": False}
-        character = char_manager.get_character_by_discord_id(discord_user_id)
+
+        # Ensure discord_user_id is string for get_character_by_discord_id if it expects string
+        character = await char_manager.get_character_by_discord_id(str(game_state.server_id), str(discord_user_id))
         if not character:
             return {"success": False, "message": "**Мастер:** У вас еще нет персонажа в этой игре. Используйте `/join_game`.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-        # Ensure guild_id is consistently string
         guild_id_str_process = str(game_state.server_id)
 
         if not loc_manager:
             return {"success": False, "message": "**Мастер:** Менеджер локаций недоступен.", "target_channel_id": ctx_channel_id, "state_changed": False}
+
         current_location_id = getattr(character, 'current_location_id', None)
-        # Assuming get_location is async
-        location = await loc_manager.get_location(current_location_id, guild_id=guild_id_str_process) if current_location_id else None
-        if not location:  # location could be None if current_location_id was None or get_location returned None
+        if not current_location_id: # Check if current_location_id is None before using it
+             return {"success": False, "message": "**Мастер:** Ваш персонаж не имеет текущей локации. Обратитесь к администратору.", "target_channel_id": ctx_channel_id, "state_changed": False}
+
+        location = await loc_manager.get_location_instance(guild_id_str_process, current_location_id)
+        if not location:
             return {"success": False, "message": "**Мастер:** Ваш персонаж в неизвестной локации. Обратитесь к администратору.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-        output_channel_id = loc_manager.get_location_channel(game_state, location.id) or ctx_channel_id
+        location_name = getattr(location, 'name_i18n', {}).get(character.selected_language or 'en', 'Неизвестная локация')
+        location_description_template = getattr(location, 'description_i18n', {}).get(character.selected_language or 'en', 'Пустота...')
 
-        # --- Check for actions targeting an event first (Logic might be in EventManager's process method) ---
-        # ActionProcessor determines if the action is relevant to *any* active event in the location.
-        # If relevant, it passes ALL handling to EventManager.process_player_action_within_event.
-        # EventManager must return a compatible dict structure.
+
+        # Use a method on loc_manager to get the channel ID, or fallback
+        output_channel_id_obj = getattr(loc_manager, 'get_location_channel_id', None)
+        output_channel_id = ctx_channel_id # Default to context channel
+        if callable(output_channel_id_obj):
+            resolved_channel_id = await output_channel_id_obj(guild_id_str_process, location.id)
+            if resolved_channel_id:
+                output_channel_id = resolved_channel_id
+
 
         if not event_manager:
             active_events = []
             relevant_event_id = None
         else:
-            active_events = event_manager.get_active_events_in_location(location.id)
+            # Ensure get_active_events_in_location is callable and awaited
+            get_active_events_method = getattr(event_manager, 'get_active_events_in_location', None)
+            active_events = []
+            if callable(get_active_events_method):
+                active_events_result = get_active_events_method(guild_id_str_process, location.id)
+                if asyncio.iscoroutine(active_events_result):
+                    active_events = await active_events_result
+                else:
+                    active_events = active_events_result if isinstance(active_events_result, list) else []
+
             relevant_event_id = None
             is_potentially_event_interactive = action_type in ["interact", "attack", "use_skill", "skill_check", "move", "use_item"]
             if is_potentially_event_interactive and active_events:
-                 relevant_event_id = active_events[0].id
+                 relevant_event_id = getattr(active_events[0], 'id', None) # Safe access
 
-        if relevant_event_id and event_manager: # Ensure event_manager is not None here
-            print(f"Action {action_type} for {character.name} routed to event {relevant_event_id}.")
-            # Pass all needed components to EventManager method
-            # This signature must match what EventManager.process_player_action_within_event expects!
-            character_name_i18n = getattr(character, 'name_i18n', {})
-            character_name = character_name_i18n.get('en', 'Unknown Character')
+        if relevant_event_id and event_manager:
+            character_name = getattr(character, 'name_i18n', {}).get(character.selected_language or 'en', 'Неизвестный персонаж')
             print(f"Action {action_type} for {character_name} routed to event {relevant_event_id}.")
 
-            # TODO: CRITICAL - The method 'process_player_action_within_event' is missing from EventManager.
-            # This functionality is essential for routing player actions to active events.
-            # It needs to be implemented in EventManager or the event handling logic here needs a redesign.
-            event_response = await event_manager.process_player_action_within_event(
-                event_id=relevant_event_id,
-                player_id=character.id,
-                action_type=action_type,
-                action_data=action_data,
-                guild_id=str(game_state.server_id),  # Added guild_id
-                # Pass other managers and context variables as kwargs
-                character_manager=char_manager,
-                loc_manager=loc_manager,
-                rule_engine=rule_engine,
-                openai_service=openai_service,
-                ctx_channel_id=ctx_channel_id,  # Still needed for event manager to potentially return this as fallback
-                # Pass other managers needed by EventManager here (e.g., NpcManager)
-                # npc_manager = npc_manager,
-                # combat_manager = combat_manager,
-            )
-            # EventManager must return a dict: {"success":bool, "message":str, "target_channel_id":int, "state_changed":bool, ...}
-            # ActionProcessor just returns whatever EventManager returned.
-            # Ensure the response from the event processing has the necessary keys.
-            if 'target_channel_id' not in event_response or event_response['target_channel_id'] is None:
-                event_response['target_channel_id'] = output_channel_id  # Fallback to location channel
-            if 'state_changed' not in event_response:
-                event_response['state_changed'] = False  # Default if not specified
+            process_event_action_method = getattr(event_manager, 'process_player_action_within_event', None)
+            if callable(process_event_action_method):
+                event_response = await process_event_action_method(
+                    event_id=relevant_event_id,
+                    player_id=str(character.id), # Ensure string
+                    action_type=action_type,
+                    action_data=action_data,
+                    guild_id=guild_id_str_process,
+                    character_manager=char_manager,
+                    loc_manager=loc_manager,
+                    rule_engine=rule_engine,
+                    openai_service=openai_service,
+                    ctx_channel_id=ctx_channel_id,
+                )
+                if 'target_channel_id' not in event_response or event_response['target_channel_id'] is None:
+                    event_response['target_channel_id'] = output_channel_id
+                if 'state_changed' not in event_response:
+                    event_response['state_changed'] = False
+                return event_response
+            else:
+                logger.warning(f"EventManager is missing 'process_player_action_within_event' method.")
+                # Fall through to regular processing if method is missing
 
-            # If the event processing was successful and it handled the action, return its response.
-            # The event processing method should indicate if it fully handled the action.
-            # For now, we assume if an event is relevant, it handles the action.
-            return event_response
-            # print(f"ActionProcessor: TODO - EventManager.process_player_action_within_event call is commented out as method does not exist.")  # Remove this line
+        print(f"Processing regular action '{action_type}' for player '{getattr(character, 'name', 'N/A')}' at '{location_name}'.")
 
-        # --- Process as Regular World Interaction if not Event Action ---
-        print(f"Processing regular action '{action_type}' for player '{character.name}' at '{location.name}'.")
-
-        # --- Handle Specific Action Types ---
 
         if action_type == "look":
             if not openai_service:
                 return {"success": False, "message": "**Мастер:** Сервис AI недоступен для генерации описания.", "target_channel_id": output_channel_id, "state_changed": False}
             system_prompt = "Ты - Мастер текстовой RPG в мире темного фэнтези. Описывай локации атмосферно и мрачно."
-            user_prompt = (
-                f"Опиши локацию для персонажа '{character.name}' в мрачном фэнтези. "
-                f"Учитывай: Локация '{location.name}', ",
-                f"Шаблон описания: '''{location.description_template[:200]}'''. "
-                f"Активные события здесь: {', '.join([e.name for e in active_events]) if active_events else 'нет'}. "
-                f"Видимые персонажи/NPC (пример): {', '.join([c.name_i18n.get('en', c.id) for c in char_manager.get_characters_in_location(guild_id=str(game_state.server_id), location_id=location.id) if c.id != character.id][:3]) if char_manager.get_characters_in_location(guild_id=str(game_state.server_id), location_id=location.id) else 'нет'}. "
+
+            active_event_names = [getattr(e, 'name_i18n', {}).get(character.selected_language or 'en', 'активное событие') for e in active_events] if active_events else ['нет']
+
+            # Fetch visible characters/NPCs correctly
+            visible_chars_list = []
+            if char_manager and hasattr(char_manager, 'get_characters_in_location'):
+                chars_in_loc_result = char_manager.get_characters_in_location(guild_id=guild_id_str_process, location_id=location.id)
+                if asyncio.iscoroutine(chars_in_loc_result): chars_in_loc_result = await chars_in_loc_result
+                if isinstance(chars_in_loc_result, list):
+                    visible_chars_list = [
+                        getattr(c, 'name_i18n', {}).get(character.selected_language or 'en', getattr(c, 'id', 'неизвестный'))
+                        for c in chars_in_loc_result if getattr(c, 'id', None) != character.id
+                    ][:3]
+
+            user_prompt_tuple = (
+                f"Опиши локацию для персонажа '{getattr(character, 'name', 'N/A')}' в мрачном фэнтези. "
+                f"Учитывай: Локация '{location_name}', ",
+                f"Шаблон описания: '''{location_description_template[:200]}'''. "
+                f"Активные события здесь: {', '.join(active_event_names)}. "
+                f"Видимые персонажи/NPC (пример): {', '.join(visible_chars_list) if visible_chars_list else 'нет'}. "
             )
+            user_prompt_str = "".join(user_prompt_tuple) # Join tuple elements into a single string
+
             description = await openai_service.generate_master_response(
-                system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=400
+                system_prompt=system_prompt, user_prompt=user_prompt_str, max_tokens=400
             )
-            return {"success": True, "message": f"**Локация:** {location.name}\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": False}
+            return {"success": True, "message": f"**Локация:** {location_name}\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": False}
 
         elif action_type == "move":
             destination_input = action_data.get('destination')
             if not destination_input:
                 return {"success": False, "message": "**Мастер:** Укажите, куда именно вы хотите идти.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-            # --- FULL Movement Logic Implementation ---
+            get_exit_target_method = getattr(loc_manager, 'get_exit_target', None)
+            target_location_pydantic = None
+            if callable(get_exit_target_method):
+                 target_location_pydantic = await get_exit_target_method(guild_id_str_process, location.id, destination_input)
 
-            # Use LocationManager to find target location by exit direction or name/ID
-            target_location = loc_manager.get_exit_target(location.id, destination_input)  # Checks direction AND accessible by name/ID
-
-            if not target_location:
-                # LocationManager.get_exit_target handles the checks if the input is a valid/accessible exit or connected location by name.
-                # If it returns None, the destination input doesn't match any valid exit from the current location.
+            if not target_location_pydantic:
                 return {"success": False, "message": f"**Мастер:** Неизвестное направление или путь: '{destination_input}'. Отсюда туда нельзя попасть.", "target_channel_id": output_channel_id, "state_changed": False}
 
-            # --- If reached here, target_location is a valid and accessible destination ---
-            # Optional: Add RuleEngine check for movement cost, obstacles, checks (e.g., Stealth check to move quietly)
-            # This would involve calling RuleEngine.perform_check()
-            # if (movement needs a skill check, e.g. stealth_move):
-            #     check_result = rule_engine.perform_check(...)
-            #     if check_result['is_success']: actual move, else fail move or consequence
+            update_char_loc_method = getattr(char_manager, 'update_character_location', None)
+            if callable(update_char_loc_method):
+                await update_char_loc_method(str(character.id), str(target_location_pydantic.id), guild_id_str_process)
+            else:
+                logger.error("CharacterManager.update_character_location method not found or not callable.")
+                return {"success": False, "message": "**Мастер:** Ошибка при обновлении локации персонажа.", "target_channel_id": output_channel_id, "state_changed": False}
 
-            # For now, basic move is always successful (no checks, no cost)
 
-            # Update character's location using CharacterManager
-            char_manager.update_character_location(character.id, target_location.id)
-            # State has changed -> GameManager will be signaled by "state_changed": True
+            exit_description_for_prompt = destination_input
+            location_exits = getattr(location, 'exits', [])
+            if isinstance(location_exits, list):
+                found_exit = next((exit_obj for exit_obj in location_exits if isinstance(exit_obj, dict) and exit_obj.get("target_location_id") == target_location_pydantic.id), None)
+                if found_exit:
+                    exit_direction = found_exit.get("direction_i18n", {}).get(character.selected_language or 'en')
+                    if exit_direction: exit_description_for_prompt = exit_direction
 
-            # --- Use AI to describe the movement ---
-            # Determine the specific exit description used for prompt
-            exit_description_for_prompt = destination_input  # Default to user input
-            # Find the *exact* exit object used, if possible, to use its defined direction
-            found_exit = next((exit_obj for exit_obj in location.exits if exit_obj.get("target_location_id") == target_location.id), None)
-            if found_exit:
-                exit_description_for_prompt = found_exit.get("direction")  # Use the defined exit direction
+            target_location_name = getattr(target_location_pydantic, 'name_i18n', {}).get(character.selected_language or 'en', 'Неизвестная локация')
+            target_location_desc_template = getattr(target_location_pydantic, 'description_i18n', {}).get(character.selected_language or 'en', '...')
+
 
             system_prompt = "Ты - Мастер текстовой RPG в мире темного фэнтези. Описывай перемещение между локациями. Учитывай стиль и атмосферу."
-            user_prompt = (
-                f"Персонаж '{character.name}' перемещается из локации '{location.name}' "
-                f"через '{exit_description_for_prompt}' в локацию '{target_location.name}'. "
-                f"Краткое описание начальной локации: {location.description_template[:150]}. "
-                f"Краткое описание конечной локации: {target_location.description_template[:150]}. "
-                # Add current weather, time of day from GameState/TimeManager if available
-                # Mention any visible details about the path or destination from this approach
-                f"Опиши краткое путешествие и прибытие в '{target_location.name}'. "
+            user_prompt_tuple_move = (
+                f"Персонаж '{getattr(character, 'name', 'N/A')}' перемещается из локации '{location_name}' "
+                f"через '{exit_description_for_prompt}' в локацию '{target_location_name}'. "
+                f"Краткое описание начальной локации: {location_description_template[:150]}. "
+                f"Краткое описание конечной локации: {target_location_desc_template[:150]}. "
+                f"Опиши краткое путешествие и прибытие в '{target_location_name}'. "
                 f"Будь атмосферным и мрачным. В конце явно укажи, что персонаж теперь "
-                f"находится в '{target_location.name}'."  # Make AI clearly state new location
+                f"находится в '{target_location_name}'."
             )
+            user_prompt_str_move = "".join(user_prompt_tuple_move)
+
             if not openai_service:
-                description = f"Вы прибыли в {target_location.name}."  # Fallback
+                description = f"Вы прибыли в {target_location_name}."
             else:
                 description = await openai_service.generate_master_response(
-                    system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=250
+                    system_prompt=system_prompt, user_prompt=user_prompt_str_move, max_tokens=250
                 )
 
-            # Determine where to send the description (usually the destination location's mapped channel)
-            destination_channel_id = loc_manager.get_location_channel(game_state, target_location.id)
-            # If destination channel is not mapped, use the channel where command was issued
-            final_output_channel_id = destination_channel_id if destination_channel_id else output_channel_id
+            final_output_channel_id = output_channel_id # Default to current location's channel
+            if callable(output_channel_id_obj): # output_channel_id_obj is loc_manager.get_location_channel_id
+                dest_channel_id_val = await output_channel_id_obj(guild_id_str_process, target_location_pydantic.id)
+                if dest_channel_id_val:
+                    final_output_channel_id = dest_channel_id_val
 
-            # Send description and indicate state change for GameManager to save
+
             return {"success": True, "message": f"**Мастер:** {description}", "target_channel_id": final_output_channel_id, "state_changed": True}
 
         elif action_type == "skill_check":
@@ -212,96 +229,109 @@ class ActionProcessor:
             complexity = action_data.get("complexity", "medium")
             base_modifiers = action_data.get("modifiers", {})
             target_description = action_data.get("target_description", "чего-то")
-            env_modifiers = {}
-            status_modifiers = {}
-            final_modifiers = {**env_modifiers, **status_modifiers, **base_modifiers}
+            final_modifiers = {**base_modifiers} # Simplified for now
 
             if not skill_name:
                 return {"success": False, "message": "**Мастер:** Укажите название навыка для проверки.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-            # Basic skill existence check using CharacterManager (better than checking raw dict)
-            # Need method char_manager.character_has_skill(character.id, skill_name)
-            # For now, directly check the character object's skills dict
-            if skill_name not in character.skills:
+            character_skills = getattr(character, 'skills_data', []) # Pydantic Character.skills_data is List[Dict]
+            if not isinstance(character_skills, list) or not any(s.get('skill_id') == skill_name for s in character_skills if isinstance(s, dict)):
                 return {"success": False, "message": f"**Мастер:** Ваш персонаж не владеет навыком '{skill_name}'.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-            # Get base DC from rules or helper (RuleEngine.get_base_dc might be better location for helper)
             base_dc = skill_rules.get_base_dc(complexity)
 
             if not rule_engine:
                 return {"success": False, "message": "**Мастер:** Движок правил недоступен для проверки навыка.", "target_channel_id": ctx_channel_id, "state_changed": False}
-            # Perform the skill check using the RuleEngine
-            # RuleEngine needs Character data -> Pass the character object OR its ID
-            # The current RuleEngine.perform_check expects char_id and fetches data internally.
-            check_result = rule_engine.perform_check(
-                character_id=character.id,  # Pass character ID
-                check_type="skill",
+
+            perform_check_method = getattr(rule_engine, 'resolve_skill_check', None) # Changed to resolve_skill_check
+            if not callable(perform_check_method):
+                 logger.error("RuleEngine.resolve_skill_check method not found or not callable.")
+                 return {"success": False, "message": "**Мастер:** Ошибка конфигурации движка правил.", "target_channel_id": ctx_channel_id, "state_changed": False}
+
+            check_result = await perform_check_method( # Assuming resolve_skill_check is async
+                character=character, # Pass the Pydantic Character model instance
                 skill_name=skill_name,
                 base_dc=base_dc,
-                modifiers=final_modifiers
+                modifiers=final_modifiers,
+                guild_id=guild_id_str_process
             )
 
-            if not check_result:
+
+            if not check_result: # check_result is now CheckResult object or similar
                 return {"success": False, "message": f"**Мастер:** Произошла ошибка при выполнении проверки навыка '{skill_name}'.", "target_channel_id": ctx_channel_id, "state_changed": False}
 
-            # Use AI to describe the outcome
+            # Extract values from CheckResult object safely
+            roll_val = getattr(check_result, 'roll', 'N/A')
+            total_value_val = getattr(check_result, 'total_value', 'N/A')
+            dc_val = getattr(check_result, 'dc', 'N/A')
+            is_success_val = getattr(check_result, 'succeeded', False) # Assuming 'succeeded' attribute
+            is_critical_success_val = getattr(check_result, 'is_critical_success', False)
+            is_critical_failure_val = getattr(check_result, 'is_critical_failure', False)
+            description_from_check = getattr(check_result, 'description', "Проверка выполнена.")
+
+
             system_prompt = "Ты - Мастер текстовой RPG в мире темного фэнтези. Описывай действия и их результаты детализированно и атмосферно."
-            user_prompt = (
-                f"Персонаж '{character.name}' (Навыки: {list(character.skills.keys())}, "
-                f"Статы: {list(character.stats.keys())}) "
+
+            char_skills_list = [s.get('skill_id') for s in character_skills if isinstance(s, dict) and s.get('skill_id')]
+            # Assuming character.stats_json is a string that needs parsing or character.stats is a dict
+            char_stats_dict = {}
+            if hasattr(character, 'effective_stats_json') and isinstance(character.effective_stats_json, str):
+                try: char_stats_dict = json.loads(character.effective_stats_json)
+                except json.JSONDecodeError: pass
+            elif hasattr(character, 'stats') and isinstance(character.stats, dict): # Fallback to base stats if effective not available
+                char_stats_dict = character.stats
+
+
+            user_prompt_tuple_skill = (
+                f"Персонаж '{getattr(character, 'name', 'N/A')}' (Навыки: {char_skills_list}, "
+                f"Статы: {list(char_stats_dict.keys())}) "
                 f"попытался совершить действие, связанное с навыком '{skill_name}', "
                 f"целью было {target_description}. "
-                f"Ситуация: локация '{location.name}', "
-                f"атмосферное описание: {location.description_template[:150]}...\n"
-                f"Механический результат проверки:\n{json.dumps(check_result, ensure_ascii=False)}\n"
+                f"Ситуация: локация '{location_name}', "
+                f"атмосферное описание: {location_description_template[:150]}...\n"
+                f"Механический результат проверки: Успех={is_success_val}, Крит. успех={is_critical_success_val}, Крит. провал={is_critical_failure_val}, Бросок={roll_val}, Итог={total_value_val} против DC={dc_val}.\n"
                 f"Опиши, КАК это выглядело и ощущалось в мире. "
-                f"Учитывай результат (Успех/Провал/Крит) и контекст. Будь мрачным и детализированным."
+                f"Учитывай результат и контекст. Будь мрачным и детализированным."
             )
+            user_prompt_str_skill = "".join(user_prompt_tuple_skill)
+
             if not openai_service:
-                description = "Результат проверки навыка получен."  # Fallback
+                description = "Результат проверки навыка получен."
             else:
                 description = await openai_service.generate_master_response(
-                    system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=300
+                    system_prompt=system_prompt, user_prompt=user_prompt_str_skill, max_tokens=300
                 )
 
-            mech_summary = check_result.get("description", "Проверка выполнена.")
-            state_changed = check_result.get("is_critical_failure", False)  # Crit fail might change state
+            state_changed = is_critical_failure_val
 
-            # --- Logging Skill Check ---
             if game_log_manager:
                 log_details_skill_check = {
-                    "skill_name": skill_name,
-                    "complexity": complexity,
-                    "base_dc": base_dc,
-                    "modifiers_applied": final_modifiers,
-                    "roll_result": check_result.get("roll"),
-                    "total_with_bonus": check_result.get("total_value"),
-                    "dc_target": check_result.get("dc"),
-                    "is_success": check_result.get("is_success"),
-                    "is_critical_success": check_result.get("is_critical_success"),
-                    "is_critical_failure": check_result.get("is_critical_failure"),
-                    "description_generated": description, # The AI generated description of the outcome
-                    "target_description_input": action_data.get("target_description", "чего-то")
+                    "skill_name": skill_name, "complexity": complexity, "base_dc": base_dc,
+                    "modifiers_applied": final_modifiers, "roll_result": roll_val,
+                    "total_with_bonus": total_value_val, "dc_target": dc_val,
+                    "is_success": is_success_val, "is_critical_success": is_critical_success_val,
+                    "is_critical_failure": is_critical_failure_val,
+                    "description_generated": description,
+                    "target_description_input": target_description
                 }
                 log_message_params_skill_check = {
-                    "player_id": character.id,
-                    "skill_name": skill_name,
-                    "outcome": "success" if check_result.get("is_success") else "failure"
+                    "player_id": str(character.id), "skill_name": skill_name,
+                    "outcome": "success" if is_success_val else "failure"
                 }
-                await game_log_manager.log_event(
-                    guild_id=str(game_state.server_id),
-                    player_id=character.id,
-                    party_id=getattr(character, 'current_party_id', None),
-                    location_id=location.id,
-                    event_type="SKILL_CHECK_ACTION",
-                    message_key="log.action.skill_check",
-                    message_params=log_message_params_skill_check,
-                    involved_entities_ids=None,
-                    details=log_details_skill_check,
-                    channel_id=str(output_channel_id)
-                )
+                log_event_method = getattr(game_log_manager, 'log_event', None)
+                if callable(log_event_method):
+                    await log_event_method(
+                        guild_id=guild_id_str_process, player_id=str(character.id),
+                        party_id=getattr(character, 'current_party_id', None),
+                        location_id=location.id, event_type="SKILL_CHECK_ACTION",
+                        message_key="log.action.skill_check", # Ensure this key exists in i18n
+                        message_params=log_message_params_skill_check,
+                        details=log_details_skill_check, channel_id=str(output_channel_id)
+                    )
+                else:
+                    logger.warning("GameLogManager.log_event method not found or not callable.")
 
-            return {"success": True, "message": f"_{mech_summary}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed}
+            return {"success": True, "message": f"_{description_from_check}_\n\n**Мастер:** {description}", "target_channel_id": output_channel_id, "state_changed": state_changed}
 
         # --- Add Handlers for other core Action Types (placeholder) ---
         # elif action_type == "interact": ...

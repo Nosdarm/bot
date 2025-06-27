@@ -18,35 +18,48 @@ LANGUAGE_CHOICES = [
 ]
 
 class GuildConfigCmds(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: "RPGBot"): # Changed to RPGBot for game_manager access
         self.bot = bot
-        # It's generally better if DBService instance is passed or accessed via self.bot,
-        # e.g., self.db_service = bot.db_service
-        # For now, direct instantiation is kept as per existing structure.
-        self.db_service = DBService()
+        # Access DBService via bot.game_manager if available, or directly if not (less ideal)
+        if hasattr(bot, 'game_manager') and bot.game_manager is not None and hasattr(bot.game_manager, 'db_service'):
+            self.db_service: Optional[DBService] = bot.game_manager.db_service
+        else:
+            logger.warning("GuildConfigCmds initialized without DBService from GameManager. Direct instantiation fallback.")
+            self.db_service = DBService() # Fallback, consider raising error if critical
+
+    async def _get_db_service(self) -> Optional[DBService]:
+        """Safely retrieves the DBService instance."""
+        if hasattr(self.bot, 'game_manager') and self.bot.game_manager is not None:
+            return getattr(self.bot.game_manager, 'db_service', None)
+        return getattr(self, 'db_service', None) # Fallback to cog's own db_service
 
     async def _update_guild_channel_config(self, interaction: Interaction, channel_type: str, channel: TextChannel) -> None:
         """Helper function to update a specific channel type in GuildConfig."""
         guild_id_str = str(interaction.guild_id)
-        if not guild_id_str:
+        if not guild_id_str: # Should be caught by guild_only decorator context
             await interaction.response.send_message("Error: This command can only be used in a server.", ephemeral=True)
             return
 
-        async with self.db_service.get_session() as session:
-            try:
-                # GuildConfig's PK is guild_id (String), so pass guild_id_str directly to session.get
+        db_service = await self._get_db_service()
+        if not db_service:
+            logger.error(f"DBService not available for _update_guild_channel_config in guild {guild_id_str}.")
+            await interaction.response.send_message("Database service is unavailable.", ephemeral=True)
+            return
+
+        session_obj = None
+        try:
+            async with db_service.get_session() as session: # session is AsyncSession
+                session_obj = session # For potential rollback outside context
                 guild_config = await session.get(GuildConfig, guild_id_str)
 
                 if not guild_config:
-                    # This might happen if the guild was never initialized properly.
-                    # Attempt a select as a fallback, though guild_initializer should prevent this.
                     logger.warning(f"GuildConfig not found with session.get for guild {guild_id_str}. Attempting select.")
                     stmt = select(GuildConfig).where(GuildConfig.guild_id == guild_id_str)
                     result = await session.execute(stmt)
                     guild_config = result.scalars().first()
 
                 if not guild_config:
-                    # This case should ideally be handled by guild_initializer on bot join/first command
+                    logger.error(f"GuildConfig still not found for guild {guild_id_str} after select. Cannot update channel.")
                     await interaction.response.send_message(
                         "Error: Guild configuration not found. Please try re-inviting the bot or contact support.",
                         ephemeral=True
@@ -54,7 +67,7 @@ class GuildConfigCmds(commands.Cog):
                     return
 
                 setattr(guild_config, channel_type, str(channel.id))
-                session.add(guild_config)
+                # session.add(guild_config) # Not needed if guild_config is already tracked by the session
                 await session.commit()
                 await interaction.response.send_message(
                     f"{channel_type.replace('_', ' ').capitalize()} has been set to {channel.mention}.",

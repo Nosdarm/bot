@@ -75,18 +75,27 @@ class PromptContextCollector:
         return {main_lang: "N/A"}
 
     async def get_main_language_code(self, guild_id_for_lang: Optional[str] = None) -> str:
-        if self._game_manager and hasattr(self._game_manager, 'get_default_bot_language') and callable(getattr(self._game_manager, 'get_default_bot_language')):
-            if guild_id_for_lang:
-                lang_result = await getattr(self._game_manager, 'get_default_bot_language')(guild_id_for_lang)
-                if lang_result and isinstance(lang_result, str): return lang_result
+        if self._game_manager:
+            get_lang_method = getattr(self._game_manager, 'get_default_bot_language', None)
+            if callable(get_lang_method):
+                if guild_id_for_lang:
+                    lang_result = await get_lang_method(guild_id_for_lang)
+                    if lang_result and isinstance(lang_result, str):
+                        return lang_result
 
-            active_guild_ids_attr = getattr(self._game_manager, '_active_guild_ids', None)
-            if isinstance(active_guild_ids_attr, list) and active_guild_ids_attr:
-                active_guild_id = active_guild_ids_attr[0]
-                if active_guild_id:
-                    lang_result_active = await getattr(self._game_manager, 'get_default_bot_language')(active_guild_id)
-                    if lang_result_active and isinstance(lang_result_active, str): return lang_result_active
-        return self.settings.get('main_language_code', 'ru')
+                active_guild_ids_attr = getattr(self._game_manager, '_active_guild_ids', None)
+                if isinstance(active_guild_ids_attr, list) and active_guild_ids_attr:
+                    active_guild_id = active_guild_ids_attr[0]
+                    if active_guild_id: # Ensure active_guild_id is not None or empty
+                        lang_result_active = await get_lang_method(active_guild_id)
+                        if lang_result_active and isinstance(lang_result_active, str):
+                            return lang_result_active
+            else:
+                logger.debug("GameManager does not have 'get_default_bot_language' method.")
+        else:
+            logger.debug("GameManager not available for get_main_language_code.")
+
+        return str(self.settings.get('main_language_code', 'ru'))
 
 
     def get_lore_context(self) -> List[Dict[str, Any]]:
@@ -156,34 +165,81 @@ class PromptContextCollector:
 
     async def get_full_context(self, guild_id: str, request_type: str, request_params: Dict[str, Any], target_entity_id: Optional[str] = None, target_entity_type: Optional[str] = None, session: Optional['AsyncSession'] = None) -> GenerationContext:
         logger.debug(f"Assembling full context (guild: {guild_id}, type: {request_type}, target: {target_entity_type} {target_entity_id})")
-        if not self._game_manager: raise ValueError("PromptContextCollector needs GameManager.")
+        if not self._game_manager:
+            raise ValueError("PromptContextCollector needs GameManager.")
 
         guild_main_lang_val = await self.get_main_language_code(guild_id)
 
-        filtered_langs = [lang for lang in [guild_main_lang_val, "en"] if lang is not None]
-        target_languages = sorted(list(set(filtered_langs)))
-        if not target_languages: target_languages = ["en"]
+        # Ensure all elements in filtered_langs are strings before set/sorted
+        potential_langs = [lang for lang in [guild_main_lang_val, "en"] if isinstance(lang, str) and lang]
+        target_languages = sorted(list(set(potential_langs)))
+        if not target_languages:
+            target_languages = ["en"] # Default if no valid languages found
 
         game_rules_data = await self.get_game_rules_summary(guild_id)
-        world_state_data = self.get_world_state_context(guild_id); await self._get_db_world_state_details(guild_id, world_state_data, session=session)
+        world_state_data = self.get_world_state_context(guild_id)
+        await self._get_db_world_state_details(guild_id, world_state_data, session=session)
+
         dynamic_lore = await self._get_dynamic_lore_snippets(guild_id, request_params, target_entity_id, target_entity_type, session=session)
-        static_lore = self.get_lore_context(); combined_lore = dynamic_lore + static_lore
+        static_lore = self.get_lore_context()
+        combined_lore = dynamic_lore + static_lore
 
         terms_kwargs: Dict[str, Any] = {'_fetched_abilities': False, '_fetched_spells': False}
+        game_terms_list: List[Dict[str, Any]] = [] # Initialize as list
+
+        # Assuming get_game_terms_dictionary returns List[Dict] or compatible
+        raw_terms = self.get_game_terms_dictionary(guild_id, game_rules_data=game_rules_data, **terms_kwargs)
+        if isinstance(raw_terms, list): # Ensure it's a list
+            game_terms_list = [term for term in raw_terms if isinstance(term, dict)] # Further ensure items are dicts
 
         context_dict: Dict[str, Any] = {
-            "guild_id": guild_id, "main_language": guild_main_lang_val, "target_languages": target_languages,
-            "request_type": request_type, "request_params": request_params,
-            "game_rules_summary": game_rules_data, "lore_snippets": combined_lore, "world_state": world_state_data,
-            "game_terms_dictionary": self.get_game_terms_dictionary(guild_id, game_rules_data=game_rules_data, **terms_kwargs),
+            "guild_id": guild_id,
+            "main_language": guild_main_lang_val,
+            "target_languages": target_languages,
+            "request_type": request_type,
+            "request_params": request_params,
+            "game_rules_summary": game_rules_data,
+            "lore_snippets": combined_lore,
+            "world_state": world_state_data,
+            "game_terms_dictionary": game_terms_list, # Use the validated list
             "scaling_parameters": self.get_scaling_parameters(guild_id, game_rules_data=game_rules_data),
-            "player_context": None, "faction_data": self.get_faction_data_context(guild_id, game_rules_data=game_rules_data),
-            "relationship_data": [], "active_quests_summary": [], "primary_location_details": None, "party_context": None
+            "player_context": None, # Placeholder, to be filled if target_entity_type is 'player' or 'character'
+            "faction_data": self.get_faction_data_context(guild_id, game_rules_data=game_rules_data),
+            "relationship_data": [], # Placeholder
+            "active_quests_summary": [], # Placeholder
+            "primary_location_details": None, # Placeholder
+            "party_context": None # Placeholder
         }
 
-        for key in GenerationContext.model_fields.keys(): context_dict.setdefault(key, None)
-        try: return GenerationContext(**context_dict)
-        except Exception as e: logger.error(f"Error creating GenerationContext. Keys: {list(context_dict.keys())}", exc_info=True); raise ValueError(f"Failed GenerationContext: {e}") from e
+        # Populate player_context if applicable
+        char_to_fetch_id: Optional[str] = None
+        if target_entity_type in ["player", "character"] and target_entity_id:
+            char_to_fetch_id = target_entity_id
+        elif 'player_id' in request_params and request_params['player_id']: # Assuming player_id might be discord_id
+             # This part needs clarification: if player_id is discord_id, need to get char_id
+             # For now, assume if player_id is present, it's the character_id
+             pass # Needs logic to map player_id (discord) to character_id if necessary
+
+
+        if char_to_fetch_id:
+            char_details = await self.get_character_details_context(guild_id, char_to_fetch_id)
+            if char_details: # Ensure it's not None
+                 context_dict["player_context"] = char_details
+
+
+        # Ensure all expected keys for GenerationContext are present, defaulting to None
+        for key in GenerationContext.model_fields.keys():
+            context_dict.setdefault(key, None)
+
+        try:
+            return GenerationContext(**context_dict)
+        except Exception as e:
+            logger.error(f"Error creating GenerationContext. Keys: {list(context_dict.keys())}. Error: {e}", exc_info=True)
+            # Log problematic parts of context_dict if possible, e.g. types of complex fields
+            for k, v in context_dict.items():
+                if not isinstance(v, (str, int, float, bool, type(None), list, dict)):
+                    logger.error(f"Context field '{k}' has unusual type: {type(v)}")
+            raise ValueError(f"Failed to create GenerationContext: {e}") from e
 
     async def get_character_details_context(self, guild_id: str, character_id: str) -> Optional[Dict[str, Any]]:
         return None

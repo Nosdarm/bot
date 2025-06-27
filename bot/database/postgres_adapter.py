@@ -103,64 +103,53 @@ class PostgresAdapter(BaseDbAdapter):
 
 
         print(f"🔧 SQLAlchemy engine will be created for URL: {self._db_url_for_engine} with explicit connect_args: {final_engine_connect_args}")
-        self._engine = create_async_engine(self._db_url_for_engine, echo=False, connect_args=final_engine_connect_args)
+        self._engine = create_async_engine(self._db_url_for_engine, echo=False, connect_args=final_engine_connect_args) # type: ignore [call-overload]
 
-        self._SessionLocal = sessionmaker(
-            bind=self._engine,
-            class_=AsyncSession, # Use AsyncSession for SQLAlchemy 2.0 async support
+        self._SessionLocal = sessionmaker( # type: ignore [call-overload]
+            bind=self._engine, # type: ignore [arg-type]
+            class_=AsyncSession,
             expire_on_commit=False,
-            autocommit=False, # Explicit commit needed
-            autoflush=False, # Explicit flush needed
+            autocommit=False,
+            autoflush=False,
         )
-        self.db: Optional[AsyncSession] = None # SQLAlchemy async session
-        self._conn_pool: Optional[asyncpg.Pool] = None # Asyncpg connection pool
+        self.db: Optional[AsyncSession] = None
+        self._conn_pool: Optional[asyncpg.Pool] = None
+        self._initial_asyncpg_url = self._asyncpg_url # Store initial for fallback logic
         print(f"PostgresAdapter initialized. Engine URL: {self._db_url_for_engine}, Asyncpg DSN: {self._asyncpg_url}")
 
     async def _get_raw_connection(self) -> asyncpg.Connection:
         """Gets a raw connection from the pool, creating pool if necessary."""
         if self._conn_pool is None:
-            max_retries = 2 # Max retries for general connection issues (refused, cannot connect now)
+            max_retries = 2
             auth_fallback_attempted = False
+            last_retryable_exception_for_loop: Optional[Union[ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError]] = None
 
-            # Loop for retrying general connection issues and for the auth fallback
-            for attempt in range(max_retries + 2): # +1 for initial try, +1 for potential fallback
-                last_retryable_exception: Optional[Union[ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError]] = None
+            for attempt in range(max_retries + 2):
+                last_retryable_exception_for_loop = None # Reset for current attempt type
                 try:
                     print(f"PostgresAdapter: Attempting to create pool with DSN: {self._asyncpg_url} (Attempt {attempt + 1})")
-                    # Adjust connect_min_size and connect_max_size as needed
-                    # The log mentioned ssl_param_for_pool, so we should consider if it's needed.
-                    # For now, sticking to the code's direct parameters.
-                    # If `self._asyncpg_url` contains `sslmode=require`, asyncpg might handle it.
-                    # Let's assume for now the DSN is self-contained regarding SSL if needed by asyncpg.
-                    # --- MODIFIED SSL HANDLING ---
-                    from urllib.parse import urlparse, parse_qs, urlunparse, urlencode # Add imports for URL manipulation
 
-                    parsed_original_url = urlparse(self._db_url) # Parse the original SQLAlchemy URL
+                    from urllib.parse import urlparse, parse_qs, urlunparse, urlencode
+
+                    parsed_original_url = urlparse(self._db_url)
                     query_params_original_url = {k: v[0] for k, v in parse_qs(parsed_original_url.query).items()}
                     ssl_mode = query_params_original_url.get('sslmode')
 
                     connect_kwargs_for_pool = {}
-                    asyncpg_dsn_for_pool = self._asyncpg_url # Start with the potentially modified asyncpg_url
+                    asyncpg_dsn_for_pool = self._asyncpg_url
 
                     if ssl_mode:
                         print(f"PostgresAdapter: Found 'sslmode={ssl_mode}' in DB_URL. Configuring for asyncpg pool.")
                         if ssl_mode in ['require', 'prefer', 'allow']:
-                            # For these modes, asyncpg can often use ssl=True and handle negotiation.
-                            # 'prefer' and 'allow' will use SSL if server supports it.
                             connect_kwargs_for_pool['ssl'] = True
                         elif ssl_mode == 'disable':
                             connect_kwargs_for_pool['ssl'] = False
                         elif ssl_mode in ['verify-ca', 'verify-full']:
-                            # These modes strictly require SSL and server certificate verification.
-                            # For simplicity, we use ssl=True, which enables SSL with default verification.
-                            # For actual CA verification, an ssl.SSLContext object would be needed.
-                            # This might require providing CA cert paths, which is outside current scope.
                             connect_kwargs_for_pool['ssl'] = True
                             print(f"PostgresAdapter: INFO: For sslmode={ssl_mode}, using ssl=True. For full verification, an SSLContext with CA certs might be needed.")
                         else:
                             print(f"PostgresAdapter: WARNING: Unsupported 'sslmode={ssl_mode}'. SSL will not be explicitly configured based on this mode for asyncpg pool.")
 
-                        # Remove sslmode from the DSN for asyncpg, as it's handled by the 'ssl' parameter
                         parsed_asyncpg_dsn = urlparse(self._asyncpg_url)
                         query_params_asyncpg_dsn = {k: v[0] for k, v in parse_qs(parsed_asyncpg_dsn.query).items()}
                         if 'sslmode' in query_params_asyncpg_dsn:
@@ -170,13 +159,13 @@ class PostgresAdapter(BaseDbAdapter):
                         print(f"PostgresAdapter: Modified asyncpg DSN (sslmode removed from query): {asyncpg_dsn_for_pool}")
                     else:
                         print(f"PostgresAdapter: No 'sslmode' found in DB_URL query parameters. Asyncpg will use its default SSL behavior.")
-                    # --- END MODIFIED SSL HANDLING ---
+
 
                     self._conn_pool = await asyncpg.create_pool(
-                        dsn=asyncpg_dsn_for_pool, # Use the potentially modified DSN
+                        dsn=asyncpg_dsn_for_pool,
                         min_size=1,
                         max_size=10,
-                        **connect_kwargs_for_pool # Pass SSL options here
+                        **connect_kwargs_for_pool
                     )
 
                     if self._conn_pool is None:
@@ -184,52 +173,48 @@ class PostgresAdapter(BaseDbAdapter):
                         raise ConnectionError("Failed to create asyncpg connection pool: create_pool returned None")
 
                     print("PostgresAdapter: Asyncpg connection pool created successfully.")
-                    last_retryable_exception = None
-                    break  # Exit loop if pool is created successfully
+                    break
 
                 except (ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError) as e:
-                    last_retryable_exception = e
+                    last_retryable_exception_for_loop = e
                     print(f"PostgresAdapter: Connection attempt {attempt + 1} failed due to {type(e).__name__}: {e}")
-                    if attempt < max_retries: # Only retry these errors up to max_retries
+                    if attempt < max_retries:
                         print(f"PostgresAdapter: Retrying in 5 seconds...")
                         await asyncio.sleep(5)
-                    else: # Max retries exceeded for these specific errors
-                        break # Break to handle last_retryable_exception outside
+                    else:
+                        break
 
                 except asyncpg.exceptions.InternalServerError as e:
                     if "password authentication failed" in str(e).lower():
-                        if self._used_env_var_url and not auth_fallback_attempted and self._initial_asyncpg_url == self._asyncpg_url:
-                            auth_fallback_attempted = True # Mark that we are trying the fallback
+                        if self._used_env_var_url and not auth_fallback_attempted and self._initial_asyncpg_url == self._asyncpg_url :
+                            auth_fallback_attempted = True
                             print(f"PostgresAdapter: 🔑 Password authentication failed with environment variable URL.")
                             print(f"PostgresAdapter: Attempting fallback to default database URL.")
                             self._asyncpg_url = self._default_db_url.replace("postgresql+asyncpg://", "postgresql://")
                             # Reset engine and session factory if URL changes
-                            self._engine = create_async_engine(self._default_db_url, echo=False)
-                            self._SessionLocal = sessionmaker(
-                                bind=self._engine, class_=AsyncSession, expire_on_commit=False,
+                            # Need to ensure _db_url_for_engine and final_engine_connect_args are also updated if using fallback for SQLAlchemy
+                            self._engine = create_async_engine(self._default_db_url, echo=False) # type: ignore[call-overload]
+                            self._SessionLocal = sessionmaker( # type: ignore[call-overload]
+                                bind=self._engine, class_=AsyncSession, expire_on_commit=False, # type: ignore[arg-type]
                                 autocommit=False, autoflush=False
                             )
                             print(f"PostgresAdapter: Switched to default DSN: {self._asyncpg_url}. Retrying pool creation.")
-                            # Continue to next iteration of the loop to retry with new URL
                             continue
                         else:
-                            # Auth error, but not eligible for fallback (e.g., default URL already failed, or not using env var)
                             print(f"PostgresAdapter: ❌ Password authentication failed: {e}")
                             traceback.print_exc()
-                            raise # Re-raise immediately
+                            raise
                     else:
-                        # Other InternalServerError, not auth related
                         print(f"PostgresAdapter: ❌ An unexpected InternalServerError occurred: {e}")
                         traceback.print_exc()
-                        raise # Re-raise immediately
+                        raise
 
                 except Exception as e:
                     print(f"PostgresAdapter: ❌ An unexpected error occurred while creating asyncpg connection pool: {e}")
                     traceback.print_exc()
-                    raise # Re-raise immediately, no more retries for this type of error.
+                    raise
 
-            if last_retryable_exception is not None: # This means ConnectionRefused or CannotConnectNow max_retries exceeded
-                # Now, format and print the detailed error message block and raise the last caught exception.
+            if last_retryable_exception_for_loop is not None:
                 error_message = f"""
 PostgresAdapter: ❌ DATABASE CONNECTION FAILED AFTER {max_retries + 1} ATTEMPTS!
 --------------------------------------------------------------------------------------
@@ -246,23 +231,19 @@ Please check the following:
 5. Ensure the `DATABASE_URL` environment variable is correctly set if you are not using the default.
    Environment variable name: {DATABASE_URL_ENV_VAR}
 
-Last encountered error: {last_retryable_exception}
+Last encountered error: {last_retryable_exception_for_loop}
 --------------------------------------------------------------------------------------
 """
                 print(error_message)
-                traceback.print_exc() # Print traceback for the last_retryable_exception
-                raise last_retryable_exception
+                traceback.print_exc()
+                raise last_retryable_exception_for_loop
 
-        # Ensure pool is not None before acquiring. This should be guaranteed if loop exited successfully,
-        # or an exception was raised.
         if self._conn_pool is None:
-            # This state should ideally not be reached if logic above is correct.
-            # It implies retries completed without success AND no exception was propagated.
             print("PostgresAdapter: ❌ Connection pool is None after initialization attempts, and no exception was raised from retries.")
             raise ConnectionError("PostgresAdapter: Connection pool is None after initialization attempts.")
 
         conn = await self._conn_pool.acquire()
-        if conn is None:
+        if conn is None: # Should not happen if pool.acquire() is successful
             raise ConnectionError("Failed to acquire connection from asyncpg pool: acquire returned None")
         return conn
 
