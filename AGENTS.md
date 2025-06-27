@@ -758,3 +758,71 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
         *   `pyright_errors_part_6.txt`
     4.  Distributed the content of `pyright_issues_errors.txt` into these part files. Each part file contains errors from a subset of the original source Python files. The original `pyright_issues_errors.txt` was retained.
 - **Purpose (Further Split):** To break down the large number of errors into smaller, more focused chunks for easier management and resolution.
+
+## Pyright Error Fixing Phase (Batch 39 - world_view_service.py focus from pyright_errors_part_1.txt)
+- **Focus:** Addressing 93 errors in `bot/game/world_processors/world_view_service.py` as listed in `pyright_errors_part_1.txt`.
+- **Strategy:** Corrected `get_i18n_text` to `get_localized_string`, added `await` for async calls, fixed manager method names/parameters, ensured correct model attribute access, and initialized variables.
+- **Batch 39 Fixes (93 errors in `bot/game/world_processors/world_view_service.py`):**
+    - **i18n Utility:** Replaced all calls to `get_i18n_text` with `get_localized_string`. Updated call signatures accordingly (e.g., removed `guild_id` parameter from direct calls as it's handled by the new utility or language determination logic, removed `default_text` where `default_lang` or the key's default is sufficient, ensured `key` parameter is used for labels like 'you_see_here_label').
+    - **Async/Await:** Added `await` to all asynchronous manager calls. This includes:
+        - `_character_manager.get_character`, `_character_manager.get_characters_in_location`
+        - `_db_service.get_global_state_value`
+        - `_location_manager.get_location_instance`
+        - `_item_manager.get_items_by_owner`, `_item_manager.get_item_instance_by_id`
+        - `_party_manager.get_all_parties_for_guild`, `_party_manager.get_party`
+        - `_relationship_manager.get_relationships_for_entity`
+        - `_quest_manager.list_quests_for_character`
+        - `Quest.get_stage_title`, `Quest.get_stage_description` (on quest instances)
+        - `_npc_manager.get_npc`, `_npc_manager.get_npcs_in_location`
+    - **Manager Method Calls & Parameters:**
+        - Corrected `_item_manager.get_items_by_owner_sync` to `await _item_manager.get_items_by_owner` and ensured `owner_type="location"` was passed.
+        - Corrected `_party_manager.get_all_parties_for_guild_sync` to `await _party_manager.get_all_parties_for_guild`.
+        - Changed `_item_manager.get_item_instance_by_id_sync` to `await _item_manager.get_item_instance_by_id`.
+    - **Model Attribute Access & Data Handling:**
+        - For `Location` data, after fetching with `get_location_instance`, if the result is a Pydantic model instance (checked with `isinstance(location_data_result, Location)`), used `location_data_result.model_dump()` to get the dictionary representation. Maintained `to_dict()` for other potential types.
+        - Ensured `Quest` model's `get_stage_title` and `get_stage_description` methods are called with `await`.
+    - **Variable Initialization:** Ensured `active_quest_data_list` is initialized (e.g., to `[]`) before the `if active_quest_data_list:` check to prevent "possibly unbound" errors, especially if `_quest_manager.list_quests_for_character` returns `None`.
+    - **Helper Function Signature:** Removed `guild_id_for_i18n` parameter from `_format_basic_entity_details_placeholder` as `get_localized_string` does not directly take `guild_id` in its common usage pattern within this file (it's usually derived or part of a context not passed directly to every call).
+
+## Pyright Error Fixing Phase (Batch 40 - master_schemas.py focus from pyright_errors_part_1.txt)
+- **Focus:** Addressing 66 errors in `bot/api/schemas/master_schemas.py` as listed in `pyright_errors_part_1.txt`.
+- **Strategy:** Corrected Pydantic `Field` usage to align with Pydantic V2, ensuring `default` is a keyword argument or `None` is the first argument for optional fields. Changed `@validator` to `@field_validator`.
+- **Batch 40 Fixes (66 errors in `bot/api/schemas/master_schemas.py`):**
+    - **Pydantic `Field` Usage:**
+        - For optional fields with a specified default value (e.g., `language: Optional[str] = Field('en', ...)`), changed to `language: Optional[str] = Field(default='en', ...)`.
+        - For optional fields intended to default to `None` (e.g., `parameters: Optional[Dict[str, Any]] = Field(default=None, ...)`), changed to `parameters: Optional[Dict[str, Any]] = Field(None, ...)`.
+        - Ensured all metadata like `description` and `example` are passed as keyword arguments.
+        - Required fields (e.g., `outcome_type: str = Field(...,)`) were correctly maintained with `...` as the first argument.
+    - **Pydantic Validator:** Changed `@validator` to `@field_validator` for `simulation_type_must_be_valid` method to comply with Pydantic V2.
+
+## Pyright Error Fixing Phase (Batch 41 - gm_app_cmds.py focus from pyright_errors_part_1.txt)
+- **Focus:** Addressing 55 errors in `bot/command_modules/gm_app_cmds.py` as listed in `pyright_errors_part_1.txt`.
+- **Strategy:** Corrected imports, async/await usage, Pydantic model instantiation, `AsyncSession` management, and attribute/method access patterns.
+- **Batch 41 Fixes (55 errors in `bot/command_modules/gm_app_cmds.py`):**
+    - **Imports:** Moved `PendingGeneration`, `PendingStatus`, `parse_and_validate_ai_response`, `GenerationType` from `TYPE_CHECKING` to direct imports as they are used at runtime.
+    - **Async/Await:** Added `await` to all asynchronous manager calls (e.g., `game_mngr.get_default_bot_language`, `location_manager.get_location_instance`, `character_manager.get_character`, `party_manager.get_party`, `sim.analyze_action_consequences`).
+    - **Attribute/Method Access:** Ensured `hasattr` checks are paired with `callable(getattr(manager, 'method_name'))` before calling methods on managers to prevent `AttributeError` for methods that might not exist or are not callable. This was applied to methods like `trigger_manual_simulation_tick`, `remove_character`, `update_npc_field`, `log_event`, `undo_last_player_event`, etc.
+    - **Pydantic Models:** Ensured `RuleConfigData().model_dump()` is called without arguments, consistent with Pydantic V2.
+    - **`AsyncSession` Management:** Standardized `AsyncSession` usage, particularly in `cmd_master_approve_ai` and `cmd_master_edit_ai`, by using `async with db_service.get_session() as session:` and passing the `session` object to `crud_utils` functions. Ensured `get_session_method` is checked for callability before use.
+    - **Error Handling:** Reviewed `try...except` blocks to ensure they have appropriate clauses (e.g., `cmd_master_approve_ai` now has more robust error handling around session management).
+    - **Type `None` Awaitables:** Fixed errors where `None` was incorrectly identified as awaitable by ensuring that the actual coroutine-returning methods were awaited (e.g., `npc_manager.get_npc`).
+
+## Pyright Error Fixing Phase (Batch 42 - test_gm_app_cmds.py focus from pyright_errors_part_1.txt)
+- **Focus:** Addressing 47 errors in `tests/commands/test_gm_app_cmds.py` as listed in `pyright_errors_part_1.txt`.
+- **Strategy:** Corrected imports, improved mocking for `GameManager` and its sub-managers, adjusted patch targets for `crud_utils`, and refined assertions.
+- **Batch 42 Fixes (47 errors in `tests/commands/test_gm_app_cmds.py`):**
+    - **Imports:**
+        - Added `from bot.database import crud_utils` for type hinting/spec for `db_service` mock.
+        - Ensured `PendingGeneration`, `GenerationType`, `PendingStatus` are imported from `bot.models.pending_generation`.
+        - Ensured `parse_and_validate_ai_response` is imported from `bot.ai.ai_response_validator`.
+    - **Mocking `GameManager` & Sub-managers (in `mock_rpg_bot_with_game_manager` fixture):**
+        - Set `spec=crud_utils.DBService` for `mock_rpg_bot.game_manager.db_service`.
+        - Correctly mocked the async context manager behavior for `db_service.get_session`.
+        - Added `AsyncMock` instances for all other managers that `GMAppCog` might access via `game_mngr` (e.g., `character_manager`, `npc_manager`, `item_manager`, `location_manager`, `event_manager`, `quest_manager`, `undo_manager`, `conflict_resolver`).
+    - **Patching `crud_utils`:**
+        - Changed patch paths from `bot.database.crud_utils` to `bot.command_modules.gm_app_cmds.crud_utils`. This is crucial because the test needs to patch the `crud_utils` module *as it is imported and used by the `gm_app_cmds.py` module*, not its original location.
+    - **Assertions & `unittest.mock.ANY`:**
+        - Used `unittest.mock.ANY` (imported as `ANY`) for `db_session` in assertions (e.g., `mock_get_entity_by_pk.assert_awaited_once_with(db_session=ANY, ...)`). This is because the actual session object is created within the command being tested and isn't directly known by the test fixture's `mock_session` in these patched scenarios.
+    - **Enum Value Comparisons:** Ensured assertions for enum status fields compare against `.value` (e.g., `updates_dict['status'] == PendingStatus.APPROVED.value`).
+    - **Mocking `game_mngr.get_rule`:** In `test_master_reject_ai_success`, added logic to mock `game_mngr.get_rule` or `game_mngr.rule_engine.get_rule` as an `AsyncMock` to prevent failures if this method is called during the test.
+    - **`parse_and_validate_ai_response` call in test:** Ensured the `request_type` argument in `mock_parse_validate.assert_awaited_once_with` uses `mock_record.request_type` (the enum member) rather than `mock_record.request_type.value`, aligning with how the actual function is likely called.
