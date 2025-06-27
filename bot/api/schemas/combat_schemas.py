@@ -28,9 +28,9 @@ class CombatParticipantData(BaseModel):
 # --- Combat Encounter Schemas ---
 class CombatEncounterBase(BaseModel):
     location_id: str = Field(..., description="ID of the location where the combat takes place.")
-    participants_data: List[CombatParticipantData] = Field(..., min_items=1, description="List of participants involved in the combat.")
-    initial_positions: Optional[Dict[str, CombatPosition]] = Field(None, description="Overall initial positions if not per-participant, keyed by entity_id.")
-    combat_rules_snapshot: Optional[Dict[str, Any]] = Field(None, description="Snapshot of relevant game rules at the start of combat.")
+    participants_data: List[CombatParticipantData] = Field(..., min_length=1, description="List of participants involved in the combat.") # Changed min_items to min_length for Pydantic V2
+    initial_positions: Optional[Dict[str, CombatPosition]] = Field(default=None, description="Overall initial positions if not per-participant, keyed by entity_id.")
+    combat_rules_snapshot: Optional[Dict[str, Any]] = Field(default=None, description="Snapshot of relevant game rules at the start of combat.")
     # state_variables from model can be here if API needs to set them initially
 
 class CombatEncounterCreate(CombatEncounterBase):

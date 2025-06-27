@@ -16,8 +16,9 @@ class ValidationIssue(BaseModel):
 
 # --- Reusable Helper Validators ---
 
-# Removed 'cls' as it's not used and might confuse Pyright in some contexts
-def validate_i18n_field(v: Any, info: FieldValidationInfo) -> Dict[str, str]:
+# Re-adding 'cls' as it's part of Pydantic's field_validator signature, even if not always used by the validator logic.
+# Pyright expects it for methods decorated with @field_validator.
+def validate_i18n_field(cls, v: Any, info: FieldValidationInfo) -> Dict[str, str]:
     if not isinstance(v, dict):
         raise ValueError(f"Field '{info.field_name}' must be a dictionary.")
     if not v:
@@ -45,32 +46,28 @@ def validate_i18n_field(v: Any, info: FieldValidationInfo) -> Dict[str, str]:
             first_available_lang = next(iter(validated_dict))
             validated_dict['en'] = validated_dict[first_available_lang]
             logger.info(f"Field '{info.field_name}': Missing 'en' translation, copied from '{first_available_lang}'.")
-            missing_languages.remove('en')
+            if 'en' in missing_languages: missing_languages.remove('en')
+
 
         if missing_languages:
             primary_guild_lang = target_languages[0]
             if primary_guild_lang in missing_languages and 'en' in validated_dict:
                 validated_dict[primary_guild_lang] = validated_dict['en']
                 logger.info(f"Field '{info.field_name}': Missing primary language '{primary_guild_lang}', copied from 'en'.")
-                missing_languages.remove(primary_guild_lang)
+                if primary_guild_lang in missing_languages: missing_languages.remove(primary_guild_lang)
 
-        if missing_languages:
+
+        if missing_languages: # Check again after potential autofill
             raise ValueError(f"Field '{info.field_name}' is missing required language(s): {', '.join(missing_languages)}. Provided: {list(validated_dict.keys())}")
     return validated_dict
 
-# Removed 'cls' as it's not used
-def ensure_valid_json_string(v: Any, info: FieldValidationInfo) -> Optional[str]: # Return Optional[str] as None is possible
-    # Need access to model_fields, so 'cls' was actually needed if we want to use info.field_name to get field info.
-    # However, the Pydantic FieldValidationInfo itself does not directly give access to 'cls.model_fields'.
-    # This validator might need to be used differently or the logic simplified if 'cls' is truly problematic for pyright.
-    # For now, assuming the intent was to check if the field *could* be None based on model definition,
-    # which is hard to do without 'cls'. A simpler approach is to allow None if v is None.
+def ensure_valid_json_string(cls, v: Any, info: FieldValidationInfo) -> Optional[str]:
+    field_is_optional = True # Default assumption, difficult to determine robustly without model schema access here
+    # A more robust way would be to pass `field_info.is_required` from the model's field if this validator
+    # is used in a context where `field_info` (from Pydantic's model_fields) is accessible.
+    # For a generic validator, this is tricky. Let's assume optional for now if v is None or empty string.
+
     if v is None:
-        # To robustly check if None is allowed, one would typically need the field's schema,
-        # which `info` might not provide in enough detail without `cls`.
-        # If this validator is only for non-optional fields, or optional fields that must be valid JSON if not None,
-        # then this check might need adjustment.
-        # For now, if v is None, we'll assume it might be an acceptable value for an Optional field.
         return None
 
     if isinstance(v, (dict, list)):
@@ -82,50 +79,20 @@ def ensure_valid_json_string(v: Any, info: FieldValidationInfo) -> Optional[str]
     if not isinstance(v, str):
         raise ValueError(f"Field '{info.field_name}' must be a string or a valid JSON serializable object/list. Got type: {type(v)}")
 
-    # Allow empty string for optional fields that were explicitly passed as ""
-    # This check is difficult without knowing if the field is optional via 'cls.model_fields'
-    # If an empty string should represent null/None for JSON, it should be converted.
-    # If an empty string is a valid JSON string (it's not by default for json.loads), this logic is fine.
-    # Assuming an empty string for an optional JSON field should perhaps become None or "{}"
     if not v.strip(): # If string is empty or whitespace
-        # If the field is optional and meant to be JSON, an empty string is not valid JSON.
-        # It should ideally be None or an empty JSON structure like "{}" or "[]".
-        # Returning None if empty string is provided for simplicity here,
-        # but this depends on desired behavior for empty string inputs for JSON fields.
-        return None # Or consider raising ValueError if empty string is not acceptable for a JSON field.
+        # For optional JSON fields, an empty string might mean "no data" -> None
+        # For required JSON fields, an empty string is invalid.
+        # This logic depends on how the specific field is defined in the model (Optional vs Required).
+        # If field_is_optional (hard to determine here accurately without model schema), return None.
+        # Otherwise, if it's a required JSON field, an empty string is an error.
+        # For now, let's return None for empty strings, assuming they represent optional empty JSON.
+        return None
 
 
     try:
-        json.loads(v)
+        json.loads(v) # Check if it's valid JSON
     except json.JSONDecodeError as e:
         raise ValueError(f"Field '{info.field_name}' contains an invalid JSON string: {e}")
-    return v
-
-# --- Pydantic Models for AI Generated Content ---
-
-    if isinstance(v, (dict, list)):
-        try:
-            return json.dumps(v)
-        except (TypeError, OverflowError) as e:
-            raise ValueError(f"Field '{info.field_name}': Invalid object for JSON stringification: {e}")
-
-    if not isinstance(v, str):
-        raise ValueError(f"Field '{info.field_name}' must be a string or a valid JSON serializable object/list. Got type: {type(v)}")
-
-    # Allow empty string for optional fields that were explicitly passed as ""
-    if not v.strip() and field_is_optional:
-        # Consider if empty string should be converted to None or kept as ""
-        # For now, keeping as "" if it's explicitly passed. If it should be None, add: return None
-        pass
-
-    try:
-        json.loads(v)
-    except json.JSONDecodeError as e:
-        # If it's an optional field and the string is empty, it might be acceptable
-        if field_is_optional and not v.strip():
-             pass # Allow empty string for optional JSON fields (implies empty/null structure)
-        else:
-            raise ValueError(f"Field '{info.field_name}' contains an invalid JSON string: {e}")
     return v
 
 # --- Pydantic Models for AI Generated Content ---

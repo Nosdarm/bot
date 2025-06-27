@@ -3,7 +3,7 @@ from bot.game.models.base_model import BaseModel
 import uuid
 
 class GlobalNpc(BaseModel):
-    id: Optional[str] = None
+    # id: Optional[str] = None # Removed, id is handled by BaseModel's __init__
     guild_id: str
     name_i18n: Dict[str, str]
     description_i18n: Optional[Dict[str, str]] = None

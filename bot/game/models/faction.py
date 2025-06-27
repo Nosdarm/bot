@@ -60,17 +60,22 @@ class Faction(BaseModel):
              # Or, if it must be in data:
             raise ValueError("Missing or invalid 'name_i18n' in data for Faction.from_dict")
 
-
-        return cls(
-            id=faction_id,
-            name_i18n=name_i18n, # Ensure this is a dict
-            description_i18n=data.get("description_i18n", {}), # Default to empty dict if missing
+        # Create instance without id first, as id in BaseModel has init=False
+        instance = cls(
+            name_i18n=name_i18n,
+            description_i18n=data.get("description_i18n", {}),
             guild_id=guild_id,
-            member_ids=data.get("member_ids", []), # Default to empty list
+            member_ids=data.get("member_ids", []),
             leader_id=data.get("leader_id"),
             alignment=data.get("alignment"),
-            state_variables=data.get("state_variables", {}), # Default to empty dict
+            state_variables=data.get("state_variables", {}),
         )
+
+        # If an ID was provided in the data, set it on the instance
+        if faction_id is not None: # faction_id was data.get('id')
+            instance.id = str(faction_id)
+
+        return instance
 
 # Example Usage (Optional, for testing)
 if __name__ == '__main__':

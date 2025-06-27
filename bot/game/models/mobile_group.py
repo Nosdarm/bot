@@ -9,7 +9,7 @@ class MobileGroup(BaseModel):
     Represents a mobile group of entities, such as caravans, patrols, or migrating herds.
     These groups can move between locations and may have specific members (NPCs or characters).
     """
-    id: Optional[str] = None
+    # id: Optional[str] = None # Removed, id is handled by BaseModel's __init__
     guild_id: str
     name_i18n: Dict[str, str]
     description_i18n: Optional[Dict[str, str]] = None

@@ -1,6 +1,7 @@
 # В bot/game/models/character.py
 from __future__ import annotations
 import json
+import uuid # Added import for uuid
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field # Import dataclass and field
 from bot.utils.i18n_utils import get_i18n_text # Import the new utility
@@ -141,37 +142,74 @@ class Character:
                  else: data[field_name] = {}
 
 
-        # Ensure required fields that might not be direct DB columns are set
-        data['id'] = str(db_model.id) # Ensure ID is string
+        # Ensure required fields that might not be direct DB columns are set and correctly typed
+        data['id'] = str(db_model.id) if db_model.id is not None else str(uuid.uuid4())
         data['discord_user_id'] = int(db_model.discord_user_id) if db_model.discord_user_id is not None else 0
-        data['guild_id'] = str(db_model.guild_id)
-        data['selected_language'] = db_model.selected_language or "en"
+        data['guild_id'] = str(db_model.guild_id) if db_model.guild_id is not None else "default_guild"
+        data['selected_language'] = str(db_model.selected_language or "en")
         data['location_id'] = str(db_model.location_id) if db_model.location_id is not None else None
-        data['hp'] = float(db_model.hp)
-        data['max_health'] = float(db_model.max_health)
-        data['level'] = int(db_model.level)
-        data['experience'] = int(db_model.xp) # map xp from DB to experience
-        data['unspent_xp'] = int(db_model.unspent_xp)
-        data['gold'] = int(db_model.gold)
-        data['is_alive'] = bool(db_model.is_alive)
 
-        # Ensure name_i18n is a dict
-        if not isinstance(data.get('name_i18n'), dict):
-            data['name_i18n'] = {'en': str(db_model.id)} # Fallback
+        try: data['hp'] = float(db_model.hp) if db_model.hp is not None else 100.0
+        except (ValueError, TypeError): data['hp'] = 100.0
+        try: data['max_health'] = float(db_model.max_health) if db_model.max_health is not None else 100.0
+        except (ValueError, TypeError): data['max_health'] = 100.0
+        try: data['level'] = int(db_model.level) if db_model.level is not None else 1
+        except (ValueError, TypeError): data['level'] = 1
+        try: data['experience'] = int(db_model.xp) if db_model.xp is not None else 0 # map xp from DB to experience
+        except (ValueError, TypeError): data['experience'] = 0
+        try: data['unspent_xp'] = int(db_model.unspent_xp) if db_model.unspent_xp is not None else 0
+        except (ValueError, TypeError): data['unspent_xp'] = 0
+        try: data['gold'] = int(db_model.gold) if db_model.gold is not None else 0
+        except (ValueError, TypeError): data['gold'] = 0
 
-        # collected_actions_json is already a string, keep as is
-        data['collected_actions_json'] = db_model.collected_actions_json
+        data['is_alive'] = bool(db_model.is_alive) if db_model.is_alive is not None else True
 
-        # Filter out keys not in Pydantic model to prevent unexpected argument errors
-        # This is important if db_model has more fields than Pydantic model
+        # Ensure name_i18n is a dict; if not, provide a default
+        name_i18n_val = data.get('name_i18n')
+        if not isinstance(name_i18n_val, dict) or not name_i18n_val:
+            # Fallback if name_i18n is missing or not a dict. Use db_model.name if it exists, else id.
+            default_name = getattr(db_model, 'name', None) or str(data['id'])
+            data['name_i18n'] = {'en': str(default_name)}
+
+
+        # Ensure other dict/list fields default to empty if None, before passing to dataclass __init__
+        # This is critical for non-Optional dataclass fields expecting dict/list.
+        list_fields_non_optional = ['inventory', 'status_effects', 'active_quests', 'known_spells', 'skills_data', 'abilities_data', 'spells_data', 'action_queue', 'known_abilities']
+        dict_fields_non_optional = ['stats', 'spell_cooldowns', 'flags', 'state_variables']
+
+        for lf in list_fields_non_optional:
+            if data.get(lf) is None: data[lf] = []
+        for df in dict_fields_non_optional:
+            if data.get(df) is None: data[df] = {}
+
+        # collected_actions_json is Optional[str], so None is fine.
+        data['collected_actions_json'] = getattr(db_model, 'collected_actions_json', None)
+
+
         model_fields = cls.__annotations__.keys()
         init_data = {k: v for k, v in data.items() if k in model_fields}
+
+        # Final check for any non-optional fields in dataclass that are still None in init_data
+        # This is a safeguard; ideally, the logic above should handle all cases.
+        for f_name, f_type in cls.__annotations__.items():
+            if not (str(f_type).startswith("typing.Optional") or str(f_type).startswith("Optional")):
+                if init_data.get(f_name) is None:
+                    # Provide a sensible default based on type hint if possible
+                    if f_type == str: init_data[f_name] = ""
+                    elif f_type == int: init_data[f_name] = 0
+                    elif f_type == float: init_data[f_name] = 0.0
+                    elif f_type == bool: init_data[f_name] = False
+                    elif f_type == list or str(f_type).startswith("List") or str(f_type).startswith("typing.List"): init_data[f_name] = []
+                    elif f_type == dict or str(f_type).startswith("Dict") or str(f_type).startswith("typing.Dict"): init_data[f_name] = {}
+                    # else: raise ValueError(f"Non-optional field {f_name}: {f_type} is None and no default provided in from_db_model")
+
 
         return cls(**init_data)
 
     def to_db_dict(self) -> Dict[str, Any]:
         """Converts the Pydantic Character instance to a dictionary suitable for CharacterDBModel."""
-        db_dict = self.to_dict() # Start with the existing to_dict for most fields
+        # Use __dict__ from dataclass instance for direct field values
+        db_dict = self.__dict__.copy()
 
         # Fields that need to be JSON strings for the database
         json_string_fields = [
