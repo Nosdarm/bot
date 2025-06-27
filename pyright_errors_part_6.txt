@@ -1,0 +1,575 @@
+[tests\game\test_guild_initializer.py] - 10 issue(s)
+  Line 72: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 73: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 82: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 143: Cannot assign to attribute "value" for class "RulesConfig"
+  Line 151: Cannot assign to attribute "custom_flags" for class "WorldState"
+  Line 180: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 217: Cannot assign to attribute "value" for class "RulesConfig"
+  Line 283: "IntegrityError" is not defined
+  Line 286: "patch" is not defined
+  Line 287: "IntegrityError" is not defined
+
+[bot\game\managers\ability_manager.py] - 9 issue(s)
+  Line 121: Cannot access attribute "execute" for class "object"
+  Line 129: Cannot access attribute "execute" for class "object"
+  Line 144: No parameter named "effect_i18n"
+  Line 145: No parameter named "cost"
+  Line 192: Argument of type "object" cannot be assigned to parameter "current_session" of type "AsyncSession" in function "_fetch"
+  Line 212: Cannot access attribute "check_ability_learning_requirements" for class "RuleEngine"
+  Line 228: "None" is not awaitable
+  Line 277: "None" is not awaitable
+  Line 291: "None" is not awaitable
+
+[tests\commands\test_inventory_cmds.py] - 9 issue(s)
+  Line 89: Cannot access attribute "equip" for class "InventoryCog"
+  Line 122: Cannot access attribute "equip" for class "InventoryCog"
+  Line 135: Cannot access attribute "equip" for class "InventoryCog"
+  Line 150: Cannot access attribute "equip" for class "InventoryCog"
+  Line 171: Cannot access attribute "equip" for class "InventoryCog"
+  Line 192: Cannot access attribute "unequip" for class "InventoryCog"
+  Line 214: Cannot access attribute "unequip" for class "InventoryCog"
+  Line 230: Cannot access attribute "unequip" for class "InventoryCog"
+  Line 255: Cannot access attribute "unequip" for class "InventoryCog"
+
+[bot\api\routers\action.py] - 8 issue(s)
+  Line 70: Arguments missing for parameters "message_key", "message_params", "party_id", "location_id", "channel_id"
+  Line 143: Invalid conditional operand of type "Column[Unknown]"
+  Line 156: Argument of type "Column[Unknown]" cannot be assigned to parameter "ability_name_i18n" of type "Dict[str, str]" in function "log_ability_activation"
+  Line 216: Arguments missing for parameters "message_key", "message_params", "party_id", "consequences_data", "channel_id"
+  Line 304: Argument of type "Column[str]" cannot be assigned to parameter "new_location_id" of type "str" in function "log_character_movement"
+  Line 319: Argument of type "Column[str]" cannot be assigned to parameter "new_location_id" of type "str" in function "log_character_movement"
+  Line 333: Argument of type "Column[str]" cannot be assigned to parameter "new_location_id" of type "str" in function "__init__"
+  Line 334: Argument of type "Column[Unknown]" cannot be assigned to parameter "new_location_name_i18n" of type "Dict[str, str]" in function "__init__"
+
+[tests\game\managers\test_character_manager.py] - 8 issue(s)
+  Line 137: "name" is not a known attribute of "None"
+  Line 138: "name_i18n" is not a known attribute of "None"
+  Line 139: "discord_user_id" is not a known attribute of "None"
+  Line 140: "guild_id" is not a known attribute of "None"
+  Line 141: "location_id" is not a known attribute of "None"
+  Line 148: "id" is not a known attribute of "None"
+  Line 267: Cannot access attribute "assert_called_once_with" for class "FunctionType"
+  Line 332: Cannot access attribute "equipment_slots_json" for class "Character"
+
+[tests\game\managers\test_global_npc_manager.py] - 8 issue(s)
+  Line 64: "id" is not a known attribute of "None"
+  Line 65: "name_i18n" is not a known attribute of "None"
+  Line 78: "id" is not a known attribute of "None"
+  Line 79: "guild_id" is not a known attribute of "None"
+  Line 136: "name_i18n" is not a known attribute of "None"
+  Line 137: "current_location_id" is not a known attribute of "None"
+  Line 199: Object of type "None" is not subscriptable
+  Line 234: Argument of type "dict[str, dict[str, str]]" cannot be assigned to parameter "exits" of type "List[Dict[str, Any]] | None" in function "__init__"
+
+[bot\game\command_handlers\party_handler.py] - 7 issue(s)
+  Line 165: No parameter named "leader_id"
+  Line 166: No parameter named "member_ids"
+  Line 169: No parameter named "current_location_id"
+  Line 249: Cannot access attribute "add_member_to_party" for class "PartyManager"
+  Line 312: Cannot access attribute "remove_member_from_party" for class "PartyManager"
+  Line 365: Cannot access attribute "remove_party" for class "PartyManager"
+  Line 408: Cannot access attribute "get_party_by_member_id" for class "PartyManager"
+
+[bot\game\conflict_resolver.py] - 7 issue(s)
+  Line 39: "CoreGameRulesConfig" is not defined
+  Line 317: "object" is not awaitable
+  Line 363: "CoreGameRulesConfig" is not defined
+  Line 365: "ConflictResolutionRules" is unknown import symbol
+  Line 380: Cannot access attribute "model_dump" for class "str"
+  Line 421: "object" is not awaitable
+  Line 442: "object" is not awaitable
+
+[bot\game\managers\faction_manager.py] - 7 issue(s)
+  Line 65: Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "prepare_faction_generation_prompt"
+  Line 74: Cannot access attribute "get_completion" for class "OpenAIService"
+  Line 117: Cannot access attribute "add" for class "object"
+  Line 122: Cannot access attribute "commit" for class "object"
+  Line 126: Cannot access attribute "refresh" for class "object"
+  Line 135: Cannot access attribute "is_active" for class "object"
+  Line 136: Cannot access attribute "rollback" for class "object"
+
+[bot\game\rules\resolvers\dialogue_resolver.py] - 7 issue(s)
+  Line 39: Argument of type "Any | None" cannot be assigned to parameter "template_id" of type "str" in function "get_dialogue_template"
+  Line 61: "Character" is not awaitable
+  Line 61: "None" is not awaitable
+  Line 67: "None" is not awaitable
+  Line 157: "Character" is not awaitable
+  Line 157: "None" is not awaitable
+  Line 167: "None" is not awaitable
+
+[tests\game\rules\test_rule_engine_relationship_influence.py] - 7 issue(s)
+  Line 152: Argument of type "MockCharacterManager" cannot be assigned to parameter "character_manager" of type "CharacterManager | None" in function "__init__"
+  Line 153: Argument of type "MockNpcManager" cannot be assigned to parameter "npc_manager" of type "NpcManager | None" in function "__init__"
+  Line 154: Argument of type "MockRelationshipManager" cannot be assigned to parameter "relationship_manager" of type "RelationshipManager | None" in function "__init__"
+  Line 155: Argument of type "MockDialogueManager" cannot be assigned to parameter "dialogue_manager" of type "DialogueManager | None" in function "__init__"
+  Line 156: Argument of type "MockGameLogManager" cannot be assigned to parameter "game_log_manager" of type "GameLogManager | None" in function "__init__"
+  Line 233: Cannot access attribute "_calculate_skill_check_dc_with_relationship_bonus" for class "RuleEngine"
+  Line 382: Cannot assign to attribute "_calculate_skill_check_dc_with_relationship_bonus" for class "type[RuleEngine]"
+
+[tests\game\test_faction_integration.py] - 7 issue(s)
+  Line 118: Argument missing for parameter "game_manager"
+  Line 118: No parameter named "db_service"
+  Line 118: No parameter named "settings"
+  Line 145: "Any" cannot be instantiated
+  Line 146: "Any" cannot be instantiated
+  Line 174: Cannot access attribute "create_faction_from_ai" for class "FactionManager"
+  Line 207: Cannot access attribute "_dirty_factions" for class "FactionManager"
+
+[tests\game\utils\test_stats_calculator.py] - 7 issue(s)
+  Line 125: "get_equipped_item_instances" is not a known attribute of "None"
+  Line 149: "get_active_statuses_for_entity" is not a known attribute of "None"
+  Line 171: "get_equipped_item_instances" is not a known attribute of "None"
+  Line 172: "get_active_statuses_for_entity" is not a known attribute of "None"
+  Line 186: Cannot assign to attribute "stats_json" for class "Character"
+  Line 224: "logs" is not a known attribute of module "pytest"
+  Line 237: "logs" is not a known attribute of module "pytest"
+
+[tests\integration\test_database_model_constraints.py] - 7 issue(s)
+  Line 33: Argument of type "() -> Generator[AbstractEventLoop, Any, None]" cannot be assigned to parameter of type "FixtureFunction[_P@fixture, _R@fixture]"
+  Line 66: Object of type "Session" cannot be used with "async with" because it does not correctly implement __aenter__
+  Line 66: Object of type "Session" cannot be used with "with" because it does not correctly implement __aexit__
+  Line 207: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 208: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 209: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 439: Class declaration "TestPartyModelConstraints" is obscured by a declaration of the same name
+
+[bot\ai\rules_schema.py] - 6 issue(s)
+  Line 275: Class declaration "ItemRarityDefinition" is obscured by a declaration of the same name
+  Line 282: Class declaration "ItemTypeDefinition" is obscured by a declaration of the same name
+  Line 289: Class declaration "ShopInventoryItemRule" is obscured by a declaration of the same name
+  Line 296: Class declaration "ShopRestockRule" is obscured by a declaration of the same name
+  Line 301: Class declaration "ShopTypeDefaultSettings" is obscured by a declaration of the same name
+  Line 311: Class declaration "CoreGameRulesConfig" is obscured by a declaration of the same name
+
+[bot\cogs\master_commands.py] - 6 issue(s)
+  Line 41: Method "cog_check" overrides class "Cog" in an incompatible manner
+  Line 64: Arguments missing for parameters "guild_id", "user_id"
+  Line 139: Cannot assign to attribute "neighbor_locations_json" for class "Location"
+  Line 192: Cannot assign to attribute "neighbor_locations_json" for class "Location"
+  Line 225: Cannot assign to attribute "neighbor_locations_json" for class "Location"
+  Line 240: Argument of type "Bot" cannot be assigned to parameter "bot" of type "RPGBot" in function "__init__"
+
+[bot\nlu\player_action_parser.py] - 6 issue(s)
+  Line 40: "cli" is not a known attribute of module "spacy"
+  Line 55: "cli" is not a known attribute of module "spacy"
+  Line 128: Type "Dict[str, List[GameEntity]]" is not assignable to declared type "Dict[str, List[Dict[str, Any]]]"
+  Line 295: No parameter named "message_key"
+  Line 296: No parameter named "message_params"
+  Line 307: Argument missing for parameter "db_service"
+
+[bot\services\nlu_data_service.py] - 6 issue(s)
+  Line 70: Argument of type "str | None" cannot be assigned to parameter "key" of type "str" in function "get"
+  Line 70: No overloads for "get" match the provided arguments
+  Line 202: No overloads for "__init__" match the provided arguments
+  Line 212: No overloads for "__init__" match the provided arguments
+  Line 221: No overloads for "__init__" match the provided arguments
+  Line 234: No overloads for "__init__" match the provided arguments
+
+[tests\game\commands\test_moderation_commands.py] - 6 issue(s)
+  Line 78: Argument of type "MockMessage" cannot be assigned to parameter "message" of type "Message" in function "handle_approve_content_command"
+  Line 112: Argument of type "MockMessage" cannot be assigned to parameter "message" of type "Message" in function "handle_approve_content_command"
+  Line 135: Argument of type "MockMessage" cannot be assigned to parameter "message" of type "Message" in function "handle_approve_content_command"
+  Line 193: Argument of type "MockMessage" cannot be assigned to parameter "message" of type "Message" in function "handle_reject_content_command"
+  Line 277: Argument of type "MockMessage" cannot be assigned to parameter "message" of type "Message" in function "handle_edit_content_command"
+  Line 343: Argument of type "MockMessage" cannot be assigned to parameter "message" of type "Message" in function "handle_edit_content_command"
+
+[tests\game\managers\test_npc_manager.py] - 6 issue(s)
+  Line 79: Object of type "None" is not subscriptable
+  Line 83: Object of type "None" is not subscriptable
+  Line 84: Object of type "None" is not subscriptable
+  Line 113: "get" is not a known attribute of "None"
+  Line 114: "get" is not a known attribute of "None"
+  Line 115: "get" is not a known attribute of "None"
+
+[bot\ai\ai_response_validator.py] - 5 issue(s)
+  Line 33: Argument of type "list[str] | List[str | int]" cannot be assigned to parameter "loc" of type "List[str | int]" in function "__init__"
+  Line 57: Cannot access attribute "get" for class "CoroutineType[Any, Any, Any | None]"
+  Line 73: Cannot access attribute "get" for class "CoroutineType[Any, Any, Any | None]"
+  Line 212: Cannot access attribute "get" for class "CoroutineType[Any, Any, Any | None]"
+  Line 283: Argument of type "list[Any | str | None]" cannot be assigned to parameter "iterable" of type "Iterable[SupportsRichComparisonT@sorted]" in function "sorted"
+
+[bot\game\managers\game_log_manager.py] - 5 issue(s)
+  Line 91: Cannot access attribute "execute" for class "object"
+  Line 102: Cannot access attribute "begin" for class "object"
+  Line 108: Argument of type "object" cannot be assigned to parameter "db_session" of type "AsyncSession" in function "initialize_new_guild"
+  Line 234: Argument of type "tuple[str, str, str | None, str | None, str, str | None, str | None, str | None, str | None, str, str | None, str | None, str | None, str | None, str | None]" cannot be assigned to parameter "params" of type "_CoreAnyExecuteParams | None" in function "execute"
+  Line 234: No overloads for "execute" match the provided arguments
+
+[bot\game\managers\location_manager.py] - 5 issue(s)
+  Line 180: Argument of type "Column[str]" cannot be assigned to parameter "key" of type "str" in function "__setitem__"
+  Line 299: Cannot access attribute "get_rule" for class "RuleEngine"
+  Line 322: "player_ids_json" is not a known attribute of "None"
+  Line 363: Method declaration "move_entity" is obscured by a declaration of the same name
+  Line 509: Argument of type "Column[str]" cannot be assigned to parameter "key" of type "str" in function "__setitem__"
+
+[bot\game\managers\npc_manager.py] - 5 issue(s)
+  Line 188: Argument of type "Column[Unknown] | list[_T@list]" cannot be assigned to parameter "iterable" of type "Iterable[_T@list]" in function "__init__"
+  Line 191: Cannot assign to attribute "npc_ids" for class "Location"
+  Line 296: Cannot access attribute "begin" for class "object"
+  Line 301: Cannot access attribute "merge" for class "object"
+  Line 312: Cannot access attribute "execute" for class "object"
+
+[bot\game\rules\resolvers\combat_ai_resolver.py] - 5 issue(s)
+  Line 132: Argument missing for parameter "location_id"
+  Line 168: Cannot access attribute "can_start_dialogue" for class "DialogueManager"
+  Line 172: Argument missing for parameter "instance_id"
+  Line 189: Argument missing for parameter "entity_id"
+  Line 189: No parameter named "context"
+
+[tests\ai\test_multilingual_prompt_generator.py] - 5 issue(s)
+  Line 41: Argument missing for parameter "main_bot_language"
+  Line 81: Argument missing for parameter "generation_context"
+  Line 83: No parameter named "context_data"
+  Line 122: Argument missing for parameter "generation_context"
+  Line 124: No parameter named "context_data"
+
+[tests\game\managers\test_lore_manager.py] - 5 issue(s)
+  Line 78: Cannot access attribute "_diagnostic_log" for class "LoreManager"
+  Line 88: "id" is not a known attribute of "None"
+  Line 89: "title_i18n" is not a known attribute of "None"
+  Line 121: Argument of type "dict[str, str]" cannot be assigned to parameter "data" of type "list[Unknown]" in function "_write_dummy_lore_file"
+  Line 131: "id" is not a known attribute of "None"
+
+[tests\game\test_npc_action_processor.py] - 5 issue(s)
+  Line 83: "mock" is not a known attribute of module "unittest"
+  Line 107: "mock" is not a known attribute of module "unittest"
+  Line 137: "mock" is not a known attribute of module "unittest"
+  Line 166: "mock" is not a known attribute of module "unittest"
+  Line 190: "mock" is not a known attribute of module "unittest"
+
+[bot\ai\ai_data_models.py] - 4 issue(s)
+  Line 19: Expected class but received "object"
+  Line 60: Expected class but received "object"
+  Line 120: Expected class but received "object"
+  Line 230: Expected class but received "object"
+
+[bot\api\dependencies.py] - 4 issue(s)
+  Line 12: No overloads for "__init__" match the provided arguments
+  Line 13: Argument of type "AsyncEngine" cannot be assigned to parameter "bind" of type "_SessionBind | None" in function "__init__"
+  Line 19: Object of type "Session" cannot be used with "async with" because it does not correctly implement __aenter__
+  Line 19: Object of type "Session" cannot be used with "with" because it does not correctly implement __aexit__
+
+[bot\api\routers\map.py] - 4 issue(s)
+  Line 139: Argument of type "Column[str]" cannot be assigned to parameter "id" of type "str" in function "__init__"
+  Line 140: Argument of type "Column[Unknown]" cannot be assigned to parameter "name_i18n" of type "Dict[str, str]" in function "__init__"
+  Line 141: Argument of type "Column[Unknown]" cannot be assigned to parameter "type_i18n" of type "Dict[str, str]" in function "__init__"
+  Line 142: Argument of type "Column[Unknown]" cannot be assigned to parameter "coordinates" of type "Dict[str, Any] | None" in function "__init__"
+
+[bot\bot_core.py] - 4 issue(s)
+  Line 82: Return type of async generator function must be compatible with "AsyncGenerator[object, Any]"
+  Line 219: "SQLAlchemyIntegrityError" is possibly unbound
+  Line 265: "get" is not a known attribute of "None"
+  Line 434: Cannot access attribute "get_game_channel_ids" for class "GameManager"
+
+[bot\command_modules\character_cmds.py] - 4 issue(s)
+  Line 68: Cannot access attribute "get_rules_data_for_guild" for class "RuleEngine"
+  Line 136: Cannot access attribute "send_notification" for class "NotificationService"
+  Line 153: "Character" is not awaitable
+  Line 153: "None" is not awaitable
+
+[bot\command_modules\settings_cmds.py] - 4 issue(s)
+  Line 92: Type "Character | None" is not assignable to declared type "Player | None"
+  Line 93: Argument of type "str" cannot be assigned to parameter "discord_id" of type "int" in function "get_player_by_discord_id"
+  Line 101: Argument missing for parameter "guild_id"
+  Line 105: No parameter named "guild_id_str"
+
+[bot\database\inventory_crud.py] - 4 issue(s)
+  Line 56: Cannot assign to attribute "quantity" for class "NewCharacterItem"
+  Line 103: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 106: Cannot assign to attribute "quantity" for class "NewCharacterItem"
+  Line 108: Invalid conditional operand of type "ColumnElement[bool]"
+
+[bot\game\combat_rewards.py] - 4 issue(s)
+  Line 42: Invalid conditional operand of type "Column[str] | bool"
+  Line 93: Arguments missing for parameters "message_key", "message_params", "party_id", "location_id", "channel_id"
+  Line 112: Arguments missing for parameters "message_key", "message_params", "party_id", "location_id", "channel_id"
+  Line 131: Arguments missing for parameters "message_key", "message_params", "party_id", "location_id", "consequences_data", "channel_id"
+
+[bot\game\npc_action_handlers\npc_use_item_completion_handler.py] - 4 issue(s)
+  Line 79: Cannot access attribute "get_item" for class "ItemManager"
+  Line 84: Argument missing for parameter "character_id"
+  Line 86: Argument missing for parameter "npc_id"
+  Line 100: Cannot access attribute "resolve_item_use" for class "RuleEngine"
+
+[bot\game\rules\resolvers\economic_resolver.py] - 4 issue(s)
+  Line 79: Cannot access attribute "get_market_inventory_level_ratio" for class "EconomyManager"
+  Line 105: Cannot access attribute "get_location" for class "LocationManager"
+  Line 134: "Character" is not awaitable
+  Line 134: "None" is not awaitable
+
+[tests\ai\test_generation_manager.py] - 4 issue(s)
+  Line 25: Expression of type "None" cannot be assigned to parameter of type "str"
+  Line 181: Cannot assign to attribute "id" for class "Location"
+  Line 511: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 560: Invalid conditional operand of type "ColumnElement[bool]"
+
+[tests\database\test_crud_utils.py] - 4 issue(s)
+  Line 88: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 114: Invalid conditional operand of type "ColumnElement[bool]"
+  Line 227: Function declaration "test_create_entity_integrity_error" is obscured by a declaration of the same name
+  Line 237: Argument of type "None" cannot be assigned to parameter "orig" of type "BaseException" in function "__init__"
+
+[tests\game\managers\test_mobile_group_manager.py] - 4 issue(s)
+  Line 71: "id" is not a known attribute of "None"
+  Line 84: "id" is not a known attribute of "None"
+  Line 119: "name_i18n" is not a known attribute of "None"
+  Line 120: "current_location_id" is not a known attribute of "None"
+
+[tests\game\models\test_status_model.py] - 4 issue(s)
+  Line 14: Cannot access attribute "name" for class "Status"
+  Line 15: Cannot access attribute "duration_turns" for class "Status"
+  Line 69: Cannot access attribute "current_tick" for class "Status"
+  Line 70: Cannot access attribute "max_duration" for class "Status"
+
+[tests\game\services\test_location_interaction_service.py] - 4 issue(s)
+  Line 64: Cannot access attribute "process_interaction" for class "LocationInteractionService"
+  Line 80: Arguments missing for parameters "check_type", "required_items"
+  Line 105: Cannot access attribute "process_interaction" for class "LocationInteractionService"
+  Line 138: Cannot access attribute "process_interaction" for class "LocationInteractionService"
+
+[tests\integration\test_api_guild_context.py] - 4 issue(s)
+  Line 33: Argument of type "() -> Generator[AbstractEventLoop, Any, None]" cannot be assigned to parameter of type "FixtureFunction[_P@fixture, _R@fixture]"
+  Line 80: Object of type "Session" cannot be used with "async with" because it does not correctly implement __aenter__
+  Line 80: Object of type "Session" cannot be used with "with" because it does not correctly implement __aexit__
+  Line 215: Cannot assign to attribute "value" for class "RulesConfig"
+
+[bot\api\schemas\character_schemas.py] - 3 issue(s)
+  Line 16: No overloads for "Field" match the provided arguments
+  Line 17: No overloads for "Field" match the provided arguments
+  Line 23: Argument of type "type[CharacterStatsSchema]" cannot be assigned to parameter "default_factory" of type "(() -> _T@Field) | ((dict[str, Any]) -> _T@Field)" in function "Field"
+
+[bot\database\crud_utils.py] - 3 issue(s)
+  Line 55: Type "_Wrapped[..., Coroutine[Any, Any, Any], ..., CoroutineType[Any, Any, Any]]" is not assignable to return type "F@decorator"
+  Line 332: Argument of type "(session_factory: Any, guild_id: str) -> CoroutineType[Any, Any, None]" cannot be assigned to parameter "func" of type "(**_P@asynccontextmanager) -> AsyncIterator[_T_co@asynccontextmanager]" in function "asynccontextmanager"
+
+[bot\game\ai\event_ai_generator.py] - 3 issue(s)
+  Line 52: Arguments missing for parameters "request_type", "request_params"
+  Line 78: Argument missing for parameter "generation_context"
+  Line 80: No parameter named "context_data"
+
+[bot\game\event_processors\event_action_processor.py] - 3 issue(s)
+  Line 275: Type "Dict[str, Any]" is not assignable to declared type "EventStage"
+  Line 278: Cannot access attribute "get" for class "EventStage"
+  Line 280: Cannot access attribute "get" for class "EventStage"
+
+[bot\game\managers\dialogue_manager.py] - 3 issue(s)
+  Line 179: "float" is not awaitable
+  Line 290: "None" is not awaitable
+  Line 299: "float" is not awaitable
+
+[bot\game\npc_action_handlers\npc_rest_completion_handler.py] - 3 issue(s)
+  Line 64: Cannot access attribute "calculate_rest_recovery" for class "RuleEngine"
+  Line 71: Cannot access attribute "add" for class "Dict[str, Set[str]]"
+  Line 85: Parameter "target_id" is already assigned
+
+[bot\game\rules\check_resolver.py] - 3 issue(s)
+  Line 50: "None" is not awaitable
+  Line 161: "None" is not awaitable
+  Line 182: Operator ">=" not supported for types "int" and "int | None"
+
+[bot\game\rules\world_simulator.py] - 3 issue(s)
+  Line 40: Expected class but received "(obj: object, /) -> TypeIs[(...) -> object]"
+  Line 65: Cannot access attribute "_active_events_data" for class "EventManager"
+  Line 70: Cannot access attribute "run_event_simulation" for class "EventManager"
+
+[bot\services\notification_service.py] - 3 issue(s)
+  Line 6: "I18nUtils" is unknown import symbol
+  Line 70: "Character" is not awaitable
+  Line 70: "None" is not awaitable
+
+[tests\ai\test_prompt_context_collector.py] - 3 issue(s)
+  Line 6: "GameTerm" is unknown import symbol
+  Line 6: "ScalingParameter" is unknown import symbol
+  Line 173: "List[Dict[str, Any]]" is not awaitable
+
+[tests\game\models\test_location_model.py] - 3 issue(s)
+  Line 37: Cannot access attribute "state" for class "Location"
+  Line 38: Cannot access attribute "custom_field" for class "Location"
+  Line 72: Cannot access attribute "state" for class "Location"
+
+[tests\game\test_turn_processing_service.py] - 3 issue(s)
+  Line 150: "self" is not defined
+  Line 151: "self" is not defined
+  Line 163: "self" is not defined
+
+[tests\nlu\test_player_action_parser.py] - 3 issue(s)
+  Line 138: "nlp_en" is not defined
+  Line 139: "nlp_en" is not defined
+  Line 176: "nlp_en" is not defined
+
+[tests\services\test_nlu_data_service.py] - 3 issue(s)
+  Line 9: Type "type[bot.services.nlu_data_service.GameEntity]" is not assignable to declared type "type[tests.services.test_nlu_data_service.GameEntity]"
+  Line 50: Cannot assign to attribute "CACHE_TTL_SECONDS" for class "type[NLUDataService]"
+  Line 191: Cannot assign to attribute "CACHE_TTL_SECONDS" for class "NLUDataService"
+
+[tests\test_bot_core.py] - 3 issue(s)
+  Line 92: Argument of type "Unknown | None" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+  Line 110: Argument of type "Unknown | None" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+  Line 291: Argument of type "Unknown | None" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+
+[bot\api\schemas\ability_schemas.py] - 2 issue(s)
+  Line 6: No overloads for "Field" match the provided arguments
+  Line 12: No overloads for "Field" match the provided arguments
+
+[bot\api\schemas\location_schemas.py] - 2 issue(s)
+  Line 11: No overloads for "Field" match the provided arguments
+  Line 13: No overloads for "Field" match the provided arguments
+
+[bot\api\schemas\player_schemas.py] - 2 issue(s)
+  Line 23: No overloads for "Field" match the provided arguments
+  Line 37: "discord_id" overrides symbol of same name in class "PlayerBase"
+
+[bot\game\event_processors\event_simulation_processor.py] - 2 issue(s)
+  Line 98: Cannot access attribute "passive_sim_checks" for class "EventStage"
+  Line 99: Cannot access attribute "passive_sim_checks" for class "EventStage"
+
+[bot\game\managers\event_manager.py] - 2 issue(s)
+  Line 115: "get" is not a known attribute of "None"
+  Line 325: Cannot assign to attribute "is_active" for class "Event"
+
+[bot\game\managers\inventory_manager.py] - 2 issue(s)
+  Line 140: Cannot access attribute "get_item_template_as_dict" for class "ItemManager"
+  Line 154: Cannot access attribute "get_item_template_as_dict" for class "ItemManager"
+
+[bot\game\managers\status_manager.py] - 2 issue(s)
+  Line 65: Cannot access attribute "rules_config_data" for class "RuleEngine"
+  Line 153: Cannot access attribute "get_current_turn" for class "TimeManager"
+
+[bot\game\npc_action_handlers\npc_move_completion_handler.py] - 2 issue(s)
+  Line 65: Cannot access attribute "add" for class "Dict[str, Set[str]]"
+  Line 79: Argument missing for parameter "instance_id"
+
+[bot\game\npc_action_handlers\npc_search_completion_handler.py] - 2 issue(s)
+  Line 113: Cannot access attribute "create_item" for class "ItemManager"
+  Line 126: Cannot access attribute "move_item" for class "ItemManager"
+
+[bot\game\services\relationship_event_processor.py] - 2 issue(s)
+  Line 72: Argument of type "Any | None" cannot be assigned to parameter "s" of type "str | bytes | bytearray" in function "loads"
+  Line 76: Object of type "None" is not subscriptable
+
+[bot\game\turn_processing_service.py] - 2 issue(s)
+  Line 232: No parameter named "reason"
+  Line 291: No parameter named "reason"
+
+[bot\models\pending_generation.py] - 2 issue(s)
+  Line 70: Invalid conditional operand of type "Column[str]"
+  Line 70: Invalid conditional operand of type "Column[str]"
+
+[bot\utils\decorators.py] - 2 issue(s)
+  Line 29: Cannot access attribute "db_service" for class "Client"
+  Line 37: Cannot access attribute "db_service" for class "Client"
+
+[tests\game\managers\test_economy_manager.py] - 2 issue(s)
+  Line 143: Object of type "None" is not subscriptable
+  Line 223: Object of type "None" is not subscriptable
+
+[tests\game\managers\test_item_manager_revert_logic.py] - 2 issue(s)
+  Line 195: "quantity" is not a known attribute of "None"
+  Line 220: Argument of type "main" cannot be assigned to parameter "main" of type "Coroutine[Any, Any, _T@run]" in function "run"
+
+[tests\game\test_action_scheduler.py] - 2 issue(s)
+  Line 121: "status" is not a known attribute of "None"
+  Line 122: "result" is not a known attribute of "None"
+
+[bot\alembic\env.py] - 1 issue(s)
+  Line 131: Argument of type "dict[Unknown, Unknown]" cannot be assigned to parameter "value" of type "str" in function "__setitem__"
+
+[bot\alembic\versions\202401010001_add_generated_details_to_location.py] - 1 issue(s)
+  Line 23: No parameter named "astext_fallback"
+
+[bot\alembic\versions\8275f48039b4_merge_two_heads.py] - 1 issue(s)
+  Line 16: Type "tuple[Literal['506f4e6c1756'], Literal['b43c1b9235b3']]" is not assignable to declared type "str | None"
+
+[bot\alembic\versions\d9dbc4f4caa8_merge_multiple_heads_into_one.py] - 1 issue(s)
+  Line 16: Type "tuple[Literal['6789a895c800'], Literal['d275002e4c9b']]" is not assignable to declared type "str | None"
+
+[bot\alembic\versions\ef248acacb6c_merge_heads.py] - 1 issue(s)
+  Line 16: Type "tuple[Literal['202401010002'], Literal['8275f48039b4']]" is not assignable to declared type "str | None"
+
+[bot\api\main.py] - 1 issue(s)
+  Line 215: Argument of type "None" cannot be assigned to parameter "discord_client" of type "Client" in function "__init__"
+
+[bot\api\routers\character.py] - 1 issue(s)
+  Line 101: Arguments missing for parameters "base_strength", "base_dexterity", "base_constitution", "base_intelligence", "base_wisdom", "base_charisma"
+
+[bot\api\routers\inventory_router.py] - 1 issue(s)
+  Line 46: Argument of type "Column[int]" cannot be assigned to parameter "quantity" of type "int" in function "__init__"
+
+[bot\api\schemas\combat_schemas.py] - 1 issue(s)
+  Line 31: No overloads for "Field" match the provided arguments
+
+[bot\api\schemas\item_schemas.py] - 1 issue(s)
+  Line 32: "Config" overrides symbol of same name in class "NewItemBase"
+
+[bot\database\models\character_related.py] - 1 issue(s)
+  Line 18: Class declaration "Party" is obscured by a declaration of the same name
+
+[bot\database\rpg_character_crud.py] - 1 issue(s)
+  Line 42: Type "Sequence[RPGCharacter]" is not assignable to return type "List[RPGCharacter]"
+
+[bot\game\command_handlers\quest_commands.py] - 1 issue(s)
+  Line 37: "format" is not a known attribute of "None"
+
+[bot\game\event_processors\event_condition_checker.py] - 1 issue(s)
+  Line 39: Cannot access attribute "get" for class "EventOutcome"
+
+[bot\game\event_processors\event_stage_processor.py] - 1 issue(s)
+  Line 213: Cannot access attribute "get_stage_by_id" for class "Event"
+
+[bot\game\event_processors\on_enter_action_executor.py] - 1 issue(s)
+  Line 139: Cannot access attribute "add_status_effect_to_entity" for class "StatusManager"
+
+[bot\game\managers\crafting_manager.py] - 1 issue(s)
+  Line 222: Cannot access attribute "add_item_to_entity_inventory_by_template_id" for class "ItemManager"
+
+[bot\game\managers\global_npc_manager.py] - 1 issue(s)
+  Line 271: Argument of type "str | None" cannot be assigned to parameter "npc_id" of type "str" in function "update_global_npc"
+
+[bot\game\managers\relationship_manager.py] - 1 issue(s)
+  Line 167: "data" is possibly unbound
+
+[bot\game\models\faction.py] - 1 issue(s)
+  Line 65: No parameter named "id"
+
+[bot\game\models\global_npc.py] - 1 issue(s)
+  Line 6: "id" overrides symbol of same name in class "BaseModel"
+
+[bot\game\models\mobile_group.py] - 1 issue(s)
+  Line 12: "id" overrides symbol of same name in class "BaseModel"
+
+[bot\game\npc_action_handlers\npc_combat_attack_completion_handler.py] - 1 issue(s)
+  Line 62: Argument of type "Dict[str, Any]" cannot be assigned to parameter "actor_type" of type "str" in function "handle_participant_action_complete"
+
+[bot\game\npc_action_handlers\npc_craft_completion_handler.py] - 1 issue(s)
+  Line 87: Cannot access attribute "create_item" for class "ItemManager"
+
+[bot\services\openai_service.py] - 1 issue(s)
+  Line 144: Argument of type "list[dict[str, str]]" cannot be assigned to parameter "messages" of type "Iterable[ChatCompletionMessageParam]" in function "create"
+
+[tests\api\routers\test_character_api.py] - 1 issue(s)
+  Line 23: No parameter named "app"
+
+[tests\api\routers\test_player_api.py] - 1 issue(s)
+  Line 23: No parameter named "app"
+
+[tests\commands\test_general_cmds.py] - 1 issue(s)
+  Line 52: Cannot access attribute "assert_awaited_once_with" for class "FunctionType"
+
+[tests\game\managers\test_dialogue_manager.py] - 1 issue(s)
+  Line 91: No parameter named "event_action_processor"
+
+[tests\game\managers\test_game_log_manager.py] - 1 issue(s)
+  Line 352: "mock" is not a known attribute of module "unittest"
+
+[tests\game\managers\test_party_manager_revert_logic.py] - 1 issue(s)
+  Line 75: Cannot assign to attribute "remove_party" for class "PartyManager"
+
+[tests\game\managers\test_relationship_manager.py] - 1 issue(s)
+  Line 85: "Any" cannot be instantiated
+
+[tests\game\managers\test_undo_manager.py] - 1 issue(s)
+  Line 776: Argument of type "main" cannot be assigned to parameter "main" of type "Coroutine[Any, Any, _T@run]" in function "run"
+
+[tests\services\test_db_service.py] - 1 issue(s)
+  Line 285: Argument of type "Literal['error_table']" cannot be assigned to parameter "model_class" of type "type | None" in function "create_entity"
