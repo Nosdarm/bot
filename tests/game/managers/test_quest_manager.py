@@ -7,10 +7,11 @@ from typing import Dict, Any, List, Optional, cast
 
 from bot.game.managers.quest_manager import QuestManager
 from bot.game.models.quest import Quest, QuestStep
-from bot.ai.ai_data_models import GenerationContext, QuestCompletionValidationResult, ValidatedQuestData, ValidationIssue
-from bot.database.models.player import Player
-from bot.database.models.generated_quest import GeneratedQuest as DBGeneratedQuest
-from bot.database.models.quest_step import QuestStepTable as DBQuestStepTable
+# Removed QuestCompletionValidationResult, ValidatedQuestData as they are not actual return types of validator
+from bot.ai.ai_data_models import GenerationContext, ValidationIssue
+from bot.database.models import Player # Corrected import
+from bot.database.models import GeneratedQuest as DBGeneratedQuest # Corrected import path
+from bot.database.models import QuestStepTable as DBQuestStepTable # Corrected import path
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.game.managers.game_manager import GameManager # For spec
 
@@ -286,10 +287,9 @@ class TestQuestManager(unittest.IsolatedAsyncioTestCase):
         self.mock_prompt_generator.generate_quest_prompt = AsyncMock(return_value={"system": "sys", "user": "usr"})
         self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": json.dumps(expected_data_dict)})
 
-        # Mock validate_ai_response to return ValidatedQuestData
-        validated_quest_data_obj = ValidatedQuestData(**expected_data_dict, id=str(uuid.uuid4()), guild_id=guild_id)
-        mock_validation_result = QuestCompletionValidationResult(overall_status="success", entities=[validated_quest_data_obj])
-        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value=mock_validation_result)
+        # Mock validate_ai_response to return tuple: (Optional[Dict[str, Any]], Optional[List[ValidationIssue]])
+        # For success, issues is None
+        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value=(expected_data_dict, None))
 
         dummy_player_context: Dict[str, Any] = {"player_level": 5, "current_location_name": "Town Square"}
         generation_context_arg = GenerationContext(
@@ -307,6 +307,10 @@ class TestQuestManager(unittest.IsolatedAsyncioTestCase):
         guild_id = "gid_openai_fail"; quest_idea = "concept_openai_fail"
         self.mock_prompt_generator.generate_quest_prompt = AsyncMock(return_value={"system": "sys", "user": "usr"})
         self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"error": "OpenAI down"})
+        # For this test, AI validator would not be called if OpenAI fails first.
+        # If it were, it would return (None, [ValidationIssue(...)])
+        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value=(None, [ValidationIssue(type="openai_error", msg="OpenAI down", loc=())]))
+
         generation_context_arg = GenerationContext(guild_id=guild_id, main_language="en", target_languages=["en"], request_type="quest_idea", request_params={"idea": quest_idea}, game_rules_summary={}, lore_snippets=[], world_state={}, game_terms_dictionary=[], scaling_parameters=[], player_context=None, faction_data=[], relationship_data=[], active_quests_summary=[])
         result = await self.quest_manager.generate_quest_details_from_ai(guild_id, quest_idea, generation_context_arg)
         self.assertIsNone(result)
@@ -314,10 +318,11 @@ class TestQuestManager(unittest.IsolatedAsyncioTestCase):
     async def test_generate_quest_details_from_ai_validator_fails(self):
         guild_id = "gid_validator_fail"; quest_idea = "concept_validator_fail"
         self.mock_prompt_generator.generate_quest_prompt = AsyncMock(return_value={"system": "sys", "user": "usr"})
-        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"})
+        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"}) # Valid JSON string from OpenAI
 
-        mock_validation_result_fail = QuestCompletionValidationResult(overall_status="error", global_errors=[ValidationIssue(type="error", msg="failed", loc=())])
-        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value=mock_validation_result_fail)
+        # Validator returns (None data, List of issues) for failure
+        validation_issues = [ValidationIssue(type="error", msg="failed validation", loc=())]
+        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value=(None, validation_issues))
 
         generation_context_arg = GenerationContext(guild_id=guild_id, main_language="en", target_languages=["en"], request_type="quest_idea", request_params={"idea": quest_idea}, game_rules_summary={}, lore_snippets=[], world_state={}, game_terms_dictionary=[], scaling_parameters=[], player_context=None, faction_data=[], relationship_data=[], active_quests_summary=[])
         result = await self.quest_manager.generate_quest_details_from_ai(guild_id, quest_idea, generation_context_arg)
@@ -326,11 +331,19 @@ class TestQuestManager(unittest.IsolatedAsyncioTestCase):
     async def test_generate_quest_details_from_ai_validator_requires_moderation(self):
         guild_id = "gid_validator_mod"; quest_idea = "concept_validator_mod"
         self.mock_prompt_generator.generate_quest_prompt = AsyncMock(return_value={"system": "sys", "user": "usr"})
-        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"})
+        self.mock_openai_service.generate_structured_multilingual_content = AsyncMock(return_value={"json_string": "{}"}) # Valid JSON
 
-        validated_quest_data_mod = ValidatedQuestData(id=str(uuid.uuid4()), guild_id=guild_id, name_i18n={"en":"Needs Review"}, steps=[], requires_moderation=True)
-        mock_validation_result_mod = QuestCompletionValidationResult(overall_status="requires_manual_review", entities=[validated_quest_data_mod])
-        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value=mock_validation_result_mod)
+        # For "requires_moderation", validator might return the data along with warning/info issues
+        # Or the QuestManager's logic for requires_moderation is separate from strict validation failure.
+        # Assuming here that if validator deems it needs moderation, it might still return data but with issues.
+        # The QuestManager's internal logic then decides if this means "return None" for auto-start.
+        # For this test, let's assume validate_ai_response returns (data, [issues_flagging_moderation])
+        # and generate_quest_details_from_ai returns None if any issues exist, including moderation flags.
+        moderation_issue = ValidationIssue(type="moderation_needed", msg="Content needs review", loc=(), severity="warning")
+        # This data would be the parsed data if validation passed enough for that.
+        parsed_data_for_moderation: Dict[str, Any] = {"name_i18n": {"en":"Needs Review"}, "steps": [], "id": str(uuid.uuid4()), "guild_id": guild_id}
+
+        self.mock_ai_validator.validate_ai_response = AsyncMock(return_value=(parsed_data_for_moderation, [moderation_issue]))
 
         generation_context_arg = GenerationContext(guild_id=guild_id, main_language="en", target_languages=["en"], request_type="quest_idea", request_params={"idea": quest_idea}, game_rules_summary={}, lore_snippets=[], world_state={}, game_terms_dictionary=[], scaling_parameters=[], player_context=None, faction_data=[], relationship_data=[], active_quests_summary=[])
         result = await self.quest_manager.generate_quest_details_from_ai(guild_id, quest_idea, generation_context_arg)

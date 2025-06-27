@@ -9,7 +9,7 @@ import pytest
 # import discord # Not directly used, spec=discord.Client might be too broad if only Client methods are needed
 
 from bot.game.managers.location_manager import LocationManager
-from bot.game.models.location import Location as PydanticLocation, ExitDefinition as PydanticExitDefinition # Import ExitDefinition
+from bot.game.models.location import Location as PydanticLocation # Removed ExitDefinition import
 from bot.database.models.world_related import Location as DBLocation
 from bot.database.models.character_related import Character as DBCharacter, Party as DBParty
 from sqlalchemy.ext.asyncio import AsyncSession

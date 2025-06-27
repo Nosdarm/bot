@@ -288,4 +288,3 @@ def test_generated_location_content_optional_fields_as_none(validation_context_e
     assert loc_content.points_of_interest is None # Changed from empty list to None as per model
     assert loc_content.initial_npcs_json is None # Changed from empty list to None
     assert loc_content.generated_details_json is None
-

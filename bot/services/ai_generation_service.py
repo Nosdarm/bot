@@ -4,13 +4,16 @@ import uuid
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional, List, cast, Callable
 
-from bot.database.models.pending_generation import PendingGeneration, PendingStatus, GenerationType, ValidationIssue
-from bot.database.models.guild_config import GuildConfig
-from bot.database.models.npc import NPC
+# Corrected imports based on latest understanding of where Enums/Models are defined
+from bot.database.models import PendingGeneration, PendingStatus, GenerationType
+from bot.ai.ai_data_models import ValidationIssue
+from bot.database.models import GuildConfig # Corrected import path
+from bot.database.models import NPC # Corrected import path
 from bot.database.models.location import Location
 from bot.database.models.quest_related import QuestTable, QuestStepTable # Assuming this is the correct location
 from bot.database.guild_transaction import GuildTransaction
 from sqlalchemy.ext.asyncio import AsyncSession
+import datetime # Added for moderated_at timestamp
 
 
 if TYPE_CHECKING:
@@ -48,6 +51,8 @@ class AIGenerationService:
             return None
 
         specific_task_instruction = ""
+        # Ensure GenerationType is correctly referenced (e.g. from ai_data_models if it's defined there)
+        # For now, assuming GenerationType is available in the current scope (e.g. imported from pending_generation model)
         if request_type == GenerationType.LOCATION_CONTENT_GENERATION.value:
             specific_task_instruction = "Generate detailed content for a game location based on the provided context and parameters, including name, atmospheric description, points of interest, and connections."
         elif request_type == GenerationType.NPC_PROFILE_GENERATION.value:
@@ -65,7 +70,7 @@ class AIGenerationService:
             return None
         prompt_str = await prepare_ai_prompt_method(
             guild_id=guild_id,
-            location_id=str(location_id_for_prompt) if location_id_for_prompt else None, # Ensure string or None
+            location_id=str(location_id_for_prompt) if location_id_for_prompt else None,
             player_id=str(request_params.get("player_id")) if request_params.get("player_id") else None,
             party_id=str(request_params.get("party_id")) if request_params.get("party_id") else None,
             specific_task_instruction=specific_task_instruction,
@@ -91,7 +96,7 @@ class AIGenerationService:
             parse_validate_method = getattr(ai_response_validator, 'parse_and_validate_ai_response', None)
             if not callable(parse_validate_method):
                 logger.error("ai_response_validator.parse_and_validate_ai_response is not callable.")
-                pending_status_enum = PendingStatus.FAILED_VALIDATION # Fail if validator is missing
+                pending_status_enum = PendingStatus.FAILED_VALIDATION
                 validation_issues_list_obj = [ValidationIssue(type="internal_error", msg="AI Response Validator not available.", loc=())]
             else:
                 try:
@@ -101,6 +106,8 @@ class AIGenerationService:
                     pending_status_enum = PendingStatus.FAILED_VALIDATION
                     validation_issues_list_obj = [ValidationIssue(type="validation_error", msg=f"Invalid request type: {request_type}", loc=("request_type",))]
                 else:
+                    # Ensure ai_response_validator and its method are correctly typed and available.
+                    # GameManager should be passed to parse_and_validate_ai_response.
                     parsed_data_dict, validation_issues_list_obj = await parse_validate_method(
                         raw_ai_output_text=raw_ai_output, guild_id=guild_id,
                         request_type=request_type_enum_val, game_manager=self.game_manager
@@ -192,8 +199,8 @@ class AIGenerationService:
             return False
 
         session_factory_method = getattr(db_service, 'async_session_factory', None)
-        if not callable(session_factory_method): # Check if it's a callable that returns a session factory
-             session_factory_method = getattr(db_service, 'get_session_factory', None) # Try alternative common name
+        if not callable(session_factory_method):
+             session_factory_method = getattr(db_service, 'get_session_factory', None)
 
         if not callable(session_factory_method):
             logger.error("AIGenerationService: DBService.async_session_factory or get_session_factory is not callable.")
@@ -207,7 +214,8 @@ class AIGenerationService:
             logger.error("DBService.get_session is not callable for fetching record.")
             return False
 
-        async with get_session_context_manager() as temp_session:
+        async with get_session_context_manager() as temp_session_context:
+            temp_session = cast(AsyncSession, temp_session_context)
             if not isinstance(temp_session, AsyncSession):
                 logger.error("DBService.get_session did not yield an AsyncSession.")
                 return False
@@ -232,13 +240,18 @@ class AIGenerationService:
         application_successful = False
         final_status_update_payload: Dict[str, Any] = {}
         current_validation_issues = list(record.validation_issues_json or [])
+        session_to_use_for_transaction: Optional[AsyncSession] = None
 
-        async with GuildTransaction(actual_session_factory, guild_id) as session:
+        async with GuildTransaction(actual_session_factory, guild_id) as active_transaction_session:
+            session_to_use_for_transaction = cast(AsyncSession, active_transaction_session)
             try:
-                if record.request_type == GenerationType.NPC_PROFILE_GENERATION.value:
+                create_entity_method_gs = getattr(db_service, 'create_entity', None)
+                if not callable(create_entity_method_gs):
+                    application_successful = False; current_validation_issues.append({"type": "application_error", "msg": "DBService.create_entity not available."})
+
+                elif record.request_type == GenerationType.NPC_PROFILE_GENERATION.value:
                     npc_data = cast(Dict[str, Any], record.parsed_data_json)
                     request_params = json.loads(record.request_params_json or '{}')
-
                     npc_id = str(uuid.uuid4()); default_hp = 100.0
                     stats_data = npc_data.get("stats", {})
                     health = float(stats_data.get("hp", default_hp)); max_health_val = float(stats_data.get("max_hp", health))
@@ -257,12 +270,9 @@ class AIGenerationService:
                         first_faction = faction_affiliations[0]
                         npc_db_data["faction_id"] = first_faction.get("faction_id") if isinstance(first_faction, dict) else None
 
-                    create_entity_method_gs = getattr(db_service, 'create_entity', None)
-                    if callable(create_entity_method_gs):
-                        new_npc = await create_entity_method_gs(model_class=NPC, entity_data=npc_db_data, session=session)
-                        application_successful = bool(new_npc)
-                        if not new_npc: current_validation_issues.append({"type": "application_error", "msg": "NPC DB creation failed."})
-                    else: application_successful = False; current_validation_issues.append({"type": "application_error", "msg": "DBService.create_entity not available."})
+                    new_npc = await create_entity_method_gs(model_class=NPC, entity_data=npc_db_data, session=session_to_use_for_transaction)
+                    application_successful = bool(new_npc)
+                    if not new_npc: current_validation_issues.append({"type": "application_error", "msg": "NPC DB creation failed."})
 
                 elif record.request_type == GenerationType.LOCATION_CONTENT_GENERATION.value:
                     loc_data = cast(Dict[str, Any], record.parsed_data_json); new_loc_id = str(uuid.uuid4())
@@ -280,12 +290,9 @@ class AIGenerationService:
                         "ai_metadata_json": {"original_request_params": json.loads(record.request_params_json or '{}'), "ai_generated_template_id": loc_data.get("template_id")},
                         "is_active": True
                     }
-                    create_entity_method_gs = getattr(db_service, 'create_entity', None)
-                    if callable(create_entity_method_gs):
-                        new_loc = await create_entity_method_gs(model_class=Location, entity_data=loc_db_data, session=session)
-                        application_successful = bool(new_loc)
-                        if not new_loc: current_validation_issues.append({"type": "application_error", "msg": "Location DB creation failed."})
-                    else: application_successful = False; current_validation_issues.append({"type": "application_error", "msg": "DBService.create_entity not available."})
+                    new_loc = await create_entity_method_gs(model_class=Location, entity_data=loc_db_data, session=session_to_use_for_transaction)
+                    application_successful = bool(new_loc)
+                    if not new_loc: current_validation_issues.append({"type": "application_error", "msg": "Location DB creation failed."})
 
                 elif record.request_type == GenerationType.QUEST_GENERATION.value:
                     quest_data = cast(Dict[str, Any], record.parsed_data_json); new_quest_id = str(uuid.uuid4())
@@ -295,51 +302,45 @@ class AIGenerationService:
                         "description_i18n": quest_data.get("description_i18n", {"en": "N/A"}),
                         "status": "available", "is_ai_generated": True
                     }
-                    create_entity_method_gs = getattr(db_service, 'create_entity', None)
-                    if callable(create_entity_method_gs):
-                        new_quest = await create_entity_method_gs(model_class=QuestTable, entity_data=quest_db_data, session=session)
-                        if not new_quest: application_successful = False; current_validation_issues.append({"type": "application_error", "msg": "QuestTable creation failed."})
-                        else:
-                            all_steps_ok = True
-                            steps_to_create = quest_data.get("steps", [])
-                            for step_data in steps_to_create:
-                                step_db_data = {"id": str(uuid.uuid4()), "guild_id": guild_id, "quest_id": new_quest.id, "title_i18n": step_data.get("title_i18n") if isinstance(step_data, dict) else None} # Ensure step_data is dict
-                                if not await create_entity_method_gs(model_class=QuestStepTable, entity_data=step_db_data, session=session):
-                                    all_steps_ok = False; current_validation_issues.append({"type": "application_error", "msg": "QuestStep creation failed."}); break
-                            application_successful = all_steps_ok
-                    else: application_successful = False; current_validation_issues.append({"type": "application_error", "msg": "DBService.create_entity not available."})
+                    new_quest = await create_entity_method_gs(model_class=QuestTable, entity_data=quest_db_data, session=session_to_use_for_transaction)
+                    if not new_quest: application_successful = False; current_validation_issues.append({"type": "application_error", "msg": "QuestTable creation failed."})
+                    else:
+                        all_steps_ok = True
+                        steps_to_create = quest_data.get("steps", [])
+                        for step_data in steps_to_create:
+                            step_db_data = {"id": str(uuid.uuid4()), "guild_id": guild_id, "quest_id": new_quest.id, "title_i18n": step_data.get("title_i18n") if isinstance(step_data, dict) else None}
+                            if not await create_entity_method_gs(model_class=QuestStepTable, entity_data=step_db_data, session=session_to_use_for_transaction):
+                                all_steps_ok = False; current_validation_issues.append({"type": "application_error", "msg": "QuestStep creation failed."}); break
+                        application_successful = all_steps_ok
                 else:
                     logger.warning(f"AIGenSvc: Apply logic for '{record.request_type}' not implemented.");
-                    record.status = PendingStatus.APPLICATION_PENDING_LOGIC.value
+                    record.status = PendingStatus.APPLICATION_PENDING_LOGIC.value # type: ignore[assignment] # record.status is str
                     application_successful = False
 
-                if application_successful: await session.commit(); record.status = PendingStatus.APPLIED.value
-                else: await session.rollback(); record.status = record.status if record.status in [PendingStatus.APPLICATION_FAILED.value, PendingStatus.APPLICATION_PENDING_LOGIC.value] else PendingStatus.APPLICATION_FAILED.value
-                final_status_update_payload = {"status": record.status, "validation_issues_json": current_validation_issues if record.status == PendingStatus.APPLICATION_FAILED.value else record.validation_issues_json}
+                if application_successful: record.status = PendingStatus.APPLIED.value # type: ignore[assignment]
+                else: record.status = record.status if record.status in [PendingStatus.APPLICATION_FAILED.value, PendingStatus.APPLICATION_PENDING_LOGIC.value] else PendingStatus.APPLICATION_FAILED.value # type: ignore[assignment]
+                final_status_update_payload = {"status": record.status, "validation_issues_json": current_validation_issues if record.status == PendingStatus.APPLICATION_FAILED.value else record.validation_issues_json} # type: ignore[assignment]
+
             except Exception as e:
                 logger.error(f"AIGenSvc: Exception in GuildTransaction for {pending_gen_id}: {e}", exc_info=True);
-                if session.is_active: await session.rollback()
                 application_successful = False;
-                if record: record.status = PendingStatus.APPLICATION_FAILED.value
+                if record: record.status = PendingStatus.APPLICATION_FAILED.value # type: ignore[assignment]
                 current_validation_issues.append({"type": "application_error", "msg": f"Transaction exception: {str(e)}"});
                 final_status_update_payload = {"status": PendingStatus.APPLICATION_FAILED.value, "validation_issues_json": current_validation_issues}
 
-        if final_status_update_payload and record and record.id :
+        if final_status_update_payload and record and record.id : # Check record and record.id again
             update_entity_pk_method = getattr(db_service, 'update_entity_by_pk', None)
             if callable(update_entity_pk_method) and callable(get_session_context_manager):
-                async with get_session_context_manager() as status_session: # type: ignore[attr-defined]
-                    if not isinstance(status_session, AsyncSession):
+                async with get_session_context_manager() as status_session_context_final:
+                    status_session_final = cast(AsyncSession, status_session_context_final)
+                    if not isinstance(status_session_final, AsyncSession):
                          logger.error("DBService.get_session for status update did not yield an AsyncSession.")
                     else:
-                        # Some DB adapters might require begin() explicitly even for single updates if not auto-committing
-                        if hasattr(status_session, 'begin') and callable(status_session.begin):
-                             async with status_session.begin(): # type: ignore[attr-defined]
-                                await update_entity_pk_method(PendingGeneration, str(record.id), final_status_update_payload, guild_id=guild_id, session=status_session)
-                        else: # Assume direct execution is fine
-                            await update_entity_pk_method(PendingGeneration, str(record.id), final_status_update_payload, guild_id=guild_id, session=status_session)
+                        if hasattr(status_session_final, 'begin') and callable(status_session_final.begin):
+                             async with status_session_final.begin():
+                                await update_entity_pk_method(PendingGeneration, str(record.id), final_status_update_payload, guild_id=guild_id, session=status_session_final)
+                        else:
+                            await update_entity_pk_method(PendingGeneration, str(record.id), final_status_update_payload, guild_id=guild_id, session=status_session_final)
             elif not callable(update_entity_pk_method):
                  logger.error("DBService.update_entity_by_pk is not callable for final status update.")
-
-
         return application_successful
-

@@ -9,7 +9,9 @@ from .ai_data_models import (
     GeneratedQuestData,
     GeneratedItemProfile,
     ValidationIssue
+    # GenerationType will be imported from bot.database.models
 )
+from bot.database.models import GenerationType # Corrected import for GenerationType
 
 if TYPE_CHECKING:
     from bot.game.managers.game_manager import GameManager
@@ -24,11 +26,11 @@ class AIResponseValidator:
         if not entity_id:
             return None
 
-        loc_path_list: List[Union[str, int]] = [field_path] if isinstance(field_path, str) else list(field_path) # Ensure it's a list for ValidationIssue
+        loc_path_list: List[Union[str, int]] = [field_path] if isinstance(field_path, str) else list(field_path)
 
         if not any(term.get('id') == entity_id and term.get('term_type') == expected_term_type for term in game_terms):
             return ValidationIssue(
-                loc=loc_path_list, # Pass the ensured list
+                loc=loc_path_list,
                 type="semantic.invalid_id_reference",
                 msg=f"Invalid ID: '{entity_id}' not found as a known '{expected_term_type}'.",
                 input_value=entity_id,
@@ -48,12 +50,12 @@ class AIResponseValidator:
             npc_archetype = data_dict.get('archetype')
             npc_stats = data_dict.get('stats', {})
 
-            all_npc_stat_ranges_rule = await game_manager.get_rule(guild_id, "npc_stat_ranges", default={}) # Added await
+            all_npc_stat_ranges_rule = await game_manager.get_rule(guild_id, "npc_stat_ranges", default={})
             all_npc_stat_ranges = all_npc_stat_ranges_rule if isinstance(all_npc_stat_ranges_rule, dict) else {}
 
             archetype_specific_ranges = all_npc_stat_ranges.get(npc_archetype, {}) if npc_archetype and isinstance(all_npc_stat_ranges, dict) else {}
 
-            global_stat_limits_rule = await game_manager.get_rule(guild_id, "npc_global_stat_limits", default={}) # Added await
+            global_stat_limits_rule = await game_manager.get_rule(guild_id, "npc_global_stat_limits", default={})
             global_stat_limits = global_stat_limits_rule if isinstance(global_stat_limits_rule, dict) else {}
 
 
@@ -94,12 +96,12 @@ class AIResponseValidator:
             issue = self._check_id_in_terms(spell_id, "spell", game_terms, ["spells", i])
             if issue: issues.append(issue)
         for i, item_entry in enumerate(data_dict.get('inventory', [])):
-            if isinstance(item_entry, dict): # Ensure item_entry is a dict before .get()
+            if isinstance(item_entry, dict):
                 item_tpl_id = item_entry.get('item_template_id')
                 issue = self._check_id_in_terms(item_tpl_id, "item_template", game_terms, ["inventory", i, "item_template_id"])
                 if issue: issues.append(issue)
         for i, faction_entry in enumerate(data_dict.get('faction_affiliations', [])):
-            if isinstance(faction_entry, dict): # Ensure faction_entry is a dict
+            if isinstance(faction_entry, dict):
                 faction_id = faction_entry.get('faction_id')
                 issue = self._check_id_in_terms(faction_id, "faction", game_terms, ["faction_affiliations", i, "faction_id"])
                 if issue: issues.append(issue)
@@ -114,11 +116,11 @@ class AIResponseValidator:
         npc_involvement = data_dict.get('npc_involvement', {})
         if isinstance(npc_involvement, dict):
             for role, npc_id in npc_involvement.items():
-                issue = self._check_id_in_terms(npc_id, "npc_archetype", game_terms, ["npc_involvement", role]) # Assuming npc_id here refers to an archetype for generation
+                issue = self._check_id_in_terms(npc_id, "npc_archetype", game_terms, ["npc_involvement", role])
                 if issue: issues.append(issue)
-        for json_field_name in ["rewards_json", "prerequisites_json"]: # Removed "objectives_json" as it's part of steps
+        for json_field_name in ["rewards_json", "prerequisites_json"]:
             json_str = data_dict.get(json_field_name)
-            if json_str and isinstance(json_str, str): # Check if it's a string before json.loads
+            if json_str and isinstance(json_str, str):
                 try:
                     content = json.loads(json_str)
                     if isinstance(content, dict) and "items" in content and isinstance(content["items"], list):
@@ -127,13 +129,13 @@ class AIResponseValidator:
                                 item_id = item_ref["item_id"]
                                 issue = self._check_id_in_terms(item_id, "item_template", game_terms, [json_field_name, "items", i, "item_id"])
                                 if issue: issues.append(issue)
-                except json.JSONDecodeError: pass # Already validated by Pydantic validator
+                except json.JSONDecodeError: pass
         return issues
 
     def _semantic_validate_location_content(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str, game_manager: Optional['GameManager']) -> List[ValidationIssue]:
         issues: List[ValidationIssue] = []
         for i, poi in enumerate(data_dict.get('points_of_interest', [])):
-            if isinstance(poi, dict): # Check if poi is a dict
+            if isinstance(poi, dict):
                 for j, item_id in enumerate(poi.get('contained_item_ids', [])):
                     issue = self._check_id_in_terms(item_id, "item_template", game_terms, ["points_of_interest", i, "contained_item_ids", j])
                     if issue: issues.append(issue)
@@ -141,9 +143,9 @@ class AIResponseValidator:
                     issue = self._check_id_in_terms(npc_archetype_id, "npc_archetype", game_terms, ["points_of_interest", i, "npc_archetypes_to_spawn", k])
                     if issue: issues.append(issue)
         for i, conn in enumerate(data_dict.get('connections', [])):
-             if isinstance(conn, dict): # Check if conn is a dict
+             if isinstance(conn, dict):
                 to_loc_id = conn.get('to_location_id')
-                if to_loc_id and not any(term.get('id') == to_loc_id and term.get('term_type') in ["location_template", "location_instance", "location"] for term in game_terms): # Added "location_instance"
+                if to_loc_id and not any(term.get('id') == to_loc_id and term.get('term_type') in ["location_template", "location_instance", "location"] for term in game_terms):
                     issues.append(ValidationIssue(
                         loc=["connections", i, "to_location_id"], type="semantic.unknown_location_reference",
                         msg=f"Connected location ID '{to_loc_id}' does not match known location template/instance.", input_value=to_loc_id, severity="info",
@@ -154,7 +156,7 @@ class AIResponseValidator:
     async def _semantic_validate_item_profile(self, data_dict: Dict[str, Any], game_terms: List[Dict[str, Any]], guild_id: str, game_manager: Optional['GameManager']) -> List[ValidationIssue]:
         issues: List[ValidationIssue] = []
         properties_json_str = data_dict.get('properties_json')
-        if properties_json_str and isinstance(properties_json_str, str): # Check type
+        if properties_json_str and isinstance(properties_json_str, str):
             try:
                 properties = json.loads(properties_json_str)
                 if isinstance(properties, dict):
@@ -173,11 +175,11 @@ class AIResponseValidator:
                 ))
         if game_manager:
             item_type = data_dict.get('item_type')
-            rarity_level = data_dict.get('rarity_tag') # Assuming 'rarity_tag' based on test_item_profile
+            rarity_level = data_dict.get('rarity_tag')
             base_value = data_dict.get('base_value')
 
             if item_type and rarity_level and isinstance(base_value, (int, float)):
-                item_value_ranges_rule = await game_manager.get_rule(guild_id, "item_value_ranges", default={}) # Added await
+                item_value_ranges_rule = await game_manager.get_rule(guild_id, "item_value_ranges", default={})
                 all_item_value_ranges = item_value_ranges_rule if isinstance(item_value_ranges_rule, dict) else {}
 
                 type_ranges = all_item_value_ranges.get(item_type, {})
@@ -203,7 +205,7 @@ class AIResponseValidator:
 
     async def parse_and_validate_ai_response(
         self, raw_ai_output_text: str, guild_id: str,
-        request_type: Union[str, GenerationType], # Allow Enum member or string
+        request_type: Union[str, "GenerationType"],
         game_manager: Optional['GameManager'] = None
     ) -> Tuple[Optional[Dict[str, Any]], Optional[List[ValidationIssue]]]:
         logger.debug(f"Parsing AI response for type: {request_type}, guild: {guild_id}")
@@ -220,7 +222,7 @@ class AIResponseValidator:
 
         request_type_str = request_type.value if isinstance(request_type, GenerationType) else request_type
 
-        MODEL_MAP: Dict[str, Any] = { # Use Any for Pydantic models
+        MODEL_MAP: Dict[str, Any] = {
             GenerationType.LOCATION_DETAILS.value: GeneratedLocationContent,
             GenerationType.NPC_PROFILE_GENERATION.value: GeneratedNpcProfile,
             GenerationType.QUEST_GENERATION.value: GeneratedQuestData,
@@ -234,16 +236,13 @@ class AIResponseValidator:
             return parsed_json_data, pydantic_issues
 
         validation_context: Dict[str, Any] = {}
-        target_languages_list = ['en'] # Default
+        target_languages_list = ['en']
         if game_manager:
             try:
-                guild_main_lang_rule = await game_manager.get_rule(guild_id, "default_language", "en") # Added await
+                guild_main_lang_rule = await game_manager.get_rule(guild_id, "default_language", "en")
                 guild_main_lang = str(guild_main_lang_rule) if guild_main_lang_rule else "en"
-
-                # Filter out None before creating the set for sorted()
                 filtered_langs = [lang for lang in [guild_main_lang, "en"] if lang is not None]
                 target_languages_list = sorted(list(set(filtered_langs)))
-
                 validation_context["target_languages"] = target_languages_list
             except Exception as e: logger.error(f"Failed to get guild language for context: {e}", exc_info=True)
         validation_context.setdefault("target_languages", target_languages_list)
@@ -293,5 +292,3 @@ class AIResponseValidator:
         if data and not issues and isinstance(data.get("atmospheric_description_i18n"), dict): return data["atmospheric_description_i18n"]
         return None
     # ... (other deprecated methods can be similarly updated if needed, or removed if truly unused) ...
-
-[end of bot/ai/ai_response_validator.py]

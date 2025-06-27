@@ -1,6 +1,6 @@
 # bot/nlu/player_action_parser.py
 import re
-from typing import Optional, List, Dict, Any # Tuple removed, Union added later if needed for return type
+from typing import Optional, List, Dict, Any, TypedDict # Tuple removed, Union added later if needed for return type, Added TypedDict
 import spacy
 from spacy.matcher import PhraseMatcher # Import PhraseMatcher
 # Forward declare NLUDataService if not importing directly at top level for main parser logic
@@ -88,6 +88,22 @@ INTENT_KEYWORDS_RU = {
     "drop": ["брось", "выброси", "оставь"],
 }
 
+# Define TypedDicts for structured action data
+class PlayerActionEntity(TypedDict, total=False): # Use total=False if some keys are optional
+    id: Optional[str]
+    name: str
+    type: str
+    lang: str
+    intent_context: Optional[str] # If this key might exist from NLUDataService
+
+class PlayerActionData(TypedDict):
+    intent: Optional[str]
+    entities: List[PlayerActionEntity] # Use the more specific entity type
+    original_text: str
+    processed_tokens: List[Dict[str, str]]
+    primary_target_entity: Optional[PlayerActionEntity]
+
+
 # Old Regex patterns and _find_matching_db_entity are removed as SpaCy PhraseMatcher is primary.
 
 async def parse_player_action(
@@ -96,14 +112,16 @@ async def parse_player_action(
     guild_id: str,
     game_log_manager: Optional[GameLogManager] = None,
     nlu_data_service: Optional['NLUDataService'] = None
-) -> Optional[Dict[str, Any]]:
+) -> Optional[PlayerActionData]: # Return type changed to PlayerActionData
     raw_input_text = text
 
-    action_data: Dict[str, Any] = {
+    # Initialize with the structure of PlayerActionData
+    action_data: PlayerActionData = { # Use PlayerActionData type
         'intent': None,
         'entities': [],
         'original_text': raw_input_text,
-        'processed_tokens': []
+        'processed_tokens': [],
+        'primary_target_entity': None # Ensure all keys from TypedDict are present
     }
 
     nlp = None

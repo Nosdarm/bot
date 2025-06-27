@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch, ANY as UANY # Renamed to 
 from typing import Dict, Any as TypingAny, List, Optional, cast
 
 from bot.game.managers.status_manager import StatusManager, ApplyStatusResult
-from bot.database.models.character import Character as CharacterDbModel
-from bot.database.models.player import Player as PlayerDbModel
+from bot.database.models import Character as CharacterDbModel # Corrected import
+from bot.database.models import Player as PlayerDbModel # Corrected import
 from bot.services.db_service import DBService
 from bot.game.managers.character_manager import CharacterManager
 from bot.game.rules.rule_engine import RuleEngine

@@ -8,6 +8,7 @@ _i18n_files: List[str] = [
     # Add other i18n files here if needed, e.g., "game_data/ui_i18n.json"
 ]
 _loaded = False
+DEFAULT_BOT_LANGUAGE = "en" # Added definition
 
 def load_translations(base_dir: str = "") -> None:
     """

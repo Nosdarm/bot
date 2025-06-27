@@ -9,8 +9,8 @@ from discord import app_commands
 from discord.ext import commands
 
 # Models involved
-from bot.database.models.player import Player
-from bot.database.models.character import Character as DBCharacter
+from bot.database.models import Player # Corrected import
+from bot.database.models import Character as DBCharacter # Corrected import path
 from bot.game.exceptions import CharacterAlreadyExistsError
 
 
