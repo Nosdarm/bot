@@ -860,3 +860,17 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
         - Removed `# type: ignore[no-untyped-def]` from `load_state`, `save_state`, and `rebuild_runtime_caches` by ensuring they have `-> None`.
         - For `handle_stage`, ensured `proc`, `event`, and `send_message_callback` are checked for `None` before use. The complex type compatibility issues with `**context` and `EventStageProcessor.advance_stage` are noted; the current fix relies on the processor's internal handling or future refactoring of `advance_stage`.
     - **Removed Unnecessary Type Ignores:** Removed `type: ignore[return]` from skill check wrappers as return types are now more explicit or handled by the resolver's signature.
+
+## Pyright Error Fixing Phase (Batch 45 - bot/game/rules/combat_rules.py focus from pyright_errors_part_1.txt)
+- **Focus:** Addressing 36 errors in `bot/game/rules/combat_rules.py` as listed in `pyright_errors_part_1.txt`.
+- **Strategy:** Added `await` to async manager calls, corrected `GameLogManager` usage to prefer `log_event` with fallbacks, ensured safe dictionary access for stats, and updated method calls for `StatusManager` and `CheckResult`.
+- **Batch 45 Fixes (36 errors in `bot/game/rules/combat_rules.py`):**
+    - **Async/Await:** Added `await` before all asynchronous manager calls, including `character_manager.get_character`, `npc_manager.get_npc`, `status_manager.apply_status` (formerly `add_status_effect`), `character_manager.update_character_stats`, and `npc_manager.update_npc_stats`.
+    - **`GameLogManager` Usage:**
+        - Replaced `game_log_manager.add_log_entry("message", "type")` with `await game_log_manager.log_event(guild_id, "type", details={"message": "message", ...})`.
+        - Ensured `guild_id` is consistently converted to `str` before being passed to logging methods.
+        - Added checks for `game_log_manager` not being `None` and `hasattr(game_log_manager, 'log_event')` before calling `log_event`, with a fallback to `add_log_entry` if `log_event` is not available (for robustness, though `log_event` is preferred).
+    - **Safe Stat Access:** When accessing stats from dictionaries (e.g., `actor_stats`, `target_stats`), used `.get("stat_name", default_value)` to provide defaults (like `0` or `10`) to prevent `TypeError` when attempting to perform arithmetic operations on `None` if a stat is missing.
+    - **`StatusManager` Method Call:** Changed `status_manager.add_status_effect(...)` to `await status_manager.apply_status(...)`.
+    - **`CheckResult` Property:** Changed `save_result.succeeded` (which was already correct from a previous hypothetical fix) to ensure it's used instead of any legacy `save_result.is_success`.
+    - **Type Safety:** Ensured `guild_id` derived from `rules_config` is explicitly cast to `str` where needed. Ensured numerical operations are performed on values that are confirmed or safely converted to numbers.
