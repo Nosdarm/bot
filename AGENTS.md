@@ -874,3 +874,35 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **`StatusManager` Method Call:** Changed `status_manager.add_status_effect(...)` to `await status_manager.apply_status(...)`.
     - **`CheckResult` Property:** Changed `save_result.succeeded` (which was already correct from a previous hypothetical fix) to ensure it's used instead of any legacy `save_result.is_success`.
     - **Type Safety:** Ensured `guild_id` derived from `rules_config` is explicitly cast to `str` where needed. Ensured numerical operations are performed on values that are confirmed or safely converted to numbers.
+
+## Pyright Error Fixing Phase (Batch 46 - bot/game/managers/quest_manager.py focus from pyright_errors_part_1.txt)
+- **Focus:** Addressing 35 errors in `bot/game/managers/quest_manager.py` as listed in `pyright_errors_part_1.txt`.
+- **Strategy:** Corrected `AsyncSession` usage, SQLAlchemy column operations, async/await calls, method signatures, attribute access, and ensured services are properly initialized/accessed.
+- **Batch 46 Fixes (35 errors in `bot/game/managers/quest_manager.py`):**
+    - **`__init__`:**
+        - Ensured `ConsequenceProcessor` initialization checks for existence of dependent managers on `self.game_manager` (e.g., `location_manager`, `event_manager`, `status_manager`) using `hasattr` before access.
+        - If `consequence_processor` is passed in, ensured `_notification_service` is attached if missing.
+    - **`accept_quest`:**
+        - Added `callable` check for `self._db_service.get_session`.
+        - Ensured `session` from `async with self._db_service.get_session() as session:` is used for `get_entity_by_id` and `get_entities`.
+        - Safely handled `player.active_quests` (which might be a SQLAlchemy `Column[str]`) by assigning its value to a local string variable before `json.loads`. Ensured the loaded JSON is a list and items are dicts.
+        - Similarly handled `quest_to_accept.prerequisites_json`.
+        - Safely accessed `player.level` using `getattr`.
+        - Ensured IDs (e.g., `first_step.id`, `player.id`) are cast to `str` when used in dictionary values for logging or JSON serialization.
+        - Added `hasattr` and `callable` checks for `self._game_log_manager.log_event`.
+        - Ensured `quest_to_accept.title_i18n` and `first_step.title_i18n` are treated as dictionaries before `.get()`.
+        - Checked `session.is_active` before `session.rollback()`.
+    - **`get_active_quests_for_character` & `get_completed_quests_for_character`:**
+        - Ensured that when reconstructing `Quest` or `QuestStep` from cached dictionaries using `from_dict`, necessary fields like `guild_id` and `quest_id` are provided if potentially missing from the cached dict.
+    - **`_load_all_quests_from_db` & `save_generated_quest`:**
+        - Ensured `guild_id` is added to log messages.
+        - Handled JSON string fields being parsed to dicts if necessary before passing to `Quest.from_dict`.
+        - Ensured `quest.id` and `quest.guild_id` are set on `step_obj` before saving steps.
+    - **`start_quest_from_moderated_data`:** Added `await` for `self._consequence_processor.process_consequences`.
+    - **`_evaluate_abstract_goal`:** Corrected call to `self._rule_engine.evaluate_conditions` (it's synchronous, removed `await`) and passed `eval_context` as `context`.
+    - **`handle_player_event_for_quest`:**
+        - Merged previously obscured methods into a single `async` method.
+        - Added `await` for `self._evaluate_abstract_goal` and `self.complete_quest`.
+    - **`complete_quest` (async):** Added `await` for DB execute and `log_event`.
+    - **`fail_quest`:** Noted that the DB update call inside this synchronous method is problematic as it uses `asyncio.create_task`. This addresses the immediate Pyright error but is a design concern for proper error handling and execution flow.
+    - **`generate_and_save_quest`:** Added `await` before `prompt_generator.prepare_quest_generation_prompt`, `openai_service.get_completion`, and `validator.parse_and_validate_quest_generation_response`. Ensured correct session handling for DB operations.
