@@ -806,3 +806,23 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
     - **`AsyncSession` Management:** Standardized `AsyncSession` usage, particularly in `cmd_master_approve_ai` and `cmd_master_edit_ai`, by using `async with db_service.get_session() as session:` and passing the `session` object to `crud_utils` functions. Ensured `get_session_method` is checked for callability before use.
     - **Error Handling:** Reviewed `try...except` blocks to ensure they have appropriate clauses (e.g., `cmd_master_approve_ai` now has more robust error handling around session management).
     - **Type `None` Awaitables:** Fixed errors where `None` was incorrectly identified as awaitable by ensuring that the actual coroutine-returning methods were awaited (e.g., `npc_manager.get_npc`).
+
+## Pyright Error Fixing Phase (Batch 42 - test_gm_app_cmds.py focus from pyright_errors_part_1.txt)
+- **Focus:** Addressing 47 errors in `tests/commands/test_gm_app_cmds.py` as listed in `pyright_errors_part_1.txt`.
+- **Strategy:** Corrected imports, improved mocking for `GameManager` and its sub-managers, adjusted patch targets for `crud_utils`, and refined assertions.
+- **Batch 42 Fixes (47 errors in `tests/commands/test_gm_app_cmds.py`):**
+    - **Imports:**
+        - Added `from bot.database import crud_utils` for type hinting/spec for `db_service` mock.
+        - Ensured `PendingGeneration`, `GenerationType`, `PendingStatus` are imported from `bot.models.pending_generation`.
+        - Ensured `parse_and_validate_ai_response` is imported from `bot.ai.ai_response_validator`.
+    - **Mocking `GameManager` & Sub-managers (in `mock_rpg_bot_with_game_manager` fixture):**
+        - Set `spec=crud_utils.DBService` for `mock_rpg_bot.game_manager.db_service`.
+        - Correctly mocked the async context manager behavior for `db_service.get_session`.
+        - Added `AsyncMock` instances for all other managers that `GMAppCog` might access via `game_mngr` (e.g., `character_manager`, `npc_manager`, `item_manager`, `location_manager`, `event_manager`, `quest_manager`, `undo_manager`, `conflict_resolver`).
+    - **Patching `crud_utils`:**
+        - Changed patch paths from `bot.database.crud_utils` to `bot.command_modules.gm_app_cmds.crud_utils`. This is crucial because the test needs to patch the `crud_utils` module *as it is imported and used by the `gm_app_cmds.py` module*, not its original location.
+    - **Assertions & `unittest.mock.ANY`:**
+        - Used `unittest.mock.ANY` (imported as `ANY`) for `db_session` in assertions (e.g., `mock_get_entity_by_pk.assert_awaited_once_with(db_session=ANY, ...)`). This is because the actual session object is created within the command being tested and isn't directly known by the test fixture's `mock_session` in these patched scenarios.
+    - **Enum Value Comparisons:** Ensured assertions for enum status fields compare against `.value` (e.g., `updates_dict['status'] == PendingStatus.APPROVED.value`).
+    - **Mocking `game_mngr.get_rule`:** In `test_master_reject_ai_success`, added logic to mock `game_mngr.get_rule` or `game_mngr.rule_engine.get_rule` as an `AsyncMock` to prevent failures if this method is called during the test.
+    - **`parse_and_validate_ai_response` call in test:** Ensured the `request_type` argument in `mock_parse_validate.assert_awaited_once_with` uses `mock_record.request_type` (the enum member) rather than `mock_record.request_type.value`, aligning with how the actual function is likely called.
