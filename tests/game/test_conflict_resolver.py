@@ -1,14 +1,12 @@
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 import uuid
-import json
+# import json # Unused
 from typing import Dict, List, Any, Optional
 
 from bot.game.conflict_resolver import ConflictResolver, ActionWrapper, ActionStatus
-from bot.ai.rules_schema import CoreGameRulesConfig, ActionConflictDefinition # Removed AutoResolutionConfig etc.
+from bot.ai.rules_schema import CoreGameRulesConfig, ActionConflictDefinition
 
-# Minimal mock for Character if needed by any part of the system under test,
-# though ConflictResolver primarily works with IDs and action data.
 class MockCharacter:
     def __init__(self, id: str, name: str, guild_id: str, location_id: str = "loc1", party_id: str = "party1"):
         self.id = id
@@ -16,16 +14,13 @@ class MockCharacter:
         self.guild_id = guild_id
         self.location_id = location_id
         self.party_id = party_id
-        # Add other attributes if RuleEngine or other components accessed via context need them
 
-# TODO: Refactor these tests to align with the current ConflictResolver interface.
 class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
 
-    async def asyncSetUp(self): # Changed to asyncSetUp for async mocks
+    async def asyncSetUp(self):
         self.mock_rule_engine = AsyncMock()
-        self.mock_rule_engine.resolve_action_conflict = AsyncMock() # Key method for auto resolution
+        self.mock_rule_engine.resolve_action_conflict = AsyncMock()
 
-        # Define ActionConflictDefinitions using Pydantic models
         self.pickup_conflict_def_manual = ActionConflictDefinition(
             name="Contested Item Pickup (Manual)",
             type="contested_item_pickup",
@@ -41,8 +36,7 @@ class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
             description="Multiple players trying to pick up the same unique item (auto).",
             resolution_type="auto",
             priority=1,
-            auto_resolution_check_type="pickup_priority_check" # Changed from auto_resolution_config
-            # outcome_rules would need to be part of ActionConflictDefinition if used, or handled differently
+            auto_resolution_check_type="pickup_priority_check"
         )
         self.attack_conflict_def_auto = ActionConflictDefinition(
             name="Simultaneous Attack (Auto)",
@@ -51,24 +45,28 @@ class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
             description="Multiple players attacking the same target.",
             resolution_type="auto",
             priority=1,
-            auto_resolution_check_type="attack_priority_check" # Changed from auto_resolution_config
+            auto_resolution_check_type="attack_priority_check"
         )
-        self.move_conflict_def_auto = ActionConflictDefinition( # Example from original test
+        self.move_conflict_def_auto = ActionConflictDefinition(
             name="Simultaneous Move to Limited Space",
-            type="simultaneous_move_to_limited_slot", # Changed type to match new logic
+            type="simultaneous_move_to_limited_slot",
             involved_intent_pattern=["MOVE"],
             description="Two entities attempt to move into the same space that can only occupy one.",
             resolution_type="auto",
             priority=1,
-            auto_resolution_check_type="move_priority_check" # Changed from auto_resolution_config
+            auto_resolution_check_type="move_priority_check"
         )
 
+        # Simplified CoreGameRulesConfig for tests, ensure all *required* fields are present or have defaults
+        # If XPRules is a Pydantic model, it needs to be instantiated or properly mocked.
+        # Assuming XPRules might have default values or can be a simple MagicMock for these tests.
+        mock_xp_rules = MagicMock() # Or instantiate XPRules if it's simple enough
 
-        self.rules_config = CoreGameRulesConfig( # Ensure all required fields for CoreGameRulesConfig are present
-            checks={}, damage_types={}, xp_rules=None, loot_tables={},
+        self.rules_config = CoreGameRulesConfig(
+            checks={}, damage_types={}, xp_rules=mock_xp_rules, loot_tables={},
             action_conflicts=[
                 self.pickup_conflict_def_manual,
-                self.pickup_conflict_def_auto, # Will select one based on test scenario
+                self.pickup_conflict_def_auto,
                 self.attack_conflict_def_auto,
                 self.move_conflict_def_auto,
             ],
@@ -77,21 +75,16 @@ class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
         )
 
         self.mock_notification_service = AsyncMock()
-        # db_adapter is no longer directly used by ConflictResolver constructor or methods.
-        # It might be part of a 'context' passed to RuleEngine, but not ConflictResolver itself.
-        # self.mock_db_adapter = AsyncMock()
         self.mock_game_log_manager = AsyncMock()
-        self.mock_db_service = AsyncMock() # Added mock for db_service
+        self.mock_db_service = AsyncMock()
 
-        # ConflictResolver constructor no longer takes rules_config_data or db_adapter
         self.resolver = ConflictResolver(
             rule_engine=self.mock_rule_engine,
-            notification_service=self.mock_notification_service, # Added notification_service
-            db_service=self.mock_db_service, # Added db_service
+            notification_service=self.mock_notification_service,
+            db_service=self.mock_db_service,
             game_log_manager=self.mock_game_log_manager
         )
-        # Mock characters - can be expanded if rule engine needs more details
-        self.mock_characters = {
+        self.mock_characters: Dict[str, MockCharacter] = { # Added type hint
             "player1": MockCharacter(id="player1", name="Player One", guild_id="guild1"),
             "player2": MockCharacter(id="player2", name="Player Two", guild_id="guild1"),
             "playerA": MockCharacter(id="playerA", name="Player Alpha", guild_id="guild_test"),
@@ -106,38 +99,47 @@ class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
                                action_id: Optional[str] = None,
                                status: ActionStatus = ActionStatus.PENDING_ANALYSIS) -> ActionWrapper:
         act_id = action_id or f"action_{uuid.uuid4().hex[:6]}"
-        action_data = {"intent": intent, "entities": entities or [], "action_id": act_id}
-        # Create a mock that quacks like an ActionWrapper
+        action_data: Dict[str, Any] = {"intent": intent, "entities": entities or [], "action_id": act_id} # Added type hint
+
+        # For tests, directly creating a MagicMock that mimics ActionWrapper is often simpler
+        # if ActionWrapper itself is complex or has many dependencies.
+        # However, if ActionWrapper is a simple Pydantic model or dataclass, instantiating it might be better.
+        # Given ActionWrapper is imported, let's assume it can be mocked effectively.
         wrapper = MagicMock(spec=ActionWrapper)
         wrapper.player_id = player_id
         wrapper.action_data = action_data
         wrapper.action_id = act_id
         wrapper.original_intent = intent
-        wrapper._status = status # Use _status to allow direct assignment
+        wrapper._status = status # Store status in a private attribute for the property
         wrapper.participated_in_conflict_resolution = False
         wrapper.is_resolved = False
+        wrapper.guild_id = "test_guild" # Assuming a default or it's passed in
 
-        # Make _status assignable for tests
-        def set_status(s_val): wrapper._status = s_val
-        def get_status(): return wrapper._status
-        wrapper.status = property(get_status, set_status)
+        # Define status as a property to mimic ActionWrapper's behavior
+        def get_status(self_mock) -> ActionStatus: # Added type hint for return
+            return self_mock._status
+        def set_status(self_mock, value: ActionStatus): # Added type hint for value
+            self_mock._status = value
+
+        type(wrapper).status = property(fget=get_status, fset=set_status)
+
 
         return wrapper
 
     async def test_no_conflicts(self):
         """Test that actions with no conflicts are passed through."""
-        action1_data = self._create_action_wrapper("player1", "MOVE", entities=[{"type": "location", "id": "loc_A"}]).action_data
-        action2_data = self._create_action_wrapper("player2", "SEARCH_AREA", entities=[]).action_data
+        action1_wrapper = self._create_action_wrapper("player1", "MOVE", entities=[{"type": "location", "id": "loc_A"}])
+        action2_wrapper = self._create_action_wrapper("player2", "SEARCH_AREA", entities=[])
 
-        player_actions_map = {
-            "player1": [action1_data],
-            "player2": [action2_data]
+        player_actions_map: Dict[str, List[ActionWrapper]] = { # Value is List[ActionWrapper]
+            "player1": [action1_wrapper],
+            "player2": [action2_wrapper]
         }
-        test_rules_config = CoreGameRulesConfig(checks={}, damage_types={}, xp_rules=None, loot_tables={}, action_conflicts=[], location_interactions={}, base_stats={}, equipment_slots={}, item_effects={}, status_effects={}, relation_rules=[], relationship_influence_rules=[]) # No conflict definitions
+        # Simplified CoreGameRulesConfig for this test
+        mock_xp_rules = MagicMock()
+        test_rules_config = CoreGameRulesConfig(checks={}, damage_types={}, xp_rules=mock_xp_rules, loot_tables={}, action_conflicts=[], location_interactions={}, base_stats={}, equipment_slots={}, item_effects={}, status_effects={}, relation_rules=[], relationship_influence_rules=[])
 
-        # The third argument to analyze_actions_for_conflicts was self.mock_characters, which is not expected by the method.
-        # The method signature is (self, player_actions_map: Dict[str, List[Dict[str, Any]]], guild_id: str, rules_config: Optional[CoreGameRulesConfig])
-        # Assuming a guild_id for the test.
+        # analyze_actions_for_conflicts now expects List[ActionWrapper] not List[Dict]
         result = await self.resolver.analyze_actions_for_conflicts(player_actions_map=player_actions_map, guild_id="guild1", rules_config=test_rules_config)
 
         self.assertFalse(result["requires_manual_resolution"])
@@ -145,14 +147,12 @@ class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["auto_resolution_outcomes"]), 0)
         self.assertEqual(len(result["actions_to_execute"]), 2)
 
-        # The structure of actions_to_execute is List[Dict[str, Any]]
-        # Each dict is {"character_id": char_id, "action_data": action_data}
-        executed_action1 = next(a for a in result["actions_to_execute"] if a["character_id"] == "player1")
-        executed_action2 = next(a for a in result["actions_to_execute"] if a["character_id"] == "player2")
-
-        self.assertEqual(executed_action1["action_data"]["intent"], "MOVE")
-        self.assertEqual(executed_action2["action_data"]["intent"], "SEARCH_AREA")
-        # Status is not part of the actions_to_execute dicts as per current ConflictResolver logic
+        # actions_to_execute contains ActionWrapper instances
+        executed_action_wrappers = result["actions_to_execute"]
+        self.assertIn(action1_wrapper, executed_action_wrappers)
+        self.assertIn(action2_wrapper, executed_action_wrappers)
+        self.assertEqual(action1_wrapper.status, ActionStatus.READY_TO_EXECUTE)
+        self.assertEqual(action2_wrapper.status, ActionStatus.READY_TO_EXECUTE)
 
 
     async def test_contested_item_pickup_manual_resolution(self):
@@ -161,26 +161,26 @@ class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
         actionA_wrapper = self._create_action_wrapper("playerA", "PICKUP", entities=[{"type": "item", "id": item_id_contested, "name": "Unique Sword"}])
         actionB_wrapper = self._create_action_wrapper("playerB", "PICKUP", entities=[{"type": "item", "id": item_id_contested, "name": "Unique Sword"}])
 
-        player_actions_map = {
-            "playerA": [actionA_wrapper.action_data],
-            "playerB": [actionB_wrapper.action_data]
+        player_actions_map: Dict[str, List[ActionWrapper]] = {
+            "playerA": [actionA_wrapper],
+            "playerB": [actionB_wrapper]
         }
-        # Ensure all required fields for CoreGameRulesConfig are provided
+        mock_xp_rules = MagicMock()
         current_rules_config = CoreGameRulesConfig(
-            checks={}, damage_types={}, xp_rules=None, loot_tables={},
-            action_conflicts=[self.pickup_conflict_def_manual],
+            checks={}, damage_types={}, xp_rules=mock_xp_rules, loot_tables={},
+            action_conflicts=[self.pickup_conflict_def_manual], # Only manual conflict rule
             location_interactions={}, base_stats={}, equipment_slots={}, item_effects={}, status_effects={},
             relation_rules=[], relationship_influence_rules=[]
         )
 
         result = await self.resolver.analyze_actions_for_conflicts(player_actions_map=player_actions_map, guild_id="guild_test", rules_config=current_rules_config)
 
-        # Assuming placeholder logic doesn't correctly identify this specific conflict
-        self.assertFalse(result["requires_manual_resolution"])
-        self.assertEqual(len(result["pending_conflict_details"]), 0)
+        self.assertTrue(result["requires_manual_resolution"])
+        self.assertEqual(len(result["pending_conflict_details"]), 1)
         self.assertEqual(len(result["auto_resolution_outcomes"]), 0)
-        # All actions should pass through if no conflict is detected by the placeholder
-        self.assertEqual(len(result["actions_to_execute"]), 2)
+        self.assertEqual(len(result["actions_to_execute"]), 0)
+        self.assertEqual(actionA_wrapper.status, ActionStatus.PENDING_MANUAL_RESOLUTION)
+        self.assertEqual(actionB_wrapper.status, ActionStatus.PENDING_MANUAL_RESOLUTION)
 
 
     async def test_contested_item_pickup_automatic_resolution_one_winner(self):
@@ -189,50 +189,40 @@ class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
         actionC_wrapper = self._create_action_wrapper("playerC", "PICKUP", entities=[{"type": "item", "id": item_id_contested, "name": "Unique Gem"}])
         actionD_wrapper = self._create_action_wrapper("playerD", "PICKUP", entities=[{"type": "item", "id": item_id_contested, "name": "Unique Gem"}])
 
-        player_actions_map = {
-            "playerC": [actionC_wrapper.action_data],
-            "playerD": [actionD_wrapper.action_data]
+        player_actions_map: Dict[str, List[ActionWrapper]] = {
+            "playerC": [actionC_wrapper],
+            "playerD": [actionD_wrapper]
         }
-
-        # Ensure only the 'auto' version of pickup conflict is in rules_config for this test
-        # Also ensure all required fields for CoreGameRulesConfig are provided
+        mock_xp_rules = MagicMock()
         current_rules_config = CoreGameRulesConfig(
-            checks={}, damage_types={}, xp_rules=None, loot_tables={},
-            action_conflicts=[self.pickup_conflict_def_auto],
+            checks={}, damage_types={}, xp_rules=mock_xp_rules, loot_tables={},
+            action_conflicts=[self.pickup_conflict_def_auto], # Only auto conflict rule
             location_interactions={}, base_stats={}, equipment_slots={}, item_effects={}, status_effects={},
             relation_rules=[], relationship_influence_rules=[]
         )
 
-        # Mock RuleEngine to declare playerC the winner
-        # The current ConflictResolver.analyze_actions_for_conflicts uses a placeholder auto-resolution.
-        # It doesn't call rule_engine.resolve_action_conflict.
-        # For now, we'll assume the placeholder logic (first action wins) applies.
-        # If RuleEngine integration was deeper, this mock would be crucial.
-        # self.mock_rule_engine.resolve_action_conflict.return_value = {
-        #     "winning_action_ids": [actionC_wrapper.action_id],
-        #     "losing_action_ids": [actionD_wrapper.action_id],
-        #     "resolution_details": "Player C had higher dexterity."
-        # }
+        self.mock_rule_engine.resolve_action_conflict.return_value = {
+            "winning_action_ids": [actionC_wrapper.action_id],
+            "losing_action_ids": [actionD_wrapper.action_id],
+            "resolution_details": "Player C had higher priority."
+        }
 
         result = await self.resolver.analyze_actions_for_conflicts(player_actions_map=player_actions_map, guild_id="guild_item_auto", rules_config=current_rules_config)
 
-        # self.mock_rule_engine.resolve_action_conflict.assert_called_once() # Not called by current CR logic
+        self.mock_rule_engine.resolve_action_conflict.assert_called_once()
         self.assertFalse(result["requires_manual_resolution"])
         self.assertEqual(len(result["pending_conflict_details"]), 0)
-        self.assertEqual(len(result["auto_resolution_outcomes"]), 1) # Placeholder auto-resolution creates one outcome
+        self.assertEqual(len(result["auto_resolution_outcomes"]), 1)
 
-        self.assertEqual(len(result["actions_to_execute"]), 1) # First action proceeds by placeholder logic
-        executed_action_dict = result["actions_to_execute"][0]
-        self.assertEqual(executed_action_dict["character_id"], "playerC")
-        self.assertEqual(executed_action_dict["action_data"]["action_id"], actionC_wrapper.action_id)
-
-        # Status of original wrappers is not changed by current ConflictResolver
-        # self.assertEqual(actionC_wrapper.status, ActionStatus.AUTO_RESOLVED_PROCEED)
-        # self.assertEqual(actionD_wrapper.status, ActionStatus.AUTO_RESOLVED_FAILED_CONFLICT)
+        self.assertEqual(len(result["actions_to_execute"]), 1)
+        executed_action_wrapper = result["actions_to_execute"][0]
+        self.assertEqual(executed_action_wrapper.action_id, actionC_wrapper.action_id)
+        self.assertEqual(actionC_wrapper.status, ActionStatus.AUTO_RESOLVED_PROCEED)
+        self.assertEqual(actionD_wrapper.status, ActionStatus.AUTO_RESOLVED_FAILED_CONFLICT)
 
         outcome = result["auto_resolution_outcomes"][0]
-        # self.assertEqual(outcome["resolution_type"], "auto") # This field is not in the placeholder outcome
-        self.assertIn(actionC_wrapper.action_id, outcome["outcome"]["winner_action_id"])
+        self.assertIn(actionC_wrapper.action_id, outcome["outcome"]["winning_action_ids"])
+        self.assertIn(actionD_wrapper.action_id, outcome["outcome"]["losing_action_ids"])
 
 
     async def test_simultaneous_attack_auto_resolution_no_winner(self):
@@ -241,74 +231,73 @@ class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
         action_atk1_wrapper = self._create_action_wrapper("playerA", "ATTACK", entities=[{"type": "npc", "id": npc_target_id, "name": "Goblin"}])
         action_atk2_wrapper = self._create_action_wrapper("playerB", "ATTACK", entities=[{"type": "npc", "id": npc_target_id, "name": "Goblin"}])
 
-        player_actions_map = {
-            "playerA": [action_atk1_wrapper.action_data],
-            "playerB": [action_atk2_wrapper.action_data]
+        player_actions_map: Dict[str, List[ActionWrapper]] = {
+            "playerA": [action_atk1_wrapper],
+            "playerB": [action_atk2_wrapper]
         }
+        mock_xp_rules = MagicMock()
         current_rules_config = CoreGameRulesConfig(
-            checks={}, damage_types={}, xp_rules=None, loot_tables={},
+            checks={}, damage_types={}, xp_rules=mock_xp_rules, loot_tables={},
             action_conflicts=[self.attack_conflict_def_auto],
             location_interactions={}, base_stats={}, equipment_slots={}, item_effects={}, status_effects={},
             relation_rules=[], relationship_influence_rules=[]
         )
 
-        # Placeholder auto-resolution makes the first action listed in all_actions_flat win.
-        # To test "no winner", the mock for rule_engine would be key if it were used.
-        # For now, the test will reflect current placeholder behavior.
-        # self.mock_rule_engine.resolve_action_conflict.return_value = {
-        #     "winning_action_ids": [],
-        #     "losing_action_ids": [action_atk1_wrapper.action_id, action_atk2_wrapper.action_id],
-        #     "resolution_details": "Both attackers fumbled their attacks."
-        # }
+        self.mock_rule_engine.resolve_action_conflict.return_value = {
+            "winning_action_ids": [],
+            "losing_action_ids": [action_atk1_wrapper.action_id, action_atk2_wrapper.action_id],
+            "resolution_details": "Both attacks failed or tied."
+        }
 
         result = await self.resolver.analyze_actions_for_conflicts(player_actions_map=player_actions_map, guild_id="guild_test", rules_config=current_rules_config)
 
-        # self.mock_rule_engine.resolve_action_conflict.assert_called_once() # Not called
-        self.assertEqual(len(result["actions_to_execute"]), 1) # First action (playerA's) proceeds by placeholder
-        # self.assertEqual(action_atk1_wrapper.status, ActionStatus.AUTO_RESOLVED_PROCEED) # Status not changed on original wrappers
-        # self.assertEqual(action_atk2_wrapper.status, ActionStatus.AUTO_RESOLVED_FAILED_CONFLICT)
+        self.mock_rule_engine.resolve_action_conflict.assert_called_once()
+        self.assertEqual(len(result["actions_to_execute"]), 0)
         self.assertEqual(len(result["auto_resolution_outcomes"]), 1)
-        # self.assertEqual(len(result["auto_resolution_outcomes"][0]["winning_action_ids"]), 0) # Placeholder makes first one win
-        self.assertEqual(result["auto_resolution_outcomes"][0]["outcome"]["winner_action_id"], action_atk1_wrapper.action_id)
+        self.assertEqual(len(result["auto_resolution_outcomes"][0]["outcome"]["winning_action_ids"]), 0)
+        self.assertIn(action_atk1_wrapper.action_id, result["auto_resolution_outcomes"][0]["outcome"]["losing_action_ids"])
+        self.assertIn(action_atk2_wrapper.action_id, result["auto_resolution_outcomes"][0]["outcome"]["losing_action_ids"])
+        self.assertEqual(action_atk1_wrapper.status, ActionStatus.AUTO_RESOLVED_FAILED_CONFLICT)
+        self.assertEqual(action_atk2_wrapper.status, ActionStatus.AUTO_RESOLVED_FAILED_CONFLICT)
 
 
     async def test_action_not_double_conflicted(self):
         """Ensure an action, once part of a resolved/pending conflict, isn't re-evaluated."""
         item_id = "relic_xyz"
-        action_pickup_p1 = self._create_action_wrapper("player1", "PICKUP", entities=[{"type": "item", "id": item_id}])
-        # Second conflict definition that might also match PICKUP if not for status change
+        action_pickup_p1_wrapper = self._create_action_wrapper("player1", "PICKUP", entities=[{"type": "item", "id": item_id}])
+        action_pickup_p2_wrapper = self._create_action_wrapper("player2", "PICKUP", entities=[{"type": "item", "id": item_id}])
+
         another_pickup_conflict_def = ActionConflictDefinition(
             name="Generic Pickup Conflict",
             type="generic_pickup_conflict",
-            involved_intent_pattern=["PICKUP", "TAKE"], # Matches PICKUP
+            involved_intent_pattern=["PICKUP", "TAKE"],
             description="Any pickup action might conflict.",
-            resolution_type="manual", # Different type to distinguish
-            priority=0 # Lower priority
+            resolution_type="manual",
+            priority=0
         )
+        mock_xp_rules = MagicMock()
         current_rules_config = CoreGameRulesConfig(
-            checks={}, damage_types={}, xp_rules=None, loot_tables={},
+            checks={}, damage_types={}, xp_rules=mock_xp_rules, loot_tables={},
             action_conflicts=[
-                self.pickup_conflict_def_manual, # Higher priority, will process first
+                self.pickup_conflict_def_manual, # Higher priority
                 another_pickup_conflict_def
             ],
             location_interactions={}, base_stats={}, equipment_slots={}, item_effects={}, status_effects={},
             relation_rules=[], relationship_influence_rules=[]
         )
-        action_pickup_p2 = self._create_action_wrapper("player2", "PICKUP", entities=[{"type": "item", "id": item_id}]) # Renamed from action_pickup_p2_wrapper
 
-        player_actions_map = {
-            action_pickup_p1.player_id: [action_pickup_p1.action_data], # player1's action
-            action_pickup_p2.player_id: [action_pickup_p2.action_data] # player2's action, using corrected variable name
+        player_actions_map: Dict[str, List[ActionWrapper]] = {
+            action_pickup_p1_wrapper.player_id: [action_pickup_p1_wrapper],
+            action_pickup_p2_wrapper.player_id: [action_pickup_p2_wrapper]
         }
-        # The analyze_actions_for_conflicts method expects guild_id and rules_config.
-        # The third argument `self.mock_characters` was incorrect previously.
         result = await self.resolver.analyze_actions_for_conflicts(player_actions_map=player_actions_map, guild_id="guild1", rules_config=current_rules_config)
 
-        # Expect no conflict to be detected by the current placeholder logic for this specific setup
-        self.assertFalse(result["requires_manual_resolution"])
-        self.assertEqual(len(result["pending_conflict_details"]), 0)
-        # All actions should pass through
-        self.assertEqual(len(result["actions_to_execute"]), 2)
+        self.assertTrue(result["requires_manual_resolution"])
+        self.assertEqual(len(result["pending_conflict_details"]), 1)
+        self.assertEqual(result["pending_conflict_details"][0]["conflict_type"], self.pickup_conflict_def_manual.type)
+        # Check statuses of original wrappers
+        self.assertEqual(action_pickup_p1_wrapper.status, ActionStatus.PENDING_MANUAL_RESOLUTION)
+        self.assertEqual(action_pickup_p2_wrapper.status, ActionStatus.PENDING_MANUAL_RESOLUTION)
 
 
     async def test_non_conflicting_action_passes_through(self):
@@ -318,32 +307,27 @@ class TestConflictResolver(unittest.IsolatedAsyncioTestCase):
         actionP2_pickup_wrapper = self._create_action_wrapper("playerB", "PICKUP", entities=[{"type": "item", "id": item_id_contested}])
         actionP1_move_wrapper = self._create_action_wrapper("playerA", "MOVE", entities=[{"type": "location", "id": "exit_A"}])
 
-        player_actions_map = {
-            actionP1_pickup_wrapper.player_id: [actionP1_pickup_wrapper.action_data, actionP1_move_wrapper.action_data],
-            actionP2_pickup_wrapper.player_id: [actionP2_pickup_wrapper.action_data]
+        player_actions_map: Dict[str, List[ActionWrapper]] = {
+            actionP1_pickup_wrapper.player_id: [actionP1_pickup_wrapper, actionP1_move_wrapper], # playerA has two actions
+            actionP2_pickup_wrapper.player_id: [actionP2_pickup_wrapper]
         }
+        mock_xp_rules = MagicMock()
         current_rules_config = CoreGameRulesConfig(
-            checks={}, damage_types={}, xp_rules=None, loot_tables={},
-            action_conflicts=[self.pickup_conflict_def_manual], # Only manual pickup conflict
+            checks={}, damage_types={}, xp_rules=mock_xp_rules, loot_tables={},
+            action_conflicts=[self.pickup_conflict_def_manual],
             location_interactions={}, base_stats={}, equipment_slots={}, item_effects={}, status_effects={},
             relation_rules=[], relationship_influence_rules=[]
         )
-        # Corrected guild_id and removed mock_characters from call
         result = await self.resolver.analyze_actions_for_conflicts(player_actions_map=player_actions_map, guild_id="guild_test", rules_config=current_rules_config)
 
-        # Expect no conflict to be detected by the current placeholder logic for this specific setup
-        self.assertFalse(result["requires_manual_resolution"])
-        self.assertEqual(len(result["pending_conflict_details"]), 0)
-        # All actions (2 pickup, 1 move) should pass through if no conflict detected by placeholder
-        self.assertEqual(len(result["actions_to_execute"]), 3)
+        self.assertTrue(result["requires_manual_resolution"])
+        self.assertEqual(len(result["pending_conflict_details"]), 1) # The pickup conflict
+        self.assertEqual(len(result["actions_to_execute"]), 1) # The MOVE action
 
-        # Verify the MOVE action is one of those to be executed
-        move_action_found = False
-        for action_to_exec in result["actions_to_execute"]:
-            if action_to_exec["action_data"]["action_id"] == actionP1_move_wrapper.action_id:
-                move_action_found = True
-                break
-        self.assertTrue(move_action_found, "The non-conflicting MOVE action should be in actions_to_execute")
+        self.assertIn(actionP1_move_wrapper, result["actions_to_execute"])
+        self.assertEqual(actionP1_pickup_wrapper.status, ActionStatus.PENDING_MANUAL_RESOLUTION)
+        self.assertEqual(actionP2_pickup_wrapper.status, ActionStatus.PENDING_MANUAL_RESOLUTION)
+        self.assertEqual(actionP1_move_wrapper.status, ActionStatus.READY_TO_EXECUTE)
 
 if __name__ == '__main__':
     unittest.main()
