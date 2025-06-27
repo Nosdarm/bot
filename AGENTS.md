@@ -966,3 +966,14 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
         - Corrected `status_manager.add_status_effect` to `await status_manager.apply_status`.
         - Ensured `guild_id` is consistently string.
         - Fixed JSON loading/dumping for DB persistence of combat state.
+
+## Pyright Error Fixing Phase (Batch 48 - world_view_service.py focus from pyright_errors_part_1.txt)
+- **Focus:** Re-addressing 93 errors in `bot/game/world_processors/world_view_service.py` as listed in `pyright_errors_part_1.txt` (despite previous fixes noted in Batch 32 & 39).
+- **Strategy:** Overwrote file. Corrected `get_i18n_text` to `get_localized_string`, added `await` for async calls, fixed manager method names/parameters, ensured correct model attribute access (Pydantic `model_dump()`, `to_dict()`), and initialized variables.
+- **Batch 48 Fixes (93 errors in `bot/game/world_processors/world_view_service.py`):**
+    - **i18n Utility:** Replaced all calls to `get_i18n_text` with `get_localized_string`. Updated call signatures (removed `guild_id` from direct calls, removed `default_text` where `default_lang` or key's default is sufficient, ensured `key` parameter for labels). Imported `DEFAULT_BOT_LANGUAGE` from `i18n_utils`.
+    - **Async/Await:** Added `await` to all asynchronous manager calls (e.g., `_character_manager.get_character`, `_db_service.get_global_state_value`, `_location_manager.get_location_instance`, `_item_manager.get_items_by_owner`, `_quest_manager.list_quests_for_character`, `Quest.get_stage_title/get_stage_description`).
+    - **Manager Method Calls & Parameters:** Corrected calls like `_item_manager.get_items_by_owner(..., owner_type="location")`, `_party_manager.get_all_parties_for_guild`, `_item_manager.get_item_instance_by_id`.
+    - **Model Attribute Access & Data Handling:** Used `model_dump()` for Pydantic `Location` instances, fallback to `to_dict()` or direct dict usage. Ensured `active_quest_data_list` initialized to `[]`. Handled `target_location_static_data_res` being `None` before conversion.
+    - **Helper Function Signature:** Removed `guild_id_for_i18n` from `_format_basic_entity_details_placeholder`.
+    - **Safe List Access:** Added checks for `all_characters_result`, `all_npcs_result`, `items_in_loc_result`, `all_parties_result` being non-None before iteration.

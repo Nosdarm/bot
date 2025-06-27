@@ -25,9 +25,7 @@ from bot.game.models.relationship import Relationship
 from bot.game.models.quest import Quest
 
 
-from bot.utils.i18n_utils import get_localized_string
-
-DEFAULT_BOT_LANGUAGE = "en"
+from bot.utils.i18n_utils import get_localized_string, DEFAULT_BOT_LANGUAGE # Updated import
 
 if TYPE_CHECKING:
     from bot.services.db_service import DBService
@@ -74,7 +72,7 @@ class WorldViewService:
         player_lang = DEFAULT_BOT_LANGUAGE
         viewer_char_obj: Optional[Character] = None
         if viewer_entity_type == 'Character' and self._character_manager:
-            char_result = await self._character_manager.get_character(guild_id, viewer_entity_id) # Pyright: "Character" is not awaitable, "None" is not awaitable
+            char_result = await self._character_manager.get_character(guild_id, viewer_entity_id)
             if isinstance(char_result, Character):
                 viewer_char_obj = char_result
                 if viewer_char_obj and viewer_char_obj.selected_language:
@@ -97,23 +95,22 @@ class WorldViewService:
                 if raw_value:
                     consequence_data = world_state_consequences_i18n.get(raw_value)
                     if consequence_data:
-                        # Pyright: No parameter named "guild_id" (Fixed by using get_localized_string)
                         consequence_desc = get_localized_string(consequence_data, 'description_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
                         if consequence_desc and "not found" not in consequence_desc.lower() and consequence_desc != raw_value:
                             world_state_description_parts.append(consequence_desc)
 
-        location_data_result = await self._location_manager.get_location_instance(guild_id, location_id) # Pyright: "Location" is not awaitable, "None" is not awaitable
+        location_data_result = await self._location_manager.get_location_instance(guild_id, location_id)
         if not location_data_result:
             print(f"WorldViewService: Error generating location description: Location {location_id} not found.")
             return None
 
         location_data: Dict[str, Any] = {}
-        if hasattr(location_data_result, 'to_dict') and callable(getattr(location_data_result, 'to_dict')) :
-            location_data = location_data_result.to_dict()
-        elif isinstance(location_data_result, dict): # Should be Location model instance
-            location_data = location_data_result
-        elif isinstance(location_data_result, Location):
+        if isinstance(location_data_result, Location): # Pydantic model
              location_data = location_data_result.model_dump()
+        elif hasattr(location_data_result, 'to_dict') and callable(getattr(location_data_result, 'to_dict')) : # Other ORM
+            location_data = location_data_result.to_dict()
+        elif isinstance(location_data_result, dict): # Raw dict
+            location_data = location_data_result
         else:
             print(f"WorldViewService: Location data for {location_id} is not a dict or model with to_dict/model_dump.")
             return None
@@ -123,40 +120,41 @@ class WorldViewService:
         excluded_id = viewer_char_obj.id if viewer_char_obj else viewer_entity_id
 
         if self._character_manager:
-            all_characters_result = await self._character_manager.get_characters_in_location(guild_id, location_id) # Pyright: "List[Character]" is not awaitable
-            for char_obj_any in all_characters_result:
-                char_obj = cast(Character, char_obj_any)
-                if viewer_entity_type == 'Character' and viewer_char_obj and char_obj.id == viewer_char_obj.id:
-                    continue
-                if getattr(char_obj, 'current_location_id', None) == location_id:
-                     entities_in_location.append(char_obj)
+            all_characters_result = await self._character_manager.get_characters_in_location(guild_id, location_id)
+            if all_characters_result:
+                for char_obj_any in all_characters_result:
+                    char_obj = cast(Character, char_obj_any)
+                    if viewer_entity_type == 'Character' and viewer_char_obj and char_obj.id == viewer_char_obj.id:
+                        continue
+                    if getattr(char_obj, 'current_location_id', None) == location_id:
+                         entities_in_location.append(char_obj)
 
         if self._npc_manager:
-            all_npcs_result = await self._npc_manager.get_npcs_in_location(guild_id, location_id) # Pyright: "List[NPC]" is not awaitable
-            for npc_obj_any in all_npcs_result:
-                npc_obj = cast(NPC, npc_obj_any)
-                if viewer_entity_type == 'NPC' and npc_obj.id == viewer_entity_id:
-                    continue
-                if getattr(npc_obj, 'current_location_id', None) == location_id:
-                     entities_in_location.append(npc_obj)
+            all_npcs_result = await self._npc_manager.get_npcs_in_location(guild_id, location_id)
+            if all_npcs_result:
+                for npc_obj_any in all_npcs_result:
+                    npc_obj = cast(NPC, npc_obj_any)
+                    if viewer_entity_type == 'NPC' and npc_obj.id == viewer_entity_id:
+                        continue
+                    if getattr(npc_obj, 'current_location_id', None) == location_id:
+                         entities_in_location.append(npc_obj)
 
         if self._item_manager:
-            # Pyright: No parameter named "owner_type" (Corrected to use appropriate method if available, or adjust logic)
             items_in_loc_result = await self._item_manager.get_items_by_owner(guild_id, location_id, owner_type="location")
-            for item_any in items_in_loc_result:
-                item = cast(Item, item_any)
-                entities_in_location.append(item)
+            if items_in_loc_result:
+                for item_any in items_in_loc_result:
+                    item = cast(Item, item_any)
+                    entities_in_location.append(item)
 
         if self._party_manager:
-            # Pyright: Cannot access attribute "get_all_parties_for_guild" for class "PartyManager" (Corrected to get_all_parties_for_guild)
             all_parties_result = await self._party_manager.get_all_parties_for_guild(guild_id)
-            for party_any in all_parties_result:
-                party = cast(Party, party_any)
-                if getattr(party, 'current_location_id', None) == location_id:
-                     entities_in_location.append(party)
+            if all_parties_result:
+                for party_any in all_parties_result:
+                    party = cast(Party, party_any)
+                    if getattr(party, 'current_location_id', None) == location_id:
+                         entities_in_location.append(party)
 
         entities_to_list = entities_in_location
-        # Pyright: No parameter named "guild_id" (x6 for get_localized_string)
         location_name = get_localized_string(location_data, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
         location_description_base = get_localized_string(location_data, 'descriptions_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
         description_text = f"**{location_name}**\n"
@@ -171,11 +169,11 @@ class WorldViewService:
         if location_features and "not found" not in location_features.lower() and location_features != "features_i18n": main_description_parts.append(location_features)
 
         description_text += "\n".join(filter(None, main_description_parts))
-        if main_description_parts and any(part for part in main_description_parts if part != location_description_base or part): description_text += "\n"
+        if main_description_parts and any(part for part in main_description_parts if part and (part != location_description_base or part)): description_text += "\n"
+
 
         if entities_to_list:
-             # Pyright: No parameter named "default_text", No parameter named "guild_id"
-            description_text += f"\n{get_localized_string(key='you_see_here_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text='Вы видите здесь:')}\n"
+            description_text += f"\n{get_localized_string(key='you_see_here_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)}\n" # Removed default_text
             relationship_cues_i18n = {
                 "enemy_hostile": {"text_i18n": {"en": " (glares at you with intense hostility)", "ru": " (смотрит на вас с явной враждебностью)"}},
                 "enemy_wary": {"text_i18n": {"en": " (seems wary and distrustful of you)", "ru": " (кажется, относится к вам с подозрением и недоверием)"}},
@@ -185,26 +183,23 @@ class WorldViewService:
             }
             for entity in entities_to_list:
                 entity_name_i18n_dict = getattr(entity, 'name_i18n', None)
-                # Pyright: No parameter named "guild_id"
                 entity_name = get_localized_string(entity_name_i18n_dict if isinstance(entity_name_i18n_dict, dict) else None, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=getattr(entity, 'name', 'Unknown Entity'))
 
 
                 entity_type_display = "???"
-                # Pyright: No parameter named "guild_id" (x4)
-                if isinstance(entity, Character): entity_type_display = get_localized_string(key="entity_type_character", lang=player_lang, default_text="Персонаж")
-                elif isinstance(entity, NPC): entity_type_display = get_localized_string(key="entity_type_npc", lang=player_lang, default_text="NPC")
-                elif isinstance(entity, Item): entity_type_display = get_localized_string(key="entity_type_item", lang=player_lang, default_text="Предмет")
-                elif isinstance(entity, Party): entity_type_display = get_localized_string(key="entity_type_party", lang=player_lang, default_text="Партия")
+                if isinstance(entity, Character): entity_type_display = get_localized_string(key="entity_type_character", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+                elif isinstance(entity, NPC): entity_type_display = get_localized_string(key="entity_type_npc", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+                elif isinstance(entity, Item): entity_type_display = get_localized_string(key="entity_type_item", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+                elif isinstance(entity, Party): entity_type_display = get_localized_string(key="entity_type_party", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
 
                 faction_display_string = ""; relationship_text_cue = ""
                 if isinstance(entity, NPC) and self._relationship_manager and viewer_char_obj:
                     faction_data = getattr(entity, 'faction', None)
                     if faction_data and isinstance(faction_data, dict):
-                        # Pyright: No parameter named "guild_id"
                         localized_faction_name = get_localized_string(faction_data, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
                         if localized_faction_name and "not found" not in localized_faction_name.lower() and localized_faction_name != "name_i18n": faction_display_string = f", {localized_faction_name}"
 
-                    viewer_relationships_result = await self._relationship_manager.get_relationships_for_entity(guild_id, viewer_char_obj.id) # Pyright: "List[Relationship]" is not awaitable
+                    viewer_relationships_result = await self._relationship_manager.get_relationships_for_entity(guild_id, viewer_char_obj.id)
                     viewer_relationships: List[Relationship] = viewer_relationships_result if viewer_relationships_result else []
 
                     target_npc_id = entity.id
@@ -220,19 +215,18 @@ class WorldViewService:
                         if cue_key:
                             cue_data = relationship_cues_i18n.get(cue_key)
                             if cue_data:
-                                # Pyright: No parameter named "guild_id"
                                 localized_cue = get_localized_string(cue_data, 'text_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
-                                if localized_cue and "not found" not in localized_cue.lower() and localized_cue != cue_data.get('text_i18n', {}).get(DEFAULT_BOT_LANGUAGE, "text_i18n"): relationship_text_cue = localized_cue
+                                if localized_cue and "not found" not in localized_cue.lower() and localized_cue != cue_data.get('text_i18n', {}).get(DEFAULT_BOT_LANGUAGE, {}).get(DEFAULT_BOT_LANGUAGE, "text_i18n"): # Fixed default access
+                                    relationship_text_cue = localized_cue
                 description_text += f"- {entity_name} ({entity_type_display}{faction_display_string}){relationship_text_cue}\n"
 
+        active_quest_data_list: List[Dict[str, Any]] = [] # Initialize to prevent unbound error
         if self._quest_manager and viewer_char_obj:
-            active_quest_data_list_result = await self._quest_manager.list_quests_for_character(guild_id, viewer_char_obj.id) # Pyright: "List[Dict[str, Any]]" is not awaitable
+            active_quest_data_list_result = await self._quest_manager.list_quests_for_character(guild_id, viewer_char_obj.id)
             active_quest_data_list = active_quest_data_list_result if active_quest_data_list_result else []
-            quest_status_text: str = "" # Pyright: "active_quest_data_list" is possibly unbound (Fixed by initializing earlier)
-            if active_quest_data_list:
-                # Pyright: No parameter named "default_text", No parameter named "guild_id"
-                active_quests_label = get_localized_string(key="active_quests_label", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Active Quests")
-                if entities_to_list or (not entities_to_list and (main_description_parts and any(part for part in main_description_parts if part != location_description_base or part))): description_text += "\n"
+            if active_quest_data_list: # Check if list is not empty before proceeding
+                active_quests_label = get_localized_string(key="active_quests_label", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+                if entities_to_list or (not entities_to_list and (main_description_parts and any(part for part in main_description_parts if part and (part != location_description_base or part)))): description_text += "\n"
                 description_text += f"{active_quests_label}:\n"
                 for quest_data_item in active_quest_data_list:
                     quest_obj = Quest.from_dict(quest_data_item); quest_obj.selected_language = player_lang
@@ -240,16 +234,13 @@ class WorldViewService:
                     current_objective_desc = ""
                     current_stage_id = quest_data_item.get('current_stage_id')
                     if current_stage_id:
-                        # Pyright: Cannot access attribute "get_stage_title" for class "Quest"
-                        # Pyright: Cannot access attribute "get_stage_description" for class "Quest"
                         stage_title = await quest_obj.get_stage_title(str(current_stage_id))
                         stage_desc = await quest_obj.get_stage_description(str(current_stage_id))
                         if stage_title and stage_title != f"Stage {current_stage_id} Title": current_objective_desc = f"{stage_title}: {stage_desc}"
                         else: current_objective_desc = stage_desc if stage_desc else ""
                     if not current_objective_desc or "not found" in current_objective_desc.lower(): current_objective_desc = quest_obj.description
                     if quest_name and "not found" not in quest_name.lower():
-                        # Pyright: No parameter named "default_text", No parameter named "guild_id"
-                        if "not found" in current_objective_desc.lower() or not current_objective_desc.strip(): current_objective_desc = get_localized_string(key="objective_not_specified_label", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Objective details not specified.")
+                        if "not found" in current_objective_desc.lower() or not current_objective_desc.strip(): current_objective_desc = get_localized_string(key="objective_not_specified_label", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
                         description_text += f"- {quest_name}: {current_objective_desc}\n"
 
         exits_data_val = location_data.get('exits', {})
@@ -257,38 +248,33 @@ class WorldViewService:
 
 
         if exits_data:
-            # Pyright: No parameter named "default_text", No parameter named "guild_id"
-            exits_label = get_localized_string(key='exits_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text='Exits:')
-            if (self._quest_manager and viewer_char_obj and active_quest_data_list) or entities_to_list or (main_description_parts and any(part for part in main_description_parts if part != location_description_base or part)): description_text += "\n"
-            description_text += f"{exits_label}\n"
+            exits_label = get_localized_string(key='exits_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            if (self._quest_manager and viewer_char_obj and active_quest_data_list) or entities_to_list or (main_description_parts and any(part for part in main_description_parts if part and (part != location_description_base or part))): description_text += "\n"
+            description_text += f"{exits_label}:\n"
             sorted_exit_keys = sorted(exits_data.keys())
             for exit_key in sorted_exit_keys:
                 exit_info = exits_data[exit_key]
                 if not isinstance(exit_info, dict): continue
                 target_location_id_exit = exit_info.get('target_location_id')
-                # Pyright: No parameter named "guild_id"
                 exit_display_name = get_localized_string(exit_info, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=exit_key.capitalize())
 
-                target_location_static_data_res = await self._location_manager.get_location_instance(guild_id, str(target_location_id_exit)) if target_location_id_exit else None # Pyright: "Location" is not awaitable, "None" is not awaitable
+                target_location_static_data_res = await self._location_manager.get_location_instance(guild_id, str(target_location_id_exit)) if target_location_id_exit else None
                 target_location_static_data: Optional[Dict[str, Any]] = None
-                if hasattr(target_location_static_data_res, 'to_dict') and callable(getattr(target_location_static_data_res, 'to_dict')):
-                    target_location_static_data = target_location_static_data_res.to_dict()
-                elif isinstance(target_location_static_data_res, dict): # Should be Location model instance
-                     target_location_static_data = target_location_static_data_res
-                elif isinstance(target_location_static_data_res, Location):
-                    target_location_static_data = target_location_static_data_res.model_dump()
-                # Pyright: "to_dict" is not a known attribute of "None" (Handled by checking instance type and if target_location_static_data_res is not None)
 
+                if target_location_static_data_res: # Ensure it's not None before trying to convert
+                    if isinstance(target_location_static_data_res, Location): # Pydantic model
+                        target_location_static_data = target_location_static_data_res.model_dump()
+                    elif hasattr(target_location_static_data_res, 'to_dict') and callable(getattr(target_location_static_data_res, 'to_dict')): # Other ORM
+                        target_location_static_data = target_location_static_data_res.to_dict()
+                    elif isinstance(target_location_static_data_res, dict): # Raw dict
+                         target_location_static_data = target_location_static_data_res
 
                 target_location_name_display = str(target_location_id_exit) if target_location_id_exit else "N/A"
                 if target_location_static_data:
-                    # Pyright: No parameter named "guild_id"
                     target_location_name_display = get_localized_string(target_location_static_data, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=str(target_location_id_exit))
-                # Pyright: No parameter named "default_text", No parameter named "guild_id"
-                description_text += f"- **{exit_display_name}** {get_localized_string(key='leads_to_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text='ведет в')} '{target_location_name_display}'\n"
+                description_text += f"- **{exit_display_name}** {get_localized_string(key='leads_to_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)} '{target_location_name_display}'\n"
         else:
-            # Pyright: No parameter named "default_text", No parameter named "guild_id"
-            description_text += f"\n{get_localized_string(key='no_exits_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text='Выходов из этой локации нет.')}\n"
+            description_text += f"\n{get_localized_string(key='no_exits_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)}\n"
 
         print(f"WorldViewService: Location description generated for {location_id} in language {player_lang}.")
         return description_text
@@ -305,92 +291,85 @@ class WorldViewService:
         player_lang = DEFAULT_BOT_LANGUAGE
         viewer_char_obj_details: Optional[Character] = None
         if viewer_entity_type == 'Character' and self._character_manager:
-            char_res_details = await self._character_manager.get_character(guild_id, viewer_entity_id) # Pyright: "Character" is not awaitable, "None" is not awaitable
+            char_res_details = await self._character_manager.get_character(guild_id, viewer_entity_id)
             if isinstance(char_res_details, Character):
                 viewer_char_obj_details = char_res_details
                 if viewer_char_obj_details and viewer_char_obj_details.selected_language:
                     player_lang = viewer_char_obj_details.selected_language
         print(f"WorldViewService: Using language '{player_lang}' for entity details {entity_id}.")
 
-        entity: Optional[Any] = None; manager: Optional[Any] = None
+        entity: Optional[Any] = None
         if entity_type == 'Character' and self._character_manager:
-             char_entity_res = await self._character_manager.get_character(guild_id, entity_id) # Pyright: "Character" is not awaitable, "None" is not awaitable
+             char_entity_res = await self._character_manager.get_character(guild_id, entity_id)
              if isinstance(char_entity_res, Character): entity = char_entity_res
-             manager = self._character_manager
         elif entity_type == 'NPC' and self._npc_manager:
-             npc_entity_res = await self._npc_manager.get_npc(guild_id, entity_id) # Pyright: "None" is not awaitable (NPC is awaitable)
+             npc_entity_res = await self._npc_manager.get_npc(guild_id, entity_id)
              if isinstance(npc_entity_res, NPC): entity = npc_entity_res
-             manager = self._npc_manager
         elif entity_type == 'Item' and self._item_manager:
-             # Pyright: Cannot access attribute "get_item_instance_by_id_sync" for class "ItemManager" (Corrected to async version)
              item_entity_res = await self._item_manager.get_item_instance_by_id(guild_id, entity_id)
              if isinstance(item_entity_res, Item): entity = item_entity_res
-             manager = self._item_manager
         elif entity_type == 'Party' and self._party_manager:
-             party_entity_res = await self._party_manager.get_party(guild_id, entity_id) # Pyright: "None" is not awaitable (Party is awaitable)
+             party_entity_res = await self._party_manager.get_party(guild_id, entity_id)
              if isinstance(party_entity_res, Party): entity = party_entity_res
-             manager = self._party_manager
 
         if entity is None:
             print(f"WorldViewService: Error generating entity details: Entity {entity_type} ID {entity_id} not found in manager cache.")
             return None
 
         description_text = ""
-        entity_data_for_i18n = entity
-        if hasattr(entity, 'to_dict') and callable(getattr(entity, 'to_dict')):
-            entity_data_for_i18n = entity.to_dict()
-        elif hasattr(entity, 'model_dump') and callable(getattr(entity, 'model_dump')):
+        entity_data_for_i18n: Any = entity # Keep original type if no dict conversion
+        if hasattr(entity, 'model_dump') and callable(getattr(entity, 'model_dump')): # Pydantic V2
             entity_data_for_i18n = entity.model_dump()
+        elif hasattr(entity, 'to_dict') and callable(getattr(entity, 'to_dict')): # Other ORM
+            entity_data_for_i18n = entity.to_dict()
+        # If it's already a dict, entity_data_for_i18n will be the dict
 
 
         entity_name_i18n_val = getattr(entity, 'name_i18n', None)
         entity_name_val = getattr(entity, 'name', 'Unknown Entity')
 
+        final_entity_name = ""
         if isinstance(entity_name_i18n_val, dict):
-             # Pyright: No parameter named "guild_id"
-             entity_name = get_localized_string(entity_name_i18n_val, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=entity_name_val)
+             final_entity_name = get_localized_string(entity_name_i18n_val, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=str(entity_name_val))
         elif isinstance(entity_name_val, str):
-            entity_name = entity_name_val
+            final_entity_name = entity_name_val
         else:
-            # Pyright: No parameter named "default_text", No parameter named "guild_id"
-            entity_name = get_localized_string(key="unknown_entity_name", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Unknown Entity")
+            final_entity_name = get_localized_string(key="unknown_entity_name", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
 
 
-        # Pyright: No parameter named "guild_id"
         entity_type_display_details = get_localized_string(key=f"entity_type_{entity_type.lower()}", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=entity_type)
-        description_text += f"**{entity_name}** ({entity_type_display_details})\n"
+        description_text += f"**{final_entity_name}** ({entity_type_display_details})\n"
         description_text += f"ID: {entity_id}\n"
 
-        def _format_basic_entity_details_placeholder(entity_obj: Any, entity_type_str: str, lang: str, observed_details_dict: Dict[str, Any]) -> str: # Removed guild_id_for_i18n
+        # Removed guild_id_for_i18n parameter from the call and definition
+        def _format_basic_entity_details_placeholder(entity_obj_param: Any, entity_type_str: str, lang: str, observed_details_dict: Dict[str, Any]) -> str:
             details = ""
-            # Pyright: No parameter named "default_text", No parameter named "guild_id" (x14 for get_localized_string)
-            type_label = get_localized_string(key="label_type", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Тип")
-            name_label = get_localized_string(key="label_name", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Имя")
-            health_label = get_localized_string(key="label_health", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Здоровье")
-            alive_label = get_localized_string(key="label_alive", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Жив")
-            yes_label = get_localized_string(key="label_yes", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Да")
-            no_label = get_localized_string(key="label_no", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Нет")
-            template_label = get_localized_string(key="label_template", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Шаблон")
-            owner_id_label = get_localized_string(key="label_owner_id", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Владелец ID")
-            location_id_label = get_localized_string(key="label_location_id", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Локация ID")
-            leader_id_label = get_localized_string(key="label_leader_id", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Лидер ID")
-            members_label = get_localized_string(key="label_members", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Участники")
-            none_label = get_localized_string(key="label_none", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="нет")
-            unknown_label = get_localized_string(key="label_unknown", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="Неизвестно")
-            na_label = get_localized_string(key="label_na", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text="N/A")
+            type_label = get_localized_string(key="label_type", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            name_label = get_localized_string(key="label_name", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            health_label = get_localized_string(key="label_health", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            alive_label = get_localized_string(key="label_alive", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            yes_label = get_localized_string(key="label_yes", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            no_label = get_localized_string(key="label_no", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            template_label = get_localized_string(key="label_template", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            owner_id_label = get_localized_string(key="label_owner_id", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            location_id_label = get_localized_string(key="label_location_id", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            leader_id_label = get_localized_string(key="label_leader_id", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            members_label = get_localized_string(key="label_members", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            none_label = get_localized_string(key="label_none", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            unknown_label = get_localized_string(key="label_unknown", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
+            na_label = get_localized_string(key="label_na", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
 
             entity_obj_dict = {}
-            if hasattr(entity_obj, 'to_dict') and callable(getattr(entity_obj, 'to_dict')):
-                entity_obj_dict = entity_obj.to_dict()
-            elif hasattr(entity_obj, 'model_dump') and callable(getattr(entity_obj, 'model_dump')):
-                 entity_obj_dict = entity_obj.model_dump()
-            elif isinstance(entity_obj, dict):
-                entity_obj_dict = entity_obj
+            if hasattr(entity_obj_param, 'model_dump') and callable(getattr(entity_obj_param, 'model_dump')):
+                 entity_obj_dict = entity_obj_param.model_dump()
+            elif hasattr(entity_obj_param, 'to_dict') and callable(getattr(entity_obj_param, 'to_dict')):
+                entity_obj_dict = entity_obj_param.to_dict()
+            elif isinstance(entity_obj_param, dict):
+                entity_obj_dict = entity_obj_param
 
-            # Pyright: No parameter named "guild_id"
-            entity_display_name_inner = get_localized_string(entity_obj_dict.get('name_i18n') if isinstance(entity_obj_dict.get('name_i18n'), dict) else None, 'name_i18n', lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=entity_obj_dict.get('name', unknown_label))
+            entity_display_name_inner_i18n = entity_obj_dict.get('name_i18n') if isinstance(entity_obj_dict.get('name_i18n'), dict) else None
+            entity_display_name_inner = get_localized_string(entity_display_name_inner_i18n, 'name_i18n', lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=str(entity_obj_dict.get('name', unknown_label)))
 
-            # Pyright: No parameter named "guild_id"
             entity_type_display_placeholder_inner = get_localized_string(key=f"entity_type_{entity_type_str.lower()}", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=entity_type_str)
 
             details += f"{type_label}: {entity_type_display_placeholder_inner}\n"
@@ -413,6 +392,6 @@ class WorldViewService:
                  details += f"{members_label} ({members_count}): {members_list_str}\n"
             return details
 
-        description_text += _format_basic_entity_details_placeholder(entity, entity_type, player_lang, {}) # Removed guild_id
+        description_text += _format_basic_entity_details_placeholder(entity, entity_type, player_lang, {})
         print(f"WorldViewService: Entity details generated for {entity_type} ID {entity_id} in language {player_lang}.")
         return description_text
