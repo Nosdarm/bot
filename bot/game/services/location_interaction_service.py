@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 SendToChannelCallback = Callable[[str], Awaitable[Any]] # Simplified: assumes callback takes only message string
 
 class LocationInteractionService:
-    def __init__(self, game_manager: "GameManager"):
-        self.game_manager = game_manager
-        if not self.game_manager:
-            logger.critical("LocationInteractionService initialized without a valid GameManager instance!")
+    def __init__(self, location_manager: "LocationManager", character_manager: "CharacterManager", npc_manager: "NpcManager"):
+        self.location_manager = location_manager
+        self.character_manager = character_manager
+        self.npc_manager = npc_manager
         logger.info("LocationInteractionService initialized.")
 
     async def process_on_enter_location_events(self, guild_id: str, entity_id: str, entity_type: str, location_id: str) -> None:

@@ -237,3 +237,32 @@ class StatusManager:
     def mark_status_effect_dirty(self, guild_id: str, status_effect_id: str) -> None: pass
     async def get_active_statuses_for_entity(self, entity_id: str, entity_type: str, guild_id: str) -> List[Any]: return []
 
+    async def create_status(self, guild_id: int, static_id: str, name_i18n: Dict[str, str], description_i18n: Dict[str, str], properties_json: Dict[str, Any]) -> 'Status':
+        async with self.db_service.get_session() as session:
+            from bot.database.models import Status
+            
+            new_status = Status(
+                guild_id=guild_id,
+                static_id=static_id,
+                name_i18n=name_i18n,
+                description_i18n=description_i18n,
+                properties_json=properties_json
+            )
+            session.add(new_status)
+            await session.commit()
+            return new_status
+
+    async def apply_status(self, guild_id: int, entity_id: int, entity_type: str, status_id: int, duration: int, source_ability_id=None) -> None:
+        if entity_type == "character":
+            await self.apply_status_to_character(
+                guild_id=str(guild_id),
+                character_id=str(entity_id),
+                status_id_or_key=str(status_id),
+                duration_turns=duration,
+                source_id=str(source_ability_id),
+                source_type="ability"
+            )
+        else:
+            # TODO: Implement status application for other entity types
+            pass
+

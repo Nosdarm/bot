@@ -1,6 +1,7 @@
 # tests/game/test_guild_initializer.py
 import pytest
 import uuid
+from unittest.mock import patch
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
 from sqlalchemy.future import select
 import json

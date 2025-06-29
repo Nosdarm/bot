@@ -3,8 +3,9 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
+from discord.ext import commands
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from typing import cast, Optional
 from bot.command_modules.settings_cmds import SettingsCog, LANGUAGE_CHOICES
 from bot.database.models import Player, UserSettings
 from bot.game.managers.game_manager import GameManager

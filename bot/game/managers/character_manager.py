@@ -405,7 +405,13 @@ class CharacterManager:
     async def add_item_to_inventory(self, guild_id: str, character_id: str, item_id: str, quantity: int = 1, **kwargs: Any) -> bool: return False
     async def remove_item_from_inventory(self, guild_id: str, character_id: str, item_id: str, quantity: int = 1, **kwargs: Any) -> bool: return False
     def set_active_action(self, guild_id: str, character_id: str, action_details: Optional[Dict[str, Any]]) -> None: pass
-    def add_action_to_queue(self, guild_id: str, character_id: str, action_details: Dict[str, Any]) -> None: pass
+    def add_action_to_queue(self, guild_id: str, character_id: str, action_type: str, action_data: dict) -> None:
+        character = self.get_character(guild_id, character_id)
+        if character:
+            if not character.action_queue:
+                character.action_queue = []
+            character.action_queue.append({"type": action_type, "data": action_data})
+            self.mark_character_dirty(guild_id, character_id)
     def get_next_action_from_queue(self, guild_id: str, character_id: str) -> Optional[Dict[str, Any]]: return None
     async def save_character(self, character: Character, guild_id: str) -> bool: return False
     async def set_current_party_id(self, guild_id: str, character_id: str, party_id: Optional[str], **kwargs: Any) -> bool: return False

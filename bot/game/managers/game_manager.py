@@ -8,6 +8,7 @@ import uuid
 from typing import Optional, Dict, Any, Callable, Awaitable, List, TYPE_CHECKING, cast
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 # from asyncpg import exceptions as asyncpg_exceptions # Not directly used, can be removed if sqlalchemy handles all specific db exceptions
 
 import discord

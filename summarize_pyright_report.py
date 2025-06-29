@@ -43,7 +43,7 @@ def main():
             for line, severity, message in sorted(issues):
                 f.write(f"  Line {line:<4} [{severity.upper()}] {message}\n")
 
-    print(f"\n✅ Отчет успешно создан: {OUTPUT_FILE}")
+    print(f"\nОтчет успешно создан: {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()

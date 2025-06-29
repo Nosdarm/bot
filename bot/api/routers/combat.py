@@ -1,10 +1,11 @@
 # bot/api/routers/combat.py
+import json 
 from fastapi import APIRouter, Depends, HTTPException, Path, status, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import uuid # For Combat ID if model doesn't auto-gen (it does now)
 import random # For initiative example
 

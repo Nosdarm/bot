@@ -209,10 +209,10 @@ class WorldStateCmdsCog(commands.Cog, name="Master WorldState"):
                 logger.info(f"{log_prefix}: Displaying flags: {world_state.custom_flags}")
                 await interaction.followup.send(response_message, ephemeral=True)
 
-            except Exception as e:
-                logger.error(f"{log_prefix}: Error viewing world flags: {e}", exc_info=True)
-                # No rollback needed for a read operation generally
-                await interaction.followup.send(f"An error occurred while viewing the flags: {e}", ephemeral=True)
+        except Exception as e:
+            logger.error(f"{log_prefix}: Error viewing world flags: {e}", exc_info=True)
+            # No rollback needed for a read operation generally
+            await interaction.followup.send(f"An error occurred while viewing the flags: {e}", ephemeral=True)
 
 async def setup(bot: "RPGBot"):
     await bot.add_cog(WorldStateCmdsCog(bot))

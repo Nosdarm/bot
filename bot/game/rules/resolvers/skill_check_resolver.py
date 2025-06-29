@@ -1,5 +1,7 @@
 # bot/game/rules/resolvers/skill_check_resolver.py
+import json
 import random
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, List, Callable, Awaitable
 
 from bot.game.models.check_models import CheckResult
@@ -10,6 +12,8 @@ if TYPE_CHECKING:
     from bot.game.managers.npc_manager import NpcManager
     # from bot.game.managers.item_manager import ItemManager # Removed unused import
     # Add other necessary model/manager imports if specific methods need them
+
+logger = logging.getLogger(__name__)
 
 
 async def resolve_skill_check(

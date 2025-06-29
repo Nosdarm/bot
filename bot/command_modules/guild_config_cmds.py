@@ -8,6 +8,7 @@ from bot.database.models import GuildConfig
 from bot.services.db_service import DBService # Assuming DBService is accessible for cogs
 from bot.utils.decorators import is_master_role # Assuming a decorator for role check
 from sqlalchemy.future import select # For querying GuildConfig
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,6 @@ class GuildConfigCmds(commands.Cog):
             await interaction.response.send_message("Database service is unavailable.", ephemeral=True)
             return
 
-        session_obj = None
         try:
             async with db_service.get_session() as session: # session is AsyncSession
                 session_obj = session # For potential rollback outside context
@@ -75,19 +75,19 @@ class GuildConfigCmds(commands.Cog):
                 )
                 logger.info(f"{channel_type} set to {channel.id} for guild {guild_id_str} by {interaction.user.id}.")
 
-            except Exception as e:
-                logger.error(f"Error updating {channel_type} for guild {guild_id_str}: {e}", exc_info=True)
-                # Check if response has been sent, otherwise use followup
-                if interaction.response.is_done():
-                    await interaction.followup.send(
-                        f"An error occurred while setting the {channel_type.replace('_', ' ')}.",
-                        ephemeral=True
-                    )
-                else:
-                    await interaction.response.send_message(
-                        f"An error occurred while setting the {channel_type.replace('_', ' ')}.",
-                        ephemeral=True
-                    )
+        except Exception as e:
+            logger.error(f"Error updating {channel_type} for guild {guild_id_str}: {e}", exc_info=True)
+            # Check if response has been sent, otherwise use followup
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    f"An error occurred while setting the {channel_type.replace('_', ' ')}.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"An error occurred while setting the {channel_type.replace('_', ' ')}.",
+                    ephemeral=True
+                )
 
     @app_commands.command(name="set_game_channel", description="Sets the primary game channel for bot activities.")
     @app_commands.describe(channel="The text channel to be used as the game channel.")

@@ -595,6 +595,13 @@ class DialogueManager:
               logger.info("DialogueManager: Ending dialogue %s in guild %s due to entity %s cleanup.", d_id_to_end, guild_id_str, entity_id_str) # Added
               await self.end_dialogue(guild_id_str, d_id_to_end, **kwargs)
 
+    async def handle_talk_action(
+        self, character_speaker: Any, guild_id: str,
+        action_data: Dict[str, Any], rules_config: Any
+    ) -> Dict[str, Any]:
+        logger.info(f"DialogueManager: handle_talk_action called for {character_speaker.id} in guild {guild_id}.")
+        return {"success": True, "message": "Talk action handled (placeholder).", "state_changed": False}
+
     async def process_player_dialogue_message(
         self, character: Any, message_text: str, channel_id: int, guild_id: str, **kwargs: Any 
     ):

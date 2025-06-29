@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from bot.ai.multilingual_prompt_generator import MultilingualPromptGenerator
     from bot.ai.ai_response_validator import AIResponseValidator
     from bot.game.managers.game_manager import GameManager
-    from bot.database.models.guild_config import GuildConfig # Added import
+    from bot.database.models.config_related import GuildConfig # Added import
     from bot.game.managers.item_manager import ItemManager # For type hint
     from bot.game.services.location_interaction_service import LocationInteractionService # For type hint
 
@@ -43,7 +43,7 @@ class AIGenerationManager:
         self.multilingual_prompt_generator = multilingual_prompt_generator
         self.ai_response_validator = ai_response_validator
         self.game_manager = game_manager
-        self.pending_generation_crud = PendingGenerationCRUD(db_service)
+        self.pending_generation_crud = PendingGenerationCRUD()
         logger.info("AIGenerationManager initialized.")
 
     async def request_content_generation(
@@ -67,7 +67,7 @@ class AIGenerationManager:
             "additional_notes": context_params.get("additional_notes")
         }
         generation_context_params = {k: v for k, v in generation_context_params.items() if v is not None}
-        generation_context = await self.prompt_context_collector.get_full_context(**generation_context_params)
+        generation_context = self.prompt_context_collector.get_full_context(**generation_context_params)
 
         target_languages_input = prompt_params.get("target_languages"); target_languages_list: List[str] = []
         if isinstance(target_languages_input, list): target_languages_list = [str(lang).strip() for lang in target_languages_input if lang and isinstance(lang, (str, int, float)) and str(lang).strip()]
@@ -76,7 +76,7 @@ class AIGenerationManager:
             default_lang = "en"
             get_rule_method = getattr(self.game_manager, 'get_rule', None)
             if callable(get_rule_method):
-                lang_rule_val = await get_rule_method(guild_id, "default_language", "en")
+                lang_rule_val = get_rule_method(guild_id, "default_language", "en")
                 default_lang = str(lang_rule_val) if lang_rule_val and isinstance(lang_rule_val, str) else "en"
             target_languages_list = [default_lang]
             if "en" not in target_languages_list: target_languages_list.append("en")
@@ -84,8 +84,8 @@ class AIGenerationManager:
 
         prepare_prompt_args: Dict[str, Any] = {
             "guild_id": guild_id,
-            "location_id": str(context_params.get("location_id")) if context_params.get("location_id") else \
-                           str(generation_context.get("location", {}).get("id")) if isinstance(generation_context.get("location"), dict) else "default_world_space",
+            "location_id": str(context_params.get("location_id")) if context_params.get("location_id") else 
+                           str(generation_context["location"]["id"]) if "location" in generation_context and "id" in generation_context["location"] else "default_world_space",
             "player_id": str(context_params.get("character_id")) if context_params.get("character_id") else None,
             "specific_task_instruction": str(prompt_params.get("specific_task_instruction", f"Generate content for type: {request_type.value}."))
         }
@@ -128,7 +128,7 @@ class AIGenerationManager:
             session_factory_callable: Optional[Callable[[], AsyncSession]] = getattr(self.db_service, 'get_session_factory', None)
             if not callable(session_factory_callable): logger.error("DBService missing 'get_session_factory'."); return None
             try:
-                async with GuildTransaction(session_factory_callable(), guild_id) as new_session_ctx: # type: ignore[operator]
+                with GuildTransaction(session_factory_callable(), guild_id) as new_session_ctx: # type: ignore[operator]
                     await create_record_internal(new_session_ctx)
             except Exception as e: logger.exception(f"AIGM: Failed to create PG record for '{request_type.value}' in guild {guild_id}"); return None
 
@@ -161,7 +161,7 @@ class AIGenerationManager:
                 if not record or not record.id: logger.error(f"PG record {pending_generation_id} not found."); return False
 
                 record_id_str = str(record.id)
-                if record.status != PendingStatus.APPROVED.value: logger.warning(f"PG {record_id_str} not APPROVED."); return False
+                if record.status != PendingStatus.APPROVED: logger.warning(f"PG {record_id_str} not APPROVED."); return False
                 if not record.parsed_data_json or not isinstance(record.parsed_data_json, dict):
                     logger.error(f"No parsed_data for PG {record_id_str}.");
                     await self.pending_generation_crud.update_pending_generation_status(session, record_id_str, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, parsed_data_json={"error": "No parsed data."}) # type: ignore[call-arg]
@@ -205,21 +205,78 @@ class AIGenerationManager:
 
 
                 # ... (elif for NPC_PROFILE, QUEST_FULL, ITEM_PROFILE - similar safe access and method calls) ...
-                elif request_type_val in [GenerationType.NPC_PROFILE, GenerationType.QUEST_FULL, GenerationType.ITEM_PROFILE]:
+                elif request_type_val == GenerationType.NPC_PROFILE:
+                    if self.game_manager.npc_manager:
+                        npc_data = parsed_data.get("npc_profile")
+                        if npc_data:
+                            new_npc = await self.game_manager.npc_manager.create_npc(
+                                guild_id=guild_id, npc_profile=GeneratedNpcProfile(**npc_data), session=session
+                            )
+                            if new_npc:
+                                persisted_entity_id = new_npc.id
+                                application_success = True
+                            else:
+                                logger.error(f"Failed to create NPC from parsed data for PG {record_id_str}.")
+                                await self.pending_generation_crud.update_pending_generation_status(session, record_id_str, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, validation_issues_json=[{"error": "NPC creation failed."}] )
+                    
+                elif request_type_val == GenerationType.QUEST_FULL:
+                    if self.game_manager.quest_manager:
+                        quest_data = parsed_data.get("quest_full")
+                        if quest_data:
+                            new_quest = await self.game_manager.quest_manager.create_quest(
+                                guild_id=guild_id, quest_data=quest_data, session=session
+                            )
+                            if new_quest:
+                                persisted_entity_id = new_quest.id
+                                application_success = True
+                            else:
+                                logger.error(f"Failed to create Quest from parsed data for PG {record_id_str}.")
+                                await self.pending_generation_crud.update_pending_generation_status(session, record_id_str, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, validation_issues_json=[{"error": "Quest creation failed."}] )
+
+                elif request_type_val == GenerationType.ITEM_PROFILE:
+                    if self.game_manager.item_manager:
+                        item_data = parsed_data.get("item_profile")
+                        if item_data:
+                            new_item = await self.game_manager.item_manager.create_item_instance(
+                                guild_id=guild_id, template_id=item_data.get("template_id"),
+                                quantity=item_data.get("quantity", 1), initial_state=item_data.get("state_variables"),
+                                session=session
+                            )
+                            if new_item:
+                                persisted_entity_id = new_item.id
+                                application_success = True
+                            else:
+                                logger.error(f"Failed to create Item from parsed data for PG {record_id_str}.")
+                                await self.pending_generation_crud.update_pending_generation_status(session, record_id_str, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id, validation_issues_json=[{"error": "Item creation failed."}] )
+
+                # Fallback for types not explicitly handled above, or if managers are missing
+                if not application_success and request_type_val in [GenerationType.NPC_PROFILE, GenerationType.QUEST_FULL, GenerationType.ITEM_PROFILE]:
                     logger.info(f"AIGM: [SIMULATING PERSISTENCE] for {request_type_val.value} - PG ID {record_id_str}")
                     persisted_entity_id = f"simulated_{request_type_val.value.lower()}_{record_id_str[:8]}"
                     application_success = True
 
 
                 if application_success and persisted_entity_id:
-                    record.entity_id = persisted_entity_id # This should be fine if record.entity_id is Column[str]
+                    record.entity_id = persisted_entity_id 
                     flag_modified(record, "entity_id")
-                    await self.pending_generation_crud.update_pending_generation_status(session, record_id_str, PendingStatus.APPLIED, guild_id, moderator_user_id, moderator_notes=str(record.moderator_notes)) # type: ignore[call-arg]
+                    await self.pending_generation_crud.update_pending_generation_status(session, record_id_str, PendingStatus.APPLIED, guild_id, moderator_user_id, moderator_notes=record.moderator_notes)
                     logger.info(f"Applied PG {pending_generation_id}. Status: APPLIED.")
                     return True
                 else: # ... (update status to FAILED and return False) ...
                     return False
-        except Exception as e: # ... (Outer exception handling) ...
+        except Exception as e: # Catch any unexpected errors during the transaction
             logger.exception(f"Unexpected error processing approved PG {pending_generation_id}")
+            # Attempt to update status to APPLICATION_FAILED if an unexpected error occurs
+            # This requires a new session as the current one might be invalidated by the exception
+            try:
+                session_factory_for_error_update: Optional[Callable[[], AsyncSession]] = getattr(self.db_service, 'get_session_factory', None)
+                if callable(session_factory_for_error_update):
+                    async with GuildTransaction(session_factory_for_error_update(), guild_id) as error_session:
+                        await self.pending_generation_crud.update_pending_generation_status(
+                            error_session, pending_generation_id, PendingStatus.APPLICATION_FAILED, guild_id, moderator_user_id,
+                            validation_issues_json=[{"error": f"Unexpected error during application: {e}"}]
+                        )
+            except Exception as inner_e:
+                logger.error(f"Failed to update PG status to APPLICATION_FAILED for {pending_generation_id} after unexpected error: {inner_e}")
             return False
 # Removed the duplicated end-of-file marker

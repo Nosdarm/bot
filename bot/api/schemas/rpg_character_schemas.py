@@ -1,6 +1,6 @@
 import uuid
 import datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional
 
 class RPGCharacterBase(BaseModel):

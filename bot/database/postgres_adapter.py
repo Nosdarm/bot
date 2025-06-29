@@ -39,7 +39,7 @@ if SQLALCHEMY_DATABASE_URL_FROM_ENV is None:
     SQLALCHEMY_DATABASE_URL = DEFAULT_SQLALCHEMY_DATABASE_URL
     _used_env_var_globally = False
 else:
-    print(f"🌍 Using database URL from environment variable {DATABASE_URL_ENV_VAR}.")
+    print(f"Using database URL from environment variable {DATABASE_URL_ENV_VAR}.")
     SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL_FROM_ENV
     _used_env_var_globally = True
 
@@ -102,7 +102,7 @@ class PostgresAdapter(BaseDbAdapter):
         self._asyncpg_ssl_param = final_engine_connect_args.get('ssl')
 
 
-        print(f"🔧 SQLAlchemy engine will be created for URL: {self._db_url_for_engine} with explicit connect_args: {final_engine_connect_args}")
+        print(f"SQLAlchemy engine will be created for URL: {self._db_url_for_engine} with explicit connect_args: {final_engine_connect_args}")
         self._engine = create_async_engine(self._db_url_for_engine, echo=False, connect_args=final_engine_connect_args) # type: ignore [call-overload]
 
         self._SessionLocal = sessionmaker( # type: ignore [call-overload]

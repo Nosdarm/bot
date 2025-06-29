@@ -131,145 +131,144 @@ class CombatManager:
         else:
             logger.warning("CM.mark_participant_acted: Combat %s not found for guild %s.", combat_id, guild_id) # Changed
 
-    async def start_combat(self, guild_id: str, location_id: Optional[str], participant_ids_types: List[Tuple[str, str]], **kwargs: Any) -> Optional["Combat"]:
-        # logger.debug("CM_START_COMBAT_DEBUG: self._rule_engine is %s", 'NOT None' if self._rule_engine else 'None') # Changed
-        # logger.debug("CM_START_COMBAT_DEBUG: self._character_manager is %s", 'NOT None' if self._character_manager else 'None') # Changed
-        # logger.debug("CM_START_COMBAT_DEBUG: self._npc_manager is %s", 'NOT None' if self._npc_manager else 'None') # Changed
-
-        guild_id_str = str(guild_id)
-        location_id_str = str(location_id) if location_id is not None else None
-        game_log_manager: Optional[GameLogManager] = kwargs.get('game_log_manager')
-
-        log_message_start = f"CombatManager: Starting new combat in location {location_id_str} for guild {guild_id_str} with participants: {participant_ids_types}..."
-        if game_log_manager: asyncio.create_task(game_log_manager.log_info(log_message_start, guild_id=guild_id_str, location_id=location_id_str))
-        else: logger.info(log_message_start) # Changed
-
-
-        if self._db_service is None:
-            err_msg = f"CombatManager: No DB service for guild {guild_id_str}. Cannot start combat." # Added guild_id
-            if game_log_manager: asyncio.create_task(game_log_manager.log_error(err_msg, guild_id=guild_id_str))
-            else: logger.error(err_msg) # Changed
-            return None
-        if not self._character_manager or not self._npc_manager or not self._rule_engine:
-            err_msg = f"CombatManager: ERROR - CharacterManager, NpcManager, or RuleEngine not initialized for guild {guild_id_str}. Cannot fetch participant details." # Added guild_id
-            if game_log_manager: asyncio.create_task(game_log_manager.log_error(err_msg, guild_id=guild_id_str))
-            else: logger.error(err_msg) # Changed
+    async def start_combat(self, guild_id: int, location_id: int, participant_ids: List[Tuple[int, str]]) -> Optional['CombatEncounter']:
+        if not self._db_service:
+            logger.error("CombatManager: DBService not available.")
             return None
 
-        combat_participant_objects: List[CombatParticipant] = []
+        async with self._db_service.get_session() as session:
+            async with session.begin():
+                from bot.database.models import CombatEncounter, Player, GeneratedNpc
+                from sqlalchemy.future import select
 
-        for p_id, p_type in participant_ids_types:
-            entity_name = "Unknown"
-            entity_hp = 10
-            entity_max_hp = 10
-            entity_dex = 10
+                # 1. Determine Initiative and Turn Order
+                turn_order = []
+                participants_json = []
+                for entity_id, entity_type in participant_ids:
+                    if entity_type == "Player":
+                        player = await session.get(Player, entity_id)
+                        if player:
+                            # TODO: Use RuleEngine for initiative calculation
+                            initiative = random.randint(1, 20)
+                            turn_order.append({"id": player.id, "type": "Player", "initiative": initiative})
+                            participants_json.append({"id": player.id, "type": "Player", "hp": player.stats_json.get("hp", 10)})
+                    elif entity_type == "NPC":
+                        npc = await session.get(GeneratedNpc, entity_id)
+                        if npc:
+                            # TODO: Use RuleEngine for initiative calculation
+                            initiative = random.randint(1, 20)
+                            turn_order.append({"id": npc.id, "type": "NPC", "initiative": initiative})
+                            participants_json.append({"id": npc.id, "type": "NPC", "hp": npc.stats_json.get("hp", 10)})
 
-            if p_type == "Character":
-                char = self._character_manager.get_character(guild_id_str, p_id)
-                if char:
-                    name_i18n_dict = getattr(char, 'name_i18n', {})
-                    entity_name = name_i18n_dict.get('en', p_id) if isinstance(name_i18n_dict, dict) else p_id
-                    entity_hp = int(getattr(char, 'hp', 10))
-                    entity_max_hp = int(getattr(char, 'max_health', 10))
-                    stats = getattr(char, 'stats', {})
-                    entity_dex = stats.get('dexterity', 10) if isinstance(stats, dict) else 10
-                else:
-                    logger.warning("CombatManager: Character %s not found for combat in guild %s.", p_id, guild_id_str) # Changed
-                    continue
-            elif p_type == "NPC":
-                npc = await self._npc_manager.get_npc(guild_id_str, p_id) # Added await
-                if npc:
-                    name_i18n_dict = getattr(npc, 'name_i18n', {})
-                    entity_name = name_i18n_dict.get('en', p_id) if isinstance(name_i18n_dict, dict) else p_id
-                    entity_hp = int(getattr(npc, 'health', 10))
-                    entity_max_hp = int(getattr(npc, 'max_health', 10))
-                    stats = getattr(npc, 'stats', {})
-                    entity_dex = stats.get('dexterity', 10) if isinstance(stats, dict) else 10
-                else:
-                    logger.warning("CombatManager: NPC %s not found for combat in guild %s.", p_id, guild_id_str) # Changed
-                    continue
-            else:
-                logger.warning("CombatManager: Unknown participant type %s for entity %s in guild %s.", p_type, p_id, guild_id_str) # Changed
-                continue
+                turn_order.sort(key=lambda x: x["initiative"], reverse=True)
 
-            dex_modifier = (entity_dex - 10) // 2
-            initiative_roll = random.randint(1, 20)
-            initiative_score = initiative_roll + dex_modifier
-            logger.info("CombatManager: Initiative for %s (%s) in guild %s: 1d20(%s) + Dex(%s) = %s", entity_name, p_id, guild_id_str, initiative_roll, dex_modifier, initiative_score) # Changed
+                # 2. Create CombatEncounter
+                new_combat = CombatEncounter(
+                    guild_id=guild_id,
+                    location_id=location_id,
+                    status="active",
+                    turn_order_json=turn_order,
+                    participants_json=participants_json,
+                    combat_log_json=[{"event": "Combat started"}]
+                )
+                session.add(new_combat)
+                await session.flush()
 
-            participant_obj = CombatParticipant(
-                entity_id=p_id, entity_type=p_type, hp=entity_hp, max_hp=entity_max_hp,
-                initiative=initiative_score, acted_this_round=False
-            )
-            combat_participant_objects.append(participant_obj)
+                # 3. Update Participant Status
+                for entity_id, entity_type in participant_ids:
+                    if entity_type == "Player":
+                        player = await session.get(Player, entity_id)
+                        if player:
+                            player.current_status = "in_combat"
+                    elif entity_type == "NPC":
+                        # NPCs don't have a status field in the same way
+                        pass
 
-        if not combat_participant_objects:
-            logger.warning("CombatManager: No valid participants for combat in guild %s. Aborting start_combat.", guild_id_str) # Changed
-            return None
+                # 4. Log Event
+                if self._game_manager:
+                    await self._game_manager.game_log_manager.log_event(
+                        guild_id=guild_id,
+                        event_type="COMBAT_START",
+                        details={"combat_id": new_combat.id, "participants": participant_ids}
+                    )
 
-        combat_participant_objects.sort(key=lambda p: (p.initiative if p.initiative is not None else -1, p.max_hp), reverse=True)
+                return new_combat
 
-        turn_order_ids = [p.entity_id for p in combat_participant_objects]
-        current_turn_idx = 0
+    async def process_combat_action(self, guild_id: int, combat_instance_id: int, actor_id: int, actor_type: str, action_data: Dict[str, Any]) -> CombatActionResult:
+        if not self._db_service:
+            logger.error("CombatManager: DBService not available.")
+            return CombatActionResult(success=False, message="DBService not available.")
 
-        new_combat_id = str(uuid.uuid4())
-        combat_data: Dict[str, Any] = {
-            'id': new_combat_id,
-            'guild_id': guild_id_str,
-            'location_id': location_id_str,
-            'status': 'active', # Changed from is_active: True
-            'channel_id': kwargs.get('channel_id'),
-            'event_id': kwargs.get('event_id'),
-            'current_round': 1,
-            'participants': [p.to_dict() for p in combat_participant_objects],
-            'turn_order': turn_order_ids,
-            'current_turn_index': current_turn_idx,
-            'combat_log': [f"Combat started in location {location_id_str or 'Unknown'}."],
-            'state_variables': kwargs.get('initial_state_variables', {}),
-        }
+        async with self._db_service.get_session() as session:
+            async with session.begin():
+                from bot.database.models import CombatEncounter, Player, GeneratedNpc
+                from bot.game.models.combat import CombatActionResult
+                from sqlalchemy.future import select
 
-        try:
-            combat = Combat.from_dict(combat_data)
-            self._active_combats.setdefault(guild_id_str, {})[new_combat_id] = combat
-            self.mark_combat_dirty(guild_id_str, new_combat_id)
+                combat = await session.get(CombatEncounter, combat_instance_id)
+                if not combat:
+                    return CombatActionResult(success=False, message="Combat not found.")
 
-            log_message_success = f"Combat {new_combat_id} started in location {location_id_str} for guild {guild_id_str}."
-            if game_log_manager: asyncio.create_task(game_log_manager.log_info(log_message_success, guild_id=guild_id_str, combat_id=new_combat_id, location_id=location_id_str))
-            else: logger.info("CombatManager: %s", log_message_success) # Changed
+                # 1. Get Actor and Target
+                actor = None
+                if actor_type == "Player":
+                    actor = await session.get(Player, actor_id)
+                elif actor_type == "NPC":
+                    actor = await session.get(GeneratedNpc, actor_id)
 
-            send_cb_factory = kwargs.get('send_callback_factory')
-            combat_channel_id = getattr(combat, 'channel_id', None)
-            if send_cb_factory and combat_channel_id is not None and self._character_manager and self._npc_manager and self._location_manager:
-                  try:
-                      send_cb = send_cb_factory(int(combat_channel_id))
-                      location_name_str = location_id_str or "an unknown location"
-                      loc_details = self._location_manager.get_location_instance(guild_id_str, location_id_str) if location_id_str else None
-                      if loc_details: location_name_str = getattr(loc_details, 'name', location_id_str)
+                if not actor:
+                    return CombatActionResult(success=False, message="Actor not found.")
 
-                      start_message = f"Бой начинается в {location_name_str}!"
-                      if combat.turn_order:
-                          first_actor_id = combat.get_current_actor_id()
-                          first_actor_participant_obj = combat.get_participant_data(first_actor_id) if first_actor_id else None
-                          first_actor_name = "Кто-то"
-                          if first_actor_participant_obj:
-                              if first_actor_participant_obj.entity_type == "Character":
-                                  actor_char = self._character_manager.get_character(guild_id_str, first_actor_participant_obj.entity_id)
-                                  if actor_char:
-                                      first_actor_name = getattr(actor_char, 'name', first_actor_participant_obj.entity_id)
-                              elif first_actor_participant_obj.entity_type == "NPC":
-                                  actor_npc = self._npc_manager.get_npc(guild_id_str, first_actor_participant_obj.entity_id)
-                                  if actor_npc:
-                                      first_actor_name = getattr(actor_npc, 'name', first_actor_participant_obj.entity_id)
-                          start_message += f" {first_actor_name} ходит первым!"
-                      await send_cb(start_message)
-                  except Exception as e:
-                       logger.error("CombatManager: Error sending combat start message for guild %s, combat %s: %s", guild_id_str, new_combat_id, e, exc_info=True) # Changed
-            return combat
-        except Exception as e:
-            err_msg_create = f"CombatManager: Error creating Combat object or during setup for guild {guild_id_str}: {e}" # Added guild_id
-            if game_log_manager: asyncio.create_task(game_log_manager.log_error(f"{err_msg_create}\n{traceback.format_exc()}", guild_id=guild_id_str))
-            else: logger.error(err_msg_create, exc_info=True) # Changed
-            return None
+                target_id = action_data.get("target_id")
+                target_type = action_data.get("target_type")
+                target = None
+                if target_id and target_type:
+                    if target_type == "Player":
+                        target = await session.get(Player, target_id)
+                    elif target_type == "NPC":
+                        target = await session.get(GeneratedNpc, target_id)
+
+                if not target:
+                    return CombatActionResult(success=False, message="Target not found.")
+
+                # 2. Calculate Damage
+                # TODO: Use RuleEngine for damage calculation
+                damage = random.randint(1, 6)
+                
+                # 3. Apply Damage
+                hp_changes = []
+                if target_type == "Player":
+                    target.stats_json["hp"] -= damage
+                    hp_changes.append({"participant_id": target.id, "new_hp": target.stats_json["hp"]})
+                elif target_type == "NPC":
+                    target.stats_json["hp"] -= damage
+                    hp_changes.append({"participant_id": target.id, "new_hp": target.stats_json["hp"]})
+
+                # 4. Apply Status Effects
+                # TODO: Use RuleEngine for status effect application
+
+                # 5. Update Combat Log
+                combat.combat_log_json.append(f"{actor.name} attacks {target.name} for {damage} damage.")
+
+                # 6. Log Event
+                if self._game_manager:
+                    await self._game_manager.game_log_manager.log_event(
+                        guild_id=guild_id,
+                        event_type="COMBAT_ACTION",
+                        details={
+                            "combat_id": combat.id,
+                            "actor_id": actor_id,
+                            "actor_type": actor_type,
+                            "action_data": action_data,
+                            "damage": damage
+                        }
+                    )
+
+                return CombatActionResult(
+                    success=True,
+                    message=f"{actor.name} attacks {target.name} for {damage} damage.",
+                    hp_changes=hp_changes
+                )
 
     async def process_tick(self, combat_id: str, game_time_delta: float, **kwargs: Dict[str, Any]) -> bool:
         guild_id = kwargs.get('guild_id')

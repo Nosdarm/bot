@@ -1,134 +1,64 @@
 [
-  {
-    "id": "town_square",
-    "name_i18n": {
-      "en": "Town Square",
-      "ru": "[RU] Town Square"
+    {
+        "static_id": "town_square",
+        "name_i18n": {
+            "en": "Town Square",
+            "ru": "Городская площадь"
+        },
+        "descriptions_i18n": {
+            "en": "A bustling town square with a fountain in the center.",
+            "ru": "Шумная городская площадь с фонтаном в центре."
+        },
+        "type": "town",
+        "coordinates_json": {"x": 0, "y": 0},
+        "neighbor_locations_json": {
+            "tavern": {
+                "en": "A nearby tavern",
+                "ru": "Ближайшая таверна"
+            }
+        },
+        "points_of_interest_json": [
+            {
+                "name_i18n": {
+                    "en": "fountain",
+                    "ru": "фонтан"
+                },
+                "description_i18n": {
+                    "en": "A large, ornate fountain made of white marble. The water is crystal clear.",
+                    "ru": "Большой, богато украшенный фонтан из белого мрамора. Вода кристально чистая."
+                }
+            }
+        ]
     },
-    "description_i18n": {
-      "en": "A bustling town square with a fountain in the center. Cobblestone paths lead in various directions.",
-      "ru": "[RU] A bustling town square with a fountain in the center. Cobblestone paths lead in various directions."
-    },
-    "connections": ["tavern", "market_street", "guild_hall", "city_gate"]
-  },
-  {
-    "id": "tavern",
-    "name_i18n": {
-      "en": "The Drunken Dragon Tavern",
-      "ru": "[RU] The Drunken Dragon Tavern"
-    },
-    "description_i18n": {
-      "en": "A cozy, dimly lit tavern filled with the murmur of adventurers and locals. The air smells of ale and stew.",
-      "ru": "[RU] A cozy, dimly lit tavern filled with the murmur of adventurers and locals. The air smells of ale and stew."
-    },
-    "connections": ["town_square"]
-  },
-  {
-    "id": "market_street",
-    "name_i18n": {
-      "en": "Market Street",
-      "ru": "[RU] Market Street"
-    },
-    "description_i18n": {
-      "en": "A vibrant, busy street lined with colorful market stalls. Merchants hawk their wares, and shoppers haggle for goods.",
-      "ru": "[RU] A vibrant, busy street lined with colorful market stalls. Merchants hawk their wares, and shoppers haggle for goods."
-    },
-    "connections": ["town_square", "alchemist_shop"]
-  },
-  {
-    "id": "guild_hall",
-    "name_i18n": {
-      "en": "Adventurers' Guild Hall",
-      "ru": "[RU] Adventurers' Guild Hall"
-    },
-    "description_i18n": {
-      "en": "A grand hall with high ceilings and walls adorned with maps and trophies. A large board displays available quests.",
-      "ru": "[RU] A grand hall with high ceilings and walls adorned with maps and trophies. A large board displays available quests."
-    },
-    "connections": ["town_square"]
-  },
-  {
-    "id": "city_gate",
-    "name_i18n": {
-      "en": "Main City Gate",
-      "ru": "[RU] Main City Gate"
-    },
-    "description_i18n": {
-      "en": "The main gate of the city, heavily fortified and guarded. A wide road leads out into the wilderness.",
-      "ru": "[RU] The main gate of the city, heavily fortified and guarded. A wide road leads out into the wilderness."
-    },
-    "connections": ["town_square", "wilderness_ crossroads"]
-  },
-  {
-    "id": "alchemist_shop",
-    "name_i18n": {
-      "en": "The Alchemist's Brew",
-      "ru": "[RU] The Alchemist's Brew"
-    },
-    "description_i18n": {
-      "en": "A shop filled with bubbling concoctions, strange ingredients, and the scent of exotic herbs.",
-      "ru": "[RU] A shop filled with bubbling concoctions, strange ingredients, and the scent of exotic herbs."
-    },
-    "connections": ["market_street"]
-  },
-  {
-    "id": "wilderness_crossroads",
-    "name_i18n": {
-      "en": "Wilderness Crossroads",
-      "ru": "[RU] Wilderness Crossroads"
-    },
-    "description_i18n": {
-      "en": "A dusty crossroads outside the city. Paths lead into the forest, towards the mountains, and along the river.",
-      "ru": "[RU] A dusty crossroads outside the city. Paths lead into the forest, towards the mountains, and along the river."
-    },
-    "connections": ["city_gate", "forest_path", "mountain_trail"]
-  },
-  {
-    "id": "forest_path",
-    "name_i18n": {
-      "en": "Forest Path",
-      "ru": "[RU] Forest Path"
-    },
-    "description_i18n": {
-      "en": "A winding path leading into a dark and ancient forest.",
-      "ru": "[RU] A winding path leading into a dark and ancient forest."
-    },
-    "connections": ["wilderness_crossroads", "clearing_deepwood"]
-  },
-  {
-    "id": "mountain_trail",
-    "name_i18n": {
-      "en": "Mountain Trail",
-      "ru": "[RU] Mountain Trail"
-    },
-    "description_i18n": {
-      "en": "A steep and rocky trail ascending into the nearby mountains.",
-      "ru": "[RU] A steep and rocky trail ascending into the nearby mountains."
-    },
-    "connections": ["wilderness_crossroads", "cave_entrance"]
-  },
-  {
-    "id": "clearing_deepwood",
-    "name_i18n": {
-      "en": "Clearing in Deepwood",
-      "ru": "[RU] Clearing in Deepwood"
-    },
-    "description_i18n": {
-      "en": "A small, sun-dappled clearing deep within the forest. Ancient ruins are barely visible through the undergrowth.",
-      "ru": "[RU] A small, sun-dappled clearing deep within the forest. Ancient ruins are barely visible through the undergrowth."
-    },
-    "connections": ["forest_path"]
-  },
-  {
-    "id": "cave_entrance",
-    "name_i18n": {
-      "en": "Cave Entrance",
-      "ru": "[RU] Cave Entrance"
-    },
-    "description_i18n": {
-      "en": "A dark and foreboding cave entrance at the foot of the mountains.",
-      "ru": "[RU] A dark and foreboding cave entrance at the foot of the mountains."
-    },
-    "connections": ["mountain_trail"]
-  }
+    {
+        "static_id": "tavern",
+        "name_i18n": {
+            "en": "The Salty Siren",
+            "ru": "Соленая Сирена"
+        },
+        "descriptions_i18n": {
+            "en": "A cozy tavern filled with the smell of ale and sawdust.",
+            "ru": "Уютная таверна, наполненная запахом эля и опилок."
+        },
+        "type": "building",
+        "coordinates_json": {"x": 1, "y": 0},
+        "neighbor_locations_json": {
+            "town_square": {
+                "en": "The town square",
+                "ru": "Городская площадь"
+            }
+        },
+        "points_of_interest_json": [
+            {
+                "name_i18n": {
+                    "en": "bar",
+                    "ru": "барная стойка"
+                },
+                "description_i18n": {
+                    "en": "A long, wooden bar, stained with the rings of countless mugs.",
+                    "ru": "Длинная деревянная барная стойка, испачканная кольцами от бесчисленных кружек."
+                }
+            }
+        ]
+    }
 ]

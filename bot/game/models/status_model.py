@@ -67,4 +67,4 @@ class StatusEffect(BaseModel): # Renamed to StatusEffect to avoid direct clash i
     def increment_tick(self):
         self.current_tick += 1
 
-[end of bot/game/models/status_model.py]
+

@@ -355,7 +355,7 @@ class TestLocationManagerProcessCharacterMove(BaseLocationManagerTest):
                 return test_self.pydantic_loc_from
         return None
 
-    async def _mock_session_get_side_effect(self, model_cls: TypingAny, entity_id: TypingAny) -> TypingAny:
+    async def _mock_session_get_side_effect(self, model_cls: Any, entity_id: Any) -> Any:
         if model_cls == DBCharacter and entity_id == self.char_id: return self.db_character
         if model_cls == DBCharacter and entity_id == "char_member_2":
             member2 = MagicMock(spec=DBCharacter); member2.id = "char_member_2"; member2.guild_id = self.guild_id; member2.current_location_id = self.loc_from_id; return member2

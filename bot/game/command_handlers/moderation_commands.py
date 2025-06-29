@@ -15,6 +15,8 @@ async def _activate_approved_content_internal(request_id: str, context: Dict[str
 
     db_adapter = persistence_manager._db_adapter
     moderation_request = await db_adapter.get_pending_moderation_request(request_id)
+    print(f"DEBUG: request_id: {request_id}")
+    print(f"DEBUG: moderation_request: {moderation_request}")
 
     if not moderation_request:
         await send_to_master_channel(f"Error: Request {request_id} not found for activation.")
@@ -23,6 +25,7 @@ async def _activate_approved_content_internal(request_id: str, context: Dict[str
     original_user_id = moderation_request.get("user_id")
     guild_id = moderation_request.get("guild_id")
     content_type = moderation_request.get("content_type")
+    print(f"DEBUG: content_type: {content_type}")
     data_json_str = moderation_request.get("data")
 
     if not all([original_user_id, guild_id, content_type, data_json_str]):
@@ -31,6 +34,7 @@ async def _activate_approved_content_internal(request_id: str, context: Dict[str
 
     try:
         approved_data = json.loads(data_json_str)
+        print(f"DEBUG: approved_data: {approved_data}")
     except json.JSONDecodeError:
         await send_to_master_channel(f"Error: Invalid JSON in request {request_id}.")
         return False
@@ -88,7 +92,8 @@ async def _activate_approved_content_internal(request_id: str, context: Dict[str
         await send_to_master_channel(f"❌ Critical error during activation for {request_id}: {e_activate}.")
         await db_adapter.update_pending_moderation_request(request_id, 'activation_failed', context.get('author_id', 'System'), None)
         return False
-
+    
+    print(f"DEBUG: activation_successful: {activation_successful}")
     if activation_successful:
         if character_manager and status_manager: # Ensure managers are available
             player_char_to_update = await character_manager.get_character_by_discord_id(guild_id, int(original_user_id))

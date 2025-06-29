@@ -72,11 +72,9 @@ class WorldViewService:
         player_lang = DEFAULT_BOT_LANGUAGE
         viewer_char_obj: Optional[Character] = None
         if viewer_entity_type == 'Character' and self._character_manager:
-            char_result = await self._character_manager.get_character(guild_id, viewer_entity_id)
-            if isinstance(char_result, Character):
-                viewer_char_obj = char_result
-                if viewer_char_obj and viewer_char_obj.selected_language:
-                    player_lang = viewer_char_obj.selected_language
+            viewer_char_obj = await self._character_manager.get_character(guild_id, viewer_entity_id)
+            if viewer_char_obj and viewer_char_obj.selected_language:
+                player_lang = viewer_char_obj.selected_language
 
         print(f"WorldViewService: Using language '{player_lang}' for viewer {viewer_entity_id}.")
         world_state_description_parts = []
@@ -95,7 +93,7 @@ class WorldViewService:
                 if raw_value:
                     consequence_data = world_state_consequences_i18n.get(raw_value)
                     if consequence_data:
-                        consequence_desc = get_localized_string(consequence_data, 'description_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+                        consequence_desc = get_localized_string(key=consequence_data['description_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
                         if consequence_desc and "not found" not in consequence_desc.lower() and consequence_desc != raw_value:
                             world_state_description_parts.append(consequence_desc)
 
@@ -140,7 +138,7 @@ class WorldViewService:
                          entities_in_location.append(npc_obj)
 
         if self._item_manager:
-            items_in_loc_result = await self._item_manager.get_items_by_owner(guild_id, location_id, owner_type="location")
+            items_in_loc_result = await self._item_manager.get_items_by_owner(guild_id, location_id)
             if items_in_loc_result:
                 for item_any in items_in_loc_result:
                     item = cast(Item, item_any)
@@ -155,17 +153,17 @@ class WorldViewService:
                          entities_in_location.append(party)
 
         entities_to_list = entities_in_location
-        location_name = get_localized_string(location_data, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
-        location_description_base = get_localized_string(location_data, 'descriptions_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+        location_name = get_localized_string(key=location_data['name_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+        location_description_base = get_localized_string(key=location_data['descriptions_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
         description_text = f"**{location_name}**\n"
         main_description_parts = [location_description_base]
         if world_state_description_parts: main_description_parts.extend(world_state_description_parts)
 
-        location_details = get_localized_string(location_data, 'details_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+        location_details = get_localized_string(key=location_data['details_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
         if location_details and "not found" not in location_details.lower() and location_details != "details_i18n": main_description_parts.append(location_details)
-        location_atmosphere = get_localized_string(location_data, 'atmosphere_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+        location_atmosphere = get_localized_string(key=location_data['atmosphere_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
         if location_atmosphere and "not found" not in location_atmosphere.lower() and location_atmosphere != "atmosphere_i18n": main_description_parts.append(location_atmosphere)
-        location_features = get_localized_string(location_data, 'features_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+        location_features = get_localized_string(key=location_data['features_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
         if location_features and "not found" not in location_features.lower() and location_features != "features_i18n": main_description_parts.append(location_features)
 
         description_text += "\n".join(filter(None, main_description_parts))
@@ -173,7 +171,7 @@ class WorldViewService:
 
 
         if entities_to_list:
-            description_text += f"\n{get_localized_string(key='you_see_here_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)}\n" # Removed default_text
+            description_text += f"\n{get_localized_string(key='you_see_here_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)}\n"
             relationship_cues_i18n = {
                 "enemy_hostile": {"text_i18n": {"en": " (glares at you with intense hostility)", "ru": " (смотрит на вас с явной враждебностью)"}},
                 "enemy_wary": {"text_i18n": {"en": " (seems wary and distrustful of you)", "ru": " (кажется, относится к вам с подозрением и недоверием)"}},
@@ -183,7 +181,7 @@ class WorldViewService:
             }
             for entity in entities_to_list:
                 entity_name_i18n_dict = getattr(entity, 'name_i18n', None)
-                entity_name = get_localized_string(entity_name_i18n_dict if isinstance(entity_name_i18n_dict, dict) else None, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=getattr(entity, 'name', 'Unknown Entity'))
+                entity_name = get_localized_string(key=entity_name_i18n_dict if isinstance(entity_name_i18n_dict, dict) else None, lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=getattr(entity, 'name', 'Unknown Entity'))
 
 
                 entity_type_display = "???"
@@ -196,11 +194,10 @@ class WorldViewService:
                 if isinstance(entity, NPC) and self._relationship_manager and viewer_char_obj:
                     faction_data = getattr(entity, 'faction', None)
                     if faction_data and isinstance(faction_data, dict):
-                        localized_faction_name = get_localized_string(faction_data, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+                        localized_faction_name = get_localized_string(key=faction_data['name_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
                         if localized_faction_name and "not found" not in localized_faction_name.lower() and localized_faction_name != "name_i18n": faction_display_string = f", {localized_faction_name}"
 
-                    viewer_relationships_result = await self._relationship_manager.get_relationships_for_entity(guild_id, viewer_char_obj.id)
-                    viewer_relationships: List[Relationship] = viewer_relationships_result if viewer_relationships_result else []
+                    viewer_relationships: List[Relationship] = await self._relationship_manager.get_relationships_for_entity(guild_id, viewer_char_obj.id)
 
                     target_npc_id = entity.id
                     relationship_with_npc: Optional[Relationship] = None
@@ -215,15 +212,14 @@ class WorldViewService:
                         if cue_key:
                             cue_data = relationship_cues_i18n.get(cue_key)
                             if cue_data:
-                                localized_cue = get_localized_string(cue_data, 'text_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
+                                localized_cue = get_localized_string(key=cue_data['text_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
                                 if localized_cue and "not found" not in localized_cue.lower() and localized_cue != cue_data.get('text_i18n', {}).get(DEFAULT_BOT_LANGUAGE, {}).get(DEFAULT_BOT_LANGUAGE, "text_i18n"): # Fixed default access
                                     relationship_text_cue = localized_cue
                 description_text += f"- {entity_name} ({entity_type_display}{faction_display_string}){relationship_text_cue}\n"
 
         active_quest_data_list: List[Dict[str, Any]] = [] # Initialize to prevent unbound error
         if self._quest_manager and viewer_char_obj:
-            active_quest_data_list_result = await self._quest_manager.list_quests_for_character(guild_id, viewer_char_obj.id)
-            active_quest_data_list = active_quest_data_list_result if active_quest_data_list_result else []
+            active_quest_data_list = await self._quest_manager.list_quests_for_character(guild_id, viewer_char_obj.id)
             if active_quest_data_list: # Check if list is not empty before proceeding
                 active_quests_label = get_localized_string(key="active_quests_label", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
                 if entities_to_list or (not entities_to_list and (main_description_parts and any(part for part in main_description_parts if part and (part != location_description_base or part)))): description_text += "\n"
@@ -234,8 +230,8 @@ class WorldViewService:
                     current_objective_desc = ""
                     current_stage_id = quest_data_item.get('current_stage_id')
                     if current_stage_id:
-                        stage_title = await quest_obj.get_stage_title(str(current_stage_id))
-                        stage_desc = await quest_obj.get_stage_description(str(current_stage_id))
+                        stage_title = quest_obj.get_stage_title(str(current_stage_id))
+                        stage_desc = quest_obj.get_stage_description(str(current_stage_id))
                         if stage_title and stage_title != f"Stage {current_stage_id} Title": current_objective_desc = f"{stage_title}: {stage_desc}"
                         else: current_objective_desc = stage_desc if stage_desc else ""
                     if not current_objective_desc or "not found" in current_objective_desc.lower(): current_objective_desc = quest_obj.description
@@ -256,7 +252,7 @@ class WorldViewService:
                 exit_info = exits_data[exit_key]
                 if not isinstance(exit_info, dict): continue
                 target_location_id_exit = exit_info.get('target_location_id')
-                exit_display_name = get_localized_string(exit_info, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=exit_key.capitalize())
+                exit_display_name = get_localized_string(key=exit_info['name_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=exit_key.capitalize())
 
                 target_location_static_data_res = await self._location_manager.get_location_instance(guild_id, str(target_location_id_exit)) if target_location_id_exit else None
                 target_location_static_data: Optional[Dict[str, Any]] = None
@@ -271,7 +267,7 @@ class WorldViewService:
 
                 target_location_name_display = str(target_location_id_exit) if target_location_id_exit else "N/A"
                 if target_location_static_data:
-                    target_location_name_display = get_localized_string(target_location_static_data, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=str(target_location_id_exit))
+                    target_location_name_display = get_localized_string(key=target_location_static_data['name_i18n'], lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=str(target_location_id_exit))
                 description_text += f"- **{exit_display_name}** {get_localized_string(key='leads_to_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)} '{target_location_name_display}'\n"
         else:
             description_text += f"\n{get_localized_string(key='no_exits_label', lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)}\n"
@@ -291,26 +287,20 @@ class WorldViewService:
         player_lang = DEFAULT_BOT_LANGUAGE
         viewer_char_obj_details: Optional[Character] = None
         if viewer_entity_type == 'Character' and self._character_manager:
-            char_res_details = await self._character_manager.get_character(guild_id, viewer_entity_id)
-            if isinstance(char_res_details, Character):
-                viewer_char_obj_details = char_res_details
-                if viewer_char_obj_details and viewer_char_obj_details.selected_language:
-                    player_lang = viewer_char_obj_details.selected_language
+            viewer_char_obj_details = await self._character_manager.get_character(guild_id, viewer_entity_id)
+            if viewer_char_obj_details and viewer_char_obj_details.selected_language:
+                player_lang = viewer_char_obj_details.selected_language
         print(f"WorldViewService: Using language '{player_lang}' for entity details {entity_id}.")
 
         entity: Optional[Any] = None
         if entity_type == 'Character' and self._character_manager:
-             char_entity_res = await self._character_manager.get_character(guild_id, entity_id)
-             if isinstance(char_entity_res, Character): entity = char_entity_res
+             entity = await self._character_manager.get_character(guild_id, entity_id)
         elif entity_type == 'NPC' and self._npc_manager:
-             npc_entity_res = await self._npc_manager.get_npc(guild_id, entity_id)
-             if isinstance(npc_entity_res, NPC): entity = npc_entity_res
+             entity = await self._npc_manager.get_npc(guild_id, entity_id)
         elif entity_type == 'Item' and self._item_manager:
-             item_entity_res = await self._item_manager.get_item_instance_by_id(guild_id, entity_id)
-             if isinstance(item_entity_res, Item): entity = item_entity_res
+             entity = await self._item_manager.get_item_instance_by_id(guild_id, entity_id)
         elif entity_type == 'Party' and self._party_manager:
-             party_entity_res = await self._party_manager.get_party(guild_id, entity_id)
-             if isinstance(party_entity_res, Party): entity = party_entity_res
+             entity = await self._party_manager.get_party(guild_id, entity_id)
 
         if entity is None:
             print(f"WorldViewService: Error generating entity details: Entity {entity_type} ID {entity_id} not found in manager cache.")
@@ -330,14 +320,14 @@ class WorldViewService:
 
         final_entity_name = ""
         if isinstance(entity_name_i18n_val, dict):
-             final_entity_name = get_localized_string(entity_name_i18n_val, 'name_i18n', player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=str(entity_name_val))
+             final_entity_name = get_localized_string(key=entity_name_i18n_val, lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=str(entity_name_val))
         elif isinstance(entity_name_val, str):
             final_entity_name = entity_name_val
         else:
             final_entity_name = get_localized_string(key="unknown_entity_name", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
 
 
-        entity_type_display_details = get_localized_string(key=f"entity_type_{entity_type.lower()}", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=entity_type)
+        entity_type_display_details = get_localized_string(key=f"entity_type_{entity_type.lower()}", lang=player_lang, default_lang=DEFAULT_BOT_LANGUAGE)
         description_text += f"**{final_entity_name}** ({entity_type_display_details})\n"
         description_text += f"ID: {entity_id}\n"
 
@@ -368,9 +358,9 @@ class WorldViewService:
                 entity_obj_dict = entity_obj_param
 
             entity_display_name_inner_i18n = entity_obj_dict.get('name_i18n') if isinstance(entity_obj_dict.get('name_i18n'), dict) else None
-            entity_display_name_inner = get_localized_string(entity_display_name_inner_i18n, 'name_i18n', lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=str(entity_obj_dict.get('name', unknown_label)))
+            entity_display_name_inner = get_localized_string(key=entity_display_name_inner_i18n, lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=str(entity_obj_dict.get('name', unknown_label)))
 
-            entity_type_display_placeholder_inner = get_localized_string(key=f"entity_type_{entity_type_str.lower()}", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE, default_text=entity_type_str)
+            entity_type_display_placeholder_inner = get_localized_string(key=f"entity_type_{entity_type_str.lower()}", lang=lang, default_lang=DEFAULT_BOT_LANGUAGE)
 
             details += f"{type_label}: {entity_type_display_placeholder_inner}\n"
             details += f"{name_label}: {entity_display_name_inner}\n"

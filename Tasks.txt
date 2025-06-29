@@ -1,662 +1,513 @@
-# Проект: AI-Driven Text RPG Bot - Техническое Задание для Backend-Разработки (ФИНАЛЬНАЯ ВЕРСИЯ с УПРАВЛЕНИЕМ КОНТЕКСТОМ AI ЧЕРЕЗ UI)
-
-**Общий контекст проекта:** Это масштабируемый backend-сервис для Discord бота, поддерживающий множество независимых RPG миров (по гильдиям). Мир процедурно генерируется AI (OpenAI API) и управляется системой игровых механик (бой, квесты, диалоги) на основе настраиваемых правил. Все данные персистентно хранятся в масштабируемой БД, изолированно для каждой гильдии. Поддерживается многоязычие (RU/EN), NLU ввод, Система Ходов, инструментарий Мастера с возможностью ручного разрешения ситуаций.
-
----
-
-## Декомпозированный Список Задач для Backend-Разработки (Для AI Агента - Автономные Задачи)
-
----
-
-**Фаза 0: Архитектура и Инициализация (Foundation MVP)**
-
-1.  🔧 **0.1 Инициализация проекта Discord бота и базовая интеграция с Guilds.**
-    *   Описание: Настроить структуру Python проекта с использованием выбранного асинхронного фреймворка. Инициализировать интеграцию с Discord API, обрабатывать базовые события Discord (`on_ready`, `on_message`, `on_guild_join`, `on_guild_remove`). Настроить логирование. **Реализуйте обработку события `on_guild_join`: при добавлении бота на новый сервер Discord (гильдию), выполните первоначальную инициализацию для этой гильдии (создать записи в БД для новой гильдии: дефолтные RuleConfig и WorldState, сохранить ID каналов в `GuildConfig`).** Реализуйте служебные команды (напр., `/ping`). **Реализуйте команду `/lang [ru|en]` для игрока для выбора и сохранения его языка в БД (`Player.selected_language`).** **Реализуйте команду `/set_bot_language [ru|en]` (только для Мастера) для выбора основного языка бота для **этой гильдии** и сохранения его в `GuildConfig`.**
-    *   Результат: Базовый работающий Discord бот, настроенный для работы с несколькими гильдиями, логирование, система языков.
-
-2.  💾 **0.2 Настройка СУБД и определение моделей БД с Guild ID.**
-    *   Описание: Выберите масштабируемую СУБД (PostgreSQL/MySQL) и ORM. Определите структуру всех моделей данных в БД. **Критично: Все модели, хранящие игровые данные, специфичные для конкретной гильдии, ДОЛЖНЫ ВКЛЮЧАТЬ поле `guild_id` (BIGINT, Indexed) как часть составного ключа или FK к `GuildConfig`).** (Детали полей см. в описаниях задач, где эти модели детализируются: Player, Location, WorldState, Party, GeneratedNpc, GeneratedFaction, GeneratedQuest, Item, Inventory, Log, Relationship, PlayerNpcMemory, RuleConfig, Ability, Skill, Status, ItemProperty, Questline, QuestStep, MobileGroup, CraftingRecipe). **Текстовые поля - JSONB (`_i18n`).**
-    *   Реализуйте модель `GuildConfig`: id (PK, BIGINT - ID самой Discord гильдии), master_channel_id (BIGINT), system_channel_id (BIGINT), notification_channel_id (BIGINT, для уведомлений о модерации/конфликтах), main_language (TEXT).
-    *   Настройте ORM и миграции.
-    *   Результат: Схема БД готова для полной изоляции игровых данных по гильдиям и хранения всех типов игровых данных с многоязычием.
-
-3.  🔧 **0.3 Базовые утилиты взаимодействия с БД и доступом к конфигу правил (Guild-Aware).**
-    *   Описание: Реализовать низкоуровневые функции для работы с БД, которые всегда оперируют в контексте указанной гильдии.
-    *   Реализуйте утилиты для управления сессиями ORM (`get_db_session`). **Реализуйте декораторы или контекстные менеджеры для управления ТРАНЗАКЦИЯМИ ORM (@transactional(guild_id)). Эти транзакции ДОЛЖНЫ оперировать ТОЛЬКО С ДАННЫМИ ВНУТРИ УКАЗАННОГО `guild_id`.**
-    *   **Реализуйте утилиты CRUD (`get_entity_by_id`, `create_entity`, `update_entity`, `delete_entity`) для ВСЕХ моделей.** Эти утилиты ДОЛЖНЫ принимать `guild_id` как ПЕРВЫЙ обязательный параметр и АВТОМАТИЧЕСКИ добавлять условие `WHERE guild_id = :guild_id` в запросы.
-    *   **Реализуйте утилиту `load_rules_config(guild_id: int) -> dict`**: Загружает все записи `RuleConfig` (0.2) *для указанной гильдии* и формирует словарь правил. Кэширует этот словарь **per-guild** в памяти процесса бота.
-    *   **Реализуйте утилиту `get_rule(guild_id: int, key: str) -> Any`**: Получает параметр правила ИЗ КЭША *для указанной гильдии* по ключу. Обработка ошибок.
-    *   **Реализуйте утилиту `update_rule_config(guild_id: int, key: str, value: Any)`**: Обновляет RuleConfig в БД *для указанной гильгии*. После успешного сохранения, обновляет кэш правил для этой гильдии (`load_rules_config`).
-    *   Результат: Набор утилит для надежной, безопасной (изолированной по гильдиям) работы с данными БД и настраиваемыми правилами.
-
----
-
-🌍 **Фаза 1: Игровой Мир (Static & Generated)**
-
-4.  🌍 **1.1 Модель Локации (i18n, Guild-Scoped).** (0.2)
-    *   Описание: Определить модель локации в БД, привязанную к гильдии, с поддержкой мультиязычности и связей. Эта модель будет хранить как статические, так и сгенерированные детали локации.
-    *   Реализуйте модель `Location` (0.2) с полями: id (PK, INTEGER), **guild_id (BIGINT, Indexed, FK to GuildConfig)**, static_id (TEXT, уникален в рамках гильдии), name_i18n (JSONB - для статического или основного сгенерированного имени), descriptions_i18n (JSONB - для статического или основного сгенерированного описания), type (TEXT enum), coordinates_json (JSONB), **neighbor_locations_json (JSONB - список {location_id: связь_тип_i18n})**, **generated_details_json (JSONB - дополнительные сгенерированные описательные детали)**, **ai_metadata_json (JSONB - для AI генерации)**.
-    *   Наполнение БД статическими данными при `on_guild_join` (0.1). Лор Мира также хранится в БД (например, в WorldState или отдельной таблице), привязан к гильдии.
-    *   Утилиты `get_location(guild_id, location_id)`, `get_static_location_id(guild_id, static_id)`. Утилита для получения локализованного текста описания локации/лора (используя `_i18n` поля и резервные языки 0.1).
-    *   Результат: Модель Location определена, статические данные доступны и изолированы.
-
-5.  🌍 **1.2 Система игроков и групп (ORM, Commands, Guild-Scoped).** (0.2, 0.3, 0.1)
-    *   Описание: Управление игроками и партиями в рамках гильдии.
-    *   Реализуйте модель `Player` (0.2/7). Поля: id (PK, INTEGER), **guild_id (BIGINT, Indexed)**, discord_id (BIGINT, Indexed), name (TEXT), current_location_id (INTEGER FK), **selected_language (TEXT)**, xp (INT), level (INT), unspent_xp (INT), gold (INT), **current_status (TEXT - enum)**, **collected_actions_json (JSONB)**, current_party_id (INTEGER FK Nullable). **(Составной Unique Index: guild_id, discord_id)**.
-    *   Реализуйте модель `Party` (0.2). Поля: id (PK, INTEGER), **guild_id (BIGINT, Indexed)**, name (TEXT), player_ids_json (JSONB), current_location_id (INTEGER FK), **turn_status (TEXT - enum)**.
-    *   Команда `/start`: Получить `guild_id` из контекста команды Discord. Создать `Player` с этим `guild_id` через утилиты 0.3. Присвоить стартовую локацию (через 4). Установить дефолтные статы, XP, уровень, статус 'исследование'.
-    *   Команды `/party create/join/leave/disband`: Управление `Party` **в контексте гильдии**. Все загрузки/изменения Player/Party С УЧЕТОМ `guild_id` (0.3).
-    *   Утилиты `get_player(guild_id, player_id)`, `get_party(guild_id, party_id)`, `get_players_in_location(guild_id, location_id)`.
-
-6.  🌍 **1.3 Логика Перемещения (Player/Party, Guild-Scoped).** (4, 5, 0.3, 14)
-    *   Описание: Реализация механики перемещения между локациями внутри одной гильдии.
-    *   API функция `handle_move_action(guild_id: int, player_id: int, target_location_identifier: str)`. Принимает `guild_id`.
-    *   Загружает Player (с `guild_id`). Определяет текущую локацию и target_location (4.1) С УЧЕТОМ `guild_id`.
-    *   Проверяет связи локаций (статические 4.1 `static_connections_json` и сгенерированные `Location.neighbor_locations_json` 4.1).
-    *   **Если игрок в партии: Проверяет правила перемещения партии (RuleConfig 13) ДЛЯ ЭТОЙ ГИЛЬДИИ**, если игрок в партии.
-    *   **В рамках ОДНОЙ ТРАНЗАКЦИИ (0.3), оперирующей ТОЛЬКО С ДАННЫМИ ЭТОЙ ГИЛЬДИИ:** Обновляет локацию Player (и Party). Логирует событие перемещения (19) С ЭТИМ `guild_id`.
-    *   **После commit:** Асинхронно вызывает `on_enter_location(guild_id, entity_id, entity_type, target_location_id)` (14).
-    *   *MVP:* Привязать к `/move`. NLU (10/12) будет передавать `guild_id`.
-
----
-
-🧠 **Фаза 2: Интеграция AI - Ядро Генерации**
-
-7.  🧠 **2.1 Завершение определения ВСЕХ схем БД (i18n, Guild ID).** (0.2, 0.3)
-    *   Описание: Финальная структура всех ORM схем (полей и связей) для всех игровых сущностей. **Каждая модель, хранящая игровое состояние, должна иметь поле `guild_id`**. Текстовые поля - JSONB (`_i18n`).
-    *   Включая модели: `GeneratedLocation` (расширяет Location 4.1?), `GeneratedNpc`, `GeneratedFaction`, `GeneratedQuest`, `Item`, `Inventory`, `Log`, `Relationship`, `PlayerNpcMemory`, `Ability`, `Skill`, `Status`, `ItemProperty`, `Questline`, `QuestStep`, `MobileGroup`, `CraftingRecipe`. **Все эти модели ДОЛЖНЫ ВКЛЮЧАТЬ `guild_id` (BIGINT, Indexed) как часть первичного ключа или уникального индекса, и как Foreign Key к `GuildConfig` (0.2).**
-
-8.  🧠 **2.2 Модуль подготовки промпта AI.** (1, 4, 7, 13, 14, 30, 36, 37, 38, 39, 40)
-    *   Описание: Сбор контекста мира для конкретной гильдии и формирование запроса к AI на генерацию нового контента.
-    *   API: `prepare_ai_prompt(guild_id: int, location_id: int, player_id: Optional[int] = None, party_id: Optional[int] = None) -> str`. **Принимает `guild_id`.**
-    *   Собирает контекст (WS 36, отношения 30/31/32, квесты 35/36, лор 4, уровень группы 5) **ВСЕ ДАННЫЕ ДЛЯ ЭТОЙ ГИЛЬДИИ**. **Включает "словарь" игровых терминов (статы, навыки, сущности) ИЗ БД ДЛЯ ЭТОЙ ГИЛЬДИИ (14/13/30/36/37) как API для AI.**
-    *   Запрос: Генерация сущностей (NPC, Квесты, Предметы, Локации, События) **соответствующих правилам и контексту ДЛЯ ЭТОЙ ГИЛЬДИИ**. **Генерировать тексты НА ОСНОВНОМ ЯЗЫКЕ БОТА ДЛЯ ЭТОЙ ГИЛЬДИИ (1) И на АНГЛИЙСКОМ**, в формате `_i18n JSONB`.
-
-9.  🧠 **2.3 Модуль парсинга и валидации ответа от AI.** (7, 13, 14, 30, 37, 39, 18, 16)
-    *   Описание: Парсинг и многоуровневая валидация ответа AI.
-    *   API: `parse_and_validate_ai_response(raw_ai_output_text: str, guild_id: int) -> ParsedAiData | ValidationError`. **Принимает `guild_id`.**
-    *   Парсинг JSON. **Валидация структуры (по схеме 7).**
-    *   **Семантическая валидация (по правилам 13/14/30/37/39/40) ДЛЯ ЭТОЙ ГИЛЬДИИ:** Проверка соответствия сгенерированных данных правилам и контексту (диапазоны статов, корректность связей, структура квеста, цены, согласованность), **наличия текстов на обоих запрашиваемых языках в `_i18n` полях.** Автокоррекция, пометка проблем.
-
-10. 🧠 **2.6 Логика AI-генерации, Модерации и Сохранения.** (7, 14, 15, 16, 17, 19, 41, OpenAI API, 0.3, 1, 3, 12, 13, 21)
-    *   Описание: Полный цикл генерации контента с ручным контролем Мастера.
-    *   Функция `trigger_location_generation(guild_id: int, ...)`. **Принимает `guild_id`.**
-    *   Вызов 16 -> API -> 17.
-    *   **Pending модерации:** Если 17 валидно, создать `PendingGeneration` запись **С `guild_id`**. Уведомление Мастеру (41) В КАНАЛ УВЕДОМЛЕНИЙ **ЭТОЙ ГИЛЬДИИ**. Статус игрока(ов) 'ожидание_модерации' **В ЭТОЙ ГИЛЬДИИ**.
-    *   **API Мастера (41) для модерации:** `/master review_ai`, `/master approve_ai`, `/master edit_ai`, `/master reject_ai`. **Оперируют записями PendingGeneration ПО `guild_id`.** Редактирование `_i18n` полей.
-    *   **Worker сохранения:** Мониторит `PendingGeneration`. При 'approved', **копирует `guild_id` в КАЖДУЮ генерируемую сущность** и сохраняет в БД (7, 14 и др.) в транзакции **для этой гильдии**. Асинхронно вызывает `on_enter_location(guild_id, ...)` (14).
+Project: AI-Driven Text RPG Bot - Backend Technical Specification (FINAL VERSION with AI CONTEXT MANAGEMENT VIA UI)
+Overall Project Context: This is a scalable backend service for a Discord bot supporting numerous independent RPG worlds (per guild). The world is procedurally generated by AI (OpenAI API) and managed by a system of game mechanics (combat, quests, dialogues) based on configurable rules. All data is persistently stored in a scalable DB, isolated for each guild. Multilingual support (RU/EN), NLU input, a Turn System, and Master tools allowing manual situation resolution are supported.
 
----
+Decomposed Backend Development Task List (For AI Agent - Autonomous Tasks)
 
-🎲 **Фаза 6: Системы Разрешения Действий (Core Mechanics)**
+Phase 0: Architecture and Initialization (Foundation MVP)
+🔧 0.1 Discord Bot Project Initialization and Basic Guild Integration.
+Description: Set up the Python project structure using the chosen asynchronous framework. Initialize integration with the Discord API, handle basic Discord events (on_ready, on_message, on_guild_join, on_guild_remove). Configure logging. Implement  Implement utility commands (e.g., /ping). Implement the  Implement the 
+Result: Basic working Discord bot, configured for multiple guilds, logging, language system.
 
-11. 🎲 **6.3.1 Модуль Броска Кубиков (Dice Roller).** (Нет)
-    *   Описание: Реализовать парсер и функцию броска кубиков. Не привязана к гильдии.
-    *   API: `roll_dice(dice_string: str) -> Tuple[int, List[int]]`.
 
-12. 🎲 **6.3.2 Модуль Разрешения Проверок (Check Resolver).** (14, 0.3, 11, 47)
-    *   Описание: Модуль для расчета исходов проверок по правилам RuleConfig.
-    *   API: `resolve_check(guild_id: int, check_type: str, entity_doing_check_id: int, entity_doing_check_type: str, target_entity_id: Optional[int] = None, target_entity_type: Optional[str] = None, difficulty_dc: Optional[int] = None, check_context: Optional[dict] = None) -> CheckResult`.
-    *   **Принимает `guild_id`.** Получает правила **RuleConfig ДЛЯ ЭТОЙ ГИЛЬДИИ (0.3/13)**. Загружает сущностей **по `guild_id` (0.3)**. Использует `Effective_Stats` (14) ДЛЯ ЭТОЙ СУЩНОСТИ В ЭТОЙ ГИЛЬДИИ.
-    *   Рассчитывает модификатор по правилам, используя статы, навыки (14), экипировку (15), статусы (14), отношения (31), и контекст.
-    *   Вызывает 11 (`roll_dice`). Рассчитывает итоговый результат. Определяет исход по правилам (сравнение результат vs DC/vs_result).
-    *   Возвращает результат И объект с деталями (для лога 19, фидбека 47).
+💾 0.2 DBMS Setup and Database Model Definition with Guild ID.
+Description: Select a scalable DBMS (PostgreSQL/MySQL) and ORM. Define the structure of all data models in the DB. Crucial: All models storing game data specific to a particular guild MUST INCLUDE a guild_id field (BIGINT, Indexed) as part of a composite key or FK to GuildConfig). (Field details are in task descriptions where these models are detailed: Player, Location, WorldState, Party, GeneratedNpc, GeneratedFaction, GeneratedQuest, Item, Inventory, Log, Relationship, PlayerNpcMemory, RuleConfig, Ability, Skill, Status, ItemProperty, Questline, QuestStep, MobileGroup, CraftingRecipe). Text fields - JSONB (_i18n).
+Implement the GuildConfig model: id (PK, BIGINT - the Discord guild's ID itself), master_channel_id (BIGINT), system_channel_id (BIGINT), notification_channel_id (BIGINT, for moderation/conflict notifications), main_language (TEXT).
+Configure ORM and migrations.
+Result: DB schema is ready for full data isolation by guild and storing all types of game data with multilingual support.
 
-13. ⚙️ **6.10 Модуль Парсинга и Распознавания Действий (NLU & Intent/Entity).** (1, 4, 7, 14, 0.2, 0.3, **Выбор NLU Libs**, **Guild-Scoped Dictionary**)
-    *   Описание: Понимает повествовательный ввод игрока и извлекает его намерения и цели в контексте его гильдии.
-    *   Async Listener для `on_message(message)`. Получает `guild_id`. Проверяет статус игрока. Использует NLU библиотеку и словарь сущностей **ТОЛЬКО ДЛЯ ЭТОЙ ГИЛЬДИИ**. Сохраняет Action (JSON) в `player.collected_actions_json` (0.2) **для этого игрока в этой гильдии**.
 
-14. ⚙️ **6.12 Система Очереди Ходов (Turn Controller) - Per-Guild Processing.** (1, 2, 13, 21, 1.3, 19, 11.3, 25, 35, 15, 36, **Per-Guild Async Workers/Queue Management**)
-    *   Описание: Управляет пошаговым течением игры и триггерит обработку действий независимо для каждой гильдии.
-    *   Модели `Player` и `Party` со статусами, привязанными к гильдии (0.2/1.2).
-    *   Async Listener для `/end_turn`/`/end_party_turn`. Получает `guild_id`.
-    *   Обновляет статус игрока(ов) **в этой гильдии** в транзакции (0.3).
-    *   Если условия для обработки хода в этой гильдии выполнены: Устанавливает статус(ы) на 'обрабатывается' **в этой гильдии**. **Запускает async worker для Модуля Обработки Действий (15), передавая ему `guild_id`.**
+🔧 0.3 Basic DB Interaction Utilities and Rule Configuration Access (Guild-Aware).
+Description: Implement low-level functions for working with the DB that always operate within the context of the specified guild.
+Implement utilities for managing ORM sessions (get_db_session). Implement decorators or context managers for managing ORM TRANSACTIONS (@transactional(guild_id)). These transactions MUST operate ONLY WITH DATA WITHIN THE SPECIFIED guild_id.
+Implement CRUD utilities (get_entity_by_id, create_entity, update_entity, delete_entity) for ALL models. These utilities MUST accept guild_id as the FIRST mandatory parameter and AUTOMATICALLY add the condition WHERE guild_id = :guild_id to queries.
+Implement the load_rules_config(guild_id: int) -> dict utility: Loads all RuleConfig records (0.2) for the specified guild and forms a rules dictionary. Caches this dictionary per-guild in the bot process memory.
+Implement the get_rule(guild_id: int, key: str) -> Any utility: Retrieves a rule parameter FROM THE CACHE for the specified guild by key. Handle errors.
+Implement the update_rule_config(guild_id: int, key: str, value: Any) utility: Updates the RuleConfig in the DB for the specified guild. After successful saving, updates the cache for this guild (load_rules_config).
+Result: A set of utilities for reliable, secure (guild-isolated) DB data access and configurable rules.
 
-15. ⚙️ **6.11 Центральный Модуль Обработки Накопленных Действий (Turn Processor) - Guild-Scoped Execution.** (14, 13, 14, 0.3, 19, 47, 21, 36, 38, 40, 1.3, 25, 15, 35, **Конфликт Разрешения, Уведомление Мастера 41, Транзакции 0.3**)
-    *   Описание: Основной асинхронный исполнитель игровой логики для одного хода в одной гильдии. Обрабатывает все накопленные игроками действия, разрешает конфликты и вызывает соответствующие игровые модули.
-    *   Async Worker: **Принимает `guild_id`** и список player_id/party_id от 14.
-    *   **ВСЕ операции с данными (загрузка, сохранение, обновление) ДОЛЖНЫ ИСПОЛЬЗОВАТЬ ПЕРЕДАННЫЙ `guild_id`.** Утилиты 0.3, 14, 15, и вызовы других модулей ДОЛЖНЫ принимать его.
-    *   Загружает Players по `guild_id`. Извлекает actions, очищает поле в БД.
-    *   **Этап Анализа Конфликтов (Партия):** Если партия, анализирует actions по правилам `conflict_resolution_rules` ИЗ RULECONFIG ДЛЯ ЭТОЙ ГИЛЬДИИ (13/41).
-        *   **Если конфликт требует РУЧНОЙ модерации:** Создать запись pending конфликта **С `guild_id`**. Уведомление Мастеру (41) В КАНАЛ **ЭТОЙ ГИЛЬДИИ**. Пометить действия как 'ожидающие'. **Приостановить обработку.**
-    *   **Этап Автоматического Разрешения Конфликтов:** Если конфликт `auto_resolve == true`: Определить тип проверки (RuleConfig 13/41), вызвать 12 (Модуль Проверок, **передавая `guild_id`**). Определить результат по правилам 13/44. Логгировать решение (19).
-    *   **Этап Выполнения Действий:** Итерировать по actions (пропуская ожидающие). Для каждого action:
-        *   **Начать АТОМАРНУЮ ТРАНЗАКЦИЮ (0.3) СКОУПОМ НА ЭТУ ГИЛЬДИЮ.**
-        *   Передать управление соответствующему модулю (1.3 - Move, 21 - Look, 25 - Combat init/action, 15 - Inventory actions, 35 - Quest progress event, 16 - Intra-Location Interaction) **ПЕРЕДАВАЯ ЕМУ `guild_id` и action data**. Модуль выполняет логику, обновляет БД. **Commit транзакции.**
-    *   Сбор фидбека (47). Логгирование (19). Формирование отчета (47). Обновление статусов.
 
-16. ⚙️ **6.1.1 Модуль Взаимодействия Внутри Локации (Intra-Location Interaction Handler).** (15, 4.1, 0.3, 15, 12, 21, 35, **Правила 13/41**)
-    *   Описание: Обрабатывает действия игрока, направленные на объекты или сублокации ВНУТРИ текущей локации.
-    *   API функция `handle_intra_location_action(guild_id: int, session: Session, player_id: int, action_data: dict) -> dict`. **Вызывается из 15 (Центральный Процессор Хода). Принимает `guild_id` и сессию БД от 15, а также action data (intent/entity) от NLU (13).**
-    *   Определяет тип взаимодействия (move_to_sublocation, interact_with_object, examine_object) на основе `action_data['intent']`.
-    *   Загружает Player (с `guild_id`) и его текущую локацию (4.1). Находит целевую сущность (сублокация/объект) в БД (4.1, 7, 14) **по `guild_id`** и Entity ID из action_data.
-    *   **Использует правила ИЗ RULECONFIG (13/41) ДЛЯ ЭТОЙ ГИЛЬДИИ** для определения, как взаимодействовать: требуется ли проверка (12)? Какие последствия (изменение WorldState 36, получение предмета 15, триггер квеста 35)?
-    *   Выполняет соответствующую логику (обновление "позиции внутри локации" игрока - новое поле в Player?, вызов 12 для проверки, вызовы 15/35/36 для последствий). **Все в рамках предоставляемой транзакции (session).**
-    *   Логгирование (19) для гильдии. Фидбек (47).
 
----
+🌍 Phase 1: Game World (Static & Generated)
+🌍 1.1 Location Model (i18n, Guild-Scoped). (0.2)
+Description: Define the location model in the DB, linked to a guild, with multilingual support and relationships. This model will store both static and generated location details.
+Implement the Location model (0.2) with fields: id (PK, INTEGER), guild_id (BIGINT, Indexed, FK to GuildConfig), static_id (TEXT, unique within the guild), name_i18n (JSONB - for static or primary generated name), descriptions_i18n (JSONB - for static or primary generated description), type (TEXT enum), coordinates_json (JSONB), neighbor_locations_json (JSONB - list of {location_id: connection_type_i18n}), generated_details_json (JSONB - additional generated descriptive details), ai_metadata_json (JSONB - for AI generation).
+Populate the DB with static data during on_guild_join (0.1). World Lore is also stored in the DB (e.g., in WorldState or a separate table), linked to the guild.
+Utilities get_location(guild_id, location_id), get_static_location_id(guild_id, static_id). A utility to get localized location/lore text (using _i18n fields and fallback languages 0.1).
+Result: Location model defined, static data accessible and isolated.
 
-## Блок Задач: Фаза 7: Нарративная Генерация и Журнал Событий
 
-В этом блоке представлены задачи, связанные с ведением журнала событий и генерацией нарративного текста, включая отчеты о ходе.
+🌍 1.2 Player and Party System (ORM, Commands, Guild-Scoped). (0.2, 0.3, 0.1)
+Description: Managing players and parties within a guild.
+Implement the Player model (0.2/7). Fields: id (PK, INTEGER), guild_id (BIGINT, Indexed), discord_id (BIGINT, Indexed), name (TEXT), current_location_id (INTEGER FK), selected_language (TEXT), xp (INT), level (INT), unspent_xp (INT), gold (INT), current_status (TEXT - enum), collected_actions_json (JSONB), current_party_id (INTEGER FK Nullable). (Composite Unique Index: guild_id, discord_id).
+Implement the Party model (0.2). Fields: id (PK, INTEGER), guild_id (BIGINT, Indexed), name (TEXT), player_ids_json (JSONB), current_location_id (INTEGER FK), turn_status (TEXT - enum).
+/start command: Get guild_id from Discord command context. Create Player with this guild_id using 0.3 utilities. Assign starting location (via 4). Set default stats, XP, level, 'exploring' status.
+/party create/join/leave/disband commands: Manage Party within the guild context. All Player/Party loading/modification MUST use guild_id (0.3).
+Utilities get_player(guild_id, player_id), get_party(guild_id, party_id), get_players_in_location(guild_id, location_id).
 
----
 
-**Задача 17: 📚 7.1 Модель Журнала Событий (Story Log, i18n, Guild-Scoped).**
+🌍 1.3 Movement Logic (Player/Party, Guild-Scoped). (4, 5, 0.3, 14)
+Description: Implement the mechanic of moving between locations within one guild.
+API function handle_move_action(guild_id: int, player_id: int, target_location_identifier: str). Accepts guild_id.
+Loads Player (with guild_id). Determines current location and target_location (4.1) CONSIDERING guild_id.
+Checks location connections (static 4.1 static_connections_json and generated Location.neighbor_locations_json 4.1).
+If player is in a party: Checks party movement rules (RuleConfig 13) FOR THIS GUILD, if the player is in a party.
+Within a SINGLE TRANSACTION (0.3), operating ONLY ON DATA WITHIN THIS GUILD: Updates the Player's (and Party's) location. Logs the movement event (19) WITH THIS guild_id.
+After commit: Asynchronously calls on_enter_location(guild_id, entity_id, entity_type, target_location_id) (14).
+MVP: Link to /move. NLU (10/12) will pass guild_id.
 
-*   Описание: Модель для хранения подробного журнала игровых событий в каждой гильдии. **Переименована из 5.1, перенесена).**
-    *   Реализуйте модель `StoryLog` (0.2/7). Поля: id (PK), **guild_id (BIGINT, Indexed, FK to GuildConfig)**, timestamp (DATETIME), location_id (INTEGER FK, Nullable), event_type (TEXT, ENUM?), **entity_ids_json (JSONB - {"players":[...], "npcs":[...], ...} - ссылки на затронутые сущности по ID)**, **details_json (JSONB - полная детализация события, для отката 20 и фидбека 47).**
-    *   Реализуйте API `log_event(session: Session, guild_id: int, event_type: str, details_json: dict, player_id=None, party_id=None, location_id=None, entity_ids_json=None)`: Сохраняет запись в StoryLog **в рамках предоставленной транзакции (session)**, С УКАЗАНИЕМ ЭТОГО `guild_id`. Вызывается всеми модулями, изменяющими состояние или производящими важные события.
-    *   Результат: Модель StoryLog определена, API для логирования событий в рамках гильдии реализовано.
 
----
 
-**Задача 18: 📚 7.2 AI-Генерация Нарратива (Multilang).**
+🧠 Phase 2: AI Integration - Generation Core
+🧠 2.1 Finalize Definition of ALL DB Schemas (i18n, Guild ID). (0.2, 0.3)
+Description: Final structure for all ORM schemas (fields and relationships) for all game entities. Every model storing game state must have a guild_id field. Text fields - JSONB (_i18n).
+Including models: GeneratedLocation (extends Location 4.1?), GeneratedNpc, GeneratedFaction, GeneratedQuest, Item, Inventory, Log, Relationship, PlayerNpcMemory, Ability, Skill, Status, ItemProperty, Questline, QuestStep, MobileGroup, CraftingRecipe. All these models MUST INCLUDE guild_id (BIGINT, Indexed) as part of the primary key or a unique index, and as a Foreign Key to GuildConfig (0.2).
 
-*   Описание: Вызов LLM для генерации более свободного нарративного текста (описание события, реакции на что-то).
-*   API `generate_narrative(guild_id: int, context: dict) -> str`. **Принимает `guild_id`. Вызывается другими модулями для обогащения описания события.**
-*   Формирует промпт LLM: Контекст (событие, участники, локация, WorldState - **все для этой гильдии**). **Просит LLM сгенерировать текст НА ЯЗЫКЕ ИГРОКА (0.1/0.2) или основном языке бота (гильдии 1), соответствующий контексту.**
-*   Результат: API для генерации нарративного текста по запросу.
 
----
+🧠 2.2 AI Prompt Preparation Module. (1, 4, 7, 13, 14, 30, 36, 37, 38, 39, 40)
+Description: Collects world context for a specific guild and forms a request to the AI for generating new content.
+API: prepare_ai_prompt(guild_id: int, location_id: int, player_id: Optional[int] = None, party_id: Optional[int] = None) -> str. Accepts guild_id.
+Collects context (WS 36, relationships 30/31/32, quests 35/36, lore 4, party level 5) ALL DATA FOR THIS GUILD. Includes a "dictionary" of game terms (stats, skills, entities) FROM THE DB FOR THIS GUILD (14/13/30/36/37) as an API for the AI.
+Request: Generation of entities (NPCs, Quests, Items, Locations, Events) corresponding to the rules and context FOR THIS GUILD. Generate texts in the bot's MAIN LANGUAGE FOR THIS GUILD (1) AND in ENGLISH, in _i18n JSONB format.
 
-**Задача 19: 📚 7.3 Форматирование Ходов и Репортов (Guild-Scoped).**
 
-*   Описание: Модуль, преобразующий структурированные данные о событиях (из StoryLog) в читабельные отчеты для игроков и Мастера. **(Перенесена из 6.7.1).**
-*   API `format_log_entry(log_entry_details_json: dict, language: str) -> str`. **Принимает JSON детали лога (из StoryLog 17) и язык.** Использует `guild_id` из `details_json` для загрузки i18n названий сущностей (из БД по их ID и `guild_id`) и RuleConfig терминов (из кэша 0.3) **ДЛЯ ЭТОЙ ГИЛЬДИИ** для форматирования текста на нужном языке.
-*   API `format_turn_report(guild_id: int, log_entries: List[dict], player_id: int, language: str) -> str`. Собирает записи лога (17) за ход **для гильдии** (определяется из log_entries или передается явно). Форматирует их, используя `format_log_entry`. **Отчет для каждого игрока на его языке (0.1/0.2).**
-*   Результат: Система форматирования логов и фидбека, генерирующая локализованные отчеты.
+🧠 2.3 AI Response Parsing and Validation Module. (7, 13, 14, 30, 37, 39, 18, 16)
+Description: Parsing and multi-level validation of the AI response.
+API: parse_and_validate_ai_response(raw_ai_output_text: str, guild_id: int) -> ParsedAiData | ValidationError. Accepts guild_id.
+Parse JSON. Validate structure (against schema 7).
+Semantic validation (against rules 13/14/30/37/39/40) FOR THIS GUILD: Check generated data against rules and context (stat ranges, relationship correctness, quest structure, prices, consistency), presence of texts in both requested languages in _i18n fields. Autocorrection, flag issues.
 
----
 
-## Блок Задач: Фаза 3: Механика Способностей и Проверок
+🧠 2.6 AI Generation, Moderation, and Saving Logic. (7, 14, 15, 16, 17, 19, 41, OpenAI API, 0.3, 1, 3, 12, 13, 21)
+Description: Full content generation cycle with manual Master control.
+Function trigger_location_generation(guild_id: int, ...). Accepts guild_id.
+Calls 16 -> API -> 17.
+Pending Moderation: If 17 is valid, create a PendingGeneration record WITH guild_id. Notify the Master (41) IN THE NOTIFICATION CHANNEL FOR THIS GUILD. Set player(s) status to 'awaiting_moderation' IN THIS GUILD.
+Master API (41) for moderation: /master review_ai, /master approve_ai, /master edit_ai, /master reject_ai. Operate on PendingGeneration records BY guild_id. Allows editing _i18n fields.
+Saving Worker: Monitors PendingGeneration. Upon 'approved', copies the guild_id to EVERY generated entity and saves them in the DB (7, 14, etc.) within a transaction for this guild. Asynchronously calls on_enter_location(guild_id, ...) (14).
 
-В этом блоке представлены задачи, связанные с определением и использованием способностей, статусов и механикой проверок атрибутов/навыков.
 
----
 
-**Задача 20: 🧠 3.1 Модель Способности (i18n, Guild-Scoped).**
+🎲 Phase 6: Action Resolution Systems (Core Mechanics)
+🎲 6.3.1 Dice Roller Module. (None)
+Description: Implement a dice string parser and rolling function. Not linked to a guild.
+API: roll_dice(dice_string: str) -> Tuple[int, List[int]].
 
-*   Описание: Определить модель для хранения данных о способностях.
-*   Реализуйте модель `Ability` (0.2/7). Поля: id (PK), **guild_id (BIGINT, Indexed, Nullable? - если способность может быть глобальной)**, static_id (TEXT, уникален в рамках гильдии/глобально), name_i18n (JSONB), description_i18n (JSONB), **properties_json (JSONB - эффекты, стоимость, типы дамага)**.
-*   Результат: Модель Ability определена.
 
----
+🎲 6.3.2 Check Resolver Module. (14, 0.3, 11, 47)
+Description: Module for calculating check outcomes based on RuleConfig rules.
+API: resolve_check(guild_id: int, check_type: str, entity_doing_check_id: int, entity_doing_check_type: str, target_entity_id: Optional[int] = None, target_entity_type: Optional[str] = None, difficulty_dc: Optional[int] = None, check_context: Optional[dict] = None) -> CheckResult.
+Accepts guild_id. Gets RuleConfig rules FOR THIS GUILD (0.3/13). Loads entities by guild_id (0.3). Uses Effective_Stats (14) FOR THIS ENTITY IN THIS GUILD.
+Calculates modifier based on rules, using stats, skills (14), equipment (15), statuses (14), relationships (31), and context.
+Calls 11 (roll_dice). Calculates final result. Determines outcome based on rules (compare result vs DC/vs_result).
+Returns the result AND an object with details (for log 19, feedback 47).
 
-**Задача 21: 🧠 3.2 Модель Состояния Сущностей (Status Effects, i18n, Guild-Scoped).**
 
-*   Описание: Определить модель для хранения различных временных состояний (баффы/дебаффы) сущностей.
-*   Реализуйте модель `Status` (0.2/7). Поля: id (PK), **guild_id (BIGINT, Indexed, Nullable?)**, static_id (TEXT, уникален), name_i18n (JSONB), description_i18n (JSONB), **properties_json (JSONB - как влияет на статы/поведение, длительность)**.
-*   Результат: Модель Status определена.
+⚙️ 6.10 Action Parsing and Recognition Module (NLU & Intent/Entity). (1, 4, 7, 14, 0.2, 0.3, Choose NLU Libs, Guild-Scoped Dictionary)
+Description: Understands player narrative input and extracts their intentions and targets in the context of their guild.
+Async Listener for on_message(message). Gets guild_id. Checks player status. Uses NLU library and an entity dictionary ONLY FOR THIS GUILD. Saves the Action (JSON) in player.collected_actions_json (0.2) for this player in this guild.
 
----
 
-**Задача 22: 🧠 3.3 API для активации способностей и наложения состояний (Guild-Scoped).**
+⚙️ 6.12 Turn Queue System (Turn Controller) - Per-Guild Processing. (1, 2, 13, 21, 1.3, 19, 11.3, 25, 35, 15, 36, Per-Guild Async Workers/Queue Management)
+Description: Manages the step-by-step progression of the game and triggers action processing independently for each guild.
+Player and Party models with statuses, linked to the guild (0.2/1.2).
+Async Listener for /end_turn//end_party_turn. Gets guild_id.
+Updates player(s) status in this guild within a transaction (0.3).
+If conditions for processing a turn in this guild are met: Sets status(es) to 'processing' in this guild. Starts an async worker for the Action Processing Module (15), passing it the guild_id.
 
-*   Описание: Реализовать логику использования способностей персонажами и наложения/снятия состояний.
-*   API функция `activate_ability(guild_id: int, entity_id: int, entity_type: str, ability_id: int, target_ids: Optional[List[int]] = None) -> AbilityOutcomeDetails`. **Принимает `guild_id`.**
-    *   Загружает Ability (20) и Entity (1.2/5) **по `guild_id`**. Проверяет доступность способности (наличие у Entity), затраты (ресурсы Entity), валидность цели.
-    *   Выполняет логику способности (нанесение урона, наложение состояния). **Использует правила ИЗ RULECONFIG ДЛЯ ЭТОЙ ГИЛЬДИИ (13/0.3) для расчетов и эффектов.**
-    *   Обновляет состояние Entity (HP, ресурсы, добавление записи о состоянии). **В рамках транзакции действия (0.3).** Логгирует (19) С ЭТИМ `guild_id`.
-*   API функции для наложения/снятия состояний: `apply_status(guild_id: int, entity_id: int, status_id: int, duration: int, source_ability_id=None)`.
-*   Результат: Реализована логика использования способностей и состояний в рамках гильдии.
 
----
+⚙️ 6.11 Central Collected Actions Processing Module (Turn Processor) - Guild-Scoped Execution. (14, 13, 14, 0.3, 19, 47, 21, 36, 38, 40, 1.3, 25, 15, 35, Conflict Resolution, Master Notification 41, Transactions 0.3)
+Description: The main asynchronous executor of game logic for one turn in one guild. Processes all collected player actions, resolves conflicts, and calls relevant game modules.
+Async Worker: Accepts guild_id and a list of player_id/party_id from 14.
+ALL data operations (loading, saving, updating) MUST USE THE PROVIDED guild_id. Utilities 0.3, 14, 15, and calls to other modules MUST accept it.
+Loads Players by guild_id. Extracts actions, clears the field in the DB.
+Conflict Analysis Phase (Party): If a party, analyzes actions based on conflict_resolution_rules FROM RULECONFIG FOR THIS GUILD (13/41).
+If a conflict requires MANUAL moderation: Create a pending conflict record WITH guild_id. Notify the Master (41) IN THE CHANNEL FOR THIS GUILD. Mark actions as 'pending'. Pause processing.
 
-## Блок Задач: Фаза 4: Модель Мира и Локаций
 
-В этом блоке представлены задачи, связанные с определением и управлением локациями и картой мира.
+Automatic Conflict Resolution Phase: If conflict auto_resolve == true: Determine check type (RuleConfig 13/41), call 12 (Check Resolver Module, passing guild_id). Determine outcome based on rules 13/44. Log the decision (19).
+Action Execution Phase: Iterate through actions (skipping pending ones). For each action:
+Start an ATOMIC TRANSACTION (0.3) SCOPED TO THIS GUILD.
+Hand over control to the corresponding module (1.3 - Move, 21 - Look, 25 - Combat init/action, 15 - Inventory actions, 35 - Quest progress event, 16 - Intra-Location Interaction) PASSING IT guild_id and action data. The module executes the logic, updates the DB. Commit the transaction.
 
----
 
-**Задача 23: 🗺️ 4.1 Модель Локации (i18n, Guild-Scoped).**
-    *   Описание: **(Перенесена из 13 для лучшей группировки).** Определить модель локации в БД, привязанную к гильдии, с поддержкой мультиязычности и связей. Эта модель будет хранить как статические, так и сгенерированные детали локации. (См. описание в задаче 4).
+Collect feedback (47). Log events (19). Generate report (47). Update statuses.
+
+
+⚙️ 6.1.1 Intra-Location Interaction Handler Module. (15, 4.1, 0.3, 15, 12, 21, 35, Rules 13/41)
+Description: Handles player actions directed at objects or sub-locations WITHIN the current location.
+API function handle_intra_location_action(guild_id: int, session: Session, player_id: int, action_data: dict) -> dict. Called from 15 (Central Turn Processor). Accepts guild_id and DB session from 15, as well as action data (intent/entity) from NLU (13).
+Determines interaction type (move_to_sublocation, interact_with_object, examine_object) based on action_data['intent'].
+Loads Player (with guild_id) and their current location (4.1). Finds the target entity (sub-location/object) in the DB (4.1, 7, 14) by guild_id and Entity ID from action_data.
+Uses rules FROM RULECONFIG (13/41) FOR THIS GUILD to determine how to interact: is a check required (12)? What are the consequences (WorldState change 36, item acquisition 15, quest trigger 35)?
+Executes the corresponding logic (updating player's "position within location" - a new field in Player?, calling 12 for a check, calling 15/35/36 for consequences). All within the provided transaction (session).
+Logs the event (19) for the guild. Provides feedback (47).
+
+
+
+Task Block: Phase 7: Narrative Generation and Event Log
+This block presents tasks related to maintaining an event log and generating narrative text, including turn reports.
+
+Task 17: 📚 7.1 Event Log Model (Story Log, i18n, Guild-Scoped).
+Description: Model for storing a detailed log of game events within each guild. (Renamed from 5.1, moved).
+Implement the StoryLog model (0.2/7). Fields: id (PK), guild_id (BIGINT, Indexed, FK to GuildConfig), timestamp (DATETIME), location_id (INTEGER FK, Nullable), event_type (TEXT, ENUM?), entity_ids_json (JSONB - {"players":[...], "npcs":[...], ...} - references to affected entities by ID), details_json (JSONB - full event details, for rollback 20 and feedback 47).
+Implement the log_event(session: Session, guild_id: int, event_type: str, details_json: dict, player_id=None, party_id=None, location_id=None, entity_ids_json=None) API: Saves a record to StoryLog within the provided transaction (session), SPECIFYING THIS guild_id. Called by all modules that change state or produce important events.
+Result: StoryLog model defined, API for logging events within a guild implemented.
+
+
+
+Task 18: 📚 7.2 AI Narrative Generation (Multilang).
+Description: Call LLM to generate more freeform narrative text (event description, reactions to something).
+API generate_narrative(guild_id: int, context: dict) -> str. Accepts guild_id. Called by other modules to enrich event descriptions.
+Forms the LLM prompt: Context (event, participants, location, WorldState - all for this guild). Requests the LLM to generate text IN THE PLAYER'S LANGUAGE (0.1/0.2) or the bot's main language (guild 1), relevant to the context.
+Result: API for generating narrative text on demand.
+
+Task 19: 📚 7.3 Turn and Report Formatting (Guild-Scoped).
+Description: Module that transforms structured event data (from StoryLog) into readable reports for players and the Master. (Moved from 6.7.1).
+API format_log_entry(log_entry_details_json: dict, language: str) -> str. Accepts JSON log details (from StoryLog 17) and language. Uses the guild_id from details_json to load i18n entity names (from DB by their ID and guild_id) and RuleConfig terms (from cache 0.3) FOR THIS GUILD to format the text in the required language.
+API format_turn_report(guild_id: int, log_entries: List[dict], player_id: int, language: str) -> str. Collects log entries (17) for the turn for the guild (determined from log_entries or explicitly passed). Formats them using format_log_entry. Generates a report for each player in their language (0.1/0.2).
+Result: Logging and feedback formatting system generating localized reports.
 
----
+Task Block: Phase 3: Abilities and Checks Mechanics
+This block presents tasks related to defining and using abilities, statuses, and attribute/skill check mechanics.
 
-**Задача 24: 🗺️ 4.2 Генерация и редактирование карты гильдии (Guild-Scoped).**
-    *   Описание: Реализовать логику генерации новых локаций AI и их добавления на карту гильдии, а также мастерские инструменты для управления картой.
-    *   API функция `generate_location(guild_id: int, ...)`: Вызывает AI (16/17/10) для генерации данных НОВОЙ локации (имя, описание, тип, координаты, соседи). **Создает новую запись в Location с этим `guild_id` и сгенерированными данными.** Добавляет связи к существующим локациям в БД (обновляет `neighbor_locations_json` в соседях). Логгирует (19).
-    *   API функция `add_location(guild_id: int, data: dict)` (для Мастера). `remove_location(guild_id: int, location_id: int)`. `connect_locations(guild_id: int, loc1_id: int, loc2_id: int, connection_type_i18n: dict)`.
-    *   Реализуйте мастерские команды для этих API (напр., `/master add_location`, `/master connect_locations`).
-    *   Результат: Система может генерировать и управлять картой гильдии.
+Task 20: 🧠 3.1 Ability Model (i18n, Guild-Scoped).
+Description: Define the model for storing ability data.
+Implement the Ability model (0.2/7). Fields: id (PK), guild_id (BIGINT, Indexed, Nullable? - if ability can be global), static_id (TEXT, unique within the guild/globally), name_i18n (JSONB), description_i18n (JSONB), properties_json (JSONB - effects, cost, damage types).
+Result: Ability model defined.
 
----
+Task 21: 🧠 3.2 Entity Status Model (Status Effects, i18n, Guild-Scoped).
+Description: Define the model for storing various temporary states (buffs/debuffs) of entities.
+Implement the Status model (0.2/7). Fields: id (PK), guild_id (BIGINT, Indexed, Nullable?), static_id (TEXT, unique), name_i18n (JSONB), description_i18n (JSONB), properties_json (JSONB - how it affects stats/behavior, duration).
+Result: Status model defined.
+
+Task 22: 🧠 3.3 API for Activating Abilities and Applying Statuses (Guild-Scoped).
+Description: Implement the logic for characters using abilities and applying/removing statuses.
+API function activate_ability(guild_id: int, entity_id: int, entity_type: str, ability_id: int, target_ids: Optional[List[int]] = None) -> AbilityOutcomeDetails. Accepts guild_id.
+Loads Ability (20) and Entity (1.2/5) by guild_id. Checks ability availability (Entity has it), costs (Entity resources), target validity.
+Executes the ability logic (dealing damage, applying status). Uses rules FROM RULECONFIG FOR THIS GUILD (13/0.3) for calculations and effects.
+Updates the Entity's state (HP, resources, adds status entry). Within the action's transaction (0.3). Logs (19) WITH THIS guild_id.
 
-**Задача 25: 🗺️ 4.3 Переходы между локациями (Guild-Scoped).**
-    *   Описание: API для обработки действия перемещения игрока/партии между локациями. **(Перенесена из 6. Частично перекрывается с 1.3).**
-    *   API функция `handle_move_action(guild_id: int, session: Session, player_id: int, target_location_identifier: str) -> dict`. **Вызывается из 15 (Центральный Модуль Обработки Действий). Принимает `guild_id` и сессию БД.**
-    *   Загружает Player (с `guild_id`) и его текущую локацию (23). Сопоставляет `target_location_identifier` с именем/static_id локаций **в этой гильдии**.
-    *   Проверяет связи локаций (статические 4.1 и сгенерированные 23).
-    *   **Если игрок в партии: Проверяет ПРАВИЛА ПЕРЕМЕЩЕНИЯ ПАРТИИ (из RuleConfig 13/0.3) ДЛЯ ЭТОЙ ГИЛЬДИИ.**
-    *   Если перемещение разрешено: Обновляет `current_location_id` для Player (и Party). Логгирует (19) С ЭТИМ `guild_id`.
-    *   **После успешного коммита транзакции действия (выполненного в 15):** Асинхронно вызывает `on_enter_location(guild_id, entity_id, entity_type, location_id)` (14).
 
----
+API functions for applying/removing statuses: apply_status(guild_id: int, entity_id: int, status_id: int, duration: int, source_ability_id=None).
+Result: Logic for using abilities and statuses within a guild implemented.
 
-## Блок Задач: Фаза 5: Боевая Система
+Task Block: Phase 4: World and Location Model
+This block presents tasks related to defining and managing locations and the world map.
 
-В этом блоке представлены задачи, связанные с механикой боя.
+Task 23: 🗺️ 4.1 Location Model (i18n, Guild-Scoped).
+* Description: (Moved from 13 for better grouping). Define the location model in the DB, linked to a guild, with multilingual support and relationships. This model will store both static and generated location details. (See description in Task 4).
 
----
+Task 24: 🗺️ 4.2 Guild Map Generation and Editing (Guild-Scoped).
+* Description: Implement logic for AI generating new locations and adding them to the guild map, as well as Master tools for map management.
+* API function generate_location(guild_id: int, ...): Calls AI (16/17/10) to generate data for a NEW location (name, description, type, coordinates, neighbors). Creates a new record in Location with this guild_id and generated data. Adds connections to existing locations in the DB (updates neighbor_locations_json in neighbors). Logs (19).
+* API function add_location(guild_id: int, data: dict) (for Master). remove_location(guild_id: int, location_id: int). connect_locations(guild_id: int, loc1_id: int, loc2_id: int, connection_type_i18n: dict).
+* Implement Master commands for these APIs (e.g., /master add_location, /master connect_locations).
+* Result: The system can generate and manage the guild map.
+
+Task 25: 🗺️ 4.3 Location Transitions (Guild-Scoped).
+* Description: API for handling player/party movement action between locations. (Moved from 6. Partially overlaps with 1.3).
+* API function handle_move_action(guild_id: int, session: Session, player_id: int, target_location_identifier: str) -> dict. Called from 15 (Central Action Processing Module). Accepts guild_id and DB session.
+* Loads Player (with guild_id) and their current location (23). Matches target_location_identifier with the name/static_id of locations in this guild.
+* Checks location connections (static 4.1 and generated 23).
+* If player is in a party: Checks PARTY MOVEMENT RULES (from RuleConfig 13/0.3) FOR THIS GUILD.
+* If movement is allowed: Updates current_location_id for Player (and Party). Logs (19) WITH THIS guild_id.
+* After successful commit of the action transaction (performed in 15): Asynchronously calls on_enter_location(guild_id, entity_id, entity_type, location_id) (14).
 
-**Задача 26: ⚔️ 5.1 Модель Боя и Участников (Guild-Scoped).**
+Task Block: Phase 5: Combat System
+This block presents tasks related to combat mechanics.
 
-*   Описание: Определить модель для отслеживания состояния активного боя в гильдии.
-*   Реализуйте модель `CombatEncounter` (0.2/7). **С полем `guild_id`.** Включает: id (PK), location_id (INTEGER FK), status (TEXT enum), current_turn_entity_id (INT), turn_order_json (JSONB), **rules_config_snapshot_json (JSONB - слепок правил боя из RuleConfig на начало боя?)**, **participants_json (JSONB - {entity_id, entity_type, current_hp, ...})**, **combat_log_json (JSONB - лог событий этого боя)**.
+Task 26: ⚔️ 5.1 Combat and Participant Model (Guild-Scoped).
+Description: Define the model for tracking the state of active combat within a guild.
+Implement the CombatEncounter model (0.2/7). With a guild_id field. Includes: id (PK), location_id (INTEGER FK), status (TEXT enum), current_turn_entity_id (INT), turn_order_json (JSONB), rules_config_snapshot_json (JSONB - snapshot of combat rules from RuleConfig at combat start?), participants_json (JSONB - {entity_id, entity_type, current_hp, ...}), combat_log_json (JSONB - log of this combat's events).
 
----
+Task 27: ⚔️ 5.2 Combat Engine Module.
+Description: Implement the central module for calculating action outcomes in combat.
+API process_combat_action(guild_id: int, session: Session, combat_instance_id: int, actor_id: int, actor_type: str, action_data: dict) -> CombatActionResult. Accepts guild_id and session.
+Called from 28 (Combat Cycle).
+Loads CombatEncounter (24) and participants (by their ID and type) by guild_id from the DB (1.2/5/14) via the provided session. Uses Effective_Stats (14).
+Retrieves action rules (damage formulas, criticals, status effects) FROM rules_config FOR THIS GUILD (13/0.3/41), or from combat_instance.rules_config_snapshot_json (24).
+If the action requires a check (attack, save) -> call 12 (Check Resolver Module) with guild_id.
+Performs calculations (damage, statuses, costs) strictly according to formulas/rules.
+Updates combat participant states (HP, resources, statuses) in the DB (14/15) via the provided session.
+Logs (19) the action result, including calculation details, check outcomes (from 12).
+Returns a CombatActionResult object (action result + details for log 19/feedback 47).
+Result: Detailed, reliable combat calculations based on configurable rules, with logging.
+
+Task 28: ⚔️ 5.3 NPC Combat Strategy Module (AI).
+Description: Implement the logic governing NPC actions in combat.
+API get_npc_combat_action(guild_id: int, npc_id: int, combat_instance_id: int) -> dict. Accepts guild_id. Called from 27 (Combat Cycle).
+Loads the NPC (1.2/5/14), combat state (24), participating players/other NPCs by guild_id. Gets the NPC's relationships (32) to players/parties/other NPCs.
+Uses AI behavior rules FROM rules_config FOR THIS GUILD (13/0.3/41): How to choose targets (aggro system?), how to choose an action (based on stats 14, abilities 20, resources), how to evaluate action success chances (possibly by calling a check simulation via 12). Considers NPC character (from AI generation 16/17) and their relationships (35).
+AI behavior can scale according to rules 13/41 based on encounter difficulty or PARTY level in the location (see 27). Includes choosing types of creatures to spawn or adjusting their tactics.
+Returns a description of the chosen action (format understandable by 27).
 
-**Задача 27: ⚔️ 5.2 Модуль Боевого Движка.**
+Task 29: ⚔️ 5.4 Combat Cycle Refactoring (Multiplayer Combat State Machine).
+Description: Manages turn-based or round-based combat, integrating player actions (via Processing Module 21) and AI NPC actions (via 26), performing calculations (via 25).
+API start_combat(guild_id: int, location_id: int, participant_ids: List[Tuple[int, str]]) -> CombatEncounter. Accepts guild_id. Called from 21 (Action Processing Module) upon detecting an "attack" action or from the system (Global Entities 44, Quest 39).
+Within an ATOMIC TRANSACTION (0.3), SCOPED TO THIS GUILD: Creates a CombatEncounter record (24) with this guild_id and a link to the location. Loads participants by guild_id (1.2/5/14), populates participants_json. Determines initiative (via 12 based on rules 13/41). Copies combat rules from RuleConfig into rules_config_snapshot_json. Sets participant status to 'combat'. Logs (19).
+Returns the created CombatEncounter.
 
-*   Описание: Реализовать центральный модуль расчета исходов действий в бою.
-*   API `process_combat_action(guild_id: int, session: Session, combat_instance_id: int, actor_id: int, actor_type: str, action_data: dict) -> CombatActionResult`. **Принимает `guild_id` и сессию.**
-*   **Вызывается из 28 (Боевой Цикл).**
-*   Загружает CombatEncounter (24) и участников (по их ID и типу) **по `guild_id`** из БД (1.2/5/14) через предоставленную сессию. Использует `Effective_Stats` (14).
-*   **Получает правила действия (формулы урона, криты, эффекты статусов) ИЗ `rules_config` ДЛЯ ЭТОЙ ГИЛЬДИИ (13/0.3/41), или из `combat_instance.rules_config_snapshot_json` (24).**
-*   **Если действие требует проверки (атака, спасбросок) -> вызов 12 (Модуль Проверок) с `guild_id`.**
-*   Выполняет расчеты (урон, статусы, затраты) **строго по формулам/правилам**.
-*   Обновляет состояния участников боя (HP, ресурсы, статусы) в БД (14/15) через предоставленную сессию.
-*   **Логгирует (19) результат действия, включая детали расчета, итоги проверок (из 12).**
-*   Возвращает объект CombatActionResult (результат действия + детали для лога 19/фидбека 47).
-*   Результат: Детальные, надежные боевые расчеты по настраиваемым правилам, с логгированием.
 
----
+API process_combat_turn(guild_id: int, combat_id: int): Called by the Turn Module (14) to process one combat turn.
+Loads combat (24) by guild_id. Determines the active participant.
+If it's a player/party turn: The Turn Module (14/21) awaits player input, recognizes combat action (13/21), and passes it to this module (29). If there's a party action conflict, 21 has already resolved it. Calls 25 (Combat Engine) with guild_id and the action.
+If it's an NPC turn: Calls 26 (AI Strategy) with guild_id to get an action. Calls 25 with this action.
+After EACH action in combat: Logs the action result (from 25) to the general log (19) and the combat log (24). Updates participant states in the DB (0.3/14/15) (these updates are done within the transaction in 25).
+Output feedback (47) in the player's language.
+Check for combat conclusion. Remove 'combat' status.
+Handle Combat End Consequences:
+XP: Calls 30 (XP System). Awarding according to rules 13/41 AMONG COMBAT PARTICIPANTS (in this guild) based on distribution rules 13/41.
+Loot: Generated (according to rules 13/41, can use Item/ItemProperty 42, Context 16) or taken from defeated NPC inventories (15). Distributed AMONG VICTORS WITHIN THE PARTY (or placed in the location) according to rules 13/41. Optionally - trigger manual moderation (47) for rare loot distribution.
+WS/Relationships: Update WorldState (36) / Relationships (36) according to rules 13/41 (on behalf of the player/party who killed opponents).
+Quest Progress (36/39): Completion of combat-related steps.
 
-**Задача 28: ⚔️ 5.3 Модуль Стратегии Боя NPC (AI).**
 
-*   Описание: Реализовать логику, управляющую действиями NPC в бою.
-*   API `get_npc_combat_action(guild_id: int, npc_id: int, combat_instance_id: int) -> dict`. **Принимает `guild_id`. Вызывается из 27 (Боевой Цикл).**
-*   Загружает NPC (1.2/5/14), состояние боя (24), участвующих игроков/других NPC **по `guild_id`**. Получает отношения NPC (32) к игрокам/партии/другим NPC.
-*   **Использует правила AI-поведения ИЗ `rules_config` ДЛЯ ЭТОЙ ГИЛЬДИИ (13/0.3/41):** Как выбирать цели (аггро-система?), как выбирать действие (на основе статов 14, способностей 20, ресурсов), **как оценивать шансы на успех действия (возможно, вызывая симуляцию проверки через 12)**. Учет характера NPC (из AI-генерации 16/17) и их отношений (35).
-*   **Поведение AI может масштабироваться по правилам 13/41 в зависимости от сложности встречи или уровня ПАРТИИ в локации (см. 27).** Включая выбор *типа* существ для спавна или настройку их *тактики*.
-*   Возвращает описание выбранного действия (формат понятный 27).
 
----
 
-**Задача 29: ⚔️ 5.4 Переработка Боевого Цикла (Multiplayer Combat State Machine).**
 
-*   Описание: Управляет пошаговым или раундовым боем, интегрируя действия игроков (через Модуль Обработки 21) и AI NPC (через 26), выполняя расчеты (через 25).
-*   API `start_combat(guild_id: int, location_id: int, participant_ids: List[Tuple[int, str]]) -> CombatEncounter`. **Принимает `guild_id`. Вызывается из 21 (Модуль Обработки Действий) при распознании действия "attack" или от системы (Global Entities 44, Quest 39).**
-    *   **В рамках АТОМАРНОЙ ТРАНЗАКЦИИ (0.3), СКОУПОМ НА ЭТУ ГИЛЬДИИ:** Создает запись `CombatEncounter` (24) с этим `guild_id` и ссылкой на локацию. Загружает участников **по `guild_id`** (1.2/5/14), заполняет `participants_json`. Определяет инициативу (через 12 по правилам 13/41). Копирует правила боя из RuleConfig в `rules_config_snapshot_json`. Устанавливает статус участников на 'бой'. Логгирует (19).
-    *   Возвращает созданный `CombatEncounter`.
-*   API `process_combat_turn(guild_id: int, combat_id: int)`: Вызывается Модулем Хода (14) для обработки одного хода боя.
-    *   Загружает бой (24) по `guild_id`. Определяет активного участника.
-    *   Если ход игрока/партии: Модуль Хода (14/21) ожидает ввода игрока, распознает боевое действие (13/21) и передает его в этот модуль (29). **Если конфликт действий в партии, 21 уже его разрешил.** Вызывает 25 (Боевой Движок) с `guild_id` и действием.
-    *   Если ход NPC: Вызывает 26 (AI Стратегия) с `guild_id` для получения действия. Вызывает 25 с этим действием.
-    *   **После КАЖДОГО действия в бою:** Логгирует результат действия (из 25) в общий лог (19) и в лог боя (24). Обновляет состояние участников в БД (0.3/14/15) (эти обновления делаются внутри транзакции в 25).
-    *   Вывод фидбека (47) на языке игрока.
-    *   Проверка завершения боя. Снятие статуса 'бой'.
-    *   **Обработка Последствий Завершения Боя:**
-        *   XP: Вызывает 30 (Система XP). **Начисление по правилам 13/41 СРЕДИ УЧАСТНИКОВ БОЯ (в этой гильдии) по правилам распределения 13/41.**
-        *   Лут: Генерируется (по правилам 13/41, может использовать Item/ItemProperty 42, Контекст 16) или берется из инвентаря поверженных NPC (15). **Распределяется СРЕДИ ПОБЕДИТЕЛЕЙ ВНУТРИ ПАРТИИ (или выкладывается в локацию) по правилам 13/41**. Опционально - триггер ручной модерации (47) для распределения редкого лута.
-        *   WS/Отношения: Обновление WorldState (36) / Отношений (36) по правилам 13/41 (от имени игрока/партии, убившей противников).
-        *   Прогресс Квеста (36/39): Завершение шагов, связанных с боем.
+Task Block: Phase 13: Experience and Character Development System
+This block presents tasks related to character experience, leveling up, and attribute distribution.
 
----
+Task 30: ⚡️ 13.1 Experience System Structure (Rules).
+* Description: Rules for gaining XP, leveling up, distributing points are defined in RuleConfig FOR EACH GUILD. (See RuleConfig structure in 13).
 
-## Блок Задач: Фаза 13: Система Опыта и Развития Персонажа
+Task 31: ⚡️ 13.2 XP Awarding and Progress.
+* Description: Implement logic for awarding XP and checking for level up.
+* API award_xp(guild_id: int, player_id/party_id, xp_amount, source_log_id). Accepts guild_id. Called from 27 (Combat) and 39 (Quest). Calculate base XP amount (can scale by player level) according to rules 13/41. Distribute AMONG EVENT PARTICIPANTS (players in party/location) according to rules 13/41. Update player.XP (1.2/5/0.2/0.3). Log event (19).
+* After updating XP: Check against rules 13/41 if the player has reached the next level. If yes: Update player.Level, calculate and award player.UnspentXP (attribute/skill points to distribute) according to rules. Notify the player (47).
 
-В этом блоке представлены задачи, связанные с опытом персонажей, повышением уровня и распределением характеристик.
+Task 32: ⚡️ 13.3 Applying Level Up (Multy-i18n).
+* Description: Distributing level points.
+* Player commands receive guild context. Update player stats/xp within the guild (1.2/5/14). Recalculate Effective_Stats (14). Provide feedback (47).
 
----
+Task Block: Phase 8: Factions, Relationships, and Social Mechanics
+This block presents tasks related to factions, relationships between entities, and their influence on gameplay.
 
-**Задача 30: ⚡️ 13.1 Структура Системы Опыта (Правила).**
-    *   Описание: Правила получения XP, повышения уровня, распределения очков заданы в RuleConfig **ДЛЯ КАЖДОЙ ГИЛЬДИИ**. (См. структуру RuleConfig в 13).
+Task 33: 🎭 8.1 Factions Model (Guild-Scoped, i18n).
+Description: Define the model for storing faction data within a guild.
+Implement the GeneratedFaction model (0.2/7). With a guild_id field. Fields: id (PK), name_i18n (JSONB), ideology_i18n (JSONB), description_i18n (JSONB), resources_json (JSONB), leader_npc_id (INTEGER FK, Nullable), ai_metadata_json (JSONB).
 
----
+Task 34: 🎭 8.2 Relationships Model (Guild-Scoped).
+Description: Define the model for storing relationships between entities within a guild. (Moved from 8.1).
+Implement the Relationship model (0.2/7). With a guild_id field. Fields: id (PK), entity1_type (TEXT, ENUM Player/Party/Npc/Faction), entity1_id (INT), entity2_type (TEXT), entity2_id (INT), type (TEXT enum), value (INT), source_log_id (INTEGER FK, Nullable). (Composite Unique Index: guild_id, entity1_type, entity1_id, entity2_type, entity2_id).
 
-**Задача 31: ⚡️ 13.2 Начисление и Прогресс Опыта.**
-    *   Описание: Реализация логики начисления XP и проверки повышения уровня.
-    *   API `award_xp(guild_id: int, player_id/party_id, xp_amount, source_log_id)`. **Принимает `guild_id`. Вызывается из 27 (Бой) и 39 (Квест).** **Расчет базового XP amount (может масштабироваться по уровню игроков) по правилам 13/41.** **Распределение СРЕДИ УЧАСТНИКОВ события (игроков в партии/локации) по правилам 13/41.** Обновление `player.XP` (1.2/5/0.2/0.3). Логгирование (19).
-    *   После обновления XP: Проверить по правилам 13/41, достиг ли игрок следующего уровня. Если да: Обновить `player.Level`, рассчитать и начислить `player.UnspentXP` (очки атрибутов/навыков для распределения) по правилам. Оповестить игрока (47).
+Task 35: 🎭 8.3 AI Generation of Factions and Relationships (Multilang, Per Guild).
+Description: AI generates factions and their relationships for a guild according to rules. (Moved from 8.2).
+Called from 10 (Generation Cycle). AI (16/17) is prompted to generate according to rules (13/41) FOR THIS GUILD, including factions and their relationships (to others, to player/NPC/parties). The result is saved in the GeneratedFaction (33) and Relationship (34) models WITH THIS guild_id.
 
----
+Task 36: 🎭 8.4 Relationship Changes Through Actions (According to Rules, Guild-Scoped).
+Description: Implement logic for updating numerical relationship values in response to game events based on Master-configurable rules. (Moved from 8.3).
+API update_relationship(guild_id: int, entity_doing_id, entity_doing_type, target_entity_id, target_entity_type, event_type: str, event_details_log_id: int). Accepts guild_id. Called by other modules upon events that change relationships (combat 27, quest 39, dialogue 46, trade 42, world event 44/40).
+Uses rules FROM rules_config (13/0.3) FOR THIS GUILD to find relationship change rules by event_type. Determines which relationship changes (Player vs Entity or Party vs Entity), by what amount (formula from RuleConfig).
+Finds/creates a Relationship record (34) WITHIN THIS GUILD. Updates the value. Logs (19) WITH THIS guild_id.
 
-**Задача 32: ⚡️ 13.3 Применение Повышения Уровня (Multy-i18n).**
-    *   Описание: Распределение очков уровня.
-    *   Команды игрока получают guild context. Обновление player статов/xp **внутри гильдии** (1.2/5/14). Пересчет Effective_Stats (14). Фидбек (47).
+Task 37: 🎭 8.5 Relationship Influence (Full, According to Rules, Multy-i18n).
+Description: Implement the use of relationship values from the DB (34) as parameters or conditions in various game mechanics according to game rules. (Moved from 8.5).
+Modules (12, 28, 48, 42, 44, 21) REQUIRE guild_id. When executing their logic, they:
+Load current relationships (34) between involved entities FROM THE DB, STRICTLY BY guild_id.
+Use rules FROM rules_config (13/0.3) FOR THIS GUILD on how the relationship value (from 34) translates into a numerical modifier (for checks 12), multiplier (for prices 42), or condition (for AI action choice 28, dialogue availability 46).
 
----
 
-## Блок Задач: Фаза 8: Фракции, Отношения и Социальные Механики
+Feedback (49) about relationship influence should be in the player's language.
 
-В этом блоке представлены задачи, связанные с фракциями, отношениями между сущностями и их влиянием на геймплей.
+Task 38: 🎭 8.6 Complex Internal Faction Relationships.
+Description: Generation and use of specific NPC relationships to other factions or NPCs within their own factions for more complex behavior. (Moved from 8.6).
+AI generates (16) and parses (17) these relationships. Stored in Relationship (34).
+Their influence is defined in RuleConfig (13/0.3) as a separate relationship type or rule modifier. NPC behavior rules dictated by hidden relationships (betrayal, helping the player from a hostile faction) are used by the AI Strategy (28) and Action Processing Module (21) / Dialogue (46).
 
----
+Task Block: Phase 9: Detailed Quest System with Consequences
+This block presents tasks for implementing a comprehensive quest system with steps, consequences, and links to other mechanics.
 
-**Задача 33: 🎭 8.1 Модель Фракций (Guild-Scoped, i18n).**
+Task 39: 📚 9.1 Quest and Step Structure (Guild-Scoped, i18n).
+Description: GeneratedQuest, Questline, QuestStep models. MUST INCLUDE guild_id. Link to player OR party in this guild. Step structure with required_mechanics_json, abstract_goal_json, consequences_json. _i18n text fields.
 
-*   Описание: Определить модель для хранения данных о фракциях в гильдии.
-*   Реализуйте модель `GeneratedFaction` (0.2/7). **С полем `guild_id`.** Поля: id (PK), name_i18n (JSONB), ideology_i18n (JSONB), description_i18n (JSONB), resources_json (JSONB), leader_npc_id (INTEGER FK, Nullable), **ai_metadata_json (JSONB)**.
+Task 40: 🧬 9.2 AI Quest Generation (According to Rules, Multilang, Per Guild).
+Description: AI generates quests for a specific guild according to rules.
+Called from 10 (Generation Cycle). AI (16/17) is prompted to generate according to structure 39 based on RuleConfig rules (13/0.3) FOR THIS GUILD, including rules for steps and consequences. Request generation of required_mechanics_json and abstract_goal_json (according to rules 13/41) and consequences_json (according to rules 13/41). Texts should be i18n. Entities get guild_id.
 
----
+Task 41: 📚 9.3 Quest Tracking and Completion System (Guild-Scoped).
+Description: Tracking the progress of active quests and applying consequences.
+API handle_player_event_for_quest(guild_id: int, player_id/party_id, log_entry_id: int). Called FROM 21 (Action Processing Module - after EVERY action) AND FROM 27 (Combat Cycle - after combat). Accepts guild_id and the ID of the just-occurred event's log entry.
+Loads active quests (39) for this player/party IN THIS GUILD.
+For each active quest: Checks if the event (from log 17) matches the required_mechanics_json requirement of the current step (from DB 39), comparing the event type from the log and its details with the mechanic description in the step, according to RuleConfig rules (13/0.3/41).
+If the step is complete:
+If step has abstract_goal_json: Evaluate the abstract goal. Collect logs (17) for the recent period for this player/party (related to the quest?). Optionally: Call LLM (48) for judgment, using a prompt with guild context, logs, goal description. The LLM result (or rules 13/41) determines the success/failure of the evaluation.
+If the step is successfully completed (and goal evaluation is successful): Update step status in the DB. Apply STEP CONSEQUENCES (from the step's consequences_json 39): Parse the step's consequences_json. Call corresponding modules (36 for WorldState, 34 for relationships, 29 for XP, 15/42 for gold/items) PASSING guild_id AND SPECIFYING THE PLAYER OR PARTY AS THE SOURCE of change. All according to RuleConfig rules (13/0.3/41). Log event (19). Provide feedback (47).
+Check if there's a next step in the branch. If yes, update the current step.
 
-**Задача 34: 🎭 8.2 Модель Отношений (Guild-Scoped).**
 
-*   Описание: Определить модель для хранения отношений между сущностями в гильдии. **(Перенесена из 8.1).**
-*   Реализуйте модель `Relationship` (0.2/7). **С полем `guild_id`.** Поля: id (PK), entity1_type (TEXT, ENUM Player/Party/Npc/Faction), entity1_id (INT), entity2_type (TEXT), entity2_id (INT), type (TEXT enum), value (INT), source_log_id (INTEGER FK, Nullable). **(Составной Unique Index: guild_id, entity1_type, entity1_id, entity2_type, entity2_id)**.
+If this is the last step: Mark the quest as completed. Apply the CONSEQUENCES OF THE ENTIRE QUEST (similarly to a step). Start the next quest in the arc (39). Award rewards (according to distribution rules 13/41!).
 
----
 
-**Задача 35: 🎭 8.3 AI-Генерация Фракций и их Отношений (Multilang, Per Guild).**
 
-*   Описание: AI генерирует фракции и их отношения для гильдии по правилам. **(Перенесена из 8.2).**
-*   Вызывается из 10 (Цикл генерации). AI (16/17) просят сгенерировать по правилам (13/41) **ДЛЯ ЭТОЙ ГИЛЬДИИ**, включая фракции и их отношения (к другим, к игроку/NPC/партиям). Результат сохраняется в модели `GeneratedFaction` (33) и `Relationship` (34) **С ЭТИМ `guild_id`**.
+Task Block: Phase 10: Economy, Items, and Trade
+This block presents tasks related to economy, items, and trade mechanics.
 
----
+Task 42: 💰 10.1 Data Structure (Guild-Scoped, i18n).
+Description: Item, ItemProperty models. With a guild_id field. name_i18n, description_i18n. Properties, base value, category. Economy rules (rules_config 13/0.3/41).
 
-**Задача 36: 🎭 8.4 Изменение Отношений через Действия (По Правилам, Guild-Scoped).**
+Task 43: 💰 10.2 AI Economic Entity Generation (Per Guild).
+Description: AI generates items and NPC traders for a guild according to rules.
+Called from 10 (Generation Cycle). AI (16/17) is prompted to generate according to rules 13/41 FOR THIS GUILD, including traders (with roles, inventory), base prices (calculated by rules 13/41), i18n texts. Entities get guild_id.
 
-*   Описание: Реализовать логику обновления числовых значений отношений в ответ на игровые события по правилам, настраиваемым Мастером. **(Перенесена из 8.3).**
-*   API `update_relationship(guild_id: int, entity_doing_id, entity_doing_type, target_entity_id, target_entity_type, event_type: str, event_details_log_id: int)`. **Принимает `guild_id`.** **Вызывается другими модулями при событиях, меняющих отношения (бой 27, квест 39, диалог 46, торговля 42, событие мира 44/40).**
-*   **Использует правила ИЗ `rules_config` (13/0.3) ДЛЯ ЭТОЙ ГИЛЬДИИ** для поиска правил изменения отношений по `event_type`. Определяет, какое отношение меняется (Игрок vs Сущность или Партия vs Сущность), на какую величину (формула из RuleConfig).
-*   Находит/создает запись `Relationship` (34) **ВНУТРИ ЭТОЙ ГИЛЬДИИ**. Обновляет `value`. Логгирует (19) С ЭТИМ `guild_id`.
-
----
-
-**Задача 37: 🎭 8.5 Влияние Отношений (Полное, По Правилам, Multy-i18n).**
-
-*   Описание: Реализация использования значений отношений из БД (34) в качестве параметров или условий в различных игровых механиках по правилам игры. **(Перенесена из 8.5).**
-*   Модули (12, 28, 48, 42, 44, 21) **ТРЕБУЮТ `guild_id`**. При выполнении своей логики, они:
-    *   Загружают актуальные отношения (34) между задействованными сущностями **ИЗ БД, СТРОГО ПО `guild_id`**.
-    *   **Используют правила ИЗ `rules_config` (13/0.3) ДЛЯ ЭТОЙ ГИЛЬДИИ** о том, как значение отношения (из 34) транслируется в числовой модификатор (для проверок 12), множитель (для цен 42), или условие (для выбора AI действия 28, доступности диалога 46).
-*   Фидбек (49) о влиянии отношений должен быть на языке игрока.
-
----
-
-**Задача 38: 🎭 8.6 Сложные Внутренние Отношения Фракций.**
-
-*   Описание: Генерация и использование специфичных отношений NPC к другим фракциям или NPC внутри своих фракций для более сложного поведения. **(Перенесена из 8.6).**
-*   AI генерирует (16) и парсит (17) эти отношения. Хранятся в `Relationship` (34).
-*   Их влияние закладывается в RuleConfig (13/0.3) как отдельный тип отношения или модификатор правил. **Правила поведения NPC, продиктованные скрытыми отношениями (предательство, помощь игроку из враждебной фракции), используются AI Стратегии (28) и Модулем Обработки Действий (21) / Диалога (46)**.
-
----
-
-## Блок Задач: Фаза 9: Детальная Система Квестов с Последствиями
-
-В этом блоке представлены задачи по реализации комплексной системы квестов с шагами, последствиями и связью с другими механиками.
-
----
-
-**Задача 39: 📚 9.1 Структура Квестов и Шагов (Guild-Scoped, i18n).**
-
-*   Описание: Модели `GeneratedQuest`, `Questline`, `QuestStep`. **ДОЛЖНЫ ВКЛЮЧАТЬ `guild_id`.** Привязка к игроку ИЛИ партии **в этой гильдии**. Структура шага с `required_mechanics_json`, `abstract_goal_json`, `consequences_json`. Текстовые поля `_i18n`.
-
----
-
-**Задача 40: 🧬 9.2 AI-Генерация Квестов (По Правилам, Multilang, Per Guild).**
-
-*   Описание: AI генерирует квесты для конкретной гильдии по правилам.
-*   Вызывается из 10 (Цикл генерации). AI (16/17) просят сгенерировать по структуре 39 **по правилам RuleConfig (13/0.3) ДЛЯ ЭТОЙ ГИЛЬДИИ**, включая правила для шагов и последствий. Просить генерировать **`required_mechanics_json` и `abstract_goal_json` (по правилам 13/41) и `consequences_json` (по правилам 13/41)**. Тексты - i18n. Сущности получают `guild_id`.
-
----
-
-**Задача 41: 📚 9.3 Система Отслеживания и Выполнения Квестов (Guild-Scoped).**
-
-*   Описание: Отслеживание прогресса активных квестов и применение последствий.
-*   API `handle_player_event_for_quest(guild_id: int, player_id/party_id, log_entry_id: int)`. **Вызывается ИЗ 21 (Модуль Обработки Действий - после КАЖДОГО действия) И ИЗ 27 (Боевой Цикл - после боя). Принимает `guild_id` и ID записи лога только что произошедшего события.**
-*   Загружает активные квесты (39) для этого игрока/партии **В ЭТОЙ ГИЛЬДИИ**.
-*   Для каждого активного квеста: Проверяет, соответствует ли событие (из лога 17) **требованию `required_mechanics_json` текущего шага** (из БД 39), сравнивая тип события из лога и его детали с описанием механики в шаге, по правилам RuleConfig (13/0.3/41).
-*   Если шаг выполнен:
-    *   Если шаг `abstract_goal_json`: **Оценка абстрактной цели.** Собрать лог (17) за последний период для этого игрока/партии (связанный с квестом?). **Опционально: Вызвать LLM (48) для суждения**, используя промпт с контекстом гильдии, логом, описанием цели. Результат LLM (или правила 13/41) определяет успех/провал оценки.
-    *   Если шаг успешно выполнен (и оценка цели успешна): Обновить статус шага в БД. **Применить ПОСЛЕДСТВИЯ ШАГА (из `consequences_json` шага 39):** **Парсить `consequences_json` шага.** Вызвать соответствующие модули (36 для WorldState, 34 для отношений, 29 для XP, 15/42 для золота/предметов) **С ПЕРЕДАЧЕЙ `guild_id` И УКАЗАНИЕМ ИГРОКА ИЛИ ПАРТИИ КАК ИСТОЧНИКА изменения**. Все по правилам RuleConfig (13/0.3/41). Логгирование (19). Фидбек (47).
-        *   Проверить, есть ли следующий шаг в ветке. Если есть, обновить текущий шаг.
-    *   Если это последний шаг: Пометить квест как завершенный. Применить ПОСЛЕДСТВИЯ ВСЕГО КВЕСТА (аналогично шагу). Запуск следующего квеста в арке (39). Награды (по правилам распределения 13/41!).
-
----
-
-## Блок Задач: Фаза 10: Экономика, Предметы и Торговля
-
-В этом блоке представлены задачи, связанные с механикой экономики, предметов и торговли.
-
----
-
-**Задача 42: 💰 10.1 Структура Данных (Guild-Scoped, i18n).**
-
-*   Описание: Модели `Item`, `ItemProperty`. **С полем `guild_id`.** `name_i18n`, `description_i18n`. Свойства, базовая ценность, категория. **Правила экономики (`rules_config` 13/0.3/41).**
-
----
-
-**Задача 43: 💰 10.2 AI-Генерация Экономических Сущностей (Per Guild).**
-
-*   Описание: AI генерирует предметы и NPC-торговцев для гильдии по правилам.
-*   Вызывается из 10 (Цикл генерации). AI (16/17) просят сгенерировать по правилам 13/41 **ДЛЯ ЭТОЙ ГИЛЬДИИ**, включая торговцев (с ролью, инвентарем), **базовые цены (расчет по правилам 13/41), i18n тексты**. Сущности получают `guild_id`.
-
----
-
-**Задача 44: 💰 10.3 Система Торговли (Guild-Scoped).**
-
-*   Описание: Управление торговой сессией.
-*   API `handle_trade_action(guild_id: int, session: Session, player_id: int, target_npc_id: int, action_type: str, item_id: Optional[int] = None, count: Optional[int] = None)`. **Вызывается из 21 (Модуль Обработки Действий) или 46 (Модуль Диалога). ТРЕБУЕТ `guild_id` и сессию.**
-*   Реализует логику: открытие торгового интерфейса, обработка "купить"/"продать". **Цены рассчитываются ДИНАМИЧЕСКИ по правилам 13/41/36**, с учетом отношений (30/31).
-*   **В рамках предоставляемой транзакции (session):** Проверка возможности сделки, расчет финальной стоимости, перемещение предметов (вызовы 15 add/remove), обновление золота (15/0.2/0.3). **Если транзакция не прошла (напр., предмет уже куплен другим членом партии) -> ROLLBACK (транзакции действия в 15).**
-*   Логгирование (19) для гильдии. Фидбек (47). **Изменение Отношений (30/31) по правилам 13/41 за сделки.**
-
----
-
-## Блок Задач: Фаза 14: Глобальные Сущности и Динамический Мир
-
-В этом блоке представлены задачи, связанные с сущностями, которые движутся по миру независимо от игроков (караваны, патрули, случайные NPC), и их симуляцией.
-
----
-
-**Задача 45: 🌌 14.1 Модели Глобальных Сущностей (Guild-Scoped, i18n).**
-
-*   Описание: Модели для сущностей, движущихся по миру в рамках каждой гильдии.
-*   Реализуйте модели `GlobalNpc`, `MobileGroup`, `GlobalEvent` (0.2/7). **Все с полем `guild_id`.** name_i18n. Маршруты, цели, состав.
-
----
-
-**Задача 46: 🧬 14.2 Управление Глобальными Сущностями (Per-Guild Iteration).**
-
-*   Описание: Модуль, симулирующий жизнь и движение глобальных сущностей для каждой гильдии.
-*   Async Worker(s): **Итерирует по списку всех активных гильдий.** Для каждой `guild_id`:
-    *   Загружает ГС, правила (13/0.3/41) **для этой гильгии**.
-    *   Симулирует перемещение ГС.
-    *   Симулирует взаимодействия (с другими ГС, сущностями, игроками) **В КОНТЕКСТЕ ЭТОЙ ГИЛЬДИИ**: **Проверка обнаружения (12 по 13/41), Реакция (определяется по правилам 13/41 и отношениям 30/31/32), Триггеры (Бой 27, Диалог 46, Квест 31, Событие мира).**
-    *   Логгирование (19).
-
----
-
-## Блок Задач: Фаза 15: Инструменты Управления и Мониторинга
-
-В этом блоке представлены задачи по реализации инструментов для Мастера игры.
-
----
-
-**Задача 47: 🛠️ 15.1 Система Мастерских Команд.**
-
-*   Описание: Реализация полного набора команд Discord для Мастера для управления геймплеем и данными в его гильдии. **Команды автоматически получают `guild_id` из контекста вызова.** Поддерживают многоязычный ввод аргументов и отображение результатов на языке Мастера.
-*   **API для CRUD над ВСЕМИ моделями БД (7 и др.).** **Требуют `guild_id`.**
-*   **API для просмотра/редактирования записей в таблице `RuleConfig` (0.2/7/13).** Позволяют Мастеру настраивать все правила игры для своей гильдии.
-*   Команды ручного триггера/изменения сущностей **оперируют В КОНТЕКСТЕ `guild_id`**.
-*   **API `/master resolve_conflict <id> <outcome>`:** Принимает `guild_id`. Находит запись pending конфликта (создана в 21) **по `guild_id`**. Устанавливает статус 'resolved' и результат. Сигнализирует Модулю Обработки Хода (21), который ждал разрешения, продолжить обработку.
-
----
-
-**Задача 48: 🛠️ 15.2 Инструменты Баланса и Тестирования (Per Guild).**
-
-*   Описание: Симуляторы и анализаторы для Мастера, работающие в контексте гильдии по правилам.
-*   API симуляций (Боя 27, Проверок 12, Конфликтов 21). **ТРЕБУЮТ `guild_id`.** Используют данные и правила **ДЛЯ ЭТОЙ ГИЛЬДИИ**.
-*   Анализаторы AI-генерации (18): Проверка качества и баланса сгенерированного контента по правилам 13/41.
-*   Результаты выводятся **на языке Мастера (49)**.
-
----
-
-**Задача 49: 🛠️ 15.3 Инструменты Мониторинга (Guild-Scoped).**
-
-*   Описание: Предоставление Мастеру информации о состоянии игры и истории в его гильдии.
-*   Команды просмотра (Лог 17, WS 36, Карта 4.1, Сущности, Статистика): **Автоматически фильтруют данные ПО `guild_id` команды.** Используют 47 для форматирования отчетов **на языке Мастера**.
-
----
-
-## Блок Задач: Фаза 11: Динамические Диалоги и Память NPC
-
-В этом блоке представлены задачи, связанные с динамическими диалогами NPC с использованием LLM и сохранением истории взаимодействия.
-
----
-
-**Задача 50: 🧠 11.1 Модуль Генерации Диалога (LLM, Multy-i18n, По Правилам).**
-
-*   Описание: Подготовка промпта для LLM для генерации реплик NPC в диалоге.
-*   API `generate_npc_dialogue(guild_id: int, context: dict) -> str`. **ТРЕБУЕТ `guild_id`. Вызывается из 46 (Модуль Диалога).**
-*   Контекст промпта: WorldState (36), Глобальные сущности (40), профиль НПЦ (данные 1.2/14, **актуальные отношения 30/31/32**, память 52), профиль Игрока/Партии (1.2/5), **контекст Квеста (39) если связан**, **правила диалога (проверки, влияние) из RuleConfig 13/0.3**. Текст ввода ИГРОКА (из 46).
-*   **Запрос LLM:** Генерировать реплику **НА ЯЗЫКЕ ИГРОКА (0.1/0.2)**, соответствующую контексту, характеру, отношению. Использовать i18n названия сущностей (из БД 4/7/14/39) **ДЛЯ ЭТОЙ ГИЛЬДИИ**.
-
----
-
-**Задача 51: 🧠 11.2 Контекст и Статус Диалога (Guild-Scoped).**
-
-*   Описание: Реализовать логику управления состоянием диалоговой сессии для игрока/партии.
-*   API `start_dialogue(guild_id: int, player_id: int, target_npc_id: int)`. **Вызывается из 21 (Модуль Обработки Действий) или команды.** Устанавливает статус игрока(ов) на 'диалог' (0.2/1.1). Создает временную запись о диалоге.
-*   API `handle_dialogue_input(guild_id: int, player_id: int, message_text: str) -> dict`. **Вызывается ИЗ 21 (Модуль Обработки Действий) при получении текста от игрока в статусе 'диалог'.** Обрабатывает текст как реплику, вызывает 50 для генерации ответа НПЦ.
-*   API `end_dialogue(guild_id: int, player_id: int)`. Снимает статус 'диалог'.
-
----
-
-**Задача 52: 🧠 11.3 Управление Памятью NPC (Persistent, Per Guild).**
-
-*   Описание: Хранение истории взаимодействия NPC с игроками/партиями. **Переименована из 11.4, перенесена из 47.**
-*   Реализуйте модели `PlayerNpcMemory`/`PartyNpcMemory` (0.2/7). **ОБЕ ВКЛЮЧАЮТ `guild_id`.** Утилиты требуют `guild_id`.
-*   API `add_to_npc_memory(guild_id: int, player_id/party_id, npc_id, event_type: str, details: dict)`. Вызывается другими модулями при значимых событиях (диалог 46, квест 41, бой 27, изменение отношения 31).
-*   Утилита `get_npc_memory(guild_id: int, player_id/party_id, npc_id) -> List[MemoryEntry]`: Загружает память **для этого НПЦ и Игрока/Партии В ЭТОЙ ГИЛЬДИИ**. Используется в 50 (для контекста LLM).
-
----
-
-**Задача 53: 🧠 11.4 NLU и Распознавание Намерений в Диалоге (Guild-Scoped).**
-
-*   Описание: Обработка ввода игрока в режиме диалога. **Это часть логики модуля 13 (NLU).**
-*   Если статус игрока 'диалог', NLU (13) **не сохраняет action в `collected_actions_json`**, а **передает его напрямую в Модуль Управления Диалогом (46) через API `handle_dialogue_input` (46).** При этом NLU (13) по-прежнему распознает Intenta/Entity и передает их 46.
-
----
-
-## Блок Задач: Система Форматирования Фидбека
-
-В этом блоке представлены задачи, связанные с преобразованием структурированных данных о событиях в читабельный текстовый фидбек для пользователей.
-
----
-
-**Задача 54: ⚙️ 6.7.1 Система Форматирования Лога и Фидбека (Full, Multy-i18n, Guild-Scoped).**
-
-*   Описание: Преобразование структурированных данных о событиях в читабельный текстовый фидбек. **Переименована из 49.**
-*   API `format_log_entry(log_entry_details_json: dict, language: str) -> str`. **Принимает JSON детали лога (из StoryLog 17) и язык.** Использует `guild_id` из `details_json` для загрузки i18n названий сущностей и RuleConfig терминов **ДЛЯ ЭТОЙ ГИЛЬДИИ** для форматирования текста на нужном языке.
-*   API `format_turn_report(guild_id: int, log_entries: List[dict], player_id: int, language: str) -> str`. Собирает записи лога (17) за ход **для гильдии**.
-
----
-
-## Блок Задач: Фаза UI (Пользовательский Интерфейс)
-
-В этом блоке представлены задачи, связанные с разработкой отдельного клиентского приложения (веб или десктоп), которое предоставит удобный графический интерфейс для Мастера игры и, возможно, игроков, взаимодействующий с backend API.
-
----
-
-**Задача 55: 🖥️ UI.1 Выбор стека технологий и базовой структуры UI.** (Нет)
-    *   Описание: Выбрать фреймворк/библиотеку для разработки клиентского UI приложения (напр., React, Vue для веба; Electron, PyQt для десктопа). Определить базовую архитектуру UI-приложения (компоненты, роутинг, управление состоянием).
-    *   Результат: Выбран стек технологий, создан базовый каркас UI проекта.
-
----
-
-**Задача 56: 🖥️ UI.2 Разработка базовой структуры UI и аутентификации.** (Зависит от 0.1 - Discord API/OAuth2?)
-    *   Описание: Создать основную структуру UI приложения (навигация, макеты страниц). Реализовать систему аутентификации пользователя UI (например, через Discord OAuth2 для привязки к аккаунту Мастера Discord). **Реализовать выбор гильдии, с которой работает Мастер в текущей UI сессии.** UI должен сохранять Guild ID и автоматически передавать его во все последующие запросы к backend API.
-    *   Результат: Рабочая система входа и выбора гильдии в UI, готовая к разработке страниц.
-
----
-
-**Задача 57: 🖥️ UI.3 UI для управления игроками и персонажами.** (Зависит от API 1.3)
-    *   Описание: Создать UI страницы для просмотра списков игроков и персонажей для выбранной гильдии. Реализовать функционал отображения данных (используя API 1.3 на чтение). Реализовать формы для создания, редактирования и удаления записей Player и GeneratedNpc (вызывая API 1.3 на создание/обновление/удаление). UI должен корректно обрабатывать i18n поля для отображения и редактирования текстов на разных языках.
-    *   Результат: Интерфейс для управления игроками и персонажами через UI.
-
----
-
-**Задача 58: 🖥️ UI.4 UI для настройки Правил (RuleConfig).** (Зависит от API 41)
-    *   Описание: Создать UI страницу для просмотра и редактирования правил игры (RuleConfig) для выбранной гильдии.
-    *   Загружать структуру правил (из 13/0.3) и актуальные значения (через API 41, напр., `/master view_rules` или выделенный API для RuleConfig). Отображать структуру правил в удобном виде (например, древовидная структура JSON).
-    *   Реализовать удобные элементы управления (формы, поля ввода, слайдеры, выпадающие списки) для редактирования различных типов параметров правил (числа, строки, булевы значения, JSON).
-    *   Реализовать кнопку сохранения изменений (вызывая API 41 на редактирование RuleConfig).
-    *   Результат: Графический интерфейс для настройки правил игры Мастером.
-
----
-
-**Задача 59: 🖥️ UI.5 UI для AI Генерации и Модерации.** (Зависит от API 10)
-    *   Описание: Создать UI страницу для управления AI генерацией и модерацией.
-    *   Реализовать элементы управления для запуска AI генерации (вызов API 10 `trigger_location_generation`). Возможность указать параметры генерации (локация, тип).
-    *   Отображать список pending запросов на модерацию для этой гильдии (через API 41, напр., `/master review_ai`).
-    *   При выборе pending запроса: Отобразить сгенерированный контент (NPC, квесты, предметы, описания) в читаемом виде (используя API 47 для форматирования или получая данные напрямую из 18 `ai_data_json`). Отображать проблемы валидации (из `issues_json` 18).
-    *   Реализовать кнопки "Одобрить", "Отклонить", "Редактировать" (вызывая соответствующие API 41). Редактирование должно позволять изменять поля сущностей в pending запросе, включая `_i18n` тексты.
-    *   Результат: Графический интерфейс для управления AI генерацией и модерацией контента.
-
----
-
-**Задача 60: 🖥️ UI.6 UI для управления Инвентарем и Предметами.** (Зависит от API 15, 42)
-    *   Описание: Создать UI страницы для просмотра и редактирования инвентаря персонажей/NPC и общего списка предметов в гильдии.
-    *   Интерфейс просмотра инвентаря выбранного персонажа/NPC (вызов API 15 `get_player_inventory` или аналогичного для NPC). Отображение предметов с их деталями (свойства, i18n описания).
-    *   Интерфейс для просмотра/редактирования списка всех предметов в гильдии (вызов API CRUD 41 для модели Item 42). Реализация форм для создания/редактирования Item, включая `_i18n` названия/описания.
-    *   Возможность перемещения предметов между инвентарями через UI (вызов API 15 add/remove).
-    *   Результат: Графический интерфейс для управления инвентарем и предметами в гильдии.
-
----
-
-**Задача 61: 🖥️ UI.7 UI для управления Фракциями и Отношениями.** (Зависит от API 20, 21)
-    *   Описание: Создать UI страницы для управления фракциями и отношениями.
-    *   Интерфейс просмотра/редактирования списка фракций (вызов API CRUD 41 для модели GeneratedFaction 20). Формы для редактирования фракций (включая `_i18n`).
-    *   Интерфейс просмотра/редактирования списка отношений (вызов API CRUD 41 для модели Relationship 21). Отображение отношений между сущностями в гильдии, формы для их изменения. Возможно, визуальное представление отношений.
-    *   Результат: Графический интерфейс для управления фракциями и отношениями.
-
----
-
-**Задача 62: 🖥️ UI.8 UI для управления Квестами.** (Зависит от API 39)
-    *   Описание: Создать UI страницы для управления квестами.
-    *   Интерфейс просмотра списка всех квестов в гильдии (вызов API CRUD 41 для GeneratedQuest 39).
-    *   Интерфейс просмотра/редактирования деталей квеста, включая шаги, требования (`required_mechanics_json`), абстрактные цели (`abstract_goal_json`), последствия (`consequences_json`). Удобные формы для редактирования этих JSON структур. Редактирование `_i18n` текстов.
-    *   Интерфейс для отслеживания прогресса квестов у игроков/партий.
-    *   Результат: Графический интерфейс для управления квестами в гильдии.
-
----
-
-**Задача 63: 🖥️ UI.9 UI для управления Глобальными Сущностями.** (Зависит от API 45)
-    *   Описание: Создать UI страницы для управления глобальными сущностями.
-    *   Интерфейс просмотра/редактирования списка Глобальных Сущностей (MobileGroup, GlobalNpc, GlobalEvent) в гильдии (вызов API CRUD 41 для моделей 45).
-    *   Отображение их состояния, маршрутов, целей. Формы для редактирования.
-
----
-
-**Задача 64: 🖥️ UI.10 UI для Мониторинга и Логгирования.** (Зависит от API 43)
-    *   Описание: Создать UI страницы для мониторинга состояния игры и просмотра логов.
-    *   Интерфейс для просмотра WorldState (API 43).
-    *   Интерфейс для просмотра лога событий (API 43). Реализовать фильтрацию и пагинацию лога. Форматирование записей лога (API 47) для отображения.
-    *   Возможно, визуализация карты гильдии (на основе данных Location 4.1). Отображение положения игроков, партий, глобальных сущностей.
-
----
-
-**Задача 65: 🖥️ UI.11 UI для Инструментов Баланса.** (Зависит от API 48)
-    *   Описание: Создать UI страницы для доступа к инструментам баланса и тестирования.
-    *   Интерфейсы для запуска симуляций (боя, проверок, конфликтов - вызов API 48) с настраиваемыми параметрами. Отображение результатов симуляций.
-    *   Отображение отчетов анализатора AI (API 48).
-
----
-
-**Задача 66: 🖥️ UI.12 UI для разрешения Конфликтов.** (Зависит от API 41)
-    *   Описание: Создать UI страницу для ручного разрешения конфликтных действий.
-    *   Отображать список pending конфликтов для этой гильдии (загрузка записей `PendingConflict` через API 41).
-    *   При выборе конфликта: Отобразить детали конфликта (действия игроков, тип конфликта) в читаемом виде.
-    *   Предоставить элементы управления (кнопки, выпадающий список) для выбора исхода конфликта (на основе `master_outcome_types` из RuleConfig 13/41).
-    *   Кнопка "Разрешить" (вызов API 41 `master_resolve_conflict`).
-
----
-
-**Задача 67: 🖥️ UI.13 Backend API для списка команд.** (Зависит от 0.1)
-    *   Описание: Разработать API endpoint на backend, выдающий структурированную информацию о командах бота.
-    *   Реализовать API endpoint (например, `/api/commands`). Загружает список всех доступных команд Discord бота (из Discord API через библиотеку бота). Для каждой команды: получить название, описание, параметры, разрешения.
-    *   API должен возвращать информацию **на языке бота (гильдии)** или **поддерживать запрос информации на определенном языке**.
-    *   Результат: Backend API для получения данных о командах.
-
----
-
-**Задача 68: 🖥️ UI.14 UI раздел "Список Команд" (Help/Guide).** (Зависит от API 67)
-    *   Описание: В UI, создать раздел для отображения списка команд.
-    *   Загрузить список команд через API 67. Отобразить его в читаемом формате (таблица, список). Представить описание команд и параметров.
-    *   Результат: В UI появляется раздел справки по командам.
-
+Task 44: 💰 10.3 Trade System (Guild-Scoped).
+Description: Managing a trade session.
+API handle_trade_action(guild_id: int, session: Session, player_id: int, target_npc_id: int, action_type: str, item_id: Optional[int] = None, count: Optional[int] = None). Called from 21 (Action Processing Module) or 46 (Dialogue Module). REQUIRES guild_id and session.
+Implements logic: opening trade interface, processing "buy"/"sell". Prices are calculated DYNAMICALLY according to rules 13/41/36, considering relationships (30/31).
+Within the provided transaction (session): Check feasibility of transaction, calculate final price, move items (call 15 add/remove), update gold (15/0.2/0.3). If the transaction fails (e.g., item already bought by another party member) -> ROLLBACK (of the action transaction in 15).
+Log (19) for the guild. Provide feedback (47). Change Relationships (30/31) according to rules 13/41 for trades.
+
+Task Block: Phase 14: Global Entities and Dynamic World
+This block presents tasks related to entities that move around the world independently of players (caravans, patrols, random NPCs), and their simulation.
+
+Task 45: 🌌 14.1 Global Entity Models (Guild-Scoped, i18n).
+Description: Models for entities moving in the world within each guild.
+Implement GlobalNpc, MobileGroup, GlobalEvent models (0.2/7). All with a guild_id field. name_i18n. Routes, goals, composition.
+
+Task 46: 🧬 14.2 Global Entity Management (Per-Guild Iteration).
+Description: Module simulating the life and movement of global entities for each guild.
+Async Worker(s): Iterates through the list of all active guilds. For each guild_id:
+Loads Global Entities, rules (13/0.3/41) for this guild.
+Simulates GE movement.
+Simulates interactions (with other GEs, entities, players) IN THE CONTEXT OF THIS GUILD: Detection check (12 by 13/41), Reaction (determined by rules 13/41 and relationships 30/31/32), Triggers (Combat 27, Dialogue 46, Quest 31, World Event).
+Log events (19).
+
+
+
+Task Block: Phase 15: Management and Monitoring Tools
+This block presents tasks for implementing tools for the game Master.
+
+Task 47: 🛠️ 15.1 Master Command System.
+Description: Implement a full set of Discord commands for the Master to manage gameplay and data in their guild. Commands automatically receive the guild_id from the command context. Support multilingual input for arguments and display results in the Master's language.
+API for CRUD over ALL DB models (7 and others). Require guild_id.
+API for viewing/editing records in the RuleConfig table (0.2/7/13). Allow the Master to configure all game rules for their guild.
+Manual trigger/modification commands for entities operate WITHIN THE guild_id CONTEXT.
+API /master resolve_conflict <id> <outcome>: Accepts guild_id. Finds the pending conflict record (created in 21) by guild_id. Sets status to 'resolved' and the outcome. Signals the Turn Processing Module (21), which was waiting for resolution, to continue processing.
+
+Task 48: 🛠️ 15.2 Balance and Testing Tools (Per Guild).
+Description: Simulators and analyzers for the Master, operating within the guild context according to rules.
+Simulation APIs (Combat 27, Checks 12, Conflicts 21). REQUIRE guild_id. Use data and rules FOR THIS GUILD.
+AI generation analyzers (18): Check the quality and balance of generated content against rules 13/41.
+Results are output in the Master's language (49).
+
+Task 49: 🛠️ 15.3 Monitoring Tools (Guild-Scoped).
+Description: Provide the Master with information about the game state and history in their guild.
+Viewing commands (Log 17, WS 36, Map 4.1, Entities, Statistics): Automatically filter data BY the command's guild_id. Use 47 to format reports in the Master's language.
+
+Task Block: Phase 11: Dynamic Dialogue and NPC Memory
+This block presents tasks related to dynamic NPC dialogues using LLM and storing interaction history.
+
+Task 50: 🧠 11.1 Dialogue Generation Module (LLM, Multy-i18n, According to Rules).
+Description: Prepare the prompt for the LLM to generate NPC dialogue lines.
+API generate_npc_dialogue(guild_id: int, context: dict) -> str. REQUIRES guild_id. Called from 46 (Dialogue Module).
+Prompt context: WorldState (36), Global Entities (40), NPC profile (data 1.2/14, current relationships 30/31/32, memory 52), Player/Party profile (1.2/5), Quest context (39) if related, dialogue rules (checks, influence) from RuleConfig 13/0.3. Player input text (from 46).
+LLM Request: Generate a line IN THE PLAYER'S LANGUAGE (0.1/0.2), relevant to the context, character, relationship. Use i18n names of entities (from DB 4/7/14/39) FOR THIS GUILD.
+
+Task 51: 🧠 11.2 Dialogue Context and Status (Guild-Scoped).
+Description: Implement logic for managing the state of a dialogue session for a player/party.
+API start_dialogue(guild_id: int, player_id: int, target_npc_id: int). Called from 21 (Action Processing Module) or a command. Sets player(s) status to 'dialogue' (0.2/1.1). Creates a temporary dialogue record.
+API handle_dialogue_input(guild_id: int, player_id: int, message_text: str) -> dict. Called FROM 21 (Action Processing Module) upon receiving text from a player in 'dialogue' status. Processes the text as a line, calls 50 to generate the NPC response.
+API end_dialogue(guild_id: int, player_id: int). Removes 'dialogue' status.
+
+Task 52: 🧠 11.3 NPC Memory Management (Persistent, Per Guild).
+Description: Storing NPC interaction history with players/parties. (Renamed from 11.4, moved from 47).
+Implement PlayerNpcMemory/PartyNpcMemory models (0.2/7). BOTH INCLUDE guild_id. Utilities require guild_id.
+API add_to_npc_memory(guild_id: int, player_id/party_id, npc_id, event_type: str, details: dict). Called by other modules upon significant events (dialogue 46, quest 41, combat 27, relationship change 31).
+Utility get_npc_memory(guild_id: int, player_id/party_id, npc_id) -> List[MemoryEntry]: Loads memory for this NPC and Player/Party IN THIS GUILD. Used in 50 (for LLM context).
+
+Task 53: 🧠 11.4 NLU and Intent Recognition in Dialogue (Guild-Scoped).
+Description: Processing player input in dialogue mode. This is part of module 13 (NLU) logic.
+If player status is 'dialogue', NLU (13) does not save the action to collected_actions_json, but passes it directly to the Dialogue Management Module (46) via the handle_dialogue_input API (46). NLU (13) still recognizes Intents/Entities and passes them to 46.
+
+Task Block: Feedback Formatting System
+This block presents tasks related to transforming structured event data into readable textual feedback for users.
+
+Task 54: ⚙️ 6.7.1 Log and Feedback Formatting System (Full, Multy-i18n, Guild-Scoped).
+Description: Transforming structured event data into readable textual feedback. (Renamed from 49).
+API format_log_entry(log_entry_details_json: dict, language: str) -> str. Accepts JSON log details (from StoryLog 17) and language. Uses the guild_id from details_json to load i18n entity names and RuleConfig terms FOR THIS GUILD to format the text in the required language.
+API format_turn_report(guild_id: int, log_entries: List[dict], player_id: int, language: str) -> str. Collects log entries (17) for the turn for the guild.
+
+Task Block: Phase UI (User Interface)
+This block presents tasks related to developing a separate client application (web or desktop) that will provide a convenient graphical interface for the Game Master and potentially players, interacting with the backend API.
+
+Task 55: 🖥️ UI.1 UI Technology Stack Selection and Basic Structure. (None)
+* Description: Select a framework/library for developing the client UI application (e.g., React, Vue for web; Electron, PyQt for desktop). Define the basic architecture of the UI application (components, routing, state management).
+* Result: Technology stack selected, basic UI project framework created.
+
+Task 56: 🖥️ UI.2 Basic UI Structure and Authentication Development. (Depends on 0.1 - Discord API/OAuth2?)
+* Description: Create the main structure of the UI application (navigation, page layouts). Implement a UI user authentication system (e.g., via Discord OAuth2 to link to the Master's Discord account). Implement selection of the guild the Master is working with in the current UI session. The UI must store the Guild ID and automatically pass it in all subsequent requests to the backend API.
+* Result: A working UI login and guild selection system, ready for page development.
+
+Task 57: 🖥️ UI.3 UI for Player and Character Management. (Depends on API 1.3)
+* Description: Create UI pages for viewing lists of players and characters for the selected guild. Implement functionality for displaying data (using API 1.3 for reading). Implement forms for creating, editing, and deleting Player and GeneratedNpc records (calling API 1.3 for create/update/delete). The UI must correctly handle i18n fields for displaying and editing texts in different languages.
+* Result: Interface for managing players and characters via UI.
+
+Task 58: 🖥️ UI.4 UI for Rule Configuration (RuleConfig). (Depends on API 41)
+* Description: Create a UI page for viewing and editing game rules (RuleConfig) for the selected guild.
+* Load the rule structure (from 13/0.3) and current values (via API 41, e.g., /master view_rules or a dedicated RuleConfig API). Display the rule structure in a convenient format (e.g., JSON tree structure).
+* Implement user-friendly controls (forms, input fields, sliders, dropdowns) for editing various types of rule parameters (numbers, strings, booleans, JSON).
+* Implement a save button for changes (calling the RuleConfig editing API 41).
+* Result: Graphical interface for configuring game rules by the Master.
+
+Task 59: 🖥️ UI.5 UI for AI Generation and Moderation. (Depends on API 10)
+* Description: Create a UI page for managing AI generation and moderation.
+* Implement controls for triggering AI generation (calling API 10 trigger_location_generation). Ability to specify generation parameters (location, type).
+* Display a list of pending moderation requests for this guild (via API 41, e.g., /master review_ai).
+* Upon selecting a pending request: Display the generated content (NPCs, quests, items, descriptions) in a readable format (using API 47 for formatting or getting data directly from 18 ai_data_json). Display validation issues (from issues_json 18).
+* Implement "Approve", "Reject", "Edit" buttons (calling corresponding API 41). Editing should allow modifying entity fields in the pending request, including _i18n texts.
+* Result: Graphical interface for managing AI content generation and moderation.
+
+Task 60: 🖥️ UI.6 UI for Inventory and Item Management. (Depends on API 15, 42)
+* Description: Create UI pages for viewing and editing character/NPC inventories and the general list of items in the guild.
+* Interface for viewing the inventory of a selected character/NPC (calling API 15 get_player_inventory or similar for NPCs). Display items with their details (properties, i18n descriptions).
+* Interface for viewing/editing the list of all items in the guild (calling CRUD API 41 for the Item model 42). Implement forms for creating/editing Items, including _i18n names/descriptions.
+* Ability to move items between inventories via UI (calling API 15 add/remove).
+* Result: Graphical interface for managing inventory and items in the guild.
+
+Task 61: 🖥️ UI.7 UI for Faction and Relationship Management. (Depends on API 20, 21)
+* Description: Create UI pages for managing factions and relationships.
+* Interface for viewing/editing the list of factions (calling CRUD API 41 for the GeneratedFaction model 20). Forms for editing factions (including _i18n).
+* Interface for viewing/editing the list of relationships (calling CRUD API 41 for the Relationship model 21). Display relationships between entities in the guild, forms for changing them. Possibly a visual representation of relationships.
+* Result: Graphical interface for managing factions and relationships.
+
+Task 62: 🖥️ UI.8 UI for Quest Management. (Depends on API 39)
+* Description: Create UI pages for managing quests.
+* Interface for viewing the list of all quests in the guild (calling CRUD API 41 for GeneratedQuest 39).
+* Interface for viewing/editing quest details, including steps, requirements (required_mechanics_json), abstract goals (abstract_goal_json), consequences (consequences_json). Convenient forms for editing these JSON structures. Editing _i18n texts.
+* Interface for tracking quest progress for players/parties.
+* Result: Graphical interface for managing quests in the guild.
+
+Task 63: 🖥️ UI.9 UI for Global Entity Management. (Depends on API 45)
+* Description: Create UI pages for managing global entities.
+* Interface for viewing/editing the list of Global Entities (MobileGroup, GlobalNpc, GlobalEvent) in the guild (calling CRUD API 41 for models 45).
+* Display their state, routes, goals. Forms for editing.
+
+Task 64: 🖥️ UI.10 UI for Monitoring and Logging. (Depends on API 43)
+* Description: Create UI pages for monitoring game state and viewing logs.
+* Interface for viewing WorldState (API 43).
+* Interface for viewing the event log (API 43). Implement filtering and pagination for the log. Format log entries (API 47) for display.
+* Possibly, visualization of the guild map (based on Location data 4.1). Display the position of players, parties, global entities.
+
+Task 65: 🖥️ UI.11 UI for Balance Tools. (Depends on API 48)
+* Description: Create UI pages for accessing balance and testing tools.
+* Interfaces for running simulations (combat, checks, conflicts - calling API 48) with configurable parameters. Display simulation results.
+* Display reports from the AI analyzer (API 48).
+
+Task 66: 🖥️ UI.12 UI for Conflict Resolution. (Depends on API 41)
+* Description: Create a UI page for manual resolution of conflict actions.
+* Display a list of pending conflicts for this guild (loading PendingConflict records via API 41).
+* Upon selecting a conflict: Display conflict details (player actions, conflict type) in a readable format.
+* Provide controls (buttons, dropdown list) for selecting the conflict outcome (based on master_outcome_types from RuleConfig 13/41).
+* "Resolve" button (calling API 41 master_resolve_conflict).
+
+Task 67: 🖥️ UI.13 Backend API for Command List. (Depends on 0.1)
+* Description: Develop a backend API endpoint that provides structured information about bot commands.
+* Implement an API endpoint (e.g., /api/commands). Loads the list of all available Discord bot commands (from the Discord API via the bot library). For each command: get name, description, parameters, permissions.
+* The API should return information in the bot's language (guild's) or support requesting information in a specific language.
+* Result: Backend API for retrieving command data.
+
+Task 68: 🖥️ UI.14 UI "Command List" Section (Help/Guide). (Depends on API 67)
+* Description: In the UI, create a section for displaying the list of commands.
+* Load the list of commands via API 67. Display it in a readable format (table, list). Present command descriptions and parameters.
+* Result: A command help section appears in the UI.
 

@@ -117,65 +117,38 @@ class TurnProcessingService:
         print(f"TurnProcessingService: Processing player actions for guild {guild_id} and adding to scheduler.")
         actions_submitted_count = 0
 
-        all_characters_in_guild = self.character_manager.get_all_characters(guild_id) # MODIFIED: Removed await
+        all_characters_in_guild = self.character_manager.get_all_characters(guild_id)
         if not all_characters_in_guild:
             print(f"TurnProcessingService: No characters found in guild {guild_id} for player turn processing.")
             return {"status": "no_characters", "count": 0}
 
         for char in all_characters_in_guild:
-            # Only process characters who might have actions (e.g., based on status or if they always can submit)
-            # For now, let's assume any character might have actions in collected_actions_json
-            # or a specific status like 'ожидание_обработки' could be checked here if needed.
+            if char.action_queue:
+                for action in char.action_queue:
+                    action_id = action.get("action_id", str(uuid.uuid4()))
+                    intent_type = action.get('type', 'UNKNOWN').upper()
+                    action_type = f"PLAYER_{intent_type}"
 
-            raw_actions_json = getattr(char, 'collected_actions_json', None)
-            if raw_actions_json:
-                try:
-                    player_submitted_actions = json.loads(raw_actions_json)
-                    if not isinstance(player_submitted_actions, list):
-                        player_submitted_actions = [player_submitted_actions] # Handle single dict case
+                    action_request = ActionRequest(
+                        action_id=action_id,
+                        guild_id=str(guild_id),
+                        actor_id=str(char.id),
+                        action_type=action_type,
+                        action_data=action.get("data", {}),
+                        priority=action.get("priority", 10),
+                        requested_at=time.time(),
+                        execute_at=action.get("execute_at", time.time()),
+                        dependencies=action.get("dependencies", [])
+                    )
+                    self.action_scheduler.add_action(action_request)
+                    actions_submitted_count += 1
 
-                    for p_action_data in player_submitted_actions:
-                        if not isinstance(p_action_data, dict):
-                            print(f"Warning: Invalid action data format for character {char.id}. Expected dict, got {type(p_action_data)}")
-                            continue
-
-                        action_id = p_action_data.get("action_id", str(uuid.uuid4()))
-                        # Normalize intent_type, ensure it's prefixed for clarity if needed
-                        intent_type = p_action_data.get('intent_type', p_action_data.get('intent', 'UNKNOWN')).upper()
-                        action_type = f"PLAYER_{intent_type}" # Prefix to distinguish player actions
-
-                        action_request = ActionRequest(
-                            action_id=action_id,
-                            guild_id=str(guild_id),
-                            actor_id=str(char.id),
-                            action_type=action_type,
-                            action_data=p_action_data, # Store original player submission here
-                            priority=p_action_data.get("priority", 10), # Player actions high priority
-                            requested_at=time.time(),
-                            execute_at=p_action_data.get("execute_at", time.time()), # Allow players to specify future execution
-                            dependencies=p_action_data.get("dependencies", [])
-                        )
-                        self.action_scheduler.add_action(action_request)
-                        actions_submitted_count += 1
-
-                    # Clear actions and update status after processing all actions for this char
-                    setattr(char, 'collected_actions_json', None) # Clear the raw actions
-                    setattr(char, 'current_game_status', 'actions_queued') # New status
-                    self.character_manager.mark_character_dirty(guild_id, char.id)
-
-                except json.JSONDecodeError:
-                    print(f"Error: Could not parse collected_actions_json for character {char.id} in guild {guild_id}.")
-                    # Potentially log this error to player's feedback or game log
-                    setattr(char, 'current_game_status', 'action_submission_error')
-                    self.character_manager.mark_character_dirty(guild_id, char.id)
-                except Exception as e:
-                    print(f"Error processing actions for char {char.id}: {e}")
-                    traceback.print_exc()
-                    setattr(char, 'current_game_status', 'action_processing_error')
-                    self.character_manager.mark_character_dirty(guild_id, char.id)
+                char.action_queue = []
+                char.current_game_status = 'actions_queued'
+                self.character_manager.mark_character_dirty(guild_id, char.id)
 
         if actions_submitted_count > 0:
-            await self.game_manager.save_game_state_after_action(guild_id) # MODIFIED: reason argument removed
+            await self.game_manager.save_game_state_after_action(guild_id)
             details_log3 = {"count": actions_submitted_count, "log_message": f"{actions_submitted_count} player actions queued for guild {guild_id}."}
             await self.game_log_manager.log_event(
                 guild_id=guild_id,

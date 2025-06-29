@@ -18,21 +18,22 @@ from discord import Message
 import discord
 
 # TOP-LEVEL IMPORTS
+from bot.game.command_handlers import (
+    action_commands,
+    character_commands,
+    gm_commands,
+    interaction_commands,
+    inventory_commands,
+    meta_commands,
+    moderation_commands,
+    quest_commands,
+)
 # from bot.services.campaign_loader import CampaignLoaderService # MODIFIED - Removed
 from bot.game.managers.relationship_manager import RelationshipManager
 from bot.game.managers.quest_manager import QuestManager
 
 
-# Import specific command handlers
-from bot.game.action_processor import ActionProcessor
-from bot.game.command_handlers import meta_commands
-from bot.game.command_handlers import character_commands
-from bot.game.command_handlers import inventory_commands
-from bot.game.command_handlers import action_commands
-from bot.game.command_handlers import interaction_commands
-from bot.game.command_handlers import quest_commands
-from bot.game.command_handlers import gm_commands
-from bot.game.command_handlers import moderation_commands
+from bot.game.character_processors.character_action_processor import CharacterActionProcessor
 
 
 if TYPE_CHECKING:

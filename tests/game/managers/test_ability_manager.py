@@ -1,7 +1,7 @@
 import uuid
 import pytest
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, ANY
 
 # Models and Services to test/mock
 from bot.game.managers.ability_manager import AbilityManager
@@ -211,13 +211,13 @@ async def test_activate_ability_success(
     char_stats = getattr(sample_character_pydantic, 'stats', None)
     assert isinstance(char_stats, dict), "Character stats should be a dictionary."
     if isinstance(char_stats, dict): # Redundant due to assert but good for type checker
-        self.assertEqual(char_stats["stamina"], initial_stamina - cost_stamina)
+        assert char_stats["stamina"] == initial_stamina - cost_stamina
 
     char_cooldowns = getattr(sample_character_pydantic, 'ability_cooldowns', None)
     assert isinstance(char_cooldowns, dict), "Character ability_cooldowns should be a dictionary."
     if isinstance(char_cooldowns, dict): # Redundant but good for type checker
-        self.assertIn(ability_id, char_cooldowns)
-        self.assertGreater(char_cooldowns[ability_id], time.time()) # Cooldown is set
+        assert ability_id in char_cooldowns
+        assert char_cooldowns[ability_id] > time.time() # Cooldown is set
 
 
     mock_character_manager.mark_character_dirty.assert_any_call(guild_id, char_id)

@@ -147,8 +147,8 @@ async def test_run_turn_cycle_processes_player_actions(
     assert added_action_arg.action_type == "PLAYER_LOOK"
 
     # Assertions on mock_char attributes after processing
-    self.assertEqual(mock_char.collected_actions_json, None) # Should be cleared
-    self.assertEqual(mock_char.current_game_status, "actions_queued") # Initial status after action extraction
+    assert mock_char.collected_actions_json == None # Should be cleared
+    assert mock_char.current_game_status == "actions_queued" # Initial status after action extraction
 
 
     mock_game_mngr_for_tps.character_action_processor.process_action_from_request.assert_awaited_once_with(

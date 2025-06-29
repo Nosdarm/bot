@@ -135,8 +135,8 @@ async def test_parse_with_action_verb_entity(
         # Assume "attack" is token 0, "goblin" is token 2
         # The match_id string must be something PhraseMatcher can map back to our entity_map
         mock_matcher_instance.return_value = [
-            (nlp_en("").vocab.strings.add("ACTION_VERB_verb_attack"), 0, 1), # "attack"
-            (nlp_en("").vocab.strings.add("NPC_npc_goblin"), 2, 3)       # "goblin"
+            (mock_spacy_nlp_en("").vocab.strings.add("ACTION_VERB_verb_attack"), 0, 1), # "attack"
+            (mock_spacy_nlp_en("").vocab.strings.add("NPC_npc_goblin"), 2, 3)       # "goblin"
         ]
 
 
@@ -173,7 +173,7 @@ async def test_parse_with_keyword_intent(
     with patch('spacy.matcher.PhraseMatcher') as MockPhraseMatcher:
         mock_matcher_instance = MockPhraseMatcher.return_value
         mock_matcher_instance.return_value = [
-            (nlp_en("").vocab.strings.add("NPC_npc_bandit"), 2, 3) # "bandit"
+            (mock_spacy_nlp_en("").vocab.strings.add("NPC_npc_bandit"), 2, 3) # "bandit"
         ]
 
         action_data = await player_action_parser.parse_player_action(

@@ -150,12 +150,11 @@ async def update_guild_rules_config( # Renamed to be unique
         # (after they've been added to session and potentially refreshed by commit)
         final_rules_values = {key: row.value for key, row in current_rules_map.items()}
 
-    # Filter out keys not present in RuleConfigData model fields before creating Pydantic model
-    valid_fields = RuleConfigData.model_fields.keys()
-    filtered_final_rules_values = {k: v for k, v in final_rules_values.items() if k in valid_fields}
+        # Filter out keys not present in RuleConfigData model fields before creating Pydantic model
+        valid_fields = RuleConfigData.model_fields.keys()
+        filtered_final_rules_values = {k: v for k, v in final_rules_values.items() if k in valid_fields}
 
-    updated_pydantic_data = RuleConfigData(**filtered_final_rules_values)
-
+        updated_pydantic_data = RuleConfigData(**filtered_final_rules_values)
     except Exception as e_update:
         # Rollback is handled by get_db_session context manager on exception
         # await db.rollback()

@@ -9,9 +9,8 @@ from .ai_data_models import (
     GeneratedQuestData,
     GeneratedItemProfile,
     ValidationIssue
-    # GenerationType will be imported from bot.database.models
 )
-from bot.database.models import GenerationType # Corrected import for GenerationType
+from bot.models.pending_generation import GenerationType # Corrected import for GenerationType
 
 if TYPE_CHECKING:
     from bot.game.managers.game_manager import GameManager

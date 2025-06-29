@@ -124,3 +124,11 @@ class Combat:
         )
 
 print("DEBUG: combat.py (model) loaded with CombatParticipant and updated Combat model.")
+
+@dataclass
+class CombatActionResult:
+    success: bool
+    message: str
+    hp_changes: List[Dict[str, Any]] = field(default_factory=list)
+    status_changes: List[Dict[str, Any]] = field(default_factory=list)
+    log_messages: List[str] = field(default_factory=list)

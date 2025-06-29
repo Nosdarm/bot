@@ -24,6 +24,9 @@ class GenerationType(enum.Enum):
     DIALOGUE_LINE = "dialogue_line"
     EVENT_DESCRIPTION = "event_description"
     CUSTOM_PROMPT = "custom_prompt"
+    NPC_PROFILE_GENERATION = "npc_profile"
+    QUEST_GENERATION = "quest_full"
+    ITEM_PROFILE_GENERATION = "item_profile"
 
 class PendingStatus(enum.Enum):
     PENDING_GENERATION = "pending_generation"

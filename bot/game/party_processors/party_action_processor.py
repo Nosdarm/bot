@@ -4,7 +4,7 @@ import json
 import uuid
 import traceback
 import asyncio
-from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, cast
+from typing import Optional, Dict, Any, List, Set, Callable, Awaitable, TYPE_CHECKING, cast, Union
 import logging
 
 if TYPE_CHECKING:
@@ -227,5 +227,3 @@ class PartyActionProcessor:
                 active_party_id = guild_game_state.state_variables.get("active_party_id")
         # ...
         return {"status": "completed", "message": "Forced party turn end (mocked).", "details": {}}
-
-[end of bot/game/party_processors/party_action_processor.py]

@@ -173,7 +173,7 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
         self.mock_char_mgr.get_all_characters.return_value = [player_char]
         self.mock_char_mgr.get_character.return_value = player_char
 
-        async def mock_player_action_processing(action_request: ActionRequest, character: _CharacterModel, context: Dict[str, Any]): # Added type hints
+        async def mock_player_action_processing(action_request: ActionRequest, character: "_CharacterModel", context: Dict[str, Any]): # Added type hints
             if action_request.action_type == "PLAYER_LOOK":
                 return {"success": True, "message": "You look around.", "state_changed": False, "action_id": action_request.action_id, "actor_id": character.id}
             return {"success": False, "message": "Unknown player action.", "state_changed": False, "action_id": action_request.action_id, "actor_id": character.id}
@@ -231,7 +231,7 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
         await self.turn_service.process_player_turns(self.guild_id)
 
 
-        async def mock_npc_plan_action(npc: _NPCModel, guild_id_param: str, context_param: Dict[str, Any]): # Added type hints
+        async def mock_npc_plan_action(npc, guild_id_param, context_param): # No type hints
             if npc.id == npc_id:
                 return ActionRequest(
                     guild_id=guild_id_param, actor_id=npc.id, action_type="NPC_PATROL",
@@ -240,7 +240,7 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
             return None
         self.npc_action_planner.plan_action = AsyncMock(side_effect=mock_npc_plan_action)
 
-        async def mock_npc_action_processing(action_request: ActionRequest, npc: _NPCModel): # Added type hints
+        async def mock_npc_action_processing(action_request, npc): # No type hints
             dest = action_request.action_data.get("destination") if isinstance(action_request.action_data, dict) else "unknown_dest"
             npc_name = getattr(npc, 'name', 'Unknown NPC') # Safe access for name
             if action_request.action_type == "NPC_PATROL":
@@ -297,12 +297,12 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
         self.mock_npc_mgr.get_all_npcs.return_value = [npc_actor]
         self.mock_npc_mgr.get_npc.return_value = npc_actor
 
-        async def mock_player_follow_processing(action_request: ActionRequest, character: _CharacterModel, context: Dict[str, Any]): # Type hints
+        async def mock_player_follow_processing(action_request, character, context): # No type hints
             char_name = getattr(character, 'name', 'Unknown Player') # Safe access
             return {"success": True, "message": f"{char_name} follows.", "state_changed": True, "action_id": action_request.action_id, "actor_id": character.id}
         self.player_action_processor.process_action_from_request = AsyncMock(side_effect=mock_player_follow_processing)
 
-        async def mock_npc_reach_dest_plan(npc: _NPCModel, guild_id_param: str, context_param: Dict[str, Any]): # Type hints
+        async def mock_npc_reach_dest_plan(npc, guild_id_param, context_param): # No type hints
             return ActionRequest(
                 action_id=npc_action_id_fixed,
                 guild_id=guild_id_param, actor_id=npc.id, action_type="NPC_REACH_DESTINATION",
@@ -310,7 +310,7 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
             )
         self.npc_action_planner.plan_action = AsyncMock(side_effect=mock_npc_reach_dest_plan)
 
-        async def mock_npc_reach_dest_process(action_request: ActionRequest, npc: _NPCModel): # Type hints
+        async def mock_npc_reach_dest_process(action_request, npc): # No type hints
             npc_name = getattr(npc, 'name', 'Unknown NPC') # Safe access
             return {"success": True, "message": f"{npc_name} reached destination.", "state_changed": True, "action_id": action_request.action_id, "actor_id": npc.id}
         self.npc_action_processor.process_action = AsyncMock(side_effect=mock_npc_reach_dest_process)
@@ -338,11 +338,11 @@ class TestTurnProcessingIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(getattr(player_action_in_scheduler, 'status', None), "pending") # Safe access
 
         self.npc_action_planner.plan_action.reset_mock()
-        async def mock_npc_idle_plan(npc: _NPCModel, guild_id_param: str, context_param: Dict[str, Any]):  # Type hints
+        async def mock_npc_idle_plan(npc, guild_id_param, context_param):  # No type hints
             return ActionRequest(guild_id=guild_id_param, actor_id=npc.id, action_type="NPC_IDLE", execute_at=time.time())
         self.npc_action_planner.plan_action = AsyncMock(side_effect=mock_npc_idle_plan)
 
-        async def mock_npc_idle_process(action_request: ActionRequest, npc: _NPCModel): # Type hints
+        async def mock_npc_idle_process(action_request, npc): # No type hints
             return {"success": True, "message":"NPC idles.", "state_changed":False, "action_id":action_request.action_id, "actor_id":npc.id}
         self.npc_action_processor.process_action = AsyncMock(side_effect=mock_npc_idle_process)
 
