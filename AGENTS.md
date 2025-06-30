@@ -1422,6 +1422,35 @@ The primary focus of the current session has been to resolve Pytest test collect
     *   Persistent timeouts across `tests/api/`, `tests/cogs/`, and `tests/commands/` for tests involving database interactions or complex setups.
     *   Significant instability with file manipulation tools (`read_files`, `replace_with_git_merge_diff`), hindering diagnosis and application of fixes.
 
+## Development Task: Verify/Implement Missing Player Model Fields (Task 1.2 Gap) - YYYY-MM-DD HH:MM:SS UTC
+
+**Goal:** Address the reported gap in `Tasks.txt` (Task 1.2) concerning missing `unspent_xp` and `collected_actions_json` fields in the Player/Character models.
+
+**Summary of Actions & Findings:**
+
+1.  **Plan Creation:**
+    *   Initial plan was to locate models, add fields to SQLAlchemy models, update Pydantic models, and create/apply Alembic migrations.
+
+2.  **Model Investigation (SQLAlchemy):**
+    *   Located `Player` and `Character` SQLAlchemy models in `bot/database/models/character_related.py`.
+    *   **Finding:** Contrary to the "Detailed Code Analysis" section in `AGENTS.md` (under Task 1.2), both specified fields were found to **already exist** in the `Character(Base)` SQLAlchemy model:
+        *   `unspent_xp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)`
+        *   `collected_actions_json: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JsonVariant, nullable=True)`
+    *   This means the database schema (assuming migrations were correctly applied in the past) already supports these fields.
+
+3.  **Model Investigation (Pydantic):**
+    *   Located the corresponding Pydantic model `Character` in `bot/game/models/character.py`.
+    *   **Finding:** The Pydantic model also **already includes** these fields:
+        *   `unspent_xp: int = 0`
+        *   `collected_actions_json: Optional[str] = None` (Note: type is `Optional[str]` here, which is consistent if the DB `JsonVariant` stores it as a string and parsing happens during model hydration).
+
+4.  **Conclusion for this Task:**
+    *   The primary work of defining these fields in both SQLAlchemy and Pydantic models was already completed.
+    *   The "Detailed Code Analysis" in `AGENTS.md` regarding these specific missing fields was outdated.
+    *   No code changes (model updates or new Alembic migrations) were necessary for this specific item.
+
+**Outcome:** Verified that the `unspent_xp` and `collected_actions_json` fields are present in the relevant data models. The previous analysis in `AGENTS.md` should be updated to reflect this.
+
 *   **Upcoming Test Plan (Directory by Directory):**
     1.  `tests/api/`
     2.  `tests/cogs/`
