@@ -36,22 +36,27 @@ def transactional_session(session_param_name: str = 'db_session'):
             db_session: Optional[AsyncSession] = kwargs.get(session_param_name)
             if db_session is None:
                 try:
-                    if args and len(args) > 1 and isinstance(args[1], AsyncSession):
-                        db_session = args[1]
-                    elif args and isinstance(args[0], AsyncSession):
+                    if args and isinstance(args[0], AsyncSession):
                         db_session = args[0]
+                    elif args and len(args) > 1 and isinstance(args[1], AsyncSession):
+                        db_session = args[1]
                     else:
                         raise ValueError(f"AsyncSession parameter '{session_param_name}' not found in arguments for {func.__name__}")
                 except (IndexError, ValueError) as e:
                     logger.error(f"Error in transactional_session decorator for {func.__name__}: {e}")
                     raise
 
-            if not db_session.in_transaction():
-                async with db_session.begin():
-                    result = await func(*args, **kwargs)
-                    return result
-            else:
+            if db_session.in_transaction():
                 return await func(*args, **kwargs)
+
+            await db_session.begin()
+            try:
+                result = await func(*args, **kwargs)
+                await db_session.commit()
+                return result
+            except Exception:
+                await db_session.rollback()
+                raise
         return wrapper
     return decorator
 

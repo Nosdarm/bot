@@ -1,1 +1,28 @@
+Phase 0: Architecture and Initialization (Foundation MVP)
+- 0.1 Discord Bot Project Initialization and Basic Guild Integration
+- 0.2 DBMS Setup and Database Model Definition with Guild ID
+- 0.3 Basic DB Interaction Utilities and Rule Configuration Access (Guild-Aware)
 
+Phase 1: Game World (Static & Generated)
+- 1.1 Location Model (i18n, Guild-Scoped)
+- 1.2 Player and Party System (ORM, Commands, Guild-Scoped)
+- 1.3 Movement Logic (Player/Party, Guild-Scoped)
+
+Phase 2: AI Integration - Generation Core
+- 2.1 Finalize Definition of ALL DB Schemas (i18n, Guild ID)
+- 2.2 AI Prompt Preparation Module
+- 2.3 AI Response Parsing and Validation Module
+- 2.6 AI Generation, Moderation, and Saving Logic
+
+Phase 6: Action Resolution Systems (Core Mechanics)
+- 6.12 Turn Queue System (Turn Controller) - Per-Guild Processing
+- 6.11 Central Collected Actions Processing Module (Turn Processor) - Guild-Scoped Execution
+- 6.3.1 Dice Roller Module
+- 6.3.2 Check Resolver Module
+- 6.10 Action Parsing and Recognition Module (NLU & Intent/Entity)
+- 6.1.1 Intra-Location Interaction Handler Module
+
+Phase 7: Narrative Generation and Event Log
+- 7.1 Event Log Model (Story Log, i18n, Guild-Scoped)
+- 7.2 AI Narrative Generation (Multilang)
+- 7.3 Turn and Report Formatting (Guild-Scoped)

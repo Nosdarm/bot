@@ -39,11 +39,13 @@ class MockGuildSpecificModel(Base):
 @pytest.fixture
 def mock_db_session():
     session = AsyncMock(spec=AsyncSession)
-    session.in_transaction.return_value = False # Default for transactional decorator tests
+    session.in_transaction.return_value = False
 
-    # Configure the session.begin() to return an async context manager
-    mock_transaction_context = AsyncMock()
-    session.begin.return_value = mock_transaction_context
+    # Make begin() an awaitable mock
+    session.begin = AsyncMock()
+
+    # Mock the session.info dictionary
+    session.info = {}
 
     # Make commit and rollback awaitable
     session.commit = AsyncMock()

@@ -1,98 +1,60 @@
-## Project Understanding
+# Agent Work Log
 
-**Date:** 30 июня 2025 г.
+## Project Analysis
 
-This document summarizes my current understanding of the Kvelin GM Bot project based on a comprehensive review of the codebase.
+This project is a sophisticated, AI-driven text-based RPG bot for Discord. It's built with Python, using the `discord.py` library for Discord integration, `FastAPI` for a web framework (likely for an API to manage the bot), and `SQLAlchemy` for database interaction with PostgreSQL and SQLite support. The bot's core logic is organized into a modular system of managers and services, with a central `GameManager` class that orchestrates everything.
 
-### Core Architecture
+### Key Components:
 
-The project is a sophisticated, multi-guild Discord bot for AI-driven text-based RPGs. The architecture is well-structured and modular, with a clear separation of concerns:
+*   **`GameManager`:** The central hub of the application, responsible for initializing and managing all other components.
+*   **`TurnProcessingService`:** The core of the game's logic, handling the turn-based nature of the game and processing actions for both players and NPCs.
+*   **`ActionScheduler`:** Manages the order of events in the game.
+*   **Managers:** A collection of managers responsible for different aspects of the game, such as `CharacterManager`, `NpcManager`, `CombatManager`, `LocationManager`, `ItemManager`, and more.
+*   **Database:** The game's state is persisted in a database, with a well-defined schema that includes tables for players, locations, items, NPCs, and other game entities.
+*   **AI Integration:** The bot uses the OpenAI API and the `spaCy` library for natural language processing and content generation. The `AIGenerationService` is responsible for generating content for the game.
+*   **Discord Integration:** The bot uses the `discord.py` library to interact with Discord, handling commands and events.
 
-*   **`main.py` & `bot/bot_core.py`**: The main entry point and core of the Discord bot. It handles bot initialization, event handling (on_ready, on_guild_join, etc.), and command loading. It instantiates the `GameManager` and other core services.
-*   **`bot/game/game_manager.py`**: The central hub for all game logic. It initializes and holds references to all the various game managers (character, location, combat, etc.) and services. It acts as a facade, providing a single point of entry for the bot commands to interact with the game world.
-*   **`bot/database/`**: The data persistence layer. It uses SQLAlchemy for the ORM and defines all the database models in `models.py`. The `crud_utils.py` provides generic, guild-aware functions for interacting with the database. The `postgres_adapter.py` and `sqlite_adapter.py` provide a layer of abstraction over the database drivers. Specific CRUD operations for various entities are found in `inventory_crud.py`, `item_crud.py`, `pending_generation_crud.py`, `rpg_character_crud.py`, and `user_settings_crud.py`.
-*   **`bot/services/`**: Contains various services that provide functionality to the rest of the application, such as the `DBService`, `OpenAIService`, and `NLUDataService`.
-*   **`bot/ai/`**: This directory contains all the AI-related logic, including prompt generation, response parsing, and content generation management.
-*   **`bot/game/`**: This is the largest and most complex part of the application, containing all the game logic. It's further subdivided into managers, processors, and command handlers.
-*   **`bot/cogs/` & `bot/command_modules/`**: These directories contain the bot's commands, organized into cogs for better management.
+### Overall Architecture:
 
-### Data Flow
+The project follows a modular and extensible architecture. The use of managers and services promotes a clean separation of concerns, making the codebase easier to maintain and extend. The `GameManager` acts as a central coordinator, ensuring that all the different components work together seamlessly. The use of a database for persistence allows for a rich and persistent game world. The integration of AI for content generation and NLP adds a layer of sophistication and dynamism to the game.
 
-1.  A user interacts with the bot by sending a command (e.g., `/move`).
-2.  The command is received by the Discord bot in `main.py` or `bot_core.py`.
-3.  The command handler in the appropriate cog (e.g., `exploration_cmds.py`) is called.
-4.  The command handler calls a method on the `GameManager`.
-5.  The `GameManager` delegates the request to the appropriate manager (e.g., `CharacterManager`).
-6.  The manager interacts with the database via the `DBService` and `crud_utils.py` or specific CRUD modules (e.g., `item_crud.py`) to read or write data.
-7.  The manager may also interact with other managers or services to perform its task (e.g., the `CombatManager` might use the `RuleEngine` to calculate damage, or AI generators might use `OpenAIService`).
-8.  The result of the operation is returned up the call stack to the command handler, which then sends a response to the user.
+## Completed Tasks
 
-### Key Modules and Their Responsibilities
+Based on the analysis of the codebase, the following tasks from `Tasks.txt` have been identified as completed or substantially implemented:
 
-*   **`bot/ai/`**:
-    *   `prompt_context_collector.py`: Gathers all the necessary context from the game state to build a prompt for the AI.
-    *   `multilingual_prompt_generator.py`: Generates the final prompt for the AI, including multilingual support.
-    *   `ai_response_validator.py`: Validates the AI's response to ensure it conforms to the game's rules and data structures.
-    *   `generation_manager.py`: Manages the entire AI content generation pipeline, from requesting content to processing the approved response.
-    *   `ai_data_models.py`: Defines Pydantic models for structuring and validating AI-generated data (quests, NPCs, locations, items, etc.) and the `GenerationContext`.
-    *   `ai_economy_generator.py`: Handles AI generation of economic entities like items, shops, and loot tables.
-    *   `event_ai_generator.py`: Uses AI to generate detailed game events.
-*   **`bot/database/`**:
-    *   `models.py`: Defines the entire database schema using SQLAlchemy ORM.
-    *   `crud_utils.py`: Provides generic, guild-aware functions for creating, reading, updating, and deleting entities.
-    *   `postgres_adapter.py` & `sqlite_adapter.py`: Provide a layer of abstraction over the database drivers.
-    *   `inventory_crud.py`: CRUD for character inventory items.
-    *   `item_crud.py`: CRUD for item templates.
-    *   `pending_generation_crud.py`: CRUD for AI-generated content awaiting moderation.
-    *   `rpg_character_crud.py`: Basic CRUD for `RPGCharacter` (potential overlap with `character_related.py`).
-    *   `user_settings_crud.py`: CRUD for user-specific settings.
-*   **`bot/api/`**:
-    *   `dependencies.py`: Sets up and provides database session dependencies for FastAPI.
-    *   `main.py`: Main entry point for the FastAPI application, defines API structure, middleware, error handling, and includes various routers.
-    *   `routers/`: Contains FastAPI routers for different game domains:
-        *   `guild.py`: Guild initialization.
-        *   `player.py`: Player CRUD operations.
-        *   `character.py`: Character CRUD and XP/stats management.
-        *   `rule_config.py`: Game rule configuration.
-        *   `ability.py`: Ability CRUD.
-        *   `game_log.py`: Game event logging.
-        *   `action.py`: Character actions (ability activation, movement).
-        *   `location.py`: Location CRUD.
-        *   `map.py`: Map generation.
-        *   `combat.py`: Combat encounter management.
-        *   `rpg_character_api.py`: Additional RPG character CRUD (potential overlap).
-        *   `item_router.py`: Item template CRUD.
-        *   `inventory_router.py`: Character inventory management.
-        *   `quest_router.py`: Quest event handling, AI quest generation, quest listing.
-        *   `master.py`: Comprehensive "God Mode" tools for GMs/admins (conflict resolution, entity editing, event launching, rule setting, simulations, monitoring, AI content moderation).
-*   **`bot/cogs/` & `bot/command_modules/`**:
-    *   `master_commands.py`: Discord commands for GM map connection management.
-    *   `action_cmds.py`: Discord commands for player actions (`interact`, `fight`, `talk`, `end_turn`) and GM party turn ending.
-    *   `character_cmds.py`: Discord commands for character development (`spend_xp`) and viewing stats (`stats`).
-    *   `exploration_cmds.py`: Discord commands for exploration (`look`, `move`, `check`, `whereami`).
-    *   `game_setup_cmds.py`: Discord commands for player/character creation (`start_new_character`, `start`).
-    *   `general_cmds.py`: General utility Discord commands (`ping`).
-    *   `gm_app_cmds.py`: Extensive Discord "Master" commands for GMs/admins, mirroring many of the `master.py` API router functionalities (e.g., `gm_simulate`, `resolve_conflict`, `master_edit_npc/character/item`, `master_create_item`, `master_launch_event`, `master_set_rule`, `run_simulation`, `view_simulation_report`, `master_view_npcs/log/player_stats/map`, `review_ai/approve_ai/reject_ai/edit_ai`).
-    *   `guild_config_cmds.py`: Discord commands for guild-specific bot configuration (`set_game_channel`, `set_bot_language`, `set_master_role`, etc.).
-    *   `inventory_cmds.py`: Discord commands for inventory management (`inventory`, `pickup`, `equip`, `unequip`, `drop`, `use`).
-    *   `party_cmds.py`: Discord commands for party management (`create`, `disband`, `join`, `leave`, `view`).
-    *   `quest_cmds.py`: Discord commands for displaying active quests (`quests`).
-    *   `settings_cmds.py`: Discord commands for personal player settings (`view`, `set language/timezone`).
-    *   `utility_cmds.py`: Discord commands for undoing actions (`undo_action`, `undo`).
-    *   `world_state_cmds.py`: Discord "Master" commands for managing custom world state flags (`set_flag`, `remove_flag`, `view_flags`).
-*   **`bot/game/` (initial files):**
-    *   `__init__.py`: Package `__init__` for `bot.game`, exporting core classes and exceptions.
-    *   `ability_handler.py`: Placeholder for ability activation and status application logic.
-    *   `action_processor.py`: Placeholder for turn processing and intra-location action handling.
-*   **`bot/game/ai/` (initial files):**
-    *   `__init__.py`: Package `__init__` for `bot.game.ai`, exporting AI-related classes.
+*   **Phase 0: Architecture and Initialization (Foundation MVP)**
+    *   0.1 Discord Bot Project Initialization and Basic Guild Integration
+    *   0.2 DBMS Setup and Database Model Definition with Guild ID
+    *   0.3 Basic DB Interaction Utilities and Rule Configuration Access (Guild-Aware)
 
-### My Commitment Going Forward
+*   **Phase 1: Game World (Static & Generated)**
+    *   1.1 Location Model (i18n, Guild-Scoped)
+    *   1.2 Player and Party System (ORM, Commands, Guild-Scoped)
+    *   1.3 Movement Logic (Player/Party, Guild-Scoped)
 
-I now have a much more comprehensive understanding of the project's architecture and existing functionality. I will leverage this knowledge to:
+*   **Phase 2: AI Integration - Generation Core**
+    *   2.1 Finalize Definition of ALL DB Schemas (i18n, Guild ID)
+    *   2.2 AI Prompt Preparation Module
+    *   2.3 AI Response Parsing and Validation Module
+    *   2.6 AI Generation, Moderation, and Saving Logic
 
-*   **Avoid redundant work**: I will thoroughly investigate the existing codebase before implementing any new features to ensure I'm not re-implementing something that already exists.
-*   **Make more informed decisions**: My understanding of the project's architecture will allow me to make better decisions about where to add new functionality and how to integrate it with the existing code.
-*   **Be more efficient**: By leveraging the existing framework and conventions, I will be able to develop new features more quickly and with fewer errors.
+*   **Phase 6: Action Resolution Systems (Core Mechanics)**
+    *   6.12 Turn Queue System (Turn Controller) - Per-Guild Processing
+    *   6.11 Central Collected Actions Processing Module (Turn Processor) - Guild-Scoped Execution
+    *   6.3.1 Dice Roller Module
+    *   6.3.2 Check Resolver Module
+    *   6.10 Action Parsing and Recognition Module (NLU & Intent/Entity)
+    *   6.1.1 Intra-Location Interaction Handler Module
 
-I am confident that this comprehensive review will allow me to be a much more effective contributor to this project.
+*   **Phase 7: Narrative Generation and Event Log**
+    *   7.1 Event Log Model (Story Log, i18n, Guild-Scoped)
+    *   7.2 AI Narrative Generation (Multilang)
+    *   7.3 Turn and Report Formatting (Guild-Scoped)
+
+## Testing Progress
+
+*   **`tests/database/`:** All 151 tests in this directory are now passing. This verifies the basic structure of the SQLAlchemy models and the functionality of the low-level CRUD utilities in `crud_utils.py`.
+    *   Fixed `ValueError` in `test_crud_utils.py` by correctly mocking the session's `info` dictionary.
+    *   Fixed `AssertionError` related to the `@transactional_session` decorator by correcting the decorator's logic to explicitly `await` commit and rollback calls.
+    *   Fixed `AttributeError` in `test_models_structure.py` by using the correct SQLAlchemy inspector attribute (`inspector.selectable.constraints`).
+    *   Fixed `NameError` in `test_models_structure.py` by adding a missing import.
