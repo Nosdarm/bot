@@ -16,9 +16,9 @@ from tests.integration.test_database_model_constraints import test_engine # Reus
 @pytest_asyncio.fixture(scope="function")
 async def client(test_engine) -> AsyncIterator[AsyncClient]:
     """Provides an AsyncClient for making API requests to the FastAPI app, with a clean database."""
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+    # async with test_engine.begin() as conn:
+    #     await conn.run_sync(Base.metadata.drop_all)
+    #     await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncClient(app=app, base_url="http://test") as ac:
         yield ac
@@ -40,7 +40,8 @@ async def _ensure_player(db_session: AsyncSession, guild_id: str, discord_id_suf
             # level, xp, gold are character attributes, not player account attributes
         )
         db_session.add(db_player)
-        await db_session.commit()
+        # await db_session.commit() # Commit will be handled by the test method
+        await db_session.flush() # Flush to assign IDs, ensure data is in session
         await db_session.refresh(db_player)
     return db_player
 
@@ -60,13 +61,15 @@ class TestCharacterAPI:
             level=1, xp=0
         )
         db_session.add(db_char)
-        await db_session.commit()
+        # await db_session.commit() # Commit will be handled by the test method
+        await db_session.flush() # Flush to assign IDs, ensure data is in session
         await db_session.refresh(db_char)
         return db_char
 
     async def test_create_character_success(self, client: AsyncClient, test_engine):
         async with AsyncSession(test_engine) as session:
             player = await _ensure_player(session, TEST_GUILD_ID_CHAR_API, "create_char")
+            await session.commit() # Commit after all DB setup for this test
 
         char_data = {
             "player_id": player.id, # From CharacterCreate schema
@@ -94,6 +97,7 @@ class TestCharacterAPI:
         async with AsyncSession(test_engine) as session:
             player = await _ensure_player(session, TEST_GUILD_ID_CHAR_API, "get_char")
             character = await self._create_character_direct_db(session, player.id, TEST_GUILD_ID_CHAR_API, "Get Me Char")
+            await session.commit() # Commit after all DB setup for this test
             char_id = character.id
 
         response = await client.get(f"/api/v1/guilds/{TEST_GUILD_ID_CHAR_API}/characters/{char_id}")

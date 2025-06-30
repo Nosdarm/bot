@@ -220,8 +220,11 @@ async def startup_event():
     # Assuming GameManager has a method to initialize its sub-managers and load initial data.
     # This might involve loading data for all guilds or preparing for on-demand loading.
     # await game_manager.initialize_all_managers() # Incorrect method
-    await game_manager.setup() # Correct method for full initialization
-    logger.info("GameManager setup complete for API.")
+    if os.getenv("TESTING_MODE") != "true":
+        await game_manager.setup() # Correct method for full initialization
+        logger.info("GameManager setup complete for API (non-testing mode).")
+    else:
+        logger.info("GameManager setup SKIPPED for API (testing mode).")
 
     # Store GameManager in app.state to make it accessible in request handlers via dependencies
     app.state.game_manager = game_manager

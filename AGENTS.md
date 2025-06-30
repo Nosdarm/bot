@@ -1361,6 +1361,67 @@ The primary focus of the current session has been to resolve Pytest test collect
         *   `test_multilingual_prompt_generator.py` (8 passed)
         *   `test_prompt_context_collector.py` (10 passed)
 
+*   **`tests/api/` Directory:**
+    *   **Status:** Attempted, Unresolved Timeouts.
+    *   **Command Attempted:** `poetry run pytest tests/api/`
+    *   **Initial Issues:**
+        *   Encountered `ModuleNotFoundError: No module named 'pytest_asyncio'` across multiple files in `tests/api/routers/`.
+        *   **Fix:** Ran `poetry install --with dev` again, which successfully installed `pytest-asyncio` (v0.23.8) and other dependencies. This resolved the collection errors.
+    *   **Timeout Problems:**
+        *   Running `poetry run pytest tests/api/routers/test_character_api.py` resulted in a timeout (>400s).
+        *   Investigation revealed that the FastAPI app's `startup_event`, which calls `GameManager.setup()`, was a likely cause.
+        *   **Partial Mitigation:** Modified `bot/api/main.py` to skip `await game_manager.setup()` when `os.getenv("TESTING_MODE") == "true"`.
+        *   This allowed a very simple test without direct DB setup (`test_get_character_not_found` in `test_character_api.py`) to PASS when run individually.
+    *   **Persistent Timeouts in Data-Intensive Tests:**
+        *   Tests in `test_character_api.py` that perform their own database setup (e.g., `test_create_character_success`, `test_get_character_success`, `test_get_characters_for_player`) continued to time out even after the `GameManager.setup()` skip and when run individually.
+        *   Attempts to refactor database commit/flush strategies within these tests (e.g., moving `session.commit()` out of helper functions) were made. However, these efforts were severely hampered by instability and timeouts with the `replace_with_git_merge_diff` tool, preventing reliable application and verification of these changes.
+        *   Running `poetry run pytest tests/api/routers/test_inventory_router.py` also resulted in a timeout, suggesting the issue is widespread for API tests involving database interactions.
+    *   **Conclusion for `tests/api/`:** The directory remains largely untested. The primary remaining blocker is a timeout issue likely related to conflicts or deadlocks in database session/transaction management between the test's direct DB operations and the FastAPI application's handling of requests. Further debugging was not possible due to tool limitations. The `GameManager.setup()` mitigation remains in place.
+
+*   **`tests/cogs/` Directory:**
+    *   **Status:** Attempted, Unresolved Timeouts.
+    *   **Command Attempted:** `poetry run pytest tests/cogs/`
+    *   **Initial Issues & Fixes:** None (test execution timed out before any specific errors could be identified or collection issues surfaced).
+    *   **Timeout Problems:**
+        *   Running `poetry run pytest tests/cogs/` resulted in a timeout (>400s).
+        *   Attempts to read the main test file in this directory (`tests/cogs/test_master_commands.py`) and the root `tests/conftest.py` using the `read_files` tool also timed out repeatedly.
+    *   **Persistent Timeouts & Inability to Diagnose:**
+        *   Due to the tool instability preventing file inspection and reliable code modification, no specific diagnostic steps could be taken for this directory, nor could any fixes be attempted.
+        *   The cause of the timeout is presumed to be similar to the complex interaction issues seen in `tests/api/` (e.g., related to `GameManager` instantiation within tests, database interactions, or async event loop conflicts in the test setup for cogs).
+    *   **Conclusion for `tests/api/`:** The directory remains largely untested. The primary remaining blocker is a timeout issue likely related to conflicts or deadlocks in database session/transaction management between the test's direct DB operations and the FastAPI application's handling of requests. Further debugging was not possible due to tool limitations. The `GameManager.setup()` mitigation remains in place. The `client` fixture in `test_character_api.py` still has its `drop_all`/`create_all` lines commented out. The attempted `flush()`/`commit()` refactorings in `test_character_api.py` helpers and `test_create_character_success` were partially and intermittently applied by the tool, their final state is as reflected in the last successful `read_files` before this summary.
+
+*   **`tests/cogs/` Directory:**
+    *   **Status:** Attempted, Unresolved Timeouts.
+    *   **Commands Attempted:**
+        *   `poetry run pytest tests/cogs/` (Overall timeout)
+    *   **Initial Issues & Fixes:** None (test execution timed out before any specific errors could be identified or collection issues surfaced).
+    *   **Timeout Problems & Inability to Diagnose:**
+        *   Running `poetry run pytest tests/cogs/` resulted in a timeout (>400s) on multiple attempts.
+        *   Attempts to read the main test file in this directory (`tests/cogs/test_master_commands.py`) and the root `tests/conftest.py` using the `read_files` tool also timed out repeatedly, preventing inspection of the test code and fixture setup.
+        *   Due to this tool instability, no specific diagnostic steps could be taken for this directory, nor could any fixes be attempted.
+        *   The cause of the timeout is presumed to be similar to the complex interaction issues seen in `tests/api/` (e.g., related to `GameManager` instantiation within tests, database interactions, or async event loop conflicts in the test setup for cogs).
+    *   **Conclusion for `tests/cogs/`:** The directory remains untested and blocked by timeout issues. No specific errors could be identified or fixes applied due to persistent tool limitations preventing file inspection and modification.
+
+*   **`tests/commands/` Directory:**
+    *   **Status:** Attempted, Unresolved Timeouts.
+    *   **Commands Attempted:**
+        *   `poetry run pytest tests/commands/` (Overall timeout)
+    *   **Initial Issues & Fixes:** None (test execution timed out before any specific errors could be identified or collection issues surfaced).
+    *   **Timeout Problems & Inability to Diagnose:**
+        *   Running `poetry run pytest tests/commands/` resulted in a timeout (>400s) on multiple attempts.
+        *   Due to the pattern of timeouts in other integration-style test directories (`tests/api/`, `tests/cogs/`) and persistent tool instability (preventing file inspection and reliable code modification), no specific diagnostic steps were taken for this directory.
+        *   The cause of the timeout is presumed to be similar to the complex interaction issues seen in other directories (e.g., related to `GameManager` instantiation, database interactions, or async event loop conflicts in the test setup for bot commands).
+    *   **Conclusion for `tests/commands/`:** The directory remains untested and blocked by timeout issues. No specific errors could be identified or fixes applied due to persistent tool limitations and the assumption of systemic issues.
+    *   **Focused API Test Debugging (`test_character_api.py`):**
+        *   Re-verified that `_ensure_player` and `_create_character_direct_db` helpers use `flush()` instead of `commit()`.
+        *   Re-verified that `test_create_character_success` calls `session.commit()` after its DB setup. This test still timed out when run individually.
+        *   Modified `test_get_character_success` to also call `session.commit()` after its DB setup. This test also timed out when run individually.
+        *   **Conclusion:** The refined commit strategy (flushing in helpers, committing once in the test method before the API call) did not resolve the timeouts for these specific data-intensive tests. The problem likely lies in a more fundamental conflict between the test-managed DB session and the FastAPI app's DB session when an API call is made, possibly leading to deadlocks with SQLite in an async environment. Tool instability prevented further reliable modifications or deeper debugging of these specific tests.
+
+*   **Overall Testing Blockers:**
+    *   Persistent timeouts across `tests/api/`, `tests/cogs/`, and `tests/commands/` for tests involving database interactions or complex setups.
+    *   Significant instability with file manipulation tools (`read_files`, `replace_with_git_merge_diff`), hindering diagnosis and application of fixes.
+
 *   **Upcoming Test Plan (Directory by Directory):**
     1.  `tests/api/`
     2.  `tests/cogs/`
