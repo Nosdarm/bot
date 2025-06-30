@@ -1311,3 +1311,279 @@ The primary goal is to analyze the `Tasks.txt` file, conduct comprehensive testi
         - Corrected method name from `rule_engine.perform_check` to `rule_engine.resolve_skill_check` and updated its parameter passing.
         - Ensured user prompts for AI (concatenated from tuples) are passed as single strings.
         - Corrected parameter passing for `game_log_manager.log_event`.
+
+## Detailed Code Analysis (Based on Tasks.txt and Codebase Review - YYYY-MM-DD HH:MM:SS UTC)
+
+This section provides a detailed analysis of specific areas requiring attention or appearing incomplete, based on a comparative review of `Tasks.txt` and the current codebase.
+
+**Summary of Pytest Collection Errors Fixed (Current Session):**
+
+The primary focus of the current session has been to resolve Pytest test collection errors, which were preventing any tests from running. The following issues have been addressed:
+
+1.  **`ImportError: cannot import name 'GeneralSettings' from 'bot.ai.rules_schema'`** (in `tests/ai/test_ai_response_validator.py`)
+    *   **Fix:** Removed imports for `GeneralSettings`, `NPCStatRangesByRole`, and `GlobalStatLimits` from the test file as these classes are not defined in `bot.ai.rules_schema.py`.
+2.  **`ImportError: cannot import name 'initialize_new_guild' from 'bot.game.guild_initializer'`** (in multiple API/game test files)
+    *   **Fix:** Renamed function `initialize_guild_data` to `initialize_new_guild` in `bot/game/guild_initializer.py` and updated its signature to be `async` and match caller expectations. (Note: Internal logic of this function is now a placeholder and needs full async implementation).
+3.  **`NameError: name 'logger' is not defined`** (in `tests/cogs/test_master_commands.py`)
+    *   **Fix:** Added `import logging` and `logger = logging.getLogger(__name__)` at the top of `tests/cogs/test_master_commands.py`.
+4.  **`ImportError: cannot import name 'GenerationType' from 'bot.ai.ai_data_models'`** (initially in `bot/command_modules/gm_app_cmds.py`, then found missing from `ai_data_models.py`)
+    *   **Fix (Initial Attempt):** Moved the import to top-level in `gm_app_cmds.py`.
+    *   **Fix (Definitive):** Re-defined the `GenerationType` enum in `bot/ai/ai_data_models.py` as it was found to be missing.
+5.  **`NameError: name 'CharacterModel' is not defined`** (in `bot/command_modules/inventory_cmds.py`)
+    *   **Fix:** Moved the import `from bot.game.models.character import Character as CharacterModel` out of the `TYPE_CHECKING` block to top-level imports in `bot/command_modules/inventory_cmds.py`.
+6.  **`ModuleNotFoundError: No module named 'bot.database.models.player'`** (in `bot/command_modules/party_cmds.py`)
+    *   **Fix:** Corrected import path for the `Player` model to `from bot.database.models.character_related import Player`.
+7.  **`ModuleNotFoundError: No module named 'bot.game.managers.rule_engine'`** (in `tests/game/managers/test_combat_manager.py` and later `tests/commands/test_gm_app_cmds.py`)
+    *   **Fix:** Corrected import path to `from bot.game.rules.rule_engine import RuleEngine`.
+8.  **`ModuleNotFoundError: No module named 'bot.database.models.location'`** (in `tests/integration/test_core_flows.py`)
+    *   **Fix:** Corrected import path for `Location` SQLAlchemy model to `from bot.database.models.world_related import Location`.
+9.  **`ModuleNotFoundError: No module named 'bot.main'`** (in `tests/test_integration.py`)
+    *   **Fix:** Modified `bot/bot_core.py` to make the `RPGBot` instance (`bot`) globally available. Updated `tests/test_integration.py` to import `bot` from `bot.bot_core`. This also involved fixing a forward reference `NameError` for `RPGBot` in `bot_core.py` by using `Optional["RPGBot"]`.
+10. **`IndentationError` in `bot/command_modules/gm_app_cmds.py`**
+    *   **Fix:** Corrected indentation for a local import of `crud_utils` within a `with` block.
+11. **`ImportError: cannot import name 'parse_and_validate_ai_response' from 'bot.ai.ai_response_validator'`** (in `tests/commands/test_gm_app_cmds.py`)
+    *   **Fix:** Removed the incorrect import of a standalone function and updated the `@patch` decorator in the test to target `bot.command_modules.gm_app_cmds.AIResponseValidatorClass`, configuring the mock instance's method.
+
+**Current Status & Next Steps for Testing:**
+*   All identified Pytest *collection errors* have been resolved.
+*   The next phase is to run tests incrementally, directory by directory.
+
+**Incremental Pytest Runs & Fixes (Current Session):**
+
+*   **`tests/ai/` Directory:**
+    *   **Status:** Completed.
+    *   **Command:** `poetry run pytest tests/ai/`
+    *   **Result:** 43 tests passed, 0 failed, 0 errors.
+    *   **Files Tested:**
+        *   `test_ai_data_models.py` (9 passed)
+        *   `test_ai_response_validator.py` (10 passed)
+        *   `test_generation_manager.py` (6 passed)
+        *   `test_multilingual_prompt_generator.py` (8 passed)
+        *   `test_prompt_context_collector.py` (10 passed)
+
+*   **Upcoming Test Plan (Directory by Directory):**
+    1.  `tests/api/`
+    2.  `tests/cogs/`
+    3.  `tests/commands/`
+    4.  `tests/core/`
+    5.  `tests/database/`
+    6.  `tests/game/` (and its subdirectories - will be broken down further if necessary)
+    7.  `tests/integration/`
+    8.  `tests/nlu/`
+    9.  `tests/persistence/`
+    10. `tests/rules/`
+    11. `tests/services/`
+    12. `tests/utils/`
+    13. Root-level tests in `tests/` (e.g., `test_conflict_resolver.py`, `test_text_utils.py`, etc.)
+    *   For each directory, the process will be: run tests, analyze failures, create a sub-plan to fix, and re-run until the batch passes or issues require broader changes.
+    *   After all batches, a final full test run will be attempted.
+    *   This `AGENTS.md` file will be updated with the results of each batch.
+
+### Phase 0: Architecture and Initialization (Foundation MVP)
+*   **🔧 0.1 Discord Bot Project Initialization and Basic Guild Integration:**
+    *   **`on_message` event handling (in `bot/bot_core.py`):** Currently, this only logs messages and ignores bots/self. It does not integrate with any NLU or command processing for general player text input for actions.
+        *   **Needs Work:** This is a critical gap for enabling natural language gameplay. The `on_message` handler needs to be expanded to pass messages (from non-bot users in appropriate channels) to an NLU processing pipeline (related to Task 6.10).
+*   **💾 0.2 DBMS Setup and Database Model Definition with Guild ID:**
+    *   **`guild_id` data type:** Models (e.g., `CharacterDbModel`, `LocationDb`) use `Mapped[str]` for `guild_id`. `Tasks.txt` (0.2) specifies `BIGINT`.
+        *   **Review Point:** While string representation of Guild IDs is functional, using `BigInteger` (if all Discord Guild IDs are indeed numeric) might be more type-correct and potentially more efficient for database indexing/querying. Confirm if Discord Guild IDs can ever be non-numeric. If always numeric, consider migrating `guild_id` columns to `BigInteger`. Ensure `guild_id` is indexed in the database schema (verify Alembic migrations).
+*   **🔧 0.3 Basic DB Interaction Utilities and Rule Configuration Access (Guild-Aware):**
+    *   **CRUD Utilities API (in `bot/database/crud_utils.py`):** Generic CRUD functions (`get_entity_by_pk_async`, `create_entity_async`, etc.) do not take `guild_id` as a direct first parameter for automatic filtering as suggested by `Tasks.txt`. Guild isolation relies on the calling code to include `guild_id` in the query statements.
+        *   **Deviation/Needs Review:** This is a functional deviation. While it can achieve guild isolation if callers are disciplined, it's not as foolproof as the API described in `Tasks.txt`. Assess if this deviation is acceptable or if refactoring CRUD utils to enforce `guild_id` filtering internally is preferred for robustness.
+    *   **`@transactional(guild_id)` decorator:** This specific decorator is not present.
+        *   **Observation:** `bot/database/guild_transaction.py` provides an async context manager `GuildTransaction(session_factory, guild_id)` which serves a similar purpose for managing guild-scoped transactions. This is likely an acceptable alternative implementation.
+
+### Phase 1: Game World (Static & Generated)
+*   **🌍 1.1 Location Model (i18n, Guild-Scoped):**
+    *   **Model Definition (`LocationDb` in `bot/database/models/world_related.py`):**
+        *   Primary Key: `id: Mapped[str]` (UUID string) vs. Task 1.1 `INTEGER PK`. **Discrepancy.**
+        *   `neighbor_locations_json`: Task 1.1 specifies structure as `List of {location_id: connection_type_i18n}`. Current model is `Mapped[Optional[List[Dict[str, Any]]]]`. The internal structure of these dicts needs to be verified against the spec during usage/generation.
+    *   **Static Data Population (`GuildInitializer`):**
+        *   Loads from `initial_world_data.json`. Seems functional for locations and lore.
+    *   **Utilities (`LocationManager`):**
+        *   `get_location_instance` and `get_location_by_static_id` appear to meet requirements.
+    *   **Needs Review:** PK type difference. Validate `neighbor_locations_json` internal structure and its handling.
+*   **🌍 1.2 Player and Party System (ORM, Commands, Guild-Scoped):**
+    *   **`Player` Model Fields (split between `PlayerAccountDb` and `CharacterDbModel`):**
+        *   `unspent_xp`: Appears **Missing** from both `PlayerAccountDb` and `CharacterDbModel`. Needs to be added (likely to `CharacterDbModel`).
+        *   `collected_actions_json`: Appears **Missing** from both. This is important for the turn-based action system (Task 6.12). Needs to be added (likely to `CharacterDbModel` or `PlayerAccountDb` if actions are per-player account rather than per-character).
+    *   **`PlayerAccountDb` Unique Index:** Task 1.2 specifies `(Composite Unique Index: guild_id, discord_id)`. This needs to be verified in the Alembic migration for `player_accounts` table.
+    *   **Party Model (`PartyDb`):** Fields align well with Task 1.2.
+    *   **Commands (`game_setup_cmds.py`, `party_cmds.py`):** Structure for `/start` and party commands exists. Logic details (e.g., initial stats, conditions for joining/leaving parties) need testing.
+    *   **Needs Work:** Add missing `unspent_xp` and `collected_actions_json` fields to the appropriate database model. Verify unique index on `PlayerAccountDb`.
+*   **🌍 1.3 Movement Logic (Player/Party, Guild-Scoped):**
+    *   **`handle_move_action` (in `CharacterActionProcessor`):** Core logic for moving a single character exists.
+    *   **Party Movement Rules:** Task 1.3 mentions "Checks party movement rules (RuleConfig 13) FOR THIS GUILD". This specific check against `RuleConfig` is not immediately evident in `CharacterActionProcessor` when a character with `party_id` moves, nor in `PartyManager.update_party_location`.
+        *   **Needs Work/Verification:** Implement or verify how party movement rules (e.g., if all members must be able to move, or if leader moves the party) are sourced from `RuleConfig` and applied. The reference to "RuleConfig 13" seems to be a typo in `Tasks.txt` as task 13 is XP system; Task 25.c refers to RuleConfig 13/0.3 for party movement. This cross-referencing is confusing. The actual rule keys in `RuleConfig` need to be identified and used.
+    *   **`on_enter_location` (`LocationInteractionService.process_on_enter_location_events`):** The framework for this async call exists.
+        *   **Needs Work/Verification:** The *specific events and consequences* triggered by this service (random encounters, quest updates, environmental messages, etc.) are numerous and their individual implementation status is unclear without deeper dives into event/quest systems. This is a major integration point.
+
+### Phase 2: AI Integration - Generation Core
+*   **🧠 2.1 Finalize Definition of ALL DB Schemas (i18n, Guild ID):**
+    *   **Models:** As noted in the high-level review, most specified models exist (e.g., `LocationDb`, `NpcProfileDb`, `FactionDb`, `GeneratedQuestDb`, `ItemTemplateDb`, `InventoryDb`, `GameLogDb`, `RelationshipDb`, `PlayerNpcMemoryDb`, `AbilityDb`, `SkillDb`, `StatusEffectDb`, `QuestStepDb`, `QuestLineDb`, `MobileGroupDb`, `CraftingRecipeDb`).
+    *   **Needs Work/Verification:**
+        *   **Field Completeness:** A detailed audit of each model against all field requirements mentioned throughout `Tasks.txt` (not just in section 2.1 but in later feature descriptions) is needed. For example, `ItemProperty` fields, specific JSON structures for `QuestStep.required_mechanics_json`, `QuestStep.abstract_goal_json`, `QuestStep.consequences_json`, `Ability.properties_json`, `Status.properties_json` etc., need confirmation.
+        *   **Relationships (Foreign Keys):** All intended relationships between models must be correctly defined with foreign keys and relationship attributes (e.g., `Character.party_id` FK to `Party.id`).
+*   **🧠 2.2 AI Prompt Preparation Module:**
+    *   **Context Collection (`PromptContextCollector`):**
+        *   Collects location, character, party, NPC, recent events, and basic world state details.
+        *   **Game Terms Dictionary:** Task 2.2 specifies including a "dictionary of game terms (stats, skills, entities) FROM THE DB FOR THIS GUILD as an API for the AI." It's unclear if `PromptContextCollector` or `MultilingualPromptGenerator` dynamically builds such a comprehensive, guild-specific dictionary of all relevant game entities and their properties for the AI to reference. This seems like a **Potential Gap or Area for Deep Verification.** Prompt templates might contain static examples, but a dynamic, guild-specific dictionary is more powerful.
+    *   **Prompt Generation (`MultilingualPromptGenerator`):**
+        *   Uses templates and requests i18n JSONB output. Appears functional at a high level.
+    *   **Needs Work/Verification:** Confirm implementation of the dynamic, guild-specific "game terms dictionary" for AI prompts. Test the comprehensiveness and accuracy of all collected context data points.
+*   **🧠 2.3 AI Response Parsing and Validation Module:**
+    *   **Parsing and Structural Validation (`AIResponseParser`, `AIResponseValidator` using Pydantic models):** This seems reasonably robust due to Pydantic's nature.
+    *   **Semantic Validation (`AIResponseValidator`):**
+        *   Methods like `_semantic_validate_npc_profile` exist and use `game_manager.get_rule`.
+        *   `_validate_i18n_field_consistency` checks for required languages in `_i18n` fields.
+        *   **Needs Work/Verification:** The *depth* of semantic validation needs to be significantly expanded and tested. For example:
+            *   Are generated NPC stats within defined min/max ranges from `RuleConfig`?
+            *   Are generated item prices reasonable based on type/properties and `RuleConfig`?
+            *   Does generated quest structure (number of steps, types of objectives) align with `RuleConfig` guidelines?
+            *   Are generated relationships between new NPCs/factions logical or adhere to any defined constraints?
+            *   Are all required i18n texts present for *all* generated localizable fields, not just a subset?
+    *   **Autocorrection:** Task 2.3 mentions "Autocorrection". This feature seems largely **Not Implemented** beyond Pydantic's default value handling. Complex autocorrection based on rules would be a significant addition.
+*   **🧠 2.6 AI Generation, Moderation, and Saving Logic:**
+    *   **Workflow (`AIGenerationService`):** The overall flow (request -> generate -> validate -> pending -> moderate -> save) exists.
+    *   **`PendingGenerationDb`:** Model and CRUD operations seem functional.
+    *   **Master Moderation (Commands/API):** `gm_app_cmds.py` and `master.py` router have commands/endpoints for approve/reject/edit.
+        *   **Needs Work/Verification:** The editing functionality (`cmd_master_edit_ai` and corresponding API) for pending generations, especially for complex nested JSON data and `_i18n` fields, needs to be very robust and user-friendly for the Master. This likely requires significant testing and refinement.
+    *   **Saving Approved Content (`AIGenerationService.process_approved_generation`):**
+        *   This method calls various managers (e.g., `location_manager.create_location_instance_from_ai`).
+        *   **Critical Verification Point:** Ensure that the `guild_id` from the `PendingGenerationDb` record is correctly and consistently passed down through all service and manager calls and is saved on *every single database record* created from the approved AI data (locations, NPCs, items, quests, quest steps, relationships, etc.). Any lapse here breaks guild data isolation. This requires auditing each `create_*_from_ai` method in relevant managers.
+    *   **Async `on_enter_location`:** Called after saving a location. The triggered events themselves are part of other systems.
+
+### Phase 6: Action Resolution Systems (Core Mechanics)
+*   **🎲 6.3.1 Dice Roller Module (`bot/game/rules/dice_roller.py`):**
+    *   **Status:** Implemented.
+    *   **Detailed Findings:** `DiceRoller.roll(dice_string)` handles basic "XdY+Z" and "XdY-Z" formats.
+    *   **Needs Work/Verification:** Test robustness against more complex dice strings or malformed inputs (e.g., "1d20-1d4*2", "d20", "3d"). Current parsing seems basic.
+*   **🎲 6.3.2 Check Resolver Module (`bot/game/rules/check_resolver.py` - `CheckResolver`):**
+    *   **Status:** Core logic Implemented.
+    *   **Detailed Findings:** `resolve_check` method exists, uses `guild_id` for rules/entities, calculates modifiers from attributes, skills, items, statuses. Calls dice roller. Returns `CheckOutcome`.
+    *   **Needs Work/Verification:**
+        *   **Modifier Completeness:** The `_calculate_modifier_from_rules` needs to be verified to ensure it correctly processes *all* modifier types specified in `CheckDefinition.modifiers` (from `rules_schema.py`), especially "relationship_based" modifiers if these are intended for general checks (Task 37 implies this).
+        *   **`check_context` Usage:** The role and implementation of the `check_context: Optional[dict]` parameter needs clarification and verification if it's meant to dynamically influence checks beyond pre-defined rule modifiers.
+        *   **Opposed Checks:** Thoroughly test the logic for opposed checks (roll vs. roll) within `_determine_outcome`.
+*   **⚙️ 6.10 Action Parsing and Recognition Module (NLU):**
+    *   **Status:** NLU parsing logic is Significantly Implemented; Integration with `on_message` is Missing.
+    *   **Detailed Findings:**
+        *   `bot/nlu/parser.py` (`NLUParser`) and `bot/nlu/player_action_parser.py` (`PlayerActionParser`) contain sophisticated logic for intent recognition and entity extraction using `spacy` and custom rules.
+        *   `NLUParser.load_custom_entities_for_guild` correctly implements guild-scoped entity dictionaries.
+        *   **Critical Gap:** The `on_message` event handler in `bot/bot_core.py` currently does not call these NLU modules.
+        *   The `player.collected_actions_json` field (Task 1.2) intended to store parsed actions is currently missing from the database models.
+    *   **Needs Work:**
+        *   **Integrate NLU into `on_message`:** Modify `bot_core.py`'s `on_message` to pass relevant user messages to `NLUParser.parse_action`.
+        *   **Add `collected_actions_json` to DB Model:** Add this field to `CharacterDbModel`.
+        *   **Save Parsed Actions:** After NLU parsing in `on_message`, the resulting action (likely an `NLUParsedAction` converted to JSON) must be saved to the character's `collected_actions_json` field.
+*   **⚙️ 6.12 Turn Queue System (Turn Controller):**
+    *   **Status:** Well Implemented.
+    *   **Detailed Findings:**
+        *   `bot/command_modules/action_cmds.py` (`ActionCog.cmd_end_turn`) correctly triggers `TurnProcessingService.player_end_turn`.
+        *   `bot/game/turn_processing_service.py` (`TurnProcessingService`):
+            *   `player_end_turn` updates character status and calls `schedule_turn_processing_if_ready`.
+            *   `schedule_turn_processing_if_ready` correctly checks if all relevant players/parties are ready.
+            *   If ready, it calls `action_scheduler.schedule_guild_turn_processing`.
+        *   `bot/game/action_scheduler.py` (`GuildActionScheduler`):
+            *   `schedule_guild_turn_processing` correctly creates an `asyncio.Task` to call `_process_guild_turn`.
+            *   `_process_guild_turn` calls `turn_processor.process_turn_for_guild`.
+    *   **Needs Work/Verification:** Robustness under load or with many concurrent guilds (if applicable to testing scope). Edge cases like player disconnects while their turn is pending.
+*   **⚙️ 6.11 Central Collected Actions Processing Module (Turn Processor):**
+    *   **Status:** Core structure Implemented; heavily dependent on NLU populating actions and on sub-module completeness.
+    *   **Detailed Findings (`bot/game/turn_processor.py` - `TurnProcessor`):**
+        *   `process_turn_for_guild`: Main entry point.
+        *   **Action Extraction:** Correctly attempts to get actions from `character.get_collected_actions()` (which parses `collected_actions_json`). Will fail if this JSON is not populated by NLU (see 6.10).
+        *   **Conflict Resolution:** `_resolve_conflicts_for_party_actions` calls `ConflictResolver`. `ConflictResolver` has logic for auto-resolution (using `CheckResolver`) and manual resolution (creating `PendingConflictDb` and notifying Master).
+        *   **Action Execution:** Iterates actions, uses `GuildTransaction` (via `db_service.get_session()`), and calls `character_action_processor.process_action_from_request` or `party_action_processor.process_action`. These processors then route to specific handlers.
+    *   **Needs Work/Verification:**
+        *   **Dependency on NLU:** The entire module is ineffective if `collected_actions_json` is not populated by a working NLU pipeline integrated into `on_message`.
+        *   **Conflict Rules:** Test the actual conflict definitions in `RuleConfig` and ensure they are correctly interpreted and resolved.
+        *   **Transactional Integrity:** Verify that all sub-action handlers (move, combat, item use, etc.) strictly use the session passed by `TurnProcessor` to maintain atomicity for each action.
+        *   **Feedback & Logging:** Ensure comprehensive event logging and player feedback for all action outcomes.
+*   **⚙️ 6.1.1 Intra-Location Interaction Handler Module (`bot/game/services/location_interaction_service.py` - `LocationInteractionService`):**
+    *   **Status:** Implemented.
+    *   **Detailed Findings:** `handle_intra_location_action` processes intents like `interact_with_object`, `examine_object`. It loads character/location, finds target POI/entity. It uses `rule_engine.check_conditions` and `consequence_processor.process_consequences` based on `interaction_rules` found in location data.
+    *   **Needs Work/Verification:**
+        *   **Source of `interaction_rules`:** Clarify if these rules are defined in `RuleConfig`, static JSON, or AI-generated content within the location's data. Their structure and how they are authored/managed is important.
+        *   **"Position within location":** Task 6.1.1 asks if this needs updating. Currently, interactions seem tied to named POIs. If a more granular "sub-location" or coordinate-based position within a single location is needed, this state isn't tracked on the player model.
+        *   **Consequence Variety:** Test the range of consequences that can be triggered (WorldState changes, item acquisition, quest triggers) and ensure `ConsequenceProcessor` handles them correctly in this context.
+
+### Phase 7: Narrative Generation and Event Log
+*   **📚 7.1 Event Log Model (StoryLog) (Task 17) (`GameLogDb` in `bot/database/models/game_log_model.py`):**
+    *   **Status:** Well Implemented.
+    *   **Detailed Findings:** Model fields align with Task 17. `GameLogManager.log_event` API correctly saves entries with guild scope and uses transactions.
+*   **📚 7.2 AI Narrative Generation (Task 18) (`AINarrativeGenerator` in `bot/ai/narrative_generator.py`):**
+    *   **Status:** Core components Implemented.
+    *   **Detailed Findings:** `generate_event_narration` uses `PromptContextCollector` and `MultilingualPromptGenerator`.
+    *   **Needs Work/Verification:**
+        *   **Prompt Quality:** Quality and relevance of generated narrative depend heavily on prompt templates for "event_narration" and LLM performance.
+        *   **Context Tailoring:** How well `event_type` and `event_data` tailor prompts for diverse events.
+        *   **Language Determination:** Ensure player/guild language preference is correctly used for `target_languages`.
+*   **📚 7.3 Turn and Report Formatting (Task 19, 54) (`ReportFormatter` in `bot/game/services/report_formatter.py`):**
+    *   **Status:** Substantially Implemented.
+    *   **Detailed Findings:** `format_event_log_entry_for_player` and `format_turn_report_for_player` exist. Uses `guild_id` from log entries to fetch i18n entity names/terms. Handles various `LogEventTypes`.
+    *   **Needs Work/Verification:**
+        *   **Formatting Quality:** Clarity and correctness of formatted text for all `LogEventTypes` and their `details_json` variations.
+        *   **i18n Keys:** Ensure all necessary i18n keys for formatting are present.
+        *   **RuleConfig Terms:** How `RuleConfig` terms (if distinct from entity names/i18n keys) are used in formatting.
+
+### Phase 3: Abilities and Checks Mechanics (Tasks 20, 21, 22)
+*   **Tasks:** 3.1 (Ability Model), 3.2 (Status Model), 3.3 (API for Abilities/Statuses).
+*   **Assessment (High-Level):** Models and basic managers Implemented. Application logic, rule integration, and effects need thorough testing.
+*   **Evidence:** Models in `character_related.py` or `game_mechanics.py`. Managers: `ability_manager.py`, `status_manager.py`.
+
+### Phase 4: World and Location Model (Further aspects beyond Phase 1)
+*   **Tasks:** 4.2 (Guild Map Gen/Editing), 4.3 (Location Transitions - advanced).
+*   **Assessment (High-Level):** Location model (Phase 1) is Implemented. AI map generation and Master editing commands have foundations. Robustness and edge cases need testing.
+*   **Evidence:** `ai/generation_manager.py` (locations), `gm_app_cmds.py`.
+
+### Phase 5: Combat System (Tasks 26, 27, 28, 29)
+*   **Tasks:** 5.1 (Combat Model), 5.2 (Combat Engine), 5.3 (NPC Combat AI), 5.4 (Combat Cycle).
+*   **Assessment (High-Level):** Core combat models and managers Implemented. This is a highly complex system; turn flow, action resolution, AI, rule integration (XP, loot, relationships), and multiplayer aspects require extensive testing and likely significant further work.
+*   **Evidence:** `CombatEncounter` model. Managers: `combat_manager.py`, `rules/combat_rules.py`. AI: `ai/npc_combat_strategy.py`, `game/ai/npc_combat_ai.py`.
+
+### Phase 13: Experience and Character Development (Tasks 30, 31, 32)
+*   **Tasks:** 13.1 (XP Rules), 13.2 (XP Awarding), 13.3 (Level Up).
+*   **Assessment (High-Level):** XP/level fields on Player model exist. Logic for awarding and level-ups based on rules needs verification.
+*   **Evidence:** Player model, `RuleConfig`. Logic in `character_manager.py` or dedicated service.
+
+### Phase 8: Factions, Relationships, and Social Mechanics (Tasks 33-38)
+*   **Tasks:** Models, AI generation, relationship changes & influence.
+*   **Assessment (High-Level):** Models and managers Implemented. AI generation, dynamic updates, and actual influence on game mechanics are complex and need thorough testing.
+*   **Evidence:** `GeneratedFaction`, `Relationship` models. `ai/generation_manager.py`, `game/ai/faction_generator.py`. Managers: `faction_manager.py`, `relationship_manager.py`.
+
+### Phase 9: Detailed Quest System with Consequences (Tasks 39, 40, 41)
+*   **Tasks:** Quest/Step models, AI quest gen, tracking/completion/consequences.
+*   **Assessment (High-Level):** Quest models and `QuestManager` Implemented. AI generation, robust tracking of diverse step types (especially abstract goals), and correct application of varied consequences are highly complex and need significant testing/refinement.
+*   **Evidence:** Models in `quest_related.py`. `ai/generation_manager.py`. `quest_manager.py`, `ConsequenceProcessor`.
+
+### Phase 10: Economy, Items, and Trade (Tasks 42, 43, 44)
+*   **Tasks:** Item models, AI econ gen, Trade system.
+*   **Assessment (High-Level):** Item models and `ItemManager` Implemented. Inventory commands exist. AI gen for economy and a full trade system (dynamic pricing, NPC traders) are complex and need thorough testing.
+*   **Evidence:** Models in `item_related.py`. `ai/generation_manager.py`, `game/ai/ai_economy_generator.py`. Managers: `item_manager.py`, `economy_manager.py`. `inventory_cmds.py`.
+
+### Phase 14: Global Entities and Dynamic World (Tasks 45, 46)
+*   **Tasks:** Models (`GlobalNpc`, `MobileGroup`, `GlobalEvent`), Simulation.
+*   **Assessment (High-Level):** Foundational models and managers likely exist. Simulating independent entity movement/interactions per guild is an advanced feature set needing substantial further work and testing.
+*   **Evidence:** Models (e.g., `global_npc.py`, `mobile_group.py`). Managers: `global_npc_manager.py`, `mobile_group_manager.py`, `event_manager.py`. Simulation: `world_simulation_processor.py`.
+
+### Phase 15: Management and Monitoring Tools (Tasks 47, 48, 49)
+*   **Tasks:** Master commands (CRUD, RuleConfig editing), Balance/Testing tools, Monitoring.
+*   **Assessment (High-Level):** Many Master commands Implemented. Completeness, correctness across all models/rules, and tool functionality need verification.
+*   **Evidence:** `gm_app_cmds.py`, `master_commands.py`.
+
+### Phase 11: Dynamic Dialogue and NPC Memory (Tasks 50-53)
+*   **Tasks:** Dialogue Gen (LLM), Context/Status, NPC Memory, NLU in dialogue.
+*   **Assessment (High-Level):** Core components Implemented. NPC memory persistence, its use in enriching dialogue, and seamless NLU integration in dialogue mode are advanced features requiring thorough testing.
+*   **Evidence:** `ai/dialogue_generator.py`. `dialogue_manager.py`, `PlayerNpcMemory` model. `nlu/parser.py`.
+
+### Phase UI (User Interface) (Tasks 55-68)
+*   **Tasks:** UI development across all major features, plus a command list API.
+*   **Assessment (High-Level):** Backend API routes in `bot/api/routers/` provide foundations. The UI client is separate; its status is unknown. Backend API completeness for UI needs testing. Task 67 (Command List API) might be implemented on backend.
+*   **Evidence:** `bot/api/routers/`.
+
+### Important Caveats for Project Status Analysis:
+*   The analysis above is based on a static review of the codebase structure, filenames, and high-level task descriptions in `Tasks.txt`.
+*   Recent work has heavily focused on resolving Pyright static analysis errors, which means many files have been touched, but their runtime logic and correctness have not been verified through testing.
+*   "Implemented" in this context generally signifies that corresponding Python modules, classes, or functions likely exist. It does **not** guarantee that the features are complete, bug-free, or fully meet all requirements outlined in `Tasks.txt`.
+*   "Further work" or "requires verification/testing" indicates areas where the complexity of the feature, the interaction between multiple components, or the need for specific business logic validation suggests that significant effort is still required beyond basic code existence.
+*   A comprehensive testing phase (unit, integration, and functional) is essential to determine the true operational status, correctness, and completeness of each feature.

@@ -33,6 +33,10 @@ from typing import AsyncIterator # For get_db_session
 # from bot.command_modules.game_setup_cmds import is_master_or_admin, is_gm_channel # Now part of GameSetupCog
 
 LOADED_TEST_GUILD_IDS: List[int] = []
+bot: Optional["RPGBot"] = None # Module-level bot instance, using forward reference
+global_openai_service: Optional[OpenAIService] = None # Keep if used globally
+global_game_manager: Optional[GameManager] = None # Keep if used globally
+
 
 TURN_CYCLE_INTERVAL_SECONDS = 10 # Or load from settings if preferred
 
@@ -511,7 +515,8 @@ async def global_send_message(channel_id: int, content: str, **kwargs):
 async def start_bot():
     print("DEBUG_PRINT: Entered start_bot() function.") # New diagnostic print
 
-    global _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS, global_game_manager
+    # Declare we are assigning to the module-level 'bot'
+    global bot, _rpg_bot_instance_for_global_send, LOADED_TEST_GUILD_IDS, global_game_manager, global_openai_service
 
     print("DEBUG_PRINT: About to configure logging.") # New diagnostic print
     logging.basicConfig(
@@ -608,21 +613,32 @@ async def start_bot():
     bot_intents.message_content = True
     bot_intents.presences = True
 
-    rpg_bot = RPGBot(
-        game_manager=None,
+    # Instantiate RPGBot and assign to the module-level 'bot'
+    rpg_bot_local_instance = RPGBot( # Use a local name first
+        game_manager=None, # GameManager will be set later
         openai_service=openai_service,
         command_prefix=COMMAND_PREFIX,
         intents=bot_intents,
         debug_guild_ids=LOADED_TEST_GUILD_IDS if LOADED_TEST_GUILD_IDS else None
     )
-    _rpg_bot_instance_for_global_send = rpg_bot
+    bot = rpg_bot_local_instance # Assign to the module-level variable
+    _rpg_bot_instance_for_global_send = bot # Keep this for legacy global_send_message if used
 
-    game_manager = GameManager(
-        discord_client=rpg_bot,
+    # Initialize GameManager and link it to the bot
+    game_manager_instance = GameManager(
+        discord_client=bot, # Pass the created bot instance
         settings=settings
     )
-    rpg_bot.game_manager = game_manager
-    global_game_manager = game_manager
+    bot.game_manager = game_manager_instance # Link GameManager back to bot instance
+    global_game_manager = game_manager_instance # Set global if needed
+
+    # Initialize NLUDataService and attach to bot
+    if bot.game_manager: # Ensure game_manager is set
+        nlu_service = NLUDataService(bot.game_manager) # Pass the actual GameManager instance
+        setattr(bot, 'nlu_data_service', nlu_service) # Attach to bot instance using setattr
+        logging.info("NLUDataService initialized and attached to bot instance.")
+    else:
+        logging.error("GameManager not available on bot instance after creation. NLUDataService not initialized.")
 
     print("GameManager instantiated. Running setup...")
     game_manager_setup_successful = False
@@ -642,8 +658,8 @@ async def start_bot():
     print(f"RPGBot: Calling rpg_bot.start(TOKEN) with token: {'******' if TOKEN else 'None'}")
 
     try:
-        logging.info(f"{datetime.now()} - RPGBot Core: PRE - Attempting await rpg_bot.start(TOKEN)...")
-        await rpg_bot.start(TOKEN)
+        logging.info(f"{datetime.now()} - RPGBot Core: PRE - Attempting await bot.start(TOKEN)...") # Use module-level bot
+        await bot.start(TOKEN) # Use module-level bot
     except discord.errors.LoginFailure:
         print("❌ FATAL: Invalid Discord token. Please check your DISCORD_TOKEN.")
         logging.error("RPGBot Core: Discord login failure. Invalid token.")

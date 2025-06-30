@@ -5,8 +5,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from unittest.mock import AsyncMock, MagicMock, patch
 import json
 
-from bot.main import bot
-from bot.game.game_manager import GameManager
+from bot.bot_core import bot # Corrected import path
+from bot.game.managers.game_manager import GameManager # Corrected import path
 from bot.services.db_service import DBService
 
 class TestIntegration(unittest.IsolatedAsyncioTestCase):

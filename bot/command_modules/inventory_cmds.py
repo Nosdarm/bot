@@ -9,6 +9,9 @@ from bot.utils.i18n_utils import get_localized_string, DEFAULT_BOT_LANGUAGE # Im
 from bot.services.nlu_data_service import NLUDataService
 from bot.nlu.player_action_parser import parse_player_action, PlayerActionData
 from bot.ai.rules_schema import CoreGameRulesConfig
+# Moved CharacterModel import out of TYPE_CHECKING
+from bot.game.models.character import Character as CharacterModel
+
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
@@ -16,7 +19,7 @@ if TYPE_CHECKING:
     from bot.game.managers.character_manager import CharacterManager
     from bot.game.managers.item_manager import ItemManager, EquipResult, ItemInstance # Added ItemInstance
     from bot.game.managers.location_manager import LocationManager
-    from bot.game.models.character import Character as CharacterModel
+    # from bot.game.models.character import Character as CharacterModel # Moved up
     from bot.game.rules.rule_engine import RuleEngine
     from bot.database.models import Item as DBItemModel # For PydanticItem in ItemManager returns
 

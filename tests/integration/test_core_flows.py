@@ -17,7 +17,7 @@ from bot.game.managers.game_manager import GameManager # For spec
 # Models
 from bot.game.models.character import Character
 from bot.game.models.item import Item
-from bot.database.models.location import Location
+from bot.database.models.world_related import Location # Corrected import path
 from bot.game.models.location import Location as PydanticLocation
 
 # Constants or default data that might be used

@@ -343,6 +343,39 @@ class GameTerm(BaseModel):
         if v is None: return None
         return validate_i18n_field(cls, v, info)
 
+class GenerationType(Enum):
+    LOCATION_DETAILS = "location_details"
+    NPC_PROFILE = "npc_profile_generation"
+    ITEM_PROFILE = "item_profile_generation"
+    QUEST = "quest_generation"
+    FACTION = "faction_generation"
+    EVENT_DETAILS = "event_details"
+    LORE_ENTRY = "lore_entry"
+    GUILD_MAP = "guild_map"
+    ENCOUNTER_DESIGN = "encounter_design"
+    DIALOGUE_SNIPPET = "dialogue_snippet"
+    WORLD_STATE_UPDATE_NARRATIVE = "world_state_update_narrative"
+    LIST_OF_LOCATIONS = "list_of_locations"
+    LIST_OF_NPCS = "list_of_npcs"
+    LIST_OF_ITEMS = "list_of_items"
+    LIST_OF_QUESTS = "list_of_quests"
+    LIST_OF_FACTIONS = "list_of_factions"
+    LIST_OF_EVENTS = "list_of_events"
+    # Add other types as needed, e.g., from PendingGenerationTypeEnum if that's the source
+    # Example:
+    # NPC_INTERACTION_DIALOGUE = "npc_interaction_dialogue"
+    # LOCATION_DESCRIPTION_EXPANSION = "location_description_expansion"
+    # ITEM_LORE = "item_lore"
+    # FACTION_HIERARCHY = "faction_hierarchy"
+    # NPC_SCHEDULE = "npc_schedule"
+    # CUSTOM_EVENT_NARRATIVE = "custom_event_narrative"
+    # WORLD_EVENT = "world_event"
+    # REGIONAL_MAP_DETAILS = "regional_map_details"
+    # NPC_DIALOGUE_OPTIONS = "npc_dialogue_options"
+    # QUEST_REWARD_TABLE = "quest_reward_table"
+    # ITEM_EFFECT_DESCRIPTION = "item_effect_description"
+    # NPC_BACKGROUND_STORY_EXPANSION = "npc_background_story_expansion"
+
 class ScalingParameter(BaseModel):
     parameter_name: str
     value: Union[float, int, str, bool, List[Any], Dict[str, Any]] # Allow list/dict for complex params

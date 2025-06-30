@@ -11,8 +11,8 @@ import json
 import logging
 
 # Database model imports
-from bot.database.models.player import Player # Corrected import path
-from bot.database.models.party import Party as PartyModel # Corrected import path
+from bot.database.models.character_related import Player # Corrected import path
+from bot.database.models.character_related import Party as PartyModel # Corrected import path
 from bot.game.exceptions import CharacterAlreadyInPartyError, NotPartyLeaderError, PartyNotFoundError, PartyFullError, CharacterNotInPartyError
 
 

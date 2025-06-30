@@ -11,7 +11,7 @@ from bot.game.models.character import Character
 from bot.game.models.npc import NPC as NpcModel
 from bot.ai.rules_schema import CoreGameRulesConfig, XPRule, LootTableEntry, LootTableDefinition
 from bot.services.db_service import DBService
-from bot.game.managers.rule_engine import RuleEngine
+from bot.game.rules.rule_engine import RuleEngine # Corrected path
 from bot.game.managers.character_manager import CharacterManager
 from bot.game.managers.npc_manager import NpcManager
 from bot.game.managers.party_manager import PartyManager

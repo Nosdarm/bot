@@ -13,9 +13,9 @@ from bot.models.pending_generation import PendingGeneration, GenerationType, Pen
 from bot.command_modules.gm_app_cmds import GMAppCog
 from bot.bot_core import RPGBot
 from bot.game.managers.game_manager import GameManager # For spec
-from bot.game.managers.rule_engine import RuleEngine # For spec
+from bot.game.rules.rule_engine import RuleEngine # For spec, Corrected path
 from bot.database import crud_utils # For patching
-from bot.ai.ai_response_validator import parse_and_validate_ai_response # For patching
+# Removed incorrect import of parse_and_validate_ai_response, which is a method, not standalone.
 
 
 @pytest.fixture
@@ -230,9 +230,9 @@ async def test_master_reject_ai_success(
     cast(AsyncMock, mock_interaction.followup.send).assert_awaited_once_with(f"🚫 AI ID `{pending_id_param}` (Тип: {mock_record.request_type.value}) отклонено. Причина: {reason}", ephemeral=True)
 
 @pytest.mark.asyncio
-@patch('bot.command_modules.gm_app_cmds.parse_and_validate_ai_response', new_callable=AsyncMock)
+@patch('bot.command_modules.gm_app_cmds.AIResponseValidatorClass') # Patched the class
 async def test_master_edit_ai_success_valid_new_data(
-    mock_parse_validate: AsyncMock,
+    MockAIResponseValidatorClass: MagicMock, # Renamed mock for clarity
     gm_app_cog: GMAppCog,
     mock_interaction: discord.Interaction,
     mock_rpg_bot_with_game_manager: RPGBot
@@ -244,15 +244,24 @@ async def test_master_edit_ai_success_valid_new_data(
     mock_record = PendingGeneration(id=pending_id_val, guild_id=str(mock_interaction.guild_id), request_type=GenerationType.NPC_PROFILE, status=PendingStatus.FAILED_VALIDATION, parsed_data_json={"name_i18n": {"en": "Old"}}, moderator_notes_i18n=None)
     # mock_session = game_mngr.db_service.get_session.return_value.__aenter__.return_value
 
+    # Configure the mock for the instance's method
+    mock_validator_instance = MockAIResponseValidatorClass.return_value
+    mock_validator_instance.parse_and_validate_ai_response = AsyncMock(return_value=(new_parsed_data_dict, None))
+
     with patch('bot.command_modules.gm_app_cmds.crud_utils.get_entity_by_id', new_callable=AsyncMock) as mock_get_by_id, \
          patch('bot.command_modules.gm_app_cmds.crud_utils.update_entity', new_callable=AsyncMock) as mock_update_entity:
         mock_get_by_id.return_value = mock_record
-        mock_parse_validate.return_value = (new_parsed_data_dict, None)
+        # mock_parse_validate.return_value = (new_parsed_data_dict, None) # Original line, now handled by mock_validator_instance
         mock_update_entity.return_value = mock_record
 
         await gm_app_cog.cmd_master_edit_ai.callback(gm_app_cog, mock_interaction, pending_id=pending_id_val, json_data=new_data_str) # type: ignore
 
-    mock_parse_validate.assert_awaited_once_with(raw_ai_output_text=new_data_str, guild_id=str(mock_interaction.guild_id), request_type=mock_record.request_type, game_manager=game_mngr) # Use .value for enum
+    mock_validator_instance.parse_and_validate_ai_response.assert_awaited_once_with(
+        raw_ai_output_text=new_data_str,
+        guild_id=str(mock_interaction.guild_id),
+        request_type=mock_record.request_type, # This is already the enum member
+        game_manager=game_mngr
+    )
     mock_update_entity.assert_awaited_once()
     updates_dict = mock_update_entity.call_args.kwargs['data']
     assert updates_dict['status'] == PendingStatus.PENDING_MODERATION.value # Use .value

@@ -2,6 +2,7 @@ import pytest
 import json
 import uuid
 import asyncio
+import logging # Added logging
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import cast, List, Dict, Any, Callable, Awaitable # Added Callable, Awaitable
 
@@ -19,6 +20,8 @@ from bot.cogs.master_commands import MasterCog
 
 # Import RPGBot for type hinting in fixtures
 from bot.bot_core import RPGBot
+
+logger = logging.getLogger(__name__) # Defined logger
 
 
 # --- Fixtures ---

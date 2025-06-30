@@ -13,7 +13,7 @@ import datetime
 from bot.game.managers.undo_manager import UndoManager # Keep if used, seems so
 from bot.models.pending_generation import PendingGeneration, PendingStatus
 from bot.ai.ai_response_validator import AIResponseValidator as AIResponseValidatorClass
-from bot.ai.ai_data_models import GenerationType
+from bot.ai.ai_data_models import GenerationType # Ensure this is at the top level
 
 if TYPE_CHECKING:
     from bot.bot_core import RPGBot
@@ -1445,7 +1445,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 await interaction.followup.send("Ошибка: Сервис базы данных неисправен (нет get_session).", ephemeral=True); return
 
             async with get_session_method() as session: # get_session_method is now known to be callable
-                from bot.database import crud_utils
+                from bot.database import crud_utils # Local import for this scope
                 record_to_approve = await crud_utils.get_entity_by_id(
                     db_session=session, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str # Pass session
                 )
@@ -1480,7 +1480,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 current_status_after_apply = PendingStatus.UNKNOWN.value
                 # get_session_method is already confirmed callable
                 async with get_session_method() as session_after_apply: # No need to re-check callable
-                    from bot.database import crud_utils
+                    from bot.database import crud_utils # Local import for this scope
                     updated_record_after_apply = await crud_utils.get_entity_by_id(
                         db_session=session_after_apply, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
                     )
@@ -1591,12 +1591,12 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
                 logging.error(f"DBService for guild {guild_id_str} missing 'get_session' method for edit_ai.")
                 await interaction.followup.send("Ошибка: Сервис базы данных неисправен (нет get_session).", ephemeral=True); return
 
-            from bot.models.pending_generation import PendingGeneration, PendingStatus # Moved import
-            from bot.ai.ai_response_validator import AIResponseValidatorClass # Moved import
-            from bot.ai.ai_data_models import GenerationType # Moved import
+            from bot.models.pending_generation import PendingGeneration, PendingStatus # Local import for this scope
+            from bot.ai.ai_response_validator import AIResponseValidatorClass # Local import for this scope
+            # GenerationType is already imported at the top level
 
             async with get_session_method() as session_initial: # get_session_method is now known to be callable
-                from bot.database import crud_utils
+                from bot.database import crud_utils # Local import for this scope
                 record_to_edit = await crud_utils.get_entity_by_id(
                     db_session=session_initial, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
                 )
@@ -1666,7 +1666,7 @@ class GMAppCog(commands.Cog, name="GM App Commands"):
             # get_session_method is already confirmed callable
             try:
                 async with get_session_method() as session_for_update: # get_session_method is now known to be callable
-                    from bot.database import crud_utils
+                    from bot.database import crud_utils # Local import for this scope
                     record_for_update_in_session = await crud_utils.get_entity_by_id(
                             db_session=session_for_update, model_class=PendingGeneration, entity_id=pending_id, guild_id=guild_id_str
                     )

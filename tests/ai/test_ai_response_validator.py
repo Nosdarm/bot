@@ -12,7 +12,7 @@ from bot.ai.ai_data_models import (
 from bot.ai.rules_schema import (
     GameRules, CharacterStatRules, SkillRules, ItemRules, QuestRules,
     FactionRules, RoleStatRules, StatRange, ItemPriceCategory, ItemPriceDetail,
-    QuestRewardRules, CoreGameRulesConfig, GeneralSettings, NPCStatRangesByRole, GlobalStatLimits
+    QuestRewardRules, CoreGameRulesConfig # Removed GeneralSettings, NPCStatRangesByRole, GlobalStatLimits
 )
 from bot.game.managers.game_manager import GameManager
 
