@@ -26,8 +26,8 @@ from urllib.parse import urlparse, parse_qs, urlunparse, urlencode # Add imports
 # Example: DATABASE_URL="postgresql+asyncpg://user:password@host:port/dbname"
 
 DATABASE_URL_ENV_VAR = "DATABASE_URL"
-# Заменяем URL по умолчанию на предоставленный пользователем
-DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb?sslmode=require"
+# Заменяем URL по умолчанию на предоставленный пользователем, УБРАЛИ ?sslmode=require
+DEFAULT_SQLALCHEMY_DATABASE_URL = "postgresql+asyncpg://neondb_owner:npg_O2HrF6JYDPpG@ep-old-hat-a9ctb4yy-pooler.gwc.azure.neon.tech:5432/neondb"
 
 SQLALCHEMY_DATABASE_URL_FROM_ENV = os.getenv(DATABASE_URL_ENV_VAR)
 _used_env_var_globally = False
@@ -50,62 +50,123 @@ class PostgresAdapter(BaseDbAdapter):
     """
 
     def __init__(self, db_url: Optional[str] = None):
-        self._default_db_url = DEFAULT_SQLALCHEMY_DATABASE_URL
+        is_testing_mode = os.getenv("TESTING_MODE") == "true"
+        allow_postgres_in_test = os.getenv("ALLOW_POSTGRES_IN_TEST") == "true"
+
+        determined_db_url = db_url or SQLALCHEMY_DATABASE_URL # SQLALCHEMY_DATABASE_URL is from env or default (which is Neon)
+
+        if is_testing_mode and not allow_postgres_in_test:
+            # Check if the determined URL looks like a Postgres/Neon URL
+            if "postgres" in determined_db_url.lower() or "neon.tech" in determined_db_url.lower():
+                logger.error(
+                    "PostgresAdapter initialized with a PostgreSQL URL (%s) in TESTING_MODE "
+                    "without ALLOW_POSTGRES_IN_TEST set. This is likely an error. "
+                    "Tests should typically use SQLite. Halting to prevent external connection.",
+                    determined_db_url
+                )
+                raise RuntimeError(
+                    "Attempted to initialize PostgresAdapter with a live PostgreSQL URL during general testing. "
+                    "Set DATABASE_TYPE=sqlite and ensure TEST_DATABASE_URL points to SQLite, "
+                    "or set ALLOW_POSTGRES_IN_TEST=true if a Postgres test DB is intended for this specific test."
+                )
+
+        self._default_db_url = DEFAULT_SQLALCHEMY_DATABASE_URL # This is the Neon URL (clean of sslmode)
         self._used_env_var_url: bool
 
         if db_url: # If a specific URL is passed, it takes precedence
             self._db_url = db_url
-            # We can't be certain if this explicitly passed db_url originated from env or default,
-            # so we make a best guess or assume it's not the global env var for fallback purposes.
-            # For simplicity, if db_url is provided, we assume it's intentional and don't fallback.
-            self._used_env_var_url = False # Or determine based on equality if needed
+            self._used_env_var_url = (db_url == SQLALCHEMY_DATABASE_URL_FROM_ENV if SQLALCHEMY_DATABASE_URL_FROM_ENV else False)
         else:
-            self._db_url = SQLALCHEMY_DATABASE_URL
+            self._db_url = SQLALCHEMY_DATABASE_URL # This is (ENV_URL or DEFAULT_NEON_URL)
             self._used_env_var_url = _used_env_var_globally
 
-        # Ensure the URL scheme is compatible with asyncpg if used directly
+        # Ensure the URL scheme is compatible with asyncpg if used directly for raw pool
         self._asyncpg_url = self._db_url.replace("postgresql+asyncpg://", "postgresql://")
 
-        # --- Define final_engine_connect_args and _db_url_for_engine ---
+        # --- Define final_engine_connect_args and construct URL object ---
+        from sqlalchemy.engine import URL
+
+        original_parsed_url = urlparse(self._db_url) # Parse the original full URL (now without sslmode in default)
+
+        ssl_connect_arg: Optional[Union[bool, object]] = None
+
+        # Heuristic: if host contains 'neon.tech', assume SSL is required.
+        # A more robust solution would be an explicit config setting for SSL.
+        if original_parsed_url.hostname and "neon.tech" in original_parsed_url.hostname.lower():
+            print(f"PostgresAdapter __init__: Detected NeonDB host ({original_parsed_url.hostname}), enabling SSL via SSLContext.")
+            import ssl
+            # Create a basic SSL context. For 'sslmode=require', asyncpg typically needs ssl=True or an SSLContext.
+            # This context enables SSL. Verification behavior depends on server and context defaults.
+            # To mimic 'require' (verify server cert against system CAs if server provides it),
+            # ssl.create_default_context() is a good start.
+            # If Neon's pooler uses a self-signed or non-standard CA, further context customization might be needed.
+            ssl_context = ssl.create_default_context()
+            # For 'require', we usually don't need to check hostname if connecting to a pooler
+            # and don't need to provide client certs unless server mandates it.
+            # Default context usually tries to verify server cert against system CAs.
+            # If this fails, one might need:
+            # ssl_context.check_hostname = False
+            # ssl_context.verify_mode = ssl.CERT_NONE # This would be like sslmode=allow/prefer if server is lax
+                                                    # or connect if server forces SSL but client doesn't validate CA.
+                                                    # For true 'require', server cert must be validated.
+            ssl_connect_arg = ssl_context
+
+        # Allow environment variable to override SSL behavior if needed for other hosts or specific neon setups
+        env_ssl_setting = os.getenv("PGSSL_ADAPTER_SETTING")
+        if env_ssl_setting:
+            if env_ssl_setting.lower() == "disable":
+                ssl_connect_arg = False
+                print(f"PostgresAdapter __init__: Overridden SSL to 'false' due to PGSSL_ADAPTER_SETTING.")
+            elif env_ssl_setting.lower() == "true" or env_ssl_setting.lower() == "require":
+                if not isinstance(ssl_connect_arg, ssl.SSLContext): # Avoid overwriting a context with True
+                    ssl_connect_arg = True
+                print(f"PostgresAdapter __init__: Set SSL to '{ssl_connect_arg}' due to PGSSL_ADAPTER_SETTING.")
+            elif os.path.exists(env_ssl_setting): # Check if it's a path to a cert file for context
+               import ssl
+               try:
+                   context = ssl.create_default_context(cafile=env_ssl_setting)
+                   ssl_connect_arg = context
+                   print(f"PostgresAdapter __init__: Loaded SSLContext from CA file '{env_ssl_setting}' due to PGSSL_ADAPTER_SETTING.")
+               except Exception as e:
+                   print(f"PostgresAdapter __init__: WARNING: Failed to load SSLContext from CA file '{env_ssl_setting}': {e}. Using previous SSL setting: {ssl_connect_arg}")
+            # Add more complex SSLContext loading from path if needed in future
+
+
+
         final_engine_connect_args: Dict[str, Any] = {}
-        original_parsed_url = urlparse(self._db_url) # Parse the original full URL
-        original_query_params = parse_qs(original_parsed_url.query)
+        if ssl_connect_arg is not None:
+            final_engine_connect_args['ssl'] = ssl_connect_arg
 
-        ssl_mode_value = original_query_params.get('sslmode', [None])[0]
+        # Query parameters from the URL (should be clean of sslmode now)
+        query_for_sqla_url = {
+            key: val_list[0]
+            for key, val_list in parse_qs(original_parsed_url.query).items()
+            # No need to filter sslmode here as it's removed from default URL string
+        }
 
-        # Determine 'ssl' for connect_args based on ssl_mode_value
-        if ssl_mode_value:
-            print(f"PostgresAdapter __init__: Found 'sslmode={ssl_mode_value}' in DB_URL. Configuring for SQLAlchemy engine.")
-            if ssl_mode_value in ['require', 'prefer', 'allow', 'verify-ca', 'verify-full']:
-                final_engine_connect_args['ssl'] = True
-                if ssl_mode_value in ['verify-ca', 'verify-full']:
-                     print(f"PostgresAdapter __init__: INFO: For sslmode={ssl_mode_value}, using ssl=True. For full CA verification, a custom SSLContext might be required.")
-            elif ssl_mode_value == 'disable':
-                final_engine_connect_args['ssl'] = False
-            # else: A warning for unsupported ssl_mode would be printed if encountered, no specific action for connect_args.
+        driver_name = original_parsed_url.scheme
+        if driver_name == "postgresql":
+            driver_name = "postgresql+asyncpg"
 
-        # Construct _db_url_for_engine by stripping sslmode/ssl from the original URL's query parameters.
-        # This ensures that if 'ssl' is in final_engine_connect_args, these params are not in the URL string given to the engine.
-        query_params_for_engine_url_list = []
-        for key, val_list in original_query_params.items():
-            if key.lower() not in ['sslmode', 'ssl']: # Always strip these if 'ssl' might be in connect_args
-                for val_item in val_list:
-                    query_params_for_engine_url_list.append((key, val_item))
+        db_url_object = URL.create(
+            drivername=driver_name,
+            username=original_parsed_url.username,
+            password=original_parsed_url.password,
+            host=original_parsed_url.hostname,
+            port=original_parsed_url.port,
+            database=original_parsed_url.path.lstrip('/'),
+            query=query_for_sqla_url
+        )
+        self._db_url_for_engine = str(db_url_object)
 
-        clean_query_string_for_engine = urlencode(query_params_for_engine_url_list, doseq=True)
-        self._db_url_for_engine = urlunparse(original_parsed_url._replace(query=clean_query_string_for_engine))
         # --- End Define ---
 
-        # The 'ssl' parameter for asyncpg.create_pool should come from the final derived connect_args
-        # This specific variable `_asyncpg_ssl_param` seems to be intended for the raw asyncpg pool later,
-        # let's ensure it reflects what the engine would use if it were creating a raw pool.
-        self._asyncpg_ssl_param = final_engine_connect_args.get('ssl')
+        self._asyncpg_ssl_param = ssl_connect_arg # Store for raw pool creation
 
+        print(f"SQLAlchemy engine will be created for URL object: {str(db_url_object)} with explicit connect_args: {final_engine_connect_args}")
+        self._engine = create_async_engine(db_url_object, echo=False, connect_args=final_engine_connect_args)
 
-        print(f"SQLAlchemy engine will be created for URL: {self._db_url_for_engine} with explicit connect_args: {final_engine_connect_args}")
-        self._engine = create_async_engine(self._db_url_for_engine, echo=False, connect_args=final_engine_connect_args) # type: ignore [call-overload]
-
-        self._SessionLocal = sessionmaker( # type: ignore [call-overload]
+        self._SessionLocal = sessionmaker(
             bind=self._engine, # type: ignore [arg-type]
             class_=AsyncSession,
             expire_on_commit=False,

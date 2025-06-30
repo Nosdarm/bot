@@ -109,20 +109,25 @@ class TestCharacterAPI:
         assert response.status_code == 404
 
     async def test_get_characters_for_player(self, client: AsyncClient, test_engine):
+        player_id_val: str
+        other_player_id_val: str
         async with AsyncSession(test_engine) as session:
             player = await _ensure_player(session, TEST_GUILD_ID_CHAR_API, "list_chars")
-            await self._create_character_direct_db(session, player.id, TEST_GUILD_ID_CHAR_API, "Char 1 For List")
-            await self._create_character_direct_db(session, player.id, TEST_GUILD_ID_CHAR_API, "Char 2 For List")
+            player_id_val = player.id # Store the ID before potential session expiry of 'player'
+            await self._create_character_direct_db(session, player_id_val, TEST_GUILD_ID_CHAR_API, "Char 1 For List")
+            await self._create_character_direct_db(session, player_id_val, TEST_GUILD_ID_CHAR_API, "Char 2 For List")
+
             # Create a char for another player or guild to ensure filtering works
             other_player = await _ensure_player(session, OTHER_GUILD_ID_CHAR_API, "other_list")
-            await self._create_character_direct_db(session, other_player.id, OTHER_GUILD_ID_CHAR_API, "Other Char")
+            other_player_id_val = other_player.id # Store this ID as well
+            await self._create_character_direct_db(session, other_player_id_val, OTHER_GUILD_ID_CHAR_API, "Other Char")
 
-        response = await client.get(f"/api/v1/guilds/{TEST_GUILD_ID_CHAR_API}/players/{player.id}/characters/")
+        response = await client.get(f"/api/v1/guilds/{TEST_GUILD_ID_CHAR_API}/players/{player_id_val}/characters/")
         assert response.status_code == 200
         characters = response.json()
         assert len(characters) == 2
-        assert characters[0]["player_id"] == player.id
-        assert characters[1]["player_id"] == player.id
+        assert characters[0]["player_id"] == player_id_val
+        assert characters[1]["player_id"] == player_id_val
         assert characters[0]["guild_id"] == TEST_GUILD_ID_CHAR_API
 
     async def test_update_character_success(self, client: AsyncClient, test_engine):

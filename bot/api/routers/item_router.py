@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Path, Body # Added Path, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from typing import List
@@ -22,17 +22,17 @@ async def create_item_endpoint(item: NewItemCreate, db: AsyncSession = Depends(g
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.get("/", response_model=List[NewItemRead])
-async def read_items_endpoint(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db_session)):
+async def read_items_endpoint(guild_id: str = Path(..., description="The ID of the guild to retrieve items for"), skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db_session)):
     try:
-        items = await item_crud.get_new_items(db=db, skip=skip, limit=limit)
+        items = await item_crud.get_new_items(db=db, guild_id=guild_id, skip=skip, limit=limit)
         return items
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.get("/{item_id}", response_model=NewItemRead)
-async def read_item_endpoint(item_id: UUID, db: AsyncSession = Depends(get_db_session)):
+async def read_item_endpoint(guild_id: str = Path(..., description="The ID of the guild"), item_id: UUID = Path(..., description="The ID of the item to retrieve"), db: AsyncSession = Depends(get_db_session)):
     try:
-        db_item = await item_crud.get_new_item(db=db, item_id=item_id)
+        db_item = await item_crud.get_new_item(db=db, item_id=item_id, guild_id=guild_id)
         if db_item is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
         return db_item
@@ -42,9 +42,15 @@ async def read_item_endpoint(item_id: UUID, db: AsyncSession = Depends(get_db_se
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.put("/{item_id}", response_model=NewItemRead)
-async def update_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSession = Depends(get_db_session)):
+async def update_item_endpoint(
+    guild_id: str = Path(..., description="The ID of the guild"),
+    item_id: UUID = Path(..., description="The ID of the item to update"),
+    item: NewItemUpdate = Body(...),
+    db: AsyncSession = Depends(get_db_session)
+):
     try:
-        updated_item = await item_crud.update_new_item(db=db, item_id=item_id, item_update=item)
+        # Ensure guild_id from path is used for CRUD, not from item body if present
+        updated_item = await item_crud.update_new_item(db=db, item_id=item_id, guild_id=guild_id, item_update=item)
         if updated_item is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
         return updated_item
@@ -56,11 +62,16 @@ async def update_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSess
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.patch("/{item_id}", response_model=NewItemRead)
-async def patch_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSession = Depends(get_db_session)):
+async def patch_item_endpoint(
+    guild_id: str = Path(..., description="The ID of the guild"),
+    item_id: UUID = Path(..., description="The ID of the item to patch"),
+    item: NewItemUpdate = Body(...),
+    db: AsyncSession = Depends(get_db_session)
+):
     # The item_crud.update_new_item function should use model_dump(exclude_unset=True)
     # from the Pydantic model, which is suitable for PATCH behavior.
     try:
-        updated_item = await item_crud.update_new_item(db=db, item_id=item_id, item_update=item)
+        updated_item = await item_crud.update_new_item(db=db, item_id=item_id, guild_id=guild_id, item_update=item)
         if updated_item is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
         return updated_item
@@ -71,10 +82,10 @@ async def patch_item_endpoint(item_id: UUID, item: NewItemUpdate, db: AsyncSessi
     except Exception as e: # Catch any other unexpected errors from CRUD or elsewhere
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
 
-@router.delete("/{item_id}", response_model=NewItemRead)
-async def delete_item_endpoint(item_id: UUID, db: AsyncSession = Depends(get_db_session)):
+@router.delete("/{item_id}", response_model=NewItemRead) # No body parameter, so original order is fine
+async def delete_item_endpoint(guild_id: str = Path(..., description="The ID of the guild"), item_id: UUID = Path(..., description="The ID of the item to delete"), db: AsyncSession = Depends(get_db_session)):
     try:
-        deleted_item = await item_crud.delete_new_item(db=db, item_id=item_id)
+        deleted_item = await item_crud.delete_new_item(db=db, item_id=item_id, guild_id=guild_id)
         if deleted_item is None: # This case implies item was not found before attempting delete or after check (if logic changes)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found or already deleted")
         return deleted_item
